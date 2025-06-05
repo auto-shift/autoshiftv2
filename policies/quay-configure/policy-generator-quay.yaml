@@ -1,0 +1,59 @@
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: policy-quay
+
+placementBindingDefaults:
+  name: policy-quay
+
+policyDefaults:
+  namespace: policies-autoshift # TODO: deal with me later
+  configurationPolicyAnnotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+
+  consolidateManifests: true
+  orderManifests: false
+  orderPolicies: false # can not do because of the use of "dependencies" for external policy dependencies
+  generatePlacementWhenInSet: false
+  pruneObjectBehavior: None
+  complianceType: musthave
+  severity: critical
+  informGatekeeperPolicies: false
+  evaluationInterval:
+    compliant: 10s
+    noncompliant: 10s
+
+  #placement:
+  #  - placementPath: placement-policy-quay.yaml
+
+policies:
+  #
+  #  - name: policy-quay-operator-install
+  #    description: Install Quay operator
+  #    policySets:
+  #    remediationAction: enforce
+  #    manifests:
+  #      - path: TODO
+
+  #  - name: policy-quay-deploy
+  #    description: Deploy Quay
+  #    policySets:
+  #    remediationAction: enforce
+  #    dependencies:
+  #    - name: policy-quay-operator-install
+  #    - name: policy-storage-cluster
+  #    manifests:
+  #      - path: TODO
+  #
+
+  - name: policy-quay-configure
+    description: Configure Quay
+    policySets:
+    remediationAction: enforce
+    dependencies:
+      - name: policy-quay-deploy
+    manifests:
+      - path: policy-manifests/quay-configure
