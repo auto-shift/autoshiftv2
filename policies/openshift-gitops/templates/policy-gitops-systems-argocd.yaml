@@ -124,33 +124,32 @@ spec:
                         configMap:
                           name: user-ca-bundle
                     {{- end }}
-                      # enable argo to be able to run policy-generator via kustomize
-                      volumes:
-                      - emptyDir: {}
-                        name: policy-generator
-                      env:
-                      - name: POLICY_GEN_ENABLE_HELM
-                        value: "true"
-                      initContainers:
-                      - args:
-                        - -c
-                        #- cp /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator/PolicyGenerator /policy-generator/PolicyGenerator
-
-                        # NOTE: not using version from ACM image right now because it doesn't currently have a new enough PolicyGenerator which supports POLICY_GEN_ENABLE_HELM environment variable
-                        - echo "Download upstream PolicyGenerator plugin v1.15.0";
-                          curl -L -o /policy-generator/PolicyGenerator https://github.com/open-cluster-management-io/policy-generator-plugin/releases/download/v1.15.0/linux-amd64-PolicyGenerator;
-                          echo; echo "Set execute permissions on PolicyGenerator plugin";
-                          chmod +x /policy-generator/PolicyGenerator;
-                        command:
-                        - /bin/bash
-                        image: registry.redhat.io/rhacm2/multicluster-operators-subscription-rhel8:v2.8
-                        name: policy-generator-install
-                        volumeMounts:
-                        - mountPath: /policy-generator
-                          name: policy-generator
+                    # enable argo to be able to run policy-generator via kustomize
+                    volumes:
+                    - emptyDir: {}
+                      name: policy-generator
+                    env:
+                    - name: POLICY_GEN_ENABLE_HELM
+                      value: "true"
+                    initContainers:
+                    - args:
+                      - -c
+                      #- cp /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator/PolicyGenerator /policy-generator/PolicyGenerator
+                      # NOTE: not using version from ACM image right now because it doesn't currently have a new enough PolicyGenerator which supports POLICY_GEN_ENABLE_HELM environment variable
+                      - echo "Download upstream PolicyGenerator plugin v1.15.0";
+                        curl -L -o /policy-generator/PolicyGenerator https://github.com/open-cluster-management-io/policy-generator-plugin/releases/download/v1.15.0/linux-amd64-PolicyGenerator;
+                        echo; echo "Set execute permissions on PolicyGenerator plugin";
+                        chmod +x /policy-generator/PolicyGenerator;
+                      command:
+                      - /bin/bash
+                      image: registry.redhat.io/rhacm2/multicluster-operators-subscription-rhel8:v2.8
+                      name: policy-generator-install
                       volumeMounts:
-                      - mountPath: /.config/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+                      - mountPath: /policy-generator
                         name: policy-generator
+                    volumeMounts:
+                    - mountPath: /.config/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+                      name: policy-generator
                   ha:
                     resources:
                       limits:
