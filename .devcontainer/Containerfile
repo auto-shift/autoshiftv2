@@ -1,0 +1,45 @@
+FROM registry.access.redhat.com/ubi9/ubi
+
+ENV OCP_VERSION=stable
+
+LABEL description="A container for deploying OpenShift Clusters."
+
+# Install skopeo and podman
+RUN dnf -y update &&\
+    dnf -y install \
+        bash-completion \
+        git \
+        ncurses \
+        nmstate \
+        podman \
+        procps-ng \
+        skopeo &&\
+    dnf clean all
+
+# Download butane
+RUN curl -sL https://mirror.openshift.com/pub/openshift-v4/amd64/clients/butane/latest/butane -o /usr/local/bin/butane &&\
+    chmod +x /usr/local/bin/butane &&\
+# Download oc-mirror
+    curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OCP_VERSION}/oc-mirror.tar.gz \
+    | tar xvzf - -C /usr/local/bin &&\
+    chmod +x /usr/local/bin/oc-mirror &&\
+# Download oc
+    curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OCP_VERSION}/openshift-client-linux.tar.gz \
+    | tar xvzf - -C /usr/local/bin &&\
+    chmod +x /usr/local/bin/oc &&\
+    oc completion bash > /etc/bash_completion.d/oc &&\
+    chmod +x /usr/local/bin/kubectl &&\
+# Download openshift-install
+    curl -sL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/${OCP_VERSION}/openshift-install-rhel9-amd64.tar.gz \
+    | tar xvzf - -C /usr/local/bin &&\
+    chmod +x /usr/local/bin/openshift-install-fips &&\
+    openshift-install-fips completion > /etc/bash_completion.d/openshift-install &&\
+# Download helm
+    curl -sL https://developers.redhat.com/content-gateway/file/pub/openshift-v4/clients/helm/3.15.4/helm-linux-amd64 -o /usr/local/bin/helm &&\
+    chmod +x /usr/local/bin/helm
+
+# Create vscode user
+RUN mkdir /workspaces &&\
+    useradd -s /bin/bash -d /workspaces vscode &&\
+    chown -R vscode:vscode /workspaces
+USER vscode
