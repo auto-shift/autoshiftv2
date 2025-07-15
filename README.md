@@ -9,93 +9,114 @@ AutoShiftv2 is an Infrastructure-as-Code (IaC) framework designed to manage infr
 ## Hub of Hubs Architecture
 ![alt text](images/AutoShiftv2-HubOfHubs.jpg)
 
-How To Install
+### How to Install
+
+#### Preparing for Install
 
 1. Fork, clone, or use upstream git repo
-  
+
 2. Install dependencies
+   
+   - [helm](https://helm.sh/docs/intro/install/) on local machine
+   
+   - oc from hub cluster on local machine
 
-  1. [helm](https://helm.sh/docs/intro/install/) on local machine
+3. Login to hub cluster as cluster-admin
+   
+   ```
+   oc login
+   ```
+   
+   > **Note:** Alternatively you can use the devcontainer provided by this repository. By default the container will install the stable version of `oc` and the latest Red Hat provided version of `helm`. These versions can be specified by setting the `OCP_VERSION` and `HELM_VERSION` variables before building. From the container you can login as usual with `oc login` or copy your kubeconfig into the container `podman cp ${cluster_dir}/auth/kubeconfig ${container-name}:/workspaces/.kube/config`.
 
-  2. oc from hub cluster on local machine
+4. Configure for your environment
+   
+   - Update `policies/openshift-gitops/values.yaml` and `policies/advanced-cluster-management/values.yaml` with desired source mirror registry for disconnected or leave as is for connected
+   
+   - If your clone of AutoShiftv2 requires credentials or you would like to add credentials to any other git repos you can do this in the openshift-gitops/values file before installing. This can also be done in the OpenShift GitOps GUI after install.
+   
+   - Update the cli image found in `openshift-gitops/values.yaml` and `advanced-cluster-management/values.yaml` if you're not using the default `image-registry.openshift-image-registry.svc:5000/openshift/cli:latest`
 
-login to hub cluster as cluster-admin
-```
-oc login
-```
+5. Install OpenShift GitOps
+   
+   ```
+   helm upgrade --install openshift-gitops openshift-gitops -f policies/openshift-gitops/values.yaml
+   ```
+   
+   > **Note:** If OpenShift GitOps is already installed manually on cluster and the default argo instance exists this step can be skipped. Make sure that argocd controller has cluster-admin
+   
+   Test if OpenShift GitOps was installed correctly
+   
+   ```
+   oc get argocd -A
+   ```
+   
+   This command should return something like this:
+   
+   ```
+   NAMESPACE NAME AGE
+   
+   openshift-gitops infra-gitops 29s
+   ```
+   
+   If this is not the case you may need to run helm upgrade again.
 
-> **Note:** Alternatively you can use the devcontainer provided by this repository. By default the container will install the stable version of `oc` and the latest Red Hat provided version of `helm`. These versions can be specified by setting the `OCP_VERSION` and `HELM_VERSION` variables before building. From the container you can login as usual with `oc login` or copy your kubeconfig into the container `podman cp ${cluster_dir}/auth/kubeconfig ${container-name}:/workspaces/.kube/config`.
+6. Install Advanced Cluster Management
+   
+   ```
+   helm upgrade --install advanced-cluster-management advanced-cluster-management -f policies/advanced-cluster-management/values.yaml
+   ```
+   
+   Test Advanced Cluster Management
+   
+   ```
+   oc get mch -A -w
+   ```
+   
+   This command should return something like this:
+   
+   ```
+   NAMESPACE NAME STATUS AGE CURRENTVERSION DESIREDVERSION
+   open-cluster-management multiclusterhub Installing 2m35s 2.13.2
+   open-cluster-management multiclusterhub Installing 2m39s 2.13.2
+   open-cluster-management multiclusterhub Installing 3m12s 2.13.2
+   open-cluster-management multiclusterhub Installing 3m41s 2.13.2
+   open-cluster-management multiclusterhub Installing 4m11s 2.13.2
+   open-cluster-management multiclusterhub Installing 4m57s 2.13.2
+   open-cluster-management multiclusterhub Installing 5m15s 2.13.2
+   open-cluster-management multiclusterhub Installing 5m51s 2.13.2
+   open-cluster-management multiclusterhub Running 6m28s 2.13.2 2.13.2
+   ```
+   
+   > **Note:** this does take roughly 6 min to install. You can proceed to installing AutoShift while this is installing but you will not be able to verify AutoShift or select a clusterset until this is finished.
 
-Update policies/openshift-gitops/values.yaml and policies/advanced-cluster-management/values.yaml with desired source mirror registry for disconnected or leave as is for connected
+#### Install AutoShiftv2
 
+Both ACM and GitOps will be controlled by AutoShift after it is installed for version upgrading
 
-If your clone of AutoShiftv2 requires credentials or you would like to add credentials to any other git repos you can do this in the openshift-gitops/values file before installing. This can also be done in the OpenShift GitOps GUI after install.
+1. Update autoshift/values.yaml with desired feature flags and repo url
 
-Install OpenShift GitOps
-```
-helm upgrade --install openshift-gitops openshift-gitops -f policies/openshift-gitops/values.yaml
-```
-> **Note:** If OpenShift GitOps is already installed manually on cluster and the default argo instance exists this step can be skipped. Make sure that argocd controller has cluster-admin
+2. Install AutoShift
+   
+   Example using the hub values file
+   
+   ```
+   helm template autoshift autoshift -f autoshift/values.hub.yaml | oc apply -f -
+   ```
 
-Test if OpenShift GitOps was installed correctly
-```
-oc get argocd -A
-```
-This command should return something like this:
-```
-NAMESPACE          NAME               AGE
-openshift-gitops   infra-gitops   29s
-```
-
-If this is not the case you may need to run helm upgrade again.
-
-Install Advanced Cluster Management
-```
-helm upgrade --install advanced-cluster-management advanced-cluster-management -f policies/advanced-cluster-management/values.yaml
-```
-
-Test Advanced Cluster Management
-```
-oc get mch -A -w
-```
-
-This command should return something like this:
-```
-NAMESPACE                 NAME              STATUS       AGE     CURRENTVERSION   DESIREDVERSION
-open-cluster-management   multiclusterhub   Installing   2m35s                    2.13.2
-open-cluster-management   multiclusterhub   Installing   2m39s                    2.13.2
-open-cluster-management   multiclusterhub   Installing   3m12s                    2.13.2
-open-cluster-management   multiclusterhub   Installing   3m41s                    2.13.2
-open-cluster-management   multiclusterhub   Installing   4m11s                    2.13.2
-open-cluster-management   multiclusterhub   Installing   4m57s                    2.13.2
-open-cluster-management   multiclusterhub   Installing   5m15s                    2.13.2
-open-cluster-management   multiclusterhub   Installing   5m51s                    2.13.2
-open-cluster-management   multiclusterhub   Running      6m28s   2.13.2           2.13.2
-```
-
-> **Note:** this does take roughly 6 min to install. You can proceed to installing AutoShift while this is installing but you will not be able to verify AutoShift or select a clusterset until this is finished.
-
-
-Both ACM and GitOps will be controlled by autoshift after it is installed for version upgrading
-
-Update autoshift/values.yaml with desired feature flags and repo url
-
-Install AutoShiftv2
-
-example using the hub values file
-```
-helm template autoshift autoshift -f autoshift/values.hub.yaml | oc apply -f -
-```
+#### Post AutoShift Installation
 
 Given the labels and cluster sets provided in the values file, ACM cluster sets will be created.
 
-Go to cluster sets in the acm console
+1. Go to cluster sets in the acm console
+
 ![alt text](images/acm-cluster-sets.png)
 
-Manually select which cluster will belong to each cluster set, or when provisioning a new cluster from ACM you can select the desired cluster set from ACM at time of creation.
+2. Manually select which cluster will belong to each cluster set, or when provisioning a new cluster from ACM you can select the desired cluster set from ACM at time of creation.
+
 ![alt text](images/acm-add-hub-cluster.png)
 
-That's it. Welcome to OpenShift Platform Plus!
+3. That's it. Welcome to OpenShift Platform Plus!
 
 ## Cluster Labels
 #### values can be set on a per cluster and clusterset level to decide what features of autoshift will be applied to each cluster. If a value is defined in helm values, a clusterset label and a cluster 
@@ -227,7 +248,7 @@ quay-source<String>: default redhat-operators
 quay-source-namespace<String>: default openshift-marketplace
 
 ### Developer OpenShift Gitops
-gitops-dev<bool>: If not set Developer OpenShift Gitops intances will not be managed
+gitops-dev<bool>: If not set Developer OpenShift Gitops instances will not be managed
 
 gitops-dev-team-{INSERT_TEAM_NAME}<String>: Team that can deploy onto cluster from dev team gitops. Must match a team in the gitops-dev helm chart values file.
 
@@ -300,7 +321,7 @@ odf<bool>: If not set OpenShift Data Foundation will not be managed. if Storage 
 
 odf-multi-cloud-gateway<String>: values standalone or standard. Install ODF with only nooba object gateway or full odf
 
-odf-nooba-pvpool<bool>: if not set nooba will be deployed with default settings. Recomended don't set for cloud providers. Use pv pool for storage
+odf-nooba-pvpool<bool>: if not set nooba will be deployed with default settings. Recommended don't set for cloud providers. Use pv pool for storage
 
 odf-nooba-store-size<String>: example 500Gi. if pvpool set. Size of nooba backing store
 
