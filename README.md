@@ -9,13 +9,15 @@ AutoShiftv2 is an Infrastructure-as-Code (IaC) framework designed to manage infr
 ## Hub of Hubs Architecture
 ![alt text](images/AutoShiftv2-HubOfHubs.jpg)
 
-## How To Install
+How To Install
 
-Fork, clone, or use upstream git repo
+1. Fork, clone, or use upstream git repo
+  
+2. Install dependencies
 
-install [helm](https://helm.sh/docs/intro/install/) on local machine
+  1. [helm](https://helm.sh/docs/intro/install/) on local machine
 
-install oc from hub cluster
+  2. oc from hub cluster on local machine
 
 login to hub cluster as cluster-admin
 ```
