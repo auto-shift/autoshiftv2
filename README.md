@@ -66,6 +66,15 @@ AutoShiftv2 is an Infrastructure-as-Code (IaC) framework designed to manage infr
    ```
    helm upgrade --install advanced-cluster-management advanced-cluster-management -f policies/advanced-cluster-management/values.yaml
    ```
+
+   > **Note:** This command may fail with an error:
+   > 
+   > ```
+   > Error: failed post-install: warning: Hook post-install advanced-cluster-management/templates/acm-mch.yaml failed: 1 error occurred:
+   >         * Internal error occurred: failed calling webhook "multiclusterhub.validating-webhook.open-cluster-management.io": failed to call webhook: Post "https://multiclusterhub-operator-webhook.open-cluster-management.svc:443/validate-operator-open-cluster-management-io-v1-multiclusterhub?timeout=10s": no endpoints available for service "multiclusterhub-operator-webhook
+   > ```
+   > 
+   > If this is the case you may need to run helm upgrade again.
    
    Test Advanced Cluster Management
    
