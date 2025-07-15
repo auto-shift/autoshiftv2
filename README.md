@@ -22,6 +22,8 @@ login to hub cluster as cluster-admin
 oc login
 ```
 
+> Alternatively you can use the devcontainer provided by the repository. By default it will install the stable version of `oc` and the latest Red Hat provided version of `helm`. Just `oc login` from the container or copy your kubeconfig into the container `podman cp ${cluster_dir}/auth/kubeconfig ${container-name}:/workspaces/.kube/config`
+
 Update policies/openshift-gitops/values.yaml and policies/advanced-cluster-management/values.yaml with desired source mirror registry for disconnected or leave as is for connected
 
 
@@ -31,7 +33,7 @@ Install OpenShift GitOps
 ```
 helm upgrade --install openshift-gitops openshift-gitops -f policies/openshift-gitops/values.yaml
 ```
-Note: If OpenShift GitOps is already installed manually on cluster and the default argo instance exists this step can be skipped. Make sure that argocd controller has cluster-admin
+> Note: If OpenShift GitOps is already installed manually on cluster and the default argo instance exists this step can be skipped. Make sure that argocd controller has cluster-admin
 
 Test if OpenShift GitOps was installed correctly
 ```
@@ -69,7 +71,7 @@ open-cluster-management   multiclusterhub   Installing   5m51s                  
 open-cluster-management   multiclusterhub   Running      6m28s   2.13.2           2.13.2
 ```
 
-Note: this does take roughly 6 min to install. You can proceed to installing AutoShift while this is installing but you will not be able to verify AutoShift or select a clusterset until this is finished.
+> Note: this does take roughly 6 min to install. You can proceed to installing AutoShift while this is installing but you will not be able to verify AutoShift or select a clusterset until this is finished.
 
 
 Both ACM and GitOps will be controlled by autoshift after it is installed for version upgrading
