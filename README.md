@@ -55,7 +55,6 @@ AutoShiftv2 is an Infrastructure-as-Code (IaC) framework designed to manage infr
    
    ```
    NAMESPACE NAME AGE
-   
    openshift-gitops infra-gitops 29s
    ```
    
