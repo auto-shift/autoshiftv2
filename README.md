@@ -144,107 +144,105 @@ That's it. Welcome to OpenShift Platform Plus!
 #### label precedence will be cluster -> clusterset -> helm values where helm values is the least. Helm values are meant to be defaults.
 ##
 
+## Autoshift Cluster Labels Values Reference
+
+Values can be set on a per cluster and clusterset level to decide what features of autoshift will be applied to each cluster. If a value is defined in helm values, a clusterset label and a cluster 
+
+label precedence will be cluster -> clusterset -> helm values where helm values is the least. Helm values, `values.yaml` are meant to be defaults.
+
+
 ### Advanced Cluster Manager
-Hub Clusters Only
 
-self-managed: true or false
+> [!WARNING]  
+> Hub Clusters Only
 
-acm-channel: default release-2.13
-
-acm-install-plan-approval: default Automatic
-
-acm-source: default redhat-operators
-
-acm-source-namespace: default openshift-marketplace
-
-acm-availability-config: supports basic or high
+| Variable                    | Type      | Default Value             | 
+|-----------------------------|-----------|---------------------------|
+| `self-managed`              | bool      | `true` or `false`         |
+| `acm-channel`               | string    | `release-2.13`            |
+| `acm-install-plan-approval` | string    | `Automatic`               |
+| `acm-source`                | string    | `redhat-operators`        |
+| `acm-source-namespace`      | string    | `openshift-marketplace`   |
+| `acm-availability-config`   | string    | `basic` or `high`         |
 
 ### OpenShift Gitops
 
-gitops-channel: default latest
-
-gitops-install-plan-approval: default Automatic
-
-gitops-source: default redhat-operators
-
-gitops-source-namespace: default openshift-marketplace
+| Variable                        | Type      | Default Value             | 
+|---------------------------------|-----------|---------------------------|
+| `gitops-channel`                | string    | `latest`                  |
+| `gitops-install-plan-approval`  | string    | `Manual` or `Automatic`   |
+| `gitops-source`                 | string    | `redhat-operators`        |
+| `gitops-source-namespace`       | string    | `openshift-marketplace`   |
 
 ### Infra Nodes
-infra-nodes<int>: Number of infra nodes min if autoscale. If not set infra nodes are not managed, if blank infra nodes will be deleted
 
-infra-nodes-numcpu<int>: Number of cpu per infra node
-
-infra-nodes-memory-mib<int>: Memory mib per infra node
-
-infra-nodes-numcores-per-socket<int>: Number of CPU Cores per socket
-
-infra-nodes-zones<list<String>>: list of availability zones
+| Variable                            | Type              | Default Value             | Notes |
+|-------------------------------------|-------------------|---------------------------|-------|
+| `infra-nodes`                       | int               |                           | Number of infra nodes min if autoscale. If not set infra nodes are not managed, if blank infra nodes will be deleted |
+| `infra-nodes-numcpu`                | int               |                           | Number of cpu per infra node |
+| `infra-nodes-memory-mib`            | int               |                           | Memory mib per infra node |
+| `infra-nodes-numcores-per-socket`   | int               |                           | Number of CPU Cores per socket |
+| `infra-nodes-zones`                 | <list<String>>    |                           | List of availability zones |
 
 ### Worker Nodes
-worker-nodes<int>: Number of worker nodes min if autoscale. If not set worker nodes are not managed, if blank worker nodes will be deleted
 
-worker-nodes-numcpu<int>: Number of cpu per worker node
-
-worker-nodes-memory-mib<int>: Memory mib per worker node
-
-worker-nodes-numcores-per-socket<int>: Number of CPU Cores per socket
-
-worker-nodes-zones<list<String>>: list of availability zones
+| Variable                            | Type              | Default Value             | Notes |
+|-------------------------------------|-------------------|---------------------------|-------|
+| `worker-nodes`                      | int               |                           | Number of worker nodes min if autoscale. If not set worker nodes are not managed, if blank worker nodes will be deleted |
+| `worker-nodes-numcpu`               | int               |                           | Number of cpu per worker node |
+| `worker-nodes-memory-mib`           | int               |                           | Memory mib per worker node |
+| `worker-nodes-numcores-per-socket`  | int               |                           | Number of CPU Cores per socket |
+| `worker-nodes-zones`                | <list<String>>    |                           | list of availability zones
 
 ### Storage Nodes
-storage-nodes<int>: Number of storage nodes min if autoscale. If not set storage nodes are not managed, if blank storage nodes will be deleted. Local Storage Operator will be installed if Storage Nodes are enabled
 
-storage-nodes-numcpu<int>: Number of cpu per storage node
-
-storage-nodes-memory-mib<int>: Memory mib per storage node
-
-storage-nodes-numcores-per-socket<int>: Number of CPU Cores per socket
-
-storage-nodes-zones<list<String>>: list of availability zones
+| Variable                              | Type              | Default Value             | Notes |
+|---------------------------------------|-------------------|---------------------------|-------|
+| `storage-nodes`                       | int               |                           | Number of storage nodes min if autoscale. If not set storage nodes are not managed, if blank storage nodes will be deleted. Local Storage Operator will be installed if Storage Nodes are enabled |
+| `storage-nodes-numcpu`                | int               |                           | Number of cpu per storage node |
+| `storage-nodes-memory-mib`            | int               |                           | Memory mib per storage node |
+| `storage-nodes-numcores-per-socket`   | int               |                           | Number of CPU Cores per socket |
+| `storage-nodes-zones`                 | <list<String>>    |                           | list of availability zones |
 
 ### Advanced Cluster Security
-acs<bool>: If not set Advanced Cluster Security will not be managed
 
-acs-channel<String>: default stable
-
-acs-install-plan-approval<String>: default Automatic
-
-acs-source<String>: default redhat-operators
-
-acs-source-namespace<String>: default openshift-marketplace
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `acs`                             | bool              |                           | If not set Advanced Cluster Security will not be managed |
+| `acs-channel`                     | String            | `stable`                  |       |
+| `acs-install-plan-approval`       | String            | `Automatic`               |       |
+| `acs-source`                      | String            | `redhat-operators`        |       |
+| `acs-source-namespace`            | String            | `openshift-marketplace`   |       |
 
 ### Developer Spaces
-dev-spaces<bool>: If not set Developer Spaces will not be managed
 
-dev-spaces-channel<String>: default stable
-
-dev-spaces-install-plan-approval<String>: default Automatic
-
-dev-spaces-source<String>: default redhat-operators
-
-dev-spaces-source-namespace<String>: default openshift-marketplace
+| Variable                              | Type              | Default Value             | Notes |
+|---------------------------------------|-------------------|---------------------------|-------|
+| `dev-spaces`                          | bool              |                           | If not set Developer Spaces will not be managed |
+| `dev-spaces-channel`                  | String            | `stable`                  |       |
+| `dev-spaces-install-plan-approval`    | String            | `Automatic`               |       |
+| `dev-spaces-source`                   | String            | `redhat-operators`        |       |
+| `dev-spaces-source-namespace`         | String            | `openshift-marketplace`   |       |
 
 ### Developer Hub
-dev-hub<bool>: If not set Developer Hub will not be managed
 
-dev-hub-channel<String>: default fast
-
-dev-hub-install-plan-approval<String>: default Automatic
-
-dev-hub-source<String>: default redhat-operators
-
-dev-hub-source-namespace<String>: default openshift-marketplace
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `dev-hub`                         | bool              |                           | If not set Developer Hub will not be managed |
+| `dev-hub-channel`                 | String            | `fast`                    |       |
+| `dev-hub-install-plan-approval`   | String            | `Automatic`               |       |
+| `dev-hub-source`                  | String            | `redhat-operators`        |       |
+| `dev-hub-source-namespace`        | String            | `openshift-marketplace`   |       |
 
 ### OpenShift Pipelines
-pipelines<bool>: If not set OpenShift Pipelines will not be managed
 
-pipelines-channel<String>: default latest
-
-pipelines-install-plan-approval<String>: default Automatic
-
-pipelines-source<String>: default redhat-operators
-
-pipelines-source-namespace<String>: default openshift-marketplace
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `pipelines`                       | bool              |                           | If not set OpenShift Pipelines will not be managed |
+| `pipelines-channel`               | String            | `latest`                  |       |
+| `pipelines-install-plan-approval` | String            | `Automatic`               |       |
+| `pipelines-source`                | String            | `redhat-operators`        |       |
+| `pipelines-source-namespace`      | String            | `openshift-marketplace`   |       |
 
 ### Trusted Artifact Signer
 tas<bool>: If not set Trusted Artifact Signer will not be managed
