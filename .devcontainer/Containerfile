@@ -1,0 +1,36 @@
+FROM registry.access.redhat.com/ubi9/ubi
+
+ARG OCP_VERSION=stable-4.18
+ARG HELM_VERSION=latest
+
+LABEL description="A container for administrating OpenShift Clusters."
+
+# Install skopeo and podman
+RUN dnf -y update &&\
+    dnf -y install \
+        bash-completion \
+        git \
+        ncurses &&\
+    dnf clean all
+
+# Download oc
+RUN curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OCP_VERSION}/openshift-client-linux.tar.gz \
+    | tar xvzf - -C /usr/local/bin &&\
+    chmod +x /usr/local/bin/oc &&\
+    oc completion bash > /etc/bash_completion.d/oc &&\
+    chmod +x /usr/local/bin/kubectl &&\
+# Download helm
+    curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/helm/${HELM_VERSION}/helm-linux-amd64 -o /usr/local/bin/helm &&\
+    chmod +x /usr/local/bin/helm
+
+# Create vscode user
+RUN mkdir -p /workspaces/.kube &&\
+    useradd -s /bin/bash -d /workspaces vscode &&\
+    chown -R vscode:vscode /workspaces
+
+USER vscode
+
+# Make prompt nicer
+RUN curl -sL https://raw.githubusercontent.com/git/git/refs/heads/master/contrib/completion/git-prompt.sh \
+        -o ~/.git-prompt.sh
+COPY bashrc /workspaces/.bashrc
