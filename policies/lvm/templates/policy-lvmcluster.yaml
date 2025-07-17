@@ -33,30 +33,30 @@ spec:
           object-templates-raw: |
             - complianceType: musthave
               objectDefinition:
-              apiVersion: lvm.topolvm.io/v1alpha1
-              kind: LVMCluster
-              metadata:
-                name: lvmcluster
-                namespace: openshift-storage
-              spec:
-                storage:
-                  deviceClasses:
-                    - default: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-default" | default "{{ .Values.lvm.default }}" hub{{ "}}" }}
-                      fstype: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-fstype" | default "{{ .Values.lvm.fstype }}" hub{{ "}}" }}
-                      name: vg1
-                      thinPoolConfig:
-                        chunkSizeCalculationPolicy: Static
-                        metadataSizeCalculationPolicy: Host
-                        sizePercent: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-size-percent" | default {{ .Values.lvm.sizePercent }} | toInt hub{{ "}}" }}'
-                        name: thin-pool-1
-                        overprovisionRatio: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-overprovision-ratio" | default {{ .Values.lvm.overprovisionRatio }} | toInt hub{{ "}}" }}'
-                      {{- if .Values.lvm.nodeSelector }}
-                      nodeSelector:
-                        nodeSelectorTerms:
-                          - matchExpressions:
-                              - key: autoshift.io/lvm-node
-                                operator: ''
-                      {{- end }}
+                apiVersion: lvm.topolvm.io/v1alpha1
+                kind: LVMCluster
+                metadata:
+                  name: lvmcluster
+                  namespace: {{ .Values.lvm.namespace }}
+                spec:
+                  storage:
+                    deviceClasses:
+                      - default: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-default" | default "{{ .Values.lvm.default }}" hub{{ "}}" }}
+                        fstype: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-fstype" | default "{{ .Values.lvm.fstype }}" hub{{ "}}" }}
+                        name: vg1
+                        thinPoolConfig:
+                          chunkSizeCalculationPolicy: Static
+                          metadataSizeCalculationPolicy: Host
+                          sizePercent: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-size-percent" | default {{ .Values.lvm.sizePercent }} | toInt hub{{ "}}" }}'
+                          name: thin-pool-1
+                          overprovisionRatio: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-overprovision-ratio" | default {{ .Values.lvm.overprovisionRatio }} | toInt hub{{ "}}" }}'
+                        {{- if .Values.lvm.nodeSelector }}
+                        nodeSelector:
+                          nodeSelectorTerms:
+                            - matchExpressions:
+                                - key: autoshift.io/lvm-node
+                                  operator: ''
+                        {{- end }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
