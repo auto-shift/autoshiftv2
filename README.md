@@ -9,9 +9,9 @@ AutoShiftv2 is an Infrastructure-as-Code (IaC) framework designed to manage infr
 ## Hub of Hubs Architecture
 ![alt text](images/AutoShiftv2-HubOfHubs.jpg)
 
-### How to Install
+## How to Install
 
-#### Preparing for Install
+### Preparing for Install
 
 1. Fork, clone, or use upstream git repo
 
@@ -98,7 +98,7 @@ AutoShiftv2 is an Infrastructure-as-Code (IaC) framework designed to manage infr
    
    > **Note:** this does take roughly 6 min to install. You can proceed to installing AutoShift while this is installing but you will not be able to verify AutoShift or select a clusterset until this is finished.
 
-#### Install AutoShiftv2
+### Install AutoShiftv2
 
 Both ACM and GitOps will be controlled by AutoShift after it is installed for version upgrading
 
@@ -112,7 +112,7 @@ Both ACM and GitOps will be controlled by AutoShift after it is installed for ve
    helm template autoshift autoshift -f autoshift/values.hub.yaml | oc apply -f -
    ```
 
-#### AutoShift Initial Cluster Set Configuration
+### AutoShift Initial Cluster Set Configuration
 
 Given the labels and cluster sets provided in the values file, ACM cluster sets will be created. Existing clusters must be added to these cluster sets. The following example shows the process for adding the local-cluster to the hub cluster set.
 
