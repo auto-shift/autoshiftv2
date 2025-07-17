@@ -1,0 +1,100 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-aap-install
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+spec:
+  disabled: false
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: apply-aap-cr-job
+      spec:
+        remediationAction: enforce
+        severity: high
+        object-templates:
+          - complianceType: musthave
+            objectDefinition:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: apply-aap-cr
+                namespace: ansible-automation-platform
+              spec:
+                template:
+                  spec:
+                    serviceAccountName: aap-creator
+                    restartPolicy: Never
+                    containers:
+                      - name: kubectl
+                        image: quay.io/openshift/origin-cli:latest
+                        command:
+                          - /bin/sh
+                          - -c
+                          - |
+                            echo "Waiting for Operator to become available..."
+                            while true; do
+                              status=$(oc get deployment automation-controller-operator-controller-manager -n ansible-automation-platform -o jsonpath='{.status.conditions[?(@.type=="Available")].status}')
+                              if [ "$status" = "True" ]; then
+                                break
+                              fi
+                              sleep 5
+                            done
+
+                            echo "Applying AAP CR..."
+                            oc apply -f /manifests/aap-cr.yaml
+                        volumeMounts:
+                          - name: manifest
+                            mountPath: /manifests
+                    volumes:
+                      - name: manifest
+                        configMap:
+                          name: aap-cr-config
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-aap-install
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/aap'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-aap-install
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-aap-install
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-aap-install
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
