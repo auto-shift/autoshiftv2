@@ -112,19 +112,23 @@ Both ACM and GitOps will be controlled by AutoShift after it is installed for ve
    helm template autoshift autoshift -f autoshift/values.hub.yaml | oc apply -f -
    ```
 
-#### Post AutoShift Installation
+#### AutoShift Initial Cluster Set Configuration
 
-Given the labels and cluster sets provided in the values file, ACM cluster sets will be created.
+Given the labels and cluster sets provided in the values file, ACM cluster sets will be created. Existing clusters must be added to these cluster sets. The following example shows the process for adding the local-cluster to the hub cluster set.
 
-1. Go to cluster sets in the acm console
+1. Go to cluster sets in the acm console and open the hub cluster set.
 
 ![alt text](images/acm-cluster-sets.png)
 
-2. Manually select which cluster will belong to each cluster set, or when provisioning a new cluster from ACM you can select the desired cluster set from ACM at time of creation.
+2. Open 'Add clusters' -> 'Manage resource assignments'
 
 ![alt text](images/acm-add-hub-cluster.png)
 
-3. That's it. Welcome to OpenShift Platform Plus!
+3. Checkmark the 'local-cluster' and click 'Review', then 'Save'
+
+4. Repeat this process for any existing cluster, or when provisioning a new cluster from ACM you can select the desired cluster set from ACM at time of creation.
+
+5. That's it. Welcome to OpenShift Platform Plus!
 
 ## Cluster Labels
 #### values can be set on a per cluster and clusterset level to decide what features of autoshift will be applied to each cluster. If a value is defined in helm values, a clusterset label and a cluster 
