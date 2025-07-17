@@ -1,0 +1,128 @@
+# This policy verifies the installation of the official & supported version of
+# the Compliance Operator on the managed clusters.
+#
+# If set to "enforce" it'll install the operator.
+#
+# Note that OpenShift 4.18 is required.
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-storage-cluster
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+spec:
+  dependencies:
+    - name: policy-lvm-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy  
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: storage-cluster-install
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+              apiVersion: lvm.topolvm.io/v1alpha1
+              kind: LVMCluster
+              metadata:
+                name: lvmcluster
+                namespace: openshift-storage
+              spec:
+                storage:
+                  deviceClasses:
+                    - default: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-default | default "{{ .Values.lvm.default }}" hub{{ "}}" }}
+                      fstype: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-fstype | default "{{ .Values.lvm.fstype }}" hub{{ "}}" }}
+                      name: vg1
+                      thinPoolConfig:
+                        chunkSizeCalculationPolicy: Static
+                        metadataSizeCalculationPolicy: Host
+                        sizePercent: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-size-percent | default "{{ .Values.lvm.size-percent }}" | toInt hub{{ "}}" }}
+                        name: thin-pool-1
+                        overprovisionRatio: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-overprovision-ratio | default "{{ .Values.lvm.overprovision-ratio }}" | toInt hub{{ "}}" }}
+                      {{- if .Values.lvm.nodeSelector }}
+                      nodeSelector:
+                        nodeSelectorTerms:
+                          - matchExpressions:
+                              - key: autoshift.io/lvm-node
+                                operator: ''
+                      {{- end }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: storage-cluster-install-test
+        spec:
+          remediationAction: inform
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: lvm.topolvm.io/v1alpha1
+                kind: LVMCluster
+                metadata:
+                  name: lvmcluster
+                  namespace: {{ .Values.lvm.namespace }}
+                status:
+                  conditions:
+                    - status: 'False'
+                      type: VersionMismatch
+                    - status: 'True'
+                      type: ReconcileComplete
+                    - status: 'True'
+                      type: Available
+                    - status: 'False'
+                      type: Progressing
+                    - status: 'False'
+                      type: Degraded
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-storage-cluster
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/lvm'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-storage-cluster
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-storage-cluster
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-storage-cluster
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
