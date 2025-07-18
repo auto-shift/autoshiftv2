@@ -279,6 +279,18 @@ compliance-source-namespace<String>: default openshift-marketplace
 
 compliance-channel<String>: default stable
 
+### LVM Operator
+
+lvm<bool>: If not set the LVM Operator will not be managed. default false
+
+lvm-default<bool>: default 'true'
+
+lvm-fstype<String>: Options xfs,ext4; default xfs
+
+lvm-size-percent<Int>: Percentage of the Volume Group to use for the thinpool default 90
+
+lvm-overprovision-ratio<Int>: default 10
+
 ### Local Storage Operator
 
 local-storage<bool>: if not set to true, local storage will not be managed or deployed.

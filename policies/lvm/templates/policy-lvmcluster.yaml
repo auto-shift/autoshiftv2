@@ -1,0 +1,115 @@
+# This policy verifies the installation of the official & supported version of
+# the LVM Operator on the managed clusters.
+#
+# If set to "enforce" it'll install the operator.
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-lvmcluster
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: AutoShiftv2
+    policy.open-cluster-management.io/categories: LVM Operator
+    policy.open-cluster-management.io/controls: OpenShift Standard
+spec:
+  dependencies:
+    - name: policy-lvm-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy  
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: lvmcluster-install
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: lvm.topolvm.io/v1alpha1
+                kind: LVMCluster
+                metadata:
+                  name: lvmcluster
+                  namespace: {{ .Values.lvm.namespace }}
+                spec:
+                  storage:
+                    deviceClasses:
+                      - default: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-default" | default "{{ .Values.lvm.default }}" hub{{ "}}" }}
+                        fstype: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-fstype" | default "{{ .Values.lvm.fstype }}" hub{{ "}}" }}
+                        name: vg1
+                        thinPoolConfig:
+                          chunkSizeCalculationPolicy: Static
+                          metadataSizeCalculationPolicy: Host
+                          sizePercent: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-size-percent" | default {{ .Values.lvm.sizePercent }} | toInt hub{{ "}}" }}'
+                          name: thin-pool-1
+                          overprovisionRatio: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-overprovision-ratio" | default {{ .Values.lvm.overprovisionRatio }} | toInt hub{{ "}}" }}'
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: lvmcluster-install-test
+        spec:
+          remediationAction: inform
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: lvm.topolvm.io/v1alpha1
+                kind: LVMCluster
+                metadata:
+                  name: lvmcluster
+                  namespace: {{ .Values.lvm.namespace }}
+                status:
+                  ready: true
+                  state: Ready
+                  deviceClassStatuses:
+                    - name: vg1
+                      nodeStatus:
+                        - name: vg1
+                          status: Ready
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-lvmcluster
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/lvm'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-lvmcluster
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-lvmcluster
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-lvmcluster
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
