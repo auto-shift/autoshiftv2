@@ -283,7 +283,7 @@ compliance-channel<String>: default stable
 
 lvm<bool>: If not set the LVM Operator will not be managed. default false
 
-lvm-default<bool>: default 'true'
+lvm-default<bool>: Sets the lvm-operator as the default Storage Class. default 'true'
 
 lvm-fstype<String>: Options xfs,ext4; default xfs
 
