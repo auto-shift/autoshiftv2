@@ -331,3 +331,10 @@ odf-install-plan-approval<String>: default Automatic
 odf-source<String>: default redhat-operators
 
 odf-source-namespace<String>: default openshift-marketplace
+
+### Single Node OpenShift
+SNO clusters are generally resource constrained. An example values file is provided at `autoshift/values.hub.baremetal-sno.yaml`. This disables extra features and leverages LVM Operator for storage.
+
+sno<bool>: If set, tweaks specific to SNO will be applied. default false
+
+sno-max-pods<Int>: The number of maximum pods per node. Up to 2500 supported dependent on hardware. default 500
