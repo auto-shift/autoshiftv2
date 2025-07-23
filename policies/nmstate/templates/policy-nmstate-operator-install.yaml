@@ -1,0 +1,111 @@
+# This policy verifies the installation of the official & supported version of
+# the NMState Operator on the managed clusters.
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-nmstate-operator-install
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: nmstate-operator-ns
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.nmstate.namespace }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1beta1
+        kind: OperatorPolicy
+        metadata:
+          name: install-operator-nmstate
+        spec:
+          remediationAction: enforce
+          severity: high
+          complianceType: musthave
+          operatorGroup:
+            name: {{ .Values.nmstate.namespace }}
+            namespace: {{ .Values.nmstate.namespace }}
+            targetNamespaces:
+              - {{ .Values.nmstate.namespace }}
+          subscription:
+            name: {{ .Values.nmstate.name }}
+            namespace: {{ .Values.nmstate.namespace }}
+            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/nmstate-source" | default "{{ .Values.nmstate.source }}" hub{{ "}}" }}'
+            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/nmstate-source-namespace" | default "{{ .Values.nmstate.sourceNamespace }}" hub{{ "}}" }}'
+            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/nmstate-channel" | default "{{ .Values.nmstate.channel }}" hub{{ "}}" }}'
+          # Getting Label and then capitalizing first letter
+          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/nmstate-install-plan-approval" | default "{{ .Values.nmstate.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: openshift-nmstate-status
+        spec:
+          remediationAction: inform # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1alpha1
+                kind: ClusterServiceVersion
+                metadata:
+                  namespace: {{ .Values.nmstate.namespace }}
+                spec:
+                  displayName: Kubernetes NMState Operator
+                status:
+                  phase: Succeeded # check the csv status to determine if operator is running or not
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-nmstate-operator-install
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/nmstate'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-nmstate-operator-install
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-nmstate-operator-install
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-nmstate-operator-install
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
