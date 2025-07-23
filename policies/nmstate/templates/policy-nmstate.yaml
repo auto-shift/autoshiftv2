@@ -1,5 +1,5 @@
 # This policy verifies the installation of the official & supported version of
-# the NMState Operator on the managed clusters.
+# the NMState object on the managed clusters.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -10,6 +10,12 @@ metadata:
     policy.open-cluster-management.io/categories: Kubernetes NMState Operator
     policy.open-cluster-management.io/controls: OpenShift Standard
 spec:
+  dependencies:
+    - name: policy-nmstate-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -27,6 +33,26 @@ spec:
                 kind: NMState
                 metadata:
                   name: nmstate
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: nmstate-operator-nmstate-test
+        spec:
+          remediationAction: inform
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                kind: Deployment
+                apiVersion: apps/v1
+                metadata:
+                  name: nmstate-webhook
+                  namespace: {{ .Values.nmstate.namespace }}
+                status:
+                  conditions:
+                    - type: Available
+                      status: 'True'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
