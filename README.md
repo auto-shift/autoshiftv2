@@ -17,7 +17,6 @@ install [helm](https://helm.sh/docs/intro/install/) on local machine
 
 install oc from hub cluster
 
-
 login to hub cluster as cluster-admin
 ```
 oc login
