@@ -27,7 +27,7 @@ spec:
           remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
           object-templates-raw: |
-            {{ "{{" }}hub $configmap := lookup "v1" "ConfigMap" "{{ .Values.policy_namespace }}" "nmstate-expanse-1g-bond-cm" hub{{ "}}" }}
+            {{ "{{" }}hub $configmap := ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" "nmstate-expanse-1g-bond").data) -hub{{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: nmstate.io/v1
@@ -36,7 +36,7 @@ spec:
                   name: nmstate-expanse-1g-bond
                 spec:
                   desiredState:
-                    {{ "{{" }}hub $configmap.data.nmstate hub{{ "}}" }}
+                    {{ "{{" }}hub $configmap.nmstate | base64dec | autoindent hub{{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
