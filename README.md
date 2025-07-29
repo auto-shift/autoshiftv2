@@ -372,6 +372,14 @@ lvm-overprovision-ratio<Int>: default 10
 | `odf-source`                      | String            | `redhat-operators`        |       |
 | `odf-source-namespace`            | String            | `openshift-marketplace`   |       |
 
+### Kubernetes NMState Operator
+nmstate<bool>: If not set the Kubernetes NMState Operator will not be managed. default false
+nmstate-nncp<list<String>>: Filename of NMState config that exists in files. Can be specified multiple times to apply more than one config to a cluster, they must have unique labels but start with 'nmstate-nncp-'. default absent
+nmstate-channel<String>: default stable
+nmstate-install-plan-approval<String>: default Automatic
+nmstate-source<String>: default redhat-operators
+nmstate-source-namespace<String>: default openshift-marketplace
+
 ### Single Node OpenShift
 
 SNO clusters are generally resource constrained. An example values file is provided at `autoshift/values.hub.baremetal-sno.yaml`. This disables extra features and leverages LVM Operator for storage.
