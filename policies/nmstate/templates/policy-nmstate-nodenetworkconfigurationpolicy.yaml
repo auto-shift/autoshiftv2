@@ -27,13 +27,21 @@ spec:
           remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
           object-templates-raw: |
-            {{ "{{" }}hub $configmap := ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" "nmstate-expanse-1g-bond").data) -hub{{ "}}" }}
+            {{ "{{hub-" }} $nncp_list := list {{ "hub}}" }}
+            {{ "{{hub-" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}
+              {{ "{{hub-" }} if $label | hasPrefix "autoshift.io/nmstate-nncp" {{ "hub}}" }}
+                {{ "{{hub-" }} $nncp_list = append $nncp_list $labelvalue {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if not (eq 0 (len $nncp_list)) {{ "hub}}" }}
+              {{ "{{hub-" }} range $nncp_list {{ "hub}}" }}
+                {{ "{{hub-" }} $configmap := ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (print "nmstate-" .)).data) {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: nmstate.io/v1
                 kind: NodeNetworkConfigurationPolicy
                 metadata:
-                  name: nmstate-expanse-1g-bond
+                  name: nmstate-{{ "{{hub"}} . {{ "hub}}" }}
                 spec:
                   {{ "{{" }}hub- if $configmap.nodeSelector hub{{ "}}" }}
                   nodeSelector:
@@ -41,6 +49,8 @@ spec:
                   {{ "{{" }}hub- end hub{{ "}}" }}
                   desiredState:
                     {{ "{{" }}hub $configmap.nmstate | base64dec | autoindent hub{{ "}}" }}
+              {{ "{{hub-"}} end {{ "hub}}" }}
+            {{ "{{hub-"}} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
