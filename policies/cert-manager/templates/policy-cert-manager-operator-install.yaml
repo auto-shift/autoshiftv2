@@ -1,0 +1,102 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-cert-manager-operator-install
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cert-manager-operator-ns
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.certmanager.namespace }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1beta1
+        kind: OperatorPolicy
+        metadata:
+          name: install-operator-cert-manager
+        spec:
+          remediationAction: enforce
+          severity: high
+          complianceType: musthave
+          operatorGroup:
+            name: {{ .Values.certmanager.name }}
+            namespace: {{ .Values.certmanager.namespace }}
+          subscription:
+            namespace: {{ .Values.certmanager.namespace }}
+            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/cert-manager-channel" | default "{{ .Values.certmanager.channel }}" hub{{ "}}" }}'
+            name: {{ .Values.certmanager.name }}
+            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/cert-manager-source" | default "{{ .Values.certmanager.source }}" hub{{ "}}" }}'
+            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/cert-manager-source-namespace" | default "{{ .Values.certmanager.sourceNamespace }}" hub{{ "}}" }}'
+          # Getting Label and then capitalizing first letter
+          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/cert-manager-install-plan-approval" | default "{{ .Values.certmanager.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: openshift-cert-manager-status
+        spec:
+          remediationAction: inform
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1alpha1
+                kind: ClusterServiceVersion
+                metadata:
+                  namespace: {{ .Values.certmanager.namespace }}
+                spec:
+                  displayName: 'cert-manager Operator for Red Hat OpenShift'
+                status:
+                  phase: Succeeded
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-pipelines-operator-install
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cert-manager'
+              operator: In
+              values:
+              - 'true'
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-pipelines-operator-install
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-pipelines-operator-install
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-pipelines-operator-install
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
