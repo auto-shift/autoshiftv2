@@ -331,6 +331,18 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | `lvm-size-percent`                    | Int               | `90`                      | Percentage of the Volume Group to use for the thinpool |
 | `lvm-overprovision-ratio              | Int               | `10`                      |       |
 
+### LVM Operator
+
+lvm<bool>: If not set the LVM Operator will not be managed. default false
+
+lvm-default<bool>: Sets the lvm-operator as the default Storage Class. default 'true'
+
+lvm-fstype<String>: Options xfs,ext4; default xfs
+
+lvm-size-percent<Int>: Percentage of the Volume Group to use for the thinpool default 90
+
+lvm-overprovision-ratio<Int>: default 10
+
 ### Local Storage Operator
 
 | Variable                              | Type              | Default Value             | Notes |
