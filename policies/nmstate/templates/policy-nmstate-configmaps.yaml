@@ -1,0 +1,78 @@
+{{- $files := .Files.Glob "files/**" }}
+{{- if $files }}
+# This policy verifies the installation of the official & supported version of
+# the NMState NodeNetworkConfigurationPolicy on the managed clusters.
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-nmstate-configmaps
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: AutoShiftv2
+    policy.open-cluster-management.io/categories: Kubernetes NMState Operator
+    policy.open-cluster-management.io/controls: OpenShift Standard
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: nmstate-operator-configmaps
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates:
+            {{- range $path, $_ := $files }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: nmstate-{{ ($path | trimPrefix "files/" | split ".")._0 }}
+                  namespace: {{ $.Values.policy_namespace }}
+                data:
+                  nmstate: {{ ($.Files.Get $path | fromYaml).nmstate | toYaml | b64enc }}
+                  {{- if ($.Files.Get $path | fromYaml).nodeSelector }}
+                  nodeSelector: {{ ($.Files.Get $path | fromYaml).nodeSelector | toYaml | b64enc }}
+                  {{- end }}
+            {{- end }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-nmstate-configmaps
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/nmstate'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-nmstate-configmaps
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-nmstate-configmaps
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-nmstate-configmaps
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}
