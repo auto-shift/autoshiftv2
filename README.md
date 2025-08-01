@@ -373,6 +373,9 @@ lvm-overprovision-ratio<Int>: default 10
 | `odf-source-namespace`            | String            | `openshift-marketplace`   |       |
 
 ### Kubernetes NMState Operator
+
+The Kubernetes NMState Operator can be used to declaratively configure the Red Hat Core OS network settings. Common uses are adding bonds, vlans, and bridges. This helm chart works with AutoShift v2. This helm chart ingests every file in `policies/nmstate/files/` (with the exception of any file ending wit the extension `.example`) and applies them as a ConfigMap on the hub cluster. Cluster labels are used to chose which cluster gets a configuration. If you want a cluster to have a config applied to it, you must label it with a label that starts with `autoshift.io/nmstate-nncp-` and has a value of the name of the file. For example the configuration file `example-1g-bond.yaml` can be applied to a cluster by applying label: `nmstate-nncp-example-bond1: example-1g-bond`. To further select specific nodes within a cluster, nodeSelectors can be used. To get started you can copy an example file such as `policies/nmstate/files/bond.yaml.example` and change the `nmstate:` configuration as required. The NMState YAML API is well documented at: [nmstate | A Declarative API for Host Network Management](https://nmstate.io/devel/yaml_api.html).
+
 nmstate<bool>: If not set the Kubernetes NMState Operator will not be managed. default false
 
 nmstate-nncp<list<String>>: Filename of NMState config that exists in files. Can be specified multiple times to apply more than one config to a cluster, they must have unique labels but start with 'nmstate-nncp-'. default absent
