@@ -4,9 +4,11 @@
 
 AutoShiftv2 is an opinionated [Infrastructure-as-Code (IaC)](https://martinfowler.com/bliki/InfrastructureAsCode.html) framework designed to manage infrastructure components after an OpenShift installation using Advanced Cluster Management (ACM) and OpenShift GitOpds. It provides a modular, extensible model to support infrastructure elements deployed on OpenShift — particularly those in [OpenShift Platform Plus](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet). AutoShiftv2 emphasizes east of adoption, configurable features (taggable on/off), and production-ready capabilities for installation, upgrades, and maintenance.
 
+What AutoShift does is it uses OpenShift GitOps to declaratively manage RHACM which then manages various OpenShift and/or Kubernetes cluster resources and components. This eliminates much of the operator toil associated with installing and managing day 2 tasks, by letting declarative GitOps do that for you. 
+
 ## Architecture 
 
-AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert.
+AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert. 
 
 RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass. RHACM provides built-in governance, cluster lifecycle management, application lifecycle management, and observability feature
 
@@ -18,6 +20,9 @@ The hub cluster is the main cluster with RHACM with it's core components install
 ![alt text](images/AutoShiftv2-Hub.jpg)
 
 ### Hub of Hubs Architecture
+
+[Red Hat YouTube: RHACM MultiCluster Global Hub](https://www.youtube.com/watch?v=jg3Zr7hFzhM)
+
 ![alt text](images/AutoShiftv2-HubOfHubs.jpg)
 
 ## Installation Instructions
@@ -36,6 +41,9 @@ The hub cluster is the main cluster with RHACM with it's core components install
     ```console
     $ oc login --token=sha256~lQ...dI --server=https://api.cluster.example.com:6443
     ```
+
+    > [!NOTE] 
+    > Alternatively you can use the devcontainer provided by this repository. By default the container will install the stable version of `oc` and the latest Red Hat provided version of `helm`. These versions can be specified by setting the `OCP_VERSION` and `HELM_VERSION` variables before building. From the container you can login as usual with `oc login` or copy your kubeconfig into the container `podman cp ${cluster_dir}/auth/kubeconfig ${container-name}:/workspaces/.kube/config`.
 
 2.  If installing in a disconnected or internet-disadvantaged environment, update the values in `policies/openshift-gitops/values.yaml` and `policies/advanced-cluster-management/values.yaml` with the source mirror registry, otherwise leave these values as is.
 
@@ -313,6 +321,16 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | `compliance-source-namespace`         | String            | `openshift-marketplace`   |       |
 | `compliance-channel`                  | String            | `stable`                  |       |
 
+### LVM Operator
+
+| Variable                              | Type              | Default Value             | Notes |
+|---------------------------------------|-------------------|---------------------------|-------|
+| `lvm`                                 | bool              | `false`                   | If not set the LVM Operator will not be managed |
+| `lvm-default`                         | bool              | `true`                    | Sets the lvm-operator as the default Storage Class |
+| `lvm-fstype`                          | String            | `xfs`                     | Options `xfs` `ext4` |
+| `lvm-size-percent`                    | Int               | `90`                      | Percentage of the Volume Group to use for the thinpool |
+| `lvm-overprovision-ratio              | Int               | `10`                      |       |
+
 ### Local Storage Operator
 
 | Variable                              | Type              | Default Value             | Notes |
@@ -341,6 +359,16 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | `odf-install-plan-approval`       | String            | `Automatic`               |       |
 | `odf-source`                      | String            | `redhat-operators`        |       |
 | `odf-source-namespace`            | String            | `openshift-marketplace`   |       |
+
+### Single Node OpenShift
+
+SNO clusters are generally resource constrained. An example values file is provided at `autoshift/values.hub.baremetal-sno.yaml`. This disables extra features and leverages LVM Operator for storage.
+
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `sno`                             | bool              | `false`                   | If set, tweaks specific to SNO will be applied |
+| `sno-max-pods`                    | Int               | `500`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
+
 ## References
 
 * [OpenShift Platform Plus DataShift](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet)
