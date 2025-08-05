@@ -383,14 +383,14 @@ The Kubernetes NMState Operator can be used to declaratively configure the Red H
 | `nmstate-source`                | string         | redhat-operators      |                                                                                   |
 | `nmstate-source-namespace`      | string         | openshift-marketplace |                                                                                   |
 
-### Single Node OpenShift
+### Master Nodes
 
-SNO clusters are generally resource constrained. An example values file is provided at `autoshift/values.hub.baremetal-sno.yaml`. This disables extra features and leverages LVM Operator for storage.
+Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. These are a collection of settings that can allow running
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
-| `sno`                             | bool              | `false`                   | If set, tweaks specific to SNO will be applied |
-| `sno-max-pods`                    | Int               | `500`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
+| `master-nodes`                    | bool              | `false`                   |       |
+| `master-max-pods`                 | Int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
 
 ## References
 
