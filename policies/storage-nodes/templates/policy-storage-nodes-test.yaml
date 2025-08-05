@@ -40,17 +40,21 @@ spec:
                     readyReplicas: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub{{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} else {{ "}}" }}
+                {{ "{{-" }} $storage_nodes := (getNodesWithExactRoles "master").items {{ "}}" }}
+                {{ "{{-" }} range  {{ "}}" }}
               - complianceType: musthave
                 objectDefinition:
                   apiVersion: v1
                   kind: Node
                   metadata:
+                    name: {{ .metadata.name }}
                     labels:
                       cluster.ocs.openshift.io/openshift-storage: ''
                   status:
                     conditions:
                       - type: Ready
                         status: 'True'
+                {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
