@@ -72,13 +72,13 @@ spec:
                   replicas: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-replicas" | default "1" hub}}`}}
                   managementState: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-management-state" | default "Managed" hub}}`}}
                   storage:
-                    managementState: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-storage-management-state" | default "Managed" hub}}`}}
                     {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}}`}}
+                    managementState: Managed
                     pvc:
                       claim: image-registry-storage
                     {{`{{hub- else if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}
+                    managementState: Unmanaged
                     s3:
-                      managementState: Unmanaged
                       region: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-s3-region" | default "us-east-1" hub}}`}}
                       bucket: {{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_NAME" }}`}}
                       regionEndpoint: 'https://{{`{{ (lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3").spec.host }}`}}'
