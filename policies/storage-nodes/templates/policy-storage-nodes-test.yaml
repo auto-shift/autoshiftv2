@@ -19,7 +19,7 @@ spec:
           remediationAction: inform
           severity: high
           object-templates-raw: |
-              {{ "{{-" }} if not (default "false" ({{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/local-storage-baremetal" {{ "hub}}" }})) {{ "}}" }}
+              {{ "{{-" }} if not (default "false" ({{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/storage-nodes-baremetal" {{ "hub}}" }})) {{ "}}" }}
               {{ "{{-" }} /* Specify the parameters needed to create the MachineSet  */ {{ "-}}" }}
               {{ "{{-" }} $machineset_role := "storage" {{ "}}" }}
               {{ "{{-" }} $zones_from_labels := list {{ "{{hub" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub" }} if $label | hasPrefix "autoshift.io/storage-nodes-zone" {{ "hub}}" }}"{{ "{{hub" }} $labelvalue {{ "hub}}" }}"{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }} {{ "}}" }}
@@ -46,7 +46,11 @@ spec:
                   kind: Node
                   metadata:
                     labels:
-                      node-role.kubernetes.io/control-plane: ''
+                      cluster.ocs.openshift.io/openshift-storage: ''
+                  status:
+                    conditions:
+                      - type: Ready
+                        status: 'True'
               {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
