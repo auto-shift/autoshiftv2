@@ -21,7 +21,7 @@ spec:
       compliance: Compliant
       kind: Policy
   remediationAction: enforce
-  disabled: true
+  disabled: false
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -40,19 +40,31 @@ spec:
                   name: cluster
                 spec:
                   logLevel: Normal
-                  rolloutStrategy: Recreate
+                  rolloutStrategy: {{` {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-rollout-strategy" | default "Recreate" hub}} `}}
                   operatorLogLevel: Normal
                   requests:
                     read:
                       maxWaitInQueue: 0s
                     write:
                       maxWaitInQueue: 0s
-                  managementState: Managed
+                  managementState: {{` {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-management-state" | default "Managed" hub}} `}}
                   storage:
-                    managementState: Managed
+                    managementState: {{` {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-storage-management-state" | default "Managed" hub}} `}}
+                    {{` {{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}} `}}
                     pvc:
                       claim: image-registry-storage
-                  replicas: 1
+                    {{` {{hub- else if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}} `}}
+                    s3:
+                      managementState: Unmanaged
+                      region: {{` {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-s3-region" | default "us-east-1" hub}} `}}
+                      bucket: {{` {{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_NAME" }} `}}
+                      regionEndpoint: 'https://{{` {{ lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3").spec.host }} `}}'
+                      virtualHostedStyle: false
+                      encrypt: false
+                      trustedCA:
+                        name: image-registry-s3-bundle
+                    {{` {{hub- end hub}} `}}
+                  replicas: {{` {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-replicas" | default "1" | toInt hub}} `}}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -67,6 +79,14 @@ spec:
   {{- range $clusterSet, $value := .Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/imageregistry'
+              operator: In
+              values:
+                - 'true'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
