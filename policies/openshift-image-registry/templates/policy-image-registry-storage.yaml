@@ -26,55 +26,55 @@ spec:
           remediationAction: inform # will be overridden by remediationAction in parent policy
           severity: high
           object-templates-raw: |
-            {{` {{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}} `}}
-            - complianceType: musthave
-              objectDefinition:
-                kind: PersistentVolumeClaim
-                apiVersion: v1
-                metadata:
-                  name: image-registry-storage
-                  namespace: openshift-image-registry
-                spec:
-                  accessModes:
-                    - {{` {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-access-mode" hub}} `}}
-                  resources:
-                    requests:
-                      storage: {{` {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage" | default "100Gi" hub}} `}}
-                  volumeMode: {{` {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-volume-mode" | default "Filesystem" hub}} `}}
-                  storageClassName: {{` {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage-class" hub}} `}}
-            {{` {{hub- else if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}} `}}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: objectbucket.io/v1alpha1
-                kind: ObjectBucketClaim
-                metadata:
-                name: image-registry-storage
-                namespace: openshift-image-registry
-                spec:
-                storageClassName: openshift-storage.noobaa.io
-                generateBucketName: image-registry-storage
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: Secret
-                metadata:
-                  name: image-registry-private-configuration
-                  namespace: openshift-image-registry
-                type: Opaque
-                Data:
-                  REGISTRY_STORAGE_S3_ACCESSKEY: {{` {{ fromSecret "openshift-image-registry" "image-registry-storage" "AWS_ACCESS_KEY_ID" }} `}}
-                  REGISTRY_STORAGE_S3_SECRETKEY: {{` {{ fromSecret "openshift-image-registry" "image-registry-storage" "AWS_SECRET_ACCESS_KEY" }} `}}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: ConfigMap
-                metadata:
-                  name: image-registry-s3-bundle
-                  namespace: openshift-config
-                data:
-                  {{` {{- $ingress_cert := (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default").spec.defaultCertificate.name -}} `}}
-                  ca-bundle.crt='{{` {{ fromSecret "openshift-ingress" "$ingress_cert" "tls.crt" | base64dec | toRawJson | toLiteral }} `}}'
-            {{` {{hub- end hub}} `}}
+              {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}}`}}
+              - complianceType: musthave
+                objectDefinition:
+                  kind: PersistentVolumeClaim
+                  apiVersion: v1
+                  metadata:
+                    name: image-registry-storage
+                    namespace: openshift-image-registry
+                  spec:
+                    accessModes:
+                      - {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-access-mode" hub}}`}}
+                    resources:
+                      requests:
+                        storage: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage" | default "100Gi" hub}}`}}
+                    volumeMode: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-volume-mode" | default "Filesystem" hub}}`}}
+                    storageClassName: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage-class" hub}}`}}
+              {{`{{hub- else if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: objectbucket.io/v1alpha1
+                  kind: ObjectBucketClaim
+                  metadata:
+                    name: image-registry-storage
+                    namespace: openshift-image-registry
+                  spec:
+                    storageClassName: openshift-storage.noobaa.io
+                    generateBucketName: image-registry-storage
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: image-registry-private-configuration
+                    namespace: openshift-image-registry
+                  type: Opaque
+                  Data:
+                    REGISTRY_STORAGE_S3_ACCESSKEY: {{`{{ fromSecret "openshift-image-registry" "image-registry-storage" "AWS_ACCESS_KEY_ID" }}`}}
+                    REGISTRY_STORAGE_S3_SECRETKEY: {{`{{ fromSecret "openshift-image-registry" "image-registry-storage" "AWS_SECRET_ACCESS_KEY" }}`}}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: image-registry-s3-bundle
+                    namespace: openshift-config
+                  data:
+                    {{`{{- $ingress_cert := (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default").spec.defaultCertificate.name }}`}}
+                    ca-bundle.crt='{{`{{ fromSecret "openshift-ingress" "$ingress_cert" "tls.crt" | base64dec | toRawJson | toLiteral }}`}}'
+              {{`{{hub- end hub}}`}}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
