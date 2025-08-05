@@ -34,8 +34,9 @@ spec:
                 data:
                   lookupResult: |
                     test
-                    (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default").spec.defaultCertificate.name
-                    ca-bundle.crt='{{ fromSecret "openshift-ingress" (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default").spec.defaultCertificate.name "tls.crt" | base64dec | toRawJson | toLiteral }}'
+                    {{`{{ $test := (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default").spec.defaultCertificate.name }}`}}
+                    {{`{{ $test }}`}}`
+                    ca-bundle.crt='{{`{{ fromSecret "openshift-ingress" (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default").spec.defaultCertificate.name "tls.crt" | base64dec | toRawJson | toLiteral }}`}}'
 ---
 {{/* (index ((index (lookup "v1" "ConfigMap" "{{ .Values.policy_namespace }}" (printf "cluster-set.%s"  $clusterSet)) "data" "values") | fromJson) "labels") | default dict */}}
                     {{/*{{ "{{-" }} (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | toRawJson {{ "}}" }} */}}
