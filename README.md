@@ -146,13 +146,45 @@ The hub cluster is the main cluster with RHACM with its core components installe
 
 1.  Update `autoshift/values.yaml` with desired feature flags and repo url as define in [Autoshift Cluster Labels Values Reference](#Autoshift-Cluster-Labels-Values-Reference)
 
-2.  Using helm and the values you set for cluster labels, install autoshift. Here is an example using the extant hub values file:
+2.  Using helm and the values you set for cluster labels, install autoshift. Here is an example using the hub values file:
 
     ```console
-    helm template autoshift autoshift -f autoshift/values.hub.yaml | oc apply -f -
+    export APP_NAME="autoshift"
+    export REPO_URL="https://github.com/auto-shift/autoshiftv2.git"
+    export TARGET_REVISION="feature/internal-image-registry"
+    export VALUES_FILE="values.hub.yaml"
+    export ARGO_PROJECT="default"
+    export GITOPS_NAMESPACE="openshift-gitops"
+    cat << EOF | oc apply -f -
+    apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    metadata:
+      name: $APP_NAME
+      namespace $GITOPS_NAMESPACE
+    spec:
+      destination:
+        namespace: ''
+        server: https://kubernetes.default.svc
+      source:
+        path: autoshift
+        repoURL: $REPO_URL
+        targetRevision: $TARGET_REVISION
+        helm:
+          valueFiles:
+            - $VALUES_FILE
+          values: |-
+            autoshiftGitRepo: $REPO_URL
+            autoshiftGitBranchTag: $TARGET_REVISION
+      sources: []
+      project: $ARGO_PROJECT
+      syncPolicy:
+        automated:
+          prune: false
+          selfHeal: true
+    EOF
     ```
 
-3.  Given the labels and cluster sets specified in the suplied values file, ACM cluster sets will be created. To view the cluster sets, In the OpenShift web console go to **All Clusters > Infrastructure > Clusters > Cluster Sets** in the ACM Console
+3.  Given the labels and cluster sets specified in the supplied values file, ACM cluster sets will be created. To view the cluster sets, In the OpenShift web console go to **All Clusters > Infrastructure > Clusters > Cluster Sets** in the ACM Console
 
     ![Cluster Sets in ACM Console](images/acm-cluster-sets.png)
 
