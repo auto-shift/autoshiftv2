@@ -14,19 +14,19 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: check-cluster-storage-nodes
+          name: check-cluster-storage-machineset
         spec:
           remediationAction: inform
           severity: high
           object-templates-raw: |
               {{ "{{-" }} if not (default false ({{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/storage-nodes-baremetal" {{ "hub}}" }})) {{ "}}" }}
-                {{ "{{-" }} /* Specify the parameters needed to create the MachineSet  */ {{ "-}}" }}
-                {{ "{{-" }} $machineset_role := "storage" {{ "}}" }}
-                {{ "{{-" }} $zones_from_labels := list {{ "{{hub" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub" }} if $label | hasPrefix "autoshift.io/storage-nodes-zone" {{ "hub}}" }}"{{ "{{hub" }} $labelvalue {{ "hub}}" }}"{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }} {{ "}}" }}
-                {{ "{{-" }} $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName {{ "}}" }}
-                {{ "{{-" }} $worker_ms := (index (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items 0) {{ "}}" }}
-                {{ "{{-" }} /* Generate the MachineSet for each zone as specified or default to worker az */ {{ "-}}" }}
-                {{ "{{-" }} range $zone := ternary (list $worker_ms.spec.template.spec.providerSpec.value.placement.availabilityZone ) $zones_from_labels (eq 0 (len $zones_from_labels)) {{ "}}" }}
+              {{ "{{-" }} /* Specify the parameters needed to create the MachineSet  */ {{ "-}}" }}
+              {{ "{{-" }} $machineset_role := "storage" {{ "}}" }}
+              {{ "{{-" }} $zones_from_labels := list {{ "{{hub" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub" }} if $label | hasPrefix "autoshift.io/storage-nodes-zone" {{ "hub}}" }}"{{ "{{hub" }} $labelvalue {{ "hub}}" }}"{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }} {{ "}}" }}
+              {{ "{{-" }} $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName {{ "}}" }}
+              {{ "{{-" }} $worker_ms := (index (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items 0) {{ "}}" }}
+              {{ "{{-" }} /* Generate the MachineSet for each zone as specified or default to worker az */ {{ "-}}" }}
+              {{ "{{-" }} range $zone := ternary (list $worker_ms.spec.template.spec.providerSpec.value.placement.availabilityZone ) $zones_from_labels (eq 0 (len $zones_from_labels)) {{ "}}" }}
               - complianceType: musthave
                 objectDefinition:
                   apiVersion: machine.openshift.io/v1beta1
@@ -38,11 +38,53 @@ spec:
                     namespace: openshift-machine-api
                   status:
                     readyReplicas: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub{{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} else {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: check-cluster-storage-node-count
+        spec:
+          remediationAction: inform
+          severity: high
+          customMessage:
+            noncompliant: >
+              ❌ Incorrect number of storage nodes discovered;
+              Expected: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/storage-nodes" {{ "hub}}" }}
+          object-templates-raw: |
+              {{ "{{-" }} if (default false ({{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/storage-nodes-baremetal" {{ "hub}}" }})) {{ "}}" }}
                 {{ "{{-" }} $storage_nodes := (lookup "v1" "Node" "" "" "cluster.ocs.openshift.io/openshift-storage").items {{ "}}" }}
-                {{ "{{"}} $storage_nodes {{ "}}" }}
-                {{ "{{" }} if eq (len $storage_nodes) ( {{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/storage-nodes" {{ "hub}}" }} | toInt) {{ "}}" }}
+                {{ "{{-" }} if not (eq (len $storage_nodes) ( {{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/storage-nodes" {{ "hub}}" }} | toInt)) {{ "}}" }}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: v1
+                  kind: Node
+                  metadata:
+                    labels:
+                      incorrect-number-of-nodes: ''
+                  status:
+                    conditions:
+                      - type: Ready
+                        status: 'True'
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: check-cluster-storage-node-readiness
+        spec:
+          remediationAction: inform
+          severity: high
+          customMessage:
+            noncompliant: >
+              ❌ Incorrect number of storage nodes discovered;
+              Expected: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/storage-nodes" {{ "hub}}" }}
+          object-templates-raw: |
+              {{ "{{-" }} if (default false ({{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/storage-nodes-baremetal" {{ "hub}}" }})) {{ "}}" }}
+                {{ "{{-" }} $storage_nodes := (lookup "v1" "Node" "" "" "cluster.ocs.openshift.io/openshift-storage").items {{ "}}" }}
+                {{ "{{-" }} if eq (len $storage_nodes) ( {{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/storage-nodes" {{ "hub}}" }} | toInt) {{ "}}" }}
                   {{ "{{-" }} range $storage_nodes {{ "}}" }}
               - complianceType: musthave
                 objectDefinition:
@@ -57,19 +99,6 @@ spec:
                       - type: Ready
                         status: 'True'
                   {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} else {{ "}}" }}
-              {{ "{{" }} len $storage_nodes {{ "}}" }} is not {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/storage-nodes" {{ "hub}}" }}
-              - complianceType: musthave
-                objectDefinition:
-                  apiVersion: v1
-                  kind: Node
-                  metadata:
-                    labels:
-                      foo: ''
-                  status:
-                    conditions:
-                      - type: Ready
-                        status: 'True'
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
 ---
