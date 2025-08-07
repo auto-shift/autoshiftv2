@@ -212,13 +212,16 @@ Values can be set on a per cluster and clusterset level to decide what features 
 
 ### Storage Nodes
 
-| Variable                              | Type              | Default Value             | Notes |
-|---------------------------------------|-------------------|---------------------------|-------|
-| `storage-nodes`                       | int               |                           | Number of storage nodes min if autoscale. If not set storage nodes are not managed, if blank storage nodes will be deleted. Local Storage Operator will be installed if Storage Nodes are enabled |
-| `storage-nodes-numcpu`                | int               |                           | Number of cpu per storage node |
-| `storage-nodes-memory-mib`            | int               |                           | Memory mib per storage node |
-| `storage-nodes-numcores-per-socket`   | int               |                           | Number of CPU Cores per socket |
-| `storage-nodes-zones`                 | <list<String>>    |                           | list of availability zones |
+| Variable                            | Type           | Default Value | Notes |
+| ----------------------------------- | -------------- | ------------- | ----- |
+| `storage-nodes`                     | int            |               | Number of storage nodes min if autoscale. If not set storage nodes are not managed, if blank storage nodes will be deleted. Local Storage Operator will be installed if Storage Nodes are enabled |
+| `storage-nodes-numcpu`              | int            |               | Number of cpu per storage node  |
+| `storage-nodes-memory-mib`          | int            |               | Memory mib per storage node |
+| `storage-nodes-numcores-per-socket` | int            |               | Number of CPU Cores per socket |
+| `storage-nodes-zones`               | <list<String>> |               | list of availability zones |
+| `storage-nodes-instance-type`       | string         |               | Instance type for cloud provider |
+| `storage-nodes-provider`            | string         |               | Provider type; valid choices: aws, vmware, baremetal |
+| `storage-nodes-node-[iterator]`     | <list<String>> |               | List of node names to apply storage label to. Used for baremetal where MachineSets aren't used. |
 
 ### Advanced Cluster Security
 
