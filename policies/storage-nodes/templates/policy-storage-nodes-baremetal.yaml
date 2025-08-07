@@ -34,9 +34,6 @@ spec:
             # Declare the node list to use with the template
             {{ "{{-" }} $nodes := list {{ "}}" }}
 
-            # Perform lookup of all nodes
-            {{ "{{-" }} $all_nodes := (lookup "v1" "Node" "" "").items {{ "}}" }}
-
             # Build list of labels on hub
             {{ "{{hub-" }} $label_list := list {{ "hub}}" }}
             {{ "{{hub-" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}
@@ -49,10 +46,8 @@ spec:
             {{ "{{-" }} if not (eq 0 (len (list {{ "{{hub" }} range $label_list {{ "hub}}" }}{{ "{{hub" }} . | quote {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }}))) {{ "}}" }}
 
               # Build node list from labels
-              {{ "{{-" }} range $all_nodes {{ "}}" }}
-                {{ "{{-" }} if has (.metadata.name | quote) (list {{ "{{hub" }} range $label_list {{ "hub}}" }}{{ "{{hub" }} . | quote {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }}) {{ "}}" }}
-                  {{ "{{-" }} $nodes = append $nodes . {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} range (list {{ "{{hub" }} range $label_list {{ "hub}}" }}{{ "{{hub" }} . | quote {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }}) {{ "}}" }}
+                {{ "{{-" }} $nodes = append $nodes (lookup "v1" "Node" "" .) {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
 
               # Call template
@@ -60,6 +55,9 @@ spec:
 
             # Build list with first {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/storage-nodes" {{ "hub}}" }} nodes instead of labels
             {{ "{{-" }} else {{ "}}" }}
+
+              # Perform lookup of all nodes
+              {{ "{{-" }} $all_nodes := (lookup "v1" "Node" "" "").items {{ "}}" }}
 
               # Build nodelist from number
               {{ "{{-" }} range until {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/storage-nodes" {{ "hub}}" }} {{ "}}" }}

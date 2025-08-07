@@ -19,7 +19,7 @@ spec:
           remediationAction: inform
           severity: high
           object-templates-raw: |
-              {{ "{{-" }} if not (default false ({{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/storage-nodes-baremetal" {{ "hub}}" }})) {{ "}}" }}
+              {{ "{{-" }} if not (eq {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/storage-nodes-provider" | quote {{ "hub}}" }} "baremetal") {{ "}}" }}
               {{ "{{-" }} /* Specify the parameters needed to create the MachineSet  */ {{ "-}}" }}
               {{ "{{-" }} $machineset_role := "storage" {{ "}}" }}
               {{ "{{-" }} $zones_from_labels := list {{ "{{hub" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub" }} if $label | hasPrefix "autoshift.io/storage-nodes-zone" {{ "hub}}" }}"{{ "{{hub" }} $labelvalue {{ "hub}}" }}"{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }} {{ "}}" }}
@@ -50,10 +50,10 @@ spec:
           severity: high
           customMessage:
             noncompliant: >
-              ❌ Incorrect number of storage nodes discovered;
+              ❌ Incorrect number of nodes with storage label discovered;
               Expected: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/storage-nodes" {{ "hub}}" }}
           object-templates-raw: |
-              {{ "{{-" }} if (default false ({{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/storage-nodes-baremetal" {{ "hub}}" }})) {{ "}}" }}
+              {{ "{{-" }} if (eq {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/storage-nodes-provider" | quote {{ "hub}}" }} "baremetal") {{ "}}" }}
                 {{ "{{-" }} $storage_nodes := (lookup "v1" "Node" "" "" "cluster.ocs.openshift.io/openshift-storage").items {{ "}}" }}
                 {{ "{{-" }} if not (eq (len $storage_nodes) ( {{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/storage-nodes" {{ "hub}}" }} | toInt)) {{ "}}" }}
               - complianceType: musthave
@@ -78,7 +78,7 @@ spec:
           remediationAction: inform
           severity: high
           object-templates-raw: |
-              {{ "{{-" }} if (default false ({{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/storage-nodes-baremetal" {{ "hub}}" }})) {{ "}}" }}
+              {{ "{{-" }} if (eq {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/storage-nodes-provider" | quote {{ "hub}}" }} "baremetal") {{ "}}" }}
                 {{ "{{-" }} $storage_nodes := (lookup "v1" "Node" "" "" "cluster.ocs.openshift.io/openshift-storage").items {{ "}}" }}
                 {{ "{{-" }} range $storage_nodes {{ "}}" }}
               - complianceType: musthave
