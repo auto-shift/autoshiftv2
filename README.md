@@ -190,6 +190,15 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | `gitops-source`                 | string    | `redhat-operators`        |
 | `gitops-source-namespace`       | string    | `openshift-marketplace`   |
 
+### Master Nodes
+
+Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. You may have to increase the number of pods per node in these resource constrained environments.
+
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `master-nodes`                    | bool              | `false`                   |       |
+| `master-max-pods`                 | Int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
+
 ### Infra Nodes
 
 | Variable                            | Type              | Default Value             | Notes |
@@ -385,15 +394,6 @@ The Kubernetes NMState Operator can be used to declaratively configure the Red H
 | `nmstate-install-plan-approval` | string         | Automatic             |                                                                                   |
 | `nmstate-source`                | string         | redhat-operators      |                                                                                   |
 | `nmstate-source-namespace`      | string         | openshift-marketplace |                                                                                   |
-
-### Master Nodes
-
-Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. These are a collection of settings that can allow running
-
-| Variable                          | Type              | Default Value             | Notes |
-|-----------------------------------|-------------------|---------------------------|-------|
-| `master-nodes`                    | bool              | `false`                   |       |
-| `master-max-pods`                 | Int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
 
 ## References
 
