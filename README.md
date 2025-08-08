@@ -190,6 +190,15 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | `gitops-source`                 | string    | `redhat-operators`        |
 | `gitops-source-namespace`       | string    | `openshift-marketplace`   |
 
+### Master Nodes
+
+Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. You may have to increase the number of pods per node in these resource constrained environments.
+
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `master-nodes`                    | bool              | `false`                   |       |
+| `master-max-pods`                 | Int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
+
 ### Infra Nodes
 
 | Variable                            | Type              | Default Value             | Notes |
@@ -212,13 +221,16 @@ Values can be set on a per cluster and clusterset level to decide what features 
 
 ### Storage Nodes
 
-| Variable                              | Type              | Default Value             | Notes |
-|---------------------------------------|-------------------|---------------------------|-------|
-| `storage-nodes`                       | int               |                           | Number of storage nodes min if autoscale. If not set storage nodes are not managed, if blank storage nodes will be deleted. Local Storage Operator will be installed if Storage Nodes are enabled |
-| `storage-nodes-numcpu`                | int               |                           | Number of cpu per storage node |
-| `storage-nodes-memory-mib`            | int               |                           | Memory mib per storage node |
-| `storage-nodes-numcores-per-socket`   | int               |                           | Number of CPU Cores per socket |
-| `storage-nodes-zones`                 | <list<String>>    |                           | list of availability zones |
+| Variable                            | Type           | Default Value | Notes |
+| ----------------------------------- | -------------- | ------------- | ----- |
+| `storage-nodes`                     | int            |               | Number of storage nodes min if autoscale. If not set storage nodes are not managed, if blank storage nodes will be deleted. Local Storage Operator will be installed if Storage Nodes are enabled |
+| `storage-nodes-numcpu`              | int            |               | Number of cpu per storage node  |
+| `storage-nodes-memory-mib`          | int            |               | Memory mib per storage node |
+| `storage-nodes-numcores-per-socket` | int            |               | Number of CPU Cores per socket |
+| `storage-nodes-zones`               | <list<String>> |               | list of availability zones |
+| `storage-nodes-instance-type`       | string         |               | Instance type for cloud provider |
+| `storage-nodes-provider`            | string         |               | Provider type; valid choices: aws, vmware, baremetal |
+| `storage-nodes-node-[iterator]`     | <list<String>> |               | List of node names to apply storage label to. Used for baremetal where MachineSets aren't used. |
 
 ### Advanced Cluster Security
 
@@ -382,15 +394,6 @@ The Kubernetes NMState Operator can be used to declaratively configure the Red H
 | `nmstate-install-plan-approval` | string         | Automatic             |                                                                                   |
 | `nmstate-source`                | string         | redhat-operators      |                                                                                   |
 | `nmstate-source-namespace`      | string         | openshift-marketplace |                                                                                   |
-
-### Single Node OpenShift
-
-SNO clusters are generally resource constrained. An example values file is provided at `autoshift/values.hub.baremetal-sno.yaml`. This disables extra features and leverages LVM Operator for storage.
-
-| Variable                          | Type              | Default Value             | Notes |
-|-----------------------------------|-------------------|---------------------------|-------|
-| `sno`                             | bool              | `false`                   | If set, tweaks specific to SNO will be applied |
-| `sno-max-pods`                    | Int               | `500`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
 
 ## References
 
