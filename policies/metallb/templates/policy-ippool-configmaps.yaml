@@ -1,0 +1,77 @@
+{{- $files := .Files.Glob "files/ippools/**" }}
+{{- if $files }}
+# This policy verifies the installation of the official & supported version of
+# the bgp NodeNetworkConfigurationPolicy on the managed clusters.
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-ippools-configmaps
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    policy.open-cluster-management.io/standards: AutoShiftv2
+    policy.open-cluster-management.io/categories: Kubernetes MetalLB Operator
+    policy.open-cluster-management.io/controls: OpenShift Standard
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: ippools-configmap
+          namespace: policies-autoshift
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates:
+            {{- range $path, $_ := $files }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: ippool-{{ ($path | trimPrefix "files/ippools/" | split ".")._0 }}
+                  namespace: {{ $.Values.policy_namespace }}
+                data:
+                  adv: {{ $.Files.Get $path | b64enc }}
+            {{- end }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-ippools-configmap
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/metallb'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-ippools-configmap
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-ippools-configmap
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-ippools-configmaps
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}
