@@ -1,16 +1,16 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-metallb-ippool-config
+  name: policy-metallb-peer-config
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-wave: "8"
     policy.open-cluster-management.io/standards: AutoShiftv2
     policy.open-cluster-management.io/categories: Kubernetes MetalLB Operator
     policy.open-cluster-management.io/controls: OpenShift Standard
 spec:
   dependencies:
-    - name: policy-ippools-configmaps
+    - name: policy-peer-configmaps
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -21,19 +21,21 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: policy-ippool-config
+          name: policy-peer-configuration
         spec:
           remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
           object-templates-raw: |
-            {{ "{{hub-" }} $ippool_list := list {{ "hub}}" }}
+            {{ "{{hub-" }} $peer_list := list {{ "hub}}" }}
             {{ "{{hub-" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if $label | hasPrefix "autoshift.io/metallb-ippool" {{ "hub}}" }}
-                {{ "{{hub-" }} $ippool_list = append $ippool_list $labelvalue {{ "hub}}" }}
+              {{ "{{hub-" }} if $label | hasPrefix "autoshift.io/metallb-peer-" {{ "hub}}" }}
+                {{ "{{hub-" }} $peer_list = append $peer_list $labelvalue {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} range $ippool_list {{ "hub}}" }}
-              {{ "{{hub-" }} $cfg := ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (print "ippool-" .)).data) {{ "hub}}" }}
+            {{ "{{hub-" }} range $peer_list {{ "hub}}" }}
+              {{ "{{hub-" }} $cfg := ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (print "peer-" .)).data) {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
                 {{ "{{hub-" }} if $cfg.adv {{ "hub}}" }}
                     {{ "{{hub " }} $cfg.adv | base64dec | autoindent {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
@@ -42,7 +44,7 @@ spec:
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-ippool-config
+  name: placement-policy-peer-config
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -67,13 +69,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-ippool-config
+  name: placement-policy-peer-config
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-ippool-config
+  name: placement-policy-peer-config
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-metallb-ippool-config
+  - name: policy-metallb-peer-config
     apiGroup: policy.open-cluster-management.io
     kind: Policy
