@@ -34,6 +34,8 @@ spec:
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} range $ippool_list {{ "hub}}" }}
               {{ "{{hub-" }} $cfg := ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (print "ippool-" .)).data) {{ "hub}}" }}
+            - complianceType: mustonlyhave
+              objectDefinition:
                 {{ "{{hub-" }} if $cfg.adv {{ "hub}}" }}
                     {{ "{{hub " }} $cfg.adv | base64dec | autoindent {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
@@ -56,8 +58,10 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: autoshift.io/metallb
-              operator: Exists
+            - key: 'autoshift.io/metallb'
+              operator: In
+              values:
+              - 'true'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

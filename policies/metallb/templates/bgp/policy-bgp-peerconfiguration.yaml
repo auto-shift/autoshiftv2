@@ -1,49 +1,56 @@
-{{- $files := .Files.Glob "files/ippools/**" }}
-{{- if $files }}
-# This policy verifies the installation of the official & supported version of
-# the bgp NodeNetworkConfigurationPolicy on the managed clusters.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-ippools-configmaps
+  name: policy-metallb-peer-config
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-wave: "8"
     policy.open-cluster-management.io/standards: AutoShiftv2
     policy.open-cluster-management.io/categories: Kubernetes MetalLB Operator
     policy.open-cluster-management.io/controls: OpenShift Standard
 spec:
+  dependencies:
+    - name: policy-peer-configmaps
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
   disabled: false
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: ippools-configmap
-          namespace: policies-autoshift
+          name: policy-peer-configuration
         spec:
           remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
-          object-templates:
-            {{- range $path, $_ := $files }}
-            - complianceType: mustonlyhave
+          object-templates-raw: |
+            {{ "{{hub-" }} $peer_list := list {{ "hub}}" }}
+            {{ "{{hub-" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}
+              {{ "{{hub-" }} if $label | hasPrefix "autoshift.io/metallb-peer-" {{ "hub}}" }}
+                {{ "{{hub-" }} $peer_list = append $peer_list $labelvalue {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $peer_list {{ "hub}}" }}
+              {{ "{{hub-" }} $cfg := ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (print "peer-" .)).data) {{ "hub}}" }}
+            - complianceType: musthave
               objectDefinition:
-                apiVersion: v1
-                kind: ConfigMap
-                metadata:
-                  name: ippool-{{ ($path | trimPrefix "files/ippools/" | split ".")._0 }}
-                  namespace: {{ $.Values.policy_namespace }}
-                data:
-                  adv: {{ $.Files.Get $path | b64enc }}
-            {{- end }}
+                {{ "{{hub-" }} if $cfg.adv {{ "hub}}" }}
+                    {{ "{{hub " }} $cfg.adv | base64dec | autoindent {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-ippools-configmap
+  name: placement-policy-peer-config
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
   {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
@@ -51,7 +58,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/metallb'
+            - key: 'autoshift.io/metallb-bgp'
               operator: In
               values:
               - 'true'
@@ -64,14 +71,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-ippools-configmap
+  name: placement-policy-peer-config
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-ippools-configmap
+  name: placement-policy-peer-config
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-ippools-configmaps
+  - name: policy-metallb-peer-config
     apiGroup: policy.open-cluster-management.io
     kind: Policy
-{{- end }}

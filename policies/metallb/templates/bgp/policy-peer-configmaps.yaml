@@ -1,13 +1,17 @@
+{{- $files := .Files.Glob "files/peers/**" }}
+{{- if $files }}
+# This policy verifies the installation of the official & supported version of
+# the bgp NodeNetworkConfigurationPolicy on the managed clusters.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-deploy-metallb
+  name: policy-peer-configmaps
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
-    policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
-    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+    argocd.argoproj.io/sync-wave: "7"
+    policy.open-cluster-management.io/standards: AutoShiftv2
+    policy.open-cluster-management.io/categories: Kubernetes MetalLB Operator
+    policy.open-cluster-management.io/controls: OpenShift Standard
 spec:
   disabled: false
   policy-templates:
@@ -15,37 +19,39 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: deploy-metallb-controller
+          name: peer-configmap
+          namespace: policies-autoshift
         spec:
-          remediationAction: enforce
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
           object-templates:
+            {{- range $path, $_ := $files }}
             - complianceType: musthave
               objectDefinition:
-                apiVersion: metallb.io/v1beta1
-                kind: MetalLB
+                apiVersion: v1
+                kind: ConfigMap
                 metadata:
-                  name: metallb
-                  namespace: {{ .Values.metallb.namespace }}
+                  name: peer-{{ ($path | trimPrefix "files/peers/" | split ".")._0 }}
+                  namespace: {{ $.Values.policy_namespace }}
+                data:
+                  adv: {{ $.Files.Get $path | b64enc }}
+            {{- end }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-deploy-metallb
+  name: placement-peer-configmap
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
-  {{- range $clusterSet, $value := .Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
   predicates:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/metallb'
+            - key: 'autoshift.io/metallb-bgp'
               operator: In
               values:
               - 'true'
@@ -58,13 +64,14 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-deploy-metallb
+  name: placement-peer-configmap
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-deploy-metallb
+  name: placement-peer-configmap
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-deploy-metallb
+  - name: policy-peer-configmaps
     apiGroup: policy.open-cluster-management.io
     kind: Policy
+{{- end }}

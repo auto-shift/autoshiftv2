@@ -1,14 +1,14 @@
-{{- $files := .Files.Glob "files/peers/**" }}
+{{- $files := .Files.Glob "files/l2advertisements/**" }}
 {{- if $files }}
 # This policy verifies the installation of the official & supported version of
 # the bgp NodeNetworkConfigurationPolicy on the managed clusters.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-peer-configmaps
+  name: policy-l2-configmaps
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    argocd.argoproj.io/sync-wave: "7"
+    argocd.argoproj.io/sync-wave: "5"
     policy.open-cluster-management.io/standards: AutoShiftv2
     policy.open-cluster-management.io/categories: Kubernetes MetalLB Operator
     policy.open-cluster-management.io/controls: OpenShift Standard
@@ -19,7 +19,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: peer-configmap
+          name: l2-configmap
           namespace: policies-autoshift
         spec:
           remediationAction: enforce # will be overridden by remediationAction in parent policy
@@ -31,7 +31,7 @@ spec:
                 apiVersion: v1
                 kind: ConfigMap
                 metadata:
-                  name: peer-{{ ($path | trimPrefix "files/peers/" | split ".")._0 }}
+                  name: l2-{{ ($path | trimPrefix "files/l2advertisements/" | split ".")._0 }}
                   namespace: {{ $.Values.policy_namespace }}
                 data:
                   adv: {{ $.Files.Get $path | b64enc }}
@@ -40,7 +40,7 @@ spec:
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-peer-configmap
+  name: placement-l2-configmap
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -64,14 +64,14 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-peer-configmap
+  name: placement-l2-configmap
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-peer-configmap
+  name: placement-l2-configmap
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-peer-configmaps
+  - name: policy-l2-configmaps
     apiGroup: policy.open-cluster-management.io
     kind: Policy
 {{- end }}
