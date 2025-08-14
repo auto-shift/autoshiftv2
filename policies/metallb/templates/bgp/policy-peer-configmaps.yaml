@@ -1,18 +1,22 @@
+{{- if (.Files.Glob "files/peers/**") }}
 {{- $files := .Files.Glob "files/peers/**" }}
 {{- if $files }}
-# This policy verifies the installation of the official & supported version of
-# the bgp NodeNetworkConfigurationPolicy on the managed clusters.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
   name: policy-peer-configmaps
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    argocd.argoproj.io/sync-wave: "7"
     policy.open-cluster-management.io/standards: AutoShiftv2
     policy.open-cluster-management.io/categories: Kubernetes MetalLB Operator
     policy.open-cluster-management.io/controls: OpenShift Standard
 spec:
+  dependencies:
+    - name: policy-deploy-metallb
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -51,7 +55,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/metallb-bgp'
+            - key: 'autoshift.io/metallb'
               operator: In
               values:
               - 'true'
@@ -74,4 +78,5 @@ subjects:
   - name: policy-peer-configmaps
     apiGroup: policy.open-cluster-management.io
     kind: Policy
+{{- end }}
 {{- end }}

@@ -4,11 +4,16 @@ metadata:
   name: policy-deploy-metallb
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
     policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
 spec:
+  dependencies:
+    - name: policy-metallb-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
   disabled: false
   policy-templates:
     - objectDefinition:

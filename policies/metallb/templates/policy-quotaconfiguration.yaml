@@ -4,13 +4,12 @@ metadata:
   name: policy-metallb-quota-config
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    argocd.argoproj.io/sync-wave: "6"
     policy.open-cluster-management.io/standards: AutoShiftv2
     policy.open-cluster-management.io/categories: Kubernetes MetalLB Operator
     policy.open-cluster-management.io/controls: OpenShift Standard
 spec:
   dependencies:
-    - name: policy-quota-configmaps
+    - name: policy-metallb-operator-install
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -25,21 +24,18 @@ spec:
         spec:
           remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
-          object-templates-raw: |
-            {{ "{{hub-" }} $quota_list := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if $label | hasPrefix "autoshift.io/metallb-quota-" {{ "hub}}" }}
-                {{ "{{hub-" }} $quota_list = append $quota_list $labelvalue {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} range $quota_list {{ "hub}}" }}
-              {{ "{{hub-" }} $cfg := ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (print "quota-" .)).data) {{ "hub}}" }}
+          object-templates:
             - complianceType: mustonlyhave
               objectDefinition:
-                {{ "{{hub-" }} if $cfg.adv {{ "hub}}" }}
-                    {{ "{{hub " }} $cfg.adv | base64dec | autoindent {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+                apiVersion: v1
+                kind: ResourceQuota
+                metadata:
+                  name: metallb-quota
+                  namespace: metallb-system
+                spec:
+                  hard:
+                    cpu: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/metallb-quota-cpu" | default "{{ .Values.metallb.quota.cpu }}" hub{{ "}}" }}'
+                    memory: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/metallb-quota-memory" | default "{{ .Values.metallb.quota.memory }}" hub{{ "}}" }}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
