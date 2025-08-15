@@ -186,11 +186,11 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | Variable                            | Type              | Default Value             | Notes |
 |-------------------------------------|-------------------|---------------------------|-------|
 | `metallb`                           | bool              | `true` or `false`         | `true` or `false` |
-| `metallb-source`                    | string            | redhat-operators          | Number of cpu per infra node |
-| `metallb-source-namespace`          | string            | openshift-marketplace     | Number of cpu per infra node |
-| `metallb-install-plan-approval`     | string            | Automatic                 | Number of cpu per infra node |
-| `metallb-channel`                   | string            | stable                    | Number of cpu per infra node |
-| `metallb-quota`                     | string            |                           | Number of cpu per infra node |
+| `metallb-source`                    | string            | redhat-operators          |  |
+| `metallb-source-namespace`          | string            | openshift-marketplace     |  |
+| `metallb-install-plan-approval`     | string            | Automatic                 |  |
+| `metallb-channel`                   | string            | stable                    |  |
+| `metallb-quota`                     | string            |                           |  |
 | `metallb-quota-cpu`                 | int               | '2'                       | Number of cpu for Resource Quota on namesapce |
 | `metallb-quota-memory`              | string            | 2Gi                       | Amount of memory for Resource Quota on namespace (example: 2Gi or 512Mi) |
 | `metallb-ippool-1`                  | string            |                           | Name of config file for IP Pool (copy this value if more than one, increasing number each time) |
