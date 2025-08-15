@@ -195,8 +195,8 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | `metallb-quota-memory`              | string            | 2Gi                       | Amount of memory for Resource Quota on namespace (example: 2Gi or 512Mi) |
 | `metallb-ippool-1`                  | string            |                           | Name of config file for IP Pool (copy this value if more than one, increasing number each time) |
 | `metallb-l2-1`                      | string            |                           | Name of config file for L2 Advertisement (copy this value if more than one, increasing number each time) |
-| `metallb-bgp-1`                     | string            |                           | Name of config file for BGP Peer (copy this value if more than one, increasing number each time) |
-| `metallb-peer-1`                    | string            |                           | Name of file in IP Pool (copy this value if more than one, increasing number each time) |
+| `metallb-bgp-1`                     | string            |                           | Name of config file for BGP Advertisement (copy this value if more than one, increasing number each time) |
+| `metallb-peer-1`                    | string            |                           | Name of config file for BGP Peer (copy this value if more than one, increasing number each time) |
 
 ### OpenShift Gitops
 
