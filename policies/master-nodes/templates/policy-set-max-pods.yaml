@@ -9,7 +9,7 @@ metadata:
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: AutoShiftv2
-    policy.open-cluster-management.io/categories: SNO tweaks
+    policy.open-cluster-management.io/categories: Master Nodes
     policy.open-cluster-management.io/controls: OpenShift Standard
 spec:
   disabled: false
@@ -26,7 +26,7 @@ spec:
             - complianceType: musthave
               objectDefinition:
                 {{ "{{-" }} $cores := ((index (lookup "v1" "Node" "" "").items 0).status.capacity.cpu | toInt) {{ "}}" }}
-                {{ "{{-" }} $maxPods := ("{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/sno-max-pods" | default {{ .Values.sno.maxPods }} hub{{ "}}" }}" | toInt) {{ "}}" }}
+                {{ "{{-" }} $maxPods := ("{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/master-max-pods" | default {{ .Values.masterNodes.maxPods }} hub{{ "}}" }}" | toInt) {{ "}}" }}
                 apiVersion: machineconfiguration.openshift.io/v1
                 kind: KubeletConfig
                 metadata:
@@ -56,7 +56,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/sno'
+            - key: 'autoshift.io/master-nodes'
               operator: In
               values:
               - 'true'
