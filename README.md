@@ -4,11 +4,11 @@
 
 AutoShiftv2 is an opinionated [Infrastructure-as-Code (IaC)](https://martinfowler.com/bliki/InfrastructureAsCode.html) framework designed to manage infrastructure components after an OpenShift installation using Advanced Cluster Management (ACM) and OpenShift GitOps. It provides a modular, extensible model to support infrastructure elements deployed on OpenShift — particularly those in [OpenShift Platform Plus](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet). AutoShiftv2 emphasizes ease of adoption, configurable features (taggable on/off), and production-ready capabilities for installation, upgrades, and maintenance.
 
-What AutoShift does is it uses OpenShift GitOps to declaratively manage RHACM which then manages various OpenShift and/or Kubernetes cluster resources and components. This eliminates much of the operator toil associated with installing and managing day 2 tasks, by letting declarative GitOps do that for you. 
+What AutoShift does is it uses OpenShift GitOps to declaratively manage RHACM which then manages various OpenShift and/or Kubernetes cluster resources and components. This eliminates much of the operator toil associated with installing and managing day 2 tasks, by letting declarative GitOps do that for you.
 
-## Architecture 
+## Architecture
 
-AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert. 
+AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert.
 
 RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass. RHACM provides built-in governance, cluster lifecycle management, application lifecycle management, and observability feature
 
@@ -42,7 +42,7 @@ The hub cluster is the main cluster with RHACM with its core components installe
     oc login --token=sha256~lQ...dI --server=https://api.cluster.example.com:6443
     ```
 
-> [!NOTE] 
+> [!NOTE]
 > Alternatively you can use the devcontainer provided by this repository. By default the container will install the stable version of `oc` and the latest Red Hat provided version of `helm`. These versions can be specified by setting the `OCP_VERSION` and `HELM_VERSION` variables before building. From the container you can login as usual with `oc login` or copy your kubeconfig into the container `podman cp ${cluster_dir}/auth/kubeconfig ${container-name}:/workspaces/.kube/config`.
 
 2.  If installing in a disconnected or internet-disadvantaged environment, update the values in `policies/openshift-gitops/values.yaml` and `policies/advanced-cluster-management/values.yaml` with the source mirror registry, otherwise leave these values as is.
@@ -57,7 +57,7 @@ The hub cluster is the main cluster with RHACM with its core components installe
     helm upgrade --install openshift-gitops openshift-gitops -f policies/openshift-gitops/values.yaml
     ```
 
-> [!NOTE]  
+> [!NOTE]
 > If OpenShift GitOps is already installed manually on cluster and the default argo instance exists this step can be skipped. Make sure that argocd controller has cluster-admin
 
 2.  After the installation is complete, verify that all the pods in the `openshift-gitops` namespace are running. This can take a few minutes depending on your network to even return anything.
@@ -85,7 +85,7 @@ The hub cluster is the main cluster with RHACM with its core components installe
     ```console
     oc get pods -n openshift-gitops-operator
     ```
-    
+
     This command should return something like this:
 
     ```
@@ -98,9 +98,9 @@ The hub cluster is the main cluster with RHACM with its core components installe
     ```console
     oc get argocd -A
     ```
-    
+
     This command should return something like this:
-    
+
     ```console
     NAMESPACE          NAME               AGE
     openshift-gitops   infra-gitops       29s
@@ -136,7 +136,7 @@ The hub cluster is the main cluster with RHACM with its core components installe
     open-cluster-management   multiclusterhub   Installing   5m51s                    2.13.2
     open-cluster-management   multiclusterhub   Running      6m28s   2.13.2           2.13.2
     ```
-> [!NOTE]  
+> [!NOTE]
 > This does take roughly 10 min to install. You can proceed to installing AutoShift while this is installing but you will not be able to verify AutoShift or select a `clusterset` until this is finished.
 
 ### Install AutoShiftv2
@@ -169,10 +169,10 @@ Values can be set on a per cluster and clusterset level to decide what features 
 
 ### Advanced Cluster Manager
 
-> [!WARNING]  
+> [!WARNING]
 > Hub Clusters Only
 
-| Variable                    | Type      | Default Value             | 
+| Variable                    | Type      | Default Value             |
 |-----------------------------|-----------|---------------------------|
 | `self-managed`              | bool      | `true` or `false`         |
 | `acm-channel`               | string    | `release-2.13`            |
@@ -181,9 +181,26 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | `acm-source-namespace`      | string    | `openshift-marketplace`   |
 | `acm-availability-config`   | string    | `basic` or `high`         |
 
+### MetalLB
+
+| Variable                            | Type              | Default Value             | Notes |
+|-------------------------------------|-------------------|---------------------------|-------|
+| `metallb`                           | bool              | `true` or `false`         | `true` or `false` |
+| `metallb-source`                    | string            | redhat-operators          | Number of cpu per infra node |
+| `metallb-source-namespace`          | string            | openshift-marketplace     | Number of cpu per infra node |
+| `metallb-install-plan-approval`     | string            | Automatic                 | Number of cpu per infra node |
+| `metallb-channel`                   | string            | stable                    | Number of cpu per infra node |
+| `metallb-quota`                     | string            |                           | Number of cpu per infra node |
+| `metallb-quota-cpu`                 | int               | '2'                       | Number of cpu for Resource Quota on namesapce |
+| `metallb-quota-memory`              | string            | 2Gi                       | Amount of memory for Resource Quota on namespace (example: 2Gi or 512Mi) |
+| `metallb-ippool-1`                  | string            |                           | Name of config file for IP Pool (copy this value if more than one, increasing number each time) |
+| `metallb-l2-1`                      | string            |                           | Name of config file for L2 Advertisement (copy this value if more than one, increasing number each time) |
+| `metallb-bgp-1`                     | string            |                           | Name of config file for BGP Peer (copy this value if more than one, increasing number each time) |
+| `metallb-peer-1`                    | string            |                           | Name of file in IP Pool (copy this value if more than one, increasing number each time) |
+
 ### OpenShift Gitops
 
-| Variable                        | Type      | Default Value             | 
+| Variable                        | Type      | Default Value             |
 |---------------------------------|-----------|---------------------------|
 | `gitops-channel`                | string    | `latest`                  |
 | `gitops-install-plan-approval`  | string    | `Manual` or `Automatic`   |
@@ -199,6 +216,8 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | `infra-nodes-memory-mib`            | int               |                           | Memory mib per infra node |
 | `infra-nodes-numcores-per-socket`   | int               |                           | Number of CPU Cores per socket |
 | `infra-nodes-zones`                 | <list<String>>    |                           | List of availability zones |
+
+
 
 ### Worker Nodes
 
@@ -358,7 +377,7 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | `odf`                             | bool              |                           | If not set OpenShift Data Foundation will not be managed. if Storage Nodes are enable will deploy ODF on local storage/ storage nodes |
 | `odf-multi-cloud-gateway`         | String            |                           | values `standalone` or `standard`. Install ODF with only nooba object gateway or full odf |
 | `odf-nooba-pvpool`                | bool              |                           | if not set nooba will be deployed with default settings. Recomended don't set for cloud providers. Use pv pool for storage |
-| `odf-nooba-store-size`            | String            |                           | example `500Gi`. if pvpool set. Size of nooba backing store | 
+| `odf-nooba-store-size`            | String            |                           | example `500Gi`. if pvpool set. Size of nooba backing store |
 | `odf-nooba-store-num-volumes`     | String            |                           | example `1`. if pvpool set. number of volumes |
 | `odf-ocs-storage-class-name`      | String            |                           | if not using local-storage, storage class to use for ocs |
 | `odf-ocs-storage-size`            | String            |                           | storage size per nvme |
