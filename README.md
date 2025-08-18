@@ -334,6 +334,14 @@ odf-source<String>: default redhat-operators
 
 odf-source-namespace<String>: default openshift-marketplace
 
+### Cert Manager
+
+cert-manager<bool>: If not set, Cert Manager will not be managed. Default - true
+cert-manager-install-plan-approval<String>: Default - Automatic
+cert-manager-source<String>: Default - redhat-operators
+cert-manager-source-namespace<String>: Default - openshift-marketplace
+cert-manager-channel<String>: Default - stable-v1
+
 ### Single Node OpenShift
 SNO clusters are generally resource constrained. An example values file is provided at `autoshift/values.hub.baremetal-sno.yaml`. This disables extra features and leverages LVM Operator for storage.
 
