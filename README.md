@@ -160,7 +160,7 @@ The hub cluster is the main cluster with RHACM with its core components installe
     kind: Application
     metadata:
       name: $APP_NAME
-      namespace $GITOPS_NAMESPACE
+      namespace: $GITOPS_NAMESPACE
     spec:
       destination:
         namespace: ''
