@@ -151,7 +151,7 @@ The hub cluster is the main cluster with RHACM with its core components installe
     ```console
     export APP_NAME="autoshift"
     export REPO_URL="https://github.com/auto-shift/autoshiftv2.git"
-    export TARGET_REVISION="feature/internal-image-registry"
+    export TARGET_REVISION="main"
     export VALUES_FILE="values.hub.yaml"
     export ARGO_PROJECT="default"
     export GITOPS_NAMESPACE="openshift-gitops"
@@ -432,6 +432,19 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `odf-install-plan-approval`       | String            | `Automatic`               |       |
 | `odf-source`                      | String            | `redhat-operators`        |       |
 | `odf-source-namespace`            | String            | `openshift-marketplace`   |       |
+
+### OpenShift Internal Registry
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `imageregistry`                   | Bool              | `false`                   | If not set OpenShift Internal Image Registry will not be managed. |
+| `imageregistry-management-state`  | String            | `Managed`                 |       |
+| `imageregistry-replicas`          | Integer           |                           | Need at least `2`, as well as read write many storage or object/s3 storage in order support HA and Rolling Updates |
+| `imageregistry-storage-type`      | String            |                           | Supported `s3` or `pvc`, s3 only supports Nooban|
+| `imageregistry-s3-region`         | String            |                           |  if type is `s3` you can specify a region |
+| `imageregistry-pvc-access-mode`   | String            |                           | Example `ReadWriteMany`  |
+| `imageregistry-pvc-storage-class` | String            |                           | Example `ocs-storagecluster-ceph-rbd` |
+| `imageregistry-pvc-volume-mode`   | String            |                           | Example `Block` or `FileSystem` |
+| `imageregistry-rollout-strategy`  | String            | `RollingUpdate`           | Example `RollingUpdate` if at least 2 or `Recreate` if only 1 |
 
 ### Kubernetes NMState Operator
 
