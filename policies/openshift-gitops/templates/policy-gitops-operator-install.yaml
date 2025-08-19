@@ -1,8 +1,7 @@
 # This policy verifies the installation of the official & supported version of
-# the Advanced Cluster Operator on the hub cluster.
+# the GitOps Operator.
 #
 # Note that OpenShift 4.18 is required.
-{{- if .Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -51,6 +50,7 @@ spec:
           # Getting Label and then capitalizing first letter
           upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/gitops-install-plan-approval" | default "{{ .Values.gitops.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
 ---
+{{- if .Values.hubClusterSets }}
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
@@ -74,6 +74,45 @@ metadata:
   namespace: {{ .Values.policy_namespace }}
 placementRef:
   name: placement-policy-gitops-operator-install
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-gitops-operator-install
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}
+{{- if .Values.managedClusterSets }}
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-gitops-operator-install-spoke
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-gitops-operator-install-spoke
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-gitops-operator-install-spoke
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:

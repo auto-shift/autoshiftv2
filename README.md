@@ -316,6 +316,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `gitops-dev`                          | bool              |                           | If not set Developer OpenShift Gitops intances will not be managed |
+| `gitops-dev-config`                   | String            |                           | configmap from helm repo that will be used on this cluster |
 | `gitops-dev-team-{INSERT_TEAM_NAME}`  | String        |                           | Team that can deploy onto cluster from dev team gitops. Must match a team in the `gitops-dev` helm chart values file |
 
 ### Loki
