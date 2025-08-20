@@ -141,6 +141,64 @@ spec:
                       requests:
                         cpu: {{ ((.Values.gitops.applicationSet).requests).cpu | default "250m" }}
                         memory: {{ ((.Values.gitops.applicationSet).requests).memory | default "512Mi" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta1
+                kind: Placement
+                metadata:
+                  name: systems-argocd-cluster-placement
+                  namespace: {{ .Values.gitops.argoNamespace | default "openshift-gitops"}}
+                spec:
+                  clusterSets:
+                  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+                    - {{ $clusterSet }}
+                  {{- end }}
+                  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+                    - {{ $clusterSet }}
+                  {{- end }}
+                  tolerations:
+                    - key: cluster.open-cluster-management.io/unreachable
+                      operator: Exists
+                    - key: cluster.open-cluster-management.io/unavailable
+                      operator: Exists
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps.open-cluster-management.io/v1beta1
+                kind: GitOpsCluster
+                metadata:
+                  name: argo-acm-importer
+                  namespace: {{ .Values.gitops.argoNamespace | default "openshift-gitops"}}
+                spec:
+                  argoServer:
+                    cluster: notused
+                    argoNamespace: {{ .Values.gitops.argoNamespace | default "openshift-gitops"}}
+                  placementRef:
+                    kind: Placement
+                    apiVersion: cluster.open-cluster-management.io/v1beta1
+                    name: systems-argocd-cluster-placement
+                    namespace: {{ .Values.gitops.argoNamespace | default "openshift-gitops"}}
+            {{- range $clusterSet, $value := .Values.managedClusterSets }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ $clusterSet }}
+                  namespace: {{ $.Values.gitops.argoNamespace | default "openshift-gitops"}}
+                spec:
+                  clusterSet: {{ $clusterSet }}
+            {{- end }}
+            {{- range $clusterSet, $value := .Values.hubClusterSets }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ $clusterSet }}
+                  namespace: {{ $.Values.gitops.argoNamespace | default "openshift-gitops"}}
+                spec:
+                  clusterSet: {{ $clusterSet }}
+            {{- end }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
