@@ -337,9 +337,13 @@ odf-source-namespace<String>: default openshift-marketplace
 ### Cert Manager
 
 cert-manager<bool>: If not set, Cert Manager will not be managed. Default - true
+
 cert-manager-install-plan-approval<String>: Default - Automatic
+
 cert-manager-source<String>: Default - redhat-operators
+
 cert-manager-source-namespace<String>: Default - openshift-marketplace
+
 cert-manager-channel<String>: Default - stable-v1
 
 ### Single Node OpenShift
