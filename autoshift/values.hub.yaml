@@ -3,7 +3,7 @@
 # Declare variables to be passed into your templates.
 
 autoshiftGitRepo: https://github.com/auto-shift/autoshiftv2.git
-autoshiftGitBranchTag: aap
+autoshiftGitBranchTag: main
 
 selfManagedHubSet: hub
 
@@ -24,16 +24,33 @@ hubClusterSets:
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'High'
+      ### MetalLB
+      metallb: 'true'
+      metallb-source: redhat-operators
+      metallb-source-namespace: openshift-marketplace
+      metallb-install-plan-approval: Automatic
+      metallb-channel: stable
+      metallb-quota: 'false'
+      # Set your quota if metallb-quota is enabled
+      metallb-quota-cpu: ''
+      metallb-quota-memory:
+      # Specify the names of your IPPool files here
+      metallb-ippool-1: ''
+      #Specify your L2 Advertisement files here
+      metallb-l2-1: ''
+      # Specify the names of your BGP Advertisement files here
+      metallb-bgp-1: ''
+      # Specify the names of your Peer files here
+      metallb-peer-1: ''
       ### Ansible Automation Platform
-      aap: 'false'
+      aap: 'true'
       aap-channel: 'stable-2.5'
       aap-install-plan-approval: Automatic
       aap-source: redhat-operators
       aap-source-namespace: openshift-marketplace
       aap-hub-disabled: ''
       aap-lightspeed-disabled: ''
-      aap-hub-storage-class: ''
-      # AAP storage class MUST be RWX capable or the PVC creation will fail
+      aap-hub-storage-class: '' # MUST be a RWX storage class!
       ### Infrastructure Nodes
       infra-nodes: ''
       infra-nodes-numcpu: ''
@@ -54,9 +71,21 @@ hubClusterSets:
       # storage-nodes-region: 'us-east-2'
       storage-nodes-instance-type: 'm6in.8xlarge'
       storage-nodes-provider: aws
+      # storage-nodes-node-[iterator]: node-1 # For use with baremetal
+      # storage-nodes-node-[iterator]: node-2 # For use with baremetal
       storage-nodes-numcpu: ''
       storage-nodes-memory-mib: ''
       storage-nodes-numcores-per-socket: ''
+      ### LVM Operator
+      lvm: 'false'
+      lvm-default: 'true'
+      lvm-fstype: xfs
+      lvm-size-percent: 90
+      lvm-overprovision-ratio: 10
+      lvm-channel: stable-4.18
+      lvm-install-plan-approval: Automatic
+      lvm-source: redhat-operators
+      lvm-source-namespace: openshift-marketplace
       ### Local Storage Operator
       local-storage: 'false'
       local-storage-channel: stable
@@ -78,6 +107,23 @@ hubClusterSets:
       odf-install-plan-approval: Automatic
       odf-source: redhat-operators
       odf-source-namespace: openshift-marketplace
+      ### OpenShift Internal Registry
+      imageregistry: 'false'
+      imageregistry-management-state: Managed
+      imageregistry-replicas: '3'
+      imageregistry-storage-type: s3 # pvc
+      imageregistry-s3-region: us-east-2
+      imageregistry-pvc-access-mode: ReadWriteMany
+      imageregistry-pvc-size: 100Gi
+      imageregistry-pvc-storage-class: ocs-storagecluster-ceph-rbd
+      imageregistry-pvc-volume-mode: Block
+      imageregistry-rollout-strategy: RollingUpdate
+      ### Kubernetes NMState Operator
+      nmstate: 'false'
+      # Example nmstate-nncp labels. Label must start with nmstate-nncp
+      # also the value must be the name of the config file you want to apply
+      # nmstate-nncp-example-bond1: example-bond
+      # nmstate-nncp-example-vlan10: example-vlan10
       ### Advanced Cluster Security
       acs: 'true'
       acs-channel: stable
@@ -85,7 +131,7 @@ hubClusterSets:
       acs-source: redhat-operators
       acs-source-namespace: openshift-marketplace
       ### Developer Spaces
-      dev-spaces: 'false'
+      dev-spaces: 'true'
       dev-spaces-channel: stable
       dev-spaces-install-plan-approval:  Automatic
       dev-spaces-source: redhat-operators
