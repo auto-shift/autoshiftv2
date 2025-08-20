@@ -382,6 +382,16 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `local-storage-source-namespace`      | String            |                           |       |
 | `local-storage-install-plan-approval` | String            |                           |       |
 
+### Cert Manager Operator
+
+| Variable                              | Type              | Default Value             | Notes |
+|---------------------------------------|-------------------|---------------------------|-------|
+| `cert-manager`                        | bool              |                           | If not set, Cert Manager will not be managed. |
+| `cert-manager-install-plan-approval`  | String            | `Automatic`               |       |
+| `cert-manager-source`                 | String            | `redhat-operators`        |       |
+| `cert-manager-source-namespace`       | String            | `openshift-marketplace`   |       |
+| `cert-manager-channel`                | String            | `stable-v1`               |       |
+
 ### OpenShift Data Foundation
 
 | Variable                          | Type              | Default Value             | Notes |
@@ -416,45 +426,8 @@ The Kubernetes NMState Operator can be used to declaratively configure the Red H
 
 ## References
 
-<<<<<<< HEAD
 * [OpenShift Platform Plus DataShift](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet)
 * [Red Hat Training: DO480: Multicluster Management with Red Hat OpenShift Platform Plus](https://www.redhat.com/en/services/training/do480-multicluster-management-red-hat-openshift-platform-plus)
 * [Martin Fowler Blog: Infrastructure As Code](https://martinfowler.com/bliki/InfrastructureAsCode.html)
 * [helm Utility Installation Instructions](https://helm.sh/docs/intro/install/)
 * [OpenShift CLI Client `oc` Installation Instructions](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli)
-=======
-odf-ocs-storage-size<String>: storage size per nvme
-
-odf-ocs-storage-count<String>: number of replica sets of nvme drives, note total amount will count * replicas
-
-odf-ocs-storage-replicas<String>: replicas, 3 is recommended
-
-odf-resource-profile<String>: default balanced. lean: suitable for clusters with limited resources, balanced: suitable for most use cases, performance: suitable for clusters with high amount of resources.
-
-odf-channel<String>: default stable-4.17
-
-odf-install-plan-approval<String>: default Automatic
-
-odf-source<String>: default redhat-operators
-
-odf-source-namespace<String>: default openshift-marketplace
-
-### Cert Manager
-
-cert-manager<bool>: If not set, Cert Manager will not be managed. Default - true
-
-cert-manager-install-plan-approval<String>: Default - Automatic
-
-cert-manager-source<String>: Default - redhat-operators
-
-cert-manager-source-namespace<String>: Default - openshift-marketplace
-
-cert-manager-channel<String>: Default - stable-v1
-
-### Single Node OpenShift
-SNO clusters are generally resource constrained. An example values file is provided at `autoshift/values.hub.baremetal-sno.yaml`. This disables extra features and leverages LVM Operator for storage.
-
-sno<bool>: If set, tweaks specific to SNO will be applied. default false
-
-sno-max-pods<Int>: The number of maximum pods per node. Up to 2500 supported dependent on hardware. default 500
->>>>>>> 9a41dfe (Update README.md)
