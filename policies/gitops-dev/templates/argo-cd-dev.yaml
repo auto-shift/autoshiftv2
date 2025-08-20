@@ -1,7 +1,7 @@
 {{- range $team, $value := .Values.teams }}
 ---
 # This policy verifies the installation of the official & supported version of
-# the GitOps Operator.
+# the GitOps Operator for different teams.
 #
 # Note that OpenShift 4.18 is required.
 apiVersion: policy.open-cluster-management.io/v1
@@ -135,7 +135,76 @@ spec:
                   namespace: openshift-gitops-{{ $team }}
                   labels:
                     example: basic
-                spec: {}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta1
+                kind: Placement
+                metadata:
+                  name: openshift-gitops-{{ $team }}
+                  namespace: openshift-gitops-{{ $team }}
+                  annotations:
+                    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+                    argocd.argoproj.io/sync-wave: "6"
+                spec:
+                  clusterSets:
+                  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+                    - {{ $clusterSet }}
+                  {{- end }}
+                  predicates:
+                    - requiredClusterSelector:
+                        labelSelector:
+                          matchExpressions:
+                            - key: 'autoshift.io/gitops-dev'
+                              operator: In
+                              values:
+                              - 'true'
+                            - key: 'autoshift.io/gitops-dev-team-{{ $team }}'
+                              operator: In
+                              values:
+                              - 'hub'
+                  tolerations:
+                    - key: cluster.open-cluster-management.io/unreachable
+                      operator: Exists
+                    - key: cluster.open-cluster-management.io/unavailable
+                      operator: Exists
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps.open-cluster-management.io/v1beta1
+                kind: GitOpsCluster
+                metadata:
+                  name: argo-acm-importer-{{ $clusterSet }}
+                  namespace: openshift-gitops-{{ $team }}
+                spec:
+                  argoServer:
+                    cluster: notused
+                    argoNamespace: openshift-gitops-{{ $team }}
+                  placementRef:
+                    kind: Placement
+                    apiVersion: cluster.open-cluster-management.io/v1beta1
+                    name: openshift-gitops-{{ $team }}
+                    namespace: openshift-gitops-{{ $team }}
+            {{- range $clusterSet, $value := .Values.managedClusterSets }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ $clusterSet }}
+                  namespace: openshift-gitops-{{ $team }}
+                spec:
+                  clusterSet: {{ $clusterSet }}
+            {{- end }}
+            {{- range $clusterSet, $value := .Values.hubClusterSets }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ $clusterSet }}
+                  namespace: openshift-gitops-{{ $team }}
+                spec:
+                  clusterSet: {{ $clusterSet }}
+            {{ end }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -144,9 +213,6 @@ metadata:
   namespace: {{ $.Values.policy_namespace }}
 spec:
   clusterSets:
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
   {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
@@ -158,6 +224,10 @@ spec:
               operator: In
               values:
               - 'true'
+            - key: 'autoshift.io/gitops-dev-team-{{ $team }}'
+              operator: In
+              values:
+              - 'hub'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
