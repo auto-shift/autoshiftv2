@@ -220,7 +220,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 
 | Variable                            | Type              | Default Value             | Notes |
 |-------------------------------------|-------------------|---------------------------|-------|
-| `infra-nodes`                       | int               |                           | Number of infra nodes min if autoscale. If not set infra nodes are not managed, if blank infra nodes will be deleted |
+| `infra-nodes`                       | int               |                           | Number of infra nodes min if autoscale. If not set infra nodes are not managed, if 0 infra nodes will be deleted |
 | `infra-nodes-numcpu`                | int               |                           | Number of cpu per infra node |
 | `infra-nodes-memory-mib`            | int               |                           | Memory mib per infra node |
 | `infra-nodes-numcores-per-socket`   | int               |                           | Number of CPU Cores per socket |
