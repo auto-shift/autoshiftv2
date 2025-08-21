@@ -7,7 +7,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-odf-console-plugin
+  name: policy-storage-cluster-test
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -15,7 +15,7 @@ metadata:
     policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
 spec:
   dependencies:
-    - name: policy-storage-cluster-test
+    - name: policy-odf-operator-install
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -26,25 +26,35 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: policy-odf-console-plugin-enable
+          name: storage-cluster-install-test
         spec:
-          remediationAction: enforce
+          remediationAction: inform
           severity: high
           object-templates:
             - complianceType: musthave
               objectDefinition:
-                apiVersion: operator.openshift.io/v1
-                kind: Console
+                apiVersion: ocs.openshift.io/v1
+                kind: StorageCluster
                 metadata:
-                  name: cluster
-                spec:
-                  plugins:
-                    - odf-console
+                  name: ocs-storagecluster
+                  namespace: {{ .Values.odf.namespace }}
+                status:
+                  conditions:
+                    - status: 'False'
+                      type: VersionMismatch
+                    - status: 'True'
+                      type: ReconcileComplete
+                    - status: 'True'
+                      type: Available
+                    - status: 'False'
+                      type: Progressing
+                    - status: 'False'
+                      type: Degraded
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-odf-console-plugin
+  name: placement-policy-storage-cluster-test
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -71,13 +81,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-odf-console-plugin
+  name: placement-policy-storage-cluster-test
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-odf-console-plugin
+  name: placement-policy-storage-cluster-test
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-odf-console-plugin
+  - name: policy-storage-cluster-test
     apiGroup: policy.open-cluster-management.io
     kind: Policy
