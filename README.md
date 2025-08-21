@@ -414,6 +414,16 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `local-storage-source-namespace`      | String            |                           |       |
 | `local-storage-install-plan-approval` | String            |                           |       |
 
+### Cert Manager Operator
+
+| Variable                              | Type              | Default Value             | Notes |
+|---------------------------------------|-------------------|---------------------------|-------|
+| `cert-manager`                        | bool              |                           | If not set, Cert Manager will not be managed. |
+| `cert-manager-install-plan-approval`  | String            | `Automatic`               |       |
+| `cert-manager-source`                 | String            | `redhat-operators`        |       |
+| `cert-manager-source-namespace`       | String            | `openshift-marketplace`   |       |
+| `cert-manager-channel`                | String            | `stable-v1`               |       |
+
 ### OpenShift Data Foundation
 
 | Variable                          | Type              | Default Value             | Notes |
