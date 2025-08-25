@@ -29,7 +29,7 @@ spec:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
-                  name: {{ .Values.acm_observability.namespace }}
+                  name: open-cluster-management-observability
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -45,7 +45,7 @@ spec:
                 kind: ObjectBucketClaim
                 metadata:
                   name: acm-observability
-                  namespace: {{ .Values.acm_observability.namespace }}
+                  namespace: open-cluster-management-observability
                 spec:
                   storageClassName: openshift-storage.noobaa.io
                   generateBucketName: acm-observability
@@ -64,24 +64,24 @@ spec:
                 kind: Secret
                 metadata:
                   name: thanos-object-storage
-                  namespace: {{ .Values.acm_observability.namespace }}
+                  namespace: open-cluster-management-observability
                 type: Opaque
                 stringData:
                   thanos.yaml: |
                     type: s3
                     config:
-                      bucket: {{`{{ fromConfigMap "acm-observability" "{{ .Values.acm_observability.namespace }}" "BUCKET_NAME" }}`}}
+                      bucket: {{`{{ fromConfigMap "acm-observability" "open-cluster-management-observability" "BUCKET_NAME" }}`}}
                       endpoint: {{`{{ (lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3").spec.host }}`}}
                       insecure: false
-                      access_key: {{`{{ fromSecret "acm-observability" "{{ .Values.acm_observability.namespace }}" "AWS_ACCESS_KEY_ID" }}`}}
-                      secret_key: {{`{{ fromSecret "acm-observability" "{{ .Values.acm_observability.namespace }}" "AWS_SECRET_ACCESS_KEY" }}`}}
+                      access_key: {{`{{ fromSecret "acm-observability" "open-cluster-management-observability" "AWS_ACCESS_KEY_ID" }}`}}
+                      secret_key: {{`{{ fromSecret "acm-observability" "open-cluster-management-observability" "AWS_SECRET_ACCESS_KEY" }}`}}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: observability.open-cluster-management.io/v1beta2
                 kind: MultiClusterObservability
                 metadata:
                   name: observability
-                  namespace: {{ .Values.acm_observability.namespace }}
+                  namespace: open-cluster-management-observability
                 spec:
                   observabilityAddonSpec: {}
                   storageConfig:
