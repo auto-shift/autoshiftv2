@@ -207,11 +207,12 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | Variable                    | Type      | Default Value             |
 |-----------------------------|-----------|---------------------------|
 | `self-managed`              | bool      | `true` or `false`         |
-| `acm-channel`               | string    | `release-2.13`            |
+| `acm-channel`               | string    | `release-2.14`            |
 | `acm-install-plan-approval` | string    | `Automatic`               |
 | `acm-source`                | string    | `redhat-operators`        |
 | `acm-source-namespace`      | string    | `openshift-marketplace`   |
-| `acm-availability-config`   | string    | `basic` or `high`         |
+| `acm-availability-config`   | string    | `Basic` or `High`         |
+| `acm-observability`         | string    | `true` or `false` this will enable observability utilizing a nooba bucket for acm. ODF will have to be enabled as well |
 
 ### MetalLB
 
