@@ -15,7 +15,7 @@ metadata:
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
   remediationAction: enforce
-  disabled: true
+  disabled: false
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -25,21 +25,35 @@ spec:
         spec:
           remediationAction: inform # will be overridden by remediationAction in parent policy
           severity: high
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                kind: PersistentVolumeClaim
-                apiVersion: v1
-                metadata:
-                  name: image-registry-storage
-                  namespace: openshift-image-registry
-                spec:
-                  accessModes:
-                    - ReadWriteOnce
-                  resources:
-                    requests:
-                      storage: 100Gi
-                  volumeMode: Filesystem
+          object-templates-raw: |
+              {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}}`}}
+              - complianceType: musthave
+                objectDefinition:
+                  kind: PersistentVolumeClaim
+                  apiVersion: v1
+                  metadata:
+                    name: image-registry-storage
+                    namespace: openshift-image-registry
+                  spec:
+                    accessModes:
+                      - {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-access-mode" hub}}`}}
+                    resources:
+                      requests:
+                        storage: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage" | default "100Gi" hub}}`}}
+                    volumeMode: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-volume-mode" | default "Filesystem" hub}}`}}
+                    storageClassName: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage-class" hub}}`}}
+              {{`{{hub- else if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: objectbucket.io/v1alpha1
+                  kind: ObjectBucketClaim
+                  metadata:
+                    name: image-registry-storage
+                    namespace: openshift-image-registry
+                  spec:
+                    storageClassName: openshift-storage.noobaa.io
+                    generateBucketName: image-registry-storage
+              {{`{{hub- end hub}}`}}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -54,6 +68,14 @@ spec:
   {{- range $clusterSet, $value := .Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/imageregistry'
+              operator: In
+              values:
+                - 'true'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

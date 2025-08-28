@@ -18,12 +18,37 @@ hubClusterSets:
   hub:
     labels:
       self-managed: 'true'
+      ### OpenShift Gitops
+      gitops: 'true' # is expected to be installed on all hub clusters
+      gitops-channel: latest
+      gitops-install-plan-approval: Automatic
+      gitops-source: redhat-operators
+      gitops-source-namespace: openshift-marketplace
       ### Advance Cluster Manager
-      acm-channel: release-2.13
+      acm-channel: release-2.14
       acm-install-plan-approval: Automatic
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'High'
+      acm-observability: 'true'
+      ### MetalLB
+      metallb: 'true'
+      metallb-source: redhat-operators
+      metallb-source-namespace: openshift-marketplace
+      metallb-install-plan-approval: Automatic
+      metallb-channel: stable
+      metallb-quota: 'false'
+      # Set your quota if metallb-quota is enabled
+      metallb-quota-cpu: ''
+      metallb-quota-memory:
+      # Specify the names of your IPPool files here
+      metallb-ippool-1: ''
+      #Specify your L2 Advertisement files here
+      metallb-l2-1: ''
+      # Specify the names of your BGP Advertisement files here
+      metallb-bgp-1: ''
+      # Specify the names of your Peer files here
+      metallb-peer-1: ''
       ### Infrastructure Nodes
       infra-nodes: ''
       infra-nodes-numcpu: ''
@@ -44,6 +69,8 @@ hubClusterSets:
       # storage-nodes-region: 'us-east-2'
       storage-nodes-instance-type: 'm6in.8xlarge'
       storage-nodes-provider: aws
+      # storage-nodes-node-[iterator]: node-1 # For use with baremetal
+      # storage-nodes-node-[iterator]: node-2 # For use with baremetal
       storage-nodes-numcpu: ''
       storage-nodes-memory-mib: ''
       storage-nodes-numcores-per-socket: ''
@@ -78,6 +105,17 @@ hubClusterSets:
       odf-install-plan-approval: Automatic
       odf-source: redhat-operators
       odf-source-namespace: openshift-marketplace
+      ### OpenShift Internal Registry
+      imageregistry: 'false'
+      imageregistry-management-state: Managed
+      imageregistry-replicas: '3'
+      imageregistry-storage-type: s3 # pvc
+      imageregistry-s3-region: us-east-2
+      imageregistry-pvc-access-mode: ReadWriteMany
+      imageregistry-pvc-size: 100Gi
+      imageregistry-pvc-storage-class: ocs-storagecluster-ceph-rbd
+      imageregistry-pvc-volume-mode: Block
+      imageregistry-rollout-strategy: RollingUpdate
       ### Kubernetes NMState Operator
       nmstate: 'false'
       # Example nmstate-nncp labels. Label must start with nmstate-nncp
@@ -122,8 +160,10 @@ hubClusterSets:
       quay-source-namespace: openshift-marketplace
       ### Developer OpenShift Gitops
       gitops-dev: 'true'
+      gitops-dev-team-test: 'hub' #hub or standalone
+      # gitops-dev-team-{INSERT_TEAM_NAME}
       ### Loki
-      loki: 'true' 
+      loki: 'true'
       loki-channel: stable-6.2
       loki-install-plan-approval: Automatic
       loki-source: redhat-operators
@@ -196,7 +236,7 @@ managedClusterSets:
       odf-ocs-storage-count: ''
       odf-ocs-storage-replicas: ''
       odf-resource-profile: balanced
-      odf-channel: stable-4.17
+      odf-channel: stable-4.18
       odf-install-plan-approval: Automatic
       odf-source: redhat-operators
       odf-source-namespace: openshift-marketplace
@@ -238,9 +278,10 @@ managedClusterSets:
       quay-source-namespace: '' # openshift-marketplace
       ### Developer OpenShift Gitops
       gitops-dev: 'true'
-      gitops-dev-team-dev: 'true'
+      gitops-dev-team-test: 'hub' #hub or standalone
+      # gitops-dev-team-{INSERT_TEAM_NAME}
       ### Loki
-      loki: 'true' 
+      loki: 'true'
       loki-channel: stable-6.2
       loki-install-plan-approval: Automatic
       loki-source: redhat-operators

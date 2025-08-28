@@ -1,8 +1,7 @@
 # This policy verifies the installation of the official & supported version of
-# the Advanced Cluster Operator on the hub cluster.
+# the GitOps Operator.
 #
 # Note that OpenShift 4.18 is required.
-{{- if .Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -61,6 +60,17 @@ spec:
   {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops'
+              operator: In
+              values:
+              - 'true'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
@@ -80,4 +90,3 @@ subjects:
   - name: policy-gitops-operator-install
     apiGroup: policy.open-cluster-management.io
     kind: Policy
-{{- end }}
