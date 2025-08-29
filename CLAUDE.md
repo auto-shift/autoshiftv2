@@ -92,6 +92,40 @@ AutoShiftv2 uses a three-tiered configuration system with precedence: **cluster 
 - `autoshift/values.sbx.yaml`: Sandbox environment configuration
 - `policies/*/values.yaml`: Individual policy default values
 
+### Identifying Configuration Variables
+When documenting or working with policy configurations, **always check the actual policy templates** rather than relying solely on values.yaml files. Look for:
+
+1. **ManagedClusterLabels references** in templates:
+   ```yaml
+   index .ManagedClusterLabels "autoshift.io/gitops-channel"
+   ```
+
+2. **Placement matchExpressions** that show required labels:
+   ```yaml
+   matchExpressions:
+     - key: 'autoshift.io/gitops'
+       operator: In
+       values:
+       - 'true'
+   ```
+
+3. **Template variables** like:
+   ```yaml
+   channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/gitops-channel" | default "{{ .Values.gitops.channel }}" hub{{ "}}" }}'
+   ```
+
+Search commands to find actual label usage:
+```bash
+# Find all ManagedClusterLabels references
+grep -r "ManagedClusterLabels" policies/*/templates/
+
+# Find all autoshift.io labels
+grep -r "autoshift\.io/" policies/*/templates/
+
+# Find placement match expressions
+grep -A5 "matchExpressions:" policies/*/templates/
+```
+
 ### Feature Flags
 Components are enabled/disabled using boolean labels like:
 - `metallb: 'true'` - Enable MetalLB
