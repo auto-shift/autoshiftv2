@@ -8,13 +8,9 @@ What AutoShift does is it uses OpenShift GitOps to declaratively manage RHACM wh
 
 ## Architecture
 
-AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert.
+AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert. RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass, with built-in governance, cluster lifecycle management, application lifecycle management, and observability features. OpenShift GitOps provides declarative GitOps for multicluster continuous delivery.
 
-RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass. RHACM provides built-in governance, cluster lifecycle management, application lifecycle management, and observability feature
-
-OpenShift GitOps provides declarative GitOps for multicluster continuous delivery.
-
-The hub cluster is the main cluster with RHACM with its core components installed on it, and is also hosting our OpenShift GitOps instance that we are using to declaratively manage RHACM.
+The hub cluster is the main cluster with RHACM and its core components installed on it, and is also hosting the OpenShift GitOps instance that declaratively manages RHACM.
 
 ### Hub Architecture
 ![alt text](images/AutoShiftv2-Hub.jpg)
@@ -212,7 +208,11 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | `acm-source`                | string    | `redhat-operators`        |
 | `acm-source-namespace`      | string    | `openshift-marketplace`   |
 | `acm-availability-config`   | string    | `Basic` or `High`         |
-| `acm-observability`         | string    | `true` or `false` this will enable observability utilizing a nooba bucket for acm. ODF will have to be enabled as well |
+| `acm-observability`         | bool      | `true` or `false` this will enable observability utilizing a nooba bucket for acm. ODF will have to be enabled as well |
+
+### Cluster Labels
+
+Manages the automated cluster labeling system that applies `autoshift.io/` prefixed labels to clusters and cluster sets. This policy automatically propagates labels from cluster sets to individual clusters and manages the label hierarchy.
 
 ### MetalLB
 
@@ -231,14 +231,17 @@ Values can be set on a per cluster and clusterset level to decide what features 
 | `metallb-bgp-1`                     | string            |                           | Name of config file for BGP Advertisement (copy this value if more than one, increasing number each time) |
 | `metallb-peer-1`                    | string            |                           | Name of config file for BGP Peer (copy this value if more than one, increasing number each time) |
 
-### OpenShift Gitops
+### OpenShift GitOps
 
-| Variable                        | Type      | Default Value             |
-|---------------------------------|-----------|---------------------------|
-| `gitops-channel`                | string    | `latest`                  |
-| `gitops-install-plan-approval`  | string    | `Manual` or `Automatic`   |
-| `gitops-source`                 | string    | `redhat-operators`        |
-| `gitops-source-namespace`       | string    | `openshift-marketplace`   |
+Manages the OpenShift GitOps operator installation and systems ArgoCD instance. This policy ensures the GitOps operator is installed and creates the main ArgoCD instance used by AutoShift to declaratively manage all cluster configurations.
+
+| Variable                        | Type      | Default Value             | Notes |
+|---------------------------------|-----------|---------------------------|-------|
+| `gitops`                        | bool      |                           | If not set to `true`, OpenShift GitOps will not be managed |
+| `gitops-channel`                | string    | `latest`                  | Operator channel for GitOps updates |
+| `gitops-install-plan-approval`  | string    | `Automatic`               | Controls automatic operator upgrades |
+| `gitops-source`                 | string    | `redhat-operators`        | Operator catalog source |
+| `gitops-source-namespace`       | string    | `openshift-marketplace`   | Namespace for operator catalog |
 
 ### Master Nodes
 
@@ -249,15 +252,24 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `master-nodes`                    | bool              | `false`                   |       |
 | `master-max-pods`                 | Int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
 
+### Machine Health Checks
+
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `machine-health-checks`           | bool              |                           | If not set Machine Health Checks will not be managed |
+| `machine-health-checks-zones`     | <list<String>>    |                           | List of availability zones for health checks. Automated node health monitoring and remediation |
+
 ### Infra Nodes
 
 | Variable                            | Type              | Default Value             | Notes |
 |-------------------------------------|-------------------|---------------------------|-------|
-| `infra-nodes`                       | int               |                           | Number of infra nodes min if autoscale. If not set infra nodes are not managed, if 0 infra nodes will be deleted |
+| `infra-nodes`                       | int               |                           | Number of infra nodes. If not set infra nodes are not managed, if 0 infra nodes will be deleted |
+| `infra-nodes-provider`              | string            |                           | Provider type - 'aws', 'vmware', or 'test' |
+| `infra-nodes-instance-type`         | string            |                           | AWS instance type |
 | `infra-nodes-numcpu`                | int               |                           | Number of cpu per infra node |
 | `infra-nodes-memory-mib`            | int               |                           | Memory mib per infra node |
 | `infra-nodes-numcores-per-socket`   | int               |                           | Number of CPU Cores per socket |
-| `infra-nodes-zones`                 | <list<String>>    |                           | List of availability zones |
+| `infra-nodes-zone-[number]`         | string            |                           | Availability zone (e.g., infra-nodes-zone-1: 'us-east-2a') |
 
 
 
@@ -279,7 +291,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `storage-nodes-numcpu`              | int            |               | Number of cpu per storage node  |
 | `storage-nodes-memory-mib`          | int            |               | Memory mib per storage node |
 | `storage-nodes-numcores-per-socket` | int            |               | Number of CPU Cores per socket |
-| `storage-nodes-zones`               | <list<String>> |               | list of availability zones |
+| `storage-nodes-zone-[number]`       | string         |               | Availability zone (e.g., storage-nodes-zone-1: 'us-east-2a') |
 | `storage-nodes-instance-type`       | string         |               | Instance type for cloud provider |
 | `storage-nodes-provider`            | string         |               | Provider type; valid choices: aws, vmware, baremetal |
 | `storage-nodes-node-[iterator]`     | <list<String>> |               | List of node names to apply storage label to. Used for baremetal where MachineSets aren't used. |
@@ -344,6 +356,16 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `quay-source`                     | String            | `redhat-operators`        |       |
 | `quay-source-namespace`           | String            | `openshift-marketplace`   |       |
 
+### OpenShift Virtualization
+
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `virt`                            | bool              |                           | If not set OpenShift Virtualization will not be managed |
+| `virt-channel`                    | String            | `stable`                  | KubeVirt-based virtualization platform for running VMs on OpenShift |
+| `virt-install-plan-approval`      | String            | `Automatic`               |       |
+| `virt-source`                     | String            | `redhat-operators`        |       |
+| `virt-source-namespace`           | String            | `openshift-marketplace`   |       |
+
 ### Developer OpenShift Gitops
 
 | Variable                              | Type              | Default Value             | Notes |
@@ -400,6 +422,10 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `lvm`                                 | bool              | `false`                   | If not set the LVM Operator will not be managed |
+| `lvm-channel`                         | String            | `stable-4.18`             | Operator channel |
+| `lvm-install-plan-approval`           | String            | `Automatic`               | 'Automatic' or 'Manual' |
+| `lvm-source`                          | String            | `redhat-operators`        | Operator catalog source |
+| `lvm-source-namespace`                | String            | `openshift-marketplace`   | Catalog namespace |
 | `lvm-default`                         | bool              | `true`                    | Sets the lvm-operator as the default Storage Class |
 | `lvm-fstype`                          | String            | `xfs`                     | Options `xfs` `ext4` |
 | `lvm-size-percent`                    | Int               | `90`                      | Percentage of the Volume Group to use for the thinpool |
@@ -410,10 +436,10 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `local-storage`                       | bool              |                           | if not set to true, local storage will not be managed or deployed. |
-| `local-storage-channel`               | String            |                           |       |
-| `local-storage-source`                | String            |                           |       |
-| `local-storage-source-namespace`      | String            |                           |       |
-| `local-storage-install-plan-approval` | String            |                           |       |
+| `local-storage-channel`               | String            | `stable`                  | Operator channel |
+| `local-storage-source`                | String            | `redhat-operators`        | Operator catalog source |
+| `local-storage-source-namespace`      | String            | `openshift-marketplace`   | Catalog namespace |
+| `local-storage-install-plan-approval` | String            | `Automatic`               | 'Automatic' or 'Manual' |
 
 ### OpenShift Data Foundation
 
@@ -443,9 +469,17 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `imageregistry-storage-type`      | String            |                           | Supported `s3` or `pvc`, s3 only supports Nooban|
 | `imageregistry-s3-region`         | String            |                           |  if type is `s3` you can specify a region |
 | `imageregistry-pvc-access-mode`   | String            |                           | Example `ReadWriteMany`  |
+| `imageregistry-pvc-storage`       | String            | `100Gi`                   | PVC size (default: '100Gi') |
 | `imageregistry-pvc-storage-class` | String            |                           | Example `ocs-storagecluster-ceph-rbd` |
-| `imageregistry-pvc-volume-mode`   | String            |                           | Example `Block` or `FileSystem` |
-| `imageregistry-rollout-strategy`  | String            | `RollingUpdate`           | Example `RollingUpdate` if at least 2 or `Recreate` if only 1 |
+| `imageregistry-pvc-volume-mode`   | String            | `Filesystem`              | Example `Block` or `Filesystem` |
+| `imageregistry-rollout-strategy`  | String            | `Recreate`                | Example `RollingUpdate` if at least 2 or `Recreate` if only 1 |
+
+### OpenShift DNS
+
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `dns-tolerations`                 | bool              |                           | If set, applies DNS operator tolerations for specialized node configurations |
+| `dns-node-placement`              | String            |                           | Node placement configuration for DNS pods |
 
 ### Kubernetes NMState Operator
 
@@ -453,12 +487,21 @@ The Kubernetes NMState Operator can be used to declaratively configure the Red H
 
 | Variable                        | Type           | Default Value         | Notes                                                                             |
 | ------------------------------- | -------------- | --------------------- | --------------------------------------------------------------------------------- |
-| `nmsate`                        | bool           | false                 | If not set the Kubernetes NMState Operator will not be managed                    |
-| `nmstate-nncp`                  | <list<string>> | omitted               | Filename of NMState config that exists in files. Can be specified multiple times. |
+| `nmstate`                       | bool           | false                 | If not set the Kubernetes NMState Operator will not be managed                    |
+| `nmstate-nncp-<name>`           | string         | omitted               | Filename of NMState config that exists in files. Can be specified multiple times with unique suffixes. |
 | `nmstate-channel`               | string         | stable                |                                                                                   |
 | `nmstate-install-plan-approval` | string         | Automatic             |                                                                                   |
 | `nmstate-source`                | string         | redhat-operators      |                                                                                   |
 | `nmstate-source-namespace`      | string         | openshift-marketplace |                                                                                   |
+
+### Manual Remediations
+
+Provides manual fixes and configurations that cannot be automated through operators, including managing allowed image registries for enhanced security.
+
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `manual-remediations`             | bool              |                           | If not set Manual Remediations will not be managed |
+| `allowed-registries`              | <list<String>>    |                           | List of allowed container image registries. Controls which registries can be used for pulling images |
 
 ## References
 
