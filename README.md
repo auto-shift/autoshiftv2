@@ -212,15 +212,15 @@ Values can be set on a per cluster and clusterset level to decide what features 
 > [!WARNING]
 > Hub Clusters Only
 
-| Variable                    | Type      | Default Value             |
-|-----------------------------|-----------|---------------------------|
-| `self-managed`              | bool      | `true` or `false`         |
-| `acm-channel`               | string    | `release-2.14`            |
-| `acm-install-plan-approval` | string    | `Automatic`               |
-| `acm-source`                | string    | `redhat-operators`        |
-| `acm-source-namespace`      | string    | `openshift-marketplace`   |
-| `acm-availability-config`   | string    | `Basic` or `High`         |
-| `acm-observability`         | bool      | `true` or `false` this will enable observability utilizing a nooba bucket for acm. ODF will have to be enabled as well |
+| Variable                    | Type      | Default Value             | Notes |
+|-----------------------------|-----------|---------------------------|-------|
+| `self-managed`              | bool      | `true` or `false`         |       |
+| `acm-channel`               | string    | `release-2.14`            |       |
+| `acm-install-plan-approval` | string    | `Automatic`               |       |
+| `acm-source`                | string    | `redhat-operators`        |       |
+| `acm-source-namespace`      | string    | `openshift-marketplace`   |       |
+| `acm-availability-config`   | string    | `Basic` or `High`         |       |
+| `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a nooba bucket for acm. ODF will have to be enabled as well |
 
 ### Cluster Labels
 
@@ -272,7 +272,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `master-nodes`                    | bool              | `false`                   |       |
-| `master-max-pods`                 | Int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
+| `master-max-pods`                 | int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
 
 ### Machine Health Checks
 
@@ -378,20 +378,20 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `quay`                            | bool              |                           | If not set Quay will not be managed |
-| `quay-channel`                    | String            | `stable-3.13`             |       |
-| `quay-install-plan-approval`      | String            | `Automatic`               |       |
-| `quay-source`                     | String            | `redhat-operators`        |       |
-| `quay-source-namespace`           | String            | `openshift-marketplace`   |       |
+| `quay-channel`                    | string            | `stable-3.13`             |       |
+| `quay-install-plan-approval`      | string            | `Automatic`               |       |
+| `quay-source`                     | string            | `redhat-operators`        |       |
+| `quay-source-namespace`           | string            | `openshift-marketplace`   |       |
 
 ### OpenShift Virtualization
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `virt`                            | bool              |                           | If not set OpenShift Virtualization will not be managed |
-| `virt-channel`                    | String            | `stable`                  | KubeVirt-based virtualization platform for running VMs on OpenShift |
-| `virt-install-plan-approval`      | String            | `Automatic`               |       |
-| `virt-source`                     | String            | `redhat-operators`        |       |
-| `virt-source-namespace`           | String            | `openshift-marketplace`   |       |
+| `virt-channel`                    | string            | `stable`                  | KubeVirt-based virtualization platform for running VMs on OpenShift |
+| `virt-install-plan-approval`      | string            | `Automatic`               |       |
+| `virt-source`                     | string            | `redhat-operators`        |       |
+| `virt-source-namespace`           | string            | `openshift-marketplace`   |       |
 
 ### Developer OpenShift Gitops
 
@@ -449,10 +449,10 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `lvm`                                 | bool              | `false`                   | If not set the LVM Operator will not be managed |
-| `lvm-channel`                         | String            | `stable-4.18`             | Operator channel |
-| `lvm-install-plan-approval`           | String            | `Automatic`               | 'Automatic' or 'Manual' |
-| `lvm-source`                          | String            | `redhat-operators`        | Operator catalog source |
-| `lvm-source-namespace`                | String            | `openshift-marketplace`   | Catalog namespace |
+| `lvm-channel`                         | string            | `stable-4.18`             | Operator channel |
+| `lvm-install-plan-approval`           | string            | `Automatic`               | 'Automatic' or 'Manual' |
+| `lvm-source`                          | string            | `redhat-operators`        | Operator catalog source |
+| `lvm-source-namespace`                | string            | `openshift-marketplace`   | Catalog namespace |
 | `lvm-default`                         | bool              | `true`                    | Sets the lvm-operator as the default Storage Class |
 | `lvm-fstype`                          | string            | `xfs`                     | Options `xfs` `ext4` |
 | `lvm-size-percent`                    | int               | `90`                      | Percentage of the Volume Group to use for the thinpool |
@@ -463,10 +463,10 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `local-storage`                       | bool              |                           | if not set to true, local storage will not be managed or deployed. |
-| `local-storage-channel`               | String            | `stable`                  | Operator channel |
-| `local-storage-source`                | String            | `redhat-operators`        | Operator catalog source |
-| `local-storage-source-namespace`      | String            | `openshift-marketplace`   | Catalog namespace |
-| `local-storage-install-plan-approval` | String            | `Automatic`               | 'Automatic' or 'Manual' |
+| `local-storage-channel`               | string            | `stable`                  | Operator channel |
+| `local-storage-source`                | string            | `redhat-operators`        | Operator catalog source |
+| `local-storage-source-namespace`      | string            | `openshift-marketplace`   | Catalog namespace |
+| `local-storage-install-plan-approval` | string            | `Automatic`               | 'Automatic' or 'Manual' |
 
 ### OpenShift Data Foundation
 
@@ -490,23 +490,23 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 ### OpenShift Internal Registry
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
-| `imageregistry`                   | Bool              | `false`                   | If not set OpenShift Internal Image Registry will not be managed. |
-| `imageregistry-management-state`  | String            | `Managed`                 |  can be set to `Managed` and `Unmanaged`, though only `Managed` is supported |
-| `imageregistry-replicas`          | Integer           |                           | Need at least `2`, as well as read write many storage or object/s3 storage in order support HA and Rolling Updates |
-| `imageregistry-storage-type`      | String            |                           | Supported `s3` or `pvc`, s3 only supports Nooban|
-| `imageregistry-s3-region`         | String            |                           |  if type is `s3` you can specify a region |
-| `imageregistry-pvc-access-mode`   | String            |                           | Example `ReadWriteMany`  |
-| `imageregistry-pvc-storage`       | String            | `100Gi`                   | PVC size (default: '100Gi') |
-| `imageregistry-pvc-storage-class` | String            |                           | Example `ocs-storagecluster-ceph-rbd` |
-| `imageregistry-pvc-volume-mode`   | String            | `Filesystem`              | Example `Block` or `Filesystem` |
-| `imageregistry-rollout-strategy`  | String            | `Recreate`                | Example `RollingUpdate` if at least 2 or `Recreate` if only 1 |
+| `imageregistry`                   | bool              | `false`                   | If not set OpenShift Internal Image Registry will not be managed |
+| `imageregistry-management-state`  | string            | `Managed`                 | Can be set to `Managed` and `Unmanaged`, though only `Managed` is supported |
+| `imageregistry-replicas`          | int               |                           | Need at least `2`, as well as read write many storage or object/s3 storage in order support HA and Rolling Updates |
+| `imageregistry-storage-type`      | string            |                           | Supported `s3` or `pvc`, s3 only supports Nooba |
+| `imageregistry-s3-region`         | string            |                           | If type is `s3` you can specify a region |
+| `imageregistry-pvc-access-mode`   | string            |                           | Example `ReadWriteMany` |
+| `imageregistry-pvc-storage`       | string            | `100Gi`                   | PVC size (default: '100Gi') |
+| `imageregistry-pvc-storage-class` | string            |                           | Example `ocs-storagecluster-ceph-rbd` |
+| `imageregistry-pvc-volume-mode`   | string            | `Filesystem`              | Example `Block` or `Filesystem` |
+| `imageregistry-rollout-strategy`  | string            | `Recreate`                | Example `RollingUpdate` if at least 2 or `Recreate` if only 1 |
 
 ### OpenShift DNS
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `dns-tolerations`                 | bool              |                           | If set, applies DNS operator tolerations for specialized node configurations |
-| `dns-node-placement`              | String            |                           | Node placement configuration for DNS pods |
+| `dns-node-placement`              | string            |                           | Node placement configuration for DNS pods |
 
 ### Kubernetes NMState Operator
 
