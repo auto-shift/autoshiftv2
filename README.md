@@ -214,11 +214,6 @@ Values can be set on a per cluster and clusterset level to decide what features 
 
 Manages the automated cluster labeling system that applies `autoshift.io/` prefixed labels to clusters and cluster sets. This policy automatically propagates labels from cluster sets to individual clusters and manages the label hierarchy.
 
-| Variable                    | Type      | Default Value             | Notes |
-|-----------------------------|-----------|---------------------------|-------|
-| `cluster-labels`            | bool      | `true`                    | If not set Cluster Labels management will not be enabled |
-| `cluster-labels-prefix`    | string    | `autoshift.io/`           | Prefix for all managed labels |
-
 ### MetalLB
 
 | Variable                            | Type              | Default Value             | Notes |
