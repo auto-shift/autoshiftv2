@@ -1,11 +1,10 @@
-# This policy verifies the installation of the official & supported version of
-# the GitOps Operator.
-#
-# Note that OpenShift 4.18 is required.
+{{- $policyName := "policy-{{COMPONENT_NAME}}-operator-install" }}
+{{- $placementName := "placement-policy-{{COMPONENT_NAME}}-operator-install" }}
+
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-gitops-operator-install
+  name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -18,7 +17,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: gitops-operator-ns
+          name: {{COMPONENT_NAME}}-operator-ns
         spec:
           remediationAction: enforce
           severity: high
@@ -28,32 +27,37 @@ spec:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
-                  name: {{ .Values.gitops.namespace }}
+                  name: {{ .Values.{{COMPONENT_CAMEL}}.namespace }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
         metadata:
-          name: install-gitops-operator
+          name: install-{{COMPONENT_NAME}}
         spec:
           remediationAction: enforce
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.gitops.namespace }}
-            namespace: {{ .Values.gitops.namespace }}
+            name: {{ .Values.{{COMPONENT_CAMEL}}.operatorGroupName }}
+            namespace: {{ .Values.{{COMPONENT_CAMEL}}.namespace }}
+            {{- if .Values.{{COMPONENT_CAMEL}}.targetNamespaces }}
+            targetNamespaces:
+              {{- range .Values.{{COMPONENT_CAMEL}}.targetNamespaces }}
+              - {{ . }}
+              {{- end }}
+            {{- end }}
           subscription:
-            namespace: {{ .Values.gitops.namespace }}
-            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/gitops-channel" | default "{{ .Values.gitops.channel }}" hub{{ "}}" }}'
-            name: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/gitops-subscription-name" | default "{{ .Values.gitops.name }}" hub{{ "}}" }}'
-            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/gitops-source" | default "{{ .Values.gitops.source }}" hub{{ "}}" }}'
-            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/gitops-source-namespace" | default "{{ .Values.gitops.sourceNamespace }}" hub{{ "}}" }}'
-          # Getting Label and then capitalizing first letter
-          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/gitops-install-plan-approval" | default "{{ .Values.gitops.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+            namespace: {{ .Values.{{COMPONENT_CAMEL}}.namespace }}
+            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/{{COMPONENT_NAME}}-channel" | default "{{ .Values.{{COMPONENT_CAMEL}}.channel }}" hub{{ "}}" }}'
+            name: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/{{COMPONENT_NAME}}-subscription-name" | default "{{ .Values.{{COMPONENT_CAMEL}}.name }}" hub{{ "}}" }}'
+            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/{{COMPONENT_NAME}}-source" | default "{{ .Values.{{COMPONENT_CAMEL}}.source }}" hub{{ "}}" }}'
+            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/{{COMPONENT_NAME}}-source-namespace" | default "{{ .Values.{{COMPONENT_CAMEL}}.sourceNamespace }}" hub{{ "}}" }}'
+          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/{{COMPONENT_NAME}}-install-plan-approval" | default "{{ .Values.{{COMPONENT_CAMEL}}.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-gitops-operator-install
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -67,7 +71,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/gitops'
+            - key: 'autoshift.io/{{COMPONENT_NAME}}'
               operator: In
               values:
               - 'true'
@@ -80,13 +84,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-gitops-operator-install
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-gitops-operator-install
+  name: {{ $placementName }}
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-gitops-operator-install
+  - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy
