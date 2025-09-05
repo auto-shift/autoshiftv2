@@ -209,6 +209,5 @@ cat /workspace/containers/auth.json
 
 ## Related Documentation
 
-- [Main AutoShift oc-mirror README](../README-oc-mirror.md)
 - [AutoShift Documentation](../README.md)
 - [OpenShift Disconnected Installation](https://docs.openshift.com/container-platform/latest/installing/disconnected_install/installing-mirroring-disconnected.html)
