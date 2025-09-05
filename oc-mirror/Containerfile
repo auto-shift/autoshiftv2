@@ -1,0 +1,87 @@
+# Containerfile for oc-mirror with AutoShift integration
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+# Install runtime dependencies
+RUN microdnf update -y && \
+    microdnf install -y ca-certificates wget tar gzip bash jq findutils && \
+    microdnf clean all
+
+# We'll download oc-mirror after copying values file to get the version dynamically
+
+# Create non-root user
+RUN useradd -r -u 1001 -g root oc-mirror-user
+
+# Create working directory and AutoShift structure
+WORKDIR /workspace
+RUN mkdir -p /workspace/autoshift /workspace/scripts /workspace/cache && \
+    chown -R 1001:0 /workspace && chmod -R g+rwX /workspace
+
+# Set environment variables for oc-mirror v2
+ENV HOME=/workspace
+ENV XDG_CACHE_HOME=/workspace/cache
+ENV XDG_RUNTIME_DIR=/workspace
+
+# Copy AutoShift scripts and values files
+COPY scripts/generate-imageset-config.sh /workspace/scripts/
+COPY autoshift/values.hub.yaml /workspace/autoshift/
+RUN chmod +x /workspace/scripts/generate-imageset-config.sh && \
+    chown -R 1001:0 /workspace
+
+# Download and install oc and oc-mirror binaries
+RUN OCP_VERSION=$(grep -E "^[[:space:]]*openshift-version:" /workspace/autoshift/values.hub.yaml | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"') && \
+    if [[ "$OCP_VERSION" =~ ^([0-9]+\.[0-9]+) ]]; then \
+        OCP_MAJOR_MINOR="${BASH_REMATCH[1]}"; \
+    else \
+        OCP_MAJOR_MINOR="4.18"; \
+    fi && \
+    echo "Detected OpenShift version: $OCP_VERSION (using latest stable oc-mirror, versioned oc client)" && \
+    ARCH=$(uname -m) && \
+    cd /tmp && \
+    if [ "$ARCH" = "aarch64" ]; then \
+        # Download latest stable oc-mirror (recommended for compatibility) \
+        wget -q https://mirror.openshift.com/pub/openshift-v4/arm64/clients/ocp/stable/oc-mirror.tar.gz && \
+        # Download oc client matching OpenShift version \
+        wget -q https://mirror.openshift.com/pub/openshift-v4/arm64/clients/ocp/stable-${OCP_MAJOR_MINOR}/openshift-client-linux.tar.gz; \
+    else \
+        # Download latest stable oc-mirror (recommended for compatibility) \
+        wget -q https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/oc-mirror.tar.gz && \
+        # Download oc client matching OpenShift version \
+        wget -q https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable-${OCP_MAJOR_MINOR}/openshift-client-linux.tar.gz; \
+    fi && \
+    # Install oc-mirror \
+    tar -xzf oc-mirror.tar.gz && \
+    mv oc-mirror /usr/local/bin/ && \
+    chmod +x /usr/local/bin/oc-mirror && \
+    # Install oc client \
+    tar -xzf openshift-client-linux.tar.gz && \
+    mv oc /usr/local/bin/ && \
+    mv kubectl /usr/local/bin/ && \
+    chmod +x /usr/local/bin/oc /usr/local/bin/kubectl && \
+    # Cleanup \
+    rm -f oc-mirror.tar.gz openshift-client-linux.tar.gz README.md
+
+# Copy pull secret file (will be moved at runtime)
+COPY pull-secret.txt /workspace/
+
+# Copy entrypoint script
+COPY oc-mirror/entrypoint.sh /workspace/autoshift-entrypoint.sh
+RUN chmod +x /workspace/autoshift-entrypoint.sh && \
+    chown 1001:0 /workspace/autoshift-entrypoint.sh
+
+# Switch to non-root user
+USER 1001
+
+# Set entrypoint to our custom script
+ENTRYPOINT ["/workspace/autoshift-entrypoint.sh"]
+
+# Default command runs bash for interactive use
+CMD ["/bin/bash"]
+
+# Labels for metadata
+LABEL name="oc-mirror-autoshift" \
+      description="OpenShift oc-mirror tool with AutoShift integration for disconnected installations" \
+      version="${OCP_MAJOR_MINOR}-stable" \
+      maintainer="AutoShift Team" \
+      io.openshift.tags="openshift,mirror,disconnected,autoshift" \
+      io.k8s.description="oc-mirror tool with AutoShift ImageSet generation capabilities" \
+      io.k8s.display-name="oc-mirror AutoShift"

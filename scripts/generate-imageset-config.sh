@@ -21,6 +21,8 @@
 # Usage: ./scripts/generate-imageset-config.sh <values-files> [options]
 # Example: ./scripts/generate-imageset-config.sh values.hub.yaml
 # Example: ./scripts/generate-imageset-config.sh values.hub.yaml,values.sbx.yaml --openshift-version 4.18
+# Example: ./scripts/generate-imageset-config.sh values.hub.yaml --openshift-version 4.18.22
+# Example: ./scripts/generate-imageset-config.sh values.hub.yaml --openshift-version 4.18 --min-version 4.18.15 --max-version 4.18.25
 # Example: ./scripts/generate-imageset-config.sh values.hub.baremetal-sno.yaml --operators-only
 
 set -e
@@ -35,10 +37,46 @@ NC='\033[0m' # No Color
 # Default values
 VALUES_FILES=""
 VALUES_FILES_ARRAY=()
-OPENSHIFT_VERSION="4.18"
+OPENSHIFT_VERSION=""  # Will be read from values file or command line
+MIN_VERSION=""
+MAX_VERSION=""
 OUTPUT_FILE=""
 INCLUDE_OPENSHIFT=true
 INCLUDE_OPERATORS=true
+
+# Version parsing function
+parse_openshift_version() {
+    local version="$1"
+    local custom_min="$2"
+    local custom_max="$3"
+    local channel_name=""
+    local min_version=""
+    local max_version=""
+    
+    # Check if version has patch (e.g., 4.18.22)
+    if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        # Full version with patch - extract major.minor
+        local major_minor=$(echo "$version" | cut -d. -f1-2)
+        channel_name="stable-$major_minor"
+        min_version="$version"
+        max_version="$version"
+    elif [[ "$version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        # Major.minor only
+        channel_name="stable-$version"
+        min_version="$version.0"
+        max_version="$version.999"
+    else
+        echo -e "${RED}❌ Invalid OpenShift version format in parse function: $version${NC}" >&2
+        echo -e "${RED}❌ Expected format: X.Y (e.g., 4.18) or X.Y.Z (e.g., 4.18.22)${NC}" >&2
+        exit 1
+    fi
+    
+    # Override with custom min/max if provided
+    [[ -n "$custom_min" ]] && min_version="$custom_min"
+    [[ -n "$custom_max" ]] && max_version="$custom_max"
+    
+    echo "$channel_name|$min_version|$max_version"
+}
 
 usage() {
     echo "Usage: $0 <values-files> [options]"
@@ -56,6 +94,11 @@ usage() {
     echo ""
     echo "Options:"
     echo "  --openshift-version VERSION    OpenShift version to mirror (default: $OPENSHIFT_VERSION)"
+    echo "                                 Supports formats: X.Y (e.g., 4.18) or X.Y.Z (e.g., 4.18.22)"
+    echo "                                 X.Y format: channel=stable-X.Y, minVersion=X.Y.0, maxVersion=X.Y.999"
+    echo "                                 X.Y.Z format: channel=stable-X.Y, minVersion=X.Y.Z, maxVersion=X.Y.Z"
+    echo "  --min-version VERSION          Override minimum version (e.g., 4.18.15)"
+    echo "  --max-version VERSION          Override maximum version (e.g., 4.18.25)"
     echo "  --output FILE                  Output file path (default: imageset-config-<combined-name>.yaml)"
     echo "  --operators-only               Only include operators, skip OpenShift platform"
     echo "  --openshift-only               Only include OpenShift platform, skip operators"
@@ -64,6 +107,8 @@ usage() {
     echo "Examples:"
     echo "  $0 values.hub.yaml"
     echo "  $0 values.hub.yaml,values.sbx.yaml --openshift-version 4.17"
+    echo "  $0 values.hub.yaml --openshift-version 4.18.22"
+    echo "  $0 values.hub.yaml --openshift-version 4.18 --min-version 4.18.15 --max-version 4.18.25"
     echo "  $0 values.hub.baremetal-sno.yaml --operators-only"
     echo "  $0 values.hub.yaml --output my-imageset.yaml"
     echo ""
@@ -77,6 +122,14 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --openshift-version)
             OPENSHIFT_VERSION="$2"
+            shift 2
+            ;;
+        --min-version)
+            MIN_VERSION="$2"
+            shift 2
+            ;;
+        --max-version)
+            MAX_VERSION="$2"
             shift 2
             ;;
         --output)
@@ -120,6 +173,38 @@ if [[ -z "$VALUES_FILES" ]]; then
     exit 1
 fi
 
+# Helper functions
+log_step() {
+    echo -e "${BLUE}🔧 $1${NC}"
+}
+
+log_success() {
+    echo -e "${GREEN}✅ $1${NC}"
+}
+
+log_warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
+
+log_error() {
+    echo -e "${RED}❌ $1${NC}"
+}
+
+# Extract OpenShift version from values file
+extract_openshift_version() {
+    local values_file="$1"
+    
+    # Extract openshift-version from the values file and clean it
+    local version
+    version=$(grep -E "^[[:space:]]*openshift-version:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | sed 's/[^0-9.]//g')
+    
+    if [[ -n "$version" ]]; then
+        echo "$version"
+    else
+        echo ""  # No version found
+    fi
+}
+
 # Parse comma-separated values files
 IFS=',' read -ra VALUES_FILES_ARRAY <<< "$VALUES_FILES"
 
@@ -136,6 +221,47 @@ for values_file in "${VALUES_FILES_ARRAY[@]}"; do
         exit 1
     fi
 done
+
+# Read OpenShift version from values file if not specified on command line
+if [[ -z "$OPENSHIFT_VERSION" ]]; then
+    # Extract from first values file
+    first_values_file=$(echo "${VALUES_FILES_ARRAY[0]}" | xargs)
+    OPENSHIFT_VERSION=$(extract_openshift_version "autoshift/$first_values_file")
+    
+    if [[ -z "$OPENSHIFT_VERSION" ]]; then
+        echo -e "${RED}Error: No OpenShift version found in values file and none specified with --openshift-version${NC}"
+        echo -e "${RED}Please add 'openshift-version: 'X.Y.Z'' to your values file or use --openshift-version flag${NC}"
+        exit 1
+    else
+        log_step "Using OpenShift version from values file: $OPENSHIFT_VERSION"
+    fi
+fi
+
+# Validate OpenShift version format if we're including platform
+if [[ "$INCLUDE_OPENSHIFT" == "true" ]]; then
+    # Check for X.Y.Z format first, then X.Y format
+    if [[ "$OPENSHIFT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$OPENSHIFT_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        log_step "OpenShift version format validated: $OPENSHIFT_VERSION"
+    else
+        echo -e "${RED}❌ Invalid OpenShift version format: $OPENSHIFT_VERSION${NC}"
+        echo -e "${RED}❌ Expected format: X.Y (e.g., 4.18) or X.Y.Z (e.g., 4.18.22)${NC}"
+        exit 1
+    fi
+    
+    # Validate min version format if provided
+    if [[ -n "$MIN_VERSION" ]] && ! [[ "$MIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "${RED}❌ Invalid minimum version format: $MIN_VERSION${NC}"
+        echo -e "${RED}❌ Expected format: X.Y.Z (e.g., 4.18.15)${NC}"
+        exit 1
+    fi
+    
+    # Validate max version format if provided
+    if [[ -n "$MAX_VERSION" ]] && ! [[ "$MAX_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "${RED}❌ Invalid maximum version format: $MAX_VERSION${NC}"
+        echo -e "${RED}❌ Expected format: X.Y.Z (e.g., 4.18.25)${NC}"
+        exit 1
+    fi
+fi
 
 # Set output file if not specified
 if [[ -z "$OUTPUT_FILE" ]]; then
@@ -161,23 +287,6 @@ if [[ -z "$OUTPUT_FILE" ]]; then
         OUTPUT_FILE="imageset-config-$combined_name.yaml"
     fi
 fi
-
-# Helper functions
-log_step() {
-    echo -e "${BLUE}🔧 $1${NC}"
-}
-
-log_success() {
-    echo -e "${GREEN}✅ $1${NC}"
-}
-
-log_warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
-}
-
-log_error() {
-    echo -e "${RED}❌ $1${NC}"
-}
 
 # Get operator subscription name from labels
 get_operator_subscription_name() {
@@ -443,15 +552,12 @@ generate_imageset_config() {
     
     log_step "Generating ImageSetConfiguration from ${#values_files_array[@]} file(s): ${values_files_label}..."
     
-    # Start YAML file
+    # Start YAML file - v2 format doesn't use apiVersion or metadata
     cat > "$output_file" << EOF
-apiVersion: mirror.openshift.io/v1alpha2
+# AutoShift Generated ImageSetConfiguration
+# Values files: $values_files_label  
+# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 kind: ImageSetConfiguration
-metadata:
-  name: autoshift-$config_name-imageset
-  labels:
-    autoshift.io/values-files: $values_files_label
-    autoshift.io/generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 archiveSize: 4
 mirror:
   platform:
@@ -459,15 +565,23 @@ EOF
 
     # Add OpenShift platform if requested
     if [[ "$INCLUDE_OPENSHIFT" == "true" ]]; then
+        # Parse OpenShift version to get channel name and min/max versions
+        local version_info
+        version_info=$(parse_openshift_version "$OPENSHIFT_VERSION" "$MIN_VERSION" "$MAX_VERSION")
+        IFS='|' read -r channel_name min_version max_version <<< "$version_info"
+        
         cat >> "$output_file" << EOF
     channels:
-    - name: stable-$OPENSHIFT_VERSION
-      type: ocp
-      minVersion: $OPENSHIFT_VERSION.0
-      maxVersion: $OPENSHIFT_VERSION.999
+    - name: $channel_name
+      minVersion: $min_version
+      maxVersion: $max_version
     graph: true
 EOF
-        log_step "Added OpenShift platform: stable-$OPENSHIFT_VERSION"
+        if [[ -n "$MIN_VERSION" || -n "$MAX_VERSION" ]]; then
+            log_step "Added OpenShift platform: $channel_name (min: $min_version, max: $max_version) [custom range]"
+        else
+            log_step "Added OpenShift platform: $channel_name (min: $min_version, max: $max_version)"
+        fi
     else
         echo "    channels: []" >> "$output_file"
         log_step "Skipped OpenShift platform (operators-only mode)"
@@ -524,7 +638,14 @@ EOF
             
             # Generate redhat-operators catalog if we have operators
             if [[ -n "$redhat_operators" ]]; then
-                echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v$OPENSHIFT_VERSION" >> "$output_file"
+                # Extract major.minor from OPENSHIFT_VERSION for catalog versioning
+                local catalog_version
+                if [[ "$OPENSHIFT_VERSION" =~ ^([0-9]+\.[0-9]+) ]]; then
+                    catalog_version="${BASH_REMATCH[1]}"
+                else
+                    catalog_version="$OPENSHIFT_VERSION"
+                fi
+                echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v$catalog_version" >> "$output_file"
                 echo "    packages:" >> "$output_file"
                 
                 for package_info in $redhat_operators; do
@@ -545,7 +666,14 @@ EOF
             
             # Generate community-operators catalog if we have operators
             if [[ -n "$community_operators" ]]; then
-                echo "  - catalog: registry.redhat.io/redhat/community-operator-index:v$OPENSHIFT_VERSION" >> "$output_file"
+                # Extract major.minor from OPENSHIFT_VERSION for catalog versioning
+                local catalog_version
+                if [[ "$OPENSHIFT_VERSION" =~ ^([0-9]+\.[0-9]+) ]]; then
+                    catalog_version="${BASH_REMATCH[1]}"
+                else
+                    catalog_version="$OPENSHIFT_VERSION"
+                fi
+                echo "  - catalog: registry.redhat.io/redhat/community-operator-index:v$catalog_version" >> "$output_file"
                 echo "    packages:" >> "$output_file"
                 
                 for package_info in $community_operators; do
@@ -566,7 +694,14 @@ EOF
             
             # Generate certified-operators catalog if we have operators
             if [[ -n "$certified_operators" ]]; then
-                echo "  - catalog: registry.redhat.io/redhat/certified-operator-index:v$OPENSHIFT_VERSION" >> "$output_file"
+                # Extract major.minor from OPENSHIFT_VERSION for catalog versioning
+                local catalog_version
+                if [[ "$OPENSHIFT_VERSION" =~ ^([0-9]+\.[0-9]+) ]]; then
+                    catalog_version="${BASH_REMATCH[1]}"
+                else
+                    catalog_version="$OPENSHIFT_VERSION"
+                fi
+                echo "  - catalog: registry.redhat.io/redhat/certified-operator-index:v$catalog_version" >> "$output_file"
                 echo "    packages:" >> "$output_file"
                 
                 for package_info in $certified_operators; do
@@ -611,14 +746,17 @@ show_usage_instructions() {
     echo "1. Review the generated configuration:"
     echo -e "   ${YELLOW}cat $output_file${NC}"
     echo ""
-    echo "2. Mirror images to your registry:"
-    echo -e "   ${YELLOW}oc mirror --config=$output_file docker://your-registry.example.com/mirror${NC}"
+    echo "2. Mirror images to disk (recommended for air-gapped):"
+    echo -e "   ${YELLOW}oc-mirror -c $output_file file://mirror --v2${NC}"
     echo ""
-    echo "3. Apply mirrored content to disconnected cluster:"
-    echo -e "   ${YELLOW}oc apply -f oc-mirror-workspace/results-*/catalogSource-*.yaml${NC}"
-    echo -e "   ${YELLOW}oc apply -f oc-mirror-workspace/results-*/imageContentSourcePolicy.yaml${NC}"
+    echo "3. Or mirror directly to registry:"
+    echo -e "   ${YELLOW}oc-mirror -c $output_file docker://your-registry.example.com/mirror --v2${NC}"
     echo ""
-    echo "4. Deploy AutoShift with mirrored content:"
+    echo "4. Apply mirrored content to disconnected cluster:"
+    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/catalogSource-*.yaml${NC}"
+    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/imageContentSourcePolicy.yaml${NC}"
+    echo ""
+    echo "5. Deploy AutoShift with mirrored content:"
     if [[ ${#VALUES_FILES_ARRAY[@]} -eq 1 ]]; then
         echo -e "   ${YELLOW}helm upgrade --install autoshift autoshift/ -f autoshift/${VALUES_FILES_ARRAY[0]}${NC}"
     else
