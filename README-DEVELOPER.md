@@ -305,6 +305,7 @@ managedClusterSets:
   managed:
     labels:
       my-component: 'true'
+      my-component-subscription-name: 'my-component-operator'
       my-component-channel: 'fast'  # Different channel for managed clusters
 
 # Individual cluster overrides in same values file
@@ -318,7 +319,7 @@ Configuration precedence: **Individual Cluster > ClusterSet > Default Values**
 
 ### Dependency Management
 
-AutoShift handles dependencies through logical ordering and shared placement rules. For explicit dependencies, document them in the README and ensure proper deployment sequencing:
+AutoShift handles dependencies through logical ordering and shared placement rules. For explicit dependencies, add to policy spec.dependencies section like the example below:
 
 ```yaml
 # In policies/my-component/README.md
@@ -349,7 +350,7 @@ spec:
 ## Deployment Order
 
 1. ODF must be running before deploying my-component
-2. Loki should be configured for log aggregation
+2. Loki should be installed
 ```
 
 ## 🔧 Common Development Tasks
@@ -381,19 +382,16 @@ git push
 
 ```bash
 # Check policy status
-oc get policies -n open-cluster-management-global-set | grep my-component
+oc get policies -A | grep my-component
 
-# View policy details
-oc describe policy policy-my-component-operator-install -n open-cluster-management-global-set
-
-# Check violations
-oc get policyviolations -A | grep my-component
+# View policy details - namespace can be found from previous command
+oc describe policy policy-my-component-operator-install -n policies-{{AUTOSHIFT_DEPLOYMENT_NAME}}
 
 # View ArgoCD sync status
 oc get applications -n openshift-gitops my-component -o yaml
 ```
 
-### Working with Multiple Environments
+### Working with Disconnected Environments
 
 ```bash
 # Generate ImageSet for disconnected environments
@@ -418,27 +416,11 @@ find policies/ -name "Chart.yaml" -exec dirname {} \; | while read policy; do
 done
 ```
 
-### Integration Testing
-
-```bash
-# Deploy to test cluster set
-oc label managedclusterset test --overwrite autoshift.io/my-component='true'
-
-# Wait for policy to apply
-oc wait --for=condition=Compliant \
-  policy/policy-my-component-operator-install \
-  -n open-cluster-management-global-set \
-  --timeout=300s
-
-# Verify operator installation
-oc get pods -n my-component
-```
-
 ### Compliance Validation
 
 ```bash
 # Check policy compliance across clusters
-oc get policies -n open-cluster-management-global-set \
+oc get policies -A \
   -o custom-columns=NAME:.metadata.name,COMPLIANT:.status.compliant
 
 # Get detailed compliance status
@@ -517,11 +499,14 @@ oc get policyreports -A
 # Check ArgoCD application status
 oc get applications -n openshift-gitops
 
+# View policy propagator logs
+oc logs -n open-cluster-management deployment/grc-policy-propagator
+
 # View policy controller logs
-oc logs -n open-cluster-management deployment/governance-policy-propagator
+oc logs -n open-cluster-management-agent-addon deployment/config-policy-controller
 
 # Check placement decisions
-oc get placementdecisions -n open-cluster-management-global-set
+oc get placementdecisions -A
 
 # View cluster import status
 oc get managedclusters
@@ -530,7 +515,7 @@ oc get managedclusters
 ## 📖 Additional Resources
 
 ### Documentation
-- [Policy Generator Documentation](scripts/README.md)
+- [Policy Quick Start Documentation](scripts/README.md)
 - [OpenShift GitOps Documentation](https://docs.openshift.com/container-platform/latest/cicd/gitops/understanding-openshift-gitops.html)
 - [RHACM Policy Framework](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes/)
 
