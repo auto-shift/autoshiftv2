@@ -184,11 +184,21 @@ The hub cluster is the main cluster with RHACM and its core components installed
 
     ![Cluster Sets in ACM Console](images/acm-cluster-sets.png)
 
-4.  Manually select which cluster will belong to each cluster set, or when provisioning a new cluster from ACM you can select the desired cluster set from ACM at time of creation.
+4.  Select add cluster and manage resource assignments.
 
     ![Cluster Set Details in ACM Console](images/acm-add-hub-cluster.png)
 
+5.  Manually select which cluster will belong to each cluster set, or when provisioning a new cluster from ACM you can select the desired cluster set from ACM at time of creation.
+
+    ![Cluster Set Details in ACM Console](images/acm-resource-assignment.png)
+
+6. Confirm the selected cluster.
+
+    ![Cluster Set Details in ACM Console](images/acm-confirm-changes.png)
+
 5.  That's it. Welcome to OpenShift Platform Plus and all of it's many capabilities!
+
+    ![Cluster Set Details in ACM Console](images/acm-local-cluster-labels.png)
 
 ## Autoshift Cluster Labels Values Reference
 
