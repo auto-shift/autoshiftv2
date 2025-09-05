@@ -363,22 +363,18 @@ vi policies/my-component/templates/policy-my-component-config.yaml
 # 2. Validate changes
 helm template policies/my-component/
 
-# 3. Test with different values
-helm template policies/my-component/ --set-string myComponent.channel='fast'
+# 3. Update with different label values
+vi autoshift/values.sbx.yaml
+vi autoshift/values.my-prod-labels.yaml
 
 # 4. Commit and deploy
 git add policies/my-component/
+git add autoshift/
 git commit -m "Update my-component configuration"
 git push
-```
 
-### Testing Label Overrides
+# 5. validate on sbx cluster that is pointing to your branch
 
-```bash
-# Simulate cluster label override
-helm template policies/my-component/ \
-  --set-string myComponent.channel='fast' \
-  --set-string myComponent.replicas='5'
 ```
 
 ### Debugging Policy Issues
