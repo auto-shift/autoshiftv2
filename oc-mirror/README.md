@@ -25,7 +25,7 @@ docker build -f oc-mirror/Containerfile -t oc-mirror-autoshift:latest .
 ### Generate ImageSet Configuration
 
 ```bash
-# Version is automatically read from values file (openshift-version: '4.18.22')
+# Version is automatically read from labels in values file
 podman run --rm oc-mirror-autoshift:latest \
   bash -c "cd /workspace && ./scripts/generate-imageset-config.sh values.hub.yaml"
 ```
@@ -58,22 +58,32 @@ The container and script automatically read the OpenShift version from your Auto
 
 ```yaml
 # In autoshift/values.hub.yaml
-openshift-version: '4.18.22'  # Full version with patch
+hubClusterSets:
+  hub:
+    labels:
+      openshift-version: '4.18.22'  # Full version with patch
+managedClusterSets:
+  managed:
+    labels:
+      openshift-version: '4.18.22'  # Can be different per cluster set
 ```
 
 ### How It Works
 
 1. **Container Build**: 
    - Downloads latest stable oc-mirror binary (recommended for best compatibility)
-   - Downloads oc client matching OpenShift version from values file
-2. **Script Execution**: Reads OpenShift version from values file for ImageSet generation and catalog versioning
-3. **Command Line Override**: Use `--openshift-version` flag to override values file setting
+   - Downloads oc client matching highest OpenShift version from labels
+2. **Script Execution**: Reads OpenShift versions from all labels sections for ImageSet generation
+3. **Multiple Version Support**: Uses min/max range for platform images, highest version for binaries
+4. **Command Line Override**: Use `--openshift-version` flag to override values file setting
 
 ### Benefits
 
 - **Latest Features**: Always uses the most recent stable oc-mirror with latest bug fixes
 - **Backward Compatibility**: Latest oc-mirror works with all supported OpenShift versions
-- **Single Source of Truth**: One place to manage OpenShift version for deployments
+- **Multi-Version Support**: Handles different OpenShift versions per cluster set automatically
+- **Smart Version Range**: Uses min/max versions for platform images, highest for binaries
+- **Warning System**: Alerts when multiple versions detected with clear version information
 - **Flexible Override**: Command line flag available when needed for testing
 
 ## Container Components

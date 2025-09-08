@@ -190,19 +190,61 @@ log_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
-# Extract OpenShift version from values file
-extract_openshift_version() {
+# Extract OpenShift versions from all labels in values files
+extract_openshift_versions() {
     local values_file="$1"
+    local versions=()
+    local in_labels=false
+    local current_section=""
     
-    # Extract openshift-version from the values file and clean it
-    local version
-    version=$(grep -E "^[[:space:]]*openshift-version:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | sed 's/[^0-9.]//g')
+    # Read the YAML file and extract all openshift-version values from labels sections
+    while IFS= read -r line; do
+        # Check if we're entering a labels section
+        if [[ "$line" =~ ^[[:space:]]*labels:[[:space:]]*$ ]]; then
+            in_labels=true
+            continue
+        fi
+        
+        # Check if we're exiting labels section (new section starts)
+        if [[ "$line" =~ ^[[:space:]]*[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$ ]] && [[ "$in_labels" == true ]]; then
+            in_labels=false
+            continue
+        fi
+        
+        # Check if we're exiting labels section (cluster section ends)
+        if [[ "$line" =~ ^[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$ ]]; then
+            in_labels=false
+            continue
+        fi
+        
+        # Extract openshift-version if we're in a labels section
+        if [[ "$in_labels" == true ]] && [[ "$line" =~ ^[[:space:]]*openshift-version:[[:space:]]*[\'\"]*([0-9]+\.[0-9]+\.[0-9]+)[\'\"]*[[:space:]]*$ ]]; then
+            local version="${BASH_REMATCH[1]}"
+            if [[ -n "$version" ]]; then
+                versions+=("$version")
+            fi
+        fi
+    done < "$values_file"
     
-    if [[ -n "$version" ]]; then
-        echo "$version"
-    else
-        echo ""  # No version found
+    # Return unique versions
+    printf '%s\n' "${versions[@]}" | sort -u
+}
+
+# Get min and max versions from a list of versions
+get_version_range() {
+    local versions=("$@")
+    if [[ ${#versions[@]} -eq 0 ]]; then
+        echo "" ""
+        return
     fi
+    
+    # Sort versions and get min/max using safer array handling
+    local sorted_string=$(printf '%s\n' "${versions[@]}" | sort -V | tr '\n' ' ')
+    local sorted_versions=($sorted_string)
+    local min_version="${sorted_versions[0]}"
+    local max_version="${sorted_versions[${#sorted_versions[@]}-1]}"
+    
+    echo "$min_version" "$max_version"
 }
 
 # Parse comma-separated values files
@@ -222,18 +264,50 @@ for values_file in "${VALUES_FILES_ARRAY[@]}"; do
     fi
 done
 
-# Read OpenShift version from values file if not specified on command line
+# Read OpenShift versions from values files if not specified on command line
 if [[ -z "$OPENSHIFT_VERSION" ]]; then
-    # Extract from first values file
-    first_values_file=$(echo "${VALUES_FILES_ARRAY[0]}" | xargs)
-    OPENSHIFT_VERSION=$(extract_openshift_version "autoshift/$first_values_file")
+    # Collect all versions from all values files
+    all_versions=()
+    for values_file in "${VALUES_FILES_ARRAY[@]}"; do
+        values_file=$(echo "$values_file" | xargs)
+        input_file="autoshift/$values_file"
+        
+        # Extract versions from this file
+        while IFS= read -r version; do
+            if [[ -n "$version" ]]; then
+                all_versions+=("$version")
+            fi
+        done < <(extract_openshift_versions "$input_file")
+    done
     
-    if [[ -z "$OPENSHIFT_VERSION" ]]; then
-        echo -e "${RED}Error: No OpenShift version found in values file and none specified with --openshift-version${NC}"
-        echo -e "${RED}Please add 'openshift-version: 'X.Y.Z'' to your values file or use --openshift-version flag${NC}"
+    if [[ ${#all_versions[@]} -eq 0 ]]; then
+        echo -e "${RED}Error: No OpenShift version found in any values file and none specified with --openshift-version${NC}"
+        echo -e "${RED}Please add 'openshift-version: 'X.Y.Z'' to labels section in your values file or use --openshift-version flag${NC}"
         exit 1
+    fi
+    
+    # Get unique versions
+    unique_versions=($(printf '%s\n' "${all_versions[@]}" | sort -u))
+    
+    if [[ ${#unique_versions[@]} -eq 1 ]]; then
+        OPENSHIFT_VERSION="${unique_versions[0]}"
+        log_step "Using OpenShift version from labels: $OPENSHIFT_VERSION"
     else
-        log_step "Using OpenShift version from values file: $OPENSHIFT_VERSION"
+        # Multiple versions detected - get min/max for platform, use highest for binary downloads
+        read min_version max_version < <(get_version_range "${unique_versions[@]}")
+        OPENSHIFT_VERSION="$max_version"  # Use highest version for binary downloads
+        
+        echo -e "${YELLOW}⚠️  Multiple OpenShift versions detected: ${unique_versions[*]}${NC}"
+        echo -e "${YELLOW}⚠️  Using version range: min=$min_version, max=$max_version for platform images${NC}"
+        echo -e "${YELLOW}⚠️  Using highest version ($OPENSHIFT_VERSION) for binary downloads${NC}"
+        
+        # Set min/max if not already specified
+        if [[ -z "$MIN_VERSION" ]]; then
+            MIN_VERSION="$min_version"
+        fi
+        if [[ -z "$MAX_VERSION" ]]; then
+            MAX_VERSION="$max_version"
+        fi
     fi
 fi
 

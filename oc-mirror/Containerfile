@@ -28,7 +28,15 @@ RUN chmod +x /workspace/scripts/generate-imageset-config.sh && \
     chown -R 1001:0 /workspace
 
 # Download and install oc and oc-mirror binaries
-RUN OCP_VERSION=$(grep -E "^[[:space:]]*openshift-version:" /workspace/autoshift/values.hub.yaml | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"') && \
+# Extract all openshift-version values from labels sections, use highest version
+RUN OCP_VERSIONS=$(grep -A 200 "labels:" /workspace/autoshift/values.hub.yaml | grep "openshift-version:" | sed 's/.*openshift-version:[[:space:]]*//' | tr -d "'" | tr -d '"' | sort -V) && \
+    OCP_VERSION=$(echo "$OCP_VERSIONS" | tail -1) && \
+    OCP_VERSION=${OCP_VERSION:-"4.18.22"} && \
+    VERSION_COUNT=$(echo "$OCP_VERSIONS" | grep -c .) && \
+    if [ "$VERSION_COUNT" -gt 1 ]; then \
+        echo "⚠️ Multiple OpenShift versions detected in labels: $(echo $OCP_VERSIONS | tr '\n' ' ')"; \
+        echo "⚠️ Using highest version for binary downloads: $OCP_VERSION"; \
+    fi && \
     if [[ "$OCP_VERSION" =~ ^([0-9]+\.[0-9]+) ]]; then \
         OCP_MAJOR_MINOR="${BASH_REMATCH[1]}"; \
     else \
