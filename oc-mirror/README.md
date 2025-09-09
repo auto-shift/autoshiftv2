@@ -319,6 +319,25 @@ cd /workspace
 oc-mirror -c imageset-config-hub.yaml file://mirror --v2 --dry-run
 ```
 
+### Direct Script Usage (Outside Container)
+
+The `generate-imageset-config.sh` script can also be used directly without containers:
+
+```bash
+# Direct script usage from oc-mirror directory
+cd oc-mirror
+./generate-imageset-config.sh values.hub.yaml --help
+
+# Generate ImageSet with custom options
+./generate-imageset-config.sh values.hub.yaml \
+  --openshift-version 4.18 \
+  --operators-only \
+  --output my-imageset.yaml
+
+# For detailed script documentation, see script help:
+./generate-imageset-config.sh --help
+```
+
 ### Batch Processing
 
 ```bash

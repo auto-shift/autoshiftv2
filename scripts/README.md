@@ -76,89 +76,6 @@ Each generated policy includes these AutoShift labels in values.yaml:
 <component>-source-namespace: "openshift-marketplace" # Catalog namespace
 ```
 
-## 🔄 generate-imageset-config.sh
-
-Generate ImageSetConfiguration for oc-mirror from AutoShift values files.
-
-### Usage
-
-```bash
-./scripts/generate-imageset-config.sh [options]
-```
-
-### Options
-
-- `--values-files <files>`: Comma-separated list of values files (default: values.hub.yaml)
-- `--include-operators`: Include operator catalog sources
-- `--openshift-version <version>`: OpenShift version (default: 4.18.0)
-- `--channel <channel>`: OpenShift channel (default: stable-4.18)
-- `--output <file>`: Output file name (default: imageset-config-<suffix>.yaml)
-- `--registry <registry>`: Target registry for mirroring
-- `--help`: Display help message
-
-### Examples
-
-#### Generate for single environment
-```bash
-./scripts/generate-imageset-config.sh \
-  --values-files values.hub.yaml \
-  --include-operators \
-  --output imageset-hub.yaml
-```
-
-#### Generate for multiple environments with channel merging
-```bash
-./scripts/generate-imageset-config.sh \
-  --values-files values.hub.yaml,values.sbx.yaml,values.prod.yaml \
-  --include-operators \
-  --openshift-version 4.18.0 \
-  --registry registry.internal.example.com:5000
-```
-
-#### Generate OpenShift-only configuration
-```bash
-./scripts/generate-imageset-config.sh \
-  --openshift-version 4.18.0 \
-  --channel stable-4.18 \
-  --output imageset-openshift-only.yaml
-```
-
-### Features
-
-- **Multi-file Support**: Process multiple values files and merge operator channels
-- **Channel Merging**: Combines multiple channels when operators appear in multiple files
-- **Operator Detection**: Automatically finds all enabled operators with subscription names
-- **Flexible Output**: Customizable output location and registry settings
-- **OpenShift Versions**: Supports any OpenShift 4.x version
-
-### Output Format
-
-Generates a valid ImageSetConfiguration for oc-mirror:
-
-```yaml
-apiVersion: mirror.openshift.io/v1alpha2
-kind: ImageSetConfiguration
-storageConfig:
-  registry:
-    imageURL: <registry>/openshift/release/metadata:latest
-mirror:
-  platform:
-    channels:
-      - name: stable-4.18
-        type: ocp
-        minVersion: 4.18.0
-        maxVersion: 4.18.0
-  operators:
-    - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.18
-      packages:
-        - name: openshift-gitops-operator
-          channels:
-            - name: latest
-        - name: advanced-cluster-management
-          channels:
-            - name: release-2.14
-        # ... additional operators
-```
 
 ## 📝 Template Files
 
@@ -205,13 +122,12 @@ Templates use these placeholders:
 helm template policies/test-op/
 rm -rf policies/test-op/
 
-# Test imageset generation
-./scripts/generate-imageset-config.sh \
-  --values-files values.hub.yaml \
-  --include-operators \
-  --output test-imageset.yaml
+# Test oc-mirror imageset generation (see oc-mirror/README.md)
+cd oc-mirror
+./generate-imageset-config.sh values.hub.yaml --output test-imageset.yaml
 cat test-imageset.yaml
 rm test-imageset.yaml
+cd ..
 ```
 
 ### Common Issues
