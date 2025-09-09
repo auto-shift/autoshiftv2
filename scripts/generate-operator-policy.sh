@@ -220,7 +220,7 @@ validate_generated_policy() {
     fi
     
     # Check for proper hub escaping
-    if ! grep -q '{{ "{{" }}hub.*hub{{ "}}" }}' "$POLICY_DIR/templates"/*.yaml; then
+    if ! grep -q '{{ "{{hub" }}' "$POLICY_DIR/templates"/*.yaml; then
         log_warning "No hub functions found - this is unusual for AutoShift policies"
     fi
     
@@ -335,19 +335,8 @@ add_to_autoshift_values() {
         
         log_step "Adding labels to $values_file..."
         
-        # Create backup
-        cp "$file_path" "$file_path.backup.$(date +%Y%m%d_%H%M%S)"
-        
-        # Find the labels section in hubClusterSets or managedClusterSets
-        if grep -q "hubClusterSets:" "$file_path"; then
-            # Add labels to hubClusterSets section
-            add_labels_to_section "$file_path" "hubClusterSets"
-        fi
-        
-        if grep -q "managedClusterSets:" "$file_path"; then
-            # Add labels to managedClusterSets section  
-            add_labels_to_section "$file_path" "managedClusterSets"
-        fi
+        # Process all sections in the file
+        add_labels_to_all_sections "$file_path"
         
         log_success "Updated $values_file"
     done
@@ -355,67 +344,168 @@ add_to_autoshift_values() {
     log_success "Labels added to ${#values_files_to_update[@]} values file(s)"
 }
 
-# Add labels to a specific section (hubClusterSets or managedClusterSets)
+
+# Add labels to all sections in the values file
+add_labels_to_all_sections() {
+    local file_path="$1"
+    
+    # Find all sections and their clustersets
+    local sections_found=""
+    
+    # Check for hubClusterSets
+    if grep -q "^hubClusterSets:" "$file_path"; then
+        local hub_clustersets=$(awk '/^hubClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
+        while IFS= read -r clusterset; do
+            [[ -z "$clusterset" ]] && continue
+            add_labels_to_section "$file_path" "hubClusterSets" "$clusterset" false
+            sections_found="$sections_found hubClusterSets/$clusterset"
+        done <<< "$hub_clustersets"
+    fi
+    
+    # Check for managedClusterSets  
+    if grep -q "^managedClusterSets:" "$file_path"; then
+        local managed_clustersets=$(awk '/^managedClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
+        while IFS= read -r clusterset; do
+            [[ -z "$clusterset" ]] && continue
+            add_labels_to_section "$file_path" "managedClusterSets" "$clusterset" false
+            sections_found="$sections_found managedClusterSets/$clusterset"
+        done <<< "$managed_clustersets"
+    fi
+    
+    # Check for clusters (commented or active)
+    if grep -q "^clusters:" "$file_path"; then
+        # Active clusters section
+        local active_clusters=$(awk '/^clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
+        while IFS= read -r cluster; do
+            [[ -z "$cluster" ]] && continue
+            add_labels_to_section "$file_path" "clusters" "$cluster" false
+            sections_found="$sections_found clusters/$cluster"
+        done <<< "$active_clusters"
+    fi
+    
+    if grep -q "^# clusters:" "$file_path"; then
+        # Commented clusters section
+        local commented_clusters=$(awk '/^# clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^#   [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^#   /, ""); print}' "$file_path")
+        while IFS= read -r cluster; do
+            [[ -z "$cluster" ]] && continue
+            add_labels_to_section "$file_path" "clusters" "$cluster" true
+            sections_found="$sections_found clusters/$cluster(commented)"
+        done <<< "$commented_clusters"
+    fi
+    
+    if [[ -z "$sections_found" ]]; then
+        log_warning "No suitable sections found in $(basename "$file_path")"
+    else
+        log_step "Added $COMPONENT_NAME labels to:$sections_found"
+    fi
+}
+
+# Add labels to a specific section/clusterset combination
 add_labels_to_section() {
     local file_path="$1"
-    local section="$2"
+    local section_type="$2"  # hubClusterSets, managedClusterSets, clusters
+    local clusterset="$3"    # hub, managed, nonprod, etc.
+    local is_commented="$4"  # true/false
     
     # Check if component already exists in this section
-    if grep -A 50 "^$section:" "$file_path" | grep -q "^      $COMPONENT_NAME:"; then
-        log_warning "Labels for $COMPONENT_NAME already exist in $section section of $(basename "$file_path"), skipping"
+    if check_component_exists "$file_path" "$section_type" "$clusterset" "$is_commented"; then
+        log_warning "Labels for $COMPONENT_NAME already exist in $section_type/$clusterset $([ "$is_commented" == "true" ] && echo "(commented)"), skipping"
         return 0
     fi
     
-    # Find all clustersets in the section and add labels to each
-    local clustersets=$(awk "/^$section:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z]/{gsub(/:.*/, \"\"); gsub(/^  /, \"\"); print}" "$file_path")
-    
-    if [[ -z "$clustersets" ]]; then
-        log_warning "No clustersets found in $section section of $(basename "$file_path"), skipping"
-        return 0
+    # Create labels with proper indentation and commenting
+    local labels_content
+    if [[ "$is_commented" == "true" ]]; then
+        labels_content=$(cat << EOF
+#       ### $COMPONENT_NAME
+#       $COMPONENT_NAME: 'true'
+#       $COMPONENT_NAME-subscription-name: $SUBSCRIPTION_NAME
+#       $COMPONENT_NAME-channel: $CHANNEL
+#       $COMPONENT_NAME-source: $SOURCE
+#       $COMPONENT_NAME-source-namespace: $SOURCE_NAMESPACE
+#       $COMPONENT_NAME-install-plan-approval: $INSTALL_PLAN
+EOF
+)
+    else
+        labels_content=$(cat << EOF
+      ### $COMPONENT_NAME
+      $COMPONENT_NAME: 'true'
+      $COMPONENT_NAME-subscription-name: $SUBSCRIPTION_NAME
+      $COMPONENT_NAME-channel: $CHANNEL
+      $COMPONENT_NAME-source: $SOURCE
+      $COMPONENT_NAME-source-namespace: $SOURCE_NAMESPACE
+      $COMPONENT_NAME-install-plan-approval: $INSTALL_PLAN
+EOF
+)
     fi
     
-    # For each clusterset, add our labels
-    while IFS= read -r clusterset; do
-        [[ -z "$clusterset" ]] && continue
+    # Find the labels line for this section
+    local labels_line=$(find_labels_line "$file_path" "$section_type" "$clusterset" "$is_commented")
+    
+    if [[ -n "$labels_line" ]]; then
+        # Insert the labels after the labels: line
+        local temp_file=$(mktemp)
         
-        # Find the insertion point: after the last label line in this clusterset
-        local clusterset_line=$(grep -n "^  $clusterset:" "$file_path" | cut -d: -f1)
+        # Copy everything up to the labels line
+        head -n "$labels_line" "$file_path" > "$temp_file"
         
-        if [[ -n "$clusterset_line" ]]; then
-            # Find the end of this clusterset (start of next clusterset or section)
-            local end_line=$(tail -n +$((clusterset_line + 1)) "$file_path" | awk '/^  [a-zA-Z]|^[a-zA-Z]/{print NR + '"$clusterset_line"'; exit}')
-            
-            if [[ -z "$end_line" ]]; then
-                end_line=$(wc -l < "$file_path")
-            else
-                end_line=$((end_line - 1))
-            fi
-            
-            # Add each label
-            local insert_line=$end_line
-            
-            echo "      ### $COMPONENT_NAME" | sed -i '' "${insert_line}r /dev/stdin" "$file_path"
-            insert_line=$((insert_line + 1))
-            
-            echo "      $COMPONENT_NAME: 'true'" | sed -i '' "${insert_line}r /dev/stdin" "$file_path"
-            insert_line=$((insert_line + 1))
-            
-            echo "      $COMPONENT_NAME-subscription-name: $SUBSCRIPTION_NAME" | sed -i '' "${insert_line}r /dev/stdin" "$file_path"
-            insert_line=$((insert_line + 1))
-            
-            echo "      $COMPONENT_NAME-channel: $CHANNEL" | sed -i '' "${insert_line}r /dev/stdin" "$file_path"
-            insert_line=$((insert_line + 1))
-            
-            echo "      $COMPONENT_NAME-source: $SOURCE" | sed -i '' "${insert_line}r /dev/stdin" "$file_path"
-            insert_line=$((insert_line + 1))
-            
-            echo "      $COMPONENT_NAME-source-namespace: $SOURCE_NAMESPACE" | sed -i '' "${insert_line}r /dev/stdin" "$file_path"
-            insert_line=$((insert_line + 1))
-            
-            echo "      $COMPONENT_NAME-install-plan-approval: $INSTALL_PLAN" | sed -i '' "${insert_line}r /dev/stdin" "$file_path"
-        fi
+        # Add the new labels
+        echo "$labels_content" >> "$temp_file"
         
-    done <<< "$clustersets"
+        # Add everything after the labels line
+        tail -n +$((labels_line + 1)) "$file_path" >> "$temp_file"
+        
+        # Replace the original file
+        mv "$temp_file" "$file_path"
+    else
+        log_warning "Could not find labels: line for $section_type/$clusterset, skipping"
+    fi
+}
+
+# Check if component already exists in a section
+check_component_exists() {
+    local file_path="$1"
+    local section_type="$2"
+    local clusterset="$3"
+    local is_commented="$4"
+    
+    if [[ "$is_commented" == "true" ]]; then
+        # Check in commented section - use grep for simpler detection
+        grep -A 50 "^# $section_type:" "$file_path" | \
+        grep -A 30 "^#   $clusterset:" | \
+        grep -q "^#       $COMPONENT_NAME:"
+    else
+        # Check in active section - use grep for simpler detection  
+        grep -A 50 "^$section_type:" "$file_path" | \
+        grep -A 30 "^  $clusterset:" | \
+        grep -q "^      $COMPONENT_NAME:"
+    fi
+}
+
+# Find the line number of the labels: line for a specific section
+find_labels_line() {
+    local file_path="$1"
+    local section_type="$2"
+    local clusterset="$3"
+    local is_commented="$4"
+    
+    if [[ "$is_commented" == "true" ]]; then
+        # Find in commented section
+        awk "
+            /^# $section_type:/ { found_section=1; next }
+            found_section && /^#   $clusterset:/ { found_clusterset=1; next }
+            found_clusterset && /^#     labels:/ { print NR; exit }
+            /^[a-zA-Z]/ { found_section=0; found_clusterset=0 }
+        " "$file_path"
+    else
+        # Find in active section
+        awk "
+            /^$section_type:/ { found_section=1; next }
+            found_section && /^  $clusterset:/ { found_clusterset=1; next }
+            found_clusterset && /^    labels:/ { print NR; exit }
+            /^[a-zA-Z]/ { found_section=0; found_clusterset=0 }
+        " "$file_path"
+    fi
 }
 
 # Main execution

@@ -16,15 +16,39 @@ helm template policies/{{COMPONENT_NAME}}/
 ```
 
 ### Enable on Clusters
-```bash
-# Enable on specific cluster
-oc label managedcluster my-cluster autoshift.io/{{COMPONENT_NAME}}=true
+Edit AutoShift values files to add the operator labels:
 
-# Enable on clusterset (affects all clusters in set)
-oc label managedclusterset production autoshift.io/{{COMPONENT_NAME}}=true
+```yaml
+# In autoshift/values.hub.yaml (or values.sbx.yaml, etc.)
+hubClusterSets:
+  hub:
+    labels:
+      {{COMPONENT_NAME}}: 'true'
+      {{COMPONENT_NAME}}-subscription-name: '{{SUBSCRIPTION_NAME}}'
+      {{COMPONENT_NAME}}-channel: '{{CHANNEL}}'
+      {{COMPONENT_NAME}}-source: '{{SOURCE}}'
+      {{COMPONENT_NAME}}-source-namespace: '{{SOURCE_NAMESPACE}}'
+
+managedClusterSets:
+  managed:
+    labels:
+      {{COMPONENT_NAME}}: 'true'
+      {{COMPONENT_NAME}}-subscription-name: '{{SUBSCRIPTION_NAME}}'
+      {{COMPONENT_NAME}}-channel: '{{CHANNEL}}'
+      {{COMPONENT_NAME}}-source: '{{SOURCE}}'
+      {{COMPONENT_NAME}}-source-namespace: '{{SOURCE_NAMESPACE}}'
+
+# For specific clusters (optional override)
+clusters:
+  my-cluster:
+    labels:
+      {{COMPONENT_NAME}}: 'true'
+      {{COMPONENT_NAME}}-channel: 'fast'  # Override channel for this cluster
 ```
 
-### Add to AutoShift (Optional)
+Labels are automatically propagated to clusters via the cluster-labels policy.
+
+### Add to AutoShift ApplicationSet
 Edit `autoshift/templates/applicationset.yaml` and add:
 ```yaml
 - name: {{COMPONENT_NAME}}
