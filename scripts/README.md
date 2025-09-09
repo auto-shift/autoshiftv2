@@ -9,7 +9,7 @@ Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structur
 ### Usage
 
 ```bash
-./scripts/generate-operator-policy.sh <component-name> <subscription-name> --channel <channel> [options]
+./scripts/generate-operator-policy.sh <component-name> <subscription-name> --channel <channel> --namespace <namespace> [options]
 ```
 
 ### Required Parameters
@@ -17,6 +17,7 @@ Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structur
 - `<component-name>`: Name for your policy component (e.g., 'cert-manager', 'metallb')
 - `<subscription-name>`: Exact operator subscription name from catalog (e.g., 'cert-manager', 'metallb-operator')
 - `--channel <channel>`: Operator channel to subscribe to (e.g., 'stable', 'fast', 'stable-v1')
+- `--namespace <namespace>`: Target namespace for operator installation
 
 ### Optional Parameters
 
@@ -28,17 +29,17 @@ Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structur
 
 #### Generate a cluster-scoped operator policy
 ```bash
-./scripts/generate-operator-policy.sh cert-manager cert-manager --channel stable
+./scripts/generate-operator-policy.sh cert-manager cert-manager-operator --channel stable --namespace cert-manager
 ```
 
 #### Generate with AutoShift integration
 ```bash
-./scripts/generate-operator-policy.sh metallb metallb-operator --channel stable --add-to-autoshift
+./scripts/generate-operator-policy.sh metallb metallb-operator --channel stable --namespace metallb-system --add-to-autoshift
 ```
 
 #### Generate a namespace-scoped operator
 ```bash
-./scripts/generate-operator-policy.sh my-operator my-operator --channel stable --namespace-scoped
+./scripts/generate-operator-policy.sh my-operator my-operator --channel stable --namespace my-operator --namespace-scoped
 ```
 
 ### Generated Structure
@@ -177,10 +178,15 @@ Templates use these placeholders:
 
 - `{{COMPONENT_NAME}}`: Component name (e.g., 'cert-manager')
 - `{{SUBSCRIPTION_NAME}}`: Operator subscription name
+- `{{NAMESPACE}}`: Target namespace for operator installation
 - `{{CHANNEL}}`: Operator channel
+- `{{SOURCE}}`: Operator catalog source (e.g., 'redhat-operators')
+- `{{SOURCE_NAMESPACE}}`: Catalog source namespace (e.g., 'openshift-marketplace')
+- `{{INSTALL_PLAN}}`: Install plan approval strategy
+- `{{COMPONENT_CAMEL}}`: Component name in camelCase for values.yaml
 - `{{OPERATOR_NAME}}`: Formatted operator name (deprecated, use SUBSCRIPTION_NAME)
-- `{{COMPONENT_NAME_LOWER}}`: Lowercase component name
-- `{{TIMESTAMP}}`: Generation timestamp
+- `{{COMPONENT_NAME_LOWER}}`: Lowercase component name (deprecated)
+- `{{TIMESTAMP}}`: Generation timestamp (deprecated)
 
 ## 🛠️ Development
 
@@ -195,7 +201,7 @@ Templates use these placeholders:
 
 ```bash
 # Test policy generation
-./scripts/generate-operator-policy.sh test-op test-operator --channel stable
+./scripts/generate-operator-policy.sh test-op test-operator --channel stable --namespace test-operator
 helm template policies/test-op/
 rm -rf policies/test-op/
 

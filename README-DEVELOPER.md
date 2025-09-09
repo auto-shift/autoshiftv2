@@ -12,7 +12,7 @@ Generate and deploy an operator policy in under 5 minutes:
 
 ```bash
 # 1. Generate a new operator policy with AutoShift integration
-./scripts/generate-operator-policy.sh cert-manager cert-manager --channel stable --add-to-autoshift
+./scripts/generate-operator-policy.sh cert-manager cert-manager-operator --channel stable --namespace cert-manager --add-to-autoshift
 
 # 2. Validate the generated policy
 helm template policies/cert-manager/
@@ -81,7 +81,7 @@ cd autoshiftv2
 ./scripts/generate-operator-policy.sh --help
 
 # Test policy generation
-./scripts/generate-operator-policy.sh test-operator test-operator --channel stable
+./scripts/generate-operator-policy.sh test-operator test-operator --channel stable --namespace test-operator
 helm template policies/test-operator/
 
 # Clean up test
@@ -125,6 +125,7 @@ oc describe packagemanifest your-operator -n openshift-marketplace
   my-component \
   my-operator-subscription \
   --channel stable \
+  --namespace my-component \
   --add-to-autoshift
 
 # For namespace-scoped operators
@@ -132,6 +133,7 @@ oc describe packagemanifest your-operator -n openshift-marketplace
   my-component \
   my-operator-subscription \
   --channel stable \
+  --namespace my-component \
   --namespace-scoped \
   --add-to-autoshift
 ```
@@ -444,7 +446,7 @@ oc get policyreports -A
 
 3. **Generate and Develop Policy**
    ```bash
-   ./scripts/generate-operator-policy.sh my-operator my-operator --channel stable
+   ./scripts/generate-operator-policy.sh my-operator my-operator --channel stable --namespace my-operator
    # Add operator-specific configuration
    ```
 

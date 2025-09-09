@@ -29,13 +29,14 @@ SOURCE="$DEFAULT_SOURCE"
 SOURCE_NAMESPACE="$DEFAULT_SOURCE_NAMESPACE"
 CHANNEL=""  # Required field (no default)
 INSTALL_PLAN="$DEFAULT_INSTALL_PLAN"
+TARGET_NAMESPACE=""  # Required field (no default)
 NAMESPACE_SCOPED=false
 ADD_TO_AUTOSHIFT=false
 SHOW_INTEGRATION=false
 VALUES_FILES=""  # Empty means all values files
 
 usage() {
-    echo "Usage: $0 <component-name> <subscription-name> --channel <channel> [options]"
+    echo "Usage: $0 <component-name> <subscription-name> --channel <channel> --namespace <namespace> [options]"
     echo ""
     echo "Arguments:"
     echo "  component-name     Kebab-case name for the AutoShift policy (e.g., cert-manager)"
@@ -43,6 +44,7 @@ usage() {
     echo ""
     echo "Required Options:"
     echo "  --channel CHANNEL         Operator channel (e.g., stable, fast, candidate)"
+    echo "  --namespace NAMESPACE     Target namespace for operator installation"
     echo ""
     echo "Optional:"
     echo "  --source SOURCE           Operator catalog source (default: $DEFAULT_SOURCE)"
@@ -55,11 +57,11 @@ usage() {
     echo "  --help                    Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 cert-manager cert-manager-operator --channel stable"
-    echo "  $0 metallb metallb-operator --channel stable --source community-operators"
-    echo "  $0 compliance compliance-operator --channel stable --namespace-scoped"
-    echo "  $0 sealed-secrets sealed-secrets-operator --channel stable --add-to-autoshift"
-    echo "  $0 cert-manager cert-manager-operator --channel stable --add-to-autoshift --values-files hub,sbx"
+    echo "  $0 cert-manager cert-manager-operator --channel stable --namespace cert-manager"
+    echo "  $0 metallb metallb-operator --channel stable --namespace metallb-system --source community-operators"
+    echo "  $0 compliance compliance-operator --channel stable --namespace openshift-compliance --namespace-scoped"
+    echo "  $0 sealed-secrets sealed-secrets-operator --channel stable --namespace sealed-secrets --add-to-autoshift"
+    echo "  $0 cert-manager cert-manager-operator --channel stable --namespace cert-manager --add-to-autoshift --values-files hub,sbx"
 }
 
 # Parse command line arguments
@@ -79,6 +81,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --install-plan)
             INSTALL_PLAN="$2"
+            shift 2
+            ;;
+        --namespace)
+            TARGET_NAMESPACE="$2"
             shift 2
             ;;
         --namespace-scoped)
@@ -134,6 +140,12 @@ if [[ -z "$CHANNEL" ]]; then
     exit 1
 fi
 
+if [[ -z "$TARGET_NAMESPACE" ]]; then
+    echo -e "${RED}Error: Namespace is required. Use --namespace <namespace-name>${NC}"
+    usage
+    exit 1
+fi
+
 # Validate component name format
 if [[ ! "$COMPONENT_NAME" =~ ^[a-z0-9-]+$ ]]; then
     echo -e "${RED}Error: Component name must be lowercase alphanumeric with hyphens only${NC}"
@@ -142,7 +154,7 @@ if [[ ! "$COMPONENT_NAME" =~ ^[a-z0-9-]+$ ]]; then
 fi
 
 # Set derived values
-NAMESPACE="$COMPONENT_NAME"
+NAMESPACE="$TARGET_NAMESPACE"  # Use required TARGET_NAMESPACE
 POLICY_DIR="policies/${COMPONENT_NAME}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_DIR="$SCRIPT_DIR/templates"
