@@ -21,11 +21,8 @@ ENV HOME=/workspace
 ENV XDG_CACHE_HOME=/workspace/cache
 ENV XDG_RUNTIME_DIR=/workspace
 
-# Copy AutoShift scripts and values files
-COPY scripts/generate-imageset-config.sh /workspace/scripts/
+# Copy AutoShift values files
 COPY autoshift/values.hub.yaml /workspace/autoshift/
-RUN chmod +x /workspace/scripts/generate-imageset-config.sh && \
-    chown -R 1001:0 /workspace
 
 # Download and install oc and oc-mirror binaries
 # Extract all openshift-version values from labels sections, use highest version
@@ -71,10 +68,24 @@ RUN OCP_VERSIONS=$(grep -A 200 "labels:" /workspace/autoshift/values.hub.yaml | 
 # Copy pull secret file (will be moved at runtime)
 COPY pull-secret.txt /workspace/
 
-# Copy entrypoint script
+# Copy oc-mirror workflow scripts and configurations
 COPY oc-mirror/entrypoint.sh /workspace/autoshift-entrypoint.sh
-RUN chmod +x /workspace/autoshift-entrypoint.sh && \
-    chown 1001:0 /workspace/autoshift-entrypoint.sh
+COPY oc-mirror/generate-imageset-config.sh /workspace/
+COPY oc-mirror/mirror-to-disk.sh /workspace/
+COPY oc-mirror/disk-to-mirror.sh /workspace/
+COPY oc-mirror/mirror-to-mirror.sh /workspace/
+COPY oc-mirror/delete-generate.sh /workspace/
+COPY oc-mirror/delete-execute.sh /workspace/
+
+# Set executable permissions for all scripts and fix ownership
+RUN chmod +x /workspace/autoshift-entrypoint.sh \
+             /workspace/generate-imageset-config.sh \
+             /workspace/mirror-to-disk.sh \
+             /workspace/disk-to-mirror.sh \
+             /workspace/mirror-to-mirror.sh \
+             /workspace/delete-generate.sh \
+             /workspace/delete-execute.sh && \
+    chown -R 1001:0 /workspace
 
 # Switch to non-root user
 USER 1001
@@ -87,9 +98,14 @@ CMD ["/bin/bash"]
 
 # Labels for metadata
 LABEL name="oc-mirror-autoshift" \
-      description="OpenShift oc-mirror tool with AutoShift integration for disconnected installations" \
+      description="OpenShift oc-mirror tool with comprehensive workflow support for disconnected installations" \
       version="${OCP_MAJOR_MINOR}-stable" \
       maintainer="AutoShift Team" \
-      io.openshift.tags="openshift,mirror,disconnected,autoshift" \
-      io.k8s.description="oc-mirror tool with AutoShift ImageSet generation capabilities" \
-      io.k8s.display-name="oc-mirror AutoShift"
+      io.openshift.tags="openshift,mirror,disconnected,autoshift,workflows,lifecycle" \
+      io.k8s.description="Complete oc-mirror solution with AutoShift integration, workflow orchestration, and image lifecycle management" \
+      io.k8s.display-name="oc-mirror AutoShift Enhanced" \
+      workflows.autoshift.io/mirror-to-disk="true" \
+      workflows.autoshift.io/disk-to-mirror="true" \
+      workflows.autoshift.io/mirror-to-mirror="true" \
+      workflows.autoshift.io/delete-management="true" \
+      workflows.autoshift.io/imageset-generation="true"
