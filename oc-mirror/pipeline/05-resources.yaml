@@ -1,0 +1,142 @@
+---
+# ServiceAccount for pipeline execution
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: oc-mirror-pipeline
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+---
+# ClusterRoleBinding for pipeline ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oc-mirror-pipeline-admin
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+subjects:
+  - kind: ServiceAccount
+    name: oc-mirror-pipeline
+    namespace: openshift-pipelines
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+# PVC for pipeline workspace
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: oc-mirror-workspace
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: gp3-csi
+---
+# Secret for registry authentication 
+# Create manually using:
+# oc create secret docker-registry pipeline-registry-auth \
+#   --docker-server=image-registry.openshift-image-registry.svc:5000 \
+#   --docker-username=unused \
+#   --docker-password=$(oc whoami -t) \
+#   --namespace=openshift-pipelines
+---
+# TriggerTemplate for GitHub webhooks (optional)
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: oc-mirror-trigger-template
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+spec:
+  params:
+    - name: git-revision
+      description: Git revision
+      default: main
+    - name: git-url
+      description: Git repository URL
+      default: https://github.com/auto-shift/autoshiftv2.git
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: oc-mirror-webhook-
+        namespace: openshift-pipelines
+        labels:
+          app.kubernetes.io/name: oc-mirror-pipeline
+          autoshift.io/component: oc-mirror
+          triggers.tekton.dev/trigger: "webhook"
+      spec:
+        serviceAccountName: oc-mirror-pipeline
+        pipelineRef:
+          name: oc-mirror-build-deploy
+        params:
+          - name: git-url
+            value: $(tt.params.git-url)
+          - name: git-revision
+            value: $(tt.params.git-revision)
+          - name: image
+            value: "image-registry.openshift-image-registry.svc:5000/openshift-pipelines/oc-mirror-autoshift:$(tt.params.git-revision)"
+          - name: deploy-mode
+            value: "job"
+        workspaces:
+          - name: shared-workspace
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 5Gi
+          - name: dockerconfig-ws
+            secret:
+              secretName: pipeline-registry-auth
+          - name: mirror-data
+            persistentVolumeClaim:
+              claimName: oc-mirror-workspace
+---
+# TriggerBinding for GitHub webhooks (optional)
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: oc-mirror-trigger-binding
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+spec:
+  params:
+    - name: git-revision
+      value: $(body.head_commit.id)
+    - name: git-url
+      value: $(body.repository.clone_url)
+---
+# EventListener for GitHub webhooks (optional)
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: oc-mirror-event-listener
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+spec:
+  serviceAccountName: oc-mirror-pipeline
+  triggers:
+    - name: oc-mirror-trigger
+      bindings:
+        - ref: oc-mirror-trigger-binding
+      template:
+        ref: oc-mirror-trigger-template

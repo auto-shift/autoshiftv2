@@ -1,0 +1,121 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: oc-mirror-build-deploy
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+spec:
+  description: |
+    Pipeline to build and deploy the oc-mirror container with AutoShift integration.
+    Uses standard Tekton ClusterTasks for git operations and container builds.
+  params:
+    - name: git-url
+      type: string
+      default: "https://github.com/auto-shift/autoshiftv2.git"
+      description: "Git repository URL"
+    - name: git-revision
+      type: string
+      default: "main"
+      description: "Git revision to clone"
+    - name: image
+      type: string
+      default: "image-registry.openshift-image-registry.svc:5000/openshift-pipelines/oc-mirror-autoshift:latest"
+      description: "Full container image name with registry and tag"
+    - name: values-file
+      type: string
+      default: "values.hub.yaml"
+      description: "AutoShift values file to use"
+    - name: deploy-mode
+      type: string
+      default: "job"
+      description: "Deployment mode: job, cronjob, or deployment"
+    - name: schedule
+      type: string
+      default: "0 2 * * 0"
+      description: "Cron schedule for CronJob (weekly at 2 AM Sunday)"
+    - name: workflow
+      type: string
+      default: "workflow-to-disk"
+      description: "oc-mirror workflow to execute"
+  workspaces:
+    - name: shared-workspace
+      description: "Workspace for source code and build artifacts"
+    - name: dockerconfig-ws
+      description: "Registry authentication workspace"
+    - name: mirror-data
+      description: "Persistent workspace for oc-mirror data"
+  tasks:
+    - name: fetch-source
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+        apiVersion: tekton.dev/v1beta1
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+        - name: deleteExisting
+          value: "true"
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+    
+    - name: setup-pull-secret
+      runAfter: ["fetch-source"]
+      taskRef:
+        name: oc-mirror-setup-pull-secret
+      params:
+        - name: pull-secret-name
+          value: "oc-mirror-pull-secret"
+        - name: pull-secret-namespace
+          value: "openshift-pipelines"
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+    
+    - name: build-image
+      runAfter: ["setup-pull-secret"]
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+        apiVersion: tekton.dev/v1beta1
+      params:
+        - name: IMAGE
+          value: $(params.image)
+        - name: DOCKERFILE
+          value: "./oc-mirror/Containerfile"
+        - name: CONTEXT
+          value: "."
+        - name: TLSVERIFY
+          value: "false"
+        - name: FORMAT
+          value: "oci"
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+        - name: dockerconfig
+          workspace: dockerconfig-ws
+    
+    - name: deploy-oc-mirror
+      runAfter: ["build-image"]
+      taskRef:
+        name: oc-mirror-deploy
+      params:
+        - name: image
+          value: $(params.image)
+        - name: values-file
+          value: $(params.values-file)
+        - name: deploy-mode
+          value: $(params.deploy-mode)
+        - name: schedule
+          value: $(params.schedule)
+        - name: workflow
+          value: $(params.workflow)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+        - name: mirror-data
+          workspace: mirror-data

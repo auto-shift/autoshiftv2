@@ -1,27 +1,34 @@
 #!/bin/bash
 
-# Setup authentication if pull-secret.txt exists
+# Setup authentication from pull secret
 setup_authentication() {
+    echo "🔍 Setting up container registry authentication..."
+    
+    # Use standard XDG location that oc-mirror expects
+    AUTH_DIR="$XDG_RUNTIME_DIR/containers"
+    AUTH_FILE="$AUTH_DIR/auth.json"
+    
+    # Create auth directory
+    mkdir -p "$AUTH_DIR"
+    
+    # Check for pull secret at standard location
     if [ -f "/workspace/pull-secret.txt" ]; then
-        echo "Setting up container registry authentication..."
-        
-        # Use standard XDG location that oc-mirror expects
-        AUTH_DIR="$XDG_RUNTIME_DIR/containers"
-        AUTH_FILE="$AUTH_DIR/auth.json"
-        
-        # Create auth directory
-        mkdir -p "$AUTH_DIR"
-        
-        # Copy and format pull secret
+        echo "📋 Found pull secret at /workspace/pull-secret.txt"
         if cat /workspace/pull-secret.txt | jq . > "$AUTH_FILE" 2>/dev/null; then
-            echo "✅ Authentication configured at $AUTH_FILE"
+            echo "✅ Authentication configured successfully"
             chmod 600 "$AUTH_FILE"
-            # Note: Don't set REGISTRY_AUTH_FILE env var as it causes oc-mirror v2 parsing issues
-            # oc-mirror will use default location or --authfile flag
         else
-            echo "⚠️  Warning: Failed to configure authentication (invalid JSON in pull-secret.txt)"
+            echo "⚠️  Warning: Invalid JSON in pull secret"
         fi
+    else
+        echo "⚠️  No pull secret found at /workspace/pull-secret.txt"
+        echo "📝 For podman/docker: -v /path/to/pull-secret.json:/workspace/pull-secret.txt:ro"
+        echo "📝 For Kubernetes: Secret mounted at /workspace/pull-secret.txt"
+        echo "ℹ️  oc-mirror will use default authentication if available"
     fi
+    
+    # Note: Don't set REGISTRY_AUTH_FILE env var as it causes oc-mirror v2 parsing issues
+    # oc-mirror will use default location or --authfile flag
 }
 
 # Show available workflow commands

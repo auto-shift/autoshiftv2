@@ -1,0 +1,44 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: oc-mirror-build-deploy-example
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+spec:
+  pipelineRef:
+    name: oc-mirror-build-deploy
+  params:
+    - name: git-url
+      value: "https://github.com/auto-shift/autoshiftv2.git"
+    - name: git-revision
+      value: "main"
+    - name: image
+      value: "image-registry.openshift-image-registry.svc:5000/openshift-pipelines/oc-mirror-autoshift:latest"
+    - name: values-file
+      value: "values.hub.yaml"
+    - name: deploy-mode
+      value: "job"  # Options: job, cronjob, deployment
+    - name: schedule
+      value: "0 2 * * 0"  # Weekly at 2 AM Sunday
+    - name: workflow
+      value: "workflow-to-disk"  # oc-mirror workflow to execute
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 5Gi
+    - name: dockerconfig-ws
+      secret:
+        secretName: pipeline-registry-auth
+    - name: mirror-data
+      persistentVolumeClaim:
+        claimName: oc-mirror-workspace
+  timeouts:
+    pipeline: "2h0m0s"
+    tasks: "1h30m0s"

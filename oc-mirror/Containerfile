@@ -65,8 +65,10 @@ RUN OCP_VERSIONS=$(grep -A 200 "labels:" /workspace/autoshift/values.hub.yaml | 
     # Cleanup \
     rm -f oc-mirror.tar.gz openshift-client-linux.tar.gz README.md
 
-# Copy pull secret file (will be moved at runtime)
-COPY pull-secret.txt /workspace/
+# Pull secret will be mounted at runtime from either:
+# - Kubernetes secret (pipeline deployment)
+# - Host file mount (podman/docker run)
+# The entrypoint script will detect the source and set up accordingly
 
 # Copy oc-mirror workflow scripts and configurations
 COPY oc-mirror/entrypoint.sh /workspace/autoshift-entrypoint.sh

@@ -25,6 +25,26 @@ podman build -f oc-mirror/Containerfile -t oc-mirror-autoshift:latest .
 docker build -f oc-mirror/Containerfile -t oc-mirror-autoshift:latest .
 ```
 
+**Note**: Pull secret is now provided via Kubernetes secrets at runtime, not during build.
+
+### Authentication Setup
+
+The container expects a pull secret mounted at `/workspace/pull-secret.txt`:
+
+#### Podman/Docker Usage
+
+```bash
+# Mount pull secret from host
+podman run --rm \
+  -v /path/to/pull-secret.json:/workspace/pull-secret.txt:ro \
+  -v oc-mirror-data:/workspace/content \
+  oc-mirror-autoshift:latest workflow-to-disk
+```
+
+#### Kubernetes/Pipeline Usage
+
+Handled automatically by the Tekton pipeline - see `oc-mirror/pipeline/` directory.
+
 ### Available Workflows
 
 The container provides several built-in workflows accessible through the entrypoint:
@@ -34,24 +54,38 @@ The container provides several built-in workflows accessible through the entrypo
 podman run --rm oc-mirror-autoshift:latest workflows
 
 # Generate ImageSet from AutoShift values
-podman run --rm oc-mirror-autoshift:latest generate-imageset
+podman run --rm \
+  -v /path/to/pull-secret.json:/workspace/pull-secret.txt:ro \
+  oc-mirror-autoshift:latest generate-imageset
 
 # Complete air-gapped workflow: AutoShift values → ImageSet → Disk
-podman run --rm -v oc-mirror-data:/workspace/content oc-mirror-autoshift:latest workflow-to-disk
+podman run --rm \
+  -v /path/to/pull-secret.json:/workspace/pull-secret.txt:ro \
+  -v oc-mirror-data:/workspace/content \
+  oc-mirror-autoshift:latest workflow-to-disk
 
 # Use different values file with operators-only mode
-podman run --rm -v oc-mirror-data:/workspace/content oc-mirror-autoshift:latest \
-  workflow-to-disk --values-file values.sbx.yaml --operators-only --dry-run
+podman run --rm \
+  -v /path/to/pull-secret.json:/workspace/pull-secret.txt:ro \
+  -v oc-mirror-data:/workspace/content \
+  oc-mirror-autoshift:latest workflow-to-disk --values-file values.sbx.yaml --operators-only --dry-run
 
 # Clean cache before mirroring to ensure fresh download
-podman run --rm -v oc-mirror-data:/workspace/content oc-mirror-autoshift:latest \
-  workflow-to-disk --clean-cache --dry-run
+podman run --rm \
+  -v /path/to/pull-secret.json:/workspace/pull-secret.txt:ro \
+  -v oc-mirror-data:/workspace/content \
+  oc-mirror-autoshift:latest workflow-to-disk --clean-cache --dry-run
 
 # Upload air-gapped content to registry
-podman run --rm -v oc-mirror-data:/workspace/content oc-mirror-autoshift:latest workflow-from-disk
+podman run --rm \
+  -v /path/to/pull-secret.json:/workspace/pull-secret.txt:ro \
+  -v oc-mirror-data:/workspace/content \
+  oc-mirror-autoshift:latest workflow-from-disk
 
 # Direct mirroring workflow: AutoShift values → ImageSet → Registry
-podman run --rm oc-mirror-autoshift:latest workflow-direct -r registry.example.com:443
+podman run --rm \
+  -v /path/to/pull-secret.json:/workspace/pull-secret.txt:ro \
+  oc-mirror-autoshift:latest workflow-direct -r registry.example.com:443
 ```
 
 ## Mirroring Workflows

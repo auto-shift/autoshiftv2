@@ -1,0 +1,285 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: oc-mirror-deploy
+  namespace: openshift-pipelines
+  labels:
+    app.kubernetes.io/name: oc-mirror-task
+    autoshift.io/component: oc-mirror
+spec:
+  description: |
+    Deploys the oc-mirror container as a Job, CronJob, or Deployment based on the deploy-mode parameter.
+    Creates necessary PVCs, ConfigMaps, and Secrets for oc-mirror operation.
+  params:
+    - name: image
+      type: string
+      description: "Container image to deploy"
+    - name: values-file
+      type: string
+      default: "values.hub.yaml"
+      description: "AutoShift values file to use"
+    - name: deploy-mode
+      type: string
+      default: "job"
+      description: "Deployment mode: job, cronjob, or deployment"
+    - name: schedule
+      type: string
+      default: "0 2 * * 0"
+      description: "Cron schedule for CronJob"
+    - name: workflow
+      type: string
+      default: "workflow-to-disk"
+      description: "oc-mirror workflow to execute"
+  workspaces:
+    - name: source
+      description: "Source code workspace"
+    - name: mirror-data
+      description: "Persistent workspace for oc-mirror data"
+  steps:
+    - name: create-resources
+      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+      script: |
+        #!/bin/bash
+        set -e
+        
+        echo "🚀 Deploying oc-mirror in $(params.deploy-mode) mode..."
+        
+        # Create namespace if it doesn't exist
+        oc create namespace oc-mirror --dry-run=client -o yaml | oc apply -f -
+        
+        # Create PVC for mirror data if it doesn't exist
+        cat << EOF | oc apply -f -
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: oc-mirror-data
+          namespace: oc-mirror
+          labels:
+            app.kubernetes.io/name: oc-mirror
+            autoshift.io/component: oc-mirror
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 100Gi
+          storageClassName: gp3-csi
+        EOF
+        
+        # Create ConfigMap with values file
+        oc create configmap oc-mirror-config \
+          --from-file=values.yaml=$(workspaces.source.path)/autoshift/$(params.values-file) \
+          --namespace=oc-mirror \
+          --dry-run=client -o yaml | oc apply -f -
+        
+        # Copy pull secret from openshift-pipelines namespace to oc-mirror namespace
+        if ! oc get secret oc-mirror-pull-secret -n openshift-pipelines >/dev/null 2>&1; then
+          echo "❌ Pull secret not found in openshift-pipelines namespace"
+          echo "📝 Create it manually first in openshift-pipelines namespace"
+          exit 1
+        fi
+        
+        echo "✅ Found pull secret in openshift-pipelines namespace, copying to oc-mirror namespace..."
+        oc get secret oc-mirror-pull-secret -n openshift-pipelines -o yaml | \
+          sed 's/namespace: openshift-pipelines/namespace: oc-mirror/' | \
+          oc apply -f -
+        
+        # Deploy based on mode
+        case "$(params.deploy-mode)" in
+          "job")
+            echo "📋 Creating Job for one-time execution..."
+            cat << EOF | oc apply -f -
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: oc-mirror-job-$(date +%Y%m%d-%H%M%S)
+          namespace: oc-mirror
+          labels:
+            app.kubernetes.io/name: oc-mirror
+            autoshift.io/component: oc-mirror
+        spec:
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: oc-mirror
+                autoshift.io/component: oc-mirror
+            spec:
+              restartPolicy: Never
+              imagePullSecrets:
+                - name: oc-mirror-pull-secret
+              containers:
+                - name: oc-mirror
+                  image: $(params.image)
+                  command: ["/workspace/autoshift-entrypoint.sh"]
+                  args: ["$(params.workflow)", "--values-file", "/config/values.yaml"]
+                  env:
+                    - name: XDG_RUNTIME_DIR
+                      value: "/workspace"
+                    - name: HOME
+                      value: "/workspace"
+                  volumeMounts:
+                    - name: mirror-data
+                      mountPath: /workspace/content
+                    - name: config
+                      mountPath: /config
+                    - name: pull-secret
+                      mountPath: /workspace/pull-secret.txt
+                      subPath: .dockerconfigjson
+                  resources:
+                    requests:
+                      memory: "2Gi"
+                      cpu: "500m"
+                    limits:
+                      memory: "8Gi"
+                      cpu: "2"
+              volumes:
+                - name: mirror-data
+                  persistentVolumeClaim:
+                    claimName: oc-mirror-data
+                - name: config
+                  configMap:
+                    name: oc-mirror-config
+                - name: pull-secret
+                  secret:
+                    secretName: oc-mirror-pull-secret
+        EOF
+            ;;
+            
+          "cronjob")
+            echo "⏰ Creating CronJob for scheduled execution..."
+            cat << EOF | oc apply -f -
+        apiVersion: batch/v1
+        kind: CronJob
+        metadata:
+          name: oc-mirror-cronjob
+          namespace: oc-mirror
+          labels:
+            app.kubernetes.io/name: oc-mirror
+            autoshift.io/component: oc-mirror
+        spec:
+          schedule: "$(params.schedule)"
+          jobTemplate:
+            spec:
+              template:
+                metadata:
+                  labels:
+                    app.kubernetes.io/name: oc-mirror
+                    autoshift.io/component: oc-mirror
+                spec:
+                  restartPolicy: Never
+                  imagePullSecrets:
+                    - name: oc-mirror-pull-secret
+                  containers:
+                    - name: oc-mirror
+                      image: $(params.image)
+                      command: ["/workspace/autoshift-entrypoint.sh"]
+                      args: ["$(params.workflow)", "--values-file", "/config/values.yaml"]
+                      env:
+                        - name: XDG_RUNTIME_DIR
+                          value: "/workspace"
+                        - name: HOME
+                          value: "/workspace"
+                      volumeMounts:
+                        - name: mirror-data
+                          mountPath: /workspace/content
+                        - name: config
+                          mountPath: /config
+                        - name: pull-secret
+                          mountPath: /workspace/pull-secret.txt
+                          subPath: .dockerconfigjson
+                      resources:
+                        requests:
+                          memory: "2Gi"
+                          cpu: "500m"
+                        limits:
+                          memory: "8Gi"
+                          cpu: "2"
+                  volumes:
+                    - name: mirror-data
+                      persistentVolumeClaim:
+                        claimName: oc-mirror-data
+                    - name: config
+                      configMap:
+                        name: oc-mirror-config
+                    - name: pull-secret
+                      secret:
+                        secretName: oc-mirror-pull-secret
+        EOF
+            ;;
+            
+          "deployment")
+            echo "🔄 Creating Deployment for persistent service..."
+            cat << EOF | oc apply -f -
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: oc-mirror-deployment
+          namespace: oc-mirror
+          labels:
+            app.kubernetes.io/name: oc-mirror
+            autoshift.io/component: oc-mirror
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: oc-mirror
+              autoshift.io/component: oc-mirror
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: oc-mirror
+                autoshift.io/component: oc-mirror
+            spec:
+              imagePullSecrets:
+                - name: oc-mirror-pull-secret
+              containers:
+                - name: oc-mirror
+                  image: $(params.image)
+                  command: ["/bin/bash"]
+                  args: ["-c", "while true; do sleep 3600; done"]
+                  env:
+                    - name: XDG_RUNTIME_DIR
+                      value: "/workspace"
+                    - name: HOME
+                      value: "/workspace"
+                  volumeMounts:
+                    - name: mirror-data
+                      mountPath: /workspace/content
+                    - name: config
+                      mountPath: /config
+                    - name: pull-secret
+                      mountPath: /workspace/pull-secret.txt
+                      subPath: .dockerconfigjson
+                  resources:
+                    requests:
+                      memory: "1Gi"
+                      cpu: "250m"
+                    limits:
+                      memory: "4Gi"
+                      cpu: "1"
+              volumes:
+                - name: mirror-data
+                  persistentVolumeClaim:
+                    claimName: oc-mirror-data
+                - name: config
+                  configMap:
+                    name: oc-mirror-config
+                - name: pull-secret
+                  secret:
+                    secretName: oc-mirror-pull-secret
+        EOF
+            ;;
+            
+          *)
+            echo "❌ Invalid deploy-mode: $(params.deploy-mode)"
+            echo "Valid options: job, cronjob, deployment"
+            exit 1
+            ;;
+        esac
+        
+        echo "✅ oc-mirror deployed successfully in $(params.deploy-mode) mode"
+        
+        # Show deployed resources
+        echo ""
+        echo "📋 Deployed Resources:"
+        oc get all,pvc,cm,secret -n oc-mirror -l app.kubernetes.io/name=oc-mirror
