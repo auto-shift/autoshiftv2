@@ -353,6 +353,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `acs`                             | bool              |                           | If not set Advanced Cluster Security will not be managed |
+| `acs-egress-connectivity`         | string            | `Online`                  | Options are `Online` or `Offline`, use `Offline` if disconnected |
 | `acs-channel`                     | string            | `stable`                  |       |
 | `acs-install-plan-approval`       | string            | `Automatic`               |       |
 | `acs-source`                      | string            | `redhat-operators`        |       |
