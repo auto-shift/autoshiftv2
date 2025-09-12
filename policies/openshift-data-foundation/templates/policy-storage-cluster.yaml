@@ -19,7 +19,12 @@ spec:
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
-      kind: Policy  
+      kind: Policy
+    - name: policy-storage-nodes-test
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -38,27 +43,6 @@ spec:
                 metadata:
                   name: ocs-storagecluster
                   namespace: {{ .Values.odf.namespace }}
-                {{ "{{hub-" }} if (eq "standalone" (index .ManagedClusterLabels "autoshift.io/odf-multi-cloud-gateway" | default "")) {{ "hub}}" }}
-                spec:
-                  arbiter: {}
-                  encryption:
-                    kms: {}
-                  externalStorage: {}
-                  managedResources:
-                    cephObjectStoreUsers: {}
-                    cephCluster: {}
-                    cephBlockPools: {}
-                    cephNonResilientPools: {}
-                    cephObjectStores: {}
-                    cephFilesystems: {}
-                    cephRBDMirror: {}
-                    cephToolbox: {}
-                    cephDashboard: {}
-                    cephConfig: {}
-                  mirroring: {}
-                  multiCloudGateway:
-                    reconcileStrategy: standalone
-                {{ "{{" }}hub- else hub{{ "}}" }}
                 spec:
                   storageDeviceSets:
                     - config: {}
@@ -135,35 +119,6 @@ spec:
                   nodeTopologies: {}
                   externalStorage: {}
                   resourceProfile: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/odf-resource-profile" | default "{{ .Values.odf.resourceProfile }}" hub{{ "}}" }}'
-                {{ "{{" }}hub- end hub{{ "}}" }}
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: storage-cluster-install-test
-        spec:
-          remediationAction: inform
-          severity: high
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: ocs.openshift.io/v1
-                kind: StorageCluster
-                metadata:
-                  name: ocs-storagecluster
-                  namespace: {{ .Values.odf.namespace }}
-                status:
-                  conditions:
-                    - status: 'False'
-                      type: VersionMismatch
-                    - status: 'True'
-                      type: ReconcileComplete
-                    - status: 'True'
-                      type: Available
-                    - status: 'False'
-                      type: Progressing
-                    - status: 'False'
-                      type: Degraded
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -186,6 +141,10 @@ spec:
               operator: In
               values:
               - 'true'
+            - key: 'autoshift.io/odf-multi-cloud-gateway'
+              operator: NotIn
+              values:
+              - 'standalone'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

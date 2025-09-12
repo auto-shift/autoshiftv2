@@ -1,3 +1,4 @@
+
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -8,12 +9,6 @@ metadata:
     policy.open-cluster-management.io/categories: Kubernetes MetalLB Operator
     policy.open-cluster-management.io/controls: OpenShift Standard
 spec:
-  dependencies:
-    - name: policy-aap-operator-install
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -25,24 +20,33 @@ spec:
         spec:
           remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
-          object-templates:
-            - complianceType: musthave
+          object-templates-raw: |
+            - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: aap.ansible.com/v1alpha1
                 kind: AnsibleAutomationPlatform
                 metadata:
-                  name: "{{ .Values.aap.instance }}"
+                  name: "{{ .Values.aap.instanceName }}"
                   namespace: "{{ .Values.aap.namespace }}"
                 spec:
                   controller:
                     disabled: false
                   hub:
-                    disabled: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-hub-disabled" | default "false" hub{{ "}}" }}'
-                    storage_type: file
+                    disabled: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-hub-disabled" | default "false" hub{{ "}}" }}
+                    {{ "{{" }}hub- if eq (index .ManagedClusterLabels "autoshift.io/aap-file-storage" | default "false") "true" hub{{ "}}" }}
+                    storage_type: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-storage-type" | default "{{ .Values.aap.storageType }}" hub{{ "}}" }}'
                     file_storage_size: 10Gi
-                    file_storage_storage_class: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-hub-storage-class" | default "{{ .Values.aap.storageClass }}" hub{{ "}}" }}'
+                    file_storage_storage_class: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-file_storage_storage_class" | default "{{ .Values.aap.storageClass }}" hub{{ "}}" }}'
+                    {{ "{{" }}hub- end hub{{ "}}" }}
+                    {{ "{{" }}hub- if eq (index .ManagedClusterLabels "autoshift.io/aap-s3-storage" | default "false") "true" hub{{ "}}" }}
+                    storage_type: S3
+                    object_storage_s3_secret: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-hub-s3-secret" hub{{ "}}" }}'
+                    {{ "{{" }}hub- end hub{{ "}}" }}
+                  eda:
+                    disabled: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-eda-disabled" | default "true" hub{{ "}}" }}
                   lightspeed:
-                    disabled: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-lightspeed-disabled" | default "true" hub{{ "}}" }}'
+                    disabled: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-lightspeed-disabled" | default "true" hub{{ "}}" }}
+                  redis_mode: standalone
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -58,7 +62,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/metallb'
+            - key: 'autoshift.io/aap'
               operator: In
               values:
               - 'true'

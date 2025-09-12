@@ -1,0 +1,94 @@
+# This policy verifies the installation of the official & supported version of
+# the NMState NodeNetworkConfigurationPolicy on the managed clusters.
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-nmstate-nncp
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: AutoShiftv2
+    policy.open-cluster-management.io/categories: Kubernetes NMState Operator
+    policy.open-cluster-management.io/controls: OpenShift Standard
+spec:
+  dependencies:
+    - name: policy-nmstate
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: nmstate-operator-nmstate-nncp
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates-raw: |
+            {{ "{{hub-" }} $nncp_list := list {{ "hub}}" }}
+            {{ "{{hub-" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}
+              {{ "{{hub-" }} if $label | hasPrefix "autoshift.io/nmstate-nncp" {{ "hub}}" }}
+                {{ "{{hub-" }} $nncp_list = append $nncp_list $labelvalue {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if not (eq 0 (len $nncp_list)) {{ "hub}}" }}
+              {{ "{{hub-" }} range $nncp_list {{ "hub}}" }}
+                {{ "{{hub-" }} $configmap := ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (print "nmstate-" .)).data) {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: nmstate.io/v1
+                kind: NodeNetworkConfigurationPolicy
+                metadata:
+                  name: nmstate-{{ "{{hub"}} . {{ "hub}}" }}
+                spec:
+                  {{ "{{" }}hub- if $configmap.nodeSelector hub{{ "}}" }}
+                  nodeSelector:
+                    {{ "{{" }}hub $configmap.nodeSelector | base64dec | autoindent hub{{ "}}" }}
+                  {{ "{{" }}hub- end hub{{ "}}" }}
+                  desiredState:
+                    {{ "{{" }}hub $configmap.nmstate | base64dec | autoindent hub{{ "}}" }}
+              {{ "{{hub-"}} end {{ "hub}}" }}
+            {{ "{{hub-"}} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-nmstate-nncp
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/nmstate'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-nmstate-nncp
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-nmstate-nncp
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-nmstate-nncp
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

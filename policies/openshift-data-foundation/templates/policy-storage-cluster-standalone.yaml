@@ -1,0 +1,104 @@
+# This policy verifies the installation of the official & supported version of
+# the Compliance Operator on the managed clusters.
+#
+# If set to "enforce" it'll install the operator.
+#
+# Note that OpenShift 4.18 is required.
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-storage-cluster-standalone
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+spec:
+  dependencies:
+    - name: policy-odf-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: storage-cluster-install-standalone
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: ocs.openshift.io/v1
+                kind: StorageCluster
+                metadata:
+                  name: ocs-storagecluster
+                  namespace: {{ .Values.odf.namespace }}
+                spec:
+                  arbiter: {}
+                  encryption:
+                    kms: {}
+                  externalStorage: {}
+                  managedResources:
+                    cephObjectStoreUsers: {}
+                    cephCluster: {}
+                    cephBlockPools: {}
+                    cephNonResilientPools: {}
+                    cephObjectStores: {}
+                    cephFilesystems: {}
+                    cephRBDMirror: {}
+                    cephToolbox: {}
+                    cephDashboard: {}
+                    cephConfig: {}
+                  mirroring: {}
+                  multiCloudGateway:
+                    reconcileStrategy: standalone
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-storage-cluster-standalone
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/odf'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/odf-multi-cloud-gateway'
+              operator: In
+              values:
+              - 'standalone'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-storage-cluster-standalone
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-storage-cluster-standalone
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-storage-cluster-standalone
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

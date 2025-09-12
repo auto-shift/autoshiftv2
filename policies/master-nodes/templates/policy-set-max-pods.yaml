@@ -1,0 +1,81 @@
+# This policy verifies the installation of the official & supported version of
+# the LVM Operator on the managed clusters.
+#
+# If set to "enforce" it'll install the operator.
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-set-max-pods
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: AutoShiftv2
+    policy.open-cluster-management.io/categories: Master Nodes
+    policy.open-cluster-management.io/controls: OpenShift Standard
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: set-max-pods
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                {{ "{{-" }} $cores := ((index (lookup "v1" "Node" "" "").items 0).status.capacity.cpu | toInt) {{ "}}" }}
+                {{ "{{-" }} $maxPods := ("{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/master-max-pods" | default {{ .Values.masterNodes.maxPods }} hub{{ "}}" }}" | toInt) {{ "}}" }}
+                apiVersion: machineconfiguration.openshift.io/v1
+                kind: KubeletConfig
+                metadata:
+                  name: set-max-pods
+                spec:
+                  machineConfigPoolSelector:
+                    matchLabels:
+                      pools.operator.machineconfiguration.openshift.io/master: ""
+                  kubeletConfig:
+                    podsPerCore: {{ "{{" }} add 1 (div $maxPods $cores) {{ "}}" }}
+                    maxPods: {{ "{{" }} $maxPods {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-set-max-pods
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/master-nodes'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-set-max-pods
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-set-max-pods
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-set-max-pods
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

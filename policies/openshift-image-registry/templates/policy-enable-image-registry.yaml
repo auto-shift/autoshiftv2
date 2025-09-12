@@ -21,7 +21,7 @@ spec:
       compliance: Compliant
       kind: Policy
   remediationAction: enforce
-  disabled: true
+  disabled: false
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -31,7 +31,29 @@ spec:
         spec:
           remediationAction: inform # will be overridden by remediationAction in parent policy
           severity: high
-          object-templates:
+          object-templates-raw: |
+            {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: image-registry-private-configuration-user
+                  namespace: openshift-image-registry
+                type: Opaque
+                data:
+                  REGISTRY_STORAGE_S3_ACCESSKEY: {{`{{ fromSecret "openshift-image-registry" "image-registry-storage" "AWS_ACCESS_KEY_ID" }}`}}
+                  REGISTRY_STORAGE_S3_SECRETKEY: {{`{{ fromSecret "openshift-image-registry" "image-registry-storage" "AWS_SECRET_ACCESS_KEY" }}`}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: image-registry-s3-bundle
+                  namespace: openshift-config
+                data:
+                  ca-bundle.crt: '{{`{{ fromSecret "openshift-ingress" (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default").spec.defaultCertificate.name "tls.crt" | base64dec | toRawJson | toLiteral }}`}}'
+            {{`{{hub- end hub}}`}}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: imageregistry.operator.openshift.io/v1
@@ -40,19 +62,31 @@ spec:
                   name: cluster
                 spec:
                   logLevel: Normal
-                  rolloutStrategy: Recreate
+                  rolloutStrategy: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-rollout-strategy" | default "Recreate" hub}}`}}
                   operatorLogLevel: Normal
                   requests:
                     read:
                       maxWaitInQueue: 0s
                     write:
                       maxWaitInQueue: 0s
-                  managementState: Managed
+                  replicas: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-replicas" | default "1" hub}}`}}
+                  managementState: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-management-state" | default "Managed" hub}}`}}
                   storage:
+                    {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}}`}}
                     managementState: Managed
                     pvc:
                       claim: image-registry-storage
-                  replicas: 1
+                    {{`{{hub- else if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}
+                    managementState: Unmanaged
+                    s3:
+                      region: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-s3-region" | default "us-east-1" hub}}`}}
+                      bucket: {{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_NAME" }}`}}
+                      regionEndpoint: 'https://{{`{{ (lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3").spec.host }}`}}'
+                      virtualHostedStyle: false
+                      encrypt: false
+                      trustedCA:
+                        name: image-registry-s3-bundle
+                    {{`{{hub- end hub}}`}}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -67,6 +101,14 @@ spec:
   {{- range $clusterSet, $value := .Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/imageregistry'
+              operator: In
+              values:
+                - 'true'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

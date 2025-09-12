@@ -10,11 +10,7 @@ In your `autoshift/values.hub.yaml` file, you can configure these toggles:
 
 ⚠️ **Important:** Hub requires a storage class with RWX access. Any other access mode will prevent Hub from storing content.
 
-Once your configuration is ready, apply the labels and deploy via Autoshift:
-
-```bash
-helm template autoshift autoshift -f autoshift/values.hub.yaml | oc apply -f -
-```
+Once your configuration is ready, push your changes to your git repo.
 
 Deployment typically takes around 30 minutes. After that:
 
