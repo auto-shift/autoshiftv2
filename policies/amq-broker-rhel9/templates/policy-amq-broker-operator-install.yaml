@@ -38,11 +38,11 @@ spec:
             name: {{ .Values.amq.namespace }}
             namespace: {{ .Values.amq.namespace }}
           subscription:
-            namespace: {{ .Values.amq.namespace }}
-            channel: {{ .Values.amq.channel}}
             name: {{ .Values.amq.name }}
-            source: {{ .Values.amq.source }}
-            sourceNamespace: {{ .Values.amq.sourceNamespace}}
+            namespace: {{ .Values.amq.namespace }}
+            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/amq-source" | default "{{ .Values.amq.source }}" hub{{ "}}" }}'
+            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/amq-source-namespace" | default "{{ .Values.amq.sourceNamespace }}" hub{{ "}}" }}'
+            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/amq-channel" | default "{{ .Values.amq.channel }}" hub{{ "}}" }}'
           # Getting Label and then capitalizing first letter
           upgradeApproval: {{ .Values.amq.approval }}
 ---
@@ -86,3 +86,4 @@ subjects:
   - name: policy-amq-operator-rhel9-install
     apiGroup: policy.open-cluster-management.io
     kind: Policy
+
