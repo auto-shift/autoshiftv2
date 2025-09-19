@@ -203,27 +203,92 @@ case "$1" in
     "mirror-to-disk")
         shift
         VALUES_FILE=$(parse_values_file "$@")
-        exec ./mirror-to-disk.sh --values-file "$VALUES_FILE" "$@"
+        # Remove --values-file arguments before passing to mirror script
+        REMAINING_ARGS=()
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --values-file)
+                    shift 2  # Skip --values-file and its value
+                    ;;
+                *)
+                    REMAINING_ARGS+=("$1")
+                    shift
+                    ;;
+            esac
+        done
+        exec ./mirror-to-disk.sh "${REMAINING_ARGS[@]}"
         ;;
     "disk-to-mirror")
         shift
         VALUES_FILE=$(parse_values_file "$@")
-        exec ./disk-to-mirror.sh --values-file "$VALUES_FILE" "$@"
+        # Remove --values-file arguments before passing to mirror script
+        REMAINING_ARGS=()
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --values-file)
+                    shift 2  # Skip --values-file and its value
+                    ;;
+                *)
+                    REMAINING_ARGS+=("$1")
+                    shift
+                    ;;
+            esac
+        done
+        exec ./disk-to-mirror.sh "${REMAINING_ARGS[@]}"
         ;;
     "mirror-to-mirror")
         shift
         VALUES_FILE=$(parse_values_file "$@")
-        exec ./mirror-to-mirror.sh --values-file "$VALUES_FILE" "$@"
+        # Remove --values-file arguments before passing to mirror script
+        REMAINING_ARGS=()
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --values-file)
+                    shift 2  # Skip --values-file and its value
+                    ;;
+                *)
+                    REMAINING_ARGS+=("$1")
+                    shift
+                    ;;
+            esac
+        done
+        exec ./mirror-to-mirror.sh "${REMAINING_ARGS[@]}"
         ;;
     "delete-generate")
         shift
         VALUES_FILE=$(parse_values_file "$@")
-        exec ./delete-generate.sh --values-file "$VALUES_FILE" "$@"
+        # Remove --values-file arguments before passing to delete script
+        REMAINING_ARGS=()
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --values-file)
+                    shift 2  # Skip --values-file and its value
+                    ;;
+                *)
+                    REMAINING_ARGS+=("$1")
+                    shift
+                    ;;
+            esac
+        done
+        exec ./delete-generate.sh "${REMAINING_ARGS[@]}"
         ;;
     "delete-execute")
         shift
         VALUES_FILE=$(parse_values_file "$@")
-        exec ./delete-execute.sh --values-file "$VALUES_FILE" "$@"
+        # Remove --values-file arguments before passing to delete script
+        REMAINING_ARGS=()
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --values-file)
+                    shift 2  # Skip --values-file and its value
+                    ;;
+                *)
+                    REMAINING_ARGS+=("$1")
+                    shift
+                    ;;
+            esac
+        done
+        exec ./delete-execute.sh "${REMAINING_ARGS[@]}"
         ;;
     "workflow-to-disk")
         # Combined workflow: generate imageset + mirror to disk
