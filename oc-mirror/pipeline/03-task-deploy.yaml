@@ -2,7 +2,7 @@ apiVersion: tekton.dev/v1beta1
 kind: Task
 metadata:
   name: oc-mirror-deploy
-  namespace: openshift-pipelines
+  namespace: oc-mirror-pipeline
   labels:
     app.kubernetes.io/name: oc-mirror-task
     autoshift.io/component: oc-mirror
@@ -29,12 +29,14 @@ spec:
     - name: workflow
       type: string
       default: "workflow-to-disk"
-      description: "oc-mirror workflow to execute"
+      description: "oc-mirror workflow to execute: mirror-to-mirror, mirror-to-disk, disk-to-mirror"
+    - name: imageset-config
+      type: string
+      default: "test-imageset.yaml"
+      description: "ImageSet configuration file to use"
   workspaces:
     - name: source
       description: "Source code workspace"
-    - name: mirror-data
-      description: "Persistent workspace for oc-mirror data"
   steps:
     - name: create-resources
       image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
@@ -66,23 +68,48 @@ spec:
           storageClassName: gp3-csi
         EOF
         
-        # Create ConfigMap with values file
+        # Create ConfigMap with values file and imageset config
         oc create configmap oc-mirror-config \
-          --from-file=values.yaml=$(workspaces.source.path)/autoshift/$(params.values-file) \
+          --from-file=values.yaml=$(workspaces.source.path)/source/autoshift/$(params.values-file) \
+          --from-file=imageset.yaml=$(workspaces.source.path)/source/oc-mirror/$(params.imageset-config) \
           --namespace=oc-mirror \
           --dry-run=client -o yaml | oc apply -f -
         
-        # Copy pull secret from openshift-pipelines namespace to oc-mirror namespace
-        if ! oc get secret oc-mirror-pull-secret -n openshift-pipelines >/dev/null 2>&1; then
-          echo "❌ Pull secret not found in openshift-pipelines namespace"
-          echo "📝 Create it manually first in openshift-pipelines namespace"
+        # Copy pull secret from oc-mirror-pipeline namespace to oc-mirror namespace
+        if ! oc get secret oc-mirror-pull-secret -n oc-mirror-pipeline >/dev/null 2>&1; then
+          echo "❌ Pull secret not found in oc-mirror-pipeline namespace"
+          echo "📝 Create it manually first in oc-mirror-pipeline namespace"
           exit 1
         fi
         
-        echo "✅ Found pull secret in openshift-pipelines namespace, copying to oc-mirror namespace..."
-        oc get secret oc-mirror-pull-secret -n openshift-pipelines -o yaml | \
-          sed 's/namespace: openshift-pipelines/namespace: oc-mirror/' | \
-          oc apply -f -
+        echo "✅ Found pull secret in oc-mirror-pipeline namespace, copying to oc-mirror namespace..."
+        if ! oc get secret oc-mirror-pull-secret -n oc-mirror >/dev/null 2>&1; then
+          oc get secret oc-mirror-pull-secret -n oc-mirror-pipeline -o yaml | \
+            sed 's/namespace: oc-mirror-pipeline/namespace: oc-mirror/' | \
+            oc apply -f -
+        else
+          echo "✅ Pull secret already exists in oc-mirror namespace"
+        fi
+        
+        # Copy quay registry auth secret
+        if ! oc get secret quay-registry-auth -n oc-mirror >/dev/null 2>&1; then
+          oc get secret quay-registry-auth -n oc-mirror-pipeline -o yaml | \
+            sed 's/namespace: oc-mirror-pipeline/namespace: oc-mirror/' | \
+            oc apply -f -
+          echo "✅ Copied quay-registry-auth secret to oc-mirror namespace"
+        else
+          echo "✅ Quay registry auth secret already exists in oc-mirror namespace"
+        fi
+        
+        # Copy quayadmin secret for registry authentication
+        if ! oc get secret quayadmin -n oc-mirror >/dev/null 2>&1; then
+          oc get secret quayadmin -n quay-enterprise -o yaml | \
+            sed 's/namespace: quay-enterprise/namespace: oc-mirror/' | \
+            oc apply -f -
+          echo "✅ Copied quayadmin secret to oc-mirror namespace"
+        else
+          echo "✅ Quayadmin secret already exists in oc-mirror namespace"
+        fi
         
         # Deploy based on mode
         case "$(params.deploy-mode)" in
@@ -106,17 +133,32 @@ spec:
             spec:
               restartPolicy: Never
               imagePullSecrets:
-                - name: oc-mirror-pull-secret
+                - name: quay-registry-auth
               containers:
                 - name: oc-mirror
                   image: $(params.image)
                   command: ["/workspace/autoshift-entrypoint.sh"]
-                  args: ["$(params.workflow)", "--values-file", "/config/values.yaml"]
+                  args: ["$(params.workflow)", "--values-file", "/config/values.yaml", "--imageset-config", "/config/imageset.yaml"]
                   env:
                     - name: XDG_RUNTIME_DIR
                       value: "/workspace"
                     - name: HOME
                       value: "/workspace"
+                    - name: QUAY_USERNAME
+                      valueFrom:
+                        secretKeyRef:
+                          name: quayadmin
+                          key: basic
+                    - name: QUAY_PASSWORD
+                      valueFrom:
+                        secretKeyRef:
+                          name: quayadmin
+                          key: password
+                    - name: QUAY_TOKEN
+                      valueFrom:
+                        secretKeyRef:
+                          name: quayadmin
+                          key: token
                   volumeMounts:
                     - name: mirror-data
                       mountPath: /workspace/content
@@ -168,12 +210,12 @@ spec:
                 spec:
                   restartPolicy: Never
                   imagePullSecrets:
-                    - name: oc-mirror-pull-secret
+                    - name: quay-registry-auth
                   containers:
                     - name: oc-mirror
                       image: $(params.image)
                       command: ["/workspace/autoshift-entrypoint.sh"]
-                      args: ["$(params.workflow)", "--values-file", "/config/values.yaml"]
+                      args: ["$(params.workflow)", "--values-file", "/config/values.yaml", "--imageset-config", "/config/imageset.yaml"]
                       env:
                         - name: XDG_RUNTIME_DIR
                           value: "/workspace"
@@ -231,7 +273,7 @@ spec:
                 autoshift.io/component: oc-mirror
             spec:
               imagePullSecrets:
-                - name: oc-mirror-pull-secret
+                - name: quay-registry-auth
               containers:
                 - name: oc-mirror
                   image: $(params.image)
@@ -242,6 +284,21 @@ spec:
                       value: "/workspace"
                     - name: HOME
                       value: "/workspace"
+                    - name: QUAY_USERNAME
+                      valueFrom:
+                        secretKeyRef:
+                          name: quayadmin
+                          key: basic
+                    - name: QUAY_PASSWORD
+                      valueFrom:
+                        secretKeyRef:
+                          name: quayadmin
+                          key: password
+                    - name: QUAY_TOKEN
+                      valueFrom:
+                        secretKeyRef:
+                          name: quayadmin
+                          key: token
                   volumeMounts:
                     - name: mirror-data
                       mountPath: /workspace/content
@@ -256,7 +313,7 @@ spec:
                       cpu: "250m"
                     limits:
                       memory: "4Gi"
-                      cpu: "1"
+                      cpu: "2"
               volumes:
                 - name: mirror-data
                   persistentVolumeClaim:

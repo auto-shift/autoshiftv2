@@ -1,8 +1,8 @@
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: oc-mirror-build-deploy
-  namespace: openshift-pipelines
+  namespace: oc-mirror-pipeline
   labels:
     app.kubernetes.io/name: oc-mirror-pipeline
     autoshift.io/component: oc-mirror
@@ -21,7 +21,7 @@ spec:
       description: "Git revision to clone"
     - name: image
       type: string
-      default: "image-registry.openshift-image-registry.svc:5000/openshift-pipelines/oc-mirror-autoshift:latest"
+      default: "registry-quay-quay-enterprise.apps.cluster-ggv6s.ggv6s.sandbox1495.opentlc.com/quayadmin/oc-mirror-autoshift:latest"
       description: "Full container image name with registry and tag"
     - name: values-file
       type: string
@@ -42,23 +42,30 @@ spec:
   workspaces:
     - name: shared-workspace
       description: "Workspace for source code and build artifacts"
-    - name: dockerconfig-ws
-      description: "Registry authentication workspace"
+    - name: quay-dockerconfig-ws
+      description: "Quay registry authentication workspace"
     - name: mirror-data
       description: "Persistent workspace for oc-mirror data"
   tasks:
     - name: fetch-source
       taskRef:
-        name: git-clone
-        kind: ClusterTask
-        apiVersion: tekton.dev/v1beta1
+        resolver: cluster
+        params:
+        - name: kind
+          value: task
+        - name: name
+          value: git-clone
+        - name: namespace
+          value: openshift-pipelines
       params:
-        - name: url
+        - name: URL
           value: $(params.git-url)
-        - name: revision
+        - name: REVISION
           value: $(params.git-revision)
-        - name: deleteExisting
-          value: "true"
+        - name: DELETE_EXISTING
+          value: "false"
+        - name: SUBDIRECTORY
+          value: "source"
       workspaces:
         - name: output
           workspace: shared-workspace
@@ -71,7 +78,7 @@ spec:
         - name: pull-secret-name
           value: "oc-mirror-pull-secret"
         - name: pull-secret-namespace
-          value: "openshift-pipelines"
+          value: "oc-mirror-pipeline"
       workspaces:
         - name: source
           workspace: shared-workspace
@@ -79,16 +86,21 @@ spec:
     - name: build-image
       runAfter: ["setup-pull-secret"]
       taskRef:
-        name: buildah
-        kind: ClusterTask
-        apiVersion: tekton.dev/v1beta1
+        resolver: cluster
+        params:
+        - name: kind
+          value: task
+        - name: name
+          value: buildah
+        - name: namespace
+          value: openshift-pipelines
       params:
         - name: IMAGE
           value: $(params.image)
         - name: DOCKERFILE
-          value: "./oc-mirror/Containerfile"
+          value: "oc-mirror/Containerfile"
         - name: CONTEXT
-          value: "."
+          value: "source"
         - name: TLSVERIFY
           value: "false"
         - name: FORMAT
@@ -97,7 +109,7 @@ spec:
         - name: source
           workspace: shared-workspace
         - name: dockerconfig
-          workspace: dockerconfig-ws
+          workspace: quay-dockerconfig-ws
     
     - name: deploy-oc-mirror
       runAfter: ["build-image"]
@@ -117,5 +129,3 @@ spec:
       workspaces:
         - name: source
           workspace: shared-workspace
-        - name: mirror-data
-          workspace: mirror-data

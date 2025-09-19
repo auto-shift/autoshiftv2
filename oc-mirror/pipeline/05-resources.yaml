@@ -4,7 +4,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: oc-mirror-pipeline
-  namespace: openshift-pipelines
+  namespace: oc-mirror-pipeline
   labels:
     app.kubernetes.io/name: oc-mirror-pipeline
     autoshift.io/component: oc-mirror
@@ -20,7 +20,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: oc-mirror-pipeline
-    namespace: openshift-pipelines
+    namespace: oc-mirror-pipeline
 roleRef:
   kind: ClusterRole
   name: cluster-admin
@@ -31,7 +31,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: oc-mirror-workspace
-  namespace: openshift-pipelines
+  namespace: oc-mirror-pipeline
   labels:
     app.kubernetes.io/name: oc-mirror-pipeline
     autoshift.io/component: oc-mirror
@@ -49,14 +49,14 @@ spec:
 #   --docker-server=image-registry.openshift-image-registry.svc:5000 \
 #   --docker-username=unused \
 #   --docker-password=$(oc whoami -t) \
-#   --namespace=openshift-pipelines
+#   --namespace=oc-mirror-pipeline
 ---
 # TriggerTemplate for GitHub webhooks (optional)
 apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerTemplate
 metadata:
   name: oc-mirror-trigger-template
-  namespace: openshift-pipelines
+  namespace: oc-mirror-pipeline
   labels:
     app.kubernetes.io/name: oc-mirror-pipeline
     autoshift.io/component: oc-mirror
@@ -73,7 +73,7 @@ spec:
       kind: PipelineRun
       metadata:
         generateName: oc-mirror-webhook-
-        namespace: openshift-pipelines
+        namespace: oc-mirror-pipeline
         labels:
           app.kubernetes.io/name: oc-mirror-pipeline
           autoshift.io/component: oc-mirror
@@ -88,7 +88,7 @@ spec:
           - name: git-revision
             value: $(tt.params.git-revision)
           - name: image
-            value: "image-registry.openshift-image-registry.svc:5000/openshift-pipelines/oc-mirror-autoshift:$(tt.params.git-revision)"
+            value: "image-registry.openshift-image-registry.svc:5000/oc-mirror-pipeline/oc-mirror-autoshift:$(tt.params.git-revision)"
           - name: deploy-mode
             value: "job"
         workspaces:
@@ -112,7 +112,7 @@ apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerBinding
 metadata:
   name: oc-mirror-trigger-binding
-  namespace: openshift-pipelines
+  namespace: oc-mirror-pipeline
   labels:
     app.kubernetes.io/name: oc-mirror-pipeline
     autoshift.io/component: oc-mirror
@@ -128,7 +128,7 @@ apiVersion: triggers.tekton.dev/v1beta1
 kind: EventListener
 metadata:
   name: oc-mirror-event-listener
-  namespace: openshift-pipelines
+  namespace: oc-mirror-pipeline
   labels:
     app.kubernetes.io/name: oc-mirror-pipeline
     autoshift.io/component: oc-mirror
