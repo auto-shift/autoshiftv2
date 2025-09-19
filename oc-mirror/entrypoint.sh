@@ -1,5 +1,55 @@
 #!/bin/bash
 
+# Parse arguments for values file
+parse_values_file() {
+    local values_file=""
+    
+    # Look for --values-file parameter
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --values-file)
+                values_file="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+    
+    # Default locations to check in order of preference
+    local default_locations=(
+        "/config/values.yaml"                    # ConfigMap mount
+        "/workspace/autoshift/values.hub.yaml"  # Git repository location
+        "autoshift/values.hub.yaml"             # Local relative path
+        "values.hub.yaml"                       # Current directory
+    )
+    
+    # If values file was specified, check if it exists
+    if [ -n "$values_file" ]; then
+        if [ -f "$values_file" ]; then
+            echo "$values_file"
+            return 0
+        else
+            echo "❌ Specified values file not found: $values_file" >&2
+            exit 1
+        fi
+    fi
+    
+    # Check default locations
+    for location in "${default_locations[@]}"; do
+        if [ -f "$location" ]; then
+            echo "$location"
+            return 0
+        fi
+    done
+    
+    echo "❌ No AutoShift values file found. Checked:" >&2
+    printf "   %s\n" "${default_locations[@]}" >&2
+    echo "💡 Use --values-file to specify a custom location" >&2
+    exit 1
+}
+
 # Setup authentication from pull secret
 setup_authentication() {
     echo "🔍 Setting up container registry authentication..."
@@ -36,17 +86,17 @@ show_workflows() {
     echo "🔧 AutoShift oc-mirror Container - Available Workflows:"
     echo ""
     echo "📋 ImageSet Management:"
-    echo "  generate-imageset [values-file] [options]        Generate ImageSet from AutoShift values"
-    echo "  generate-delete-imageset [values-file] [options] Generate DeleteImageSet from AutoShift values"
+    echo "  generate-imageset [--values-file FILE] [options]        Generate ImageSet from AutoShift values"
+    echo "  generate-delete-imageset [--values-file FILE] [options] Generate DeleteImageSet from AutoShift values"
     echo ""
     echo "🔄 Mirroring Workflows:"
-    echo "  mirror-to-disk [options]          Mirror registry content to disk (air-gapped)"
-    echo "  disk-to-mirror [options]          Upload disk content to registry"
-    echo "  mirror-to-mirror [options]        Direct registry-to-registry mirroring"
+    echo "  mirror-to-disk [--values-file FILE] [options]          Mirror registry content to disk (air-gapped)"
+    echo "  disk-to-mirror [--values-file FILE] [options]          Upload disk content to registry"
+    echo "  mirror-to-mirror [--values-file FILE] [options]        Direct registry-to-registry mirroring"
     echo ""
     echo "🗑️  Image Lifecycle Management:"
-    echo "  delete-generate [options]         Generate safe deletion plan for old images"
-    echo "  delete-execute [options]          Execute deletion plan (PERMANENT!)"
+    echo "  delete-generate [--values-file FILE] [options]         Generate safe deletion plan for old images"
+    echo "  delete-execute [--values-file FILE] [options]          Execute deletion plan (PERMANENT!)"
     echo ""
     echo "🚀 Combined Workflows:"
     echo "  workflow-to-disk [workflow-options] [mirror-options]        Values → ImageSet → Disk"
@@ -152,37 +202,44 @@ case "$1" in
         ;;
     "mirror-to-disk")
         shift
-        exec ./mirror-to-disk.sh "$@"
+        VALUES_FILE=$(parse_values_file "$@")
+        exec ./mirror-to-disk.sh --values-file "$VALUES_FILE" "$@"
         ;;
     "disk-to-mirror")
         shift
-        exec ./disk-to-mirror.sh "$@"
+        VALUES_FILE=$(parse_values_file "$@")
+        exec ./disk-to-mirror.sh --values-file "$VALUES_FILE" "$@"
         ;;
     "mirror-to-mirror")
         shift
-        exec ./mirror-to-mirror.sh "$@"
+        VALUES_FILE=$(parse_values_file "$@")
+        exec ./mirror-to-mirror.sh --values-file "$VALUES_FILE" "$@"
         ;;
     "delete-generate")
         shift
-        exec ./delete-generate.sh "$@"
+        VALUES_FILE=$(parse_values_file "$@")
+        exec ./delete-generate.sh --values-file "$VALUES_FILE" "$@"
         ;;
     "delete-execute")
         shift
-        exec ./delete-execute.sh "$@"
+        VALUES_FILE=$(parse_values_file "$@")
+        exec ./delete-execute.sh --values-file "$VALUES_FILE" "$@"
         ;;
     "workflow-to-disk")
         # Combined workflow: generate imageset + mirror to disk
         shift # Remove workflow command
         
+        # Find the values file
+        VALUES_FILE=$(parse_values_file "$@")
+        
         # Parse workflow-specific arguments
-        VALUES_FILE="values.hub.yaml"
         IMAGESET_ARGS=""
         MIRROR_ARGS=""
         
         while [[ $# -gt 0 ]]; do
             case $1 in
                 --values-file)
-                    VALUES_FILE="$2"
+                    # Skip values file argument since we already parsed it
                     shift 2
                     ;;
                 --operators-only|--openshift-only|--delete-mode)
@@ -212,9 +269,9 @@ case "$1" in
         [[ -n "$IMAGESET_ARGS" ]] && echo "⚙️  ImageSet args: $IMAGESET_ARGS"
         [[ -n "$MIRROR_ARGS" ]] && echo "⚙️  Mirror args: $MIRROR_ARGS"
         
-        if [ -f "autoshift/$VALUES_FILE" ]; then
+        if [ -f "$VALUES_FILE" ]; then
             echo "1️⃣ Generating ImageSet configuration..."
-            ./generate-imageset-config.sh $VALUES_FILE --output imageset-autoshift.yaml $IMAGESET_ARGS
+            ./generate-imageset-config.sh "$VALUES_FILE" --output imageset-autoshift.yaml $IMAGESET_ARGS
             if [ -f "imageset-autoshift.yaml" ]; then
                 echo "2️⃣ Mirroring to disk..."
                 exec ./mirror-to-disk.sh -c imageset-autoshift.yaml $MIRROR_ARGS
@@ -279,7 +336,7 @@ case "$1" in
         
         if [ -f "autoshift/$VALUES_FILE" ]; then
             echo "1️⃣ Generating ImageSet configuration..."
-            ./generate-imageset-config.sh $VALUES_FILE --output imageset-autoshift.yaml $IMAGESET_ARGS
+            ./generate-imageset-config.sh "$VALUES_FILE" --output imageset-autoshift.yaml $IMAGESET_ARGS
             if [ -f "imageset-autoshift.yaml" ]; then
                 echo "2️⃣ Mirroring directly to registry..."
                 exec ./mirror-to-mirror.sh -c imageset-autoshift.yaml $MIRROR_ARGS
