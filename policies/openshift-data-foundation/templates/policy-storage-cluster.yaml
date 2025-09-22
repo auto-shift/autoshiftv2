@@ -116,6 +116,15 @@ spec:
                       encryption:
                         enabled: true
                     multiClusterService: {}
+                    selectors: {}
+                {{ "{{hub-" }} if index .ManagedClusterLabels "autoshift.io/odf-ocs-flexible-scaling" {{ "hub}}" }}
+                  flexibleScaling: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-ocs-flexible-scaling" {{ "hub}}" }}
+                {{ "{{hub-" }} else if (and
+                  (eq (index .ManagedClusterLabels "autoshift.io/storage-nodes-provider") "baremetal")
+                  (ne (sub (index .ManagedClusterLabels "autoshift.io/storage-nodes" | default "0" | toInt)
+                    (mul 3 (div (index .ManagedClusterLabels "autoshift.io/storage-nodes" | default "0" | toInt) 3))) 0)) {{ "hub}}" }}
+                  flexibleScaling: true
+                {{ "{{hub- end hub}}" }}
                   nodeTopologies: {}
                   externalStorage: {}
                   resourceProfile: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/odf-resource-profile" | default "{{ .Values.odf.resourceProfile }}" hub{{ "}}" }}'
