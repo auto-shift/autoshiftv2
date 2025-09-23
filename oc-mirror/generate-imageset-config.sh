@@ -311,7 +311,11 @@ for values_file in "${VALUES_FILES_ARRAY[@]}"; do
         if [[ "$values_file" == /* ]]; then
             input_file="$values_file"
         else
-            input_file="autoshift/$values_file"
+            if [[ "$values_file" == /* ]]; then
+                input_file="$values_file"
+            else
+                input_file="autoshift/$values_file"
+            fi
         fi
     fi
     
@@ -330,7 +334,11 @@ if [[ -z "$OPENSHIFT_VERSION" ]]; then
         if [[ "$values_file" == /* ]]; then
             input_file="$values_file"
         else
-            input_file="autoshift/$values_file"
+            if [[ "$values_file" == /* ]]; then
+                input_file="$values_file"
+            else
+                input_file="autoshift/$values_file"
+            fi
         fi
         
         # Extract versions from this file
@@ -532,7 +540,11 @@ extract_and_log_operators_multi() {
         if [[ "$values_file" == /* ]]; then
             input_file="$values_file"
         else
-            input_file="autoshift/$values_file"
+            if [[ "$values_file" == /* ]]; then
+                input_file="$values_file"
+            else
+                input_file="autoshift/$values_file"
+            fi
         fi
         
         log_step "Processing file: $values_file" >&2
