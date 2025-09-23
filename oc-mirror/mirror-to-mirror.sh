@@ -9,6 +9,9 @@ CONFIG_FILE="${CONFIG_FILE:-imageset-config.yaml}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-workspace}"
 CACHE_DIR="${CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}"
 TARGET_REGISTRY="${TARGET_REGISTRY:-localhost:8443}"
+SINCE_FLAG=""
+INCREMENTAL_MODE="false"
+AUTO_SINCE="false"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -29,6 +32,16 @@ while [[ $# -gt 0 ]]; do
             TARGET_REGISTRY="$2"
             shift 2
             ;;
+        --since)
+            SINCE_FLAG="--since $2"
+            INCREMENTAL_MODE="true"
+            shift 2
+            ;;
+        --incremental)
+            INCREMENTAL_MODE="true"
+            AUTO_SINCE="true"
+            shift
+            ;;
         --dry-run)
             DRY_RUN="--dry-run"
             shift
@@ -43,6 +56,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --workspace-dir DIR     Workspace directory (default: workspace)"
             echo "  --cache-dir DIR         Cache directory (default: \$XDG_CACHE_HOME or ~/.cache)"
             echo "  -r, --registry HOST     Target registry (default: localhost:8443)"
+            echo "  --since DATE            Mirror only changes since date (YYYY-MM-DD or ISO format)"
+            echo "  --incremental           Auto-detect last mirror date from .history files"
             echo "  --dry-run              Show what would be mirrored without transferring"
             echo "  -h, --help             Show this help message"
             echo ""
@@ -51,6 +66,11 @@ while [[ $# -gt 0 ]]; do
             echo "  WORKSPACE_DIR          Default workspace directory"
             echo "  CACHE_DIR              Default cache directory"
             echo "  TARGET_REGISTRY        Default target registry"
+            echo ""
+            echo "Examples:"
+            echo "  $0 -r my-registry.com/mirror        # Mirror to registry"
+            echo "  $0 --since 2025-09-01               # Mirror changes since September 1st"
+            echo "  $0 --incremental                    # Auto-detect since date from last mirror"
             echo ""
             echo "Examples:"
             echo "  $0                                         # Use defaults (localhost:8443)"
@@ -93,6 +113,32 @@ if [[ -n "$DRY_RUN" ]]; then
     echo "🔍 Mode: DRY RUN (no actual mirroring)"
 fi
 echo ""
+
+# Auto-detect --since flag from .history files if requested
+if [[ "$AUTO_SINCE" == "true" || "$INCREMENTAL_MODE" == "true" && -z "$SINCE_FLAG" ]]; then
+    HISTORY_DIR="$WORKSPACE_DIR/working-dir/.history"
+    if [[ -d "$HISTORY_DIR" ]]; then
+        # Find the most recent .history file
+        LATEST_HISTORY=$(find "$HISTORY_DIR" -name ".history-*" -type f 2>/dev/null | sort | tail -1)
+        if [[ -n "$LATEST_HISTORY" ]]; then
+            # Extract date from filename: .history-2025-09-23T14:32:31Z
+            HISTORY_DATE=$(basename "$LATEST_HISTORY" | sed 's/\.history-//' | cut -d'T' -f1)
+            SINCE_FLAG="--since $HISTORY_DATE"
+            echo "🔍 Auto-detected incremental mode from history: $HISTORY_DATE"
+            echo "📂 History file: $LATEST_HISTORY"
+            echo "📅 Since: $HISTORY_DATE"
+        else
+            echo "ℹ️  No .history files found - performing full mirror"
+        fi
+    else
+        echo "ℹ️  No .history directory found - performing full mirror"
+    fi
+fi
+
+# Show since flag if manually provided
+if [[ -n "$SINCE_FLAG" && "$AUTO_SINCE" != "true" ]]; then
+    echo "📅 Since: $(echo $SINCE_FLAG | cut -d' ' -f2)"
+fi
 
 # Network connectivity checks
 echo "🌐 Checking network connectivity..."

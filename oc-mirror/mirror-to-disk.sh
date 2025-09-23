@@ -14,6 +14,8 @@ CONFIG_FILE="${CONFIG_FILE:-imageset-config.yaml}"
 CONTENT_DIR="${CONTENT_DIR:-content}"
 CACHE_DIR="${CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}}"
 SINCE_FLAG=""
+INCREMENTAL_MODE="false"
+AUTO_SINCE="false"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -32,7 +34,13 @@ while [[ $# -gt 0 ]]; do
             ;;
         --since)
             SINCE_FLAG="--since $2"
+            INCREMENTAL_MODE="true"
             shift 2
+            ;;
+        --incremental)
+            INCREMENTAL_MODE="true"
+            AUTO_SINCE="true"
+            shift
             ;;
         --dry-run)
             DRY_RUN="--dry-run"
@@ -47,7 +55,8 @@ while [[ $# -gt 0 ]]; do
             echo "  -c, --config FILE       ImageSet configuration file (default: imageset-config.yaml)"
             echo "  --content-dir DIR       Content output directory (default: content)"
             echo "  --cache-dir DIR         Cache directory (default: \$XDG_CACHE_HOME or ~/.cache)"
-            echo "  --since DATE            Mirror only changes since date (YYYY-MM-DD format)"
+            echo "  --since DATE            Mirror only changes since date (YYYY-MM-DD or ISO format)"
+            echo "  --incremental           Auto-detect last mirror date from .history files"
             echo "  --dry-run              Show what would be mirrored without downloading"
             echo "  -h, --help             Show this help message"
             echo ""
@@ -60,6 +69,7 @@ while [[ $# -gt 0 ]]; do
             echo "  $0                                    # Use defaults"
             echo "  $0 -c imageset-autoshift.yaml        # Use AutoShift generated config"
             echo "  $0 --since 2025-09-01               # Mirror changes since September 1st"
+            echo "  $0 --incremental                    # Auto-detect since date from last mirror"
             echo "  $0 --dry-run                         # Preview what would be mirrored"
             exit 0
             ;;
@@ -87,9 +97,6 @@ echo "🔄 Mirroring content from registry to disk..."
 echo "📋 Config: $CONFIG_FILE"
 echo "📁 Content: $CONTENT_DIR"
 echo "💾 Cache: $CACHE_DIR"
-if [[ -n "$SINCE_FLAG" ]]; then
-    echo "📅 Since: $(echo $SINCE_FLAG | cut -d' ' -f2)"
-fi
 if [[ -n "$DRY_RUN" ]]; then
     echo "🔍 Mode: DRY RUN (no actual mirroring)"
 fi
@@ -97,6 +104,37 @@ echo ""
 
 # Create directories if they don't exist
 mkdir -p "$CONTENT_DIR" "$CACHE_DIR"
+
+# Auto-detect --since flag from .history files if requested
+if [[ "$AUTO_SINCE" == "true" || "$INCREMENTAL_MODE" == "true" && -z "$SINCE_FLAG" ]]; then
+    # Use absolute path if CONTENT_DIR starts with /, otherwise make it relative to current directory
+    if [[ "$CONTENT_DIR" = /* ]]; then
+        HISTORY_DIR="$CONTENT_DIR/working-dir/.history"
+    else
+        HISTORY_DIR="$(pwd)/$CONTENT_DIR/working-dir/.history"
+    fi
+    if [[ -d "$HISTORY_DIR" ]]; then
+        # Find the most recent .history file
+        LATEST_HISTORY=$(find "$HISTORY_DIR" -name ".history-*" -type f 2>/dev/null | sort | tail -1)
+        if [[ -n "$LATEST_HISTORY" ]]; then
+            # Extract date from filename: .history-2025-09-23T14:32:31Z
+            HISTORY_DATE=$(basename "$LATEST_HISTORY" | sed 's/\.history-//' | cut -d'T' -f1)
+            SINCE_FLAG="--since $HISTORY_DATE"
+            echo "🔍 Auto-detected incremental mode from history: $HISTORY_DATE"
+            echo "📂 History file: $LATEST_HISTORY"
+            echo "📅 Since: $HISTORY_DATE"
+        else
+            echo "ℹ️  No .history files found - performing full mirror"
+        fi
+    else
+        echo "ℹ️  No .history directory found - performing full mirror"
+    fi
+fi
+
+# Show since flag if manually provided
+if [[ -n "$SINCE_FLAG" && "$AUTO_SINCE" != "true" ]]; then
+    echo "📅 Since: $(echo $SINCE_FLAG | cut -d' ' -f2)"
+fi
 
 # Backup imageset configuration if it exists
 if [[ -f "$CONFIG_FILE" ]]; then

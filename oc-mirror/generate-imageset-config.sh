@@ -43,10 +43,6 @@ MAX_VERSION=""
 OUTPUT_FILE=""
 INCLUDE_OPENSHIFT=true
 INCLUDE_OPERATORS=true
-DELETE_MODE=false
-DELETE_OLDER_THAN=""  # Delete images older than X days/months
-DELETE_KEEP_LAST=""   # Keep last N versions
-DELETE_STRATEGY="version"  # version, time, or count
 
 # Version parsing function
 parse_openshift_version() {
@@ -106,9 +102,6 @@ usage() {
     echo "  --output FILE                  Output file path (default: imageset-config-<combined-name>.yaml)"
     echo "  --operators-only               Only include operators, skip OpenShift platform"
     echo "  --openshift-only               Only include OpenShift platform, skip operators"
-    echo "  --delete-mode                  Generate DeleteImageSetConfiguration instead of ImageSetConfiguration"
-    echo "  --delete-older-than TIMESPAN   Delete images older than timespan (e.g., 90d, 6m, 1y)"
-    echo "  --delete-keep-last COUNT       Keep last N versions (overrides other delete strategies)"
     echo "  --help                         Show this help message"
     echo ""
     echo "Examples:"
@@ -118,9 +111,6 @@ usage() {
     echo "  $0 values.hub.yaml --openshift-version 4.18 --min-version 4.18.15 --max-version 4.18.25"
     echo "  $0 values.hub.baremetal-sno.yaml --operators-only"
     echo "  $0 values.hub.yaml --output my-imageset.yaml"
-    echo "  $0 values.hub.yaml --delete-mode  # Generate DeleteImageSetConfiguration"
-    echo "  $0 values.hub.yaml --delete-mode --delete-older-than 90d  # Delete versions older than 90 days"
-    echo "  $0 values.hub.yaml --delete-mode --delete-keep-last 3     # Keep only last 3 versions"
     echo ""
     echo "Channel Merging:"
     echo "  When multiple files specify different channels for the same operator,"
@@ -153,20 +143,6 @@ while [[ $# -gt 0 ]]; do
         --openshift-only)
             INCLUDE_OPERATORS=false
             shift
-            ;;
-        --delete-mode)
-            DELETE_MODE=true
-            shift
-            ;;
-        --delete-older-than)
-            DELETE_OLDER_THAN="$2"
-            DELETE_STRATEGY="time"
-            shift 2
-            ;;
-        --delete-keep-last)
-            DELETE_KEEP_LAST="$2"
-            DELETE_STRATEGY="count"
-            shift 2
             ;;
         --help)
             usage
@@ -319,68 +295,6 @@ calculate_cutoff_date() {
 }
 
 # Generate delete version range based on strategy
-calculate_delete_range() {
-    local current_version="$1"
-    local strategy="$2"
-    local param="$3"  # Either timespan or count
-    
-    if [[ ! "$current_version" =~ ^([0-9]+\.[0-9]+)\.([0-9]+)$ ]]; then
-        echo "❌ Invalid version format for delete calculation: $current_version" >&2
-        exit 1
-    fi
-    
-    local major_minor="${BASH_REMATCH[1]}"
-    local current_patch="${BASH_REMATCH[2]}"
-    
-    case "$strategy" in
-        "version")
-            # Original logic: delete all older patches, keep current
-            local delete_max_patch=$((current_patch - 1))
-            if [[ $delete_max_patch -ge 1 ]]; then
-                echo "$major_minor.1|$major_minor.$delete_max_patch"
-            else
-                echo ""  # No versions to delete
-            fi
-            ;;
-        "count")
-            # Keep last N versions
-            local keep_count="$param"
-            local delete_max_patch=$((current_patch - keep_count))
-            if [[ $delete_max_patch -ge 1 ]]; then
-                echo "$major_minor.1|$major_minor.$delete_max_patch"
-            else
-                echo ""  # No versions to delete
-            fi
-            ;;
-        "time")
-            # Delete versions older than specified time
-            # Note: This is a simplified approach since we don't have release dates
-            # In practice, this would need API calls to get actual release dates
-            local days_ago
-            days_ago=$(parse_timespan "$param")
-            local cutoff_date
-            cutoff_date=$(calculate_cutoff_date "$days_ago")
-            
-            log_warning "Time-based deletion is approximate. OpenShift releases roughly every 2-3 weeks." >&2
-            log_warning "Cutoff date: $cutoff_date (approximately $days_ago days ago)" >&2
-            
-            # Rough approximation: assume 2-3 week release cycles
-            # This is a simplified calculation and should be enhanced with actual release date API calls
-            local approximate_versions_to_delete=$((days_ago / 21))  # 3 weeks per release
-            local delete_max_patch=$((current_patch - approximate_versions_to_delete))
-            
-            if [[ $delete_max_patch -ge 1 ]]; then
-                echo "$major_minor.1|$major_minor.$delete_max_patch"
-            else
-                echo ""  # No versions to delete
-            fi
-            ;;
-        *)
-            echo "❌ Unknown delete strategy: $strategy" >&2
-            exit 1
-            ;;
-    esac
-}
 
 # Parse comma-separated values files
 IFS=',' read -ra VALUES_FILES_ARRAY <<< "$VALUES_FILES"
@@ -476,9 +390,6 @@ fi
 if [[ -z "$OUTPUT_FILE" ]]; then
     # Create output filename from input files
     filename_prefix="imageset-config"
-    if [[ "$DELETE_MODE" == "true" ]]; then
-        filename_prefix="imageset-delete"
-    fi
     
     if [[ ${#VALUES_FILES_ARRAY[@]} -eq 1 ]]; then
         # Single file: extract base name
@@ -764,33 +675,18 @@ generate_imageset_config() {
         fi
     done
     
-    if [[ "$DELETE_MODE" == "true" ]]; then
-        log_step "Generating DeleteImageSetConfiguration from ${#values_files_array[@]} file(s): ${values_files_label}..."
-        
-        # Start Delete YAML file
-        cat > "$output_file" << EOF
-# AutoShift Generated DeleteImageSetConfiguration
-# Values files: $values_files_label  
-# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-apiVersion: mirror.openshift.io/v2alpha1
-kind: DeleteImageSetConfiguration
-delete:
-  platform:
-EOF
-    else
-        log_step "Generating ImageSetConfiguration from ${#values_files_array[@]} file(s): ${values_files_label}..."
-        
-        # Start YAML file - v2 format doesn't use apiVersion or metadata
-        cat > "$output_file" << EOF
+    log_step "Generating ImageSetConfiguration from ${#values_files_array[@]} file(s): ${values_files_label}..."
+
+    # Start YAML file - v2 format doesn't use apiVersion or metadata
+    cat > "$output_file" << EOF
 # AutoShift Generated ImageSetConfiguration
-# Values files: $values_files_label  
+# Values files: $values_files_label
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 kind: ImageSetConfiguration
 archiveSize: 4
 mirror:
   platform:
 EOF
-    fi
 
     # Add OpenShift platform if requested
     if [[ "$INCLUDE_OPENSHIFT" == "true" ]]; then
@@ -799,65 +695,13 @@ EOF
         version_info=$(parse_openshift_version "$OPENSHIFT_VERSION" "$MIN_VERSION" "$MAX_VERSION")
         IFS='|' read -r channel_name min_version max_version <<< "$version_info"
         
-        if [[ "$DELETE_MODE" == "true" ]]; then
-            # For delete mode, calculate what to delete using selected strategy
-            local delete_param=""
-            case "$DELETE_STRATEGY" in
-                "time") delete_param="$DELETE_OLDER_THAN" ;;
-                "count") delete_param="$DELETE_KEEP_LAST" ;;
-                "version") delete_param="" ;;
-            esac
-            
-            local delete_range
-            delete_range=$(calculate_delete_range "$OPENSHIFT_VERSION" "$DELETE_STRATEGY" "$delete_param")
-            
-            if [[ -n "$delete_range" ]]; then
-                IFS='|' read -r min_delete_version max_delete_version <<< "$delete_range"
-                cat >> "$output_file" << EOF
-    channels:
-    - name: $channel_name
-      minVersion: $min_delete_version
-      maxVersion: $max_delete_version
-EOF
-                case "$DELETE_STRATEGY" in
-                    "version")
-                        log_step "Delete range: $min_delete_version to $max_delete_version (keeping current $OPENSHIFT_VERSION)"
-                        ;;
-                    "count")
-                        log_step "Delete range: $min_delete_version to $max_delete_version (keeping last $DELETE_KEEP_LAST versions including $OPENSHIFT_VERSION)"
-                        ;;
-                    "time")
-                        log_step "Delete range: $min_delete_version to $max_delete_version (versions older than $DELETE_OLDER_THAN, keeping $OPENSHIFT_VERSION)"
-                        ;;
-                esac
-            else
-                cat >> "$output_file" << EOF
-    # No versions to delete based on current strategy
-    # Strategy: $DELETE_STRATEGY
-    # Current version: $OPENSHIFT_VERSION
-    channels: []
-EOF
-                case "$DELETE_STRATEGY" in
-                    "version")
-                        log_warning "No platform versions to delete - $OPENSHIFT_VERSION appears to be the first version"
-                        ;;
-                    "count")
-                        log_warning "No versions to delete - keeping last $DELETE_KEEP_LAST versions (current: $OPENSHIFT_VERSION)"
-                        ;;
-                    "time")
-                        log_warning "No versions to delete - no versions older than $DELETE_OLDER_THAN found"
-                        ;;
-                esac
-            fi
-        else
-            cat >> "$output_file" << EOF
+        cat >> "$output_file" << EOF
     channels:
     - name: $channel_name
       minVersion: $min_version
       maxVersion: $max_version
     graph: true
 EOF
-        fi
         if [[ -n "$MIN_VERSION" || -n "$MAX_VERSION" ]]; then
             log_step "Added OpenShift platform: $channel_name (min: $min_version, max: $max_version) [custom range]"
         else
@@ -868,8 +712,8 @@ EOF
         log_step "Skipped OpenShift platform (operators-only mode)"
     fi
 
-    # Add operators if requested (skip in delete mode)
-    if [[ "$INCLUDE_OPERATORS" == "true" && "$DELETE_MODE" != "true" ]]; then
+    # Add operators if requested
+    if [[ "$INCLUDE_OPERATORS" == "true" ]]; then
         echo "  operators:" >> "$output_file"
         
         # Extract operators from multiple values files (include ACM when processing operators)
@@ -1003,28 +847,18 @@ EOF
             
             log_success "Added ${#operators[@]} operators to ImageSetConfiguration"
         fi
-    elif [[ "$INCLUDE_OPERATORS" == "true" && "$DELETE_MODE" == "true" ]]; then
-        log_step "Skipping operators in delete mode (platform-focused cleanup)"
     else
-        if [[ "$DELETE_MODE" != "true" ]]; then
-            echo "  operators: []" >> "$output_file"
-            log_step "Skipped operators (openshift-only mode)"
-        fi
+        echo "  operators: []" >> "$output_file"
+        log_step "Skipped operators (openshift-only mode)"
     fi
 
-    # Add additional images section (empty by default) - skip in delete mode
-    if [[ "$DELETE_MODE" != "true" ]]; then
-        cat >> "$output_file" << EOF
+    # Add additional images section (empty by default)
+    cat >> "$output_file" << EOF
   additionalImages: []
   helm: {}
 EOF
-    fi
 
-    if [[ "$DELETE_MODE" == "true" ]]; then
-        log_success "Generated DeleteImageSetConfiguration: $output_file"
-    else
-        log_success "Generated ImageSetConfiguration: $output_file"
-    fi
+    log_success "Generated ImageSetConfiguration: $output_file"
 }
 
 # Show usage instructions
