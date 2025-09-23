@@ -304,8 +304,16 @@ for values_file in "${VALUES_FILES_ARRAY[@]}"; do
     # Strip leading/trailing whitespace
     values_file=$(echo "$values_file" | xargs)
     
-    # Construct full path
-    input_file="autoshift/$values_file"
+    # Construct full path - handle absolute paths
+    if [[ "$values_file" == /* ]]; then
+        input_file="$values_file"
+    else
+        if [[ "$values_file" == /* ]]; then
+            input_file="$values_file"
+        else
+            input_file="autoshift/$values_file"
+        fi
+    fi
     
     if [[ ! -f "$input_file" ]]; then
         echo -e "${RED}Error: Values file $input_file not found${NC}"
@@ -319,7 +327,11 @@ if [[ -z "$OPENSHIFT_VERSION" ]]; then
     all_versions=()
     for values_file in "${VALUES_FILES_ARRAY[@]}"; do
         values_file=$(echo "$values_file" | xargs)
-        input_file="autoshift/$values_file"
+        if [[ "$values_file" == /* ]]; then
+            input_file="$values_file"
+        else
+            input_file="autoshift/$values_file"
+        fi
         
         # Extract versions from this file
         while IFS= read -r version; do
@@ -517,7 +529,11 @@ extract_and_log_operators_multi() {
     # Process each values file
     for values_file in "${values_files_array[@]}"; do
         values_file=$(echo "$values_file" | xargs)
-        input_file="autoshift/$values_file"
+        if [[ "$values_file" == /* ]]; then
+            input_file="$values_file"
+        else
+            input_file="autoshift/$values_file"
+        fi
         
         log_step "Processing file: $values_file" >&2
         
