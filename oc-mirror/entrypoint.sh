@@ -130,7 +130,7 @@ if [ "$1" = "--generate-imageset" ] || [ "$1" = "generate-imageset" ]; then
     cd /workspace
     
     if [ -f "autoshift/values.hub.yaml" ]; then
-        ./generate-imageset-config.sh \
+        /opt/autoshift/generate-imageset-config.sh \
             values.hub.yaml \
             --output imageset-autoshift.yaml \
             "$@"
@@ -164,7 +164,7 @@ if [ "$1" = "--generate-delete-imageset" ] || [ "$1" = "generate-delete-imageset
     cd /workspace
     
     if [ -f "autoshift/values.hub.yaml" ]; then
-        ./generate-imageset-config.sh \
+        /opt/autoshift/generate-imageset-config.sh \
             values.hub.yaml \
             --delete-mode \
             --output imageset-delete-autoshift.yaml \
@@ -216,7 +216,7 @@ case "$1" in
                     ;;
             esac
         done
-        exec ./mirror-to-disk.sh "${REMAINING_ARGS[@]}"
+        exec /opt/autoshift/mirror-to-disk.sh "${REMAINING_ARGS[@]}"
         ;;
     "disk-to-mirror")
         shift
@@ -234,7 +234,7 @@ case "$1" in
                     ;;
             esac
         done
-        exec ./disk-to-mirror.sh "${REMAINING_ARGS[@]}"
+        exec /opt/autoshift/disk-to-mirror.sh "${REMAINING_ARGS[@]}"
         ;;
     "mirror-to-mirror")
         shift
@@ -252,7 +252,7 @@ case "$1" in
                     ;;
             esac
         done
-        exec ./mirror-to-mirror.sh "${REMAINING_ARGS[@]}"
+        exec /opt/autoshift/mirror-to-mirror.sh "${REMAINING_ARGS[@]}"
         ;;
     "delete-generate")
         shift
@@ -270,7 +270,7 @@ case "$1" in
                     ;;
             esac
         done
-        exec ./delete-generate.sh "${REMAINING_ARGS[@]}"
+        exec /opt/autoshift/delete-generate.sh "${REMAINING_ARGS[@]}"
         ;;
     "delete-execute")
         shift
@@ -288,7 +288,7 @@ case "$1" in
                     ;;
             esac
         done
-        exec ./delete-execute.sh "${REMAINING_ARGS[@]}"
+        exec /opt/autoshift/delete-execute.sh "${REMAINING_ARGS[@]}"
         ;;
     "workflow-to-disk")
         # Combined workflow: generate imageset + mirror to disk
@@ -336,10 +336,10 @@ case "$1" in
         
         if [ -f "$VALUES_FILE" ]; then
             echo "1️⃣ Generating ImageSet configuration..."
-            ./generate-imageset-config.sh "$VALUES_FILE" --output imageset-autoshift.yaml $IMAGESET_ARGS
+            /opt/autoshift/generate-imageset-config.sh "$VALUES_FILE" --output imageset-autoshift.yaml $IMAGESET_ARGS
             if [ -f "imageset-autoshift.yaml" ]; then
                 echo "2️⃣ Mirroring to disk..."
-                exec ./mirror-to-disk.sh -c imageset-autoshift.yaml $MIRROR_ARGS
+                exec /opt/autoshift/mirror-to-disk.sh -c imageset-autoshift.yaml $MIRROR_ARGS
             else
                 echo "❌ Failed to generate ImageSet configuration"
                 exit 1
@@ -355,7 +355,7 @@ case "$1" in
         # Combined workflow: disk to registry
         echo "🚀 AutoShift Workflow: Disk → Registry"
         shift
-        exec ./disk-to-mirror.sh "$@"
+        exec /opt/autoshift/disk-to-mirror.sh "$@"
         ;;
     "workflow-direct")
         # Combined workflow: generate imageset + direct mirror
@@ -401,10 +401,10 @@ case "$1" in
         
         if [ -f "autoshift/$VALUES_FILE" ]; then
             echo "1️⃣ Generating ImageSet configuration..."
-            ./generate-imageset-config.sh "$VALUES_FILE" --output imageset-autoshift.yaml $IMAGESET_ARGS
+            /opt/autoshift/generate-imageset-config.sh "$VALUES_FILE" --output imageset-autoshift.yaml $IMAGESET_ARGS
             if [ -f "imageset-autoshift.yaml" ]; then
                 echo "2️⃣ Mirroring directly to registry..."
-                exec ./mirror-to-mirror.sh -c imageset-autoshift.yaml $MIRROR_ARGS
+                exec /opt/autoshift/mirror-to-mirror.sh -c imageset-autoshift.yaml $MIRROR_ARGS
             else
                 echo "❌ Failed to generate ImageSet configuration"
                 exit 1
@@ -421,7 +421,7 @@ case "$1" in
         echo "🚀 AutoShift Workflow: Generate Delete Plan"
         shift
         if [ -f "imageset-delete.yaml" ]; then
-            exec ./delete-generate.sh -c imageset-delete.yaml "$@"
+            exec /opt/autoshift/delete-generate.sh -c imageset-delete.yaml "$@"
         else
             echo "❌ Delete configuration not found: imageset-delete.yaml"
             echo "💡 First generate delete config: generate-delete-imageset"
@@ -472,10 +472,10 @@ case "$1" in
         
         if [ -f "autoshift/$VALUES_FILE" ]; then
             echo "1️⃣ Generating DeleteImageSet configuration..."
-            ./generate-imageset-config.sh $VALUES_FILE --output imageset-delete-autoshift.yaml $IMAGESET_ARGS
+            /opt/autoshift/generate-imageset-config.sh $VALUES_FILE --output imageset-delete-autoshift.yaml $IMAGESET_ARGS
             if [ -f "imageset-delete-autoshift.yaml" ]; then
                 echo "2️⃣ Generating deletion plan..."
-                exec ./delete-generate.sh -c imageset-delete-autoshift.yaml $DELETE_ARGS
+                exec /opt/autoshift/delete-generate.sh -c imageset-delete-autoshift.yaml $DELETE_ARGS
             else
                 echo "❌ Failed to generate DeleteImageSet configuration"
                 exit 1
@@ -495,7 +495,7 @@ case "$1" in
             VALUES_FILE="$1"
             shift
         fi
-        exec ./generate-imageset-config.sh $VALUES_FILE --delete-mode "$@"
+        exec /opt/autoshift/generate-imageset-config.sh $VALUES_FILE --delete-mode "$@"
         ;;
 esac
 
