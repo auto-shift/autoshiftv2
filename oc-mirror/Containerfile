@@ -12,21 +12,21 @@ RUN microdnf update -y && \
 RUN useradd -r -u 1001 -g root oc-mirror-user
 
 # Create working directory and AutoShift structure
-WORKDIR /workspace
-RUN mkdir -p /workspace/autoshift /workspace/scripts /workspace/cache && \
-    chown -R 1001:0 /workspace && chmod -R g+rwX /workspace
+WORKDIR /opt/autoshift
+RUN mkdir -p /opt/autoshift/cache /opt/autoshift/scripts && \
+    chown -R 1001:0 /opt/autoshift && chmod -R g+rwX /opt/autoshift
 
 # Set environment variables for oc-mirror v2
-ENV HOME=/workspace
-ENV XDG_CACHE_HOME=/workspace/cache
-ENV XDG_RUNTIME_DIR=/workspace
+ENV HOME=/opt/autoshift
+ENV XDG_CACHE_HOME=/opt/autoshift/cache
+ENV XDG_RUNTIME_DIR=/opt/autoshift
 
 # Copy AutoShift values files
-COPY autoshift/values.hub.yaml /workspace/autoshift/
+COPY autoshift/values.hub.yaml /opt/autoshift/
 
 # Download and install oc and oc-mirror binaries
 # Extract all openshift-version values from labels sections, use highest version
-RUN OCP_VERSIONS=$(grep -A 200 "labels:" /workspace/autoshift/values.hub.yaml | grep "openshift-version:" | sed 's/.*openshift-version:[[:space:]]*//' | tr -d "'" | tr -d '"' | sort -V) && \
+RUN OCP_VERSIONS=$(grep -A 200 "labels:" /opt/autoshift/values.hub.yaml | grep "openshift-version:" | sed 's/.*openshift-version:[[:space:]]*//' | tr -d "'" | tr -d '"' | sort -V) && \
     OCP_VERSION=$(echo "$OCP_VERSIONS" | tail -1) && \
     OCP_VERSION=${OCP_VERSION:-"4.18.22"} && \
     VERSION_COUNT=$(echo "$OCP_VERSIONS" | grep -c .) && \
@@ -70,30 +70,30 @@ RUN OCP_VERSIONS=$(grep -A 200 "labels:" /workspace/autoshift/values.hub.yaml | 
 # - Host file mount (podman/docker run)
 # The entrypoint script will detect the source and set up accordingly
 
-# Copy oc-mirror workflow scripts and configurations
-COPY oc-mirror/entrypoint.sh /workspace/autoshift-entrypoint.sh
-COPY oc-mirror/generate-imageset-config.sh /workspace/
-COPY oc-mirror/mirror-to-disk.sh /workspace/
-COPY oc-mirror/disk-to-mirror.sh /workspace/
-COPY oc-mirror/mirror-to-mirror.sh /workspace/
-COPY oc-mirror/delete-generate.sh /workspace/
-COPY oc-mirror/delete-execute.sh /workspace/
+# Copy oc-mirror workflow scripts and configurations to /opt/autoshift
+COPY oc-mirror/entrypoint.sh /opt/autoshift/autoshift-entrypoint.sh
+COPY oc-mirror/generate-imageset-config.sh /opt/autoshift/
+COPY oc-mirror/mirror-to-disk.sh /opt/autoshift/
+COPY oc-mirror/disk-to-mirror.sh /opt/autoshift/
+COPY oc-mirror/mirror-to-mirror.sh /opt/autoshift/
+COPY oc-mirror/delete-generate.sh /opt/autoshift/
+COPY oc-mirror/delete-execute.sh /opt/autoshift/
 
 # Set executable permissions for all scripts and fix ownership
-RUN chmod +x /workspace/autoshift-entrypoint.sh \
-             /workspace/generate-imageset-config.sh \
-             /workspace/mirror-to-disk.sh \
-             /workspace/disk-to-mirror.sh \
-             /workspace/mirror-to-mirror.sh \
-             /workspace/delete-generate.sh \
-             /workspace/delete-execute.sh && \
-    chown -R 1001:0 /workspace
+RUN chmod +x /opt/autoshift/autoshift-entrypoint.sh \
+             /opt/autoshift/generate-imageset-config.sh \
+             /opt/autoshift/mirror-to-disk.sh \
+             /opt/autoshift/disk-to-mirror.sh \
+             /opt/autoshift/mirror-to-mirror.sh \
+             /opt/autoshift/delete-generate.sh \
+             /opt/autoshift/delete-execute.sh && \
+    chown -R 1001:0 /opt/autoshift
 
 # Switch to non-root user
 USER 1001
 
 # Set entrypoint to our custom script
-ENTRYPOINT ["/workspace/autoshift-entrypoint.sh"]
+ENTRYPOINT ["/opt/autoshift/autoshift-entrypoint.sh"]
 
 # Default command runs bash for interactive use
 CMD ["/bin/bash"]
