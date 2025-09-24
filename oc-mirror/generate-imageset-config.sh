@@ -483,16 +483,16 @@ extract_operators() {
             
             # Get operator subscription name from labels
             local operator_name
-            operator_name=$(get_operator_subscription_name "$label_name" "$values_file")
+            operator_name=$(get_operator_subscription_name "$label_name" "$input_file")
             
             # Skip if no operator name found (like imageregistry, gitops-dev)
             [[ -z "$operator_name" ]] && continue
             
             # Extract operator details from entire file (not just next 10 lines)
             local channel source source_namespace install_plan_approval
-            channel=$(grep -E "^[[:space:]]*$label_name-channel:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"')
-            source=$(grep -E "^[[:space:]]*$label_name-source:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"')
-            source_namespace=$(grep -E "^[[:space:]]*$label_name-source-namespace:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"')
+            channel=$(grep -E "^[[:space:]]*$label_name-channel:" "$input_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"')
+            source=$(grep -E "^[[:space:]]*$label_name-source:" "$input_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"')
+            source_namespace=$(grep -E "^[[:space:]]*$label_name-source-namespace:" "$input_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"')
             
             # Only add if we have the required fields and avoid duplicates
             if [[ -n "$channel" && -n "$source" && -n "$source_namespace" ]]; then
