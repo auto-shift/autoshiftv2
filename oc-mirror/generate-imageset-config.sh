@@ -911,9 +911,9 @@ show_usage_instructions() {
     echo ""
     echo "5. Deploy AutoShift with mirrored content:"
     if [[ ${#VALUES_FILES_ARRAY[@]} -eq 1 ]]; then
-        echo -e "   ${YELLOW}helm upgrade --install autoshift autoshift/ -f autoshift/${VALUES_FILES_ARRAY[0]}${NC}"
+        echo -e "   ${YELLOW}helm upgrade --install autoshift autoshift/ -f ${VALUES_FILES_ARRAY[0]}${NC}"
     else
-        echo -e "   ${YELLOW}helm upgrade --install autoshift autoshift/ -f autoshift/${VALUES_FILES_ARRAY[0]} # (primary values file)${NC}"
+        echo -e "   ${YELLOW}helm upgrade --install autoshift autoshift/ -f ${VALUES_FILES_ARRAY[0]} # (primary values file)${NC}"
     fi
     echo ""
     echo -e "${BLUE}📖 For more information, see: https://docs.openshift.com/container-platform/latest/installing/disconnected_install/installing-mirroring-disconnected.html${NC}"
@@ -935,11 +935,11 @@ main() {
     echo ""
     echo "📄 Generated file: $OUTPUT_FILE"
     if [[ ${#VALUES_FILES_ARRAY[@]} -eq 1 ]]; then
-        echo "📊 Source values file: autoshift/${VALUES_FILES_ARRAY[0]}"
+        echo "📊 Source values file: ${VALUES_FILES_ARRAY[0]}"
     else
-        echo "📊 Source values files (${#VALUES_FILES_ARRAY[@]}): autoshift/${VALUES_FILES_ARRAY[0]}"
+        echo "📊 Source values files (${#VALUES_FILES_ARRAY[@]}): ${VALUES_FILES_ARRAY[0]}"
         for ((i=1; i<${#VALUES_FILES_ARRAY[@]}; i++)); do
-            echo "                           autoshift/${VALUES_FILES_ARRAY[i]}"
+            echo "                           ${VALUES_FILES_ARRAY[i]}"
         done
     fi
     echo "🏗️  OpenShift version: $OPENSHIFT_VERSION"
