@@ -39,7 +39,7 @@ spec:
                     {{ "{{" }}hub- end hub{{ "}}" }}
                     {{ "{{" }}hub- if eq (index .ManagedClusterLabels "autoshift.io/aap-s3-storage" | default "false") "true" hub{{ "}}" }}
                     storage_type: S3
-                    object_storage_s3_secret:  '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-hub-s3-secret-name" | default "s3-aap-odf" hub{{ "}}" }}'
+                    object_storage_s3_secret: s3-aap-odf
                     {{ "{{" }}hub- end hub{{ "}}" }}
                   eda:
                     disabled: {{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-eda-disabled" | default "true" hub{{ "}}" }}
@@ -54,6 +54,9 @@ metadata:
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
   {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}

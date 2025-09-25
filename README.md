@@ -8,19 +8,9 @@ What AutoShift does is it uses OpenShift GitOps to declaratively manage RHACM wh
 
 ## Architecture
 
-<<<<<<< HEAD
-AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert.
-
-RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass. RHACM provides built-in governance, cluster lifecycle management, application lifecycle management, and observability feature
-
-OpenShift GitOps provides declarative GitOps for multicluster continuous delivery.
-
-The hub cluster is the main cluster with RHACM with its core components installed on it, and is also hosting our OpenShift GitOps instance that we are using to declaratively manage RHACM.
-=======
 AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert. RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass, with built-in governance, cluster lifecycle management, application lifecycle management, and observability features. OpenShift GitOps provides declarative GitOps for multicluster continuous delivery.
 
 The hub cluster is the main cluster with RHACM and its core components installed on it, and is also hosting the OpenShift GitOps instance that declaratively manages RHACM.
->>>>>>> origin/main
 
 ### Hub Architecture
 ![alt text](images/AutoShiftv2-Hub.jpg)
@@ -210,22 +200,6 @@ Values can be set on a per cluster and clusterset level to decide what features 
 > [!WARNING]
 > Hub Clusters Only
 
-<<<<<<< HEAD
-| Variable                    | Type      | Default Value             |
-|-----------------------------|-----------|---------------------------|
-| `self-managed`              | bool      | `true` or `false`         |
-| `acm-channel`               | string    | `release-2.13`            |
-| `acm-install-plan-approval` | string    | `Automatic`               |
-| `acm-source`                | string    | `redhat-operators`        |
-| `acm-source-namespace`      | string    | `openshift-marketplace`   |
-| `acm-availability-config`   | string    | `basic` or `high`         |
-
-### MetalLB
-
-| Variable                            | Type              | Default Value             | Notes |
-|-------------------------------------|-------------------|---------------------------|-------|
-| `metallb`                           | bool              | `true` or `false`         | `true` or `false` |
-=======
 | Variable                    | Type      | Default Value             | Notes |
 |-----------------------------|-----------|---------------------------|-------|
 | `self-managed`              | bool      | `true` or `false`         |       |
@@ -240,23 +214,33 @@ Values can be set on a per cluster and clusterset level to decide what features 
 
 Manages the automated cluster labeling system that applies `autoshift.io/` prefixed labels to clusters and cluster sets. This policy automatically propagates labels from cluster sets to individual clusters and manages the label hierarchy.
 
+### Ansible Automation Platform
+
+| Variable                         | Type      | Default Value              | Notes |
+|----------------------------------|-----------|----------------------------|-------|
+| `aap`                            | bool      | `true` or `false`          |  |
+| `aap-channel`                    | string    | `release-2.14`             |  |
+| `aap-install-plan-approval`      | string    | `Automatic`                |  |
+| `aap-source`                     | string    | `redhat-operators`         |  |
+| `aap-hub-disabled`               | bool      | `true` or `false`          | 'false' will include Hub content storage in your deployment, 'true' will omit.       |
+| `aap-file-storage`               | bool      | `true` or `false`          | 'false' will use file storage for Hub content storage in your deployment, 'true' will omit. |
+| `aap-file_storage_storage_class` | string    | `ocs-storagecluster-cephfs`| you will set the storage class for your file storage, defaults to ODF. you must have a RWX capable storage class if using anything else. |
+| `aap-file_storage_size`          | bool      | `10G`                      | set the pvc claim size for your file storage.  |
+| `aap-s3-storage`                 | bool      | `true` or `false`          | 'false' will use ODF NooBa for Hub content storage in your deployment, 'true' will omit. |
+| `aap-eda-disabled`               | bool      | `true` or `false`          | 'false' will include EDA in your deployment, 'true' will omit. |
+| `aap-lightspeed-disabled`        | bool      | `true` or `false`          | 'false' will include Ansible Lightspeed in your deployment, 'true' will omit. |
+
 ### MetalLB
 
 | Variable                            | Type              | Default Value             | Notes |
 |-------------------------------------|-------------------|---------------------------|-------|
 | `metallb`                           | bool              | `true` or `false`         | If not set MetalLB will not be managed |
->>>>>>> origin/main
 | `metallb-source`                    | string            | redhat-operators          |  |
 | `metallb-source-namespace`          | string            | openshift-marketplace     |  |
 | `metallb-install-plan-approval`     | string            | Automatic                 |  |
 | `metallb-channel`                   | string            | stable                    |  |
-<<<<<<< HEAD
-| `metallb-quota`                     | string            |                           |  |
-| `metallb-quota-cpu`                 | int               | '2'                       | Number of cpu for Resource Quota on namesapce |
-=======
 | `metallb-quota`                     | bool              | `false`                   | Enable resource quotas for MetalLB namespace |
 | `metallb-quota-cpu`                 | int               | `2`                       | Number of cpu for Resource Quota on namespace |
->>>>>>> origin/main
 | `metallb-quota-memory`              | string            | 2Gi                       | Amount of memory for Resource Quota on namespace (example: 2Gi or 512Mi) |
 | `metallb-ippool-1`                  | string            |                           | Name of config file for IP Pool (copy this value if more than one, increasing number each time) |
 | `metallb-l2-1`                      | string            |                           | Name of config file for L2 Advertisement (copy this value if more than one, increasing number each time) |
@@ -265,30 +249,6 @@ Manages the automated cluster labeling system that applies `autoshift.io/` prefi
 
 ### OpenShift GitOps
 
-<<<<<<< HEAD
-| Variable                        | Type      | Default Value             |
-|---------------------------------|-----------|---------------------------|
-| `gitops-channel`                | string    | `latest`                  |
-| `gitops-install-plan-approval`  | string    | `Manual` or `Automatic`   |
-| `gitops-source`                 | string    | `redhat-operators`        |
-| `gitops-source-namespace`       | string    | `openshift-marketplace`   |
-
-### Ansible Automation Platform
-
-| Variable                        | Type      | Default Value               |
-|---------------------------------|-----------|-----------------------------|
-| `aap`                           | string    | `true`                      |
-| `aap-channel`                   | string    | `stable-2.5`                |
-| `aap-install-plan-approval`     | string    | `Automatic`                 |
-| `aap-source`                    | string    | `redhat-operators`          |
-| `aap-source-namespace`          | string    | `openshift-marketplace`     |
-| `aap-hub-disabled`              | string    | `true`                      |
-| `aap-lightspeed-disabled`       | string    | `true`                      |
-| `aap-hub-storage-class`         | string    | `ocs-storagecluster-cephfs` |
-
-### Master Nodes
-
-=======
 Manages the OpenShift GitOps operator installation and systems ArgoCD instance. This policy ensures the GitOps operator is installed and creates the main ArgoCD instance used by AutoShift to declaratively manage all cluster configurations.
 
 | Variable                        | Type      | Default Value             | Notes |
@@ -301,15 +261,11 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 
 ### Master Nodes
 
->>>>>>> origin/main
 Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. You may have to increase the number of pods per node in these resource constrained environments.
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `master-nodes`                    | bool              | `false`                   |       |
-<<<<<<< HEAD
-| `master-max-pods`                 | Int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
-=======
 | `master-max-pods`                 | int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
 
 ### Machine Health Checks
@@ -318,19 +274,11 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |-----------------------------------|-------------------|---------------------------|-------|
 | `machine-health-checks`           | bool              |                           | If not set Machine Health Checks will not be managed |
 | `machine-health-checks-zones`     | <list<String>>    |                           | List of availability zones for health checks. Automated node health monitoring and remediation |
->>>>>>> origin/main
 
 ### Infra Nodes
 
 | Variable                            | Type              | Default Value             | Notes |
 |-------------------------------------|-------------------|---------------------------|-------|
-<<<<<<< HEAD
-| `infra-nodes`                       | int               |                           | Number of infra nodes min if autoscale. If not set infra nodes are not managed, if blank infra nodes will be deleted |
-| `infra-nodes-numcpu`                | int               |                           | Number of cpu per infra node |
-| `infra-nodes-memory-mib`            | int               |                           | Memory mib per infra node |
-| `infra-nodes-numcores-per-socket`   | int               |                           | Number of CPU Cores per socket |
-| `infra-nodes-zones`                 | <list<String>>    |                           | List of availability zones |
-=======
 | `infra-nodes`                       | int               |                           | Number of infra nodes. If not set infra nodes are not managed, if 0 infra nodes will be deleted |
 | `infra-nodes-provider`              | string            |                           | Provider type - 'aws', 'vmware', or 'test' |
 | `infra-nodes-instance-type`         | string            |                           | AWS instance type |
@@ -338,7 +286,6 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `infra-nodes-memory-mib`            | int               |                           | Memory mib per infra node |
 | `infra-nodes-numcores-per-socket`   | int               |                           | Number of CPU Cores per socket |
 | `infra-nodes-zone-[number]`         | string            |                           | Availability zone (e.g., infra-nodes-zone-1: 'us-east-2a') |
->>>>>>> origin/main
 
 
 
@@ -350,11 +297,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `worker-nodes-numcpu`               | int               |                           | Number of cpu per worker node |
 | `worker-nodes-memory-mib`           | int               |                           | Memory mib per worker node |
 | `worker-nodes-numcores-per-socket`  | int               |                           | Number of CPU Cores per socket |
-<<<<<<< HEAD
-| `worker-nodes-zones`                | <list<String>>    |                           | list of availability zones
-=======
 | `worker-nodes-zones`                | <list<String>>    |                           | List of availability zones |
->>>>>>> origin/main
 
 ### Storage Nodes
 
@@ -364,11 +307,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `storage-nodes-numcpu`              | int            |               | Number of cpu per storage node  |
 | `storage-nodes-memory-mib`          | int            |               | Memory mib per storage node |
 | `storage-nodes-numcores-per-socket` | int            |               | Number of CPU Cores per socket |
-<<<<<<< HEAD
-| `storage-nodes-zones`               | <list<String>> |               | list of availability zones |
-=======
 | `storage-nodes-zone-[number]`       | string         |               | Availability zone (e.g., storage-nodes-zone-1: 'us-east-2a') |
->>>>>>> origin/main
 | `storage-nodes-instance-type`       | string         |               | Instance type for cloud provider |
 | `storage-nodes-provider`            | string         |               | Provider type; valid choices: aws, vmware, baremetal |
 | `storage-nodes-node-[iterator]`     | <list<String>> |               | List of node names to apply storage label to. Used for baremetal where MachineSets aren't used. |
@@ -378,98 +317,57 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `acs`                             | bool              |                           | If not set Advanced Cluster Security will not be managed |
-<<<<<<< HEAD
-| `acs-channel`                     | String            | `stable`                  |       |
-| `acs-install-plan-approval`       | String            | `Automatic`               |       |
-| `acs-source`                      | String            | `redhat-operators`        |       |
-| `acs-source-namespace`            | String            | `openshift-marketplace`   |       |
-=======
 | `acs-egress-connectivity`         | string            | `Online`                  | Options are `Online` or `Offline`, use `Offline` if disconnected |
 | `acs-channel`                     | string            | `stable`                  |       |
 | `acs-install-plan-approval`       | string            | `Automatic`               |       |
 | `acs-source`                      | string            | `redhat-operators`        |       |
 | `acs-source-namespace`            | string            | `openshift-marketplace`   |       |
->>>>>>> origin/main
 
 ### Developer Spaces
 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `dev-spaces`                          | bool              |                           | If not set Developer Spaces will not be managed |
-<<<<<<< HEAD
-| `dev-spaces-channel`                  | String            | `stable`                  |       |
-| `dev-spaces-install-plan-approval`    | String            | `Automatic`               |       |
-| `dev-spaces-source`                   | String            | `redhat-operators`        |       |
-| `dev-spaces-source-namespace`         | String            | `openshift-marketplace`   |       |
-=======
 | `dev-spaces-channel`                  | string            | `stable`                  |       |
 | `dev-spaces-install-plan-approval`    | string            | `Automatic`               |       |
 | `dev-spaces-source`                   | string            | `redhat-operators`        |       |
 | `dev-spaces-source-namespace`         | string            | `openshift-marketplace`   |       |
->>>>>>> origin/main
 
 ### Developer Hub
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `dev-hub`                         | bool              |                           | If not set Developer Hub will not be managed |
-<<<<<<< HEAD
-| `dev-hub-channel`                 | String            | `fast`                    |       |
-| `dev-hub-install-plan-approval`   | String            | `Automatic`               |       |
-| `dev-hub-source`                  | String            | `redhat-operators`        |       |
-| `dev-hub-source-namespace`        | String            | `openshift-marketplace`   |       |
-=======
 | `dev-hub-channel`                 | string            | `fast`                    |       |
 | `dev-hub-install-plan-approval`   | string            | `Automatic`               |       |
 | `dev-hub-source`                  | string            | `redhat-operators`        |       |
 | `dev-hub-source-namespace`        | string            | `openshift-marketplace`   |       |
->>>>>>> origin/main
 
 ### OpenShift Pipelines
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `pipelines`                       | bool              |                           | If not set OpenShift Pipelines will not be managed |
-<<<<<<< HEAD
-| `pipelines-channel`               | String            | `latest`                  |       |
-| `pipelines-install-plan-approval` | String            | `Automatic`               |       |
-| `pipelines-source`                | String            | `redhat-operators`        |       |
-| `pipelines-source-namespace`      | String            | `openshift-marketplace`   |       |
-=======
 | `pipelines-channel`               | string            | `latest`                  |       |
 | `pipelines-install-plan-approval` | string            | `Automatic`               |       |
 | `pipelines-source`                | string            | `redhat-operators`        |       |
 | `pipelines-source-namespace`      | string            | `openshift-marketplace`   |       |
->>>>>>> origin/main
 
 ### Trusted Artifact Signer
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `tas`                             | bool              |                           | If not set Trusted Artifact Signer will not be managed |
-<<<<<<< HEAD
-| `tas-channel`                     | String            | `latest`                  |       |
-| `tas-install-plan-approval`       | String            | `Automatic`               |       |
-| `tas-source`                      | String            | `redhat-operators`        |       |
-| `tas-source-namespace`            | String            | `openshift-marketplace`   |       |
-=======
 | `tas-channel`                     | string            | `stable`                  |       |
 | `tas-install-plan-approval`       | string            | `Automatic`               |       |
 | `tas-source`                      | string            | `redhat-operators`        |       |
 | `tas-source-namespace`            | string            | `openshift-marketplace`   |       |
->>>>>>> origin/main
 
 ### Quay
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `quay`                            | bool              |                           | If not set Quay will not be managed |
-<<<<<<< HEAD
-| `quay-channel`                    | String            | `stable-3.13`             |       |
-| `quay-install-plan-approval`      | String            | `Automatic`               |       |
-| `quay-source`                     | String            | `redhat-operators`        |       |
-| `quay-source-namespace`           | String            | `openshift-marketplace`   |       |
-=======
 | `quay-channel`                    | string            | `stable-3.13`             |       |
 | `quay-install-plan-approval`      | string            | `Automatic`               |       |
 | `quay-source`                     | string            | `redhat-operators`        |       |
@@ -484,33 +382,19 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `virt-install-plan-approval`      | string            | `Automatic`               |       |
 | `virt-source`                     | string            | `redhat-operators`        |       |
 | `virt-source-namespace`           | string            | `openshift-marketplace`   |       |
->>>>>>> origin/main
 
 ### Developer OpenShift Gitops
 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `gitops-dev`                          | bool              |                           | If not set Developer OpenShift Gitops intances will not be managed |
-<<<<<<< HEAD
-| `gitops-dev-team-{INSERT_TEAM_NAME}`  | String        |                           | Team that can deploy onto cluster from dev team gitops. Must match a team in the `gitops-dev` helm chart values file |
-=======
 | `gitops-dev-team-{INSERT_TEAM_NAME}`  | string        |                           | Team that can deploy onto cluster from dev team gitops. Must match a team in the `gitops-dev` helm chart values file |
->>>>>>> origin/main
 
 ### Loki
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `loki`                            | bool              |                           | If not set Loki will not be managed. Dependent on ODF Multi Object Gateway |
-<<<<<<< HEAD
-| `loki-channel`                    | String            | `stable-6.2`              |       |
-| `loki-install-plan-approval`      | String            | `Automatic`               |       |
-| `loki-source`                     | String            | `redhat-operators`        |       |
-| `loki-source-namespace`           | String            | `openshift-marketplace`   |       |
-| `loki-size`                       | String            | `1x.extra-small`          |       |
-| `loki-storageclass`               | String            | `gp3-csi`                 |       |
-| `loki-lokistack-name`             | String            | `logging-lokistack`       |       |
-=======
 | `loki-channel`                    | string            | `stable-6.2`              |       |
 | `loki-install-plan-approval`      | string            | `Automatic`               |       |
 | `loki-source`                     | string            | `redhat-operators`        |       |
@@ -518,72 +402,43 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `loki-size`                       | string            | `1x.extra-small`          |       |
 | `loki-storageclass`               | string            | `gp3-csi`                 |       |
 | `loki-lokistack-name`             | string            | `logging-lokistack`       |       |
->>>>>>> origin/main
 
 ### OpenShift Logging
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `logging`                         | bool              |                           | If not set OpenShift Logging will not be managed, Dependent on Loki and COO |
-<<<<<<< HEAD
-| `logging-channel`                 | String            | `stable-6.2`              |       |
-| `logging-install-plan-approval`   | String            | `Automatic`               |       |
-| `logging-source`                  | String            | `redhat-operators`        |       |
-| `logging-source-namespace`        | String            | `openshift-marketplace`   |       |
-=======
 | `logging-channel`                 | string            | `stable-6.2`              |       |
 | `logging-install-plan-approval`   | string            | `Automatic`               |       |
 | `logging-source`                  | string            | `redhat-operators`        |       |
 | `logging-source-namespace`        | string            | `openshift-marketplace`   |       |
->>>>>>> origin/main
 
 ### Cluster Observability Operator
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `coo`                             | bool              |                           | If not set Cluster Observability Operator will not be managed |
-<<<<<<< HEAD
-| `coo-channel`                     | String            | `stable`                  |       |
-| `coo-install-plan-approval`       | String            | `Automatic`               |       |
-| `coo-source`                      | String            | `redhat-operators`        |       |
-| `coo-source-namespace`            | String            | `openshift-marketplace`   |       |
-=======
 | `coo-channel`                     | string            | `stable`                  |       |
 | `coo-install-plan-approval`       | string            | `Automatic`               |       |
 | `coo-source`                      | string            | `redhat-operators`        |       |
 | `coo-source-namespace`            | string            | `openshift-marketplace`   |       |
->>>>>>> origin/main
 
 ### Compliance Operator STIG Apply
 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `compliance`                          | bool              |                           | If not set Compliance Operator will not be managed. Helm chart config map must be set with profiles and remediations |
-<<<<<<< HEAD
-| `compliance-name`                     | String            | `compliance-operator`     |       |
-| `compliance-install-plan-approval`    | String            | `Automatic`               |       |
-| `compliance-source`                   | String            | `redhat-operators`        |       |
-| `compliance-source-namespace`         | String            | `openshift-marketplace`   |       |
-| `compliance-channel`                  | String            | `stable`                  |       |
-=======
 | `compliance-name`                     | string            | `compliance-operator`     |       |
 | `compliance-install-plan-approval`    | string            | `Automatic`               |       |
 | `compliance-source`                   | string            | `redhat-operators`        |       |
 | `compliance-source-namespace`         | string            | `openshift-marketplace`   |       |
 | `compliance-channel`                  | string            | `stable`                  |       |
->>>>>>> origin/main
 
 ### LVM Operator
 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `lvm`                                 | bool              | `false`                   | If not set the LVM Operator will not be managed |
-<<<<<<< HEAD
-| `lvm-default`                         | bool              | `true`                    | Sets the lvm-operator as the default Storage Class |
-| `lvm-fstype`                          | String            | `xfs`                     | Options `xfs` `ext4` |
-| `lvm-size-percent`                    | Int               | `90`                      | Percentage of the Volume Group to use for the thinpool |
-| `lvm-overprovision-ratio`             | Int               | `10`                      |       |
-=======
 | `lvm-channel`                         | string            | `stable-4.18`             | Operator channel |
 | `lvm-install-plan-approval`           | string            | `Automatic`               | 'Automatic' or 'Manual' |
 | `lvm-source`                          | string            | `redhat-operators`        | Operator catalog source |
@@ -592,45 +447,22 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `lvm-fstype`                          | string            | `xfs`                     | Options `xfs` `ext4` |
 | `lvm-size-percent`                    | int               | `90`                      | Percentage of the Volume Group to use for the thinpool |
 | `lvm-overprovision-ratio`             | int               | `10`                      |       |
->>>>>>> origin/main
 
 ### Local Storage Operator
 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `local-storage`                       | bool              |                           | if not set to true, local storage will not be managed or deployed. |
-<<<<<<< HEAD
-| `local-storage-channel`               | String            |                           |       |
-| `local-storage-source`                | String            |                           |       |
-| `local-storage-source-namespace`      | String            |                           |       |
-| `local-storage-install-plan-approval` | String            |                           |       |
-=======
 | `local-storage-channel`               | string            | `stable`                  | Operator channel |
 | `local-storage-source`                | string            | `redhat-operators`        | Operator catalog source |
 | `local-storage-source-namespace`      | string            | `openshift-marketplace`   | Catalog namespace |
 | `local-storage-install-plan-approval` | string            | `Automatic`               | 'Automatic' or 'Manual' |
->>>>>>> origin/main
 
 ### OpenShift Data Foundation
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `odf`                             | bool              |                           | If not set OpenShift Data Foundation will not be managed. if Storage Nodes are enable will deploy ODF on local storage/ storage nodes |
-<<<<<<< HEAD
-| `odf-multi-cloud-gateway`         | String            |                           | values `standalone` or `standard`. Install ODF with only nooba object gateway or full odf |
-| `odf-nooba-pvpool`                | bool              |                           | if not set nooba will be deployed with default settings. Recomended don't set for cloud providers. Use pv pool for storage |
-| `odf-nooba-store-size`            | String            |                           | example `500Gi`. if pvpool set. Size of nooba backing store |
-| `odf-nooba-store-num-volumes`     | String            |                           | example `1`. if pvpool set. number of volumes |
-| `odf-ocs-storage-class-name`      | String            |                           | if not using local-storage, storage class to use for ocs |
-| `odf-ocs-storage-size`            | String            |                           | storage size per nvme |
-| `odf-ocs-storage-count`           | String            |                           | number of replica sets of nvme drives, note total amount will count * replicas |
-| `odf-ocs-storage-replicas`        | String            |                           | replicas, `3` is recommended |
-| `odf-resource-profile`            | String            | `balanced`                | `lean`: suitable for clusters with limited resources, `balanced`: suitable for most use cases, `performance`: suitable for clusters with high amount of resources |
-| `odf-channel`                     | String            | `stable-4.17`             |       |
-| `odf-install-plan-approval`       | String            | `Automatic`               |       |
-| `odf-source`                      | String            | `redhat-operators`        |       |
-| `odf-source-namespace`            | String            | `openshift-marketplace`   |       |
-=======
 | `odf-multi-cloud-gateway`         | string            |                           | values `standalone` or `standard`. Install ODF with only nooba object gateway or full odf |
 | `odf-nooba-pvpool`                | bool              |                           | if not set nooba will be deployed with default settings. Recomended don't set for cloud providers. Use pv pool for storage |
 | `odf-nooba-store-size`            | string            |                           | example `500Gi`. if pvpool set. Size of nooba backing store |
@@ -645,7 +477,6 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `odf-install-plan-approval`       | string            | `Automatic`               |       |
 | `odf-source`                      | string            | `redhat-operators`        |       |
 | `odf-source-namespace`            | string            | `openshift-marketplace`   |       |
->>>>>>> origin/main
 
 ### OpenShift Internal Registry
 | Variable                          | Type              | Default Value             | Notes |
