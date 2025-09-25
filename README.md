@@ -638,7 +638,8 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `odf-ocs-storage-class-name`      | string            |                           | if not using local-storage, storage class to use for ocs |
 | `odf-ocs-storage-size`            | string            |                           | storage size per nvme |
 | `odf-ocs-storage-count`           | string            |                           | number of replica sets of nvme drives, note total amount will count * replicas |
-| `odf-ocs-storage-replicas`        | string            |                           | replicas, `3` is recommended |
+| `odf-ocs-storage-replicas`        | string            |                           | replicas, `3` is recommended; if using flexibleScaling use `1` |
+| `odf-ocs-flexible-scaling`        | bool              | `false`*                  | Sets failure domain to host and evenly spreads OSDs over hosts. Defaults to true on baremetal with a number of storage nodes that isn't a multiple of 3 |
 | `odf-resource-profile`            | string            | `balanced`                | `lean`: suitable for clusters with limited resources, `balanced`: suitable for most use cases, `performance`: suitable for clusters with high amount of resources |
 | `odf-channel`                     | string            | `stable-4.18`             |       |
 | `odf-install-plan-approval`       | string            | `Automatic`               |       |
