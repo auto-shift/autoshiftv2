@@ -6,9 +6,7 @@ In your `autoshift/values.hub.yaml` file, you can configure these toggles:
 
 * `aap: true` → Autoshift will deploy the policies and start installing the operator and its controller.
 * `aap-hub-disabled: false` → Includes Hub in your AAP deployment.
-* `aap-eda-disabled: false` → Includes Hub in your AAP deployment.
-* `aap-file-storage: true` → Deploys AAP using file storage of your choice.
-* `aap-s3-storage: true` → Deploys AAP using NooBa S3 object storage. 
+* `aap-lightspeed-disabled: false` → Includes Lightspeed in your AAP deployment.
 
 ⚠️ **Important:** Hub requires a storage class with RWX access. Any other access mode will prevent Hub from storing content.
 
