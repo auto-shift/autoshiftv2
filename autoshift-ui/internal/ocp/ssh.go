@@ -1,4 +1,4 @@
-package oc
+package ocp
 
 import (
 	"fmt"

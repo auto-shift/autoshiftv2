@@ -1,23 +1,44 @@
 package forms
 
 import (
-	"asui/internal/io"
+	"asui/internal/data_io"
+	"asui/internal/structs"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
 
-func Policies(win fyne.Window) fyne.CanvasObject {
-	policies := []string{}
+var policies = structs.CreatePolicies()
 
-	for _, value := range io.GetPolicies().Policies {
-		policies = append(policies, value.Name)
+func Policies() fyne.CanvasObject {
+
+	data_io.ReadPolicies()
+
+	policyCheckGroup := container.NewGridWithColumns(2)
+
+	for i, _ := range policies.Policies {
+		policyCheckGroup.Add(
+			policyCard(&policies.Policies[i]),
+		)
 	}
 
-	infraCheckGroup := widget.NewCheckGroup(policies, func([]string) {})
+	return container.NewVScroll(policyCheckGroup)
+}
 
-	policies_form := container.NewVBox(infraCheckGroup)
+func policyCard(policy *structs.Policy) *widget.Card {
 
-	return policies_form
+	contents := container.New(layout.NewStackLayout(),
+		widget.NewLabel(policy.Desc),
+		widget.NewCheck("Install", func(b bool) {
+			policy.UpdateIsSelected()
+		}),
+	)
+
+	return widget.NewCard(
+		policy.Name,
+		policy.Policy_type,
+		contents,
+	)
 }

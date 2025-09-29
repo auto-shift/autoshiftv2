@@ -1,7 +1,8 @@
-package io
+package data_io
 
 import (
 	"asui/internal/structs"
+	"asui/internal/utils"
 	"fmt"
 	"log"
 	"os"
@@ -10,8 +11,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func GetPolicies() structs.Policies {
-	var policies structs.Policies
+var policies = structs.CreatePolicies()
+
+func ReadPolicies() {
 
 	absPath, err := filepath.Abs("../../data/policies.yaml")
 	if err != nil {
@@ -27,8 +29,18 @@ func GetPolicies() structs.Policies {
 		if err != nil {
 			log.Fatalf("Error unmarshaling YAML: %v", err)
 		}
-
 	}
-	return policies
+}
 
+func ReadPolicyLabels(AppDir string) map[string]map[string]string {
+
+	labels := make(map[string]map[string]string)
+
+	data, err := os.ReadFile(AppDir)
+
+	utils.CheckIfError(err)
+
+	err = yaml.Unmarshal(data, &labels)
+
+	return labels
 }

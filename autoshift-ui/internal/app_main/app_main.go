@@ -2,10 +2,8 @@ package app_main
 
 import (
 	"asui/internal/forms"
-	"asui/internal/io"
-	"asui/internal/oc"
+	"asui/internal/impl"
 	"asui/internal/structs"
-	"fmt"
 	"image/color"
 
 	"fyne.io/fyne/v2"
@@ -15,14 +13,24 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-var HubValues structs.HubValuesStruct
+func init() {
+	HubValues.SetGitRepo("https://github.com/auto-shift/autoshiftv2.git")
+	HubValues.SetBranchTag("main")
+	HubValues.SetSMHubSet("hub")
+	HubValues.HubClusterSets.Hub.Labels.SelfManaged = true
+}
+
+var HubValues = structs.CreateHubValues()
 
 func Home(win fyne.Window) fyne.CanvasObject {
 
+	// testText := container.NewVBox(widget.NewRichTextWithText(HubValues.FormatHubValues()))
 	mainTabs := container.NewAppTabs(
-		container.NewTabItem("Configs", forms.Configs(win)),
-		container.NewTabItem("Policies", forms.Policies(win)),
+		container.NewTabItem("Git Configs", forms.Configs()),
+		container.NewTabItem("Policies", forms.Policies()),
+		container.NewTabItem("Deployment", forms.DeploymentConfigs()),
 	)
+
 	mainTabs.SetTabLocation(container.TabLocationLeading)
 	homeContainer := container.NewBorder(topBorder(), bottomBorder(), nil, nil, mainTabs)
 	return homeContainer
@@ -30,39 +38,14 @@ func Home(win fyne.Window) fyne.CanvasObject {
 
 func topBorder() fyne.CanvasObject {
 
-	ocpFormContainer := container.NewGridWithColumns(8)
-
-	if oc.IsLoggedIn() {
-		ocpFormContainer.Add(widget.NewLabel("Logged In"))
-	} else {
-		ocpUserNameEntry := widget.NewEntry()
-
-		ocpAccessTokenEntry := widget.NewEntry()
-		ocpApiUrl := widget.NewEntry()
-		ocpFormButton := widget.NewButton("Log In", func() {})
-		ocpFormContainer.Objects = []fyne.CanvasObject{
-			widget.NewLabel("Please log in: "),
-			widget.NewLabel("username: "),
-			ocpUserNameEntry,
-			widget.NewLabel("access token: "),
-			ocpAccessTokenEntry,
-			widget.NewLabel("OCP API url: "),
-			ocpApiUrl,
-			ocpFormButton,
-		}
-
-		fmt.Println("min-size: ")
-		fmt.Println(ocpFormContainer.MinSize())
-
-	}
-
-	return container.NewVBox(ocpFormContainer, canvas.NewLine(color.RGBA{R: 128, G: 128, B: 128, A: 255}))
+	return container.NewVBox(canvas.NewLine(color.RGBA{R: 128, G: 128, B: 128, A: 255}))
 }
 
 func bottomBorder() fyne.CanvasObject {
 
 	updateButton := widget.NewButton("Update", func() {
-		io.WriteConfigs()
+		// data_io.WriteConfigs()
+		impl.UpdateLabels()
 	})
 	deployButton := widget.NewButton("Deploy", func() {})
 	homeActions := container.NewHBox(layout.NewSpacer(), updateButton, deployButton)
