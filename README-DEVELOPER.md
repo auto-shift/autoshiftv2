@@ -41,74 +41,85 @@ Your operator is now being deployed across your clusters! Check the ArgoCD dashb
 
 AutoShiftv2 orchestrates OpenShift infrastructure through a sophisticated GitOps and policy-driven architecture:
 
+### 1. GitOps Flow - Source to Deployment
+
+```mermaid
+flowchart LR
+    Git[Git Repository<br/>autoshift + policies/*]
+    AutoShift[AutoShift Helm Chart<br/>Creates ApplicationSet]
+    Apps[ArgoCD Applications<br/>One per policy]
+    Policies[ACM Policies<br/>Deployed to hub]
+
+    Git -->|Monitors| AutoShift
+    AutoShift -->|Creates| Apps
+    Apps -->|Deploys| Policies
+
+    classDef git fill:#dc3545,stroke:#721c24,stroke-width:2px,color:#ffffff
+    classDef argo fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff
+    classDef policy fill:#198754,stroke:#0f5132,stroke-width:2px,color:#ffffff
+
+    class Git git
+    class AutoShift,Apps argo
+    class Policies policy
+```
+
+### 2. Policy Processing - Hub Templates to Spoke Deployment
+
 ```mermaid
 flowchart TD
-    subgraph Git ["🔄 Git Repository"]
-        Repo["📁 policies/*<br/>Helm Charts"]
+    subgraph Hub [Hub Cluster Processing]
+        HubPolicy[ACM Policy<br/>with hub templates]
+        Labels[Cluster Labels<br/>autoshift.io/*]
+        Processed[Processed Policy<br/>Labels resolved]
     end
 
-    subgraph Hub ["🏢 HUB CLUSTER"]
-        direction TB
-
-        subgraph ArgoCD ["🔄 ArgoCD GitOps"]
-            AppSet["ApplicationSet<br/>autoshift-app-set.yaml"]
-            Apps["📦 Applications<br/>acs-app, odf-app,<br/>logging-app, cluster-labels"]
-        end
-
-        subgraph HubPolicies ["📋 ACM Policy Resources"]
-            Policy["Policy<br/>(Hub Templates)"]
-            Placement["Placement<br/>(Cluster Sets +<br/>Label Matching)"]
-            PlacementBinding["PlacementBinding<br/>(Links Policy<br/>to Placement)"]
-        end
-
-        subgraph HubLabels ["🏷️ Cluster Labeling"]
-            ConfigMaps["ConfigMaps<br/>cluster-set.*, managed-cluster.*"]
-            ClusterLabelsPolicy["cluster-labels Policy<br/>(Applies autoshift.io/* labels)"]
-        end
-
-        Policy -.-> Placement
-        Placement -.-> PlacementBinding
-        ConfigMaps --> ClusterLabelsPolicy
-        ClusterLabelsPolicy --> Policy
+    subgraph Spoke [Spoke Cluster Processing]
+        SpokePolicy[Replicated Policy<br/>Local template processing]
+        Resources[Applied Resources<br/>Operators, configs]
     end
 
-    subgraph Spoke ["🎯 SPOKE CLUSTERS"]
-        direction TB
+    Labels -->|Provides values| HubPolicy
+    HubPolicy -->|Templates processed| Processed
+    Processed -->|ACM propagates| SpokePolicy
+    SpokePolicy -->|Applies locally| Resources
 
-        subgraph SpokePolicies ["📋 Replicated Policies"]
-            SpokePolicy1["ACS Operator Policy<br/>(Templates processed<br/>with local cluster labels)"]
-            SpokePolicy2["ODF Operator Policy<br/>(Templates processed<br/>with local cluster labels)"]
-            SpokePolicy3["Logging Policy<br/>(Templates processed<br/>with local cluster labels)"]
-        end
+    classDef hub fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff
+    classDef spoke fill:#198754,stroke:#0f5132,stroke-width:2px,color:#ffffff
 
-        subgraph Resources ["⚙️ Deployed Resources"]
-            Operators["Subscriptions, Operators,<br/>CRDs, ConfigMaps, Secrets"]
-        end
+    class HubPolicy,Labels,Processed hub
+    class SpokePolicy,Resources spoke
+```
 
-        SpokePolicy1 --> Operators
-        SpokePolicy2 --> Operators
-        SpokePolicy3 --> Operators
+### 3. Cluster Targeting - Label-Based Policy Distribution
+
+```mermaid
+flowchart TD
+    Values[AutoShift Values<br/>hubClusterSets, managedClusterSets]
+    ConfigMaps[ConfigMaps<br/>cluster-set.*, managed-cluster.*]
+    ClusterLabels[ManagedCluster Labels<br/>autoshift.io/* applied]
+
+    subgraph Targeting [Policy Targeting]
+        Policy[ACM Policy]
+        Placement[Placement<br/>Label selectors]
+        Binding[PlacementBinding<br/>Links policy to placement]
     end
 
-    %% Flow connections
-    Repo -->|"1. Monitors Git"| AppSet
-    AppSet -->|"2. Creates Applications"| Apps
-    Apps -->|"3. Deploys Helm Charts"| HubPolicies
-    HubPolicies -->|"4. Hub Template Processing<br/>{{hub index .ManagedClusterLabels hub}}"| SpokePolicies
-    SpokePolicies -->|"5. Spoke Template Processing<br/>with local cluster context"| Resources
+    Clusters[Target Clusters<br/>Matching label criteria]
 
-    %% Styling
-    classDef gitStyle fill:#f9f9f9,stroke:#333,stroke-width:2px
-    classDef hubStyle fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
-    classDef spokeStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    classDef policyStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    classDef resourceStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    Values -->|Creates| ConfigMaps
+    ConfigMaps -->|Applied by cluster-labels policy| ClusterLabels
+    ClusterLabels -->|Matched by| Placement
+    Policy -.->|Linked via| Binding
+    Placement -.->|Connected by| Binding
+    Binding -->|Targets| Clusters
 
-    class Git gitStyle
-    class Hub hubStyle
-    class Spoke spokeStyle
-    class HubPolicies,SpokePolicies policyStyle
-    class Resources resourceStyle
+    classDef config fill:#f0ab00,stroke:#b07700,stroke-width:2px,color:#151515
+    classDef policy fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff
+    classDef target fill:#198754,stroke:#0f5132,stroke-width:2px,color:#ffffff
+
+    class Values,ConfigMaps,ClusterLabels config
+    class Policy,Placement,Binding policy
+    class Clusters target
 ```
 
 **Key Components & Flow:**
