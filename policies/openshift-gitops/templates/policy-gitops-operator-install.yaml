@@ -13,7 +13,7 @@ metadata:
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
   disabled: false
-  policy-templates-raw: |
+  policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -42,11 +42,7 @@ spec:
             name: {{ .Values.gitops.namespace }}
             namespace: {{ .Values.gitops.namespace }}
           subscription:
-            {{ "{{-" }} $starting_csv := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-starting-csv" | default "" {{ "hub}}" }} {{ "}}" }}
-            {{ "{{-" }} $versions := list {{ "{{hub" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub" }} if $label | hasPrefix "autoshift.io/gitops-version" {{ "hub}}" }}"{{ "{{hub" }} $labelvalue {{ "hub}}" }}"{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }} {{ "}}" }}
-            {{ "{{-" }} if $starting_csv {{ "}}" }}
-            startingCSV: '{{ "{{-" }} if $starting_csv {{ "}}" }}'
-            {{ "{{-" }} end {{ "}}" }}
+            startingCSV: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-version" | default "" {{ "hub}}" }}
             namespace: {{ .Values.gitops.namespace }}
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-channel" | default "{{ .Values.gitops.channel }}" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-subscription-name" | default "{{ .Values.gitops.name }}" {{ "hub}}" }}'
@@ -54,12 +50,8 @@ spec:
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-source-namespace" | default "{{ .Values.gitops.sourceNamespace }}" {{ "hub}}" }}'
           # Getting Label and then capitalizing first letter
           upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/gitops-install-plan-approval" | default "{{ .Values.gitops.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
-          {{ "{{-" }} if ne 0 (len $versions) {{ "}}" }}
           versions:
-            {{ "{{-" }} range $version := $versions {{ "}}" }}
-            - {{ "{{-" }} $version {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
-          {{ "{{-" }} end {{ "}}" }}
+            - {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-version" | default "" {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
