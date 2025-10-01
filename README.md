@@ -184,15 +184,105 @@ The hub cluster is the main cluster with RHACM and its core components installed
 
     ![Cluster Sets in ACM Console](images/acm-cluster-sets.png)
 
-4.  Manually select which cluster will belong to each cluster set, or when provisioning a new cluster from ACM you can select the desired cluster set from ACM at time of creation.
+4.  Select add cluster and manage resource assignments.
 
     ![Cluster Set Details in ACM Console](images/acm-add-hub-cluster.png)
 
+5.  Manually select which cluster will belong to each cluster set, or when provisioning a new cluster from ACM you can select the desired cluster set from ACM at time of creation.
+
+    ![Cluster Set Details in ACM Console](images/acm-resource-assignment.png)
+
+6. Confirm the selected cluster.
+
+    ![Cluster Set Details in ACM Console](images/acm-confirm-changes.png)
+
 5.  That's it. Welcome to OpenShift Platform Plus and all of it's many capabilities!
+
+    ![Cluster Set Details in ACM Console](images/acm-local-cluster-labels.png)
 
 ## Autoshift Cluster Labels Values Reference
 
 Values can be set on a per cluster and clusterset level to decide what features of autoshift will be applied to each cluster. If a value is defined in helm values, a clusterset label and a cluster label precedence will be **cluster > clusterset > helm** values where helm values is the least. Helm values, `values.yaml` are meant to be defaults.
+
+## Operator Version Control
+
+AutoShift v2 provides comprehensive version control for all managed operators through cluster labels. This feature allows you to pin operators to specific versions while maintaining automatic upgrade capabilities when desired.
+
+### Version Control Behavior
+
+When you specify a version for an operator:
+- **Manual Install Plan Approval**: The operator subscription is automatically set to manual approval mode
+- **Version Pinning**: ACM will only approve install plans for the exact CSV (ClusterServiceVersion) specified
+- **Controlled Upgrades**: Operators will not automatically upgrade beyond the specified version
+
+When no version is specified:
+- **Automatic Upgrades**: Operators use automatic install plan approval and follow normal upgrade paths
+- **Channel-based Updates**: Operators receive updates based on their configured channel (stable, latest, etc.)
+
+### Setting Operator Versions
+
+Operator versions are controlled through the AutoShift values files (`autoshift/values.hub.yaml`, `autoshift/values.sbx.yaml`, etc.) using cluster labels with the pattern `autoshift.io/OPERATOR_NAME-version`:
+
+```yaml
+# Example: Pin Advanced Cluster Security to specific version
+hubClusterSets:
+  hub:
+    labels:
+      acs: 'true'
+      acs-version: 'rhacs-operator.v4.6.1'
+
+# Example: Pin OpenShift Pipelines to specific version
+managedClusterSets:
+  managed:
+    labels:
+      pipelines: 'true'
+      pipelines-version: 'openshift-pipelines-operator-rh.v1.18.1'
+
+# Example: Remove version pinning (enables automatic upgrades)
+# Simply remove or comment out the version label
+# acs-version: 'rhacs-operator.v4.6.1'
+```
+
+Labels can also be set at the individual cluster level in the `clusters:` section to override cluster set defaults.
+
+### Available Version Labels
+
+Every managed operator supports version control via its respective label:
+
+| Operator | Version Label | Example CSV |
+|----------|--------------|-------------|
+| Advanced Cluster Management | `acm-version` | `advanced-cluster-management.v2.14.0` |
+| Advanced Cluster Security | `acs-version` | `rhacs-operator.v4.6.1` |
+| OpenShift GitOps | `gitops-version` | `openshift-gitops-operator.v1.18.0` |
+| OpenShift Pipelines | `pipelines-version` | `openshift-pipelines-operator-rh.v1.18.1` |
+| OpenShift Data Foundation | `odf-version` | `odf-operator.v4.18.11-rhodf` |
+| MetalLB | `metallb-version` | `metallb-operator.v4.18.0-202509240837` |
+| Quay | `quay-version` | `quay-operator.v3.15.0` |
+| Developer Hub | `dev-hub-version` | `rhdh.v1.5.0` |
+| Developer Spaces | `dev-spaces-version` | `devspaces.v3.21.0` |
+| Trusted Artifact Signer | `tas-version` | `rhtas-operator.v1.2.0` |
+| Loki | `loki-version` | `loki-operator.v6.3.0` |
+| OpenShift Logging | `logging-version` | `cluster-logging.v6.3.0` |
+| Cluster Observability | `coo-version` | `cluster-observability-operator.v0.4.0` |
+| Compliance Operator | `compliance-version` | `compliance-operator.v1.8.0` |
+| LVM Storage | `lvm-version` | `lvms-operator.v4.18.0-202410091522` |
+| Local Storage | `local-storage-version` | `local-storage-operator.v4.18.0-202410091522` |
+| NMState | `nmstate-version` | `kubernetes-nmstate-operator.v4.18.0-202410091522` |
+| OpenShift Virtualization | `virt-version` | `kubevirt-hyperconverged.v4.18.0` |
+
+### Finding Available CSV Versions
+
+To find available CSV versions for operators, use the OpenShift CLI:
+
+```bash
+# List available CSV versions for an operator
+oc get packagemanifests rhacs-operator -o jsonpath='{.status.channels[*].currentCSV}'
+
+# Get all available versions in a channel
+oc get packagemanifests openshift-pipelines-operator-rh -o yaml | grep currentCSV
+```
+
+> **Note**: Version control removes the need for install-plan-approval labels, as version specification automatically handles install plan management through ACM governance.
 
 
 ### Advanced Cluster Manager
@@ -204,7 +294,7 @@ Values can be set on a per cluster and clusterset level to decide what features 
 |-----------------------------|-----------|---------------------------|-------|
 | `self-managed`              | bool      | `true` or `false`         |       |
 | `acm-channel`               | string    | `release-2.14`            |       |
-| `acm-install-plan-approval` | string    | `Automatic`               |       |
+| `acm-version`               | string    | (optional)                | Specific CSV version for controlled upgrades |
 | `acm-source`                | string    | `redhat-operators`        |       |
 | `acm-source-namespace`      | string    | `openshift-marketplace`   |       |
 | `acm-availability-config`   | string    | `Basic` or `High`         |       |
@@ -221,7 +311,7 @@ Manages the automated cluster labeling system that applies `autoshift.io/` prefi
 | `metallb`                           | bool              | `true` or `false`         | If not set MetalLB will not be managed |
 | `metallb-source`                    | string            | redhat-operators          |  |
 | `metallb-source-namespace`          | string            | openshift-marketplace     |  |
-| `metallb-install-plan-approval`     | string            | Automatic                 |  |
+| `metallb-version`                   | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `metallb-channel`                   | string            | stable                    |  |
 | `metallb-quota`                     | bool              | `false`                   | Enable resource quotas for MetalLB namespace |
 | `metallb-quota-cpu`                 | int               | `2`                       | Number of cpu for Resource Quota on namespace |
@@ -239,7 +329,7 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 |---------------------------------|-----------|---------------------------|-------|
 | `gitops`                        | bool      |                           | If not set to `true`, OpenShift GitOps will not be managed |
 | `gitops-channel`                | string    | `latest`                  | Operator channel for GitOps updates |
-| `gitops-install-plan-approval`  | string    | `Automatic`               | Controls automatic operator upgrades |
+| `gitops-version`                | string    | (optional)                | Specific CSV version for controlled upgrades |
 | `gitops-source`                 | string    | `redhat-operators`        | Operator catalog source |
 | `gitops-source-namespace`       | string    | `openshift-marketplace`   | Namespace for operator catalog |
 
@@ -303,7 +393,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `acs`                             | bool              |                           | If not set Advanced Cluster Security will not be managed |
 | `acs-egress-connectivity`         | string            | `Online`                  | Options are `Online` or `Offline`, use `Offline` if disconnected |
 | `acs-channel`                     | string            | `stable`                  |       |
-| `acs-install-plan-approval`       | string            | `Automatic`               |       |
+| `acs-version`                     | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `acs-source`                      | string            | `redhat-operators`        |       |
 | `acs-source-namespace`            | string            | `openshift-marketplace`   |       |
 
@@ -313,7 +403,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |---------------------------------------|-------------------|---------------------------|-------|
 | `dev-spaces`                          | bool              |                           | If not set Developer Spaces will not be managed |
 | `dev-spaces-channel`                  | string            | `stable`                  |       |
-| `dev-spaces-install-plan-approval`    | string            | `Automatic`               |       |
+| `dev-spaces-version`                  | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `dev-spaces-source`                   | string            | `redhat-operators`        |       |
 | `dev-spaces-source-namespace`         | string            | `openshift-marketplace`   |       |
 
@@ -323,7 +413,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |-----------------------------------|-------------------|---------------------------|-------|
 | `dev-hub`                         | bool              |                           | If not set Developer Hub will not be managed |
 | `dev-hub-channel`                 | string            | `fast`                    |       |
-| `dev-hub-install-plan-approval`   | string            | `Automatic`               |       |
+| `dev-hub-version`                 | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `dev-hub-source`                  | string            | `redhat-operators`        |       |
 | `dev-hub-source-namespace`        | string            | `openshift-marketplace`   |       |
 
@@ -333,7 +423,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |-----------------------------------|-------------------|---------------------------|-------|
 | `pipelines`                       | bool              |                           | If not set OpenShift Pipelines will not be managed |
 | `pipelines-channel`               | string            | `latest`                  |       |
-| `pipelines-install-plan-approval` | string            | `Automatic`               |       |
+| `pipelines-version`               | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `pipelines-source`                | string            | `redhat-operators`        |       |
 | `pipelines-source-namespace`      | string            | `openshift-marketplace`   |       |
 
@@ -343,7 +433,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |-----------------------------------|-------------------|---------------------------|-------|
 | `tas`                             | bool              |                           | If not set Trusted Artifact Signer will not be managed |
 | `tas-channel`                     | string            | `stable`                  |       |
-| `tas-install-plan-approval`       | string            | `Automatic`               |       |
+| `tas-version`                     | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `tas-source`                      | string            | `redhat-operators`        |       |
 | `tas-source-namespace`            | string            | `openshift-marketplace`   |       |
 
@@ -353,7 +443,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |-----------------------------------|-------------------|---------------------------|-------|
 | `quay`                            | bool              |                           | If not set Quay will not be managed |
 | `quay-channel`                    | string            | `stable-3.13`             |       |
-| `quay-install-plan-approval`      | string            | `Automatic`               |       |
+| `quay-version`                    | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `quay-source`                     | string            | `redhat-operators`        |       |
 | `quay-source-namespace`           | string            | `openshift-marketplace`   |       |
 
@@ -363,7 +453,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |-----------------------------------|-------------------|---------------------------|-------|
 | `virt`                            | bool              |                           | If not set OpenShift Virtualization will not be managed |
 | `virt-channel`                    | string            | `stable`                  | KubeVirt-based virtualization platform for running VMs on OpenShift |
-| `virt-install-plan-approval`      | string            | `Automatic`               |       |
+| `virt-version`                    | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `virt-source`                     | string            | `redhat-operators`        |       |
 | `virt-source-namespace`           | string            | `openshift-marketplace`   |       |
 
@@ -380,7 +470,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |-----------------------------------|-------------------|---------------------------|-------|
 | `loki`                            | bool              |                           | If not set Loki will not be managed. Dependent on ODF Multi Object Gateway |
 | `loki-channel`                    | string            | `stable-6.2`              |       |
-| `loki-install-plan-approval`      | string            | `Automatic`               |       |
+| `loki-version`                    | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `loki-source`                     | string            | `redhat-operators`        |       |
 | `loki-source-namespace`           | string            | `openshift-marketplace`   |       |
 | `loki-size`                       | string            | `1x.extra-small`          |       |
@@ -393,7 +483,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |-----------------------------------|-------------------|---------------------------|-------|
 | `logging`                         | bool              |                           | If not set OpenShift Logging will not be managed, Dependent on Loki and COO |
 | `logging-channel`                 | string            | `stable-6.2`              |       |
-| `logging-install-plan-approval`   | string            | `Automatic`               |       |
+| `logging-version`                 | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `logging-source`                  | string            | `redhat-operators`        |       |
 | `logging-source-namespace`        | string            | `openshift-marketplace`   |       |
 
@@ -403,7 +493,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |-----------------------------------|-------------------|---------------------------|-------|
 | `coo`                             | bool              |                           | If not set Cluster Observability Operator will not be managed |
 | `coo-channel`                     | string            | `stable`                  |       |
-| `coo-install-plan-approval`       | string            | `Automatic`               |       |
+| `coo-version`                     | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `coo-source`                      | string            | `redhat-operators`        |       |
 | `coo-source-namespace`            | string            | `openshift-marketplace`   |       |
 
@@ -413,7 +503,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |---------------------------------------|-------------------|---------------------------|-------|
 | `compliance`                          | bool              |                           | If not set Compliance Operator will not be managed. Helm chart config map must be set with profiles and remediations |
 | `compliance-name`                     | string            | `compliance-operator`     |       |
-| `compliance-install-plan-approval`    | string            | `Automatic`               |       |
+| `compliance-version`                  | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `compliance-source`                   | string            | `redhat-operators`        |       |
 | `compliance-source-namespace`         | string            | `openshift-marketplace`   |       |
 | `compliance-channel`                  | string            | `stable`                  |       |
@@ -424,7 +514,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |---------------------------------------|-------------------|---------------------------|-------|
 | `lvm`                                 | bool              | `false`                   | If not set the LVM Operator will not be managed |
 | `lvm-channel`                         | string            | `stable-4.18`             | Operator channel |
-| `lvm-install-plan-approval`           | string            | `Automatic`               | 'Automatic' or 'Manual' |
+| `lvm-version`                         | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `lvm-source`                          | string            | `redhat-operators`        | Operator catalog source |
 | `lvm-source-namespace`                | string            | `openshift-marketplace`   | Catalog namespace |
 | `lvm-default`                         | bool              | `true`                    | Sets the lvm-operator as the default Storage Class |
@@ -438,9 +528,9 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 |---------------------------------------|-------------------|---------------------------|-------|
 | `local-storage`                       | bool              |                           | if not set to true, local storage will not be managed or deployed. |
 | `local-storage-channel`               | string            | `stable`                  | Operator channel |
+| `local-storage-version`               | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `local-storage-source`                | string            | `redhat-operators`        | Operator catalog source |
 | `local-storage-source-namespace`      | string            | `openshift-marketplace`   | Catalog namespace |
-| `local-storage-install-plan-approval` | string            | `Automatic`               | 'Automatic' or 'Manual' |
 
 ### OpenShift Data Foundation
 
@@ -458,7 +548,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `odf-ocs-flexible-scaling`        | bool              | `false`*                  | Sets failure domain to host and evenly spreads OSDs over hosts. Defaults to true on baremetal with a number of storage nodes that isn't a multiple of 3 |
 | `odf-resource-profile`            | string            | `balanced`                | `lean`: suitable for clusters with limited resources, `balanced`: suitable for most use cases, `performance`: suitable for clusters with high amount of resources |
 | `odf-channel`                     | string            | `stable-4.18`             |       |
-| `odf-install-plan-approval`       | string            | `Automatic`               |       |
+| `odf-version`                     | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `odf-source`                      | string            | `redhat-operators`        |       |
 | `odf-source-namespace`            | string            | `openshift-marketplace`   |       |
 
@@ -492,7 +582,7 @@ The Kubernetes NMState Operator can be used to declaratively configure the Red H
 | `nmstate`                       | bool           | false                 | If not set the Kubernetes NMState Operator will not be managed                    |
 | `nmstate-nncp-<name>`           | string         | omitted               | Filename of NMState config that exists in files. Can be specified multiple times with unique suffixes. |
 | `nmstate-channel`               | string         | stable                |                                                                                   |
-| `nmstate-install-plan-approval` | string         | Automatic             |                                                                                   |
+| `nmstate-version`               | string         | (optional)            | Specific CSV version for controlled upgrades                                     |
 | `nmstate-source`                | string         | redhat-operators      |                                                                                   |
 | `nmstate-source-namespace`      | string         | openshift-marketplace |                                                                                   |
 
