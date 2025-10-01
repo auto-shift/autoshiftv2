@@ -39,25 +39,93 @@ Your operator is now being deployed across your clusters! Check the ArgoCD dashb
 
 ## 🏗️ Architecture Overview
 
-AutoShiftv2 orchestrates OpenShift infrastructure using three key technologies:
+AutoShiftv2 orchestrates OpenShift infrastructure through a sophisticated GitOps and policy-driven architecture:
 
+```mermaid
+flowchart TD
+    subgraph Git ["🔄 Git Repository"]
+        Repo["📁 policies/*<br/>Helm Charts"]
+    end
+
+    subgraph Hub ["🏢 HUB CLUSTER"]
+        direction TB
+
+        subgraph ArgoCD ["🔄 ArgoCD GitOps"]
+            AppSet["ApplicationSet<br/>autoshift-app-set.yaml"]
+            Apps["📦 Applications<br/>acs-app, odf-app,<br/>logging-app, cluster-labels"]
+        end
+
+        subgraph HubPolicies ["📋 ACM Policy Resources"]
+            Policy["Policy<br/>(Hub Templates)"]
+            Placement["Placement<br/>(Cluster Sets +<br/>Label Matching)"]
+            PlacementBinding["PlacementBinding<br/>(Links Policy<br/>to Placement)"]
+        end
+
+        subgraph HubLabels ["🏷️ Cluster Labeling"]
+            ConfigMaps["ConfigMaps<br/>cluster-set.*, managed-cluster.*"]
+            ClusterLabelsPolicy["cluster-labels Policy<br/>(Applies autoshift.io/* labels)"]
+        end
+
+        Policy -.-> Placement
+        Placement -.-> PlacementBinding
+        ConfigMaps --> ClusterLabelsPolicy
+        ClusterLabelsPolicy --> Policy
+    end
+
+    subgraph Spoke ["🎯 SPOKE CLUSTERS"]
+        direction TB
+
+        subgraph SpokePolicies ["📋 Replicated Policies"]
+            SpokePolicy1["ACS Operator Policy<br/>(Templates processed<br/>with local cluster labels)"]
+            SpokePolicy2["ODF Operator Policy<br/>(Templates processed<br/>with local cluster labels)"]
+            SpokePolicy3["Logging Policy<br/>(Templates processed<br/>with local cluster labels)"]
+        end
+
+        subgraph Resources ["⚙️ Deployed Resources"]
+            Operators["Subscriptions, Operators,<br/>CRDs, ConfigMaps, Secrets"]
+        end
+
+        SpokePolicy1 --> Operators
+        SpokePolicy2 --> Operators
+        SpokePolicy3 --> Operators
+    end
+
+    %% Flow connections
+    Repo -->|"1. Monitors Git"| AppSet
+    AppSet -->|"2. Creates Applications"| Apps
+    Apps -->|"3. Deploys Helm Charts"| HubPolicies
+    HubPolicies -->|"4. Hub Template Processing<br/>{{hub index .ManagedClusterLabels hub}}"| SpokePolicies
+    SpokePolicies -->|"5. Spoke Template Processing<br/>with local cluster context"| Resources
+
+    %% Styling
+    classDef gitStyle fill:#f9f9f9,stroke:#333,stroke-width:2px
+    classDef hubStyle fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+    classDef spokeStyle fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef policyStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef resourceStyle fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+
+    class Git gitStyle
+    class Hub hubStyle
+    class Spoke spokeStyle
+    class HubPolicies,SpokePolicies policyStyle
+    class Resources resourceStyle
 ```
-┌─────────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   OpenShift GitOps  │────▶│      RHACM       │────▶│ Target Clusters │
-│     (ArgoCD)        │     │    (Policies)    │     │                 │
-└─────────────────────┘     └──────────────────┘     └─────────────────┘
-         ▲                           ▲                        ▲
-         │                           │                        │
-    Git Repository            ApplicationSet            Cluster Labels
-```
 
-**Key Concepts:**
-- **GitOps-Driven**: All configurations stored in Git, deployed via ArgoCD
-- **Policy-Based**: RHACM policies enforce desired state across clusters
-- **Label Targeting**: Clusters are configured via `autoshift.io/` labels
-- **Template-First**: Policies are Helm charts for maximum flexibility
+**Key Components & Flow:**
 
-The framework uses GitOps principles with RHACM policies to manage cluster configurations declaratively.
+1. **GitOps Foundation**: ArgoCD ApplicationSet monitors `policies/*` directories in Git repository
+2. **Dynamic Application Creation**: ApplicationSet creates individual ArgoCD Applications for each policy
+3. **Helm Chart Deployment**: Each Application deploys a Helm chart containing ACM Policy + Placement + PlacementBinding
+4. **Hub Template Processing**: ACM processes policy templates on hub cluster using cluster labels from ConfigMaps
+5. **Policy Propagation**: ACM Policy Framework propagates processed policies to target spoke clusters
+6. **Spoke Template Processing**: Policy agents on spoke clusters process templates again with local cluster context
+7. **Resource Application**: Final Kubernetes resources are applied on spoke clusters
+
+**Label-Driven Configuration:**
+- **cluster-labels policy**: Applies `autoshift.io/*` labels to clusters from ConfigMaps
+- **Hub templates**: `{{hub index .ManagedClusterLabels "autoshift.io/key" hub}}` access cluster labels
+- **Placement matching**: Selects target clusters using label expressions and cluster sets
+- **Dynamic behavior**: Same policy template produces different resources per cluster based on labels
 
 ## 🛠️ Developer Setup
 
