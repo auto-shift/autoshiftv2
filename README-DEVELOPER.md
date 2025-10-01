@@ -44,7 +44,7 @@ AutoShiftv2 orchestrates OpenShift infrastructure through a sophisticated GitOps
 ### 1. GitOps Flow - Source to Deployment
 
 ```mermaid
-flowchart LR
+flowchart TD
     Git[Git Repository<br/>autoshift + policies/*]
     AutoShift[AutoShift Helm Chart<br/>Creates ApplicationSet]
     Apps[ArgoCD Applications<br/>One per policy]
