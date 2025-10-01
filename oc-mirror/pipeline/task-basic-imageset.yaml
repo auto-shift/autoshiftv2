@@ -1,0 +1,38 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: generate-or-use-imageset
+  namespace: oc-mirror-pipeline
+spec:
+  results:
+    - name: IMAGESET_FILE
+      description: "Path to generated ImageSet file"
+    - name: GENERATION_METHOD
+      description: "How ImageSet was obtained"
+  workspaces:
+    - name: workspace
+      description: "Workspace for ImageSet output"
+  steps:
+    - name: generate-or-use-imageset
+      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+      workingDir: $(workspaces.workspace.path)
+      script: |
+        #!/bin/bash
+        set -e
+        echo "Creating test ImageSet configuration..."
+        IMAGESET_FILE="imageset-config.yaml"
+        echo "kind: ImageSetConfiguration" > $IMAGESET_FILE
+        echo "apiVersion: mirror.openshift.io/v1alpha2" >> $IMAGESET_FILE
+        echo "storageConfig:" >> $IMAGESET_FILE
+        echo "  registry:" >> $IMAGESET_FILE
+        echo "    imageURL: registry-quay-quay-enterprise.apps.cluster-dlnph.dlnph.sandbox1297.opentlc.com/quayadmin/metadata:latest" >> $IMAGESET_FILE
+        echo "mirror:" >> $IMAGESET_FILE
+        echo "  operators:" >> $IMAGESET_FILE
+        echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.18" >> $IMAGESET_FILE
+        echo "    packages:" >> $IMAGESET_FILE
+        echo "    - name: advanced-cluster-security" >> $IMAGESET_FILE
+        echo "    - name: compliance-operator" >> $IMAGESET_FILE
+        echo "Generated ImageSet configuration"
+        cat $IMAGESET_FILE
+        echo -n "$IMAGESET_FILE" > $(results.IMAGESET_FILE.path)
+        echo -n "generated" > $(results.GENERATION_METHOD.path)

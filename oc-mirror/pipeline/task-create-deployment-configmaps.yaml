@@ -1,0 +1,118 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: create-deployment-configmaps
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-task
+    autoshift.io/component: oc-mirror
+spec:
+  description: |
+    Creates ConfigMaps with values files and ImageSet configurations for deployment.
+    Prepares all configuration data needed by the oc-mirror workload.
+  params:
+    - name: values-file-path
+      type: string
+      description: "Path to AutoShift values file in workspace"
+    - name: namespace
+      type: string
+      default: "oc-mirror"
+      description: "Target namespace for ConfigMaps"
+    - name: configmap-name
+      type: string
+      default: "oc-mirror-config"
+      description: "Name for the configuration ConfigMap"
+  workspaces:
+    - name: workspace
+      description: "Workspace containing configuration files"
+  steps:
+    - name: create-configmaps
+      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+      workingDir: $(workspaces.workspace.path)
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "📝 Creating deployment ConfigMaps..."
+
+        # Ensure target namespace exists
+        oc create namespace $(params.namespace) --dry-run=client -o yaml | oc apply -f -
+
+        # Validate required files exist
+        VALUES_FILE="values-repo/$(params.values-file-path)"
+        IMAGESET_FILE="imageset-config.yaml"
+
+        if [[ ! -f "$VALUES_FILE" ]]; then
+          echo "❌ ERROR: Values file not found: $VALUES_FILE"
+          exit 1
+        fi
+
+        if [[ ! -f "$IMAGESET_FILE" ]]; then
+          echo "❌ ERROR: ImageSet file not found: $IMAGESET_FILE"
+          exit 1
+        fi
+
+        echo "📁 Configuration files:"
+        echo "   Values: $VALUES_FILE ($(wc -l < $VALUES_FILE) lines)"
+        echo "   ImageSet: $IMAGESET_FILE ($(wc -l < $IMAGESET_FILE) lines)"
+
+        # Create main configuration ConfigMap
+        oc create configmap $(params.configmap-name) \
+          --from-file=values.yaml="$VALUES_FILE" \
+          --from-file=imageset.yaml="$IMAGESET_FILE" \
+          --namespace=$(params.namespace) \
+          --dry-run=client -o yaml | oc apply -f -
+
+        # Add labels and annotations
+        oc label configmap $(params.configmap-name) \
+          --namespace=$(params.namespace) \
+          "app.kubernetes.io/name=oc-mirror" \
+          "autoshift.io/component=oc-mirror" \
+          "autoshift.io/config-type=deployment" \
+          --overwrite
+
+        oc annotate configmap $(params.configmap-name) \
+          --namespace=$(params.namespace) \
+          "autoshift.io/created-by=oc-mirror-deployment-pipeline" \
+          "autoshift.io/created-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          "autoshift.io/values-file=$(params.values-file-path)" \
+          --overwrite
+
+        # Create additional ConfigMaps for different use cases if needed
+
+        # ImageSet-only ConfigMap (useful for reference)
+        oc create configmap oc-mirror-imageset \
+          --from-file=imageset.yaml="$IMAGESET_FILE" \
+          --namespace=$(params.namespace) \
+          --dry-run=client -o yaml | oc apply -f -
+
+        oc label configmap oc-mirror-imageset \
+          --namespace=$(params.namespace) \
+          "app.kubernetes.io/name=oc-mirror" \
+          "autoshift.io/component=oc-mirror" \
+          "autoshift.io/config-type=imageset-only" \
+          --overwrite
+
+        # Values-only ConfigMap (useful for reference)
+        oc create configmap oc-mirror-values \
+          --from-file=values.yaml="$VALUES_FILE" \
+          --namespace=$(params.namespace) \
+          --dry-run=client -o yaml | oc apply -f -
+
+        oc label configmap oc-mirror-values \
+          --namespace=$(params.namespace) \
+          "app.kubernetes.io/name=oc-mirror" \
+          "autoshift.io/component=oc-mirror" \
+          "autoshift.io/config-type=values-only" \
+          --overwrite
+
+        echo "✅ Created ConfigMaps in namespace $(params.namespace):"
+        echo "   • $(params.configmap-name) (values + imageset)"
+        echo "   • oc-mirror-imageset (imageset only)"
+        echo "   • oc-mirror-values (values only)"
+
+        # Display ConfigMap summary
+        echo ""
+        echo "📊 ConfigMap Summary:"
+        oc get configmap -n $(params.namespace) -l "app.kubernetes.io/name=oc-mirror" \
+          --no-headers -o custom-columns="NAME:.metadata.name,TYPE:.metadata.labels.autoshift\.io/config-type,SIZE:.metadata.creationTimestamp"

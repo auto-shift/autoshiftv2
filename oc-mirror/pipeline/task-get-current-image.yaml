@@ -1,0 +1,86 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: get-current-image
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-task
+    autoshift.io/component: oc-mirror
+spec:
+  description: |
+    Retrieves current image information from ConfigMap created by build pipeline.
+    Provides image URL and metadata for deployment tasks.
+  params:
+    - name: image-configmap
+      type: string
+      default: "oc-mirror-images"
+      description: "ConfigMap containing image information"
+    - name: namespace
+      type: string
+      default: "oc-mirror-pipeline"
+      description: "Namespace where ConfigMap exists"
+    - name: fallback-image
+      type: string
+      default: "quay.io/autoshift/oc-mirror-autoshift:latest"
+      description: "Fallback image if ConfigMap not found"
+  results:
+    - name: IMAGE_URL
+      description: "Current image URL"
+    - name: IMAGE_DIGEST
+      description: "Current image digest"
+    - name: GIT_REVISION
+      description: "Git revision of current image"
+    - name: BUILD_TIMESTAMP
+      description: "Build timestamp of current image"
+  workspaces:
+    - name: workspace
+      description: "Workspace for temporary files"
+  steps:
+    - name: get-image-info
+      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "🔍 Retrieving current image information..."
+
+        # Check if ConfigMap exists
+        if oc get configmap $(params.image-configmap) -n $(params.namespace) >/dev/null 2>&1; then
+          echo "✅ Found image ConfigMap: $(params.image-configmap)"
+
+          # Extract image information
+          IMAGE_URL=$(oc get configmap $(params.image-configmap) -n $(params.namespace) -o jsonpath='{.data.image-url}')
+          IMAGE_DIGEST=$(oc get configmap $(params.image-configmap) -n $(params.namespace) -o jsonpath='{.data.image-digest}')
+          GIT_REVISION=$(oc get configmap $(params.image-configmap) -n $(params.namespace) -o jsonpath='{.data.git-revision}')
+          BUILD_TIMESTAMP=$(oc get configmap $(params.image-configmap) -n $(params.namespace) -o jsonpath='{.data.build-timestamp}')
+
+          echo "Image URL: $IMAGE_URL"
+          echo "Image Digest: $IMAGE_DIGEST"
+          echo "Git Revision: $GIT_REVISION"
+          echo "Build Timestamp: $BUILD_TIMESTAMP"
+
+        else
+          echo "⚠️  Image ConfigMap not found, using fallback image"
+          IMAGE_URL="$(params.fallback-image)"
+          IMAGE_DIGEST="unknown"
+          GIT_REVISION="unknown"
+          BUILD_TIMESTAMP="unknown"
+
+          echo "Fallback Image: $IMAGE_URL"
+        fi
+
+        # Write results
+        echo -n "$IMAGE_URL" > $(results.IMAGE_URL.path)
+        echo -n "$IMAGE_DIGEST" > $(results.IMAGE_DIGEST.path)
+        echo -n "$GIT_REVISION" > $(results.GIT_REVISION.path)
+        echo -n "$BUILD_TIMESTAMP" > $(results.BUILD_TIMESTAMP.path)
+
+        # Save to workspace for other tasks
+        cat > $(workspaces.workspace.path)/image-info.env << EOF
+        IMAGE_URL=$IMAGE_URL
+        IMAGE_DIGEST=$IMAGE_DIGEST
+        GIT_REVISION=$GIT_REVISION
+        BUILD_TIMESTAMP=$BUILD_TIMESTAMP
+        EOF
+
+        echo "✅ Image information saved to workspace"

@@ -1,0 +1,31 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: test-build-simplified
+  namespace: oc-mirror-pipeline
+spec:
+  serviceAccountName: oc-mirror-pipeline
+  pipelineRef:
+    name: oc-mirror-build-pipeline
+  params:
+    - name: git-url
+      value: "https://github.com/auto-shift/autoshiftv2.git"
+    - name: git-revision
+      value: "feature/policy-template"
+    - name: image-name
+      value: "oc-mirror-autoshift"
+    - name: image-registry
+      value: "registry-quay-quay-enterprise.apps.cluster-dlnph.dlnph.sandbox1297.opentlc.com/quayadmin"
+    - name: image-tag
+      value: "latest"
+    - name: platforms
+      value: ["linux/amd64"]
+  workspaces:
+    - name: shared-workspace
+      persistentVolumeClaim:
+        claimName: oc-mirror-shared-workspace
+    - name: registry-auth
+      secret:
+        secretName: oc-mirror-pull-secret
+  timeouts:
+    pipeline: "1h0m0s"

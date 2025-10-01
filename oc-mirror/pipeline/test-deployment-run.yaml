@@ -1,0 +1,39 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: test-deployment-final-fix
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+  annotations:
+    pipeline.tekton.dev/affinity-assistant: disabled
+spec:
+  serviceAccountName: oc-mirror-pipeline
+  pipelineRef:
+    name: oc-mirror-simple-deployment
+  params:
+    - name: values-git-url
+      value: "https://github.com/auto-shift/autoshiftv2.git"
+    - name: values-git-revision
+      value: "feature/policy-template"
+    - name: values-file-path
+      value: "autoshift/values.hub.yaml"
+    - name: image-configmap
+      value: "oc-mirror-images"
+    - name: workflow
+      value: "workflow-to-disk"
+    - name: incremental-mode
+      value: "true"
+    - name: dry-run
+      value: "true"
+  workspaces:
+    - name: shared-workspace
+      persistentVolumeClaim:
+        claimName: oc-mirror-shared-workspace
+    - name: mirror-data
+      persistentVolumeClaim:
+        claimName: oc-mirror-workspace
+  timeouts:
+    pipeline: "2h0m0s"
+    tasks: "1h30m0s"

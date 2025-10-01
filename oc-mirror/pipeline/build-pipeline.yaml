@@ -1,0 +1,116 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: oc-mirror-build-pipeline
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-build
+    autoshift.io/component: oc-mirror
+spec:
+  description: |
+    Build pipeline for oc-mirror container with AutoShift integration.
+    Builds and pushes container image when source code changes.
+  params:
+    - name: git-url
+      type: string
+      default: "https://github.com/auto-shift/autoshiftv2.git"
+      description: "Git repository URL"
+    - name: git-revision
+      type: string
+      default: "main"
+      description: "Git revision to clone"
+    - name: image-name
+      type: string
+      default: "oc-mirror-autoshift"
+      description: "Container image name (without registry/tag)"
+    - name: image-registry
+      type: string
+      default: "image-registry.openshift-image-registry.svc:5000/oc-mirror-pipeline"
+      description: "Container registry for pushing images"
+    - name: image-tag
+      type: string
+      default: "latest"
+      description: "Container image tag"
+    - name: platforms
+      type: array
+      default: ["linux/amd64"]
+      description: "Target platforms for build"
+  results:
+    - name: IMAGE_DIGEST
+      description: "Digest of the built image"
+      value: $(tasks.build-image.results.IMAGE_DIGEST)
+    - name: IMAGE_URL
+      description: "Full image URL with digest"
+      value: $(tasks.build-image.results.IMAGE_URL)
+  workspaces:
+    - name: shared-workspace
+      description: "Workspace for source code and build artifacts"
+    - name: registry-auth
+      description: "Registry authentication workspace"
+  tasks:
+    - name: fetch-source
+      taskRef:
+        resolver: cluster
+        params:
+        - name: kind
+          value: task
+        - name: name
+          value: git-clone
+        - name: namespace
+          value: openshift-pipelines
+      params:
+        - name: URL
+          value: $(params.git-url)
+        - name: REVISION
+          value: $(params.git-revision)
+        - name: DELETE_EXISTING
+          value: "true"
+        - name: SUBDIRECTORY
+          value: "source"
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+
+    - name: build-image
+      runAfter: ["fetch-source"]
+      taskRef:
+        resolver: cluster
+        params:
+        - name: kind
+          value: task
+        - name: name
+          value: buildah
+        - name: namespace
+          value: openshift-pipelines
+      params:
+        - name: IMAGE
+          value: "$(params.image-registry)/$(params.image-name):$(params.image-tag)"
+        - name: DOCKERFILE
+          value: "source/oc-mirror/Containerfile"
+        - name: CONTEXT
+          value: "source"
+        - name: TLSVERIFY
+          value: "true"
+        - name: FORMAT
+          value: "oci"
+        - name: PLATFORMS
+          value: ["$(params.platforms[*])"]
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+        - name: dockerconfig
+          workspace: registry-auth
+
+    - name: update-image-configmap
+      runAfter: ["build-image"]
+      taskRef:
+        name: update-image-configmap
+      params:
+        - name: image-name
+          value: "$(params.image-name)"
+        - name: image-url
+          value: "$(tasks.build-image.results.IMAGE_URL)"
+        - name: image-digest
+          value: "$(tasks.build-image.results.IMAGE_DIGEST)"
+        - name: git-revision
+          value: "$(params.git-revision)"

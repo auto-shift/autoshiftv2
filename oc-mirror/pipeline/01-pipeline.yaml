@@ -1,0 +1,131 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: oc-mirror-build-deploy
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+spec:
+  description: |
+    Pipeline to build and deploy the oc-mirror container with AutoShift integration.
+    Uses standard Tekton ClusterTasks for git operations and container builds.
+  params:
+    - name: git-url
+      type: string
+      default: "https://github.com/auto-shift/autoshiftv2.git"
+      description: "Git repository URL"
+    - name: git-revision
+      type: string
+      default: "main"
+      description: "Git revision to clone"
+    - name: image
+      type: string
+      default: "registry-quay-quay-enterprise.apps.cluster-ggv6s.ggv6s.sandbox1495.opentlc.com/quayadmin/oc-mirror-autoshift:latest"
+      description: "Full container image name with registry and tag"
+    - name: values-file
+      type: string
+      default: "values.hub.yaml"
+      description: "AutoShift values file to use"
+    - name: deploy-mode
+      type: string
+      default: "job"
+      description: "Deployment mode: job, cronjob, or deployment"
+    - name: schedule
+      type: string
+      default: "0 2 * * 0"
+      description: "Cron schedule for CronJob (weekly at 2 AM Sunday)"
+    - name: workflow
+      type: string
+      default: "workflow-to-disk"
+      description: "oc-mirror workflow to execute"
+  workspaces:
+    - name: shared-workspace
+      description: "Workspace for source code and build artifacts"
+    - name: quay-dockerconfig-ws
+      description: "Quay registry authentication workspace"
+    - name: mirror-data
+      description: "Persistent workspace for oc-mirror data"
+  tasks:
+    - name: fetch-source
+      taskRef:
+        resolver: cluster
+        params:
+        - name: kind
+          value: task
+        - name: name
+          value: git-clone
+        - name: namespace
+          value: openshift-pipelines
+      params:
+        - name: URL
+          value: $(params.git-url)
+        - name: REVISION
+          value: $(params.git-revision)
+        - name: DELETE_EXISTING
+          value: "false"
+        - name: SUBDIRECTORY
+          value: "source"
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+    
+    - name: setup-pull-secret
+      runAfter: ["fetch-source"]
+      taskRef:
+        name: oc-mirror-setup-pull-secret
+      params:
+        - name: pull-secret-name
+          value: "oc-mirror-pull-secret"
+        - name: pull-secret-namespace
+          value: "oc-mirror-pipeline"
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+    
+    - name: build-image
+      runAfter: ["setup-pull-secret"]
+      taskRef:
+        resolver: cluster
+        params:
+        - name: kind
+          value: task
+        - name: name
+          value: buildah
+        - name: namespace
+          value: openshift-pipelines
+      params:
+        - name: IMAGE
+          value: $(params.image)
+        - name: DOCKERFILE
+          value: "oc-mirror/Containerfile"
+        - name: CONTEXT
+          value: "source"
+        - name: TLSVERIFY
+          value: "false"
+        - name: FORMAT
+          value: "oci"
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+        - name: dockerconfig
+          workspace: quay-dockerconfig-ws
+    
+    - name: deploy-oc-mirror
+      runAfter: ["build-image"]
+      taskRef:
+        name: oc-mirror-deploy
+      params:
+        - name: image
+          value: $(params.image)
+        - name: values-file
+          value: $(params.values-file)
+        - name: deploy-mode
+          value: $(params.deploy-mode)
+        - name: schedule
+          value: $(params.schedule)
+        - name: workflow
+          value: $(params.workflow)
+      workspaces:
+        - name: source
+          workspace: shared-workspace

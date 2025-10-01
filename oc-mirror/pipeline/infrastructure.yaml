@@ -1,0 +1,160 @@
+---
+# Namespace for oc-mirror pipelines
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+---
+# ServiceAccount for pipeline execution
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: oc-mirror-pipeline
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+---
+# ClusterRoleBinding for pipeline ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oc-mirror-pipeline-admin
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+subjects:
+  - kind: ServiceAccount
+    name: oc-mirror-pipeline
+    namespace: oc-mirror-pipeline
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+# Role for target namespace operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oc-mirror-deployer
+  namespace: oc-mirror
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets", "persistentvolumeclaims"]
+    verbs: ["create", "get", "list", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "get", "list", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["create", "get", "list", "update", "patch", "delete"]
+---
+# RoleBinding for target namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oc-mirror-pipeline-deployer
+  namespace: oc-mirror
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+subjects:
+  - kind: ServiceAccount
+    name: oc-mirror-pipeline
+    namespace: oc-mirror-pipeline
+roleRef:
+  kind: Role
+  name: oc-mirror-deployer
+  apiGroup: rbac.authorization.k8s.io
+---
+# PVC for shared workspace (build and deployment pipelines)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: oc-mirror-shared-workspace
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+# PVC for mirror data persistence (deployment pipeline)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: oc-mirror-workspace
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 200Gi
+---
+# oc-mirror target namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oc-mirror
+  labels:
+    app.kubernetes.io/name: oc-mirror
+    autoshift.io/component: oc-mirror
+---
+# ServiceAccount for oc-mirror workloads
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: oc-mirror
+  namespace: oc-mirror
+  labels:
+    app.kubernetes.io/name: oc-mirror
+    autoshift.io/component: oc-mirror
+---
+# Role for oc-mirror workloads
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oc-mirror-workload
+  namespace: oc-mirror
+  labels:
+    app.kubernetes.io/name: oc-mirror
+    autoshift.io/component: oc-mirror
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create"]
+---
+# RoleBinding for oc-mirror workloads
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oc-mirror-workload
+  namespace: oc-mirror
+  labels:
+    app.kubernetes.io/name: oc-mirror
+    autoshift.io/component: oc-mirror
+subjects:
+  - kind: ServiceAccount
+    name: oc-mirror
+    namespace: oc-mirror
+roleRef:
+  kind: Role
+  name: oc-mirror-workload
+  apiGroup: rbac.authorization.k8s.io

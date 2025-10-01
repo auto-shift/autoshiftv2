@@ -1,0 +1,44 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: oc-mirror-fixed-args-test
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-pipeline
+    autoshift.io/component: oc-mirror
+  annotations:
+    pipeline.tekton.dev/affinity-assistant: disabled
+spec:
+  serviceAccountName: oc-mirror-pipeline
+  pipelineRef:
+    name: oc-mirror-build-deploy
+  params:
+    - name: git-url
+      value: "https://github.com/auto-shift/autoshiftv2.git"
+    - name: git-revision
+      value: "feature/policy-template"
+    - name: image
+      value: "registry-quay-quay-enterprise.apps.cluster-ggv6s.ggv6s.sandbox1495.opentlc.com/quayadmin/oc-mirror-autoshift:latest"
+    - name: values-file
+      value: "values.hub.yaml"
+    - name: deploy-mode
+      value: "job"  # Options: job, cronjob, deployment
+    - name: schedule
+      value: "0 2 * * 0"  # Weekly at 2 AM Sunday
+    - name: workflow
+      value: "mirror-to-disk"  # oc-mirror workflow to execute: mirror-to-mirror, mirror-to-disk, disk-to-mirror
+    - name: imageset-config
+      value: "test-imageset.yaml"  # ImageSet configuration file
+  workspaces:
+    - name: shared-workspace
+      persistentVolumeClaim:
+        claimName: oc-mirror-shared-workspace
+    - name: quay-dockerconfig-ws
+      secret:
+        secretName: quay-registry-auth
+    - name: mirror-data
+      persistentVolumeClaim:
+        claimName: oc-mirror-workspace
+  timeouts:
+    pipeline: "2h0m0s"
+    tasks: "1h30m0s"

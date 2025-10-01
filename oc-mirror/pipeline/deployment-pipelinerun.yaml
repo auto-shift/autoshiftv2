@@ -1,0 +1,209 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: oc-mirror-deploy-run-
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-deployment
+    autoshift.io/component: oc-mirror
+  annotations:
+    pipeline.tekton.dev/affinity-assistant: disabled
+spec:
+  serviceAccountName: oc-mirror-pipeline
+  pipelineRef:
+    name: oc-mirror-deployment-pipeline
+  params:
+    # GitOps Configuration
+    - name: values-git-url
+      value: "https://github.com/auto-shift/autoshiftv2.git"
+    - name: values-git-revision
+      value: "main"
+    - name: values-file-path
+      value: "autoshift/values.hub.yaml"
+
+    # Image Configuration
+    - name: image-configmap
+      value: "oc-mirror-images"  # ConfigMap created by build pipeline
+
+    # Optional: Use existing ImageSet ConfigMap instead of generating
+    # - name: imageset-configmap
+    #   value: "my-custom-imageset"
+
+    # Deployment Configuration
+    - name: deploy-mode
+      value: "job"  # Options: job, cronjob, deployment
+    - name: schedule
+      value: "0 6 * * 1"  # Monday at 6 AM for incremental updates
+    - name: workflow
+      value: "workflow-to-disk"  # Options: workflow-to-disk, workflow-direct, workflow-from-disk
+
+    # Incremental Mirroring Configuration
+    - name: incremental-mode
+      value: "true"  # Enable auto-detection from .history files
+    # - name: since-date
+    #   value: "2025-09-20"  # Optional: override auto-detection
+
+    # ImageSet Generation Parameters
+    - name: openshift-version
+      value: ""  # Optional: override version from values file
+    - name: operators-only
+      value: "false"  # Set to "true" for operators-only ImageSet
+
+    # Mirror Target (for direct workflows)
+    # - name: target-registry
+    #   value: "registry.example.com:443/mirror"
+
+    # Deployment Target
+    - name: namespace
+      value: "oc-mirror"
+
+    # Testing
+    - name: dry-run
+      value: "false"  # Set to "true" for testing
+
+  workspaces:
+    - name: shared-workspace
+      persistentVolumeClaim:
+        claimName: oc-mirror-shared-workspace
+    - name: mirror-data
+      persistentVolumeClaim:
+        claimName: oc-mirror-workspace
+  timeouts:
+    pipeline: "3h0m0s"
+    tasks: "2h30m0s"
+
+---
+# Example: Incremental Air-Gapped Workflow
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: oc-mirror-incremental-airgapped-
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-deployment
+    autoshift.io/component: oc-mirror
+    autoshift.io/workflow-type: air-gapped-incremental
+spec:
+  serviceAccountName: oc-mirror-pipeline
+  pipelineRef:
+    name: oc-mirror-deployment-pipeline
+  params:
+    - name: values-git-url
+      value: "https://github.com/auto-shift/autoshiftv2.git"
+    - name: values-git-revision
+      value: "main"
+    - name: values-file-path
+      value: "autoshift/values.hub.yaml"
+    - name: image-configmap
+      value: "oc-mirror-images"
+    - name: deploy-mode
+      value: "cronjob"
+    - name: schedule
+      value: "0 2 * * *"  # Daily at 2 AM for frequent incremental updates
+    - name: workflow
+      value: "workflow-to-disk"
+    - name: incremental-mode
+      value: "true"  # Auto-detect from .history
+    - name: operators-only
+      value: "false"
+    - name: namespace
+      value: "oc-mirror"
+    - name: dry-run
+      value: "false"
+  workspaces:
+    - name: shared-workspace
+      persistentVolumeClaim:
+        claimName: oc-mirror-shared-workspace
+    - name: mirror-data
+      persistentVolumeClaim:
+        claimName: oc-mirror-workspace
+
+---
+# Example: Direct Registry Workflow
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: oc-mirror-direct-registry-
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-deployment
+    autoshift.io/component: oc-mirror
+    autoshift.io/workflow-type: direct-registry
+spec:
+  serviceAccountName: oc-mirror-pipeline
+  pipelineRef:
+    name: oc-mirror-deployment-pipeline
+  params:
+    - name: values-git-url
+      value: "https://github.com/auto-shift/autoshiftv2.git"
+    - name: values-git-revision
+      value: "main"
+    - name: values-file-path
+      value: "autoshift/values.hub.yaml"
+    - name: image-configmap
+      value: "oc-mirror-images"
+    - name: deploy-mode
+      value: "job"
+    - name: workflow
+      value: "workflow-direct"
+    - name: incremental-mode
+      value: "true"
+    - name: target-registry
+      value: "registry.example.com:443/mirror"
+    - name: operators-only
+      value: "true"  # Only mirror operators to target registry
+    - name: namespace
+      value: "oc-mirror"
+    - name: dry-run
+      value: "true"  # Test first with dry-run
+  workspaces:
+    - name: shared-workspace
+      persistentVolumeClaim:
+        claimName: oc-mirror-shared-workspace
+    - name: mirror-data
+      persistentVolumeClaim:
+        claimName: oc-mirror-workspace
+
+---
+# Example: Using Existing ImageSet ConfigMap
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: oc-mirror-custom-imageset-
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-deployment
+    autoshift.io/component: oc-mirror
+    autoshift.io/workflow-type: custom-imageset
+spec:
+  serviceAccountName: oc-mirror-pipeline
+  pipelineRef:
+    name: oc-mirror-deployment-pipeline
+  params:
+    - name: values-git-url
+      value: "https://github.com/auto-shift/autoshiftv2.git"
+    - name: values-git-revision
+      value: "main"
+    - name: values-file-path
+      value: "autoshift/values.hub.yaml"  # Still needed for other configs
+    - name: image-configmap
+      value: "oc-mirror-images"
+    - name: imageset-configmap
+      value: "production-imageset"  # Use pre-configured ImageSet
+    - name: deploy-mode
+      value: "job"
+    - name: workflow
+      value: "workflow-to-disk"
+    - name: incremental-mode
+      value: "true"
+    - name: namespace
+      value: "oc-mirror"
+    - name: dry-run
+      value: "false"
+  workspaces:
+    - name: shared-workspace
+      persistentVolumeClaim:
+        claimName: oc-mirror-shared-workspace
+    - name: mirror-data
+      persistentVolumeClaim:
+        claimName: oc-mirror-workspace

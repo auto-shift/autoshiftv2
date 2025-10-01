@@ -1,0 +1,37 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: oc-mirror-build-run-$(date +%s)
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-build
+    autoshift.io/component: oc-mirror
+  annotations:
+    pipeline.tekton.dev/affinity-assistant: disabled
+spec:
+  serviceAccountName: oc-mirror-pipeline
+  pipelineRef:
+    name: oc-mirror-build-pipeline
+  params:
+    - name: git-url
+      value: "https://github.com/auto-shift/autoshiftv2.git"
+    - name: git-revision
+      value: "main"
+    - name: image-name
+      value: "oc-mirror-autoshift"
+    - name: image-registry
+      value: "quay.io/autoshift"
+    - name: image-tag
+      value: "latest"
+    - name: platforms
+      value: ["linux/amd64", "linux/arm64"]
+  workspaces:
+    - name: shared-workspace
+      persistentVolumeClaim:
+        claimName: oc-mirror-shared-workspace
+    - name: registry-auth
+      secret:
+        secretName: quay-registry-auth
+  timeouts:
+    pipeline: "2h0m0s"
+    tasks: "1h30m0s"

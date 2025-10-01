@@ -1,0 +1,84 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: run-oc-mirror
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-task
+    autoshift.io/component: oc-mirror
+spec:
+  description: |
+    Runs oc-mirror directly as a pipeline task using the AutoShift wrapper.
+    Executes mirroring workflows with proper values file integration.
+  params:
+    - name: image-url
+      type: string
+      description: "Container image URL to run"
+    - name: workflow
+      type: string
+      default: "workflow-to-disk"
+      description: "oc-mirror workflow to execute"
+    - name: incremental-mode
+      type: string
+      default: "true"
+      description: "Enable incremental mirroring"
+    - name: since-date
+      type: string
+      default: ""
+      description: "Optional: custom --since date"
+    - name: target-registry
+      type: string
+      default: ""
+      description: "Target registry for direct workflows"
+    - name: dry-run
+      type: string
+      default: "false"
+      description: "Enable dry-run mode"
+    - name: values-file
+      type: string
+      default: "config/values.yaml"
+      description: "Path to values file within workspace"
+  workspaces:
+    - name: workspace
+      description: "Workspace for config, mirror content and cache"
+      optional: true
+      mountPath: "/tekton-workspace"
+  steps:
+    - name: run-oc-mirror
+      image: $(params.image-url)
+      env:
+        - name: HOME
+          value: "/opt/autoshift"
+        - name: XDG_CACHE_HOME
+          value: "/opt/autoshift/cache"
+        - name: XDG_RUNTIME_DIR
+          value: "/opt/autoshift"
+        - name: MIRROR_DATA_DIR
+          value: "/tekton-workspace"
+        - name: CONTENT_DIR
+          value: "/opt/autoshift/content"
+        - name: CACHE_DIR
+          value: "/opt/autoshift/cache"
+      volumeMounts:
+        - name: pull-secret
+          mountPath: /workspace/pull-secret.txt
+          subPath: .dockerconfigjson
+          readOnly: true
+        - name: config
+          mountPath: /tekton-workspace/config
+          readOnly: true
+      args:
+        - "$(params.workflow)"
+        - "--values-file"
+        - "/tekton-workspace/$(params.values-file)"
+        - "--incremental"
+        - "--dry-run"
+  volumes:
+    - name: pull-secret
+      secret:
+        secretName: oc-mirror-pull-secret
+        defaultMode: 0644
+    - name: config
+      configMap:
+        name: oc-mirror-config
+        defaultMode: 0644

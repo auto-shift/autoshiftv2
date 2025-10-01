@@ -1,0 +1,145 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: oc-mirror-simple-deployment
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-deployment
+    autoshift.io/component: oc-mirror
+spec:
+  description: |
+    Simplified deployment pipeline for oc-mirror operations.
+    Runs oc-mirror directly as a pipeline task instead of creating separate jobs.
+  params:
+    - name: values-git-url
+      type: string
+      default: "https://github.com/auto-shift/autoshiftv2.git"
+      description: "Git repository URL for values files"
+    - name: values-git-revision
+      type: string
+      default: "main"
+      description: "Git revision for values files"
+    - name: values-file-path
+      type: string
+      default: "autoshift/values.hub.yaml"
+      description: "Path to AutoShift values file in repository"
+    - name: image-configmap
+      type: string
+      default: "oc-mirror-images"
+      description: "ConfigMap containing current image information"
+    - name: workflow
+      type: string
+      default: "workflow-to-disk"
+      description: "oc-mirror workflow to execute: workflow-to-disk, workflow-direct, workflow-from-disk"
+    - name: incremental-mode
+      type: string
+      default: "true"
+      description: "Enable incremental mirroring with --incremental flag"
+    - name: since-date
+      type: string
+      default: ""
+      description: "Optional: custom --since date (overrides incremental auto-detection)"
+    - name: target-registry
+      type: string
+      default: ""
+      description: "Target registry for direct mirroring workflows"
+    - name: dry-run
+      type: string
+      default: "false"
+      description: "Enable dry-run mode (true/false)"
+  workspaces:
+    - name: shared-workspace
+      description: "Workspace for source code and generated configurations"
+    - name: mirror-data
+      description: "Persistent workspace for oc-mirror data"
+  tasks:
+    - name: fetch-values
+      taskRef:
+        resolver: cluster
+        params:
+        - name: kind
+          value: task
+        - name: name
+          value: git-clone
+        - name: namespace
+          value: openshift-pipelines
+      params:
+        - name: URL
+          value: $(params.values-git-url)
+        - name: REVISION
+          value: $(params.values-git-revision)
+        - name: DELETE_EXISTING
+          value: "true"
+        - name: SUBDIRECTORY
+          value: "values-repo"
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+
+    - name: get-current-image
+      runAfter: ["fetch-values"]
+      taskRef:
+        name: get-current-image
+      params:
+        - name: image-configmap
+          value: $(params.image-configmap)
+        - name: namespace
+          value: "oc-mirror-pipeline"
+      workspaces:
+        - name: workspace
+          workspace: shared-workspace
+
+    - name: generate-or-use-imageset
+      runAfter: ["get-current-image"]
+      taskRef:
+        name: generate-or-use-imageset
+      params:
+        - name: values-file-path
+          value: $(params.values-file-path)
+        - name: imageset-configmap
+          value: ""
+        - name: openshift-version
+          value: ""
+        - name: operators-only
+          value: "false"
+        - name: namespace
+          value: "oc-mirror-pipeline"
+      workspaces:
+        - name: workspace
+          workspace: shared-workspace
+
+    - name: create-deployment-configmaps
+      runAfter: ["generate-or-use-imageset"]
+      taskRef:
+        name: create-deployment-configmaps
+      params:
+        - name: values-file-path
+          value: $(params.values-file-path)
+        - name: namespace
+          value: "oc-mirror-pipeline"
+      workspaces:
+        - name: workspace
+          workspace: shared-workspace
+
+    - name: run-oc-mirror
+      runAfter: ["create-deployment-configmaps"]
+      taskRef:
+        name: run-oc-mirror
+      params:
+        - name: image-url
+          value: $(tasks.get-current-image.results.IMAGE_URL)
+        - name: workflow
+          value: $(params.workflow)
+        - name: incremental-mode
+          value: $(params.incremental-mode)
+        - name: since-date
+          value: $(params.since-date)
+        - name: target-registry
+          value: $(params.target-registry)
+        - name: dry-run
+          value: $(params.dry-run)
+        - name: values-file
+          value: "config/values.yaml"
+      workspaces:
+        - name: workspace
+          workspace: mirror-data

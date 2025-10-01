@@ -1,0 +1,61 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: generate-or-use-imageset
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-task
+    autoshift.io/component: oc-mirror
+spec:
+  description: |
+    Creates a simple ImageSet configuration for testing.
+  params:
+    - name: operators-only
+      type: string
+      default: "false"
+      description: "Generate operators-only ImageSet (true/false)"
+  results:
+    - name: IMAGESET_FILE
+      description: "Path to generated ImageSet file"
+    - name: GENERATION_METHOD
+      description: "How ImageSet was obtained: generated"
+  workspaces:
+    - name: workspace
+      description: "Workspace for ImageSet output"
+  steps:
+    - name: generate-or-use-imageset
+      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+      workingDir: $(workspaces.workspace.path)
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "🔧 Creating test ImageSet configuration..."
+
+        IMAGESET_FILE="imageset-config.yaml"
+
+        # Create basic ImageSet for operators only
+        cat > $IMAGESET_FILE << 'EOF'
+kind: ImageSetConfiguration
+apiVersion: mirror.openshift.io/v1alpha2
+storageConfig:
+  registry:
+    imageURL: registry-quay-quay-enterprise.apps.cluster-dlnph.dlnph.sandbox1297.opentlc.com/quayadmin/metadata:latest
+mirror:
+  operators:
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.18
+    packages:
+    - name: advanced-cluster-security
+    - name: compliance-operator
+EOF
+
+        echo "✅ Generated test ImageSet configuration"
+
+        echo "📄 ImageSet Content:"
+        cat $IMAGESET_FILE
+
+        # Set results
+        echo -n "$IMAGESET_FILE" > $(results.IMAGESET_FILE.path)
+        echo -n "generated" > $(results.GENERATION_METHOD.path)
+
+        echo "✅ ImageSet configuration ready"

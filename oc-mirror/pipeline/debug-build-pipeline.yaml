@@ -1,0 +1,63 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: debug-build-structure
+  namespace: oc-mirror-pipeline
+spec:
+  serviceAccountName: oc-mirror-pipeline
+  workspaces:
+    - name: shared-workspace
+      persistentVolumeClaim:
+        claimName: oc-mirror-shared-workspace
+  pipelineSpec:
+    workspaces:
+      - name: shared-workspace
+    tasks:
+      - name: fetch-source
+        taskRef:
+          resolver: cluster
+          params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: namespace
+            value: openshift-pipelines
+        params:
+          - name: URL
+            value: "https://github.com/auto-shift/autoshiftv2.git"
+          - name: REVISION
+            value: "feature/policy-template"
+          - name: DELETE_EXISTING
+            value: "true"
+          - name: SUBDIRECTORY
+            value: "source"
+        workspaces:
+          - name: output
+            workspace: shared-workspace
+
+      - name: debug-structure
+        runAfter: ["fetch-source"]
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+        taskSpec:
+          workspaces:
+            - name: source
+          steps:
+            - name: debug
+              image: registry.redhat.io/ubi9/ubi:latest
+              workingDir: $(workspaces.source.path)
+              script: |
+                #!/bin/bash
+                echo "=== Workspace structure ==="
+                find . -type f -name "*ontainer*" | head -20
+                echo ""
+                echo "=== Source directory ==="
+                ls -la source/ | head -20
+                echo ""
+                echo "=== oc-mirror in source ==="
+                ls -la source/oc-mirror/ | head -20
+                echo ""
+                echo "=== Looking for Containerfile ==="
+                find source -name "Containerfile" -o -name "Dockerfile"

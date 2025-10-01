@@ -1,0 +1,63 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: update-image-configmap
+  namespace: oc-mirror-pipeline
+  labels:
+    app.kubernetes.io/name: oc-mirror-task
+    autoshift.io/component: oc-mirror
+spec:
+  description: |
+    Updates a ConfigMap with current image information after successful build.
+    Used by deployment pipeline to get the latest built image.
+  params:
+    - name: image-name
+      type: string
+      description: "Container image name"
+    - name: image-url
+      type: string
+      description: "Full image URL with tag"
+    - name: image-digest
+      type: string
+      description: "Image digest"
+    - name: git-revision
+      type: string
+      description: "Git revision that was built"
+    - name: configmap-name
+      type: string
+      default: "oc-mirror-images"
+      description: "ConfigMap name to update"
+    - name: namespace
+      type: string
+      default: "oc-mirror-pipeline"
+      description: "Namespace for ConfigMap"
+  steps:
+    - name: update-configmap
+      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+      script: |
+        #!/bin/bash
+        set -e
+
+        echo "📝 Updating image ConfigMap..."
+        echo "Image: $(params.image-url)"
+        echo "Digest: $(params.image-digest)"
+        echo "Git Revision: $(params.git-revision)"
+
+        # Create or update ConfigMap with image information
+        oc create configmap $(params.configmap-name) \
+          --from-literal=image-name="$(params.image-name)" \
+          --from-literal=image-url="$(params.image-url)" \
+          --from-literal=image-digest="$(params.image-digest)" \
+          --from-literal=git-revision="$(params.git-revision)" \
+          --from-literal=build-timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          --namespace=$(params.namespace) \
+          --dry-run=client -o yaml | oc apply -f -
+
+        echo "✅ Updated ConfigMap $(params.configmap-name) in namespace $(params.namespace)"
+
+        # Annotate the ConfigMap with build information
+        oc annotate configmap $(params.configmap-name) \
+          --namespace=$(params.namespace) \
+          "autoshift.io/last-build=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          "autoshift.io/git-revision=$(params.git-revision)" \
+          --overwrite
