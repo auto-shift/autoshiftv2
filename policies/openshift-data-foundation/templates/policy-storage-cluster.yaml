@@ -27,6 +27,28 @@ spec:
       kind: Policy
   disabled: false
   policy-templates:
+  # Adding Toleration for csi plugin to run on all nodes.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rook-ceph-operator-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                kind: ConfigMap
+                apiVersion: v1
+                metadata:
+                  name: rook-ceph-operator-config
+                  namespace: {{ .Values.odf.namespace }}
+                data:
+                  CSI_LOG_LEVEL: '5'
+                  CSI_PLUGIN_TOLERATIONS: |2-
+
+                    - operator: Exists
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
