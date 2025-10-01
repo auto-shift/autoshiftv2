@@ -20,7 +20,7 @@ helm template policies/cert-manager/
 # 3. Commit and push - AutoShift will automatically deploy via GitOps
 git add policies/cert-manager/
 git commit -m "Add cert-manager operator policy"
-git push
+git push origin main  # or your branch if contributing
 ```
 
 Your operator is now being deployed across your clusters! Check the ArgoCD dashboard to monitor progress.
@@ -144,7 +144,7 @@ flowchart TD
 
 | Tool | Version | Installation |
 |------|---------|-------------|
-| OpenShift CLI | 4.18+ | [Download oc](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli) |
+| OpenShift CLI | Latest | [Download oc](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli) |
 | Helm | 3.x | [Install Helm](https://helm.sh/docs/intro/install/) |
 | Git | 2.x+ | Pre-installed on most systems |
 | Access to Hub Cluster | - | Admin or developer access required |
@@ -152,7 +152,7 @@ flowchart TD
 ### Repository Setup
 
 ```bash
-# Clone the repository
+# Clone the repository (or your fork if contributing)
 git clone https://github.com/auto-shift/autoshiftv2.git
 cd autoshiftv2
 
@@ -340,7 +340,7 @@ oc get applications -n openshift-gitops | grep my-component
 ### Policy Development Workflow
 
 ```mermaid
-graph LR
+flowchart LR
     A[Research Operator] --> B[Generate Policy]
     B --> C[Add Configuration]
     C --> D[Test Locally]
@@ -387,14 +387,12 @@ managedClusterSets:
     labels:
       my-component: 'true'
       my-component-subscription-name: 'my-component-operator'
-      my-component-channel: 'fast'  # Different channel for managed clusters
-
+      my-component-channel: 'fast'  
 # Individual cluster overrides in same values file
 clusters:
   prod-cluster-1:
     labels:
-      my-component-channel: 'stable-1.2'  # Override for specific cluster
-```
+      my-component-channel: 'stable-1.2'  ```
 
 Configuration precedence: **Individual Cluster > ClusterSet > Default Values**
 
@@ -447,7 +445,7 @@ helm template policies/my-component/
 
 # 3. Update with different label values
 vi autoshift/values.sbx.yaml
-vi autoshift/values.my-prod-labels.yaml
+vi autoshift/values.hub.yaml
 
 # 4. Commit and deploy
 git add policies/my-component/
@@ -455,7 +453,7 @@ git add autoshift/
 git commit -m "Update my-component configuration"
 git push
 
-# 5. validate on sbx cluster that is pointing to your branch
+# 5. Validate on sandbox cluster that is pointing to your branch
 
 ```
 
@@ -466,7 +464,7 @@ git push
 oc get policies -A | grep my-component
 
 # View policy details - namespace can be found from previous command
-oc describe policy policy-my-component-operator-install -n policies-{{AUTOSHIFT_DEPLOYMENT_NAME}}
+oc describe policy policy-my-component-operator-install -n policies-autoshift
 
 # View ArgoCD sync status
 oc get applications -n openshift-gitops my-component -o yaml
@@ -515,8 +513,16 @@ oc get policyreports -A
 
 1. **Fork and Clone**
    ```bash
+   # First, fork the repository on GitHub web interface:
+   # Navigate to: https://github.com/auto-shift/autoshiftv2
+   # Click "Fork" button in the top right
+
+   # Then clone your fork
    git clone https://github.com/YOUR-USERNAME/autoshiftv2.git
    cd autoshiftv2
+
+   # Add upstream remote to keep your fork in sync
+   git remote add upstream https://github.com/auto-shift/autoshiftv2.git
    ```
 
 2. **Create Feature Branch**
@@ -543,6 +549,12 @@ oc get policyreports -A
    git push origin feature/add-my-operator-policy
    ```
 
+   After pushing, create a pull request via GitHub web interface:
+   - Navigate to your fork: `https://github.com/YOUR-USERNAME/autoshiftv2`
+   - GitHub will show a banner "Compare & pull request" for your recent branch
+   - Or manually go to: `https://github.com/auto-shift/autoshiftv2/compare/main...YOUR-USERNAME:feature/add-my-operator-policy`
+   - Fill out the PR template with a clear title and description
+
 ### Code Standards
 
 - ✅ Use policy generator for all new operator policies
@@ -561,7 +573,7 @@ oc get policyreports -A
 - [ ] Tested with `helm template`
 - [ ] Deployed and validated in test environment
 - [ ] No hardcoded values (use templates)
-- [ ] Labels follow `autoshift.io/` convention
+- [ ] Add Labels to AutoShift Values files
 
 ## 🔍 Troubleshooting
 
@@ -569,29 +581,114 @@ oc get policyreports -A
 
 | Issue | Solution |
 |-------|----------|
-| Policy not applying to cluster | Check cluster labels with `oc get managedcluster CLUSTER -o yaml` |
-| Operator installation failing | Verify subscription name matches catalog: `oc get packagemanifests` |
-| Template rendering errors | Escape special characters, check YAML indentation |
-| ArgoCD sync failures | Check application logs: `oc logs -n openshift-gitops deployment/openshift-gitops-server` |
-| Policy stuck in NonCompliant | Check events: `oc get events -n OPERATOR-NAMESPACE` |
+| Policy not applying to cluster | Check cluster labels: `oc get managedcluster $CLUSTER_NAME -o yaml` |
+| Operator installation failing | Check OperatorPolicy status: `oc describe operatorpolicy OPERATOR_POLICY_NAME -n $CLUSTER_NAME` |
+| Template rendering errors | Check policy status: `oc describe policy POLICY_NAME -n policies-autoshift` |
+| ArgoCD sync failures | Check application status: `oc get applications -n openshift-gitops POLICY_NAME -o yaml` |
+| Policy stuck in NonCompliant | Check OperatorPolicy or ConfigurationPolicy status (see debug commands) |
+| Configuration not applied | Check ConfigurationPolicy status: `oc describe configurationpolicy CONFIG_POLICY_NAME -n $CLUSTER_NAME` |
+| Hub template processing issues | View policy propagator logs (see debug commands) |
 
 ### Debug Commands
 
 ```bash
-# Check ArgoCD application status
+# Set cluster name variable for your environment
+# Find your cluster name if you don't know it
+oc get managedclusters
+export CLUSTER_NAME="local-cluster"  # Replace with your actual cluster name
+
+# 1. FIRST: Check all policies and their compliance status
+oc get policies -A
+
+# 2. Check specific policy resource status
+
+# For operator installation issues:
+oc get operatorpolicy -A
+oc describe operatorpolicy OPERATOR_POLICY_NAME -n $CLUSTER_NAME
+
+# For configuration/non-operator issues:
+oc get configurationpolicy -A
+oc describe configurationpolicy CONFIG_POLICY_NAME -n $CLUSTER_NAME
+
+# 3. Check specific policy details (use actual namespace from step 1)
+oc describe policy POLICY_NAME -n policies-autoshift
+
+# 4. Check ArgoCD application status
 oc get applications -n openshift-gitops
 
-# View policy propagator logs
+# 5. View specific ArgoCD application details
+oc get application autoshift-POLICY_NAME -n openshift-gitops -o yaml
+
+# 6. Check cluster labels (hub template variables)
+oc get managedcluster $CLUSTER_NAME -o yaml
+
+# 7. View ACM policy propagator logs
 oc logs -n open-cluster-management deployment/grc-policy-propagator
 
-# View policy controller logs
-oc logs -n open-cluster-management-agent-addon deployment/config-policy-controller
-
-# Check placement decisions
+# 8. Check placement decisions (which clusters policies target)
 oc get placementdecisions -A
 
-# View cluster import status
+# 9. View cluster import and connectivity status
 oc get managedclusters
+
+# 10. Check package manifests for operator details
+oc get packagemanifests -n openshift-marketplace | grep OPERATOR_NAME
+oc describe packagemanifest OPERATOR_NAME -n openshift-marketplace
+
+# 11. General policy controller logs
+oc logs -n open-cluster-management-agent-addon deployment/config-policy-controller
+
+# 12. Check events in operator namespaces
+oc get events -n OPERATOR_NAMESPACE --sort-by='.lastTimestamp'
+```
+
+### Finding Non-Compliant Policies
+
+```bash
+# Find NonCompliant policies
+oc get policies -A | grep "NonCompliant"
+
+# Find policies with missing/blank compliance status (excluding header)
+oc get policies -A | grep -v "Compliant" | grep -v "COMPLIANCE STATE"
+
+# Find NonCompliant OperatorPolicy resources
+oc get operatorpolicy -A -o custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name,COMPLIANT:.status.compliant" | grep "NonCompliant"
+
+# Find NonCompliant ConfigurationPolicy resources
+oc get configurationpolicy -A -o custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name,COMPLIANT:.status.compliant" | grep "NonCompliant"
+
+# Alternative: Show all and manually review
+echo "=== All Policies ==="
+oc get policies -A
+echo "=== OperatorPolicy Status ==="
+oc get operatorpolicy -A -o custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name,COMPLIANT:.status.compliant"
+echo "=== ConfigurationPolicy Status ==="
+oc get configurationpolicy -A -o custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name,COMPLIANT:.status.compliant"
+
+# Get details for a specific non-compliant policy
+POLICY_NAME="policy-acs-operator-install"  # Example policy name
+POLICY_NAMESPACE="policies-autoshift"
+
+# Check the main policy status
+oc describe policy $POLICY_NAME -n $POLICY_NAMESPACE
+
+# Find related OperatorPolicy resources for this policy
+oc get operatorpolicy -A -o json | jq -r '.items[] | select(.metadata.labels["policy.open-cluster-management.io/policy"] == "'$POLICY_NAMESPACE'.'$POLICY_NAME'") | "\(.metadata.namespace)/\(.metadata.name)"'
+
+# Find related ConfigurationPolicy resources for this policy
+oc get configurationpolicy -A -o json | jq -r '.items[] | select(.metadata.labels["policy.open-cluster-management.io/policy"] == "'$POLICY_NAMESPACE'.'$POLICY_NAME'") | "\(.metadata.namespace)/\(.metadata.name)"'
+
+# Example: Find all resources related to ACS operator policy
+POLICY_NAME="policy-acs-operator-install"
+echo "=== Related OperatorPolicy resources ==="
+oc get operatorpolicy -A -o json | jq -r '.items[] | select(.metadata.labels["policy.open-cluster-management.io/policy"] == "policies-autoshift.'$POLICY_NAME'") | "\(.metadata.namespace)/\(.metadata.name)"'
+
+echo "=== Related ConfigurationPolicy resources ==="
+oc get configurationpolicy -A -o json | jq -r '.items[] | select(.metadata.labels["policy.open-cluster-management.io/policy"] == "policies-autoshift.'$POLICY_NAME'") | "\(.metadata.namespace)/\(.metadata.name)"'
+
+# Describe the related resources found above (replace with actual names from commands above)
+oc describe operatorpolicy install-operator-acs -n $CLUSTER_NAME
+oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 ```
 
 ## 📖 Additional Resources
