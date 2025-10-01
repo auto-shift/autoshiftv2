@@ -42,13 +42,16 @@ spec:
             name: {{ .Values.coo.namespace }}
             namespace: {{ .Values.coo.namespace }}
           subscription:
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/coo-version" | default "" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/coo-subscription-name" | default "{{ .Values.coo.name }}" {{ "hub}}" }}'
             namespace: {{ .Values.coo.namespace }}
             source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/coo-source" | default "{{ .Values.coo.source }}" {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/coo-source-namespace" | default "{{ .Values.coo.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/coo-channel" | default "{{ .Values.coo.channel }}" {{ "hub}}" }}'
-          # Getting Label and then capitalizing first letter
-          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/coo-install-plan-approval" | default "{{ .Values.coo.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+          # Upgrade approval for subscription will be set based on if version is set not this flag
+          upgradeApproval: 'Automatic' # if version is set install plan is set to manual and only the version specified will be installed
+          versions:
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/coo-version" | default "" {{ "hub}}" }}'
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy

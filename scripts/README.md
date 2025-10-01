@@ -71,7 +71,7 @@ Each generated policy includes these AutoShift labels in values.yaml:
 <component>: "true"                           # Enable/disable the operator
 <component>-subscription-name: "<subscription-name>"  # Operator subscription name
 <component>-channel: "<channel>"              # Operator channel
-<component>-install-plan-approval: "Automatic"        # Approval strategy
+<component>-version: "operator-name.v1.x.x"  # Specific CSV version (optional)
 <component>-source: "redhat-operators"               # Catalog source
 <component>-source-namespace: "openshift-marketplace" # Catalog namespace
 ```

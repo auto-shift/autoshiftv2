@@ -94,8 +94,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    Values[AutoShift Values<br/>hubClusterSets, managedClusterSets]
-    ConfigMaps[ConfigMaps<br/>cluster-set.*, managed-cluster.*]
+    Values[AutoShift Values<br/>hubClusterSets, managedClusterSets, clusters]
+    ConfigMaps[ConfigMaps<br/>cluster-set, managed-cluster]
     ClusterLabels[ManagedCluster Labels<br/>autoshift.io/* applied]
 
     subgraph Targeting [Policy Targeting]

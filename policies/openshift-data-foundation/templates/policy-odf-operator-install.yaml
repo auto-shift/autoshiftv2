@@ -50,8 +50,12 @@ spec:
             namespace: {{ .Values.odf.namespace }}
             source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-source" | default "{{ .Values.odf.source }}" {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-source-namespace" | default "{{ .Values.odf.sourceNamespace }}" {{ "hub}}" }}'
-          # Getting Label and then capitalizing first letter
-          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/odf-install-plan-approval" | default "{{ .Values.odf.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-channel" | default "{{ .Values.odf.channel }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-version" | default "" {{ "hub}}" }}'
+            # Upgrade approval for subscription will be set based on if version is set not this flag
+            upgradeApproval: 'Automatic' # if version is set install plan is set to manual and only the version specified will be installed
+            versions:
+              - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-version" | default "" {{ "hub}}" }}'
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy

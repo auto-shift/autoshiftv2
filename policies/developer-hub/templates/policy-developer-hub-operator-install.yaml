@@ -47,8 +47,11 @@ spec:
             name: {{ .Values.developerHub.name }}
             source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/dev-hub-source" | default "{{ .Values.developerHub.source }}" hub{{ "}}" }}'
             sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/dev-hub-source-namespace" | default "{{ .Values.developerHub.sourceNamespace }}" hub{{ "}}" }}'
-          # Getting Label and then capitalizing first letter
-          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/dev-hub-install-plan-approval" | default "{{ .Values.developerHub.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-hub-version" | default "" {{ "hub}}" }}'
+            # Upgrade approval for subscription will be set based on if version is set not this flag
+            upgradeApproval: 'Automatic' # if version is set install plan is set to manual and only the version specified will be installed
+            versions:
+              - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-hub-version" | default "" {{ "hub}}" }}'
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
