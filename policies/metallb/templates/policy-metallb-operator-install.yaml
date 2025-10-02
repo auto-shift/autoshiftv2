@@ -39,12 +39,16 @@ spec:
             namespace: {{ .Values.metallb.namespace }}
           subscription:
             namespace: {{ .Values.metallb.namespace }}
-            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/metallb-channel" | default "{{ .Values.metallb.channel }}" hub{{ "}}" }}'
-            name: {{ .Values.metallb.name }}
-            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/metallb-source" | default "{{ .Values.metallb.source }}" hub{{ "}}" }}'
-            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/metallb-source-namespace" | default "{{ .Values.metallb.sourceNamespace }}" hub{{ "}}" }}'
-          # Getting Label and then capitalizing first letter
-          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/metallb-install-plan-approval" | default "{{ .Values.metallb.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-channel" | default "{{ .Values.metallb.channel }}" {{ "hub}}" }}'
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-subscription-name" | default "{{ .Values.metallb.name }}" {{ "hub}}" }}'
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-source" | default "{{ .Values.metallb.source }}" {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-source-namespace" | default "{{ .Values.metallb.sourceNamespace }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-version" | default "" {{ "hub}}" }}'
+            # Upgrade approval for subscription will be set based on if version is set not this flag
+            # If version is set install plan is set to manual and only the version specified will be installed
+          upgradeApproval: Automatic
+          versions:
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-version" | default "" {{ "hub}}" }}'
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
