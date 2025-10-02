@@ -11,8 +11,8 @@
 Generate and deploy an operator policy in under 5 minutes:
 
 ```bash
-# 1. Generate a new operator policy with AutoShift integration
-./scripts/generate-operator-policy.sh cert-manager cert-manager-operator --channel stable --namespace cert-manager --add-to-autoshift
+# 1. Generate a new operator policy with AutoShift integration and version pinning
+./scripts/generate-operator-policy.sh cert-manager cert-manager-operator --channel stable --namespace cert-manager --version cert-manager.v1.14.4 --add-to-autoshift
 
 # 2. Validate the generated policy
 helm template policies/cert-manager/

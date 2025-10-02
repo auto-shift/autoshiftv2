@@ -19,7 +19,7 @@ NC='\033[0m' # No Color
 DEFAULT_SOURCE="redhat-operators"
 DEFAULT_SOURCE_NAMESPACE="openshift-marketplace"
 DEFAULT_CHANNEL="stable"
-DEFAULT_INSTALL_PLAN="Automatic"
+DEFAULT_VERSION=""  # Optional version pinning
 
 # Parse arguments
 COMPONENT_NAME=""
@@ -28,7 +28,7 @@ SUBSCRIPTION_NAME=""  # Required field
 SOURCE="$DEFAULT_SOURCE"
 SOURCE_NAMESPACE="$DEFAULT_SOURCE_NAMESPACE"
 CHANNEL=""  # Required field (no default)
-INSTALL_PLAN="$DEFAULT_INSTALL_PLAN"
+VERSION="$DEFAULT_VERSION"
 TARGET_NAMESPACE=""  # Required field (no default)
 NAMESPACE_SCOPED=false
 ADD_TO_AUTOSHIFT=false
@@ -49,7 +49,7 @@ usage() {
     echo "Optional:"
     echo "  --source SOURCE           Operator catalog source (default: $DEFAULT_SOURCE)"
     echo "  --source-namespace NS     Source namespace (default: $DEFAULT_SOURCE_NAMESPACE)"
-    echo "  --install-plan APPROVAL   Install plan approval (default: $DEFAULT_INSTALL_PLAN)"
+    echo "  --version VERSION         Pin to specific operator version (CSV name, optional)"
     echo "  --namespace-scoped        Add targetNamespaces for namespace-scoped operators"
     echo "  --add-to-autoshift        Add labels to AutoShift values files (default: all files)"
     echo "  --values-files FILES      Comma-separated list of values files to update (e.g., 'hub,sbx')"
@@ -58,10 +58,10 @@ usage() {
     echo ""
     echo "Examples:"
     echo "  $0 cert-manager cert-manager-operator --channel stable --namespace cert-manager"
-    echo "  $0 metallb metallb-operator --channel stable --namespace metallb-system --source community-operators"
+    echo "  $0 metallb metallb-operator --channel stable --namespace metallb-system --source community-operators --version metallb-operator.v0.14.8"
     echo "  $0 compliance compliance-operator --channel stable --namespace openshift-compliance --namespace-scoped"
     echo "  $0 sealed-secrets sealed-secrets-operator --channel stable --namespace sealed-secrets --add-to-autoshift"
-    echo "  $0 cert-manager cert-manager-operator --channel stable --namespace cert-manager --add-to-autoshift --values-files hub,sbx"
+    echo "  $0 cert-manager cert-manager-operator --channel stable --namespace cert-manager --version cert-manager.v1.14.4 --add-to-autoshift"
 }
 
 # Parse command line arguments
@@ -79,8 +79,8 @@ while [[ $# -gt 0 ]]; do
             CHANNEL="$2"
             shift 2
             ;;
-        --install-plan)
-            INSTALL_PLAN="$2"
+        --version)
+            VERSION="$2"
             shift 2
             ;;
         --namespace)
@@ -203,7 +203,7 @@ substitute_template() {
         -e "s/{{SOURCE}}/$SOURCE/g" \
         -e "s/{{SOURCE_NAMESPACE}}/$SOURCE_NAMESPACE/g" \
         -e "s/{{CHANNEL}}/$CHANNEL/g" \
-        -e "s/{{INSTALL_PLAN}}/$INSTALL_PLAN/g" \
+        -e "s/{{VERSION}}/$VERSION/g" \
         -e "s/{{COMPONENT_CAMEL}}/$COMPONENT_CAMEL/g" \
         "$template_file" > "$output_file"
 }
@@ -415,28 +415,36 @@ add_labels_to_section() {
     
     # Create labels with proper indentation and commenting
     local labels_content
+    local version_line=""
+    if [[ -n "$VERSION" ]]; then
+        version_line="      $COMPONENT_NAME-version: '$VERSION'"
+        if [[ "$is_commented" == "true" ]]; then
+            version_line="#       $COMPONENT_NAME-version: '$VERSION'"
+        fi
+    fi
+
     if [[ "$is_commented" == "true" ]]; then
-        labels_content=$(cat << EOF
-#       ### $COMPONENT_NAME
+        labels_content="#       ### $COMPONENT_NAME
 #       $COMPONENT_NAME: 'true'
 #       $COMPONENT_NAME-subscription-name: $SUBSCRIPTION_NAME
 #       $COMPONENT_NAME-channel: $CHANNEL
 #       $COMPONENT_NAME-source: $SOURCE
-#       $COMPONENT_NAME-source-namespace: $SOURCE_NAMESPACE
-#       $COMPONENT_NAME-install-plan-approval: $INSTALL_PLAN
-EOF
-)
+#       $COMPONENT_NAME-source-namespace: $SOURCE_NAMESPACE"
+        if [[ -n "$version_line" ]]; then
+            labels_content="$labels_content
+$version_line"
+        fi
     else
-        labels_content=$(cat << EOF
-      ### $COMPONENT_NAME
+        labels_content="      ### $COMPONENT_NAME
       $COMPONENT_NAME: 'true'
       $COMPONENT_NAME-subscription-name: $SUBSCRIPTION_NAME
       $COMPONENT_NAME-channel: $CHANNEL
       $COMPONENT_NAME-source: $SOURCE
-      $COMPONENT_NAME-source-namespace: $SOURCE_NAMESPACE
-      $COMPONENT_NAME-install-plan-approval: $INSTALL_PLAN
-EOF
-)
+      $COMPONENT_NAME-source-namespace: $SOURCE_NAMESPACE"
+        if [[ -n "$version_line" ]]; then
+            labels_content="$labels_content
+$version_line"
+        fi
     fi
     
     # Find the labels line for this section

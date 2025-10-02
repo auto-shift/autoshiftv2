@@ -21,8 +21,11 @@ Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structur
 
 ### Optional Parameters
 
+- `--version <version>`: Pin to specific operator version (CSV name, optional)
 - `--namespace-scoped`: Generate a namespace-scoped operator policy (default: cluster-scoped)
 - `--add-to-autoshift`: Automatically add the component to autoshift/values.hub.yaml
+- `--values-files <files>`: Comma-separated list of values files to update (e.g., 'hub,sbx')
+- `--show-integration`: Show manual integration instructions
 - `--help`: Display help message
 
 ### Examples
@@ -35,6 +38,11 @@ Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structur
 #### Generate with AutoShift integration
 ```bash
 ./scripts/generate-operator-policy.sh metallb metallb-operator --channel stable --namespace metallb-system --add-to-autoshift
+```
+
+#### Generate with version pinning
+```bash
+./scripts/generate-operator-policy.sh cert-manager cert-manager-operator --channel stable --namespace cert-manager --version cert-manager.v1.14.4 --add-to-autoshift
 ```
 
 #### Generate a namespace-scoped operator
@@ -57,11 +65,23 @@ policies/<component-name>/
 
 ### Key Features
 
+- **Version Control**: Supports operator version pinning via CSV names for precise lifecycle management
 - **Subscription Name Labels**: Automatically adds `<component>-subscription-name` label for operator tracking
 - **Channel Configuration**: Sets up proper channel subscriptions
 - **AutoShift Integration**: Optional automatic addition to hub values file
 - **Namespace Support**: Handles both cluster-scoped and namespace-scoped operators
 - **Template Variables**: Uses consistent Helm templating for all values
+
+### Version Control
+
+The script generates policies that use AutoShift's new version control approach:
+
+- **Automatic Upgrades**: By default, operators upgrade automatically within their channel
+- **Version Pinning**: Use `--version` to pin to a specific CSV for controlled deployments
+- **Dynamic Control**: Cluster labels can override default behavior at runtime
+- **No Install Plan Management**: Version control handles upgrade approval automatically
+
+When `--version` is specified, the script adds version labels to AutoShift values files, enabling precise control over operator versions across your fleet.
 
 ### Configuration Labels
 
@@ -99,7 +119,7 @@ Templates use these placeholders:
 - `{{CHANNEL}}`: Operator channel
 - `{{SOURCE}}`: Operator catalog source (e.g., 'redhat-operators')
 - `{{SOURCE_NAMESPACE}}`: Catalog source namespace (e.g., 'openshift-marketplace')
-- `{{INSTALL_PLAN}}`: Install plan approval strategy
+- `{{VERSION}}`: Operator version (CSV name, optional)
 - `{{COMPONENT_CAMEL}}`: Component name in camelCase for values.yaml
 - `{{OPERATOR_NAME}}`: Formatted operator name (deprecated, use SUBSCRIPTION_NAME)
 - `{{COMPONENT_NAME_LOWER}}`: Lowercase component name (deprecated)
@@ -119,6 +139,11 @@ Templates use these placeholders:
 ```bash
 # Test policy generation
 ./scripts/generate-operator-policy.sh test-op test-operator --channel stable --namespace test-operator
+helm template policies/test-op/
+rm -rf policies/test-op/
+
+# Test with version pinning
+./scripts/generate-operator-policy.sh test-op test-operator --channel stable --namespace test-operator --version test-operator.v1.0.0
 helm template policies/test-op/
 rm -rf policies/test-op/
 

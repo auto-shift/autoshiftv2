@@ -28,6 +28,7 @@ hubClusterSets:
       {{COMPONENT_NAME}}-channel: '{{CHANNEL}}'
       {{COMPONENT_NAME}}-source: '{{SOURCE}}'
       {{COMPONENT_NAME}}-source-namespace: '{{SOURCE_NAMESPACE}}'
+      # {{COMPONENT_NAME}}-version: '{{SUBSCRIPTION_NAME}}.v1.x.x'  # Optional: pin to specific CSV version
 
 managedClusterSets:
   managed:
@@ -37,6 +38,7 @@ managedClusterSets:
       {{COMPONENT_NAME}}-channel: '{{CHANNEL}}'
       {{COMPONENT_NAME}}-source: '{{SOURCE}}'
       {{COMPONENT_NAME}}-source-namespace: '{{SOURCE_NAMESPACE}}'
+      # {{COMPONENT_NAME}}-version: '{{SUBSCRIPTION_NAME}}.v1.x.x'  # Optional: pin to specific CSV version
 
 # For specific clusters (optional override)
 clusters:
@@ -66,6 +68,24 @@ This operator is configured as:
 - **Namespace-scoped**: Limited to specific target namespaces (if `targetNamespaces` enabled in values.yaml)
 
 To change scope, edit `values.yaml` and uncomment/configure the `targetNamespaces` field.
+
+### Version Control
+This policy supports AutoShift's operator version control system:
+
+- **Automatic Upgrades**: By default, the operator follows automatic upgrade paths within its channel
+- **Version Pinning**: Add `{{COMPONENT_NAME}}-version` label to pin to a specific CSV version
+- **Manual Control**: Pinned versions require manual updates to upgrade
+
+To pin to a specific version, add the version label to your cluster or clusterset:
+```yaml
+{{COMPONENT_NAME}}-version: '{{SUBSCRIPTION_NAME}}.v1.x.x'
+```
+
+Find available CSV versions:
+```bash
+# List available versions for this operator
+oc get packagemanifests {{SUBSCRIPTION_NAME}} -o jsonpath='{.status.channels[*].currentCSV}'
+```
 
 ## Next Steps: Configuration
 
