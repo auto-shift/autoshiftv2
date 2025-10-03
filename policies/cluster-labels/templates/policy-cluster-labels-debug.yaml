@@ -41,28 +41,7 @@ spec:
                     {{ "{{-" }} $worker_ms := (index (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items 0) {{ "}}" }}
                     {{ "{{-" }} /* Generate the MachineSet for each zone as specified or default to worker az */ {{ "-}}" }}
                     {{ "{{-" }} range $zone := ternary (list $worker_ms.spec.template.spec.providerSpec.value.placement.availabilityZone ) $zones_from_labels (eq 0 (len $zones_from_labels)) {{ "}}" }}
-                    - complianceType: musthave
-                      objectDefinition:
-                        apiVersion: machine.openshift.io/v1beta1
-                        kind: MachineHealthCheck
-                        metadata:
-                          name: worker-machine-health-check 
-                          namespace: openshift-machine-api
-                        spec:
-                          selector:
-                            matchLabels:
-                              machine.openshift.io/cluster-api-machine-role: {{ "{{" }} $machineset_role {{ "}}" }} 
-                              machine.openshift.io/cluster-api-machine-type: {{ "{{" }} $machineset_role {{ "}}" }}
-                              machine.openshift.io/cluster-api-machineset: {{ "{{" }} $infrastructure_id {{ "}}" }}-{{ "{{" }} $machineset_role {{ "}}" }}-{{ "{{" }} $zone {{ "}}" }}
-                          unhealthyConditions:
-                          - type:    "Ready"
-                            timeout: "300s" 
-                            status: "False"
-                          - type:    "Ready"
-                            timeout: "300s" 
-                            status: "Unknown"
-                          maxUnhealthy: "40%" 
-                          nodeStartupTimeout: "10m"
+                    test123
                     {{ "{{-" }} end {{ "}}" }}
 ---
 {{/* (index ((index (lookup "v1" "ConfigMap" "{{ .Values.policy_namespace }}" (printf "cluster-set.%s"  $clusterSet)) "data" "values") | fromJson) "labels") | default dict */}}
