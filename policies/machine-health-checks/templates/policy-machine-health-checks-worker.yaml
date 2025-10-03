@@ -1,7 +1,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-machine-health-checks
+  name: policy-machine-health-checks-worker
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/categories: CM Configuration Management
@@ -14,16 +14,9 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: create-machine-health-checks
+          name: create-machine-health-checks-worker
         spec:
           object-templates-raw: |
-              {{ "{{-" }} /* Specify the parameters needed to create the MachineSet  */ {{ "-}}" }}
-              {{ "{{-" }} $machineset_role := "worker" {{ "}}" }}
-              {{ "{{-" }} $zones_from_labels := list {{ "{{hub" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub" }} if $label | hasPrefix "autoshift.io/worker-nodes-zone" {{ "hub}}" }}"{{ "{{hub" }} $labelvalue {{ "hub}}" }}"{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }} {{ "}}" }}
-              {{ "{{-" }} $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName {{ "}}" }}
-              {{ "{{-" }} $worker_ms := (index (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items 0) {{ "}}" }}
-              {{ "{{-" }} /* Generate the MachineSet for each zone as specified or default to worker az */ {{ "-}}" }}
-              {{ "{{-" }} range $zone := ternary (list $worker_ms.spec.template.spec.providerSpec.value.placement.availabilityZone ) $zones_from_labels (eq 0 (len $zones_from_labels)) {{ "}}" }}
               - complianceType: musthave
                 objectDefinition:
                   apiVersion: machine.openshift.io/v1beta1
@@ -31,12 +24,14 @@ spec:
                   metadata:
                     name: worker-machine-health-check
                     namespace: openshift-machine-api
+                    {{ "{{hub-" }} if eq index .ManagedClusterLabels "machine-health-checks-provider" "baremetal" {{ "hub}}" }}
+                    annotations:
+                      machine.openshift.io/remediation-strategy: external-baremetal
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                   spec:
                     selector:
                       matchLabels:
-                        machine.openshift.io/cluster-api-machine-role: {{ "{{" }} $machineset_role {{ "}}" }}
-                        machine.openshift.io/cluster-api-machine-type: {{ "{{" }} $machineset_role {{ "}}" }}
-                        machine.openshift.io/cluster-api-machineset: {{ "{{" }} $infrastructure_id {{ "}}" }}-{{ "{{" }} $machineset_role {{ "}}" }}-{{ "{{" }} $zone {{ "}}" }}
+                        machine.openshift.io/cluster-api-machine-role: worker
                     unhealthyConditions:
                     - type:    "Ready"
                       timeout: "300s"
@@ -46,14 +41,13 @@ spec:
                       status: "Unknown"
                     maxUnhealthy: "40%"
                     nodeStartupTimeout: "10m"
-              {{ "{{-" }} end {{ "}}" }}
           remediationAction: enforce
           severity: high
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-machine-health-checks
+  name: placement-policy-machine-health-checks-worker
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -71,10 +65,6 @@ spec:
               operator: In
               values:
               - 'true'
-            - key: 'autoshift.io/machine-health-checks-provider'
-              operator: NotIn
-              values:
-              - 'baremetal'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
@@ -84,13 +74,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-machine-health-checks
+  name: placement-policy-machine-health-checks-worker
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-machine-health-checks
+  name: placement-policy-machine-health-checks-worker
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-machine-health-checks
+  - name: policy-machine-health-checks-worker
     apiGroup: policy.open-cluster-management.io
     kind: Policy
