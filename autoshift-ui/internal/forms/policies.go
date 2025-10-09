@@ -10,30 +10,77 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-var policies = structs.CreatePolicies()
+func init() {
+	hubConfigs.InitClusterSets()
+	hubConfigs.InitManagedLabelsMap()
 
-func Policies() fyne.CanvasObject {
+}
 
+var clusterSetTabs container.AppTabs
+
+func Policies(win fyne.Window) fyne.CanvasObject {
+	mainWin = win
+
+	updateTabs()
+
+	AddClusterSetBtn := widget.NewButton("Add New ClusterSet", func() { addHubClusterSet() })
+	clusterSetContainer := container.NewVBox(&clusterSetTabs, AddClusterSetBtn)
+
+	return clusterSetContainer
+}
+
+func updateTabs() {
+	clusterSetTabs = container.AppTabs{}
 	data_io.ReadPolicies()
 
+	managedPols := policies.GetManagedPolicies()
+
+	clusterSetTabs.Append(container.NewTabItem("managed", createPolicyCheckGroup(&managedPols)))
+
+	for k, v := range policies.GetHubPolicies() {
+		clusterSetTabs.Append(container.NewTabItem(k, createPolicyCheckGroup(&v)))
+	}
+}
+
+func createPolicyCheckGroup(pols *[]structs.Policy) fyne.CanvasObject {
 	policyCheckGroup := container.NewGridWithColumns(2)
 
-	for i, _ := range policies.Policies {
+	for _, v := range *pols {
 		policyCheckGroup.Add(
-			policyCard(&policies.Policies[i]),
+			policyCard(&v),
 		)
 	}
 
-	return container.NewVScroll(policyCheckGroup)
+	policyCheckGroupScroll := container.NewVScroll(policyCheckGroup)
+	policyCheckGroupScroll.SetMinSize(fyne.NewSize(policyCheckGroup.Size().Width, 500))
+
+	return policyCheckGroupScroll
+}
+
+func addManagedLabels() {
+
 }
 
 func policyCard(policy *structs.Policy) *widget.Card {
 
+	configsModalBtn := widget.NewButton(
+		"Update Configs",
+		func() {
+			showUpdateConfigsModal(policy)
+		})
+	configsModalBtn.Disable()
 	contents := container.New(layout.NewStackLayout(),
 		widget.NewLabel(policy.Desc),
-		widget.NewCheck("Install", func(b bool) {
-			policy.UpdateIsSelected()
-		}),
+		container.NewGridWithColumns(2,
+			widget.NewCheck("Install", func(b bool) {
+				if b {
+					configsModalBtn.Enable()
+				} else {
+					configsModalBtn.Disable()
+				}
+				policy.UpdateIsSelected()
+			}), configsModalBtn,
+		),
 	)
 
 	return widget.NewCard(
@@ -42,3 +89,19 @@ func policyCard(policy *structs.Policy) *widget.Card {
 		contents,
 	)
 }
+
+// func showAddClusterSetModal() fyne.CanvasObject {
+
+// 	// nameLabel := widget.NewLabel("Name: ")
+// 	nameEntry := widget.NewEntry()
+// 	// typeLabel := widget.NewLabel("ClusterSet Type: ")
+// 	typeOpts := widget.NewRadioGroup([]string{"hub", "managed"}, func(s string) {})
+// 	// dconfBtn := widget.NewButton("Add ClusterSet", func() {})
+
+//    dialog.ShowForm("New ClusterSet","Create ClusterSet","Cancel",[]*widget.FormItem{
+// 		widget.NewFormItem("ClusterSet Name:", nameEntry),
+// 		widget.NewFormItem("ClusterSet Type:",typeOpts),
+//    },func(b bool){
+
+//    },mainWin)
+// }

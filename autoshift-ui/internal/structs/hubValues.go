@@ -11,14 +11,19 @@ type hubValuesStruct struct {
 	BranchTag         string `yaml:"autoshiftGitBranchTag"`
 	SelfManagedHubSet string `yaml:"selfManagedHubSet"`
 	HubClusterSets    struct {
-		Hub struct {
-			Labels struct {
-				SelfManaged  bool `yaml:"self-managed"`
-				PolicyLabels map[string]string
-			} `yaml:"labels"`
-		} `yaml:"hub"`
+		ClusterSets map[string]ClusterSetLabels
 	} `yaml:"hubClusterSets"`
+	ManagedClusterSets struct {
+		Managed struct {
+			Labels map[string]string
+		} `yaml:"managed"`
+	} `yaml:"managedClusterSets"`
 }
+
+// PolicyLabels Struct
+// type PolicyLabels struct {
+// 	Labels map[string]string
+// }
 
 var (
 	singleInstance *hubValuesStruct
@@ -67,12 +72,13 @@ func (hv hubValuesStruct) GetBranchTag() string {
 func (hv hubValuesStruct) GetSMHubSet() string {
 	return hv.SelfManagedHubSet
 }
-func (hv hubValuesStruct) GetIsSelfManaged() bool {
-	return hv.HubClusterSets.Hub.Labels.SelfManaged
+func (hv hubValuesStruct) GetHubClusterSets(csKey string) ClusterSetLabels {
+	return hv.HubClusterSets.ClusterSets[csKey]
 }
-func (hv hubValuesStruct) GetPolicyLabels() map[string]string {
-	return hv.HubClusterSets.Hub.Labels.PolicyLabels
-}
+
+// func (hv hubValuesStruct) GetPolicyLabels() map[string]string {
+// 	return hv.HubClusterSets.Hub.Labels.PolicyLabels
+// }
 
 // Set Methods
 func (hv *hubValuesStruct) SetGitRepo(gitRepo string) {
@@ -84,19 +90,34 @@ func (hv *hubValuesStruct) SetBranchTag(branchTag string) {
 func (hv *hubValuesStruct) SetSMHubSet(selfManagedHubSet string) {
 	hv.SelfManagedHubSet = selfManagedHubSet
 }
-func (hv *hubValuesStruct) SetIsSelfManaged(isSelfManaged bool) {
-	hv.HubClusterSets.Hub.Labels.SelfManaged = isSelfManaged
+func (hv *hubValuesStruct) SetIsSelfManaged(csKey string, csValue ClusterSetLabels) {
+	hv.HubClusterSets.ClusterSets[csKey] = csValue
 }
-func (hv *hubValuesStruct) SetPolicyLabels(policyLabels map[string]string) {
-	hv.HubClusterSets.Hub.Labels.PolicyLabels = policyLabels
-}
+
+// func (hv *hubValuesStruct) SetPolicyLabels(policyLabels map[string]string) {
+// 	hv.HubClusterSets.Hub.Labels.PolicyLabels = policyLabels
+// }
 
 // Update Labels
-func (hv *hubValuesStruct) UpdatePolicyLabels(plKey, plValue string) {
-	var pl map[string]string = hv.HubClusterSets.Hub.Labels.PolicyLabels
-	pl[plKey] = plValue
+// func (hv *hubValuesStruct) UpdatePolicyLabels(plKey, plValue string) {
+// 	var pl map[string]string = hv.HubClusterSets.Hub.Labels.PolicyLabels
+// 	pl[plKey] = plValue
+// }
+
+func (hv *hubValuesStruct) InitClusterSets() {
+	hv.HubClusterSets.ClusterSets = make(map[string]ClusterSetLabels)
 }
 
-func (hv *hubValuesStruct) InitMap() {
-	hv.HubClusterSets.Hub.Labels.PolicyLabels = make(map[string]string)
+func (hv *hubValuesStruct) InitManagedLabelsMap() {
+	hv.ManagedClusterSets.Managed.Labels = make(map[string]string)
+}
+
+func (hv *hubValuesStruct) AddManagedLabel(labelKey, labelValue string) {
+	hv.ManagedClusterSets.Managed.Labels[labelKey] = labelValue
+}
+
+func (hv *hubValuesStruct) removeManagedLabels(labels map[string]string) {
+	for k, _ := range labels {
+		delete(hv.ManagedClusterSets.Managed.Labels, k)
+	}
 }

@@ -2,6 +2,7 @@ package ocp
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -27,7 +28,6 @@ func Login(user, pass, domain string) bool {
 		fmt.Println(out.String())
 		return true
 	}
-
 }
 
 func Logout() {
@@ -45,12 +45,8 @@ func Logout() {
 	}
 }
 
-func get_cluster_main() {
-	fmt.Println(Get_nodes())
-}
-
 func Get_nodes() string {
-	fmt.Println(os.Stat("../../internal/templates/nodes.tmpl"))
+	log.Println(os.Stat("../../internal/templates/nodes.tmpl"))
 	cmd := exec.Command("/usr/local/bin/oc", "get", "nodes", "-o", "go-template-file=../../internal/templates/nodes.tmpl")
 	var stdout strings.Builder
 	var stderr strings.Builder

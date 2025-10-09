@@ -5,11 +5,6 @@ import (
 	"sync"
 )
 
-// PolicyLabels Struct
-// type PolicyLabels struct {
-// 	configs []map[string]string
-// }
-
 // Policy Struct
 type Policy struct {
 	Name        string `yaml:"name"`
@@ -25,23 +20,45 @@ func (p *Policy) UpdateIsSelected() {
 
 // Policies Struct
 type policies struct {
-	Policies []Policy `yaml:"policies"`
+	HubPolicies     map[string][]Policy `yaml:"hub_policies"`
+	ManagedPolicies []Policy            `yaml:"managed_policies"`
 }
 
 var (
 	singleInstancePolicies *policies
-	syncOnce               sync.Once
+	pOnce                  sync.Once
 )
 
-// Struct Singleton
+// Policies Singleton
 func CreatePolicies() *policies {
-	syncOnce.Do(func() {
+	pOnce.Do(func() {
 		log.Println("Creating Policies instance")
 		singleInstancePolicies = &policies{}
 	})
 	return singleInstancePolicies
 }
 
-func (ps *policies) UpdatePolicies() {
+// Getters
+func (p policies) GetHubPolicies() map[string][]Policy {
+	return p.HubPolicies
+}
 
+func (p policies) GetManagedPolicies() []Policy {
+	return p.ManagedPolicies
+}
+
+// Setters
+func (p *policies) AddHubPolicies(name string, pol []Policy) {
+	p.HubPolicies[name] = pol
+}
+func (p *policies) AddManagedPolicy(pol Policy) {
+	p.ManagedPolicies = append(p.ManagedPolicies, pol)
+}
+func (p *policies) AddClusterSet(csName string) {
+	p.HubPolicies[csName] = []Policy{}
+}
+
+// Utils
+func (p *policies) InitHubPoliciesMap() {
+	p.HubPolicies = make(map[string][]Policy)
 }
