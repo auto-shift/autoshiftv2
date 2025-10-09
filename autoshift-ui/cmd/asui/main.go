@@ -10,13 +10,15 @@ import (
 	"fyne.io/fyne/v2/app"
 )
 
+var Win fyne.Window
+
 func main() {
 	app := app.New()
-	win := app.NewWindow("AutoShift UI")
-	win.Resize(fyne.NewSize(800, 600))
-	win.SetContent(app_main.Home(win))
+	Win = app.NewWindow("AutoShift UI")
+	Win.Resize(fyne.NewSize(800, 600))
+	Win.SetContent(app_main.Home(Win))
 	loggingSetup()
-	win.ShowAndRun()
+	Win.ShowAndRun()
 }
 
 func loggingSetup() {
