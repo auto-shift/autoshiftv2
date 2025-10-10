@@ -1,0 +1,69 @@
+{{- $policyName := "policy-managed-hub-namespace" -}}
+{{- $placementName := (printf "%s-%s" "placement" $policyName) -}}
+{{- $configPolicyName := (printf "%s%s" "check-" $policyName) -}}
+{{- $managedHubs := (list) }}
+{{- $policyNamespace := $.Values.policyNamespace -}}
+{{- range $k, $v := $.Values.hubClusterSets  }}
+  {{-  if eq (index $v.labels "self-managed" | default "true")  "false" }}
+    {{- $managedHubs = append $managedHubs $k }}
+  {{- end }}
+{{- end }}
+{{- if not (empty $managedHubs) }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+  remediationAction: inform
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: {{ $configPolicyName }}
+        spec:
+          severity: high
+          object-templates-raw: |
+            [ 
+              {
+                "complianceType": "mustnothave",
+                "objectDefinition": {
+                  "apiVersion": "v1", 
+                  "kind": Namespace,
+                  "metadata": {
+                    "name": {{ $policyNamespace }}
+                  }
+                }
+              }
+            ]
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName}}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  spec:
+    clusterSets:
+      {{- range $_, $clusterSet := $managedHubs }}
+      - {{ $clusterSet }}
+      {{- end }}
+    labelSelector:
+      matchLabels:
+        self-managed: false
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+---
+{{- end }}
