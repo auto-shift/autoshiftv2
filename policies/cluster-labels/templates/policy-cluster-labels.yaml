@@ -9,7 +9,7 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
   name: {{ $policyName }}
-  namespace: {{ $.Values.policy_namespace }}
+  namespace: {{ $.Values.policyNamespace }}
   annotations:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
@@ -45,11 +45,11 @@ spec:
                   {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
                 {{ "{{/*" }} // Setting up this block to work on the label extraction code and maybe make it more readable :) {{ "*/}}" }}
-                  {{ "{{-" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "cluster-set.%s" $clusterSet)) | default dict {{ "}}" }}   
+                  {{ "{{-" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" "{{ $.Values.policyNamespace }}" (printf "cluster-set.%s" $clusterSet)) | default dict {{ "}}" }}   
                   {{ "{{-" }} $clusterSetConfigMapData := (index $clusterSetConfigMap "data") | default dict {{ "}}" }} 
                   {{ "{{-" }} $clusterSetConfigMapValues := (index $clusterSetConfigMapData "values") | default "" {{ "}}" }}  
                   {{ "{{-" }} $clusterSetLabels := (index ($clusterSetConfigMapValues | fromJson | default dict) "labels") | default dict {{ "}}" }} 
-                  {{ "{{-" }} $clusterConfigMap := (lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "managed-cluster.%s" $value.metadata.name)) | default dict {{ "}}" }}   
+                  {{ "{{-" }} $clusterConfigMap := (lookup "v1" "ConfigMap" "{{ $.Values.policyNamespace }}" (printf "managed-cluster.%s" $value.metadata.name)) | default dict {{ "}}" }}   
                   {{ "{{-" }} $clusterConfigMapData := (index $clusterConfigMap "data") | default dict {{ "}}" }} 
                   {{ "{{-" }} $clusterConfigMapValues := (index $clusterConfigMapData "values") | default "" {{ "}}" }}  
                   {{ "{{-" }} $clusterLabels := (index ($clusterConfigMapValues | fromJson | default dict) "labels") | default dict {{ "}}" }} 
@@ -75,7 +75,7 @@ apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
   name: {{ $placementName }}
-  namespace: {{ $.Values.policy_namespace }}
+  namespace: {{ $.Values.policyNamespace }}
 spec:
   clusterSets:
     - {{ $.Values.selfManagedHubSet }}
@@ -89,7 +89,7 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
   name: {{ $placementName }}
-  namespace: {{ $.Values.policy_namespace }}
+  namespace: {{ $.Values.policyNamespace }}
 placementRef:
   name: {{ $placementName}}
   apiGroup: cluster.open-cluster-management.io
@@ -101,5 +101,5 @@ subjects:
 ---
 {{- end }}
 {{- end }}
-{{/* $clusterSetLabels := (index ((index (index ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "cluster-set.%s"  $clusterSet)) | default dict) "data" | default dict) "values" | default "" | fromJson) | default dict) "labels") | default dict */}}
-{{/* $clusterLabels := (index ((index (index ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "managed-cluster.%s"  $value.metadata.name)) | default dict) "data" | default dict) "values" | default "" | fromJson) | default dict) "labels") | default dict */}}
+{{/* $clusterSetLabels := (index ((index (index ((lookup "v1" "ConfigMap" "{{ $.Values.policyNamespace }}" (printf "cluster-set.%s"  $clusterSet)) | default dict) "data" | default dict) "values" | default "" | fromJson) | default dict) "labels") | default dict */}}
+{{/* $clusterLabels := (index ((index (index ((lookup "v1" "ConfigMap" "{{ $.Values.policyNamespace }}" (printf "managed-cluster.%s"  $value.metadata.name)) | default dict) "data" | default dict) "values" | default "" | fromJson) | default dict) "labels") | default dict */}}
