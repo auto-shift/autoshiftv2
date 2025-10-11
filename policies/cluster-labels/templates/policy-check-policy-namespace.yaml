@@ -53,17 +53,24 @@ placementRef:
   name: {{ $placementName}}
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
-  spec:
-    clusterSets:
-      {{- range $_, $clusterSet := $managedHubs }}
-      - {{ $clusterSet }}
-      {{- end }}
-    labelSelector:
-      matchLabels:
-        self-managed: false
 subjects:
   - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy
 ---
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+    {{- range $_, $clusterSet := $managedHubs }}
+    - {{ $clusterSet }}
+    {{- end }}
+  labelSelector:
+    matchLabels:
+      self-managed: false
+
 {{- end }}
