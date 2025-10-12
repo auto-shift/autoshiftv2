@@ -5,11 +5,12 @@
 {{- $policyName := printf "policy-%s-cluster-labels" $clusterSetKey }}
 {{- $configPolicyName := printf "cluster-labels-%s" $clusterSetKey }}
 {{- $placementName := printf "placement-%s" $policyName }}
+{{- $policyNamespace := $.Values.policyNamespace -}}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
   name: {{ $policyName }}
-  namespace: {{ $.Values.policyNamespace }}
+  namespace: {{ $policyNamespace }}
   annotations:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
@@ -23,6 +24,7 @@ spec:
         kind: ConfigurationPolicy
         metadata:
           name: {{ $configPolicyName }}
+         namespace: {{ $policyNamespace }}
         spec:
           severity: high 
           object-templates-raw: |
@@ -74,7 +76,7 @@ apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
   name: {{ $placementName }}
-  namespace: {{ $.Values.policyNamespace }}
+  namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
     - {{ $.Values.selfManagedHubSet }}
@@ -88,7 +90,7 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
   name: {{ $placementName }}
-  namespace: {{ $.Values.policyNamespace }}
+  namespace: {{ $policyNamespace }}
 placementRef:
   name: {{ $placementName}}
   apiGroup: cluster.open-cluster-management.io
