@@ -10,6 +10,9 @@ import (
 
 	git "github.com/go-git/go-git/v5"
 	http "github.com/go-git/go-git/v5/plumbing/transport/http"
+
+	"github.com/go-git/go-billy/v5/memfs"
+	"github.com/go-git/go-git/v5/storage/memory"
 )
 
 // vars
@@ -18,6 +21,36 @@ type GitVars struct {
 	GitDir  string `yaml:"gitDir"`
 	GitUrl  string `yaml:"gitUrl"`
 	GitUser string `yaml:"gitUser"`
+}
+
+func GitCloneToMemory(gitUser, gitPass, gitDir, gitUrl, gitBranch string) {
+	storer := memory.NewStorage()
+	fs := memfs.New()
+
+	// Cloning a remote repository into memory
+	repo, err := git.Clone(storer, fs, &git.CloneOptions{
+		URL: "https://github.com/your/repository",
+	})
+	if err != nil {
+		// handle error
+	}
+
+	// Or initializing a new repository in memory
+	// repo, err := git.PlainInit(storer, fs, &git.PlainInitOptions{})
+	// if err != nil {
+	// 	// handle error
+	// }
+
+	file, err := fs.Open("path/to/your/file.txt")
+	if err != nil {
+		// handle error
+	}
+	defer file.Close()
+
+	// Read the file content
+	// content, err := io.ReadAll(file)
+	// ...
+
 }
 
 // Methods for interacting with a git repository

@@ -21,9 +21,9 @@ var HubValues = structs.CreateHubValues()
 func Home(win fyne.Window) fyne.CanvasObject {
 
 	mainTabs := container.NewAppTabs(
-		container.NewTabItem("Policies", forms.Policies(win)),
 		container.NewTabItem("Configs", forms.Configs()),
-		container.NewTabItem("Deployment", forms.DeploymentConfigs()),
+		container.NewTabItem("Policies", forms.Policies(win)),
+		container.NewTabItem("Deployment", forms.Deployment()),
 	)
 
 	mainTabs.SetTabLocation(container.TabLocationLeading)

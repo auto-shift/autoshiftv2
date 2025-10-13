@@ -1,6 +1,9 @@
 package forms
 
 import (
+	"asui/internal/ocp"
+	"log"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
@@ -8,9 +11,12 @@ import (
 )
 
 func Configs() fyne.CanvasObject {
-	// spacerGrid := container.NewGridWrap(fyne.NewSize(200, 100))
-
-	return gitConfigs()
+	configsGrid := container.NewGridWithRows(
+		2,
+		container.NewGridWithColumns(2, gitConfigs(), deploymentConfigs()),
+		layout.NewSpacer(),
+	)
+	return configsGrid
 }
 
 func gitConfigs() *widget.Card {
@@ -35,7 +41,42 @@ func gitConfigs() *widget.Card {
 		// 	log.Println("GitRepo: " + CurrentGitRepo + " GitBranch :" + CurrentGitBranch)
 	})
 	gitForm := container.New(layout.NewFormLayout(), gitRepoLabel, gitRepoEntry, gitBranchLabel, gitBranchEntry, gitUserLabel, gitUserEntry, gitPassLabel, gitPassEntry)
-	formCard := widget.NewCard("Remote Repository", "", container.NewVBox(gitForm, gitSubmitBtn))
+	formCard := widget.NewCard("Remote Repository", "", container.NewVBox(gitForm, layout.NewSpacer(), gitSubmitBtn))
 
 	return formCard
+}
+
+func deploymentConfigs() fyne.CanvasObject {
+
+	ocpUserNameEntry := widget.NewEntry()
+	ocpAccessTokenEntry := widget.NewEntry()
+	ocpApiUrlEntry := widget.NewEntry()
+	ocpFormButton := widget.NewButton("Test Connection", func() {
+		ocp.Login(ocpUserNameEntry.Text, ocpAccessTokenEntry.Text, ocpApiUrlEntry.Text)
+		if ocp.IsLoggedIn() {
+			log.Println("Successful Connection")
+		}
+	})
+
+	ocpFormContainer := container.New(
+		layout.NewFormLayout(),
+		widget.NewLabel("Username: "),
+		ocpUserNameEntry,
+		widget.NewLabel("Access token: "),
+		ocpAccessTokenEntry,
+		widget.NewLabel("OCP API url: "),
+		ocpApiUrlEntry,
+	)
+
+	contentContainer := container.NewVBox(ocpFormContainer, layout.NewSpacer(), ocpFormButton)
+	ocpCard := widget.NewCard(
+		"OCP Login",
+		"",
+		contentContainer,
+	)
+
+	// deploymentConfigsGrid := container.NewGridWithColumns(2, ocpCard, layout.NewSpacer())
+	// deploymentConfigsGrid := container.NewVBox(ocpFormContainer)
+	return ocpCard
+
 }
