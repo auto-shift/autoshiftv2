@@ -1,0 +1,204 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-aap-s3-bucket-storage
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+spec:
+  dependencies:
+    - name: policy-aap-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-storage-cluster-test
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: aap-s3-bucketrolebinding
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                kind: RoleBinding
+                apiVersion: rbac.authorization.k8s.io/v1
+                metadata:
+                  name: s3-bucket-secret
+                  namespace: {{ .Values.aap.namespace }}
+                  annotations:
+                    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+                    argocd.argoproj.io/sync-wave: "4"
+                subjects:
+                  - kind: ServiceAccount
+                    name: aap-s3-bucket-secret
+                    namespace: {{ .Values.aap.namespace }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: Role
+                  name: aap-bucket-secret
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: aap-s3-bucketrole
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: Role
+                metadata:
+                  name: aap-bucket-secret
+                  namespace: "{{ .Values.aap.namespace }}"
+                rules:
+                  - verbs:
+                      - create
+                      - patch
+                      - update
+                    apiGroups:
+                      - ''
+                    resources:
+                      - configmaps
+                      - secrets
+                  - verbs:
+                      - get
+                      - list
+                      - watch
+                    apiGroups:
+                      - ''
+                    resources:
+                      - configmaps
+                      - secrets
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: aap-s3bucket-serviceaccount
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: aap-s3-bucket-secret
+                  namespace: {{ .Values.aap.namespace }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: openshift-aap-bucketclaim
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: objectbucket.io/v1alpha1
+                kind: ObjectBucketClaim
+                metadata:
+                  name: aap-bucket-odf
+                  namespace: {{ .Values.aap.namespace }}
+                  annotations:
+                    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+                    argocd.argoproj.io/sync-wave: "4"
+                spec:
+                  generateBucketName: aap-bucket-odf
+                  storageClassName: openshift-storage.noobaa.io
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: openshift-aap-bucket-secret-job
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              recreateOption: Always
+              objectDefinition:
+                apiVersion: batch/v1
+                kind: Job
+                metadata:
+                  name: aap-bucket-secret-job
+                  namespace: {{ .Values.aap.namespace }}
+                spec:
+                  selector: {}
+                  template:
+                    metadata:
+                      name: create-aap-s3-bucket-secret
+                    spec:
+                      containers:
+                        - name: cli-container
+                          image: "{{ .Values.aap.image }}"
+                          command:
+                            - /bin/bash
+                            - '-c'
+                            - |
+                              #!/usr/bin/env bash
+                              BUCKET_HOST=$(oc get -n {{ .Values.aap.namespace }} configmap aap-bucket-odf -o jsonpath='{.data.BUCKET_HOST}')
+                              BUCKET_NAME=$(oc get -n {{ .Values.aap.namespace }} configmap aap-bucket-odf -o jsonpath='{.data.BUCKET_NAME}')
+                              BUCKET_PORT=$(oc get -n {{ .Values.aap.namespace }} configmap aap-bucket-odf -o jsonpath='{.data.BUCKET_PORT}')
+                              ACCESS_KEY_ID=$(oc get -n {{ .Values.aap.namespace }} secret aap-bucket-odf -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+                              SECRET_ACCESS_KEY=$(oc get -n {{ .Values.aap.namespace }} secret aap-bucket-odf -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
+                              oc create -n {{ .Values.aap.namespace }} secret generic s3-aap-odf --from-literal=s3-access-key-id="$ACCESS_KEY_ID" --from-literal=s3-secret-access-key="$SECRET_ACCESS_KEY" --from-literal=s3-bucket-name="$BUCKET_NAME" --from-literal=s3-endpoint="https://$BUCKET_HOST:$BUCKET_PORT" --dry-run -o yaml | oc apply -f -
+                      restartPolicy: Never
+                      serviceAccountName: aap-s3-bucket-secret
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-aap-s3-bucket
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/aap-s3-storage'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-aap-s3-bucket
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name:  placement-policy-aap-s3-bucket
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-aap-s3-bucket-storage
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
