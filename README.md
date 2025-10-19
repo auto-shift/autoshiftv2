@@ -150,6 +150,7 @@ The hub cluster is the main cluster with RHACM and its core components installed
     export TARGET_REVISION="main"
     export VALUES_FILE="values.hub.yaml"
     export ARGO_PROJECT="default"
+    export POLICY_NAMESPACE="policies-autoshift"
     export GITOPS_NAMESPACE="openshift-gitops"
     cat << EOF | oc apply -f -
     apiVersion: argoproj.io/v1alpha1
@@ -171,6 +172,7 @@ The hub cluster is the main cluster with RHACM and its core components installed
           values: |-
             autoshiftGitRepo: $REPO_URL
             autoshiftGitBranchTag: $TARGET_REVISION
+            policy_namespace: $POLICY_NAMESPACE
       sources: []
       project: $ARGO_PROJECT
       syncPolicy:
