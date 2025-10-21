@@ -2,7 +2,7 @@
 # the GitOps Operator.
 #
 # Note that OpenShift 4.18 is required.
-{{- if .Values.hubClusterSets }}
+{{- if and .Values.hubClusterSets .Values.gitops.repo.cluster_ca_bundle }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -50,14 +50,6 @@ spec:
   {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/gitops-cluster-ca-bundle'
-              operator: In
-              values:
-              - 'true'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
