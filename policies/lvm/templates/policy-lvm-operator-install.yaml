@@ -44,12 +44,17 @@ spec:
             targetNamespaces:
               - {{ .Values.lvm.namespace }}
           subscription:
-            name: {{ .Values.lvm.name }}
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-subscription-name" | default "{{ .Values.lvm.name }}" {{ "hub}}" }}'
             namespace: {{ .Values.lvm.namespace }}
-            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-source" | default "{{ .Values.lvm.source }}" hub{{ "}}" }}'
-            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/lvm-source-namespace" | default "{{ .Values.lvm.sourceNamespace }}" hub{{ "}}" }}'
-          # Getting Label and then capitalizing first letter
-          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/lvm-install-plan-approval" | default "{{ .Values.lvm.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-source" | default "{{ .Values.lvm.source }}" {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-source-namespace" | default "{{ .Values.lvm.sourceNamespace }}" {{ "hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-channel" | default "{{ .Values.lvm.channel }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-version" | default "" {{ "hub}}" }}'
+            # Upgrade approval for subscription will be set based on if version is set not this flag
+            # If version is set install plan is set to manual and only the version specified will be installed
+          upgradeApproval: Automatic
+          versions:
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-version" | default "" {{ "hub}}" }}'
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy

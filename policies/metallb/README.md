@@ -17,7 +17,7 @@ This true or false flag controls if MetalLB should be installed or not.
 metallb: 'false'
 metallb-source: redhat-operators
 metallb-source-namespace: openshift-marketplace
-metallb-install-plan-approval: Automatic
+metallb-version: 'metallb-operator.v4.18.0-202509240837'  # Optional: pin to specific CSV version
 metallb-channel: stable
 
 This true or false flag controls if you want to apply a quota to your namespace
