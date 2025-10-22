@@ -24,8 +24,8 @@ spec:
           name: auto-remediate
         spec:
           object-templates-raw: |
-            {{ "{{hub" }} if index .ManagedClusterLabels "autoshift.io/compliance-auto-remediate" | default ({{ .Values.compliance.autoRemediate }}) {{ "hub}}" }}
-            {{ "{{hub" }} range (fromConfigMap "{{ .Values.policy_namespace }}" "stig-remediation" "ocp4-stig" | trim | split "\n") {{ "hub}}" }}
+            {{ "{{hub-" }} if eq ((index .ManagedClusterLabels "autoshift.io/compliance-auto-remediate") | default ({{ .Values.compliance.autoRemediate | quote }})) "true" {{ "hub}}" }}
+              {{ "{{hub-" }} range (fromConfigMap "{{ .Values.policy_namespace }}" "stig-remediation" "ocp4-stig" | trim | split "\n") {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: compliance.openshift.io/v1alpha1
@@ -35,9 +35,9 @@ spec:
                   namespace: {{ .Values.compliance.namespace }}
                 spec:
                   apply: true
-            {{ "{{hub" }} end {{ "hub}}" }}
+              {{ "{{hub- end hub}}" }}
 
-            {{ "{{hub" }} range (fromConfigMap "{{ .Values.policy_namespace }}" "stig-remediation" "rhcos4-stig" | trim | split "\n") {{ "hub}}" }}
+              {{ "{{hub-" }} range (fromConfigMap "{{ .Values.policy_namespace }}" "stig-remediation" "rhcos4-stig" | trim | split "\n") {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: compliance.openshift.io/v1alpha1
@@ -47,8 +47,8 @@ spec:
                   namespace: {{ .Values.compliance.namespace }}
                 spec:
                   apply: true
-            {{ "{{hub" }} end {{ "hub}}" }}
-            {{ "{{hub" }} end {{ "hub}}" }}
+              {{ "{{hub- end hub}}" }}
+            {{ "{{hub- end hub}}" }}
           pruneObjectBehavior: None
           remediationAction: inform
           severity: high
