@@ -309,7 +309,7 @@ Manages the automated cluster labeling system that applies `autoshift.io/` prefi
 | Variable                         | Type      | Default Value              | Notes |
 |----------------------------------|-----------|----------------------------|-------|
 | `aap`                            | bool      | `true` or `false`          |  |
-| `aap-channel`                    | string    | `release-2.14`             |  |
+| `aap-channel`                    | string    | `stable-2.5`             |  |
 | `aap-install-plan-approval`      | string    | `Automatic`                |  |
 | `aap-source`                     | string    | `redhat-operators`         |  |
 | `aap-hub-disabled`               | bool      | `true` or `false`          | 'false' will include Hub content storage in your deployment, 'true' will omit.       |
