@@ -1,0 +1,85 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-mtv-operator-install
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: mtv-operator-ns
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.mtv.namespace }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1beta1
+        kind: OperatorPolicy
+        metadata:
+          name: install-operator-mtv
+        spec:
+          remediationAction: enforce
+          severity: high
+          complianceType: musthave
+          operatorGroup:
+            name: {{ .Values.mtv.namespace }}
+            namespace: {{ .Values.mtv.namespace }}
+            targetNamespaces:
+              - {{ .Values.mtv.namespace }}
+          subscription:
+            namespace: {{ .Values.mtv.namespace }}
+            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/mtv-channel" | default "{{ .Values.mtv.channel }}" hub{{ "}}" }}'
+            name: {{ .Values.mtv.name }}
+            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/mtv-source" | default "{{ .Values.mtv.source }}" hub{{ "}}" }}'
+            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/mtv-source-namespace" | default "{{ .Values.mtv.sourceNamespace }}" hub{{ "}}" }}'
+          # Getting Label and then capitalizing first letter
+          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/mtv-install-plan-approval" | default "{{ .Values.mtv.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-mtv-operator-install
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/mtv'
+              operator: In
+              values:
+              - 'true'
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-mtv-operator-install
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-mtv-operator-install
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-mtv-operator-install
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
