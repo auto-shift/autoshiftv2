@@ -1,0 +1,106 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-aap-operator-install
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: create-aap-namespace
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.aap.namespace }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1beta1
+        kind: OperatorPolicy
+        metadata:
+          name: install-operator-aap
+        spec:
+          remediationAction: enforce
+          severity: high
+          complianceType: musthave
+          operatorGroup:
+            name: {{ .Values.aap.name }}
+            namespace: {{ .Values.aap.namespace }}
+            targetNamespaces:
+              - {{ .Values.aap.namespace }}
+          subscription:
+            namespace: {{ .Values.aap.namespace }}
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-channel" | default "{{ .Values.aap.channel }}" {{ "hub}}" }}'
+            name: {{ .Values.aap.name }}
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-source" | default "{{ .Values.aap.source }}" {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-source-namespace" | default "{{ .Values.aap.sourceNamespace }}" {{ "hub}}" }}'
+          upgradeApproval: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-install-plan-approval" | default "{{ .Values.aap.installPlanApproval }}" {{ "hub}}" }}'
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: openshift-aap-csv-check
+        spec:
+          remediationAction: inform
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1alpha1
+                kind: ClusterServiceVersion
+                metadata:
+                  namespace: {{ .Values.aap.namespace }}
+                status:
+                  phase: Succeeded
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-aap-operator-install
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/aap'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-aap-operator-install
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-aap-operator-install
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-aap-operator-install
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

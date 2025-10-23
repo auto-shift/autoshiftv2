@@ -304,22 +304,6 @@ oc get packagemanifests openshift-pipelines-operator-rh -o yaml | grep currentCS
 
 Manages the automated cluster labeling system that applies `autoshift.io/` prefixed labels to clusters and cluster sets. This policy automatically propagates labels from cluster sets to individual clusters and manages the label hierarchy.
 
-### Ansible Automation Platform
-
-| Variable                         | Type      | Default Value              | Notes |
-|----------------------------------|-----------|----------------------------|-------|
-| `aap`                            | bool      | `true` or `false`          |  |
-| `aap-channel`                    | string    | `stable-2.5`             |  |
-| `aap-install-plan-approval`      | string    | `Automatic`                |  |
-| `aap-source`                     | string    | `redhat-operators`         |  |
-| `aap-hub-disabled`               | bool      | `true` or `false`          | 'false' will include Hub content storage in your deployment, 'true' will omit.       |
-| `aap-file-storage`               | bool      | `true` or `false`          | 'false' will use file storage for Hub content storage in your deployment, 'true' will omit. |
-| `aap-file_storage_storage_class` | string    | `ocs-storagecluster-cephfs`| you will set the storage class for your file storage, defaults to ODF. you must have a RWX capable storage class if using anything else. |
-| `aap-file_storage_size`          | bool      | `10G`                      | set the pvc claim size for your file storage.  |
-| `aap-s3-storage`                 | bool      | `true` or `false`          | 'false' will use ODF NooBa for Hub content storage in your deployment, 'true' will omit. |
-| `aap-eda-disabled`               | bool      | `true` or `false`          | 'false' will include EDA in your deployment, 'true' will omit. |
-| `aap-lightspeed-disabled`        | bool      | `true` or `false`          | 'false' will include Ansible Lightspeed in your deployment, 'true' will omit. |
-
 ### MetalLB
 
 | Variable                            | Type              | Default Value             | Notes |
@@ -548,6 +532,22 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `local-storage-source`                | string            | `redhat-operators`        | Operator catalog source |
 | `local-storage-source-namespace`      | string            | `openshift-marketplace`   | Catalog namespace |
 
+### Ansible Automation Platform
+
+| Variable                         | Type      | Default Value              | Notes |
+|----------------------------------|-----------|----------------------------|-------|
+| `aap`                            | bool      | `true` or `false`          |  |
+| `aap-channel`                    | string    | `stable-2.5`             |  |
+| `aap-install-plan-approval`      | string    | `Automatic`                |  |
+| `aap-source`                     | string    | `redhat-operators`         |  |
+| `aap-hub-disabled`               | bool      | `true` or `false`          | 'false' will include Hub content storage in your deployment, 'true' will omit.       |
+| `aap-file-storage`               | bool      | `true` or `false`          | 'false' will use file storage for Hub content storage in your deployment, 'true' will omit. |
+| `aap-file_storage_storage_class` | string    | `ocs-storagecluster-cephfs`| you will set the storage class for your file storage, defaults to ODF. you must have a RWX capable storage class if using anything else. |
+| `aap-file_storage_size`          | bool      | `10G`                      | set the pvc claim size for your file storage.  |
+| `aap-s3-storage`                 | bool      | `true` or `false`          | 'false' will use ODF NooBa for Hub content storage in your deployment, 'true' will omit. |
+| `aap-eda-disabled`               | bool      | `true` or `false`          | 'false' will include EDA in your deployment, 'true' will omit. |
+| `aap-lightspeed-disabled`        | bool      | `true` or `false`          | 'false' will include Ansible Lightspeed in your deployment, 'true' will omit. |
+
 ### OpenShift Data Foundation
 
 | Variable                          | Type              | Default Value             | Notes |
@@ -571,33 +571,6 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 ### OpenShift Internal Registry
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
-<<<<<<< HEAD
-| `imageregistry`                   | Bool              | `false`                   | If not set OpenShift Internal Image Registry will not be managed. |
-| `imageregistry-management-state`  | String            | `Managed`                 |  can be set to `Managed` and `Unmanaged`, though only `Managed` is supported |
-| `imageregistry-replicas`          | Integer           |                           | Need at least `2`, as well as read write many storage or object/s3 storage in order support HA and Rolling Updates |
-| `imageregistry-storage-type`      | String            |                           | Supported `s3` or `pvc`, s3 only supports Nooban|
-| `imageregistry-s3-region`         | String            |                           |  if type is `s3` you can specify a region |
-| `imageregistry-pvc-access-mode`   | String            |                           | Example `ReadWriteMany`  |
-| `imageregistry-pvc-storage-class` | String            |                           | Example `ocs-storagecluster-ceph-rbd` |
-| `imageregistry-pvc-volume-mode`   | String            |                           | Example `Block` or `FileSystem` |
-| `imageregistry-rollout-strategy`  | String            | `RollingUpdate`           | Example `RollingUpdate` if at least 2 or `Recreate` if only 1 |
-
-### Kubernetes NMState Operator
-
-The Kubernetes NMState Operator can be used to declaratively configure the Red Hat Core OS network settings. Common uses are adding bonds, vlans, and bridges. This helm chart works with AutoShift v2. This helm chart ingests every file in `policies/nmstate/files/` (with the exception of any file ending with the extension `.example`) and applies them as a ConfigMap on the hub cluster. Cluster labels are used to choose which cluster gets a configuration. If you want a cluster to have a config applied to it, you must label it with a label that starts with `autoshift.io/nmstate-nncp-` and has a value of the name of the file. For example the configuration file `example-1g-bond.yaml` can be applied to a cluster by applying label: `nmstate-nncp-example-bond1: example-1g-bond`. To further select specific nodes within a cluster, nodeSelectors can be used. To get started you can copy an example file such as `policies/nmstate/files/bond.yaml.example` and change the `nmstate:` configuration as required. The NMState YAML API is well documented at: [nmstate | A Declarative API for Host Network Management](https://nmstate.io/devel/yaml_api.html).
-
-| Variable                        | Type           | Default Value         | Notes                                                                             |
-| ------------------------------- | -------------- | --------------------- | --------------------------------------------------------------------------------- |
-| `nmsate`                        | bool           | false                 | If not set the Kubernetes NMState Operator will not be managed                    |
-| `nmstate-nncp`                  | <list<string>> | omitted               | Filename of NMState config that exists in files. Can be specified multiple times. |
-| `nmstate-channel`               | string         | stable                |                                                                                   |
-| `nmstate-install-plan-approval` | string         | Automatic             |                                                                                   |
-| `nmstate-source`                | string         | redhat-operators      |                                                                                   |
-| `nmstate-source-namespace`      | string         | openshift-marketplace |                                                                                   |
-
-## References
-
-=======
 | `imageregistry`                   | bool              | `false`                   | If not set OpenShift Internal Image Registry will not be managed |
 | `imageregistry-management-state`  | string            | `Managed`                 | Can be set to `Managed` and `Unmanaged`, though only `Managed` is supported |
 | `imageregistry-replicas`          | int               |                           | Need at least `2`, as well as read write many storage or object/s3 storage in order support HA and Rolling Updates |
@@ -640,7 +613,6 @@ Provides manual fixes and configurations that cannot be automated through operat
 
 ## References
 
->>>>>>> origin/main
 * [OpenShift Platform Plus DataShift](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet)
 * [Red Hat Training: DO480: Multicluster Management with Red Hat OpenShift Platform Plus](https://www.redhat.com/en/services/training/do480-multicluster-management-red-hat-openshift-platform-plus)
 * [Martin Fowler Blog: Infrastructure As Code](https://martinfowler.com/bliki/InfrastructureAsCode.html)
