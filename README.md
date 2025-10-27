@@ -427,6 +427,20 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `pipelines-source`                | string            | `redhat-operators`        |       |
 | `pipelines-source-namespace`      | string            | `openshift-marketplace`   |       |
 
+### AutoShift Pipeline
+
+The AutoShift Pipeline provides automated CI/CD capabilities for AutoShift itself using Tekton. When enabled, it creates pipelines that can validate repository structure, deploy AutoShift applications via ArgoCD, and monitor deployment status.
+
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `autoshift-pipeline`              | bool              |                           | If not set AutoShift Pipeline will not be managed |
+| `autoshift-pipeline-git-repo`     | string            | `https://github.com/auto-shift/autoshiftv2.git` | Git repository URL for AutoShift |
+| `autoshift-pipeline-webhook-secret` | string          | `git-webhook-token`       | Name of webhook secret for triggers |
+| `autoshift-pipeline-cli-image`    | string            | `registry.redhat.io/openshift4/ose-cli:latest` | CLI container image for disconnected environments |
+
+> [!NOTE]
+> The AutoShift Pipeline requires OpenShift Pipelines to be enabled (`pipelines: 'true'`). The pipeline deployment is managed entirely through ACM policies and integrates with the existing AutoShift ApplicationSet workflow.
+
 ### Trusted Artifact Signer
 
 | Variable                          | Type              | Default Value             | Notes |

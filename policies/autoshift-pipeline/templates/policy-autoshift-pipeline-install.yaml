@@ -1,0 +1,424 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-autoshift-pipeline-install
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy
+      name: policy-pipelines-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      compliance: Compliant
+  policy-templates:
+    # Create pipeline namespace
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-pipeline-namespace
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.pipeline.namespace }}
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: namespace
+
+    # Create ServiceAccount and RBAC
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-pipeline-rbac
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: {{ .Values.pipeline.serviceAccount }}
+                  namespace: {{ .Values.pipeline.namespace }}
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: serviceaccount
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRole
+                metadata:
+                  name: autoshift-pipeline
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: rbac
+                rules:
+                  # Read ArgoCD Applications for status monitoring
+                  - apiGroups: ["argoproj.io"]
+                    resources: ["applications"]
+                    verbs: ["get", "list", "watch", "create", "update", "patch"]
+                  # Read/write ConfigMaps for temporary data
+                  - apiGroups: [""]
+                    resources: ["configmaps"]
+                    verbs: ["get", "list", "create", "update", "patch", "delete"]
+                  # Read secrets for webhook tokens
+                  - apiGroups: [""]
+                    resources: ["secrets"]
+                    verbs: ["get", "list"]
+                  # Read nodes and pods for cluster info
+                  - apiGroups: [""]
+                    resources: ["nodes", "pods"]
+                    verbs: ["get", "list"]
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRoleBinding
+                metadata:
+                  name: autoshift-pipeline
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: rbac
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: ClusterRole
+                  name: autoshift-pipeline
+                subjects:
+                  - kind: ServiceAccount
+                    name: {{ .Values.pipeline.serviceAccount }}
+                    namespace: {{ .Values.pipeline.namespace }}
+
+    # Create validate task
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-pipeline-validate-task
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: tekton.dev/v1
+                kind: Task
+                metadata:
+                  name: validate-autoshift-structure
+                  namespace: {{ .Values.pipeline.namespace }}
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: task
+                spec:
+                  description: Validate AutoShift repository structure and values files
+                  workspaces:
+                    - name: source
+                      description: The workspace containing the cloned repository
+                  steps:
+                    - name: validate-structure
+                      image: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-pipeline-cli-image" | default "{{ .Values.images.cli }}" {{ "hub}}" }}'
+                      resources:
+                        requests:
+                          cpu: {{ .Values.resources.requests.cpu }}
+                          memory: {{ .Values.resources.requests.memory }}
+                        limits:
+                          cpu: {{ .Values.resources.limits.cpu }}
+                          memory: {{ .Values.resources.limits.memory }}
+                      script: |
+                        #!/usr/bin/env bash
+                        set -e
+
+                        echo "=== Validating AutoShift Repository Structure ==="
+
+                        cd $(workspaces.source.path)
+
+                        # Check required directories
+                        echo "Checking required directories..."
+                        required_dirs=("autoshift" "policies" "openshift-gitops")
+                        for dir in "${required_dirs[@]}"; do
+                          if [ ! -d "$dir" ]; then
+                            echo "ERROR: Required directory '$dir' not found"
+                            exit 1
+                          fi
+                          echo "✓ Found directory: $dir"
+                        done
+
+                        # Check autoshift Chart.yaml
+                        if [ ! -f "autoshift/Chart.yaml" ]; then
+                          echo "ERROR: autoshift/Chart.yaml not found"
+                          exit 1
+                        fi
+                        echo "✓ Found autoshift/Chart.yaml"
+
+                        # Check common values files
+                        echo "Checking for common values files..."
+                        for values_file in "autoshift/values.hub.yaml" "autoshift/values.sbx.yaml" "autoshift/values.yaml"; do
+                          if [ -f "$values_file" ]; then
+                            echo "✓ Found $values_file"
+                          fi
+                        done
+
+                        # Check autoshift templates directory
+                        if [ ! -d "autoshift/templates" ]; then
+                          echo "ERROR: autoshift/templates directory not found"
+                          exit 1
+                        fi
+                        echo "✓ Found autoshift/templates directory"
+
+                        echo "=== AutoShift Repository Structure Validation Complete ==="
+
+    # Create deploy task
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-pipeline-deploy-task
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: tekton.dev/v1
+                kind: Task
+                metadata:
+                  name: deploy-autoshift
+                  namespace: {{ .Values.pipeline.namespace }}
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: task
+                spec:
+                  description: Deploy or update AutoShift ArgoCD Application
+                  params:
+                    - name: git-repo
+                      type: string
+                      description: Git repository URL
+                    - name: git-branch
+                      type: string
+                      description: Git branch
+                    - name: values-file
+                      type: string
+                      description: Values file to use
+                    - name: app-name
+                      type: string
+                      description: ArgoCD application name
+                    - name: target-revision
+                      type: string
+                      description: Target revision for ArgoCD
+                  workspaces:
+                    - name: source
+                      description: The workspace containing the cloned repository
+                  steps:
+                    - name: deploy-autoshift
+                      image: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-pipeline-cli-image" | default "{{ .Values.images.cli }}" {{ "hub}}" }}'
+                      resources:
+                        requests:
+                          cpu: {{ .Values.resources.requests.cpu }}
+                          memory: {{ .Values.resources.requests.memory }}
+                        limits:
+                          cpu: {{ .Values.resources.limits.cpu }}
+                          memory: {{ .Values.resources.limits.memory }}
+                      script: |
+                        #!/usr/bin/env bash
+                        set -e
+
+                        echo "=== Deploying AutoShift Application ==="
+
+                        # Set variables
+                        GIT_REPO="$(params.git-repo)"
+                        GIT_BRANCH="$(params.git-branch)"
+                        VALUES_FILE="$(params.values-file)"
+                        APP_NAME="$(params.app-name)"
+                        TARGET_REVISION="$(params.target-revision)"
+                        ARGOCD_NAMESPACE="{{ .Values.argocd.namespace }}"
+                        PROJECT="{{ .Values.argocd.application.project }}"
+
+                        echo "Deployment Configuration:"
+                        echo "  Repository: $GIT_REPO"
+                        echo "  Branch: $GIT_BRANCH"
+                        echo "  Target Revision: $TARGET_REVISION"
+                        echo "  Values File: $VALUES_FILE"
+                        echo "  App Name: $APP_NAME"
+
+                        # Create or update ArgoCD Application
+                        cat <<EOF | oc apply -f -
+                        apiVersion: argoproj.io/v1alpha1
+                        kind: Application
+                        metadata:
+                          name: $APP_NAME
+                          namespace: $ARGOCD_NAMESPACE
+                          labels:
+                            deployed-by: autoshift-pipeline
+                        spec:
+                          destination:
+                            namespace: ''
+                            server: https://kubernetes.default.svc
+                          source:
+                            path: autoshift
+                            repoURL: $GIT_REPO
+                            targetRevision: $TARGET_REVISION
+                            helm:
+                              valueFiles:
+                                - $VALUES_FILE
+                              values: |-
+                                autoshiftGitRepo: $GIT_REPO
+                                autoshiftGitBranchTag: $TARGET_REVISION
+                          sources: []
+                          project: $PROJECT
+                          syncPolicy:
+                            automated:
+                              prune: false
+                              selfHeal: true
+                            syncOptions:
+                              - CreateNamespace=true
+                              - RespectIgnoreDifferences=true
+                        EOF
+
+                        echo "=== AutoShift Application Deployed Successfully ==="
+
+    # Create wait task
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-pipeline-wait-task
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: tekton.dev/v1
+                kind: Task
+                metadata:
+                  name: wait-for-argocd-sync
+                  namespace: {{ .Values.pipeline.namespace }}
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: task
+                spec:
+                  description: Wait for ArgoCD Application to sync and report status
+                  params:
+                    - name: app-name
+                      type: string
+                      description: ArgoCD application name
+                    - name: timeout
+                      type: string
+                      description: Timeout in seconds
+                      default: "600"
+                  steps:
+                    - name: wait-for-sync
+                      image: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-pipeline-cli-image" | default "{{ .Values.images.cli }}" {{ "hub}}" }}'
+                      resources:
+                        requests:
+                          cpu: {{ .Values.resources.requests.cpu }}
+                          memory: {{ .Values.resources.requests.memory }}
+                        limits:
+                          cpu: {{ .Values.resources.limits.cpu }}
+                          memory: {{ .Values.resources.limits.memory }}
+                      script: |
+                        #!/usr/bin/env bash
+                        set -e
+
+                        echo "=== Waiting for ArgoCD Application Sync ==="
+
+                        APP_NAME="$(params.app-name)"
+                        ARGOCD_NAMESPACE="{{ .Values.argocd.namespace }}"
+                        TIMEOUT="$(params.timeout)"
+
+                        echo "Monitoring Application: $APP_NAME"
+                        echo "ArgoCD Namespace: $ARGOCD_NAMESPACE"
+                        echo "Timeout: ${TIMEOUT}s"
+
+                        # Function to get application status
+                        get_app_status() {
+                          oc get application "$APP_NAME" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown"
+                        }
+
+                        # Function to get application health
+                        get_app_health() {
+                          oc get application "$APP_NAME" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown"
+                        }
+
+                        # Wait for application to exist and sync
+                        START_TIME=$(date +%s)
+                        while true; do
+                          CURRENT_TIME=$(date +%s)
+                          ELAPSED=$((CURRENT_TIME - START_TIME))
+
+                          if [ $ELAPSED -gt $TIMEOUT ]; then
+                            echo "ERROR: Timeout waiting for sync to complete"
+                            exit 1
+                          fi
+
+                          SYNC_STATUS=$(get_app_status)
+                          HEALTH_STATUS=$(get_app_health)
+
+                          echo "Status check (${ELAPSED}s): Sync=$SYNC_STATUS, Health=$HEALTH_STATUS"
+
+                          # Check for successful sync
+                          if [ "$SYNC_STATUS" = "Synced" ] && [ "$HEALTH_STATUS" = "Healthy" ]; then
+                            echo "✓ Application successfully synced and healthy!"
+                            break
+                          fi
+
+                          sleep 10
+                        done
+
+                        echo "=== ArgoCD Application Sync Completed Successfully ==="
+---
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-autoshift-pipeline-install
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/pipelines'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/autoshift-pipeline'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-autoshift-pipeline-install
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-autoshift-pipeline-install
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-autoshift-pipeline-install
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
