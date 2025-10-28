@@ -356,6 +356,304 @@ spec:
                         done
 
                         echo "=== ArgoCD Application Sync Completed Successfully ==="
+
+    # Create Pipeline
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-pipeline-definition
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: tekton.dev/v1
+                kind: Pipeline
+                metadata:
+                  name: autoshift-deploy-pipeline
+                  namespace: {{ .Values.pipeline.namespace }}
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: pipeline
+                spec:
+                  description: Pipeline to validate, deploy, and monitor AutoShift applications
+                  params:
+                    - name: git-repo
+                      type: string
+                      description: Git repository URL
+                      default: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-pipeline-git-repo" | default "{{ .Values.git.repo }}" {{ "hub}}" }}'
+                    - name: git-branch
+                      type: string
+                      description: Git branch to deploy
+                      default: {{ .Values.git.branch }}
+                    - name: values-file
+                      type: string
+                      description: Values file to use for deployment
+                      default: values.hub.yaml
+                    - name: app-name
+                      type: string
+                      description: ArgoCD application name
+                      default: {{ .Values.argocd.application.name }}
+                    - name: target-revision
+                      type: string
+                      description: Target revision for ArgoCD
+                      default: $(params.git-branch)
+                  workspaces:
+                    - name: shared-data
+                      description: Shared workspace for cloned repository
+                  tasks:
+                    - name: git-clone
+                      taskRef:
+                        name: git-clone
+                        kind: ClusterTask
+                      params:
+                        - name: url
+                          value: $(params.git-repo)
+                        - name: revision
+                          value: $(params.target-revision)
+                      workspaces:
+                        - name: output
+                          workspace: shared-data
+                    - name: validate-structure
+                      taskRef:
+                        name: validate-autoshift-structure
+                      runAfter:
+                        - git-clone
+                      workspaces:
+                        - name: source
+                          workspace: shared-data
+                    - name: deploy-autoshift
+                      taskRef:
+                        name: deploy-autoshift
+                      runAfter:
+                        - validate-structure
+                      params:
+                        - name: git-repo
+                          value: $(params.git-repo)
+                        - name: git-branch
+                          value: $(params.git-branch)
+                        - name: values-file
+                          value: $(params.values-file)
+                        - name: app-name
+                          value: $(params.app-name)
+                        - name: target-revision
+                          value: $(params.target-revision)
+                      workspaces:
+                        - name: source
+                          workspace: shared-data
+                    - name: wait-for-sync
+                      taskRef:
+                        name: wait-for-argocd-sync
+                      runAfter:
+                        - deploy-autoshift
+                      params:
+                        - name: app-name
+                          value: $(params.app-name)
+                        - name: timeout
+                          value: "600"
+
+    # Create TriggerTemplate
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-pipeline-triggertemplate
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: triggers.tekton.dev/v1beta1
+                kind: TriggerTemplate
+                metadata:
+                  name: autoshift-deploy-template
+                  namespace: {{ .Values.pipeline.namespace }}
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: trigger
+                spec:
+                  params:
+                    - name: git-repo
+                      description: Git repository URL
+                    - name: git-branch
+                      description: Git branch to deploy
+                      default: main
+                    - name: values-file
+                      description: Values file to use
+                      default: values.hub.yaml
+                    - name: app-name
+                      description: ArgoCD application name
+                      default: autoshift
+                    - name: target-revision
+                      description: Target revision
+                      default: main
+                  resourcetemplates:
+                    - apiVersion: tekton.dev/v1
+                      kind: PipelineRun
+                      metadata:
+                        generateName: autoshift-deploy-
+                        namespace: {{ .Values.pipeline.namespace }}
+                        labels:
+                          app.kubernetes.io/name: autoshift-pipeline
+                          app.kubernetes.io/component: pipelinerun
+                      spec:
+                        pipelineRef:
+                          name: autoshift-deploy-pipeline
+                        params:
+                          - name: git-repo
+                            value: $(tt.params.git-repo)
+                          - name: git-branch
+                            value: $(tt.params.git-branch)
+                          - name: values-file
+                            value: $(tt.params.values-file)
+                          - name: app-name
+                            value: $(tt.params.app-name)
+                          - name: target-revision
+                            value: $(tt.params.target-revision)
+                        workspaces:
+                          - name: shared-data
+                            volumeClaimTemplate:
+                              spec:
+                                accessModes: [ReadWriteOnce]
+                                resources:
+                                  requests:
+                                    storage: 1Gi
+
+    # Create TriggerBinding for GitHub webhooks
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-pipeline-triggerbinding
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: triggers.tekton.dev/v1beta1
+                kind: TriggerBinding
+                metadata:
+                  name: autoshift-github-binding
+                  namespace: {{ .Values.pipeline.namespace }}
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: trigger
+                spec:
+                  params:
+                    - name: git-repo
+                      value: $(body.repository.clone_url)
+                    - name: git-branch
+                      value: $(body.ref)
+                    - name: target-revision
+                      value: $(body.after)
+
+    # Create EventListener
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-pipeline-eventlistener
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: triggers.tekton.dev/v1beta1
+                kind: EventListener
+                metadata:
+                  name: autoshift-eventlistener
+                  namespace: {{ .Values.pipeline.namespace }}
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: eventlistener
+                spec:
+                  serviceAccountName: {{ .Values.pipeline.serviceAccount }}
+                  triggers:
+                    - name: github-push-main
+                      interceptors:
+                        - ref:
+                            name: github
+                          params:
+                            - name: secretRef
+                              value:
+                                secretName: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-pipeline-webhook-secret" | default "{{ .Values.webhook.secretName }}" {{ "hub}}" }}'
+                                secretKey: {{ .Values.webhook.secretKey }}
+                            - name: eventTypes
+                              value: ["push"]
+                        - ref:
+                            name: cel
+                          params:
+                            - name: filter
+                              value: body.ref == 'refs/heads/main'
+                      bindings:
+                        - ref: autoshift-github-binding
+                      template:
+                        ref: autoshift-deploy-template
+                        params:
+                          - name: values-file
+                            value: values.hub.yaml
+                          - name: app-name
+                            value: autoshift
+                    - name: github-push-pr
+                      interceptors:
+                        - ref:
+                            name: github
+                          params:
+                            - name: secretRef
+                              value:
+                                secretName: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-pipeline-webhook-secret" | default "{{ .Values.webhook.secretName }}" {{ "hub}}" }}'
+                                secretKey: {{ .Values.webhook.secretKey }}
+                            - name: eventTypes
+                              value: ["push"]
+                        - ref:
+                            name: cel
+                          params:
+                            - name: filter
+                              value: body.ref != 'refs/heads/main'
+                      bindings:
+                        - ref: autoshift-github-binding
+                      template:
+                        ref: autoshift-deploy-template
+                        params:
+                          - name: values-file
+                            value: values.sbx.yaml
+                          - name: app-name
+                            value: autoshift-$(body.ref | split('/')[2])
+
+    # Create Route for EventListener
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-pipeline-route
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: route.openshift.io/v1
+                kind: Route
+                metadata:
+                  name: autoshift-eventlistener-route
+                  namespace: {{ .Values.pipeline.namespace }}
+                  labels:
+                    app.kubernetes.io/name: autoshift-pipeline
+                    app.kubernetes.io/component: route
+                spec:
+                  to:
+                    kind: Service
+                    name: el-autoshift-eventlistener
+                  port:
+                    targetPort: http-listener
+                  tls:
+                    termination: edge
+                    insecureEdgeTerminationPolicy: Redirect
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
