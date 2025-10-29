@@ -1,15 +1,18 @@
 {{- $managedHubs := dict }}
+{{- $selfManagedHubs := dict }}
 {{- range $k, $v := $.Values.hubClusterSets  }}
   {{-  if eq ((index $v.labels "self-managed") | default "true")  "false" }}
     {{- $_ := set $managedHubs $k $k }}
+  {{- else }}
+    {{- $_ := set $selfManagedHubs $k $k }}
   {{- end }}
 {{- end }}
-{{- if not (empty $managedHubs) }}
-  {{- range $managedHub, $_ := $managedHubs }}
-    {{- $policyName := (printf "child-%s-labels" $managedHub) }}
-    {{- $placementName := printf "placement-%s" $policyName }}
-    {{- $configPolicyName := printf "%s-children-labels" $managedHub }}
-    {{- $policyNamespace := $.Values.policyNamespace }}
+{{- $policyNamespace := $.Values.policyNamespace }}
+{{- range $_, $target := (list "hubofhubs" "managedHub") }}
+  {{- $policyName := (printf "%s-labels" $target) }}
+  {{- $configPolicyName := printf "configure-%s" $policyName }}
+  {{- $placementName := printf "placement-%s" $policyName }}
+---
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -20,12 +23,14 @@ metadata:
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
     policy.open-cluster-management.io/standards: NIST SP 800-53
 spec:
+    {{- if (eq $target "managedHub") }}
   dependencies: 
     - apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant 
       kind: Policy
-      name: {{ printf "check-managed-hub-labels-%s" $managedHub }}
+      name:  "policy-managed-hub-namespace"
       namespace: {{ $policyNamespace }}
+    {{- end }}
   remediationAction: enforce
   disabled: false
   policy-templates:
@@ -38,7 +43,6 @@ spec:
           severity: high
           object-templates-raw: |
             [
-              {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" "" "autoshift.io/cluster-labels") | default list {{ "}}" }}
               {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "}}" }}
               {{ "{{-" }} if not (empty $managedClusterLookupResult) {{ "}}" }}
                 {{ "{{-" }} $managedClusters := (index $managedClusterLookupResult "items") | default list {{ "}}" }}
@@ -46,25 +50,26 @@ spec:
                 {{ "{{-" }} if (ne $lastIndex -1) {{ "}}" }}
                   {{ "{{-" }} range $index, $cluster := $managedClusters {{ "}}" }}
                     {{ "{{-" }} $clusterName := (index $cluster "metadata" "name") {{ "}}" }}
-                    {{ "{{-" }} $existingLabels :=  (index $cluster "metadata" "labels") {{ "}}" }}
                     {{ "{{-" }} $clusterSet := (index $existingLabels "cluster.open-cluster-management.io/clusterset") | default "" {{ "}}" }}
                     {{ "{{-" }} if (ne $clusterSet "") {{ "}}" }}
+                      {{ "{{-" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (print "cluster-set." $clusterSet) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
+                      {{ "{{-" }} $clusterSetData := (index $clusterSetConfigMap "data" | default dict) {{ "}}" }}
+                      {{ "{{-" }} $clusterConfigMap := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (print "managed-cluster." $clusterName) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
+                      {{ "{{-" }} $clusterData := (index $clusterConfigMap "data" | default dict) {{ "}}" }}
+                      {{ "{{-" }} $labelPrefix := (index $clusterData "labelPrefix" | default (index $clusterSetData "labelPrefix" | default "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}")) {{ "}}" }}
+                      {{ "{{-" }} $existingLabels :=  (index $cluster "metadata" "labels") {{ "}}" }}
                       {{ "{{-" }} $existingLabelsNoAutoshift := dict {{ "}}" }}
                       {{ "{{-" }} range $label, $value := $existingLabels {{ "}}" }}
-                        {{ "{{-" }} if not (hasPrefix "autoshift.io/" $label) {{ "}}" }}
+                        {{ "{{-" }} if not (hasPrefix $labelPrefix $label) {{ "}}" }}
                           {{ "{{-" }} $_ :=  set $existingLabelsNoAutoshift $label $value {{ "}}" }}
                         {{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }}
-                      {{ "{{-" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (print "cluster-set." $clusterSet) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
-                      {{ "{{-" }} $clusterSetData := (index $clusterSetConfigMap "data" | default dict) {{ "}}" }}
                       {{ "{{-" }} $clusterSetLabels := (index $clusterSetData "labels" | default "") | fromJson | default dict{{ "}}" }}
-                      {{ "{{-" }} $clusterConfigMap := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (print "managed-cluster." $clusterName) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
-                      {{ "{{-" }} $clusterData := (index $clusterConfigMap "data" | default dict) {{ "}}" }}
                       {{ "{{-" }} $clusterLabels := (index $clusterData "labels" | default "") | fromJson | default dict{{ "}}" }}
                       {{ "{{-" }} $tempLabels := merge (dict) (deepCopy $clusterLabels) (deepCopy $clusterSetLabels) (deepCopy $existingLabelsNoAutoshift) {{ "}}" }}
                       {{ "{{-" }} $newLabels := dict {{ "}}" }}
                       {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
-                        {{ "{{-" }} if not (and ($label | hasPrefix "{{ $.Values.autoshiftLabelPrefix }}") (eq $value "_")) {{ "}}" }}
+                        {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
                           {{ "{{-" }} $_ := set $newLabels $label $value {{ "}}" }}
                         {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} $metadata := set $cluster.metadata "labels" $newLabels {{ "}}" }}
@@ -80,6 +85,9 @@ spec:
               {{ "{{-" }} end {{ "}}" }}
             ]
 ---
+
+  {{- if (eq $target "managedHub") }}
+---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
@@ -87,12 +95,35 @@ metadata:
   namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
+  {{- range $managedHub, $_ := $managedHubs }}
     - {{ $managedHub }}
+  {{- end }}
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
     - key: cluster.open-cluster-management.io/unavailable
       operator: Exists
+---
+  {{- end }}
+  {{- if (eq $target "hubofhubs") }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $selfManagedHub $_ := $selfManagedHubs }}
+    - {{ $selfManagedHub }}
+  {{- end }}
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+  {{- end }}
 ---
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
@@ -108,5 +139,6 @@ subjects:
     apiGroup: policy.open-cluster-management.io
     kind: Policy
 ---
-  {{- end }}
+
+
 {{- end }}
