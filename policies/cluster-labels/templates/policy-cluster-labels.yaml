@@ -50,12 +50,12 @@ spec:
                 {{ "{{-" }} if (ne $lastIndex -1) {{ "}}" }}
                   {{ "{{-" }} range $index, $cluster := $managedClusters {{ "}}" }}
                     {{ "{{-" }} $clusterName := (index $cluster "metadata" "name") {{ "}}" }}
-                    {{ "{{-" }} $labelPrefix := (index $clusterData "labelPrefix" | default (index $clusterSetData "labelPrefix" | default "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}")) {{ "}}" }}
-                    {{ "{{-" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (print "cluster-set." $clusterSet) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
-                    {{ "{{-" }} $clusterSetData := (index $clusterSetConfigMap "data" | default dict) {{ "}}" }}
                     {{ "{{-" }} $clusterConfigMap := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (print "managed-cluster." $clusterName) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
+                    {{ "{{-" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (print "cluster-set." $clusterSet) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
                     {{ "{{-" }} $clusterData := (index $clusterConfigMap "data" | default dict) {{ "}}" }}
+                    {{ "{{-" }} $clusterSetData := (index $clusterSetConfigMap "data" | default dict) {{ "}}" }}
                     {{ "{{-" }} $existingLabels :=  (index $cluster "metadata" "labels") {{ "}}" }}
+                    {{ "{{-" }} $labelPrefix := (index $clusterData "labelPrefix" | default (index $clusterSetData "labelPrefix" | default "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}")) {{ "}}" }}
                     {{ "{{-" }} $clusterSet := (index $existingLabels "cluster.open-cluster-management.io/clusterset") | default "" {{ "}}" }}
                     {{ "{{-" }} if (ne $clusterSet "") {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
