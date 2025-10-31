@@ -31,21 +31,14 @@ spec:
         spec:
           severity: high
           object-templates-raw: |
-            [ 
-              {
-                "complianceType": "mustnothave",
-                "objectDefinition": {
-                  "apiVersion": "v1", 
-                  "kind": Namespace,
-                  "metadata": {
-                    "name": {{ $policyNamespace }}
-                    "labels": { 
-                      "autoshift.io/createdByAutoshift": "true"
-                    }
-                  }
-                }
-              }
-            ]
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ $policyNamespace }}
+                  labels:
+                    autoshift.io/createdByAutoshift: true
 ---
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
@@ -74,6 +67,6 @@ spec:
     {{- end }}
   labelSelector:
     matchLabels:
-      self-managed: false
+      {{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "self-managed" }}: "false"
 
 {{- end }}
