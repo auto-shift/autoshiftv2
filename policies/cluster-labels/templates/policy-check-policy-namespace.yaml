@@ -31,14 +31,15 @@ spec:
         spec:
           severity: high
           object-templates-raw: |
+            {{ "{{-" }} $ns := (lookup "v1" "Namespace" "" "{{ $policyNamespace }}" "autoshift.io/createdByAutoshift") | default ""  {{ "}}" }}
+            {{ "{{-" }} if ne ("" $ns) {{ "}}" }}
             - complianceType: mustnothave
               objectDefinition:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
                   name: {{ $policyNamespace }}
-                  labels:
-                    autoshift.io/createdByAutoshift: true
+            {{ "{{" }} end {{ "}}" }}
 ---
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
