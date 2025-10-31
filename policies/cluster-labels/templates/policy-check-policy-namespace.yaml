@@ -31,8 +31,10 @@ spec:
         spec:
           severity: high
           object-templates-raw: |
-            {{ "{{-" }} $ns := (lookup "v1" "Namespace" "" "{{ $policyNamespace }}" "autoshift.io/createdByAutoshift")  {{ "}}" }}
-            {{ "{{-" }} if not (empty $ns) {{ "}}" }}
+            {{ "{{-" }} $ns := (lookup "v1" "Namespace" "" "{{ $policyNamespace }}")  {{ "}}" }}
+            {{ "{{-" }} $nsLabels := (index $ns "metadata" "labels") {{ "}}" }}
+            {{ "{{-" }} $autoshiftLabel := (index $nsLabels "autoshift.io/createdByAutoshift") | default ""
+            {{ "{{-" }} if eq $autoshiftLabel "" {{ "}}" }}
             - complianceType: mustnothave
               objectDefinition:
                 apiVersion: v1
