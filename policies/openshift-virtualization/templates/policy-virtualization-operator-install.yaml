@@ -41,12 +41,16 @@ spec:
               - {{ .Values.virt.namespace }}
           subscription:
             namespace: {{ .Values.virt.namespace }}
-            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/virt-channel" | default "{{ .Values.virt.channel }}" hub{{ "}}" }}'
-            name: {{ .Values.virt.name }}
-            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/virt-source" | default "{{ .Values.virt.source }}" hub{{ "}}" }}'
-            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/virt-source-namespace" | default "{{ .Values.virt.sourceNamespace }}" hub{{ "}}" }}'
-          # Getting Label and then capitalizing first letter
-          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/virt-install-plan-approval" | default "{{ .Values.virt.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virt-channel" | default "{{ .Values.virt.channel }}" {{ "hub}}" }}'
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virt-subscription-name" | default "{{ .Values.virt.name }}" {{ "hub}}" }}'
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virt-source" | default "{{ .Values.virt.source }}" {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virt-source-namespace" | default "{{ .Values.virt.sourceNamespace }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virtualization-version" | default "" {{ "hub}}" }}'
+            # Upgrade approval for subscription will be set based on if version is set not this flag
+            # If version is set install plan is set to manual and only the version specified will be installed
+          upgradeApproval: Automatic
+          versions:
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virtualization-version" | default "" {{ "hub}}" }}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
