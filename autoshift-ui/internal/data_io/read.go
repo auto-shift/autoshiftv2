@@ -15,8 +15,11 @@ func init() {
 
 }
 
-var policies = structs.CreatePolicies()
-var AppDir string
+var (
+	policies = structs.CreatePolicies()
+	TestVars = structs.CreateTestVals()
+	AppDir   string
+)
 
 func ReadPolicies() {
 
@@ -75,4 +78,15 @@ func ReadPolicyLabels() map[string]map[string]string {
 	utils.CheckIfError(err)
 
 	return labels
+}
+
+func SourceTestInputs() {
+	testFile := "../../data/test_vals.yaml"
+	data, err := os.ReadFile(testFile)
+	utils.CheckIfError(err)
+	testVars := structs.CreateTestVals()
+	err = yaml.Unmarshal(data, &testVars)
+	TestVars.Git = testVars.Git
+	TestVars.Ocp = testVars.Ocp
+	fmt.Println(TestVars)
 }

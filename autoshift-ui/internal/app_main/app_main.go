@@ -16,15 +16,18 @@ func init() {
 	HubValues.SetSMHubSet("hub")
 }
 
-var HubValues = structs.CreateHubValues()
+var (
+	HubValues = structs.CreateHubValues()
+)
 
 func Home(win fyne.Window) fyne.CanvasObject {
 
 	mainTabs := container.NewAppTabs(
 		container.NewTabItem("Configs", forms.Configs()),
 		container.NewTabItem("Policies", forms.Policies(win)),
-		container.NewTabItem("Deployment", forms.Deployment()),
+		// container.NewTabItem("Deployment", forms.Deployment()),
 	)
+	// logCont := container.NewGridWrap(fyne.NewSize(mainTabs.MinSize().Width/3, mainTabs.MinSize().Height), OutputCard())
 
 	mainTabs.SetTabLocation(container.TabLocationLeading)
 	homeContainer := container.NewBorder(topBorder(), bottomBorder(), nil, nil, mainTabs)

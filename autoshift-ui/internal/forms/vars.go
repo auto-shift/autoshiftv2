@@ -12,5 +12,7 @@ var (
 	allLabels  = data_io.ReadPolicyLabels()
 	hubConfigs = structs.CreateHubValues()
 	cSets      = hubConfigs.HubClusterSets.ClusterSets
-	mainWin    fyne.Window
+	testVars   = structs.CreateTestVals()
+
+	mainWin fyne.Window
 )

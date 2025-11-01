@@ -23,29 +23,47 @@ type GitVars struct {
 	GitUser string `yaml:"gitUser"`
 }
 
-func GitCloneToMemory(gitUser, gitPass, gitDir, gitUrl, gitBranch string) {
+func GitCloneToMemory(gitUser, gitPass, gitUrl string) git.Repository {
 	storer := memory.NewStorage()
 	fs := memfs.New()
 
 	// Cloning a remote repository into memory
 	repo, err := git.Clone(storer, fs, &git.CloneOptions{
-		URL: "https://github.com/your/repository",
+		Auth: &http.BasicAuth{
+			Username: gitUser, // yes, this can be anything except an empty string
+			Password: gitPass,
+		},
+		URL: gitUrl,
 	})
-	if err != nil {
-		// handle error
-	}
+	utils.CheckIfError(err)
 
+	// // ... retrieves the branch pointed by HEAD
+	// ref, err := repo.Head()
+	// utils.CheckIfError(err)
+
+	// // ... retrieves the commit history
+	// cIter, err := repo.Log(&git.LogOptions{From: ref.Hash()})
+	// utils.CheckIfError(err)
+
+	// // ... just iterates over the commits, printing it
+	// err = cIter.ForEach(func(c *object.Commit) error {
+	// 	fmt.Println(c)
+	// 	return nil
+	// })
+	// utils.CheckIfError(err)
+
+	return *repo
 	// Or initializing a new repository in memory
 	// repo, err := git.PlainInit(storer, fs, &git.PlainInitOptions{})
 	// if err != nil {
 	// 	// handle error
 	// }
 
-	file, err := fs.Open("path/to/your/file.txt")
-	if err != nil {
-		// handle error
-	}
-	defer file.Close()
+	// file, err := fs.Open("path/to/your/file.txt")
+	// if err != nil {
+	// 	// handle error
+	// }
+	// defer file.Close()
 
 	// Read the file content
 	// content, err := io.ReadAll(file)
