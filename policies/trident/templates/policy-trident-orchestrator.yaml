@@ -1,0 +1,83 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-trident-orchestrator
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: AutoShiftv2
+    policy.open-cluster-management.io/categories: Kubernetes MetalLB Operator
+    policy.open-cluster-management.io/controls: OpenShift Standard
+spec:
+  disabled: false
+  dependencies:
+    - name: policy-trident-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: trident-orchestrator
+          namespace: policies-autoshift
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates-raw: |
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: trident.netapp.io/v1
+                kind: TridentOrchestrator
+                metadata:
+                  name: trident
+                spec:
+                  IPv6: false
+                  debug: true
+                  nodePrep: []
+                  imagePullSecrets: []
+                  imageRegistry: ''
+                  namespace: trident
+                  silenceAutosupport: false
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-trident-orchestrator
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/trident'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-trident-orchestrator
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-trident-orchestrator
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-trident-orchestrator
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
