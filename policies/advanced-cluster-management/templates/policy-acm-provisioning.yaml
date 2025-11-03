@@ -1,0 +1,121 @@
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: acm-provisioning
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "8"
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+  disabled: false
+  dependencies:
+    - name: policy-acm-mch-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acm-provisioner
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: metal3.io/v1alpha1
+                kind: Provisioning
+                metadata:
+                  name: provisioning-configuration
+                spec:
+                  provisioningNetwork: "Disabled"
+                  watchAllNamespaces: true
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acm-agentserviceconfig
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: agent-install.openshift.io/v1beta1
+                kind: AgentServiceConfig
+                metadata:
+                name: agent
+                spec:
+                  databaseStorage:
+                    {{ "{{hub-" }}" if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") {{ "hub}}" }}
+                    storageClassName: {{ "{{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" hub}}" }}
+                    {{ "{{hub- end hub}}" }}
+                    accessModes:
+                    - ReadWriteOnce
+                    resources:
+                      requests:
+                        storage: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-provisioning-database-size" | default "{{ .Values.acm.provisioning.database_size }}" {{ "hub}}" }}
+                  filesystemStorage:
+                    {{ "{{hub-" }}" if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") {{ "hub}}" }}
+                    storageClassName: {{ "{{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" hub}}" }}
+                    {{ "{{hub- end hub}}" }}
+                    accessModes:
+                    - ReadWriteOnce
+                    resources:
+                      requests:
+                        storage: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-provisioning-filesystem-storage-size" | default "{{ .Values.acm.provisioning.filesystem_storage_size }}" {{ "hub}}" }}
+                  imageStorage:
+                    {{ "{{hub-" }}" if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") {{ "hub}}" }}
+                    storageClassName: {{ "{{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" hub}}" }}
+                    {{ "{{hub- end hub}}" }}
+                    accessModes:
+                    - ReadWriteOnce
+                    resources:
+                      requests:
+                        storage: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-provisioning-image-storage-size" | default "{{ .Values.acm.provisioning.image_storage_size }}" {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-acm-provisioning
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acm-enable-provisioning'
+              operator: In
+              values:
+              - 'true'
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-acm-provisioning
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "8"
+placementRef:
+  name: placement-acm-provisioning
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: acm-provisioning
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
