@@ -2,7 +2,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: acm-provisioning
+  name: policy-acm-provisioning
   namespace: {{ .Values.policy_namespace }}
   annotations:
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
@@ -45,17 +45,17 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
-          object-templates:
+          object-templates-raw: |
             - complianceType: musthave
               objectDefinition:
                 apiVersion: agent-install.openshift.io/v1beta1
                 kind: AgentServiceConfig
                 metadata:
-                name: agent
+                  name: agent
                 spec:
                   databaseStorage:
-                    {{ "{{hub-" }}" if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") {{ "hub}}" }}
-                    storageClassName: {{ "{{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" hub}}" }}
+                    {{ "{{hub-" }} if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") {{ "hub}}" }}
+                    storageClassName: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" {{ "hub}}" }}
                     {{ "{{hub- end hub}}" }}
                     accessModes:
                     - ReadWriteOnce
@@ -63,8 +63,8 @@ spec:
                       requests:
                         storage: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-provisioning-database-size" | default "{{ .Values.acm.provisioning.database_size }}" {{ "hub}}" }}
                   filesystemStorage:
-                    {{ "{{hub-" }}" if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") {{ "hub}}" }}
-                    storageClassName: {{ "{{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" hub}}" }}
+                    {{ "{{hub-" }} if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") {{ "hub}}" }}
+                    storageClassName: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" {{ "hub}}" }}
                     {{ "{{hub- end hub}}" }}
                     accessModes:
                     - ReadWriteOnce
@@ -72,14 +72,63 @@ spec:
                       requests:
                         storage: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-provisioning-filesystem-storage-size" | default "{{ .Values.acm.provisioning.filesystem_storage_size }}" {{ "hub}}" }}
                   imageStorage:
-                    {{ "{{hub-" }}" if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") {{ "hub}}" }}
-                    storageClassName: {{ "{{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" hub}}" }}
+                    {{ "{{hub-" }} if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") {{ "hub}}" }}
+                    storageClassName: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" {{ "hub}}" }}
                     {{ "{{hub- end hub}}" }}
                     accessModes:
                     - ReadWriteOnce
                     resources:
                       requests:
                         storage: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-provisioning-image-storage-size" | default "{{ .Values.acm.provisioning.image_storage_size }}" {{ "hub}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acm-agentserviceconfig-test
+        spec:
+          remediationAction: inform
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: agent-install.openshift.io/v1beta1
+                kind: AgentServiceConfig
+                metadata:
+                  name: agent
+                status:
+                  conditions:
+                    - message: AgentServiceConfig reconcile completed without error.
+                      reason: ReconcileSucceeded
+                      status: 'True'
+                      type: ReconcileCompleted
+                    - message: All the deployments managed by Infrastructure-operator are healthy.
+                      reason: DeploymentSucceeded
+                      status: 'True'
+                      type: DeploymentsHealthy
+            - complianceType: musthave
+              objectDefinition:
+                kind: Pod
+                apiVersion: v1
+                metadata:
+                  namespace: multicluster-engine
+                  labels:
+                    app: assisted-image-service
+                    statefulset.kubernetes.io/pod-name: assisted-image-service-0
+                status:
+                  containerStatuses:
+                    - started: true
+                      ready: true
+                      name: assisted-image-service
+                  conditions:
+                    - type: PodReadyToStartContainers
+                      status: 'True'
+                    - type: Initialized
+                      status: 'True'
+                    - type: Ready
+                      status: 'True'
+                    - type: ContainersReady
+                      status: 'True'
+                  phase: Running
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -116,6 +165,6 @@ placementRef:
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: acm-provisioning
+  - name: policy-acm-provisioning
     apiGroup: policy.open-cluster-management.io
     kind: Policy
