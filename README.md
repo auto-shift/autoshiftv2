@@ -249,26 +249,26 @@ Labels can also be set at the individual cluster level in the `clusters:` sectio
 
 Every managed operator supports version control via its respective label:
 
-| Operator | Version Label | Example CSV |
-|----------|--------------|-------------|
-| Advanced Cluster Management | `acm-version` | `advanced-cluster-management.v2.14.0` |
-| Advanced Cluster Security | `acs-version` | `rhacs-operator.v4.6.1` |
-| OpenShift GitOps | `gitops-version` | `openshift-gitops-operator.v1.18.0` |
-| OpenShift Pipelines | `pipelines-version` | `openshift-pipelines-operator-rh.v1.18.1` |
-| OpenShift Data Foundation | `odf-version` | `odf-operator.v4.18.11-rhodf` |
-| MetalLB | `metallb-version` | `metallb-operator.v4.18.0-202509240837` |
-| Quay | `quay-version` | `quay-operator.v3.15.0` |
-| Developer Hub | `dev-hub-version` | `rhdh.v1.5.0` |
-| Developer Spaces | `dev-spaces-version` | `devspaces.v3.21.0` |
-| Trusted Artifact Signer | `tas-version` | `rhtas-operator.v1.2.0` |
-| Loki | `loki-version` | `loki-operator.v6.3.0` |
-| OpenShift Logging | `logging-version` | `cluster-logging.v6.3.0` |
-| Cluster Observability | `coo-version` | `cluster-observability-operator.v0.4.0` |
-| Compliance Operator | `compliance-version` | `compliance-operator.v1.8.0` |
-| LVM Storage | `lvm-version` | `lvms-operator.v4.18.0-202410091522` |
-| Local Storage | `local-storage-version` | `local-storage-operator.v4.18.0-202410091522` |
-| NMState | `nmstate-version` | `kubernetes-nmstate-operator.v4.18.0-202410091522` |
-| OpenShift Virtualization | `virt-version` | `kubevirt-hyperconverged.v4.18.0` |
+| Operator                    | Version Label           | Example CSV                                        |
+| --------------------------- | ----------------------- | -------------------------------------------------- |
+| Advanced Cluster Management | `acm-version`           | `advanced-cluster-management.v2.14.0`              |
+| Advanced Cluster Security   | `acs-version`           | `rhacs-operator.v4.6.1`                            |
+| OpenShift GitOps            | `gitops-version`        | `openshift-gitops-operator.v1.18.0`                |
+| OpenShift Pipelines         | `pipelines-version`     | `openshift-pipelines-operator-rh.v1.18.1`          |
+| OpenShift Data Foundation   | `odf-version`           | `odf-operator.v4.18.11-rhodf`                      |
+| MetalLB                     | `metallb-version`       | `metallb-operator.v4.18.0-202509240837`            |
+| Quay                        | `quay-version`          | `quay-operator.v3.15.0`                            |
+| Developer Hub               | `dev-hub-version`       | `rhdh.v1.5.0`                                      |
+| Developer Spaces            | `dev-spaces-version`    | `devspaces.v3.21.0`                                |
+| Trusted Artifact Signer     | `tas-version`           | `rhtas-operator.v1.2.0`                            |
+| Loki                        | `loki-version`          | `loki-operator.v6.3.0`                             |
+| OpenShift Logging           | `logging-version`       | `cluster-logging.v6.3.0`                           |
+| Cluster Observability       | `coo-version`           | `cluster-observability-operator.v0.4.0`            |
+| Compliance Operator         | `compliance-version`    | `compliance-operator.v1.8.0`                       |
+| LVM Storage                 | `lvm-version`           | `lvms-operator.v4.18.0-202410091522`               |
+| Local Storage               | `local-storage-version` | `local-storage-operator.v4.18.0-202410091522`      |
+| NMState                     | `nmstate-version`       | `kubernetes-nmstate-operator.v4.18.0-202410091522` |
+| OpenShift Virtualization    | `virt-version`          | `kubevirt-hyperconverged.v4.18.0`                  |
 
 ### Finding Available CSV Versions
 
@@ -293,6 +293,14 @@ oc get packagemanifests openshift-pipelines-operator-rh -o yaml | grep currentCS
 | Variable                    | Type      | Default Value             | Notes |
 |-----------------------------|-----------|---------------------------|-------|
 | `self-managed`              | bool      | `true` or `false`         |       |
+| `acm-enable-provisioning`   | bool      | `false`                   | Configures ACM to provision clusters |
+| `acm-provisioning-storage-class` | string |                         | (optional) name of StorageClass to use if non default is desired |
+| `acm-provisioning-database-size` | string | `10Gi`                  | DatabaseStorage defines the spec of the PersistentVolumeClaim to be
+created for the database's filesystem. Minimum 10GiB is recommended. |
+| `acm-provisioning-filesystem-storage-size` | string | `100Gi`       | FileSystemStorage defines the spec of the PersistentVolumeClaim to be
+created for the assisted-service's filesystem (logs, etc). Minimum 100GiB recommended |
+| `acm-provisioning-image-storage-size` | string | `50Gi`             | ImageStorage defines the spec of the PersistentVolumeClaim to be
+created for each replica of the image service. 2GiB per OSImage entry is required. |
 | `acm-channel`               | string    | `release-2.14`            |       |
 | `acm-version`               | string    | (optional)                | Specific CSV version for controlled upgrades |
 | `acm-source`                | string    | `redhat-operators`        |       |
