@@ -255,6 +255,98 @@ For development or customization, install directly from the git repository:
 
     ![Cluster Set Details in ACM Console](images/acm-local-cluster-labels.png)
 
+## Dry Run Mode
+
+AutoShift supports **dry run mode** for safe testing of policy deployments:
+
+```yaml
+# Enable dry run mode - policies report violations without enforcing changes
+autoshift:
+  dryRun: true  # Default: false
+```
+
+**Dry run mode:**
+- ✅ Reports compliance status and policy violations
+- ✅ Shows what would be changed without making changes
+- ❌ Does NOT enforce policies or install operators
+- ❌ Does NOT create or modify cluster resources
+
+**Use cases:**
+- **Pre-production validation** - Test changes before production deployment
+- **Change impact assessment** - See what policies would affect
+- **Cluster onboarding** - Validate new cluster compatibility
+
+```bash
+# Deploy in dry run mode - use the same installation command with dryRun override
+export APP_NAME="autoshift"
+export REPO_URL="https://github.com/auto-shift/autoshiftv2.git"
+export TARGET_REVISION="main"
+export VALUES_FILE="values.hub.yaml"
+export ARGO_PROJECT="default"
+export GITOPS_NAMESPACE="openshift-gitops"
+cat << EOF | oc apply -f -
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: $APP_NAME
+  namespace: $GITOPS_NAMESPACE
+spec:
+  destination:
+    namespace: ''
+    server: https://kubernetes.default.svc
+  source:
+    path: autoshift
+    repoURL: $REPO_URL
+    targetRevision: $TARGET_REVISION
+    helm:
+      valueFiles:
+        - $VALUES_FILE
+      values: |-
+        autoshiftGitRepo: $REPO_URL
+        autoshiftGitBranchTag: $TARGET_REVISION
+        autoshift:
+          dryRun: true
+  sources: []
+  project: $ARGO_PROJECT
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+EOF
+
+# Review policy compliance
+oc get policies -A
+
+# Switch to enforcement mode - remove dryRun override
+cat << EOF | oc apply -f -
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: $APP_NAME
+  namespace: $GITOPS_NAMESPACE
+spec:
+  destination:
+    namespace: ''
+    server: https://kubernetes.default.svc
+  source:
+    path: autoshift
+    repoURL: $REPO_URL
+    targetRevision: $TARGET_REVISION
+    helm:
+      valueFiles:
+        - $VALUES_FILE
+      values: |-
+        autoshiftGitRepo: $REPO_URL
+        autoshiftGitBranchTag: $TARGET_REVISION
+  sources: []
+  project: $ARGO_PROJECT
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+EOF
+```
+
 ## Autoshift Cluster Labels Values Reference
 
 Values can be set on a per cluster and clusterset level to decide what features of autoshift will be applied to each cluster. If a value is defined in helm values, a clusterset label and a cluster label precedence will be **cluster > clusterset > helm** values where helm values is the least. Helm values, `values.yaml` are meant to be defaults.
