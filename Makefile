@@ -1,0 +1,179 @@
+.PHONY: help
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Available targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+# Configuration
+VERSION ?= $(error VERSION is required. Usage: make release VERSION=1.0.0)
+REGISTRY ?= quay.io
+REGISTRY_NAMESPACE ?= autoshift
+DRY_RUN ?= false
+CHARTS_DIR := .helm-charts
+ARTIFACTS_DIR := release-artifacts
+
+# Colors for output
+GREEN := \033[0;32m
+YELLOW := \033[1;33m
+RED := \033[0;31m
+BLUE := \033[0;34m
+NC := \033[0m
+
+# Discover all charts
+BOOTSTRAP_CHARTS := $(shell find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" -exec dirname {} \;)
+POLICY_CHARTS := $(shell find policies -maxdepth 2 -name Chart.yaml -exec dirname {} \;)
+POLICY_NAMES := $(notdir $(POLICY_CHARTS))
+
+.PHONY: discover
+discover: ## Discover all charts in the repository
+	@echo "$(BLUE)[INFO]$(NC) Discovering charts..."
+	@echo "$(GREEN)Bootstrap charts:$(NC)"
+	@$(foreach chart,$(BOOTSTRAP_CHARTS),echo "  - $(notdir $(chart))";)
+	@echo ""
+	@echo "$(GREEN)Policy charts ($(words $(POLICY_NAMES))):$(NC)"
+	@$(foreach policy,$(POLICY_NAMES),echo "  - $(policy)";)
+	@echo ""
+	@echo "$(GREEN)Total charts: $(shell echo $$(($(words $(BOOTSTRAP_CHARTS)) + $(words $(POLICY_CHARTS)) + 1)))$(NC) ($(words $(BOOTSTRAP_CHARTS)) bootstrap + 1 main + $(words $(POLICY_CHARTS)) policies)"
+
+.PHONY: validate
+validate: ## Validate that required tools are installed
+	@echo "$(BLUE)[INFO]$(NC) Validating required tools..."
+	@command -v helm >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) helm is required but not installed"; exit 1; }
+	@command -v yq >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) yq is required but not installed. Install: brew install yq"; exit 1; }
+	@command -v git >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) git is required but not installed"; exit 1; }
+	@echo "$(GREEN)✓$(NC) All required tools are installed"
+
+.PHONY: validate-version
+validate-version: ## Validate version format
+	@echo "$(BLUE)[INFO]$(NC) Validating version format: $(VERSION)"
+	@echo "$(VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$$' || { \
+		echo "$(RED)[ERROR]$(NC) Invalid version format: $(VERSION)"; \
+		echo "Expected: X.Y.Z or X.Y.Z-prerelease (e.g., 1.0.0 or 1.0.0-rc.1)"; \
+		exit 1; \
+	}
+	@echo "$(GREEN)✓$(NC) Version format is valid"
+
+.PHONY: clean
+clean: ## Clean build artifacts
+	@echo "$(BLUE)[INFO]$(NC) Cleaning build artifacts..."
+	@rm -rf $(CHARTS_DIR)
+	@rm -rf $(ARTIFACTS_DIR)
+	@rm -rf autoshift/files
+	@echo "$(GREEN)✓$(NC) Build artifacts cleaned"
+
+.PHONY: update-versions
+update-versions: validate-version ## Update all chart versions
+	@echo "$(BLUE)[INFO]$(NC) Updating chart versions to $(VERSION)..."
+	@# Update bootstrap charts
+	@$(foreach chart,$(BOOTSTRAP_CHARTS), \
+		yq eval -i '.version = "$(VERSION)" | .appVersion = "$(VERSION)"' $(chart)/Chart.yaml;)
+	@# Update autoshift chart
+	@yq eval -i '.version = "$(VERSION)" | .appVersion = "$(VERSION)"' autoshift/Chart.yaml
+	@# Update policy charts
+	@$(foreach chart,$(POLICY_CHARTS), \
+		yq eval -i '.version = "$(VERSION)" | .appVersion = "$(VERSION)"' $(chart)/Chart.yaml;)
+	@echo "$(GREEN)✓$(NC) All chart versions updated to $(VERSION)"
+
+.PHONY: generate-policy-list
+generate-policy-list: ## Generate policy-list.txt for OCI mode
+	@echo "$(BLUE)[INFO]$(NC) Generating policy-list.txt with $(words $(POLICY_NAMES)) policies..."
+	@mkdir -p autoshift/files
+	@$(foreach policy,$(POLICY_NAMES),echo "$(policy)" >> autoshift/files/policy-list.txt;)
+	@echo "$(GREEN)✓$(NC) Generated policy-list.txt with $(words $(POLICY_NAMES)) policies"
+
+.PHONY: package-charts
+package-charts: ## Package all Helm charts
+	@echo "$(BLUE)[INFO]$(NC) Packaging Helm charts..."
+	@mkdir -p $(CHARTS_DIR)
+	@# Package bootstrap charts
+	@echo "$(BLUE)[INFO]$(NC) Packaging bootstrap charts..."
+	@$(foreach chart,$(BOOTSTRAP_CHARTS), \
+		echo "  - Packaging $(notdir $(chart))..."; \
+		helm package $(chart) -d $(CHARTS_DIR) >/dev/null;)
+	@# Package policy charts
+	@echo "$(BLUE)[INFO]$(NC) Packaging policy charts..."
+	@$(foreach chart,$(POLICY_CHARTS), \
+		echo "  - Packaging $(notdir $(chart))..."; \
+		helm package $(chart) -d $(CHARTS_DIR) >/dev/null;)
+	@# Package autoshift chart (last, after template generation)
+	@echo "$(BLUE)[INFO]$(NC) Packaging autoshift chart..."
+	@helm package autoshift -d $(CHARTS_DIR) >/dev/null
+	@echo ""
+	@ls -lh $(CHARTS_DIR)
+	@echo ""
+	@echo "$(GREEN)✓$(NC) Packaged $(shell ls -1 $(CHARTS_DIR) | wc -l) charts"
+
+.PHONY: push-charts
+push-charts: ## Push charts to OCI registry with namespaced paths
+	@if [ "$(DRY_RUN)" = "true" ]; then \
+		echo "$(YELLOW)[WARN]$(NC) DRY RUN: Skipping push to registry"; \
+		echo "Bootstrap charts would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap"; \
+		echo "Main chart would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"; \
+		echo "Policy charts would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
+	else \
+		echo "$(BLUE)[INFO]$(NC) Pushing charts to OCI registry..."; \
+		echo ""; \
+		echo "$(BLUE)[INFO]$(NC) Pushing bootstrap charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap"; \
+		for chart in $(CHARTS_DIR)/*.tgz; do \
+			chart_name=$$(basename $$chart .tgz); \
+			base_name=$$(echo $$chart_name | sed 's/-[0-9].*//');\
+			if echo "$(BOOTSTRAP_CHARTS)" | grep -qw "$$(basename $$base_name)"; then \
+				echo "  - Pushing $$chart_name.tgz..."; \
+				helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap || exit 1; \
+			fi; \
+		done; \
+		echo ""; \
+		echo "$(BLUE)[INFO]$(NC) Pushing main chart to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"; \
+		if [ -f "$(CHARTS_DIR)/autoshift-$(VERSION).tgz" ]; then \
+			echo "  - Pushing autoshift-$(VERSION).tgz..."; \
+			helm push $(CHARTS_DIR)/autoshift-$(VERSION).tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE) || exit 1; \
+		fi; \
+		echo ""; \
+		echo "$(BLUE)[INFO]$(NC) Pushing policy charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
+		for chart in $(CHARTS_DIR)/*.tgz; do \
+			chart_name=$$(basename $$chart .tgz); \
+			base_name=$$(echo $$chart_name | sed 's/-[0-9].*//');\
+			if echo "$(POLICY_NAMES)" | grep -qw "$$base_name"; then \
+				echo "  - Pushing $$chart_name.tgz..."; \
+				helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies || exit 1; \
+			fi; \
+		done; \
+		echo ""; \
+		echo "$(GREEN)✓$(NC) All charts pushed"; \
+		echo "  Bootstrap: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap"; \
+		echo "  Main: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"; \
+		echo "  Policies: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
+	fi
+
+.PHONY: generate-artifacts
+generate-artifacts: ## Generate bootstrap installation scripts and documentation
+	@echo "$(BLUE)[INFO]$(NC) Generating bootstrap installation artifacts..."
+	@mkdir -p $(ARTIFACTS_DIR)
+	@bash scripts/generate-bootstrap-installer.sh $(VERSION) $(REGISTRY) $(REGISTRY_NAMESPACE) $(ARTIFACTS_DIR)
+	@echo "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/"
+
+.PHONY: release
+release: validate validate-version clean update-versions generate-policy-list package-charts push-charts generate-artifacts ## Full release process
+	@echo ""
+	@echo "$(GREEN)=========================================$(NC)"
+	@echo "$(GREEN)Release preparation complete!$(NC)"
+	@echo "$(GREEN)=========================================$(NC)"
+	@echo ""
+	@echo "$(BLUE)Version:$(NC) $(VERSION)"
+	@echo "$(BLUE)Registry:$(NC) oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"
+	@echo "$(BLUE)Charts:$(NC) $(shell ls -1 $(CHARTS_DIR) | wc -l)"
+	@echo "$(BLUE)Artifacts:$(NC) $(ARTIFACTS_DIR)/"
+	@echo ""
+	@if [ "$(DRY_RUN)" = "false" ]; then \
+		echo "$(GREEN)Next steps:$(NC)"; \
+		echo "  1. Create git tag: git tag v$(VERSION)"; \
+		echo "  2. Push tag: git push origin v$(VERSION)"; \
+		echo "  3. Create GitHub/GitLab release with artifacts from: $(ARTIFACTS_DIR)/"; \
+	fi
+
+.PHONY: package-only
+package-only: validate clean generate-policy-list package-charts ## Package charts without updating versions or pushing
+	@echo ""
+	@echo "$(GREEN)Packaging complete!$(NC)"
+	@echo "Charts are ready in: $(CHARTS_DIR)/"

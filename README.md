@@ -6,6 +6,23 @@ AutoShiftv2 is an opinionated [Infrastructure-as-Code (IaC)](https://martinfowle
 
 What AutoShift does is it uses OpenShift GitOps to declaratively manage RHACM which then manages various OpenShift and/or Kubernetes cluster resources and components. This eliminates much of the operator toil associated with installing and managing day 2 tasks, by letting declarative GitOps do that for you.
 
+## Documentation
+
+📚 **[Complete Documentation](docs/)** - Start here for guides and tutorials
+
+**Quick Links:**
+- 🚀 [Quick Start Guide](docs/quickstart-oci.md) - Get started in 15 minutes
+- 📦 [OCI Deployment](docs/deploy-oci.md) - Production deployment guide
+- 🔄 [Release Process](docs/releases.md) - Create and publish releases
+- 📊 [Gradual Rollout](docs/gradual-rollout.md) - Multi-version deployments
+- 🔧 [Developer Guide](docs/developer-guide.md) - Contributing and advanced topics
+
+**Minimum Requirements:**
+- `gitops: 'true'` - OpenShift GitOps (required)
+- ACM is automatically installed on all hub clustersets by policy
+
+See [`values.minimal.yaml`](autoshift/values.minimal.yaml) for a minimal configuration example.
+
 ## Architecture
 
 AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert. RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass, with built-in governance, cluster lifecycle management, application lifecycle management, and observability features. OpenShift GitOps provides declarative GitOps for multicluster continuous delivery.
@@ -29,6 +46,15 @@ The hub cluster is the main cluster with RHACM and its core components installed
 * Fork or clone this repo on the machine from which you will be executing this repo
 * [helm](https://helm.sh/docs/intro/install/) installed locally on the machine from which you will be executing this repo
 * The OpenShift CLI [oc](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli) client utility installed locally on the machine from which you will be executing this repo
+
+#### Minimum Hub Cluster Requirements
+
+All hub clusters **must** have the following configuration in their `hubClusterSets`:
+
+* `gitops: 'true'` - OpenShift GitOps (ArgoCD) is required to deploy AutoShift
+* ACM is automatically installed on all hub clustersets by policy (no labels required)
+
+See `autoshift/values.minimal.yaml` for a minimal configuration example that shows only the required settings.
 
 ### Prepping for Installation
 
@@ -306,7 +332,7 @@ created for each replica of the image service. 2GiB per OSImage entry is require
 | `acm-source`                | string    | `redhat-operators`        |       |
 | `acm-source-namespace`      | string    | `openshift-marketplace`   |       |
 | `acm-availability-config`   | string    | `Basic` or `High`         |       |
-| `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a nooba bucket for acm. ODF will have to be enabled as well |
+| `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a noobaa bucket for acm. ODF will have to be enabled as well |
 
 ### Cluster Labels
 
@@ -545,10 +571,10 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `odf`                             | bool              |                           | If not set OpenShift Data Foundation will not be managed. if Storage Nodes are enable will deploy ODF on local storage/ storage nodes |
-| `odf-multi-cloud-gateway`         | string            |                           | values `standalone` or `standard`. Install ODF with only nooba object gateway or full odf |
-| `odf-nooba-pvpool`                | bool              |                           | if not set nooba will be deployed with default settings. Recomended don't set for cloud providers. Use pv pool for storage |
-| `odf-nooba-store-size`            | string            |                           | example `500Gi`. if pvpool set. Size of nooba backing store |
-| `odf-nooba-store-num-volumes`     | string            |                           | example `1`. if pvpool set. number of volumes |
+| `odf-multi-cloud-gateway`         | string            |                           | values `standalone` or `standard`. Install ODF with only noobaa object gateway or full odf |
+| `odf-noobaa-pvpool`                | bool              |                           | if not set noobaa will be deployed with default settings. Recommended don't set for cloud providers. Use pv pool for storage |
+| `odf-noobaa-store-size`            | string            |                           | example `500Gi`. if pvpool set. Size of noobaa backing store |
+| `odf-noobaa-store-num-volumes`     | string            |                           | example `1`. if pvpool set. number of volumes |
 | `odf-ocs-storage-class-name`      | string            |                           | if not using local-storage, storage class to use for ocs |
 | `odf-ocs-storage-size`            | string            |                           | storage size per nvme |
 | `odf-ocs-storage-count`           | string            |                           | number of replica sets of nvme drives, note total amount will count * replicas |
