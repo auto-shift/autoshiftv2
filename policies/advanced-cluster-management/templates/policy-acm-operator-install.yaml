@@ -53,13 +53,17 @@ spec:
             targetNamespaces:
               - {{ .Values.acm.namespace }}
           subscription:
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-version" | default "" {{ "hub}}" }}'
             namespace: {{ .Values.acm.namespace }}
-            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/acm-channel" | default "{{ .Values.acm.channel }}" hub{{ "}}" }}'
-            name: {{ .Values.acm.name }}
-            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/acm-source" | default "{{ .Values.acm.source }}" hub{{ "}}" }}'
-            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/acm-source-namespace" | default "{{ .Values.acm.sourceNamespace }}" hub{{ "}}" }}'
-          # Getting Label and then capitalizing first letter
-          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/acm-install-plan-approval" | default "{{ .Values.acm.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-channel" | default "{{ .Values.acm.channel }}" {{ "hub}}" }}'
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-subscription-name" | default "{{ .Values.acm.name }}" {{ "hub}}" }}'
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-source" | default "{{ .Values.acm.source }}" {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-source-namespace" | default "{{ .Values.acm.sourceNamespace }}" {{ "hub}}" }}'
+          # Upgrade approval for subscription will be set based on if version is set not this flag
+          # If version is set install plan is set to manual and only the version specified will be installed
+          upgradeApproval: Automatic
+          versions:
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-version" | default "" {{ "hub}}" }}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

@@ -47,12 +47,16 @@ spec:
               - {{ .Values.compliance.namespace }}
           subscription:
             namespace: {{ .Values.compliance.namespace }}
-            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/compliance-channel" | default "{{ .Values.compliance.channel }}" hub{{ "}}" }}'
-            name: {{ .Values.compliance.name }}
-            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/compliance-source" | default "{{ .Values.compliance.source }}" hub{{ "}}" }}'
-            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/compliance-source-namespace" | default "{{ .Values.compliance.sourceNamespace }}" hub{{ "}}" }}'
-          # Getting Label and then capitalizing first letter
-          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/compliance-install-plan-approval" | default "{{ .Values.compliance.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/compliance-channel" | default "{{ .Values.compliance.channel }}" {{ "hub}}" }}'
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/compliance-subscription-name" | default "{{ .Values.compliance.name }}" {{ "hub}}" }}'
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/compliance-source" | default "{{ .Values.compliance.source }}" {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/compliance-source-namespace" | default "{{ .Values.compliance.sourceNamespace }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/compliance-version" | default "" {{ "hub}}" }}'
+            # Upgrade approval for subscription will be set based on if version is set not this flag
+            # If version is set install plan is set to manual and only the version specified will be installed
+          upgradeApproval: Automatic
+          versions:
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/compliance-version" | default "" {{ "hub}}" }}'
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy

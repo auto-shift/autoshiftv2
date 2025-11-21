@@ -27,6 +27,28 @@ spec:
       kind: Policy
   disabled: false
   policy-templates:
+  # Adding Toleration for csi plugin to run on all nodes.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rook-ceph-operator-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                kind: ConfigMap
+                apiVersion: v1
+                metadata:
+                  name: rook-ceph-operator-config
+                  namespace: {{ .Values.odf.namespace }}
+                data:
+                  CSI_LOG_LEVEL: '5'
+                  CSI_PLUGIN_TOLERATIONS: |2-
+
+                    - operator: Exists
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -43,53 +65,32 @@ spec:
                 metadata:
                   name: ocs-storagecluster
                   namespace: {{ .Values.odf.namespace }}
-                {{ "{{hub-" }} if (eq "standalone" (index .ManagedClusterLabels "autoshift.io/odf-multi-cloud-gateway" | default "")) {{ "hub}}" }}
-                spec:
-                  arbiter: {}
-                  encryption:
-                    kms: {}
-                  externalStorage: {}
-                  managedResources:
-                    cephObjectStoreUsers: {}
-                    cephCluster: {}
-                    cephBlockPools: {}
-                    cephNonResilientPools: {}
-                    cephObjectStores: {}
-                    cephFilesystems: {}
-                    cephRBDMirror: {}
-                    cephToolbox: {}
-                    cephDashboard: {}
-                    cephConfig: {}
-                  mirroring: {}
-                  multiCloudGateway:
-                    reconcileStrategy: standalone
-                {{ "{{" }}hub- else hub{{ "}}" }}
                 spec:
                   storageDeviceSets:
                     - config: {}
-                      count: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-count" | default "{{ .Values.odf.ocsStorageCount }}" | toInt hub{{ "}}" }}'
+                      count: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-count" | default "{{ .Values.odf.ocsStorageCount }}" | toInt {{ "hub}}" }}'
                       dataPVCTemplate:
                         metadata: {}
                         spec:
                           accessModes:
                             - ReadWriteOnce
-                          {{ "{{" }}hub- if eq (index .ManagedClusterLabels "autoshift.io/local-storage" | default "") "true" hub{{ "}}" }}
+                          {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/local-storage" | default "") "true" {{ "hub}}" }}
                           resources:
                             requests:
                               storage: '1' # will use whole PV from local storage
                           storageClassName: nvme-storageclass
-                          {{ "{{" }}hub- else hub{{ "}}" }}
+                          {{ "{{hub-" }} else {{ "hub}}" }}
                           resources:
                             requests:
-                              storage: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-size" | default "{{ .Values.odf.ocsStorageSize}}" hub{{ "}}" }}'
-                          storageClassName: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-class-name" | default "{{ .Values.odf.ocsStorageClassName }}" hub{{ "}}" }}'
-                          {{ "{{" }}hub- end hub{{ "}}" }}
+                              storage: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-size" | default "{{ .Values.odf.ocsStorageSize}}" {{ "hub}}" }}'
+                          storageClassName: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-class-name" | default "{{ .Values.odf.ocsStorageClassName }}" {{ "hub}}" }}'
+                          {{ "{{hub-" }} end {{ "hub}}" }}
                           volumeMode: Block
                         status: {}
                       name: ocs-deviceset
                       placement: {}
                       preparePlacement: {}
-                      replica: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-replicas" | default "{{ .Values.odf.ocsStorageReplicas }}" | toInt hub{{ "}}" }}'
+                      replica: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-replicas" | default "{{ .Values.odf.ocsStorageReplicas }}" | toInt {{ "hub}}" }}'
                       resources: {}
                   encryption:
                     clusterWide: true
@@ -137,38 +138,18 @@ spec:
                       encryption:
                         enabled: true
                     multiClusterService: {}
+                    selectors: {}
+                {{ "{{hub-" }} if index .ManagedClusterLabels "autoshift.io/odf-ocs-flexible-scaling" {{ "hub}}" }}
+                  flexibleScaling: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-ocs-flexible-scaling" {{ "hub}}" }}
+                {{ "{{hub-" }} else if (and
+                  (eq (index .ManagedClusterLabels "autoshift.io/storage-nodes-provider") "baremetal")
+                  (ne (sub (index .ManagedClusterLabels "autoshift.io/storage-nodes" | default "0" | toInt)
+                    (mul 3 (div (index .ManagedClusterLabels "autoshift.io/storage-nodes" | default "0" | toInt) 3))) 0)) {{ "hub}}" }}
+                  flexibleScaling: true
+                {{ "{{hub- end hub}}" }}
                   nodeTopologies: {}
                   externalStorage: {}
-                  resourceProfile: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/odf-resource-profile" | default "{{ .Values.odf.resourceProfile }}" hub{{ "}}" }}'
-                {{ "{{" }}hub- end hub{{ "}}" }}
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: storage-cluster-install-test
-        spec:
-          remediationAction: inform
-          severity: high
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: ocs.openshift.io/v1
-                kind: StorageCluster
-                metadata:
-                  name: ocs-storagecluster
-                  namespace: {{ .Values.odf.namespace }}
-                status:
-                  conditions:
-                    - status: 'False'
-                      type: VersionMismatch
-                    - status: 'True'
-                      type: ReconcileComplete
-                    - status: 'True'
-                      type: Available
-                    - status: 'False'
-                      type: Progressing
-                    - status: 'False'
-                      type: Degraded
+                  resourceProfile: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/odf-resource-profile" | default "{{ .Values.odf.resourceProfile }}" {{ "hub}}" }}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -191,6 +172,10 @@ spec:
               operator: In
               values:
               - 'true'
+            - key: 'autoshift.io/odf-multi-cloud-gateway'
+              operator: NotIn
+              values:
+              - 'standalone'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
