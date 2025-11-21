@@ -1,0 +1,377 @@
+# This policy configures OpenShift OAuth authentication for ACS Central
+# It creates auth provider configuration and assigns default Analyst role to OpenShift users
+{{- if .Values.hubClusterSets }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-acs-openshift-auth
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-wave: "2"
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, IA Identification and Authentication
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, IA-2 Identification and Authentication
+spec:
+{{ if .Values.autoshift.dryRun }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-acs-central
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-openshift-auth-serviceaccount
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: acs-openshift-auth-config
+                  namespace: {{ .Values.acs.namespace }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-openshift-auth-role
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: Role
+                metadata:
+                  name: acs-openshift-auth-config
+                  namespace: {{ .Values.acs.namespace }}
+                rules:
+                  - apiGroups: [""]
+                    resources: ["secrets"]
+                    verbs: ["get"]
+                    resourceNames: ["central-htpasswd"]
+                  - apiGroups: ["route.openshift.io"]
+                    resources: ["routes"]
+                    verbs: ["get"]
+                    resourceNames: ["central"]
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-openshift-auth-rolebinding
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: acs-openshift-auth-config
+                  namespace: {{ .Values.acs.namespace }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: Role
+                  name: acs-openshift-auth-config
+                subjects:
+                  - kind: ServiceAccount
+                    name: acs-openshift-auth-config
+                    namespace: {{ .Values.acs.namespace }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-openshift-auth-configmap
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: acs-openshift-auth-script
+                  namespace: {{ .Values.acs.namespace }}
+                data:
+                  configure-oauth.sh: |
+                    #!/bin/bash
+                    set -e
+
+                    echo "============================================"
+                    echo "Configuring OpenShift OAuth for ACS Central"
+                    echo "============================================"
+
+                    # Get ACS Central route and credentials using spoke templates
+                    # These values are populated by ACM at runtime on the target cluster
+                    ROX_ENDPOINT='{{ "{{" }} (lookup "route.openshift.io/v1" "Route" "{{ .Values.acs.namespace }}" "central").spec.host {{ "}}" }}'
+                    ROX_PASSWORD='{{ "{{" }} (lookup "v1" "Secret" "{{ .Values.acs.namespace }}" "central-htpasswd").data.password | base64dec {{ "}}" }}'
+
+                    if [ -z "$ROX_ENDPOINT" ] || [ -z "$ROX_PASSWORD" ]; then
+                      echo "ERROR: Failed to retrieve ACS Central endpoint or password"
+                      echo "ROX_ENDPOINT: ${ROX_ENDPOINT}"
+                      exit 1
+                    fi
+
+                    echo "ACS Central endpoint: ${ROX_ENDPOINT}"
+                    echo ""
+
+                    # Generate API token for configuration
+                    echo "Step 1: Generating API token..."
+                    TOKEN_RESPONSE=$(curl -sk -u "admin:${ROX_PASSWORD}" \
+                      -X POST "https://${ROX_ENDPOINT}/v1/apitokens/generate" \
+                      -H "Content-Type: application/json" \
+                      -d '{
+                        "name": "openshift-oauth-config",
+                        "role": "Admin"
+                      }')
+
+                    API_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.token // empty')
+
+                    if [ -z "$API_TOKEN" ]; then
+                      echo "ERROR: Failed to generate API token"
+                      echo "$TOKEN_RESPONSE" | jq '.'
+                      exit 1
+                    fi
+                    echo "✓ API token generated"
+                    echo ""
+
+                    # Check if OpenShift OAuth provider already exists
+                    echo "Step 2: Checking for existing OpenShift OAuth provider..."
+                    EXISTING_PROVIDERS=$(curl -sk \
+                      -H "Authorization: Bearer ${API_TOKEN}" \
+                      "https://${ROX_ENDPOINT}/v1/authProviders")
+
+                    OPENSHIFT_PROVIDER_ID=$(echo "$EXISTING_PROVIDERS" | jq -r '.authProviders[] | select(.type == "openshift") | .id')
+
+                    if [ -n "$OPENSHIFT_PROVIDER_ID" ]; then
+                      IS_ENABLED=$(echo "$EXISTING_PROVIDERS" | jq -r '.authProviders[] | select(.id == "'${OPENSHIFT_PROVIDER_ID}'") | .enabled')
+                      if [ "$IS_ENABLED" = "true" ]; then
+                        echo "✓ OpenShift OAuth is already configured and enabled"
+                        echo "Provider ID: ${OPENSHIFT_PROVIDER_ID}"
+                        echo ""
+                        echo "Verifying default access configuration..."
+
+                        # Still check/configure default access even if provider exists
+                        DEFAULT_ACCESS=$(curl -sk \
+                          -H "Authorization: Bearer ${API_TOKEN}" \
+                          "https://${ROX_ENDPOINT}/v1/groups")
+
+                        HAS_DEFAULT=$(echo "$DEFAULT_ACCESS" | jq -r '.groups[] | select(.props.authProviderId == "'${OPENSHIFT_PROVIDER_ID}'") | .roleName' | head -1)
+
+                        if [ -n "$HAS_DEFAULT" ]; then
+                          echo "✓ Default access is configured: ${HAS_DEFAULT}"
+                          echo "Configuration complete - no changes needed"
+                          exit 0
+                        fi
+                        echo "Default access not configured, will add..."
+                      else
+                        echo "OpenShift OAuth provider exists but is disabled, will enable..."
+                      fi
+                    else
+                      echo "No OpenShift OAuth provider found, will create..."
+                    fi
+                    echo ""
+
+                    # Create or update OpenShift OAuth auth provider
+                    echo "Step 3: Configuring OpenShift OAuth auth provider..."
+
+                    # Note: ACS automatically detects OpenShift OAuth when mode=auto
+                    AUTH_PROVIDER_PAYLOAD='{
+                      "name": "OpenShift",
+                      "type": "openshift",
+                      "enabled": true,
+                      "config": {
+                        "mode": "auto"
+                      },
+                      "requiredAttributes": [],
+                      "claimMappings": {
+                        "name": "name",
+                        "email": "email",
+                        "groups": "groups"
+                      }
+                    }'
+
+                    if [ -n "$OPENSHIFT_PROVIDER_ID" ]; then
+                      echo "Updating existing provider..."
+                      RESPONSE=$(curl -sk -X PUT \
+                        -H "Authorization: Bearer ${API_TOKEN}" \
+                        -H "Content-Type: application/json" \
+                        "https://${ROX_ENDPOINT}/v1/authProviders/${OPENSHIFT_PROVIDER_ID}" \
+                        -d "$AUTH_PROVIDER_PAYLOAD")
+                    else
+                      echo "Creating new provider..."
+                      RESPONSE=$(curl -sk -X POST \
+                        -H "Authorization: Bearer ${API_TOKEN}" \
+                        -H "Content-Type: application/json" \
+                        "https://${ROX_ENDPOINT}/v1/authProviders" \
+                        -d "$AUTH_PROVIDER_PAYLOAD")
+                      OPENSHIFT_PROVIDER_ID=$(echo "$RESPONSE" | jq -r '.id')
+                    fi
+
+                    if [ -z "$OPENSHIFT_PROVIDER_ID" ]; then
+                      echo "ERROR: Failed to create/update auth provider"
+                      echo "$RESPONSE" | jq '.'
+                      exit 1
+                    fi
+                    echo "✓ Auth provider configured"
+                    echo "Provider ID: ${OPENSHIFT_PROVIDER_ID}"
+                    echo ""
+
+                    # Configure default access - all authenticated OpenShift users get Analyst role
+                    echo "Step 4: Configuring default access for OpenShift users..."
+                    echo "All authenticated users will receive: Analyst role (read-only access)"
+
+                    # Check if minimum access role exists (for all authenticated users)
+                    DEFAULT_GROUP_PAYLOAD='{
+                      "props": {
+                        "authProviderId": "'${OPENSHIFT_PROVIDER_ID}'",
+                        "key": "",
+                        "value": ""
+                      },
+                      "roleName": "Analyst"
+                    }'
+
+                    # Create minimum access group (empty key/value = all authenticated users)
+                    GROUP_RESPONSE=$(curl -sk -X POST \
+                      -H "Authorization: Bearer ${API_TOKEN}" \
+                      -H "Content-Type: application/json" \
+                      "https://${ROX_ENDPOINT}/v1/groups" \
+                      -d "$DEFAULT_GROUP_PAYLOAD")
+
+                    echo "✓ Default access configured"
+                    echo ""
+
+                    # Verify final configuration
+                    echo "Step 5: Verifying configuration..."
+                    VERIFICATION=$(curl -sk \
+                      -H "Authorization: Bearer ${API_TOKEN}" \
+                      "https://${ROX_ENDPOINT}/v1/authProviders")
+
+                    OPENSHIFT_ENABLED=$(echo "$VERIFICATION" | jq -r '.authProviders[] | select(.type == "openshift") | .enabled')
+
+                    if [ "$OPENSHIFT_ENABLED" = "true" ]; then
+                      echo ""
+                      echo "============================================"
+                      echo "✓ Configuration Complete!"
+                      echo "============================================"
+                      echo ""
+                      echo "OpenShift OAuth is enabled for ACS Central"
+                      echo "Login URL: https://${ROX_ENDPOINT}"
+                      echo ""
+                      echo "Default Permissions:"
+                      echo "  - All authenticated OpenShift users: Analyst (read-only)"
+                      echo ""
+                      echo "To grant additional permissions:"
+                      echo "  1. Login to ACS Central as admin"
+                      echo "  2. Go to Platform Configuration > Access Control"
+                      echo "  3. Create auth provider rules mapping OpenShift groups to ACS roles"
+                      echo ""
+                      echo "Available ACS Roles:"
+                      echo "  - Admin: Full access"
+                      echo "  - Analyst: Read-only access"
+                      echo "  - Continuous Integration: CI/CD integration"
+                      echo "  - None: No access"
+                      echo ""
+                    else
+                      echo "ERROR: Failed to enable OpenShift OAuth"
+                      echo "$VERIFICATION" | jq '.'
+                      exit 1
+                    fi
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-openshift-auth-job
+        spec:
+          remediationAction: enforce
+          severity: high
+          pruneObjectBehavior: DeleteAll
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: batch/v1
+                kind: Job
+                metadata:
+                  name: 'acs-openshift-auth-config-{{ "{{hub" }} .ManagedClusterName {{ "hub}}" }}-{{ "{{hub" }} now | unixEpoch {{ "hub}}" }}'
+                  namespace: {{ .Values.acs.namespace }}
+                spec:
+                  ttlSecondsAfterFinished: 600
+                  backoffLimit: 3
+                  template:
+                    metadata:
+                      labels:
+                        job: acs-openshift-auth-config
+                    spec:
+                      serviceAccountName: acs-openshift-auth-config
+                      restartPolicy: Never
+                      containers:
+                        - name: configure-oauth
+                          image: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-cli-image" | default "{{ .Values.acs.cliImage }}" {{ "hub}}" }}'
+                          command:
+                            - /bin/bash
+                            - /scripts/configure-oauth.sh
+                          volumeMounts:
+                            - name: script
+                              mountPath: /scripts
+                      volumes:
+                        - name: script
+                          configMap:
+                            name: acs-openshift-auth-script
+                            defaultMode: 0755
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: policy-acs-openshift-auth-placement
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acs'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: policy-acs-openshift-auth-placement
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+placementRef:
+  name: policy-acs-openshift-auth-placement
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-acs-openshift-auth
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end -}}

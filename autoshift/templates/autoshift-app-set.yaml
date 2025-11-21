@@ -9,6 +9,17 @@ spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
+  {{- if .Values.autoshiftOciRegistry }}
+  # OCI Registry mode - deploy from published Helm charts
+  # Policy list is dynamically generated during release process
+  # DO NOT manually edit this section - it will be overwritten during release
+  - list:
+      elements:
+      # Policy list will be generated here by scripts/release.sh
+      # based on actual policies found in policies/ directory
+      - name: placeholder-policy
+  {{- else }}
+  # Git mode - discover policies from Git repository
   - git:
       repoURL: {{ .Values.autoshiftGitRepo }}
       revision: {{ .Values.autoshiftGitBranchTag }}
@@ -20,18 +31,31 @@ spec:
         exclude: true
       {{- end }}
       {{- end }}
+  {{- end }}
   template:
     metadata:
+      {{- if .Values.autoshiftOciRegistry }}
+      name: '{{ .Release.Name }}-{{"{{"}} .name {{"}}"}}'
+      {{- else }}
       name: '{{ .Release.Name }}-{{"{{"}} .path.basename {{"}}"}}'
+      {{- end }}
       labels:
         app: "{{ .Release.Name }}-policies"
         velero.io/exclude-from-backup: "true"
     spec:
       project: default
       source:
+        {{- if .Values.autoshiftOciRegistry }}
+        # OCI mode - use Helm chart from registry
+        repoURL: {{ .Values.autoshiftOciRegistry }}
+        chart: '{{"{{"}} .name {{"}}"}}'
+        targetRevision: {{ .Values.autoshiftOciVersion | default .Chart.Version }}
+        {{- else }}
+        # Git mode - use path in Git repository
         path: '{{"{{"}} .path.path {{"}}"}}'
         repoURL: {{ .Values.autoshiftGitRepo }}
         targetRevision: {{ .Values.autoshiftGitBranchTag }}
+        {{- end }}
         helm:
           valueFiles:
           - values.yaml
