@@ -6,9 +6,8 @@ on:
       - 'v*.*.*'
 
 env:
-  REGISTRY: ghcr.io
-  # Change this to your GitHub organization/user
-  REGISTRY_NAMESPACE: ${{ github.repository_owner }}
+  REGISTRY: quay.io
+  REGISTRY_NAMESPACE: autoshift
 
 jobs:
   release:
@@ -35,12 +34,12 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-      - name: Log in to GitHub Container Registry
+      - name: Log in to Quay.io
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
 
       - name: Update chart versions
         run: |
@@ -78,7 +77,7 @@ jobs:
       - name: Push charts to OCI registry
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          REGISTRY_PATH="${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift"
+          REGISTRY_PATH="${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}"
 
           echo "Pushing charts to ${REGISTRY_PATH}"
 
@@ -90,7 +89,7 @@ jobs:
       - name: Generate installation manifests
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          REGISTRY_PATH="${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift"
+          REGISTRY_PATH="${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}"
 
           mkdir -p release-artifacts
 
@@ -134,14 +133,13 @@ jobs:
 
           ### Option 1: Using ArgoCD Application (Recommended)
 
-          1. Login to your cluster with OCI registry credentials:
+          1. Login to your cluster with OCI registry credentials (if using private registry):
              \`\`\`bash
-             # For GitHub Container Registry
+             # For Quay.io (public registry - credentials may not be required)
              oc create secret docker-registry autoshift-oci-credentials \\
                --docker-server=${{ env.REGISTRY }} \\
-               --docker-username=YOUR_GITHUB_USERNAME \\
-               --docker-password=YOUR_GITHUB_TOKEN \\
-               --docker-email=YOUR_EMAIL \\
+               --docker-username=YOUR_QUAY_USERNAME \\
+               --docker-password=YOUR_QUAY_TOKEN \\
                -n openshift-gitops
 
              # Link the secret to the argocd-repo-server service account
@@ -160,11 +158,11 @@ jobs:
 
           ### Option 2: Using Helm directly
 
-          1. Login to OCI registry:
+          1. Login to OCI registry (if using private registry):
              \`\`\`bash
              helm registry login ${{ env.REGISTRY }} \\
-               -u YOUR_GITHUB_USERNAME \\
-               -p YOUR_GITHUB_TOKEN
+               -u YOUR_QUAY_USERNAME \\
+               -p YOUR_QUAY_TOKEN
              \`\`\`
 
           2. Install AutoShift:
@@ -236,7 +234,7 @@ jobs:
 
             Install from OCI registry:
             \`\`\`bash
-            helm install autoshift oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift/autoshift \\
+            helm install autoshift oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift \\
               --version ${{ steps.version.outputs.version }} \\
               -f values.hub.yaml
             \`\`\`
@@ -245,14 +243,14 @@ jobs:
 
             ### Charts Published
 
-            - Main chart: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift/autoshift:${{ steps.version.outputs.version }}`
-            - Policy charts: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift/<policy-name>:${{ steps.version.outputs.version }}`
+            - Main chart: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift:${{ steps.version.outputs.version }}`
+            - Policy charts: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/<policy-name>:${{ steps.version.outputs.version }}`
 
             ### Container Registry
 
-            All charts are published to GitHub Container Registry:
+            All charts are published to Quay.io:
             - Registry: `${{ env.REGISTRY }}`
-            - Namespace: `${{ env.REGISTRY_NAMESPACE }}/autoshift`
+            - Namespace: `${{ env.REGISTRY_NAMESPACE }}`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -279,5 +277,5 @@ jobs:
 
           for chart in .helm-charts/*.tgz; do
             chart_name=$(basename "$chart" .tgz | sed 's/-[0-9].*//')
-            echo "| ${chart_name} | oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift/${chart_name}:${{ steps.version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| ${chart_name} | oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/${chart_name}:${{ steps.version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
           done

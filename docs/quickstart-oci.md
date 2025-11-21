@@ -18,11 +18,11 @@ oc get csv -n open-cluster-management | grep advanced-cluster-management
 ### Option 1: ArgoCD Application (Recommended)
 
 ```bash
-# 1. Configure OCI credentials (GitHub Container Registry)
+# 1. Configure OCI credentials (if using private registry)
 oc create secret docker-registry autoshift-oci-credentials \
-  --docker-server=ghcr.io \
-  --docker-username=YOUR_GITHUB_USERNAME \
-  --docker-password=YOUR_GITHUB_TOKEN \
+  --docker-server=quay.io \
+  --docker-username=YOUR_QUAY_USERNAME \
+  --docker-password=YOUR_QUAY_TOKEN \
   -n openshift-gitops
 
 # 2. Link credentials to ArgoCD
@@ -34,6 +34,12 @@ oc patch serviceaccount argocd-applicationset-controller -n openshift-gitops \
   --type='json' \
   -p='[{"op":"add","path":"/imagePullSecrets/-","value":{"name":"autoshift-oci-credentials"}}]'
 
+# 2b. (Optional) For registries with custom CA, enable cluster CA bundle in values:
+#     gitops:
+#       repo:
+#         cluster_ca_bundle: true
+# See deploy-oci.md for detailed CA configuration
+
 # 3. Deploy AutoShift
 cat <<EOF | oc apply -f -
 apiVersion: argoproj.io/v1alpha1
@@ -44,7 +50,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: oci://ghcr.io/auto-shift/autoshift
+    repoURL: oci://quay.io/autoshift
     chart: autoshift
     targetRevision: 1.0.0  # Pin to specific version
     helm:
@@ -83,8 +89,8 @@ oc get application autoshift -n openshift-gitops -w
 ### Option 2: Helm CLI
 
 ```bash
-# 1. Login to OCI registry
-helm registry login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_GITHUB_TOKEN
+# 1. Login to OCI registry (if using private registry)
+helm registry login quay.io -u YOUR_QUAY_USERNAME -p YOUR_QUAY_TOKEN
 
 # 2. Create values file
 cat > my-values.yaml <<EOF
@@ -107,7 +113,7 @@ hubClusterSets:
 EOF
 
 # 3. Install
-helm install autoshift oci://ghcr.io/auto-shift/autoshift/autoshift \
+helm install autoshift oci://quay.io/autoshift/autoshift \
   --version 1.0.0 \
   --namespace openshift-gitops \
   --create-namespace \
@@ -142,7 +148,7 @@ oc patch application autoshift -n openshift-gitops \
   -p '{"spec":{"source":{"targetRevision":"1.1.0"}}}'
 
 # With Helm
-helm upgrade autoshift oci://ghcr.io/auto-shift/autoshift/autoshift \
+helm upgrade autoshift oci://quay.io/autoshift/autoshift \
   --version 1.1.0 \
   -f my-values.yaml
 ```

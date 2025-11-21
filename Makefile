@@ -75,6 +75,12 @@ update-versions: validate-version ## Update all chart versions
 		yq eval -i '.version = "$(VERSION)" | .appVersion = "$(VERSION)"' $(chart)/Chart.yaml;)
 	@echo "$(GREEN)✓$(NC) All chart versions updated to $(VERSION)"
 
+.PHONY: sync-values
+sync-values: ## Sync bootstrap chart values from policy charts
+	@echo "$(BLUE)[INFO]$(NC) Syncing bootstrap values from policy charts..."
+	@bash scripts/sync-bootstrap-values.sh
+	@echo "$(GREEN)✓$(NC) Bootstrap values synced"
+
 .PHONY: generate-policy-list
 generate-policy-list: ## Generate policy-list.txt for OCI mode
 	@echo "$(BLUE)[INFO]$(NC) Generating policy-list.txt with $(words $(POLICY_NAMES)) policies..."
@@ -154,7 +160,7 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@echo "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/"
 
 .PHONY: release
-release: validate validate-version clean update-versions generate-policy-list package-charts push-charts generate-artifacts ## Full release process
+release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts generate-artifacts ## Full release process
 	@echo ""
 	@echo "$(GREEN)=========================================$(NC)"
 	@echo "$(GREEN)Release preparation complete!$(NC)"

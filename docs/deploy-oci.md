@@ -58,6 +58,42 @@ oc rollout restart deployment/argocd-repo-server -n openshift-gitops
 oc rollout restart deployment/argocd-applicationset-controller -n openshift-gitops
 ```
 
+### Step 1b: Configure Custom CA Certificate (Optional)
+
+If your OCI registry uses a custom CA certificate (e.g., private registry with self-signed certs), you need to configure ArgoCD to trust it.
+
+**Option A: Use OpenShift's Cluster CA Bundle (Recommended)**
+
+AutoShift can automatically inject the cluster's trusted CA bundle into ArgoCD. Enable this in your values file:
+
+```yaml
+gitops:
+  repo:
+    cluster_ca_bundle: true  # Injects cluster's trusted CA bundle into ArgoCD
+```
+
+This creates a ConfigMap with the `config.openshift.io/inject-trusted-cabundle: "true"` label, which OpenShift automatically populates with the cluster's CA certificates.
+
+**Option B: Manual CA Configuration**
+
+For manual configuration, create a ConfigMap with your CA certificate:
+
+```bash
+# Create ConfigMap with your custom CA
+oc create configmap custom-ca-certs \
+  --from-file=ca-bundle.crt=/path/to/your/ca-bundle.crt \
+  -n openshift-gitops
+
+# Or use OpenShift's automatic CA injection
+oc create configmap custom-ca-certs \
+  -n openshift-gitops
+oc label configmap custom-ca-certs \
+  config.openshift.io/inject-trusted-cabundle=true \
+  -n openshift-gitops
+```
+
+Then reference it in your ArgoCD configuration by enabling `cluster_ca_bundle: true` in your values.
+
 ### Step 2: Install AutoShift from OCI Registry
 
 #### Option A: Using Helm
