@@ -510,7 +510,8 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `compliance`                          | bool              |                           | If not set Compliance Operator will not be managed. Helm chart config map must be set with profiles and remediations |
-| `compliance-name`                     | string            | `compliance-operator`     |       |
+| `compliance-auto-remediate`           | bool              | `true`                    |       |
+| `compliance-subscription-name`        | string            | `compliance-operator`     |       |
 | `compliance-version`                  | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `compliance-source`                   | string            | `redhat-operators`        |       |
 | `compliance-source-namespace`         | string            | `openshift-marketplace`   |       |
