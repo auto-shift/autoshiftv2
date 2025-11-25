@@ -41,7 +41,13 @@ spec:
             namespace: {{ .Values.pipelines.namespace }}
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-channel" | default "{{ .Values.pipelines.channel }}" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-subscription-name" | default "{{ .Values.pipelines.name }}" {{ "hub}}" }}'
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-source" | default "{{ .Values.pipelines.source }}" {{ "hub}}" }}'
+            # Source Selection Logic (evaluated on hub for each managed cluster):
+            # 1. If cluster has explicit 'autoshift.io/pipelines-source' label → use that value
+            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
+            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
+            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
+            # 3. Else → use standard source (e.g., redhat-operators)
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-source" | default (ternary (printf "%s-%s" "{{ .Values.pipelines.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.pipelines.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-source-namespace" | default "{{ .Values.pipelines.sourceNamespace }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-version" | default "" {{ "hub}}" }}'
             # Upgrade approval for subscription will be set based on if version is set not this flag

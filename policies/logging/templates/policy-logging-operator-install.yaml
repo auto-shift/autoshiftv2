@@ -46,7 +46,13 @@ spec:
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/logging-subscription-name" | default "{{ .Values.logging.name }}" {{ "hub}}" }}'
             namespace: {{ .Values.logging.namespace }}
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/logging-source" | default "{{ .Values.logging.source }}" {{ "hub}}" }}'
+            # Source Selection Logic (evaluated on hub for each managed cluster):
+            # 1. If cluster has explicit 'autoshift.io/logging-source' label → use that value
+            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
+            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
+            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
+            # 3. Else → use standard source (e.g., redhat-operators)
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/logging-source" | default (ternary (printf "%s-%s" "{{ .Values.logging.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.logging.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/logging-source-namespace" | default "{{ .Values.logging.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/logging-channel" | default "{{ .Values.logging.channel }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/logging-version" | default "" {{ "hub}}" }}'
