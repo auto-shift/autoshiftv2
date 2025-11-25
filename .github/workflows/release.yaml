@@ -27,6 +27,18 @@ jobs:
         with:
           version: 'v3.14.0'
 
+      - name: Install OpenShift CLI
+        run: |
+          curl -sL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
+          sudo mv oc kubectl /usr/local/bin/
+          oc version --client
+
+      - name: Setup Red Hat registry pull secret
+        if: ${{ secrets.PULL_SECRET != '' }}
+        run: |
+          mkdir -p ~/.docker
+          echo '${{ secrets.PULL_SECRET }}' > ~/.docker/config.json
+
       - name: Extract version from tag
         id: version
         run: |
@@ -73,6 +85,45 @@ jobs:
           done
 
           ls -lh .helm-charts/
+
+      - name: Generate operator dependencies
+        if: ${{ secrets.PULL_SECRET != '' }}
+        run: |
+          mkdir -p release-artifacts
+          echo "Extracting operator dependencies from catalog..."
+          chmod +x scripts/get-operator-dependencies.sh
+          ./scripts/get-operator-dependencies.sh --all --json > release-artifacts/operator-dependencies.json
+          echo "Dependencies extracted:"
+          cat release-artifacts/operator-dependencies.json
+
+      - name: Generate ImageSetConfiguration
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          mkdir -p release-artifacts
+
+          echo "Generating ImageSetConfiguration from ALL values files..."
+          chmod +x scripts/generate-imageset-config.sh
+
+          # Collect all values files for complete operator coverage
+          VALUES_FILES=$(ls autoshift/values*.yaml | tr '\n' ',' | sed 's/,$//')
+          echo "Values files: $VALUES_FILES"
+
+          # Generate with dependencies if available
+          if [[ -f "release-artifacts/operator-dependencies.json" ]]; then
+            ./scripts/generate-imageset-config.sh \
+              "$VALUES_FILES" \
+              --output release-artifacts/imageset-config.yaml \
+              --include-autoshift-charts \
+              --dependencies-file release-artifacts/operator-dependencies.json
+          else
+            ./scripts/generate-imageset-config.sh \
+              "$VALUES_FILES" \
+              --output release-artifacts/imageset-config.yaml \
+              --include-autoshift-charts
+          fi
+
+          echo "ImageSetConfiguration generated:"
+          cat release-artifacts/imageset-config.yaml
 
       - name: Push charts to OCI registry
         run: |

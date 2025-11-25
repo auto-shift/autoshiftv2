@@ -10,6 +10,7 @@ VERSION ?= $(error VERSION is required. Usage: make release VERSION=1.0.0)
 REGISTRY ?= quay.io
 REGISTRY_NAMESPACE ?= autoshift
 DRY_RUN ?= false
+INCLUDE_MIRROR ?= false
 CHARTS_DIR := .helm-charts
 ARTIFACTS_DIR := release-artifacts
 
@@ -91,24 +92,32 @@ generate-policy-list: ## Generate policy-list.txt for OCI mode
 .PHONY: package-charts
 package-charts: ## Package all Helm charts
 	@echo "$(BLUE)[INFO]$(NC) Packaging Helm charts..."
-	@mkdir -p $(CHARTS_DIR)
-	@# Package bootstrap charts
-	@echo "$(BLUE)[INFO]$(NC) Packaging bootstrap charts..."
+	@mkdir -p $(CHARTS_DIR)/bootstrap $(CHARTS_DIR)/policies
+	@# Package bootstrap charts to separate directory (avoids name collision with policy charts)
+	@echo "$(BLUE)[INFO]$(NC) Packaging bootstrap charts to $(CHARTS_DIR)/bootstrap/..."
 	@$(foreach chart,$(BOOTSTRAP_CHARTS), \
 		echo "  - Packaging $(notdir $(chart))..."; \
-		helm package $(chart) -d $(CHARTS_DIR) >/dev/null;)
-	@# Package policy charts
-	@echo "$(BLUE)[INFO]$(NC) Packaging policy charts..."
+		helm package $(chart) -d $(CHARTS_DIR)/bootstrap >/dev/null;)
+	@# Package policy charts to separate directory
+	@echo "$(BLUE)[INFO]$(NC) Packaging policy charts to $(CHARTS_DIR)/policies/..."
 	@$(foreach chart,$(POLICY_CHARTS), \
 		echo "  - Packaging $(notdir $(chart))..."; \
-		helm package $(chart) -d $(CHARTS_DIR) >/dev/null;)
+		helm package $(chart) -d $(CHARTS_DIR)/policies >/dev/null;)
 	@# Package autoshift chart (last, after template generation)
 	@echo "$(BLUE)[INFO]$(NC) Packaging autoshift chart..."
 	@helm package autoshift -d $(CHARTS_DIR) >/dev/null
 	@echo ""
-	@ls -lh $(CHARTS_DIR)
+	@echo "$(BLUE)Bootstrap charts:$(NC)"
+	@ls -lh $(CHARTS_DIR)/bootstrap/
 	@echo ""
-	@echo "$(GREEN)✓$(NC) Packaged $(shell ls -1 $(CHARTS_DIR) | wc -l) charts"
+	@echo "$(BLUE)Policy charts:$(NC)"
+	@ls -lh $(CHARTS_DIR)/policies/ | head -10
+	@echo "  ... and $(shell ls -1 $(CHARTS_DIR)/policies/ | wc -l | tr -d ' ') total policy charts"
+	@echo ""
+	@echo "$(BLUE)Main chart:$(NC)"
+	@ls -lh $(CHARTS_DIR)/autoshift-*.tgz
+	@echo ""
+	@echo "$(GREEN)✓$(NC) Packaged charts: $(shell ls -1 $(CHARTS_DIR)/bootstrap/ | wc -l | tr -d ' ') bootstrap + $(shell ls -1 $(CHARTS_DIR)/policies/ | wc -l | tr -d ' ') policies + 1 main"
 
 .PHONY: push-charts
 push-charts: ## Push charts to OCI registry with namespaced paths
@@ -121,13 +130,9 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 		echo "$(BLUE)[INFO]$(NC) Pushing charts to OCI registry..."; \
 		echo ""; \
 		echo "$(BLUE)[INFO]$(NC) Pushing bootstrap charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap"; \
-		for chart in $(CHARTS_DIR)/*.tgz; do \
-			chart_name=$$(basename $$chart .tgz); \
-			base_name=$$(echo $$chart_name | sed 's/-[0-9].*//');\
-			if echo "$(BOOTSTRAP_CHARTS)" | grep -qw "$$(basename $$base_name)"; then \
-				echo "  - Pushing $$chart_name.tgz..."; \
-				helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap || exit 1; \
-			fi; \
+		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
+			echo "  - Pushing $$(basename $$chart)..."; \
+			helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap || exit 1; \
 		done; \
 		echo ""; \
 		echo "$(BLUE)[INFO]$(NC) Pushing main chart to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"; \
@@ -137,13 +142,9 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 		fi; \
 		echo ""; \
 		echo "$(BLUE)[INFO]$(NC) Pushing policy charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
-		for chart in $(CHARTS_DIR)/*.tgz; do \
-			chart_name=$$(basename $$chart .tgz); \
-			base_name=$$(echo $$chart_name | sed 's/-[0-9].*//');\
-			if echo "$(POLICY_NAMES)" | grep -qw "$$base_name"; then \
-				echo "  - Pushing $$chart_name.tgz..."; \
-				helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies || exit 1; \
-			fi; \
+		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
+			echo "  - Pushing $$(basename $$chart)..."; \
+			helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies || exit 1; \
 		done; \
 		echo ""; \
 		echo "$(GREEN)✓$(NC) All charts pushed"; \
@@ -160,7 +161,13 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@echo "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/"
 
 .PHONY: release
-release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts generate-artifacts ## Full release process
+release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts generate-artifacts ## Full release process (add INCLUDE_MIRROR=true for mirror artifacts)
+	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
+		echo "$(BLUE)[INFO]$(NC) Generating mirror artifacts..."; \
+		$(MAKE) generate-imageset-full VERSION=$(VERSION) || { \
+			echo "$(YELLOW)[WARN]$(NC) Mirror artifact generation failed - continuing without them"; \
+		}; \
+	fi
 	@echo ""
 	@echo "$(GREEN)=========================================$(NC)"
 	@echo "$(GREEN)Release preparation complete!$(NC)"
@@ -170,6 +177,11 @@ release: validate validate-version clean sync-values update-versions generate-po
 	@echo "$(BLUE)Registry:$(NC) oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"
 	@echo "$(BLUE)Charts:$(NC) $(shell ls -1 $(CHARTS_DIR) | wc -l)"
 	@echo "$(BLUE)Artifacts:$(NC) $(ARTIFACTS_DIR)/"
+	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
+		echo "$(BLUE)Mirror artifacts:$(NC) included"; \
+	else \
+		echo "$(BLUE)Mirror artifacts:$(NC) not included (use INCLUDE_MIRROR=true to generate)"; \
+	fi
 	@echo ""
 	@if [ "$(DRY_RUN)" = "false" ]; then \
 		echo "$(GREEN)Next steps:$(NC)"; \
@@ -178,8 +190,44 @@ release: validate validate-version clean sync-values update-versions generate-po
 		echo "  3. Create GitHub/GitLab release with artifacts from: $(ARTIFACTS_DIR)/"; \
 	fi
 
+.PHONY: release-mirror
+release-mirror: ## Full release with mirror artifacts (imageset-config.yaml, operator-dependencies.json)
+	@$(MAKE) release VERSION=$(VERSION) INCLUDE_MIRROR=true
+
 .PHONY: package-only
 package-only: validate clean generate-policy-list package-charts ## Package charts without updating versions or pushing
 	@echo ""
 	@echo "$(GREEN)Packaging complete!$(NC)"
 	@echo "Charts are ready in: $(CHARTS_DIR)/"
+
+.PHONY: generate-dependencies
+generate-dependencies: ## Generate operator dependencies JSON (requires oc CLI and pull secret)
+	@echo "$(BLUE)[INFO]$(NC) Generating operator dependencies..."
+	@command -v oc >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) oc CLI is required. Install from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/"; exit 1; }
+	@command -v jq >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) jq is required. Install: brew install jq"; exit 1; }
+	@mkdir -p $(ARTIFACTS_DIR)
+	@bash scripts/get-operator-dependencies.sh --all --json > $(ARTIFACTS_DIR)/operator-dependencies.json
+	@echo "$(GREEN)✓$(NC) Dependencies saved to $(ARTIFACTS_DIR)/operator-dependencies.json"
+
+# All values files for complete operator coverage
+VALUES_FILES := $(shell ls autoshift/values*.yaml | tr '\n' ',' | sed 's/,$$//')
+
+.PHONY: generate-imageset
+generate-imageset: ## Generate ImageSetConfiguration for disconnected mirroring (all values files)
+	@echo "$(BLUE)[INFO]$(NC) Generating ImageSetConfiguration from all values files..."
+	@echo "$(BLUE)[INFO]$(NC) Values files: $(VALUES_FILES)"
+	@mkdir -p $(ARTIFACTS_DIR)
+	@if [ -f "$(ARTIFACTS_DIR)/operator-dependencies.json" ]; then \
+		bash scripts/generate-imageset-config.sh $(VALUES_FILES) \
+			--output $(ARTIFACTS_DIR)/imageset-config.yaml \
+			--dependencies-file $(ARTIFACTS_DIR)/operator-dependencies.json \
+			--include-autoshift-charts; \
+	else \
+		bash scripts/generate-imageset-config.sh $(VALUES_FILES) \
+			--output $(ARTIFACTS_DIR)/imageset-config.yaml \
+			--include-autoshift-charts; \
+	fi
+	@echo "$(GREEN)✓$(NC) ImageSetConfiguration saved to $(ARTIFACTS_DIR)/imageset-config.yaml"
+
+.PHONY: generate-imageset-full
+generate-imageset-full: generate-dependencies generate-imageset ## Generate ImageSetConfiguration with dependencies (requires oc CLI)

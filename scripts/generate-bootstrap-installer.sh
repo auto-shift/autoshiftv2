@@ -71,10 +71,6 @@ helm upgrade --install openshift-gitops ${OCI_BOOTSTRAP_REPO}/openshift-gitops \
 log "✓ OpenShift GitOps installed"
 echo ""
 
-log "Waiting for OpenShift GitOps to be ready..."
-oc wait --for=condition=ready pod -l app.kubernetes.io/name=openshift-gitops-server \
-    -n openshift-gitops --timeout=300s
-
 log "Installing Advanced Cluster Management..."
 helm upgrade --install advanced-cluster-management ${OCI_BOOTSTRAP_REPO}/advanced-cluster-management \
     --version ${VERSION} \
@@ -178,12 +174,17 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: ${OCI_REPO}
-    chart: autoshift
+    path: .
+    repoURL: ${OCI_REPO}/autoshift
     targetRevision: "${VERSION}"
     helm:
       valueFiles:
         - ${VALUES_FILE_PATH}
+      values: |
+        # Enable OCI registry mode for ApplicationSet
+        autoshiftOciRegistry: true
+        autoshiftOciRepo: ${OCI_REPO}/policies
+        autoshiftOciVersion: "${VERSION}"
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops
@@ -358,8 +359,8 @@ spec:
 GUIDE_EOF
 
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << GUIDE_VERSION
-    repoURL: oci://${REGISTRY}/${REGISTRY_NAMESPACE}
-    chart: autoshift
+    path: .
+    repoURL: oci://${REGISTRY}/${REGISTRY_NAMESPACE}/autoshift
     targetRevision: "${VERSION}"
 GUIDE_VERSION
 
@@ -423,8 +424,8 @@ spec:
 GUIDE_EOF
 
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << GUIDE_VERSION
-    repoURL: oci://${REGISTRY}/${REGISTRY_NAMESPACE}
-    chart: autoshift
+    path: .
+    repoURL: oci://${REGISTRY}/${REGISTRY_NAMESPACE}/autoshift
     targetRevision: "${VERSION}"
 GUIDE_VERSION
 
@@ -487,8 +488,8 @@ spec:
 GUIDE_EOF
 
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << GUIDE_VERSION
-    repoURL: oci://${REGISTRY}/${REGISTRY_NAMESPACE}
-    chart: autoshift
+    path: .
+    repoURL: oci://${REGISTRY}/${REGISTRY_NAMESPACE}/autoshift
     targetRevision: "${VERSION}"
 GUIDE_VERSION
 
