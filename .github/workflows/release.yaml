@@ -15,6 +15,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+    env:
+      PULL_SECRET: ${{ secrets.PULL_SECRET }}
 
     steps:
       - name: Checkout code
@@ -34,10 +36,10 @@ jobs:
           oc version --client
 
       - name: Setup Red Hat registry pull secret
-        if: ${{ secrets.PULL_SECRET != '' }}
+        if: ${{ env.PULL_SECRET != '' }}
         run: |
           mkdir -p ~/.docker
-          echo '${{ secrets.PULL_SECRET }}' > ~/.docker/config.json
+          echo "$PULL_SECRET" > ~/.docker/config.json
 
       - name: Extract version from tag
         id: version
@@ -87,7 +89,7 @@ jobs:
           ls -lh .helm-charts/
 
       - name: Generate operator dependencies
-        if: ${{ secrets.PULL_SECRET != '' }}
+        if: ${{ env.PULL_SECRET != '' }}
         run: |
           mkdir -p release-artifacts
           echo "Extracting operator dependencies from catalog..."
