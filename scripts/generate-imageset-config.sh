@@ -916,7 +916,7 @@ EOF
                             # Add dependency with stable channel (most common default)
                             redhat_operators+="$dep|stable "
                             existing_operators+=" $dep "
-                            ((added_deps++))
+                            added_deps=$((added_deps + 1))
                             log_step "Added dependency: $dep (required by $name)"
                         fi
                     done
