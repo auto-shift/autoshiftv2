@@ -57,230 +57,16 @@ jobs:
         run: |
           echo "$QUAY_PASS" | helm registry login ${{ env.REGISTRY }} -u "$QUAY_USER" --password-stdin
 
-      - name: Update chart versions
+      - name: Run release
         run: |
-          VERSION=${{ steps.version.outputs.version }}
-
-          # Update main autoshift chart version
-          sed -i "s/^version:.*/version: ${VERSION}/" autoshift/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" autoshift/Chart.yaml
-
-          # Update all policy chart versions
-          find policies -name Chart.yaml -exec sed -i "s/^version:.*/version: ${VERSION}/" {} \;
-          find policies -name Chart.yaml -exec sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" {} \;
-
-      - name: Package Helm charts
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-          mkdir -p .helm-charts
-
-          # Package main autoshift chart
-          echo "Packaging autoshift chart..."
-          helm package autoshift -d .helm-charts
-
-          # Package all policy charts
-          echo "Packaging policy charts..."
-          for policy_dir in policies/*/; do
-            if [ -f "${policy_dir}Chart.yaml" ]; then
-              policy_name=$(basename "$policy_dir")
-              echo "Packaging ${policy_name}..."
-              helm package "$policy_dir" -d .helm-charts
-            fi
-          done
-
-          ls -lh .helm-charts/
-
-      - name: Generate operator dependencies
-        if: ${{ env.PULL_SECRET != '' }}
-        run: |
-          mkdir -p release-artifacts
-          echo "Extracting operator dependencies from catalog..."
-          chmod +x scripts/get-operator-dependencies.sh
-          ./scripts/get-operator-dependencies.sh --all --json > release-artifacts/operator-dependencies.json
-          echo "Dependencies extracted:"
-          cat release-artifacts/operator-dependencies.json
-
-      - name: Generate ImageSetConfiguration
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-          mkdir -p release-artifacts
-
-          echo "Generating ImageSetConfiguration from ALL values files..."
-          chmod +x scripts/generate-imageset-config.sh
-
-          # Collect all values files for complete operator coverage
-          VALUES_FILES=$(ls autoshift/values*.yaml | tr '\n' ',' | sed 's/,$//')
-          echo "Values files: $VALUES_FILES"
-
-          # Generate with dependencies if available
-          if [[ -f "release-artifacts/operator-dependencies.json" ]]; then
-            ./scripts/generate-imageset-config.sh \
-              "$VALUES_FILES" \
-              --output release-artifacts/imageset-config.yaml \
-              --include-autoshift-charts \
-              --dependencies-file release-artifacts/operator-dependencies.json
-          else
-            ./scripts/generate-imageset-config.sh \
-              "$VALUES_FILES" \
-              --output release-artifacts/imageset-config.yaml \
-              --include-autoshift-charts
-          fi
-
-          echo "ImageSetConfiguration generated:"
-          cat release-artifacts/imageset-config.yaml
-
-      - name: Push charts to OCI registry
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-          REGISTRY_PATH="${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}"
-
-          echo "Pushing charts to ${REGISTRY_PATH}"
-
-          for chart in .helm-charts/*.tgz; do
-            echo "Pushing $(basename $chart)..."
-            helm push "$chart" "oci://${REGISTRY_PATH}"
-          done
-
-      - name: Generate installation manifests
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-          REGISTRY_PATH="${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}"
-
-          mkdir -p release-artifacts
-
-          # Create ArgoCD Application manifest for OCI deployment
-          cat > release-artifacts/autoshift-application.yaml <<EOF
-          apiVersion: argoproj.io/v1alpha1
-          kind: Application
-          metadata:
-            name: autoshift
-            namespace: openshift-gitops
-          spec:
-            project: default
-            source:
-              repoURL: oci://${REGISTRY_PATH}
-              chart: autoshift
-              targetRevision: ${VERSION}
-              helm:
-                valueFiles:
-                  - values.hub.yaml
-            destination:
-              server: https://kubernetes.default.svc
-              namespace: openshift-gitops
-            syncPolicy:
-              automated:
-                prune: true
-                selfHeal: true
-              syncOptions:
-                - CreateNamespace=true
-          EOF
-
-          # Create installation README
-          cat > release-artifacts/INSTALL.md <<EOF
-          # AutoShift ${VERSION} Installation
-
-          ## Prerequisites
-          - OpenShift cluster with cluster-admin access
-          - OpenShift GitOps operator installed
-          - Red Hat Advanced Cluster Management operator installed
-
-          ## Installation
-
-          ### Option 1: Using ArgoCD Application (Recommended)
-
-          1. Login to your cluster with OCI registry credentials (if using private registry):
-             \`\`\`bash
-             # For Quay.io (public registry - credentials may not be required)
-             oc create secret docker-registry autoshift-oci-credentials \\
-               --docker-server=${{ env.REGISTRY }} \\
-               --docker-username=YOUR_QUAY_USERNAME \\
-               --docker-password=YOUR_QUAY_TOKEN \\
-               -n openshift-gitops
-
-             # Link the secret to the argocd-repo-server service account
-             oc patch serviceaccount argocd-repo-server \\
-               -n openshift-gitops \\
-               --type='json' \\
-               -p='[{"op":"add","path":"/imagePullSecrets/-","value":{"name":"autoshift-oci-credentials"}}]'
-             \`\`\`
-
-          2. Apply the AutoShift application:
-             \`\`\`bash
-             oc apply -f autoshift-application.yaml
-             \`\`\`
-
-          3. Configure your cluster labels in the hub cluster values or via cluster labels
-
-          ### Option 2: Using Helm directly
-
-          1. Login to OCI registry (if using private registry):
-             \`\`\`bash
-             helm registry login ${{ env.REGISTRY }} \\
-               -u YOUR_QUAY_USERNAME \\
-               -p YOUR_QUAY_TOKEN
-             \`\`\`
-
-          2. Install AutoShift:
-             \`\`\`bash
-             helm install autoshift oci://${REGISTRY_PATH}/autoshift \\
-               --version ${VERSION} \\
-               --namespace openshift-gitops \\
-               --create-namespace \\
-               -f your-values.yaml
-             \`\`\`
-
-          ### Option 3: Pull and customize
-
-          1. Pull all charts:
-             \`\`\`bash
-             helm pull oci://${REGISTRY_PATH}/autoshift --version ${VERSION}
-             \`\`\`
-
-          2. Extract and customize:
-             \`\`\`bash
-             tar -xzf autoshift-${VERSION}.tgz
-             # Edit values files
-             helm install autoshift ./autoshift -f custom-values.yaml
-             \`\`\`
-
-          ## Verify Installation
-
-          Check ArgoCD applications:
-          \`\`\`bash
-          oc get applications -n openshift-gitops
-          \`\`\`
-
-          Check ACM policies:
-          \`\`\`bash
-          oc get policies -A
-          \`\`\`
-
-          ## Upgrade
-
-          \`\`\`bash
-          helm upgrade autoshift oci://${REGISTRY_PATH}/autoshift \\
-            --version NEW_VERSION \\
-            -f your-values.yaml
-          \`\`\`
-
-          ## Uninstall
-
-          \`\`\`bash
-          helm uninstall autoshift -n openshift-gitops
-          \`\`\`
-
-          ## Documentation
-
-          - [AutoShift Documentation](https://github.com/${{ github.repository }})
-          - [Release Notes](https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }})
-          EOF
+          make release-mirror VERSION=${{ steps.version.outputs.version }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             release-artifacts/*
-            .helm-charts/*.tgz
+            .helm-charts/**/*.tgz
           generate_release_notes: true
           body: |
             ## AutoShift ${{ steps.version.outputs.version }}
@@ -288,49 +74,27 @@ jobs:
             ### Installation
 
             Install from OCI registry:
-            \`\`\`bash
-            helm install autoshift oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift \\
-              --version ${{ steps.version.outputs.version }} \\
+            ```bash
+            helm install autoshift oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift \
+              --version ${{ steps.version.outputs.version }} \
               -f values.hub.yaml
-            \`\`\`
+            ```
 
-            See [INSTALL.md](release-artifacts/INSTALL.md) for detailed installation instructions.
+            See INSTALL.md in release artifacts for detailed installation instructions.
 
             ### Charts Published
 
             - Main chart: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift:${{ steps.version.outputs.version }}`
-            - Policy charts: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/<policy-name>:${{ steps.version.outputs.version }}`
-
-            ### Container Registry
-
-            All charts are published to Quay.io:
-            - Registry: `${{ env.REGISTRY }}`
-            - Namespace: `${{ env.REGISTRY_NAMESPACE }}`
+            - Bootstrap charts: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/bootstrap/<name>:${{ steps.version.outputs.version }}`
+            - Policy charts: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/policies/<name>:${{ steps.version.outputs.version }}`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Generate chart index (optional for Helm repo compatibility)
-        run: |
-          VERSION=${{ steps.version.outputs.version }}
-
-          # Generate Helm repo index for traditional helm repo usage
-          helm repo index .helm-charts --url https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}
-
-          # This allows users to add as traditional helm repo if needed
-          cp .helm-charts/index.yaml release-artifacts/
 
       - name: Summary
         run: |
           echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Released AutoShift version: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "Released AutoShift version: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Published Charts:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Chart | OCI URL |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|---------|" >> $GITHUB_STEP_SUMMARY
-
-          for chart in .helm-charts/*.tgz; do
-            chart_name=$(basename "$chart" .tgz | sed 's/-[0-9].*//')
-            echo "| ${chart_name} | oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/${chart_name}:${{ steps.version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
-          done
+          find .helm-charts -name "*.tgz" -exec basename {} \; | sort >> $GITHUB_STEP_SUMMARY
