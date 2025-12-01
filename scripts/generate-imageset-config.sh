@@ -1018,13 +1018,13 @@ EOF
         log_step "Skipped operators (openshift-only mode)"
     fi
 
-    # Add additional images section (empty by default)
-    echo "  additionalImages: []" >> "$output_file"
-
-    # Add AutoShift Helm charts if requested
+    # Add AutoShift OCI Helm charts to additionalImages if requested
+    # OCI Helm charts are stored as OCI artifacts, so they must be mirrored via additionalImages, not helm section
     if [[ "$INCLUDE_AUTOSHIFT_CHARTS" == "true" ]]; then
         # Set defaults if not specified
-        [[ -z "$AUTOSHIFT_REGISTRY" ]] && AUTOSHIFT_REGISTRY="oci://quay.io/autoshift"
+        [[ -z "$AUTOSHIFT_REGISTRY" ]] && AUTOSHIFT_REGISTRY="quay.io/autoshift"
+        # Strip oci:// prefix if present for additionalImages format
+        AUTOSHIFT_REGISTRY="${AUTOSHIFT_REGISTRY#oci://}"
 
         # Get version from Chart.yaml if not specified
         if [[ -z "$AUTOSHIFT_VERSION" ]]; then
@@ -1035,9 +1035,9 @@ EOF
 
         if [[ -z "$AUTOSHIFT_VERSION" ]]; then
             log_warning "AutoShift version not specified and could not be determined from Chart.yaml"
-            echo "  helm: {}" >> "$output_file"
+            echo "  additionalImages: []" >> "$output_file"
         else
-            log_step "Adding AutoShift Helm charts from $AUTOSHIFT_REGISTRY (version: $AUTOSHIFT_VERSION)"
+            log_step "Adding AutoShift OCI Helm charts from $AUTOSHIFT_REGISTRY (version: $AUTOSHIFT_VERSION)"
 
             # Discover all policy charts
             local policy_charts=()
@@ -1047,40 +1047,29 @@ EOF
                 fi
             done
 
-            # Generate helm section
-            echo "  helm:" >> "$output_file"
-            echo "    repositories:" >> "$output_file"
+            # Generate additionalImages section with OCI Helm charts
+            echo "  additionalImages:" >> "$output_file"
+            echo "    # AutoShift OCI Helm Charts" >> "$output_file"
+            echo "    # Main chart" >> "$output_file"
+            echo "    - name: $AUTOSHIFT_REGISTRY/autoshift:$AUTOSHIFT_VERSION" >> "$output_file"
 
-            # Main AutoShift chart
-            echo "    - name: autoshift-main" >> "$output_file"
-            echo "      url: $AUTOSHIFT_REGISTRY" >> "$output_file"
-            echo "      charts:" >> "$output_file"
-            echo "      - name: autoshift" >> "$output_file"
-            echo "        version: $AUTOSHIFT_VERSION" >> "$output_file"
+            echo "    # Bootstrap charts" >> "$output_file"
+            echo "    - name: $AUTOSHIFT_REGISTRY/bootstrap/openshift-gitops:$AUTOSHIFT_VERSION" >> "$output_file"
+            echo "    - name: $AUTOSHIFT_REGISTRY/bootstrap/advanced-cluster-management:$AUTOSHIFT_VERSION" >> "$output_file"
 
-            # Bootstrap charts
-            echo "    - name: autoshift-bootstrap" >> "$output_file"
-            echo "      url: $AUTOSHIFT_REGISTRY/bootstrap" >> "$output_file"
-            echo "      charts:" >> "$output_file"
-            echo "      - name: openshift-gitops" >> "$output_file"
-            echo "        version: $AUTOSHIFT_VERSION" >> "$output_file"
-            echo "      - name: advanced-cluster-management" >> "$output_file"
-            echo "        version: $AUTOSHIFT_VERSION" >> "$output_file"
-
-            # Policy charts
-            echo "    - name: autoshift-policies" >> "$output_file"
-            echo "      url: $AUTOSHIFT_REGISTRY/policies" >> "$output_file"
-            echo "      charts:" >> "$output_file"
+            echo "    # Policy charts" >> "$output_file"
             for chart_name in "${policy_charts[@]}"; do
-                echo "      - name: $chart_name" >> "$output_file"
-                echo "        version: $AUTOSHIFT_VERSION" >> "$output_file"
+                echo "    - name: $AUTOSHIFT_REGISTRY/policies/$chart_name:$AUTOSHIFT_VERSION" >> "$output_file"
             done
 
-            log_success "Added ${#policy_charts[@]} policy charts + 3 core charts to helm section"
+            log_success "Added ${#policy_charts[@]} policy charts + 3 core charts to additionalImages"
         fi
     else
-        echo "  helm: {}" >> "$output_file"
+        echo "  additionalImages: []" >> "$output_file"
     fi
+
+    # helm section not used - OCI charts go in additionalImages
+    echo "  helm: {}" >> "$output_file"
 
     log_success "Generated ImageSetConfiguration: $output_file"
 }
