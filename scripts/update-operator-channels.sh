@@ -199,6 +199,9 @@ get_channels() {
         jq -r 'select(.schema == "olm.channel") | .name' "$package_dir/catalog.json" 2>/dev/null | sort -u
     elif [[ -f "$package_dir/channels.json" ]]; then
         sed 's/}{/}\n{/g' "$package_dir/channels.json" | jq -r '.name' 2>/dev/null | sort -u
+    elif [[ -d "$package_dir/channels" ]]; then
+        # Directory-based format: channels/*.json files
+        ls "$package_dir/channels"/*.json 2>/dev/null | xargs -n1 basename | sed 's/\.json$//' | sort -u
     else
         return 1
     fi
