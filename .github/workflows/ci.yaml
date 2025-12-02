@@ -30,11 +30,10 @@ jobs:
 
           echo ""
           echo "=== Linting bootstrap charts ==="
-          for chart in bootstrap/*/; do
-            if [ -f "${chart}Chart.yaml" ]; then
-              echo "Linting $(basename $chart)..."
-              helm lint "$chart"
-            fi
+          # Bootstrap charts are at root level (excluding policies/ and autoshift/)
+          for chart in $(find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" -exec dirname {} \;); do
+            echo "Linting $(basename $chart)..."
+            helm lint "$chart"
           done
 
           echo ""
@@ -80,19 +79,24 @@ jobs:
         run: |
           echo "=== Verifying Makefile dynamic discovery ==="
 
-          # Count charts found by Makefile vs actual directories
-          BOOTSTRAP_DIRS=$(find bootstrap -maxdepth 1 -type d -name "*" ! -name "bootstrap" | wc -l | tr -d ' ')
-          POLICY_DIRS=$(find policies -maxdepth 1 -type d -name "*" ! -name "policies" | wc -l | tr -d ' ')
+          # Count bootstrap charts (root-level Chart.yaml excluding policies/ and autoshift/)
+          # This matches the Makefile's BOOTSTRAP_CHARTS discovery
+          BOOTSTRAP_DIRS=$(find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" | wc -l | tr -d ' ')
+          POLICY_DIRS=$(find policies -maxdepth 1 -type d ! -name "policies" | wc -l | tr -d ' ')
 
           BOOTSTRAP_CHARTS=$(ls .helm-charts/bootstrap/*.tgz 2>/dev/null | wc -l | tr -d ' ')
           POLICY_CHARTS=$(ls .helm-charts/policies/*.tgz 2>/dev/null | wc -l | tr -d ' ')
 
-          echo "Bootstrap: $BOOTSTRAP_DIRS directories -> $BOOTSTRAP_CHARTS charts"
-          echo "Policies: $POLICY_DIRS directories -> $POLICY_CHARTS charts"
+          echo "Bootstrap: $BOOTSTRAP_DIRS source charts -> $BOOTSTRAP_CHARTS packaged"
+          echo "Policies: $POLICY_DIRS source charts -> $POLICY_CHARTS packaged"
 
           # Verify all charts were packaged
           if [ "$BOOTSTRAP_DIRS" != "$BOOTSTRAP_CHARTS" ]; then
             echo "::error::Bootstrap chart count mismatch! Expected $BOOTSTRAP_DIRS, got $BOOTSTRAP_CHARTS"
+            echo "Source charts:"
+            find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*"
+            echo "Packaged charts:"
+            ls .helm-charts/bootstrap/*.tgz 2>/dev/null || echo "(none)"
             exit 1
           fi
 
