@@ -104,13 +104,13 @@ hubClusterSets:
   hub-stable:
     labels:
       self-managed: 'true'
-      openshift-version: '4.18.22'
+      openshift-version: '4.18.28'
       # ... your stable configuration
 
 managedClusterSets:
   managed-stable:
     labels:
-      openshift-version: '4.18.22'
+      openshift-version: '4.18.28'
       # ... your stable configuration
 ```
 
@@ -123,13 +123,13 @@ hubClusterSets:
   hub-canary:
     labels:
       self-managed: 'true'
-      openshift-version: '4.18.22'
+      openshift-version: '4.18.28'
       # ... your canary configuration (possibly with new features)
 
 managedClusterSets:
   managed-canary:
     labels:
-      openshift-version: '4.18.22'
+      openshift-version: '4.18.28'
       # ... your canary configuration
 ```
 
@@ -164,7 +164,7 @@ spec:
           hub-stable:
             labels:
               self-managed: 'true'
-              openshift-version: '4.18.22'
+              openshift-version: '4.18.28'
               gitops: 'true'
               acm: 'true'
               # ... other labels
@@ -205,7 +205,7 @@ spec:
           hub-canary:
             labels:
               self-managed: 'true'
-              openshift-version: '4.18.22'
+              openshift-version: '4.18.28'
               gitops: 'true'
               acm: 'true'
               # ... other labels (possibly new features)

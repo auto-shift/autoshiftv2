@@ -468,7 +468,7 @@ hubClusterSets:
   hub:
     labels:
       self-managed: 'true'
-      openshift-version: '4.18.22'
+      openshift-version: '4.18.28'
       acs: 'true'
       acs-channel: 'stable'
       odf: 'true'

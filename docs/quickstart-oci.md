@@ -62,7 +62,7 @@ spec:
           hub:
             labels:
               self-managed: 'true'
-              openshift-version: '4.18.22'
+              openshift-version: '4.18.28'
               # GitOps is required for hub clusters
               gitops: 'true'
               # ACM is automatically installed on all hub clustersets by policy
@@ -101,7 +101,7 @@ hubClusterSets:
   hub:
     labels:
       self-managed: 'true'
-      openshift-version: '4.18.22'
+      openshift-version: '4.18.28'
       # GitOps is required for hub clusters
       gitops: 'true'
       # ACM is automatically installed on all hub clustersets by policy
