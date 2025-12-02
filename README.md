@@ -17,12 +17,6 @@ What AutoShift does is it uses OpenShift GitOps to declaratively manage RHACM wh
 - 📊 [Gradual Rollout](docs/gradual-rollout.md) - Multi-version deployments
 - 🔧 [Developer Guide](docs/developer-guide.md) - Contributing and advanced topics
 
-**Minimum Requirements:**
-- `gitops: 'true'` - OpenShift GitOps (required)
-- ACM is automatically installed on all hub clustersets by policy
-
-See [`values.minimal.yaml`](autoshift/values.minimal.yaml) for a minimal configuration example.
-
 ## Architecture
 
 AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert. RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass, with built-in governance, cluster lifecycle management, application lifecycle management, and observability features. OpenShift GitOps provides declarative GitOps for multicluster continuous delivery.
@@ -56,7 +50,42 @@ All hub clusters **must** have the following configuration in their `hubClusterS
 
 See `autoshift/values.minimal.yaml` for a minimal configuration example that shows only the required settings.
 
-### Prepping for Installation
+### Installation from OCI Release (Recommended)
+
+For production deployments, install from the OCI registry:
+
+1. Download the installation scripts from the [latest release](https://github.com/auto-shift/autoshiftv2/releases):
+
+   ```bash
+   # Download and extract release artifacts
+   VERSION=0.1.0  # Replace with desired version
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/INSTALL.md -O
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-bootstrap.sh -O
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-autoshift.sh -O
+   chmod +x install-*.sh
+   ```
+
+2. Run the bootstrap installer to deploy GitOps and ACM:
+
+   ```bash
+   ./install-bootstrap.sh
+   ```
+
+3. Wait for ACM to be ready, then install AutoShift:
+
+   ```bash
+   # Wait for MultiClusterHub to be running
+   oc get mch -A -w
+
+   # Install AutoShift (edit the script first to set your values file)
+   ./install-autoshift.sh
+   ```
+
+The charts are pulled directly from `oci://quay.io/autoshift/` - no git clone required.
+
+### Installation from Source
+
+For development or customization, install directly from the git repository:
 
 1.  Login to the **hub** cluster via the [`oc` utility](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#cli-logging-in_cli-developer-commands).
 

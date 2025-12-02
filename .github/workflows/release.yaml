@@ -12,6 +12,8 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    container:
+      image: registry.access.redhat.com/ubi9/ubi:latest
     permissions:
       contents: write
       packages: write
@@ -19,26 +21,28 @@ jobs:
       PULL_SECRET: ${{ secrets.PULL_SECRET }}
 
     steps:
+      - name: Install dependencies
+        run: |
+          dnf -y install \
+            make \
+            jq \
+            git \
+            findutils \
+            https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+          dnf -y install yq
+          # Install Helm from Red Hat mirror
+          curl -fsSL https://mirror.openshift.com/pub/openshift-v4/clients/helm/latest/helm-linux-amd64 -o /usr/local/bin/helm
+          chmod +x /usr/local/bin/helm
+          helm version
+          # Install OpenShift CLI from Red Hat mirror
+          curl -fsSL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
+          mv oc kubectl /usr/local/bin/
+          oc version --client
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: 'v3.14.0'
-
-      - name: Install OpenShift CLI, jq, and yq
-        run: |
-          curl -sL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
-          sudo mv oc kubectl /usr/local/bin/
-          oc version --client
-          sudo apt-get update && sudo apt-get install -y jq
-          jq --version
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
-          yq --version
 
       - name: Setup Red Hat registry pull secret
         if: ${{ env.PULL_SECRET != '' }}
@@ -64,12 +68,45 @@ jobs:
         run: |
           make release-mirror VERSION=${{ steps.version.outputs.version }}
 
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            release-artifacts/*
+            .helm-charts/autoshift-*.tgz
+
+      - name: Summary
+        run: |
+          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Released AutoShift version: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Published Charts:" >> $GITHUB_STEP_SUMMARY
+          find .helm-charts -name "*.tgz" -exec basename {} \; | sort >> $GITHUB_STEP_SUMMARY
+
+  create-release:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            release-artifacts/*
-            .helm-charts/autoshift-*.tgz
+          files: artifacts/**/*
           generate_release_notes: true
           body: |
             ## AutoShift ${{ steps.version.outputs.version }}
@@ -92,12 +129,3 @@ jobs:
             - Policy charts: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/policies/<name>:${{ steps.version.outputs.version }}`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Summary
-        run: |
-          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Released AutoShift version: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Published Charts:" >> $GITHUB_STEP_SUMMARY
-          find .helm-charts -name "*.tgz" -exec basename {} \; | sort >> $GITHUB_STEP_SUMMARY
