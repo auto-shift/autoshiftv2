@@ -16,14 +16,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Colors (disabled if not a terminal)
-if [[ -t 2 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    CYAN='\033[0;36m'
-    NC='\033[0m'
+# Colors (enabled if either stdout or stderr is a terminal)
+# Using $'...' syntax so escape sequences are actual escape characters
+if [[ -t 1 ]] || [[ -t 2 ]]; then
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[1;33m'
+    BLUE=$'\033[0;34m'
+    CYAN=$'\033[0;36m'
+    NC=$'\033[0m'
 else
     RED=''
     GREEN=''
@@ -254,6 +255,16 @@ get_best_channel() {
 # AUTO-DISCOVERY: Find operators from values files
 # ============================================================================
 
+# Normalize label to canonical form (avoid duplicates like coo/cluster-observability)
+normalize_label() {
+    local label="$1"
+    case "$label" in
+        cluster-observability) echo "coo" ;;
+        virt) echo "virtualization" ;;
+        *) echo "$label" ;;
+    esac
+}
+
 # Discover operators by scanning values files for *-channel: patterns
 discover_operators() {
     local labels=""
@@ -272,7 +283,7 @@ discover_operators() {
     for file in "$PROJECT_ROOT"/policies/*/values.yaml; do
         [[ -f "$file" ]] || continue
         # Check if file has a channel: field (indicates it's an operator)
-        if grep -qE '^\s+channel:' "$file" 2>/dev/null; then
+        if grep -qE '^[[:space:]]+channel:' "$file" 2>/dev/null; then
             # Try to get the operator label from directory name
             local dir_name
             dir_name=$(basename "$(dirname "$file")")
@@ -293,8 +304,13 @@ discover_operators() {
         fi
     done
 
-    # Deduplicate and sort
-    echo "$labels" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' '
+    # Normalize labels and deduplicate
+    local normalized=""
+    for label in $labels; do
+        normalized="$normalized $(normalize_label "$label")"
+    done
+
+    echo "$normalized" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' '
 }
 
 # Get package name for a label - tries multiple sources
@@ -328,7 +344,7 @@ get_package_for_label() {
 
         if $matches; then
             # Look for name: field in the values.yaml
-            package=$(grep -E '^\s+name:' "$file" 2>/dev/null | head -1 | sed 's/.*name:\s*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+            package=$(grep -E '^[[:space:]]+name:' "$file" 2>/dev/null | head -1 | sed 's/.*name:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
             if [[ -n "$package" ]]; then
                 echo "$package"
                 return 0
@@ -339,8 +355,8 @@ get_package_for_label() {
     # Second, try to find subscription-name from autoshift values files
     for file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
         [[ -f "$file" ]] || continue
-        package=$(grep -E "^\s*${label}-subscription-name:" "$file" 2>/dev/null | head -1 | \
-                  sed 's/.*subscription-name:\s*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+        package=$(grep -E "^[[:space:]]*${label}-subscription-name:" "$file" 2>/dev/null | head -1 | \
+                  sed 's/.*subscription-name:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
         if [[ -n "$package" ]]; then
             echo "$package"
             return 0
@@ -379,7 +395,7 @@ get_label_for_package() {
     for file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
         [[ -f "$file" ]] || continue
         local label
-        label=$(grep -B1 "subscription-name:\s*['\"]\\?${package}['\"]\\?" "$file" 2>/dev/null | \
+        label=$(grep -B1 "subscription-name:[[:space:]]*['\"]\\?${package}['\"]\\?" "$file" 2>/dev/null | \
                 grep -oE '^[[:space:]]*[a-z][-a-z0-9]*-subscription-name:' | \
                 sed 's/-subscription-name:.*//' | tr -d ' ' | head -1)
         if [[ -n "$label" ]]; then
@@ -455,14 +471,16 @@ update_autoshift_channel() {
         if grep -q "${label}-channel:" "$file" 2>/dev/null; then
             if $DRY_RUN; then
                 local current
-                current=$(grep -E "^\s*${label}-channel:" "$file" | head -1 | \
-                          sed 's/.*: *//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+                current=$(grep -E "^[[:space:]]*${label}-channel:" "$file" | head -1 | \
+                          sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
                 if [[ -n "$current" ]] && [[ "$current" != "$new_channel" ]]; then
                     echo "  Would update $file: ${label}-channel: $current -> $new_channel"
                     updated=1
                 fi
             else
-                sed -i.bak "s/\(${label}-channel:\s*\).*/\1${new_channel}/" "$file"
+                # Ensure exactly one space after colon for proper YAML formatting
+                # The .* matches the old value to replace it entirely
+                sed -i.bak "s/\(${label}-channel:\)[[:space:]]*.*/\1 ${new_channel}/" "$file"
                 rm -f "$file.bak"
                 updated=1
             fi
@@ -481,17 +499,19 @@ update_policy_channel() {
     local file
     file=$(get_policy_file_for_label "$label")
 
-    if [[ -f "$file" ]] && grep -qE "^\s+channel:" "$file" 2>/dev/null; then
+    if [[ -f "$file" ]] && grep -qE "^[[:space:]]+channel:" "$file" 2>/dev/null; then
         if $DRY_RUN; then
             local current
-            current=$(grep -E "^\s+channel:" "$file" | head -1 | \
-                      sed 's/.*: *//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+            current=$(grep -E "^[[:space:]]+channel:" "$file" | head -1 | \
+                      sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
             if [[ -n "$current" ]] && [[ "$current" != "$new_channel" ]]; then
                 echo "  Would update $file: channel: $current -> $new_channel"
                 updated=1
             fi
         else
-            sed -i.bak "s/^\([[:space:]]*channel:\s*\).*/\1${new_channel}/" "$file"
+            # Ensure exactly one space after colon for proper YAML formatting
+            # The .* matches the old value to replace it entirely
+            sed -i.bak "s/^\([[:space:]]*channel:\)[[:space:]]*.*/\1 ${new_channel}/" "$file"
             rm -f "$file.bak"
             updated=1
         fi
@@ -508,8 +528,8 @@ get_current_channel() {
     # Check autoshift values files first
     for file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
         [[ -f "$file" ]] || continue
-        current=$(grep -E "^\s*${label}-channel:" "$file" 2>/dev/null | head -1 | \
-                  sed 's/.*: *//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+        current=$(grep -E "^[[:space:]]*${label}-channel:" "$file" 2>/dev/null | head -1 | \
+                  sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
         if [[ -n "$current" ]]; then
             echo "$current"
             return 0
@@ -520,8 +540,8 @@ get_current_channel() {
     local policy_file
     policy_file=$(get_policy_file_for_label "$label")
     if [[ -f "$policy_file" ]]; then
-        current=$(grep -E "^\s+channel:" "$policy_file" 2>/dev/null | head -1 | \
-                  sed 's/.*: *//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+        current=$(grep -E "^[[:space:]]+channel:" "$policy_file" 2>/dev/null | head -1 | \
+                  sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
         if [[ -n "$current" ]]; then
             echo "$current"
             return 0
@@ -606,8 +626,9 @@ main() {
             updates_available=1
 
             if ! $CHECK_ONLY; then
-                update_autoshift_channel "$label" "$best_channel"
-                update_policy_channel "$label" "$best_channel"
+                # || true prevents set -e from exiting (return 1 means "updated")
+                update_autoshift_channel "$label" "$best_channel" || true
+                update_policy_channel "$label" "$best_channel" || true
                 if ! $DRY_RUN; then
                     ((updates_made++)) || true
                 fi
