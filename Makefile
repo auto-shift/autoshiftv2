@@ -127,27 +127,27 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 		echo "Main chart would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"; \
 		echo "Policy charts would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
 	else \
-		echo "$(BLUE)[INFO]$(NC) Pushing charts to OCI registry..."; \
+		printf "$(BLUE)[INFO]$(NC) Pushing charts to OCI registry...\n"; \
 		echo ""; \
-		echo "$(BLUE)[INFO]$(NC) Pushing bootstrap charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap"; \
+		printf "$(BLUE)[INFO]$(NC) Pushing bootstrap charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap\n"; \
 		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
 			echo "  - Pushing $$(basename $$chart)..."; \
 			helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap || exit 1; \
 		done; \
 		echo ""; \
-		echo "$(BLUE)[INFO]$(NC) Pushing main chart to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"; \
+		printf "$(BLUE)[INFO]$(NC) Pushing main chart to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)\n"; \
 		if [ -f "$(CHARTS_DIR)/autoshift-$(VERSION).tgz" ]; then \
 			echo "  - Pushing autoshift-$(VERSION).tgz..."; \
 			helm push $(CHARTS_DIR)/autoshift-$(VERSION).tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE) || exit 1; \
 		fi; \
 		echo ""; \
-		echo "$(BLUE)[INFO]$(NC) Pushing policy charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
+		printf "$(BLUE)[INFO]$(NC) Pushing policy charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies\n"; \
 		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
 			echo "  - Pushing $$(basename $$chart)..."; \
 			helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies || exit 1; \
 		done; \
 		echo ""; \
-		echo "$(GREEN)✓$(NC) All charts pushed"; \
+		printf "$(GREEN)✓$(NC) All charts pushed\n"; \
 		echo "  Bootstrap: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap"; \
 		echo "  Main: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"; \
 		echo "  Policies: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
@@ -163,9 +163,9 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 .PHONY: release
 release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts generate-artifacts ## Full release process (add INCLUDE_MIRROR=true for mirror artifacts)
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
-		echo "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
+		printf "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
 		$(MAKE) generate-imageset-full VERSION=$(VERSION) || { \
-			printf "$(YELLOW)[WARN]$(NC) Mirror artifact generation failed - continuing without them"; \
+			printf "$(YELLOW)[WARN]$(NC) Mirror artifact generation failed - continuing without them\n"; \
 		}; \
 	fi
 	@echo ""
@@ -178,13 +178,13 @@ release: validate validate-version clean sync-values update-versions generate-po
 	@printf "$(BLUE)Charts:$(NC) $(shell ls -1 $(CHARTS_DIR) | wc -l)"
 	@printf "$(BLUE)Artifacts:$(NC) $(ARTIFACTS_DIR)/"
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
-		echo "$(BLUE)Mirror artifacts:$(NC) included"; \
+		printf "$(BLUE)Mirror artifacts:$(NC) included\n"; \
 	else \
-		echo "$(BLUE)Mirror artifacts:$(NC) not included (use INCLUDE_MIRROR=true to generate)"; \
+		printf "$(BLUE)Mirror artifacts:$(NC) not included (use INCLUDE_MIRROR=true to generate)\n"; \
 	fi
 	@echo ""
 	@if [ "$(DRY_RUN)" = "false" ]; then \
-		echo "$(GREEN)Next steps:$(NC)\n"; \
+		printf "$(GREEN)Next steps:$(NC)\n"; \
 		echo "  1. Create git tag: git tag v$(VERSION)"; \
 		echo "  2. Push tag: git push origin v$(VERSION)"; \
 		echo "  3. Create GitHub/GitLab release with artifacts from: $(ARTIFACTS_DIR)/"; \
