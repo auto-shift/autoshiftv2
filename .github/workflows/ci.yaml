@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feature/*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Lint Helm charts
+        run: |
+          echo "=== Linting main autoshift chart ==="
+          helm lint autoshift
+
+          echo ""
+          echo "=== Linting bootstrap charts ==="
+          for chart in bootstrap/*/; do
+            if [ -f "${chart}Chart.yaml" ]; then
+              echo "Linting $(basename $chart)..."
+              helm lint "$chart"
+            fi
+          done
+
+          echo ""
+          echo "=== Linting policy charts ==="
+          for chart in policies/*/; do
+            if [ -f "${chart}Chart.yaml" ]; then
+              echo "Linting $(basename $chart)..."
+              helm lint "$chart"
+            fi
+          done
+
+      - name: Validate YAML syntax
+        run: |
+          echo "=== Validating values files ==="
+          for f in autoshift/values*.yaml; do
+            echo "Checking $f..."
+            yq eval '.' "$f" > /dev/null
+          done
+
+      - name: Template rendering test
+        run: |
+          echo "=== Testing template rendering ==="
+          helm template autoshift autoshift -f autoshift/values.hub.yaml > /dev/null
+          echo "Template rendering successful"
+
+      - name: Dry-run packaging
+        run: |
+          echo "=== Dry-run chart packaging ==="
+          make package-only VERSION=0.0.0-ci
+          echo ""
+          echo "Packaged charts:"
+          find .helm-charts -name "*.tgz" | sort
+
+      - name: Check for uncommitted changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::warning::Uncommitted changes detected after build:"
+            git status --short
+            git diff --stat
+          fi
+
+      - name: Verify dynamic chart discovery
+        run: |
+          echo "=== Verifying Makefile dynamic discovery ==="
+
+          # Count charts found by Makefile vs actual directories
+          BOOTSTRAP_DIRS=$(find bootstrap -maxdepth 1 -type d -name "*" ! -name "bootstrap" | wc -l | tr -d ' ')
+          POLICY_DIRS=$(find policies -maxdepth 1 -type d -name "*" ! -name "policies" | wc -l | tr -d ' ')
+
+          BOOTSTRAP_CHARTS=$(ls .helm-charts/bootstrap/*.tgz 2>/dev/null | wc -l | tr -d ' ')
+          POLICY_CHARTS=$(ls .helm-charts/policies/*.tgz 2>/dev/null | wc -l | tr -d ' ')
+
+          echo "Bootstrap: $BOOTSTRAP_DIRS directories -> $BOOTSTRAP_CHARTS charts"
+          echo "Policies: $POLICY_DIRS directories -> $POLICY_CHARTS charts"
+
+          # Verify all charts were packaged
+          if [ "$BOOTSTRAP_DIRS" != "$BOOTSTRAP_CHARTS" ]; then
+            echo "::error::Bootstrap chart count mismatch! Expected $BOOTSTRAP_DIRS, got $BOOTSTRAP_CHARTS"
+            exit 1
+          fi
+
+          if [ "$POLICY_DIRS" != "$POLICY_CHARTS" ]; then
+            echo "::error::Policy chart count mismatch! Expected $POLICY_DIRS, got $POLICY_CHARTS"
+            exit 1
+          fi
+
+          echo "✓ All charts discovered and packaged correctly"
+
+      - name: Verify policy-list.txt generation
+        run: |
+          echo "=== Verifying policy-list.txt ==="
+
+          if [ ! -f autoshift/files/policy-list.txt ]; then
+            echo "::error::policy-list.txt not generated!"
+            exit 1
+          fi
+
+          POLICY_COUNT=$(wc -l < autoshift/files/policy-list.txt | tr -d ' ')
+          EXPECTED=$(find policies -maxdepth 1 -type d ! -name "policies" | wc -l | tr -d ' ')
+
+          echo "policy-list.txt contains $POLICY_COUNT entries"
+          echo "Expected $EXPECTED policies"
+
+          if [ "$POLICY_COUNT" != "$EXPECTED" ]; then
+            echo "::error::policy-list.txt count mismatch!"
+            echo "Contents:"
+            cat autoshift/files/policy-list.txt
+            exit 1
+          fi
+
+          echo "✓ policy-list.txt generated correctly"
+          echo "Policies:"
+          cat autoshift/files/policy-list.txt
+
+  validate-policies:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Validate policy templates render
+        run: |
+          echo "=== Validating policy templates ==="
+          for policy_dir in policies/*/; do
+            if [ -f "${policy_dir}Chart.yaml" ]; then
+              policy_name=$(basename "$policy_dir")
+              echo "Rendering ${policy_name}..."
+              helm template "$policy_name" "$policy_dir" > /dev/null || {
+                echo "::error::Failed to render $policy_name"
+                exit 1
+              }
+            fi
+          done
+          echo "All policy templates rendered successfully"
