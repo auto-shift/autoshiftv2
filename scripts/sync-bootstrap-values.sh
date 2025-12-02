@@ -66,42 +66,6 @@ secrets: []
 #     password: 'pass1234'
 #     sshPrivateKey: ''
 
-EOF
-
-# Extract gitops section from policy values and append
-yq eval '.gitops' "$GITOPS_POLICY_VALUES" | sed 's/^/# Policy-synced values\n/' >> "$GITOPS_BOOTSTRAP_VALUES"
-
-# Prepend 'gitops:' key
-sed -i '' '/# Policy-synced values/a\
-gitops:
-' "$GITOPS_BOOTSTRAP_VALUES"
-
-# Actually, let's do this more cleanly - rewrite the file properly
-cat > "$GITOPS_BOOTSTRAP_VALUES" << 'EOF'
-# =============================================================================
-# AUTO-GENERATED - DO NOT EDIT DIRECTLY
-# =============================================================================
-# This file is generated from policies/openshift-gitops/values.yaml
-# To modify defaults, edit the policy chart values and run:
-#   make sync-values
-# =============================================================================
-
-# Bootstrap-specific settings
-ignoreHelmHooks: false
-
-# Job image for waiting for CRD
-# Use internal registry for disconnected environments
-image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
-
-# Git repository secrets (optional)
-secrets: []
-# EXAMPLE:
-# secrets:
-#   - name: git-auth
-#     username: 'user'
-#     password: 'pass1234'
-#     sshPrivateKey: ''
-
 # =============================================================================
 # Values synced from policies/openshift-gitops/values.yaml
 # =============================================================================
