@@ -28,44 +28,44 @@ POLICY_NAMES := $(notdir $(POLICY_CHARTS))
 
 .PHONY: discover
 discover: ## Discover all charts in the repository
-	@echo "$(BLUE)[INFO]$(NC) Discovering charts..."
-	@echo "$(GREEN)Bootstrap charts:$(NC)"
+	@printf "$(BLUE)[INFO]$(NC) Discovering charts...\n"
+	@printf "$(GREEN)Bootstrap charts:$(NC)\n"
 	@$(foreach chart,$(BOOTSTRAP_CHARTS),echo "  - $(notdir $(chart))";)
 	@echo ""
-	@echo "$(GREEN)Policy charts ($(words $(POLICY_NAMES))):$(NC)"
+	@printf "$(GREEN)Policy charts ($(words $(POLICY_NAMES))):$(NC)\n"
 	@$(foreach policy,$(POLICY_NAMES),echo "  - $(policy)";)
 	@echo ""
-	@echo "$(GREEN)Total charts: $(shell echo $$(($(words $(BOOTSTRAP_CHARTS)) + $(words $(POLICY_CHARTS)) + 1)))$(NC) ($(words $(BOOTSTRAP_CHARTS)) bootstrap + 1 main + $(words $(POLICY_CHARTS)) policies)"
+	@printf "$(GREEN)Total charts: $(shell echo $$(($(words $(BOOTSTRAP_CHARTS)) + $(words $(POLICY_CHARTS)) + 1)))$(NC) ($(words $(BOOTSTRAP_CHARTS)) bootstrap + 1 main + $(words $(POLICY_CHARTS)) policies)"
 
 .PHONY: validate
 validate: ## Validate that required tools are installed
-	@echo "$(BLUE)[INFO]$(NC) Validating required tools..."
-	@command -v helm >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) helm is required but not installed"; exit 1; }
-	@command -v yq >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) yq is required but not installed. Install: brew install yq"; exit 1; }
-	@command -v git >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) git is required but not installed"; exit 1; }
-	@echo "$(GREEN)✓$(NC) All required tools are installed"
+	@printf "$(BLUE)[INFO]$(NC) Validating required tools...\n"
+	@command -v helm >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) helm is required but not installed"; exit 1; }
+	@command -v yq >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) yq is required but not installed. Install: brew install yq"; exit 1; }
+	@command -v git >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) git is required but not installed"; exit 1; }
+	@printf "$(GREEN)✓$(NC) All required tools are installed"
 
 .PHONY: validate-version
 validate-version: ## Validate version format
-	@echo "$(BLUE)[INFO]$(NC) Validating version format: $(VERSION)"
+	@printf "$(BLUE)[INFO]$(NC) Validating version format: $(VERSION)"
 	@echo "$(VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$$' || { \
-		echo "$(RED)[ERROR]$(NC) Invalid version format: $(VERSION)"; \
+		printf "$(RED)[ERROR]$(NC) Invalid version format: $(VERSION)"; \
 		echo "Expected: X.Y.Z or X.Y.Z-prerelease (e.g., 1.0.0 or 1.0.0-rc.1)"; \
 		exit 1; \
 	}
-	@echo "$(GREEN)✓$(NC) Version format is valid"
+	@printf "$(GREEN)✓$(NC) Version format is valid"
 
 .PHONY: clean
 clean: ## Clean build artifacts
-	@echo "$(BLUE)[INFO]$(NC) Cleaning build artifacts..."
+	@printf "$(BLUE)[INFO]$(NC) Cleaning build artifacts...\n"
 	@rm -rf $(CHARTS_DIR)
 	@rm -rf $(ARTIFACTS_DIR)
 	@rm -rf autoshift/files
-	@echo "$(GREEN)✓$(NC) Build artifacts cleaned"
+	@printf "$(GREEN)✓$(NC) Build artifacts cleaned"
 
 .PHONY: update-versions
 update-versions: validate-version ## Update all chart versions
-	@echo "$(BLUE)[INFO]$(NC) Updating chart versions to $(VERSION)..."
+	@printf "$(BLUE)[INFO]$(NC) Updating chart versions to $(VERSION)...\n"
 	@# Update bootstrap charts
 	@$(foreach chart,$(BOOTSTRAP_CHARTS), \
 		yq eval -i '.version = "$(VERSION)" | .appVersion = "$(VERSION)"' $(chart)/Chart.yaml;)
@@ -74,55 +74,55 @@ update-versions: validate-version ## Update all chart versions
 	@# Update policy charts
 	@$(foreach chart,$(POLICY_CHARTS), \
 		yq eval -i '.version = "$(VERSION)" | .appVersion = "$(VERSION)"' $(chart)/Chart.yaml;)
-	@echo "$(GREEN)✓$(NC) All chart versions updated to $(VERSION)"
+	@printf "$(GREEN)✓$(NC) All chart versions updated to $(VERSION)"
 
 .PHONY: sync-values
 sync-values: ## Sync bootstrap chart values from policy charts
-	@echo "$(BLUE)[INFO]$(NC) Syncing bootstrap values from policy charts..."
+	@printf "$(BLUE)[INFO]$(NC) Syncing bootstrap values from policy charts...\n"
 	@bash scripts/sync-bootstrap-values.sh
-	@echo "$(GREEN)✓$(NC) Bootstrap values synced"
+	@printf "$(GREEN)✓$(NC) Bootstrap values synced"
 
 .PHONY: generate-policy-list
 generate-policy-list: ## Generate policy-list.txt for OCI mode
-	@echo "$(BLUE)[INFO]$(NC) Generating policy-list.txt with $(words $(POLICY_NAMES)) policies..."
+	@printf "$(BLUE)[INFO]$(NC) Generating policy-list.txt with $(words $(POLICY_NAMES)) policies...\n"
 	@mkdir -p autoshift/files
 	@$(foreach policy,$(POLICY_NAMES),echo "$(policy)" >> autoshift/files/policy-list.txt;)
-	@echo "$(GREEN)✓$(NC) Generated policy-list.txt with $(words $(POLICY_NAMES)) policies"
+	@printf "$(GREEN)✓$(NC) Generated policy-list.txt with $(words $(POLICY_NAMES)) policies"
 
 .PHONY: package-charts
 package-charts: ## Package all Helm charts
-	@echo "$(BLUE)[INFO]$(NC) Packaging Helm charts..."
+	@printf "$(BLUE)[INFO]$(NC) Packaging Helm charts...\n"
 	@mkdir -p $(CHARTS_DIR)/bootstrap $(CHARTS_DIR)/policies
 	@# Package bootstrap charts to separate directory (avoids name collision with policy charts)
-	@echo "$(BLUE)[INFO]$(NC) Packaging bootstrap charts to $(CHARTS_DIR)/bootstrap/..."
+	@printf "$(BLUE)[INFO]$(NC) Packaging bootstrap charts to $(CHARTS_DIR)/bootstrap/...\n"
 	@$(foreach chart,$(BOOTSTRAP_CHARTS), \
 		echo "  - Packaging $(notdir $(chart))..."; \
 		helm package $(chart) -d $(CHARTS_DIR)/bootstrap >/dev/null;)
 	@# Package policy charts to separate directory
-	@echo "$(BLUE)[INFO]$(NC) Packaging policy charts to $(CHARTS_DIR)/policies/..."
+	@printf "$(BLUE)[INFO]$(NC) Packaging policy charts to $(CHARTS_DIR)/policies/...\n"
 	@$(foreach chart,$(POLICY_CHARTS), \
 		echo "  - Packaging $(notdir $(chart))..."; \
 		helm package $(chart) -d $(CHARTS_DIR)/policies >/dev/null;)
 	@# Package autoshift chart (last, after template generation)
-	@echo "$(BLUE)[INFO]$(NC) Packaging autoshift chart..."
+	@printf "$(BLUE)[INFO]$(NC) Packaging autoshift chart...\n"
 	@helm package autoshift -d $(CHARTS_DIR) >/dev/null
 	@echo ""
-	@echo "$(BLUE)Bootstrap charts:$(NC)"
+	@printf "$(BLUE)Bootstrap charts:$(NC)\n"
 	@ls -lh $(CHARTS_DIR)/bootstrap/
 	@echo ""
-	@echo "$(BLUE)Policy charts:$(NC)"
+	@printf "$(BLUE)Policy charts:$(NC)\n"
 	@ls -lh $(CHARTS_DIR)/policies/ | head -10
 	@echo "  ... and $(shell ls -1 $(CHARTS_DIR)/policies/ | wc -l | tr -d ' ') total policy charts"
 	@echo ""
-	@echo "$(BLUE)Main chart:$(NC)"
+	@printf "$(BLUE)Main chart:$(NC)\n"
 	@ls -lh $(CHARTS_DIR)/autoshift-*.tgz
 	@echo ""
-	@echo "$(GREEN)✓$(NC) Packaged charts: $(shell ls -1 $(CHARTS_DIR)/bootstrap/ | wc -l | tr -d ' ') bootstrap + $(shell ls -1 $(CHARTS_DIR)/policies/ | wc -l | tr -d ' ') policies + 1 main"
+	@printf "$(GREEN)✓$(NC) Packaged charts: $(shell ls -1 $(CHARTS_DIR)/bootstrap/ | wc -l | tr -d ' ') bootstrap + $(shell ls -1 $(CHARTS_DIR)/policies/ | wc -l | tr -d ' ') policies + 1 main"
 
 .PHONY: push-charts
 push-charts: ## Push charts to OCI registry with namespaced paths
 	@if [ "$(DRY_RUN)" = "true" ]; then \
-		echo "$(YELLOW)[WARN]$(NC) DRY RUN: Skipping push to registry"; \
+		printf "$(YELLOW)[WARN]$(NC) DRY RUN: Skipping push to registry"; \
 		echo "Bootstrap charts would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap"; \
 		echo "Main chart would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"; \
 		echo "Policy charts would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
@@ -155,28 +155,28 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 
 .PHONY: generate-artifacts
 generate-artifacts: ## Generate bootstrap installation scripts and documentation
-	@echo "$(BLUE)[INFO]$(NC) Generating bootstrap installation artifacts..."
+	@printf "$(BLUE)[INFO]$(NC) Generating bootstrap installation artifacts...\n"
 	@mkdir -p $(ARTIFACTS_DIR)
 	@bash scripts/generate-bootstrap-installer.sh $(VERSION) $(REGISTRY) $(REGISTRY_NAMESPACE) $(ARTIFACTS_DIR)
-	@echo "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/"
+	@printf "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/"
 
 .PHONY: release
 release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts generate-artifacts ## Full release process (add INCLUDE_MIRROR=true for mirror artifacts)
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
-		echo "$(BLUE)[INFO]$(NC) Generating mirror artifacts..."; \
+		echo "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
 		$(MAKE) generate-imageset-full VERSION=$(VERSION) || { \
-			echo "$(YELLOW)[WARN]$(NC) Mirror artifact generation failed - continuing without them"; \
+			printf "$(YELLOW)[WARN]$(NC) Mirror artifact generation failed - continuing without them"; \
 		}; \
 	fi
 	@echo ""
-	@echo "$(GREEN)=========================================$(NC)"
-	@echo "$(GREEN)Release preparation complete!$(NC)"
-	@echo "$(GREEN)=========================================$(NC)"
+	@printf "$(GREEN)=========================================$(NC)\n"
+	@printf "$(GREEN)Release preparation complete!$(NC)\n"
+	@printf "$(GREEN)=========================================$(NC)\n"
 	@echo ""
-	@echo "$(BLUE)Version:$(NC) $(VERSION)"
-	@echo "$(BLUE)Registry:$(NC) oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"
-	@echo "$(BLUE)Charts:$(NC) $(shell ls -1 $(CHARTS_DIR) | wc -l)"
-	@echo "$(BLUE)Artifacts:$(NC) $(ARTIFACTS_DIR)/"
+	@printf "$(BLUE)Version:$(NC) $(VERSION)"
+	@printf "$(BLUE)Registry:$(NC) oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"
+	@printf "$(BLUE)Charts:$(NC) $(shell ls -1 $(CHARTS_DIR) | wc -l)"
+	@printf "$(BLUE)Artifacts:$(NC) $(ARTIFACTS_DIR)/"
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
 		echo "$(BLUE)Mirror artifacts:$(NC) included"; \
 	else \
@@ -184,7 +184,7 @@ release: validate validate-version clean sync-values update-versions generate-po
 	fi
 	@echo ""
 	@if [ "$(DRY_RUN)" = "false" ]; then \
-		echo "$(GREEN)Next steps:$(NC)"; \
+		echo "$(GREEN)Next steps:$(NC)\n"; \
 		echo "  1. Create git tag: git tag v$(VERSION)"; \
 		echo "  2. Push tag: git push origin v$(VERSION)"; \
 		echo "  3. Create GitHub/GitLab release with artifacts from: $(ARTIFACTS_DIR)/"; \
@@ -197,25 +197,25 @@ release-mirror: ## Full release with mirror artifacts (imageset-config.yaml, ope
 .PHONY: package-only
 package-only: validate clean generate-policy-list package-charts ## Package charts without updating versions or pushing
 	@echo ""
-	@echo "$(GREEN)Packaging complete!$(NC)"
+	@printf "$(GREEN)Packaging complete!$(NC)\n"
 	@echo "Charts are ready in: $(CHARTS_DIR)/"
 
 .PHONY: generate-dependencies
 generate-dependencies: ## Generate operator dependencies JSON (requires oc CLI and pull secret)
-	@echo "$(BLUE)[INFO]$(NC) Generating operator dependencies..."
-	@command -v oc >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) oc CLI is required. Install from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/"; exit 1; }
-	@command -v jq >/dev/null 2>&1 || { echo "$(RED)[ERROR]$(NC) jq is required. Install: brew install jq"; exit 1; }
+	@printf "$(BLUE)[INFO]$(NC) Generating operator dependencies...\n"
+	@command -v oc >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) oc CLI is required. Install from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/"; exit 1; }
+	@command -v jq >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) jq is required. Install: brew install jq"; exit 1; }
 	@mkdir -p $(ARTIFACTS_DIR)
 	@bash scripts/get-operator-dependencies.sh --all --json > $(ARTIFACTS_DIR)/operator-dependencies.json
-	@echo "$(GREEN)✓$(NC) Dependencies saved to $(ARTIFACTS_DIR)/operator-dependencies.json"
+	@printf "$(GREEN)✓$(NC) Dependencies saved to $(ARTIFACTS_DIR)/operator-dependencies.json"
 
 # All values files for complete operator coverage
 VALUES_FILES := $(shell ls autoshift/values*.yaml | tr '\n' ',' | sed 's/,$$//')
 
 .PHONY: generate-imageset
 generate-imageset: ## Generate ImageSetConfiguration for disconnected mirroring (all values files)
-	@echo "$(BLUE)[INFO]$(NC) Generating ImageSetConfiguration from all values files..."
-	@echo "$(BLUE)[INFO]$(NC) Values files: $(VALUES_FILES)"
+	@printf "$(BLUE)[INFO]$(NC) Generating ImageSetConfiguration from all values files...\n"
+	@printf "$(BLUE)[INFO]$(NC) Values files: $(VALUES_FILES)"
 	@mkdir -p $(ARTIFACTS_DIR)
 	@if [ -f "$(ARTIFACTS_DIR)/operator-dependencies.json" ]; then \
 		bash scripts/generate-imageset-config.sh $(VALUES_FILES) \
@@ -227,7 +227,7 @@ generate-imageset: ## Generate ImageSetConfiguration for disconnected mirroring 
 			--output $(ARTIFACTS_DIR)/imageset-config.yaml \
 			--include-autoshift-charts; \
 	fi
-	@echo "$(GREEN)✓$(NC) ImageSetConfiguration saved to $(ARTIFACTS_DIR)/imageset-config.yaml"
+	@printf "$(GREEN)✓$(NC) ImageSetConfiguration saved to $(ARTIFACTS_DIR)/imageset-config.yaml"
 
 .PHONY: generate-imageset-full
 generate-imageset-full: generate-dependencies generate-imageset ## Generate ImageSetConfiguration with dependencies (requires oc CLI)
