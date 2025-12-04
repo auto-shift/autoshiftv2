@@ -2,6 +2,22 @@
 
 This directory contains utility scripts for AutoShiftv2 policy generation and management.
 
+## Quick Reference
+
+| Script | Purpose |
+|--------|---------|
+| `generate-operator-policy.sh` | Generate new operator policies |
+| `generate-imageset-config.sh` | Generate ImageSetConfiguration for oc-mirror |
+| `update-operator-channels.sh` | Update operator channels from catalog |
+| `dev-checks.sh` | Run development quality checks (shellcheck, kubeconform) |
+| `sync-bootstrap-values.sh` | Sync bootstrap chart values from policies |
+| `create-quay-repos.sh` | Create Quay.io repositories for charts |
+| `deploy-oci.sh` | Deploy AutoShift from OCI registry |
+| `generate-bootstrap-installer.sh` | Generate release installation artifacts |
+| `get-operator-dependencies.sh` | Extract operator dependencies from catalog |
+
+---
+
 ## 📦 generate-operator-policy.sh
 
 Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structure.
@@ -164,7 +180,187 @@ cd ..
 | Template not found | Ensure scripts/templates/ directory exists |
 | Invalid YAML output | Check template indentation and escaping |
 
+---
+
+## 🔧 generate-imageset-config.sh
+
+Generate ImageSetConfiguration YAML for oc-mirror disconnected mirroring.
+
+### Usage
+
+```bash
+./scripts/generate-imageset-config.sh <values-files> [options]
+```
+
+### Examples
+
+```bash
+# Generate for single environment
+./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --output imageset.yaml
+
+# Operators only (skip OpenShift platform)
+./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --operators-only -o imageset.yaml
+
+# Multiple environments (merges channels)
+./scripts/generate-imageset-config.sh autoshift/values.hub.yaml,autoshift/values.sbx.yaml -o imageset.yaml
+```
+
+### Requirements
+
+Operators must have `{operator}-subscription-name` labels in values files. See [Developer Guide](../docs/developer-guide.md#autoshift-scripts-and-label-requirements).
+
+---
+
+## 🔄 update-operator-channels.sh
+
+Update operator channels to latest versions from the Red Hat operator catalog.
+
+### Usage
+
+```bash
+./scripts/update-operator-channels.sh --pull-secret <file> [options]
+```
+
+### Examples
+
+```bash
+# Dry run (show what would change)
+./scripts/update-operator-channels.sh --pull-secret ~/.docker/config.json --dry-run
+
+# Apply updates
+./scripts/update-operator-channels.sh --pull-secret ~/.docker/config.json
+```
+
+### Requirements
+
+- `oc` CLI installed
+- `jq` installed
+- Pull secret with access to registry.redhat.io
+
+---
+
+## 🧪 dev-checks.sh
+
+Run development quality checks. Gracefully skips tools that aren't installed.
+
+### Usage
+
+```bash
+./scripts/dev-checks.sh
+```
+
+### Checks Performed
+
+- **shellcheck**: Lint shell scripts
+- **kubeconform**: Validate Kubernetes manifests
+- **helm lint**: Validate Helm charts
+
+### Requirements (Optional)
+
+```bash
+brew install shellcheck kubeconform
+```
+
+---
+
+## 🔗 sync-bootstrap-values.sh
+
+Sync bootstrap chart values from policy chart values to ensure consistency.
+
+### Usage
+
+```bash
+./scripts/sync-bootstrap-values.sh
+```
+
+Or via Makefile:
+
+```bash
+make sync-values
+```
+
+---
+
+## 📦 create-quay-repos.sh
+
+Create Quay.io repositories for all AutoShift Helm charts.
+
+### Usage
+
+```bash
+./scripts/create-quay-repos.sh <quay-token> [organization]
+```
+
+### Example
+
+```bash
+./scripts/create-quay-repos.sh mytoken autoshift
+```
+
+---
+
+## 🚀 deploy-oci.sh
+
+Deploy AutoShift from OCI registry with pre-built configurations.
+
+### Usage
+
+```bash
+./scripts/deploy-oci.sh --version <version> [options]
+```
+
+### Examples
+
+```bash
+# Deploy hub configuration
+./scripts/deploy-oci.sh --version 1.0.0
+
+# Deploy with OCI policies
+./scripts/deploy-oci.sh --version 1.0.0 --oci-policies
+
+# Dry run
+./scripts/deploy-oci.sh --version 1.0.0 --dry-run
+```
+
+---
+
+## 📋 generate-bootstrap-installer.sh
+
+Generate installation artifacts for OCI releases.
+
+### Usage
+
+```bash
+./scripts/generate-bootstrap-installer.sh <version> <registry> <namespace> <output-dir>
+```
+
+Used internally by `make release`.
+
+---
+
+## 🔍 get-operator-dependencies.sh
+
+Extract operator dependencies from the Red Hat operator catalog.
+
+### Usage
+
+```bash
+./scripts/get-operator-dependencies.sh [options]
+```
+
+### Examples
+
+```bash
+# Check specific operators
+./scripts/get-operator-dependencies.sh --operators devspaces,odf-operator
+
+# Show all operators with dependencies
+./scripts/get-operator-dependencies.sh --all --json
+```
+
+---
+
 ## 📚 See Also
 
-- [AutoShift Developer Guide](../README-DEVELOPER.md)
-- [Policy Development Guide](../docs/policy-development.md)
+- [AutoShift Developer Guide](../docs/developer-guide.md)
+- [oc-mirror Documentation](../oc-mirror/README.md)

@@ -9,8 +9,8 @@ metadata:
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
-    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
   disabled: false
   policy-templates:
@@ -45,7 +45,13 @@ spec:
             namespace: {{ .Values.developerHub.namespace }}
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-hub-channel" | default "{{ .Values.developerHub.channel }}" {{ "hub}}" }}'
             name: {{ .Values.developerHub.name }}
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-hub-source" | default "{{ .Values.developerHub.source }}" {{ "hub}}" }}'
+            # Source Selection Logic (evaluated on hub for each managed cluster):
+            # 1. If cluster has explicit 'autoshift.io/dev-hub-source' label → use that value
+            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
+            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
+            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
+            # 3. Else → use standard source (e.g., redhat-operators)
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-hub-source" | default (ternary (printf "%s-%s" "{{ .Values.developerHub.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.developerHub.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-hub-source-namespace" | default "{{ .Values.developerHub.sourceNamespace }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-hub-version" | default "" {{ "hub}}" }}'
             # Upgrade approval for subscription will be set based on if version is set not this flag

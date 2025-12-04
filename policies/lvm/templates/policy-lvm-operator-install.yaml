@@ -8,9 +8,9 @@ metadata:
   name: policy-lvm-operator-install
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    policy.open-cluster-management.io/standards: AutoShiftv2
-    policy.open-cluster-management.io/categories: LVM Operator
-    policy.open-cluster-management.io/controls: OpenShift Standard
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
   disabled: false
   policy-templates:
@@ -46,7 +46,13 @@ spec:
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-subscription-name" | default "{{ .Values.lvm.name }}" {{ "hub}}" }}'
             namespace: {{ .Values.lvm.namespace }}
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-source" | default "{{ .Values.lvm.source }}" {{ "hub}}" }}'
+            # Source Selection Logic (evaluated on hub for each managed cluster):
+            # 1. If cluster has explicit 'autoshift.io/lvm-source' label → use that value
+            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
+            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
+            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
+            # 3. Else → use standard source (e.g., redhat-operators)
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-source" | default (ternary (printf "%s-%s" "{{ .Values.lvm.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.lvm.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-source-namespace" | default "{{ .Values.lvm.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-channel" | default "{{ .Values.lvm.channel }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/lvm-version" | default "" {{ "hub}}" }}'

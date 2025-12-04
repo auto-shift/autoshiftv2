@@ -1,23 +1,93 @@
----
-# This is for argo type deployments of this chart (set to true)
+# =============================================================================
+# AUTO-GENERATED - DO NOT EDIT DIRECTLY
+# =============================================================================
+# This file is generated from policies/openshift-gitops/values.yaml
+# To modify defaults, edit the policy chart values and run:
+#   make sync-values
+# =============================================================================
+
+# Bootstrap-specific settings
 ignoreHelmHooks: false
 
-# Used for creating a custom argocd instead of the default.
-# This is needed to increase memory of application controller
-disableDefaultArgoCD: true
-
-# Job Image for waiting for crd,
-# can be from Quay or local cluster
-# quay.io/openshift/origin-cli:latest
-# image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+# Job image for waiting for CRD
+# Use internal registry for disconnected environments
 image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
 
-# Adding your secrets for git access or other repository credentials
+# Git repository secrets (optional)
 secrets: []
-# EXAMPLE ...
+# EXAMPLE:
 # secrets:
 #   - name: git-auth
 #     username: 'user'
 #     password: 'pass1234'
 #     sshPrivateKey: ''
 
+# =============================================================================
+# Values synced from policies/openshift-gitops/values.yaml
+# =============================================================================
+
+gitops:
+  namespace: openshift-gitops-operator
+  argoNamespace: openshift-gitops
+  group: openshift-gitops-operator
+  source: redhat-operators
+  channel: gitops-1.18
+  sourceNamespace: openshift-marketplace
+  name: openshift-gitops-operator
+  argoName: infra-gitops
+  disableDefaultArgoCD: true
+  rbac_policies:
+    - 'g, openshift-systems, role:admin'
+    # OPTIONAL
+  controller:
+    limits:
+      cpu: 2000m
+      memory: 6Gi
+    requests:
+      cpu: 250m
+      memory: 6Gi
+  ha:
+    enabled: false
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 250m
+      memory: 128Mi
+  redis:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 250m
+      memory: 128Mi
+  repo:
+    # If you're using a custom CA bundle and you have imported it into your OpenShift cluster
+  
+    # enabling the cluster_ca_bundle will inject the cluster's trusted CA bundle into the repo
+  
+    # server that Argo CD uses. This allows Argo CD to connect to repositories using custom certificates.
+    cluster_ca_bundle: false
+    limits:
+      cpu: 1000m
+      memory: 1024Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  server:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 125m
+      memory: 128Mi
+  dex:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 250m
+      memory: 128Mi
+
+# Disable default ArgoCD instance (we create our own)
+disableDefaultArgoCD: true
