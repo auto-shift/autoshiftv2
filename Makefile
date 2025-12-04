@@ -45,6 +45,18 @@ validate: ## Validate that required tools are installed
 	@command -v git >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) git is required but not installed\n"; exit 1; }
 	@printf "$(GREEN)✓$(NC) All required tools are installed\n"
 
+.PHONY: lint
+lint: ## Lint all Helm charts
+	@printf "$(BLUE)[INFO]$(NC) Linting Helm charts...\n"
+	@helm lint autoshift/ --quiet && printf "$(GREEN)✓$(NC) autoshift/ passed\n"
+	@failed=0; \
+	for chart in policies/*/; do \
+		if [ -f "$$chart/Chart.yaml" ]; then \
+			helm lint "$$chart" --quiet 2>/dev/null || { printf "$(RED)✗$(NC) $$chart failed\n"; failed=1; }; \
+		fi; \
+	done; \
+	if [ $$failed -eq 0 ]; then printf "$(GREEN)✓$(NC) All policy charts passed\n"; else exit 1; fi
+
 .PHONY: validate-version
 validate-version: ## Validate version format
 	@printf "$(BLUE)[INFO]$(NC) Validating version format: $(VERSION)\n"

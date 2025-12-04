@@ -30,26 +30,7 @@ jobs:
           helm version
 
       - name: Lint Helm charts
-        run: |
-          echo "=== Linting main autoshift chart ==="
-          helm lint autoshift
-
-          echo ""
-          echo "=== Linting bootstrap charts ==="
-          # Bootstrap charts are at root level (excluding policies/ and autoshift/)
-          for chart in $(find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" -exec dirname {} \;); do
-            echo "Linting $(basename $chart)..."
-            helm lint "$chart"
-          done
-
-          echo ""
-          echo "=== Linting policy charts ==="
-          for chart in policies/*/; do
-            if [ -f "${chart}Chart.yaml" ]; then
-              echo "Linting $(basename $chart)..."
-              helm lint "$chart"
-            fi
-          done
+        run: make lint
 
       - name: Validate YAML syntax
         run: |

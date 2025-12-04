@@ -481,6 +481,63 @@ cd oc-mirror
 cd ..
 ```
 
+### AutoShift Scripts and Label Requirements
+
+AutoShift includes scripts that dynamically discover operators from your values files. These scripts rely on specific label patterns to identify operators:
+
+#### Required Labels for Operators
+
+For each enabled operator, you **must** define all of these labels:
+
+```yaml
+hubClusterSets:
+  hub:
+    labels:
+      # Enable the operator
+      my-operator: 'true'
+
+      # REQUIRED: These labels are needed for scripts to detect the operator
+      my-operator-subscription-name: 'my-operator-package'  # OLM package name
+      my-operator-channel: 'stable'                          # Operator channel
+      my-operator-source: 'redhat-operators'                 # Catalog source
+      my-operator-source-namespace: 'openshift-marketplace'  # Catalog namespace
+```
+
+#### Scripts That Use These Labels
+
+| Script | Purpose | How It Uses Labels |
+|--------|---------|-------------------|
+| `generate-imageset-config.sh` | Generates ImageSetConfiguration for oc-mirror | Scans for `{operator}-subscription-name` entries to identify which operators to include in the mirror set |
+| `update-operator-channels.sh` | Updates operator channels from catalog | Uses `{operator}-subscription-name` to map labels to OLM package names and find the latest channels |
+
+#### Why subscription-name Is Required
+
+The `{operator}-subscription-name` label serves as the **canonical key** that links:
+1. **Label name** (e.g., `gitops`) → Used for enabling/disabling operators
+2. **OLM package name** (e.g., `openshift-gitops-operator`) → Used in Subscriptions and mirroring
+3. **Policy directory** → Scripts locate the policy by matching the package name
+
+Without the subscription-name label, scripts cannot:
+- Include the operator in ImageSetConfiguration for disconnected mirroring
+- Update the operator's channel from the catalog
+- Map between the label and the actual OLM package
+
+#### Example: Minimal Configuration
+
+```yaml
+# Correct - scripts will detect this operator
+gitops: 'true'
+gitops-subscription-name: openshift-gitops-operator
+gitops-channel: gitops-1.18
+gitops-source: redhat-operators
+gitops-source-namespace: openshift-marketplace
+
+# Incorrect - scripts will NOT detect this operator (subscription-name missing)
+gitops: 'true'
+# gitops-subscription-name: openshift-gitops-operator  # Commented out!
+gitops-channel: gitops-1.18
+```
+
 ## 🧪 Testing and Validation
 
 ### Local Validation

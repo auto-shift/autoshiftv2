@@ -2,10 +2,18 @@
 # AutoShift ImageSetConfiguration Generator for oc-mirror
 # Generates ImageSetConfiguration YAML from AutoShift values files for disconnected environments
 #
-# Dynamically detects operators from AutoShift values files by:
-# - Scanning for enabled operator flags (operator-name: 'true')
-# - Looking up package names from policy values.yaml files
-# - Supporting all current and future AutoShift operators automatically
+# OPERATOR DETECTION REQUIREMENTS:
+# This script dynamically discovers operators by scanning for '{operator}-subscription-name'
+# entries in your values files. For each operator to be detected, you MUST define:
+#
+#   {operator}: 'true'                        # Enable the operator
+#   {operator}-subscription-name: 'package'   # OLM package name (REQUIRED for detection)
+#   {operator}-channel: 'channel'             # Operator channel
+#   {operator}-source: 'redhat-operators'     # Catalog source
+#   {operator}-source-namespace: 'openshift-marketplace'
+#
+# The subscription-name label is the canonical key that links labels to OLM packages.
+# Without it, the operator will NOT be included in the generated ImageSetConfiguration.
 #
 # No hardcoded operator lists - new operators are auto-discovered when added to AutoShift!
 #
@@ -18,12 +26,20 @@
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Colors for output (enabled if either stdout or stderr is a terminal)
+if [[ -t 1 ]] || [[ -t 2 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    NC=''
+fi
 
 # Default values
 VALUES_FILES=""
@@ -39,6 +55,62 @@ AUTOSHIFT_REGISTRY=""
 AUTOSHIFT_VERSION=""
 DEPENDENCIES_FILE=""
 
+# Script directory for relative paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Temp file for operator mappings (portable alternative to associative arrays)
+MAPPINGS_FILE=""
+
+cleanup_mappings() {
+    [[ -n "$MAPPINGS_FILE" ]] && rm -f "$MAPPINGS_FILE"
+}
+trap cleanup_mappings EXIT
+
+# ============================================================================
+# DYNAMIC OPERATOR MAPPINGS
+# Uses subscription-name as the canonical key - no hardcoded mappings!
+# Mappings stored in temp file for bash 3.x compatibility
+# Format: label|package|policy_dir
+# ============================================================================
+
+# Build operator mappings dynamically from values files
+build_operator_mappings() {
+    MAPPINGS_FILE=$(mktemp)
+
+    for values_file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
+        [[ -f "$values_file" ]] || continue
+
+        # Find all *-subscription-name: entries
+        grep -oE '[a-z][-a-z0-9]*-subscription-name:[[:space:]]*[^[:space:]]+' "$values_file" 2>/dev/null | \
+        while IFS= read -r line; do
+            # Extract label and package
+            local label package policy_dir=""
+            label=$(echo "$line" | sed 's/-subscription-name:.*//')
+            package=$(echo "$line" | sed 's/.*-subscription-name:[[:space:]]*//' | tr -d "'" | tr -d '"')
+
+            [[ -z "$label" || -z "$package" ]] && continue
+
+            # Find policy directory by searching for name: {package} in policies/*/values.yaml
+            for policy_values in "$PROJECT_ROOT"/policies/*/values.yaml; do
+                [[ -f "$policy_values" ]] || continue
+                if grep -qE "^[[:space:]]+name:[[:space:]]*['\"]?${package}['\"]?" "$policy_values" 2>/dev/null; then
+                    policy_dir=$(dirname "$policy_values")
+                    break
+                fi
+            done
+
+            # Store mapping: label|package|policy_dir
+            echo "${label}|${package}|${policy_dir}" >> "$MAPPINGS_FILE"
+        done
+    done
+
+    # Deduplicate
+    if [[ -f "$MAPPINGS_FILE" ]]; then
+        sort -u "$MAPPINGS_FILE" -o "$MAPPINGS_FILE"
+    fi
+}
+
 # Version parsing function
 parse_openshift_version() {
     local version="$1"
@@ -51,7 +123,8 @@ parse_openshift_version() {
     # Check if version has patch (e.g., 4.18.22)
     if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         # Full version with patch - extract major.minor
-        local major_minor=$(echo "$version" | cut -d. -f1-2)
+        local major_minor
+        major_minor=$(echo "$version" | cut -d. -f1-2)
         channel_name="stable-$major_minor"
         min_version="$version"
         max_version="$version"
@@ -212,6 +285,15 @@ log_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
+# Extract major.minor version for catalog versioning (e.g., 4.18.22 -> 4.18)
+get_catalog_version() {
+    if [[ "$OPENSHIFT_VERSION" =~ ^([0-9]+\.[0-9]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "$OPENSHIFT_VERSION"
+    fi
+}
+
 # Extract OpenShift versions from all labels in values files
 extract_openshift_versions() {
     local values_file="$1"
@@ -261,62 +343,14 @@ get_version_range() {
     fi
     
     # Sort versions and get min/max using safer array handling
-    local sorted_string=$(printf '%s\n' "${versions[@]}" | sort -V | tr '\n' ' ')
+    local sorted_string
+    sorted_string=$(printf '%s\n' "${versions[@]}" | sort -V | tr '\n' ' ')
     local sorted_versions=($sorted_string)
     local min_version="${sorted_versions[0]}"
     local max_version="${sorted_versions[${#sorted_versions[@]}-1]}"
     
     echo "$min_version" "$max_version"
 }
-
-# Parse timespan (e.g., 90d, 6m, 1y) and convert to days
-parse_timespan() {
-    local timespan="$1"
-    local days=0
-    
-    if [[ "$timespan" =~ ^([0-9]+)([dmy])$ ]]; then
-        local value="${BASH_REMATCH[1]}"
-        local unit="${BASH_REMATCH[2]}"
-        
-        case "$unit" in
-            d) days=$value ;;
-            m) days=$((value * 30)) ;;  # Approximate month as 30 days
-            y) days=$((value * 365)) ;; # Approximate year as 365 days
-        esac
-    else
-        echo "❌ Invalid timespan format: $timespan" >&2
-        echo "❌ Expected format: <number><unit> where unit is d (days), m (months), or y (years)" >&2
-        echo "❌ Examples: 90d, 6m, 1y" >&2
-        exit 1
-    fi
-    
-    echo "$days"
-}
-
-# Calculate cutoff date for time-based deletion
-calculate_cutoff_date() {
-    local days_ago="$1"
-    local cutoff_date
-    
-    if command -v date >/dev/null 2>&1; then
-        # Try GNU date first (Linux)
-        if date --version >/dev/null 2>&1; then
-            cutoff_date=$(date -d "$days_ago days ago" +%Y-%m-%d 2>/dev/null)
-        else
-            # BSD date (macOS)
-            cutoff_date=$(date -v-"$days_ago"d +%Y-%m-%d 2>/dev/null)
-        fi
-    fi
-    
-    if [[ -z "$cutoff_date" ]]; then
-        echo "❌ Unable to calculate cutoff date. Date calculation not supported on this system." >&2
-        exit 1
-    fi
-    
-    echo "$cutoff_date"
-}
-
-# Generate delete version range based on strategy
 
 # Parse comma-separated values files
 IFS=',' read -ra VALUES_FILES_ARRAY <<< "$VALUES_FILES"
@@ -454,37 +488,22 @@ if [[ -z "$OUTPUT_FILE" ]]; then
     fi
 fi
 
-# Get policy values.yaml file path for a label
+# Get policy values.yaml file path for a label (dynamic lookup)
 get_policy_file_for_label() {
     local label="$1"
-    local script_dir="${BASH_SOURCE[0]}"
-    script_dir="$(cd "$(dirname "$script_dir")" && pwd)"
-    local project_root="$(cd "$script_dir/.." && pwd)"
-
-    case "$label" in
-        gitops) echo "$project_root/policies/openshift-gitops/values.yaml" ;;
-        pipelines) echo "$project_root/policies/openshift-pipelines/values.yaml" ;;
-        acm) echo "$project_root/policies/advanced-cluster-management/values.yaml" ;;
-        acs) echo "$project_root/policies/advanced-cluster-security/values.yaml" ;;
-        odf) echo "$project_root/policies/openshift-data-foundation/values.yaml" ;;
-        dev-hub) echo "$project_root/policies/developer-hub/values.yaml" ;;
-        dev-spaces) echo "$project_root/policies/dev-spaces/values.yaml" ;;
-        compliance) echo "$project_root/policies/openshift-compliance-operator/values.yaml" ;;
-        coo) echo "$project_root/policies/cluster-observabilty/values.yaml" ;;
-        tas) echo "$project_root/policies/trusted-artifact-signer/values.yaml" ;;
-        virtualization|virt) echo "$project_root/policies/openshift-virtualization/values.yaml" ;;
-        loki) echo "$project_root/policies/loki/values.yaml" ;;
-        logging) echo "$project_root/policies/logging/values.yaml" ;;
-        quay) echo "$project_root/policies/quay/values.yaml" ;;
-        metallb) echo "$project_root/policies/metallb/values.yaml" ;;
-        nmstate) echo "$project_root/policies/nmstate/values.yaml" ;;
-        lvm) echo "$project_root/policies/lvm/values.yaml" ;;
-        local-storage) echo "$project_root/policies/local-storage/values.yaml" ;;
-        *) echo "$project_root/policies/$label/values.yaml" ;;
-    esac
+    [[ -f "$MAPPINGS_FILE" ]] || return
+    local policy_dir
+    policy_dir=$(grep "^${label}|" "$MAPPINGS_FILE" 2>/dev/null | head -1 | cut -d'|' -f3)
+    if [[ -n "$policy_dir" ]]; then
+        echo "$policy_dir/values.yaml"
+    else
+        # Fallback to direct directory match
+        echo "$PROJECT_ROOT/policies/$label/values.yaml"
+    fi
 }
 
 # Get operator subscription name from labels using dynamic discovery
+# Returns empty string for non-operators (labels without {label}-subscription-name entry)
 get_operator_subscription_name() {
     local label_name="$1"
     local values_file="$2"
@@ -499,11 +518,20 @@ get_operator_subscription_name() {
         return 0
     fi
 
-    # Second, try to find from policy values.yaml (most accurate)
+    # Second, try from mappings file (built from all subscription-name entries)
+    if [[ -f "$MAPPINGS_FILE" ]]; then
+        package=$(grep "^${label_name}|" "$MAPPINGS_FILE" 2>/dev/null | head -1 | cut -d'|' -f2)
+        if [[ -n "$package" ]]; then
+            echo "$package"
+            return 0
+        fi
+    fi
+
+    # Third, try to find from policy values.yaml
     local policy_file
     policy_file=$(get_policy_file_for_label "$label_name")
 
-    if [[ -f "$policy_file" ]]; then
+    if [[ -n "$policy_file" ]] && [[ -f "$policy_file" ]]; then
         # Look for name: field in the values.yaml
         package=$(grep -E '^\s+name:' "$policy_file" 2>/dev/null | head -1 | \
                   sed 's/.*name:\s*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
@@ -513,65 +541,34 @@ get_operator_subscription_name() {
         fi
     fi
 
-    # Fallback: minimal mapping for known non-operators and edge cases
-    case "$label_name" in
-        # Skip non-operator labels
-        imageregistry|gitops-dev|acm-observability|metallb-quota|self-managed) echo "" ;;
-        # Fallback mappings for operators without policy files
-        gitops) echo "openshift-gitops-operator" ;;
-        acm) echo "advanced-cluster-management" ;;
-        metallb) echo "metallb-operator" ;;
-        odf) echo "odf-operator" ;;
-        acs) echo "rhacs-operator" ;;
-        dev-spaces) echo "devspaces" ;;
-        dev-hub) echo "rhdh" ;;
-        pipelines) echo "openshift-pipelines-operator-rh" ;;
-        tas) echo "rhtas-operator" ;;
-        quay) echo "quay-operator" ;;
-        loki) echo "loki-operator" ;;
-        logging) echo "cluster-logging" ;;
-        coo) echo "cluster-observability-operator" ;;
-        compliance) echo "compliance-operator" ;;
-        local-storage) echo "local-storage-operator" ;;
-        lvm) echo "lvms-operator" ;;
-        nmstate) echo "kubernetes-nmstate-operator" ;;
-        virtualization|virt) echo "kubevirt-hyperconverged" ;;
-        # Best guess fallback
-        *) echo "$label_name-operator" ;;
-    esac
+    # No mapping found - return empty (caller will skip this operator)
+    echo ""
 }
 
 # Extract enabled operators from values file
+# Uses dynamic discovery - only labels with {label}-subscription-name: are considered operators
 extract_operators() {
     local values_file="$1"
     local operators=()
-    
+
     # Parse YAML to find enabled operators
     # Look for patterns like: operator-name: 'true' followed by operator-name-channel, operator-name-source
     while IFS= read -r line; do
         # Skip comments and empty lines
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
         [[ -z "$(echo "$line" | xargs)" ]] && continue
-        
+
         # Look for enabled operator (value: 'true') - handle inline comments
         if echo "$line" | grep -qE "^[[:space:]]*[a-z0-9-]+:[[:space:]]*['\"]?true['\"]?"; then
-            local label_name=$(echo "$line" | sed -E 's/^[[:space:]]*([a-z0-9-]+):[[:space:]]*['\''"]?true['\''"]?.*/\1/')
-            
-            # Skip non-operator labels
-            case "$label_name" in
-                self-managed|acm-observability|metallb-quota|gitops-dev-team-*|nmstate-nncp-*) continue ;;
-                *-numcpu|*-memory-mib|*-numcores-per-socket|*-zone-*|*-region|*-instance-type) continue ;;
-                *-provider|*-default|*-fstype|*-size-percent|*-overprovision-ratio) continue ;;
-                *-management-state|*-replicas|*-storage-type|*-s3-region|*-access-mode) continue ;;
-                *-size|*-storage-class|*-volume-mode|*-rollout-strategy|*-availability-config) continue ;;
-                *-multi-cloud-gateway|*-nooba-*|*-ocs-*|*-resource-profile) continue ;;
-            esac
-            
-            # Get operator subscription name from labels
+            local label_name
+            label_name=$(echo "$line" | sed -E 's/^[[:space:]]*([a-z0-9-]+):[[:space:]]*['\''"]?true['\''"]?.*/\1/')
+
+            # Get operator subscription name - returns empty for non-operators
+            # This is the ONLY filter needed: if no subscription-name mapping exists, it's not an operator
             local operator_name
             operator_name=$(get_operator_subscription_name "$label_name" "$values_file")
 
-            # Skip if no operator name found (like imageregistry, gitops-dev)
+            # Skip if no operator name found (not an operator)
             [[ -z "$operator_name" ]] && continue
 
             # Extract operator details from entire file (not just next 10 lines)
@@ -579,7 +576,7 @@ extract_operators() {
             channel=$(grep -E "^[[:space:]]*$label_name-channel:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r')
             source=$(grep -E "^[[:space:]]*$label_name-source:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r')
             source_namespace=$(grep -E "^[[:space:]]*$label_name-source-namespace:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r')
-            
+
             # Only add if we have the required fields and avoid duplicates
             if [[ -n "$channel" && -n "$source" && -n "$source_namespace" ]]; then
                 echo "$operator_name|$channel|$source|$source_namespace"
@@ -907,12 +904,13 @@ EOF
                     IFS='|' read -r name channels <<< "$package_info"
 
                     # Get dependencies from JSON file
-                    local deps=$(jq -r --arg pkg "$name" '.[$pkg] // [] | .[]' "$DEPENDENCIES_FILE" 2>/dev/null)
+                    local deps
+                    deps=$(jq -r --arg pkg "$name" '.[$pkg] // [] | .[]' "$DEPENDENCIES_FILE" 2>/dev/null)
 
                     for dep in $deps; do
                         [[ -z "$dep" ]] && continue
                         # Check if dependency is already in the list
-                        if [[ ! "$existing_operators" =~ " $dep " ]]; then
+                        if [[ ! "$existing_operators" =~ \ $dep\  ]]; then
                             # Add dependency with stable channel (most common default)
                             redhat_operators+="$dep|stable "
                             existing_operators+=" $dep "
@@ -929,14 +927,7 @@ EOF
 
             # Generate redhat-operators catalog if we have operators
             if [[ -n "$redhat_operators" ]]; then
-                # Extract major.minor from OPENSHIFT_VERSION for catalog versioning
-                local catalog_version
-                if [[ "$OPENSHIFT_VERSION" =~ ^([0-9]+\.[0-9]+) ]]; then
-                    catalog_version="${BASH_REMATCH[1]}"
-                else
-                    catalog_version="$OPENSHIFT_VERSION"
-                fi
-                echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v$catalog_version" >> "$output_file"
+                echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v$(get_catalog_version)" >> "$output_file"
                 echo "    packages:" >> "$output_file"
                 
                 for package_info in $redhat_operators; do
@@ -957,14 +948,7 @@ EOF
             
             # Generate community-operators catalog if we have operators
             if [[ -n "$community_operators" ]]; then
-                # Extract major.minor from OPENSHIFT_VERSION for catalog versioning
-                local catalog_version
-                if [[ "$OPENSHIFT_VERSION" =~ ^([0-9]+\.[0-9]+) ]]; then
-                    catalog_version="${BASH_REMATCH[1]}"
-                else
-                    catalog_version="$OPENSHIFT_VERSION"
-                fi
-                echo "  - catalog: registry.redhat.io/redhat/community-operator-index:v$catalog_version" >> "$output_file"
+                echo "  - catalog: registry.redhat.io/redhat/community-operator-index:v$(get_catalog_version)" >> "$output_file"
                 echo "    packages:" >> "$output_file"
                 
                 for package_info in $community_operators; do
@@ -985,14 +969,7 @@ EOF
             
             # Generate certified-operators catalog if we have operators
             if [[ -n "$certified_operators" ]]; then
-                # Extract major.minor from OPENSHIFT_VERSION for catalog versioning
-                local catalog_version
-                if [[ "$OPENSHIFT_VERSION" =~ ^([0-9]+\.[0-9]+) ]]; then
-                    catalog_version="${BASH_REMATCH[1]}"
-                else
-                    catalog_version="$OPENSHIFT_VERSION"
-                fi
-                echo "  - catalog: registry.redhat.io/redhat/certified-operator-index:v$catalog_version" >> "$output_file"
+                echo "  - catalog: registry.redhat.io/redhat/certified-operator-index:v$(get_catalog_version)" >> "$output_file"
                 echo "    packages:" >> "$output_file"
                 
                 for package_info in $certified_operators; do
@@ -1106,13 +1083,16 @@ show_usage_instructions() {
 
 # Main execution
 main() {
+    # Build dynamic operator mappings from subscription-name entries
+    build_operator_mappings
+
     if [[ ${#VALUES_FILES_ARRAY[@]} -eq 1 ]]; then
         echo -e "${GREEN}🚀 Generating ImageSetConfiguration for AutoShift ${VALUES_FILES_ARRAY[0]} environment...${NC}"
     else
         echo -e "${GREEN}🚀 Generating ImageSetConfiguration for AutoShift multi-file environment (${#VALUES_FILES_ARRAY[@]} files)...${NC}"
     fi
     echo ""
-    
+
     generate_imageset_config "$OUTPUT_FILE" "${VALUES_FILES_ARRAY[@]}"
     
     echo ""

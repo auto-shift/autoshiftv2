@@ -6,6 +6,16 @@
 # extracts the operator index image, and finds the latest version-specific
 # channels for each operator.
 #
+# OPERATOR DETECTION REQUIREMENTS:
+# This script dynamically discovers operators by scanning for '{operator}-subscription-name'
+# entries in your values files. For each operator to be detected, you MUST define:
+#
+#   {operator}-subscription-name: 'package'   # OLM package name (REQUIRED for detection)
+#   {operator}-channel: 'channel'             # Current operator channel
+#
+# The subscription-name label is the canonical key that links labels to OLM packages.
+# Without it, the operator will NOT be discovered or updated by this script.
+#
 # Requirements:
 #   - oc CLI (for oc image extract)
 #   - jq (for JSON parsing)
@@ -17,7 +27,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Colors (enabled if either stdout or stderr is a terminal)
-# Using $'...' syntax so escape sequences are actual escape characters
 if [[ -t 1 ]] || [[ -t 2 ]]; then
     RED=$'\033[0;31m'
     GREEN=$'\033[0;32m'
@@ -45,6 +54,14 @@ CACHE_DIR="$PROJECT_ROOT/.cache/catalog-cache"
 DRY_RUN=false
 CHECK_ONLY=false
 PULL_SECRET=""
+
+# Temp file for operator mappings (portable alternative to associative arrays)
+MAPPINGS_FILE=""
+
+cleanup() {
+    [[ -n "$MAPPINGS_FILE" ]] && rm -f "$MAPPINGS_FILE"
+}
+trap cleanup EXIT
 
 usage() {
     cat << EOF
@@ -136,6 +153,85 @@ check_requirements() {
     fi
 }
 
+# ============================================================================
+# DYNAMIC OPERATOR MAPPINGS
+# Uses subscription-name as the canonical key - no hardcoded mappings!
+# Mappings stored in temp file for bash 3.x compatibility
+# Format: label|package|policy_dir
+# ============================================================================
+
+# Build operator mappings dynamically from values files
+build_operator_mappings() {
+    MAPPINGS_FILE=$(mktemp)
+
+    for values_file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
+        [[ -f "$values_file" ]] || continue
+
+        # Find all *-subscription-name: entries
+        grep -oE '[a-z][-a-z0-9]*-subscription-name:[[:space:]]*[^[:space:]]+' "$values_file" 2>/dev/null | \
+        while IFS= read -r line; do
+            # Extract label and package
+            local label package policy_dir=""
+            label=$(echo "$line" | sed 's/-subscription-name:.*//')
+            package=$(echo "$line" | sed 's/.*-subscription-name:[[:space:]]*//' | tr -d "'" | tr -d '"')
+
+            [[ -z "$label" || -z "$package" ]] && continue
+
+            # Find policy directory by searching for name: {package} in policies/*/values.yaml
+            for policy_values in "$PROJECT_ROOT"/policies/*/values.yaml; do
+                [[ -f "$policy_values" ]] || continue
+                if grep -qE "^[[:space:]]+name:[[:space:]]*['\"]?${package}['\"]?" "$policy_values" 2>/dev/null; then
+                    policy_dir=$(dirname "$policy_values")
+                    break
+                fi
+            done
+
+            # Store mapping: label|package|policy_dir
+            echo "${label}|${package}|${policy_dir}" >> "$MAPPINGS_FILE"
+        done
+    done
+
+    # Deduplicate
+    if [[ -f "$MAPPINGS_FILE" ]]; then
+        sort -u "$MAPPINGS_FILE" -o "$MAPPINGS_FILE"
+    fi
+}
+
+# Get all discovered operator labels
+get_discovered_labels() {
+    [[ -f "$MAPPINGS_FILE" ]] || return
+    cut -d'|' -f1 "$MAPPINGS_FILE" | sort -u | tr '\n' ' '
+}
+
+# Get package name for a label (dynamic lookup)
+get_package_for_label() {
+    local label="$1"
+    [[ -f "$MAPPINGS_FILE" ]] || return
+    grep "^${label}|" "$MAPPINGS_FILE" 2>/dev/null | head -1 | cut -d'|' -f2
+}
+
+# Get label for a package (dynamic lookup)
+get_label_for_package() {
+    local package="$1"
+    [[ -f "$MAPPINGS_FILE" ]] || return
+    grep "|${package}|" "$MAPPINGS_FILE" 2>/dev/null | head -1 | cut -d'|' -f1
+}
+
+# Get policy values.yaml file for a label (dynamic lookup)
+get_policy_file_for_label() {
+    local label="$1"
+    [[ -f "$MAPPINGS_FILE" ]] || return
+    local policy_dir
+    policy_dir=$(grep "^${label}|" "$MAPPINGS_FILE" 2>/dev/null | head -1 | cut -d'|' -f3)
+    if [[ -n "$policy_dir" ]]; then
+        echo "$policy_dir/values.yaml"
+    fi
+}
+
+# ============================================================================
+# CATALOG FUNCTIONS
+# ============================================================================
+
 # Extract catalog if not cached
 ensure_catalog() {
     local catalog_hash
@@ -181,7 +277,7 @@ ensure_catalog() {
         exit 1
     fi
 
-    success "Catalog extracted to $catalog_dir ($extracted_count operators)"
+    success "Catalog extracted to $catalog_dir ($(echo $extracted_count | xargs) operators)"
     echo "$catalog_dir"
 }
 
@@ -255,210 +351,6 @@ get_best_channel() {
 }
 
 # ============================================================================
-# AUTO-DISCOVERY: Find operators from values files
-# ============================================================================
-
-# Normalize label to canonical form (avoid duplicates like coo/cluster-observability)
-normalize_label() {
-    local label="$1"
-    case "$label" in
-        cluster-observability) echo "coo" ;;
-        virt) echo "virtualization" ;;
-        *) echo "$label" ;;
-    esac
-}
-
-# Discover operators by scanning values files for *-channel: patterns
-discover_operators() {
-    local labels=""
-
-    # Scan autoshift/values.*.yaml files
-    for file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
-        [[ -f "$file" ]] || continue
-        # Find patterns like "gitops-channel:" and extract "gitops"
-        local found
-        found=$(grep -oE '^[[:space:]]*[a-z][-a-z0-9]*-channel:' "$file" 2>/dev/null | \
-                sed 's/-channel:.*//' | tr -d ' ' | sort -u)
-        labels="$labels $found"
-    done
-
-    # Scan policy values.yaml files for operators with channel: field
-    for file in "$PROJECT_ROOT"/policies/*/values.yaml; do
-        [[ -f "$file" ]] || continue
-        # Check if file has a channel: field (indicates it's an operator)
-        if grep -qE '^[[:space:]]+channel:' "$file" 2>/dev/null; then
-            # Try to get the operator label from directory name
-            local dir_name
-            dir_name=$(basename "$(dirname "$file")")
-            # Map common directory names to labels
-            case "$dir_name" in
-                openshift-gitops) labels="$labels gitops" ;;
-                openshift-pipelines) labels="$labels pipelines" ;;
-                advanced-cluster-management) labels="$labels acm" ;;
-                advanced-cluster-security) labels="$labels acs" ;;
-                openshift-data-foundation) labels="$labels odf" ;;
-                developer-hub) labels="$labels dev-hub" ;;
-                openshift-compliance-operator) labels="$labels compliance" ;;
-                cluster-observabilty) labels="$labels coo" ;;  # Note: typo in dir name
-                trusted-artifact-signer) labels="$labels tas" ;;
-                openshift-virtualization) labels="$labels virtualization" ;;
-                *) labels="$labels $dir_name" ;;
-            esac
-        fi
-    done
-
-    # Normalize labels and deduplicate
-    local normalized=""
-    for label in $labels; do
-        normalized="$normalized $(normalize_label "$label")"
-    done
-
-    echo "$normalized" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' '
-}
-
-# Get package name for a label - tries multiple sources
-get_package_for_label() {
-    local label="$1"
-    local package=""
-
-    # First, try to find from policy values.yaml (most accurate)
-    for file in "$PROJECT_ROOT"/policies/*/values.yaml; do
-        [[ -f "$file" ]] || continue
-
-        # Check if this policy dir matches the label
-        local dir_name
-        dir_name=$(basename "$(dirname "$file")")
-
-        local matches=false
-        case "$label" in
-            gitops) [[ "$dir_name" == "openshift-gitops" ]] && matches=true ;;
-            pipelines) [[ "$dir_name" == "openshift-pipelines" ]] && matches=true ;;
-            acm) [[ "$dir_name" == "advanced-cluster-management" ]] && matches=true ;;
-            acs) [[ "$dir_name" == "advanced-cluster-security" ]] && matches=true ;;
-            odf) [[ "$dir_name" == "openshift-data-foundation" ]] && matches=true ;;
-            dev-hub) [[ "$dir_name" == "developer-hub" ]] && matches=true ;;
-            dev-spaces) [[ "$dir_name" == "dev-spaces" ]] && matches=true ;;
-            compliance) [[ "$dir_name" == "openshift-compliance-operator" ]] && matches=true ;;
-            coo) [[ "$dir_name" == "cluster-observabilty" ]] && matches=true ;;
-            tas) [[ "$dir_name" == "trusted-artifact-signer" ]] && matches=true ;;
-            virtualization) [[ "$dir_name" == "openshift-virtualization" ]] && matches=true ;;
-            *) [[ "$dir_name" == "$label" ]] && matches=true ;;
-        esac
-
-        if $matches; then
-            # Look for name: field in the values.yaml
-            package=$(grep -E '^[[:space:]]+name:' "$file" 2>/dev/null | head -1 | sed 's/.*name:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
-            if [[ -n "$package" ]]; then
-                echo "$package"
-                return 0
-            fi
-        fi
-    done
-
-    # Second, try to find subscription-name from autoshift values files
-    for file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
-        [[ -f "$file" ]] || continue
-        package=$(grep -E "^[[:space:]]*${label}-subscription-name:" "$file" 2>/dev/null | head -1 | \
-                  sed 's/.*subscription-name:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
-        if [[ -n "$package" ]]; then
-            echo "$package"
-            return 0
-        fi
-    done
-
-    # Fallback: use a known mapping for common operators
-    case "$label" in
-        gitops) echo "openshift-gitops-operator" ;;
-        acm) echo "advanced-cluster-management" ;;
-        metallb) echo "metallb-operator" ;;
-        odf) echo "odf-operator" ;;
-        acs) echo "rhacs-operator" ;;
-        dev-spaces) echo "devspaces" ;;
-        dev-hub) echo "rhdh" ;;
-        pipelines) echo "openshift-pipelines-operator-rh" ;;
-        tas) echo "rhtas-operator" ;;
-        quay) echo "quay-operator" ;;
-        loki) echo "loki-operator" ;;
-        logging) echo "cluster-logging" ;;
-        coo) echo "cluster-observability-operator" ;;
-        compliance) echo "compliance-operator" ;;
-        local-storage) echo "local-storage-operator" ;;
-        lvm) echo "lvms-operator" ;;
-        nmstate) echo "kubernetes-nmstate-operator" ;;
-        virtualization) echo "kubevirt-hyperconverged" ;;
-        *) echo "$label-operator" ;;  # Best guess
-    esac
-}
-
-# Get label name for a package (reverse lookup)
-get_label_for_package() {
-    local package="$1"
-
-    # Try to find from autoshift values files
-    for file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
-        [[ -f "$file" ]] || continue
-        local label
-        label=$(grep -B1 "subscription-name:[[:space:]]*['\"]\\?${package}['\"]\\?" "$file" 2>/dev/null | \
-                grep -oE '^[[:space:]]*[a-z][-a-z0-9]*-subscription-name:' | \
-                sed 's/-subscription-name:.*//' | tr -d ' ' | head -1)
-        if [[ -n "$label" ]]; then
-            echo "$label"
-            return 0
-        fi
-    done
-
-    # Fallback mapping
-    case "$package" in
-        openshift-gitops-operator) echo "gitops" ;;
-        advanced-cluster-management) echo "acm" ;;
-        metallb-operator) echo "metallb" ;;
-        odf-operator) echo "odf" ;;
-        rhacs-operator) echo "acs" ;;
-        devspaces) echo "dev-spaces" ;;
-        rhdh) echo "dev-hub" ;;
-        openshift-pipelines-operator-rh) echo "pipelines" ;;
-        rhtas-operator) echo "tas" ;;
-        quay-operator) echo "quay" ;;
-        loki-operator) echo "loki" ;;
-        cluster-logging) echo "logging" ;;
-        cluster-observability-operator) echo "coo" ;;
-        compliance-operator) echo "compliance" ;;
-        local-storage-operator) echo "local-storage" ;;
-        lvms-operator) echo "lvm" ;;
-        kubernetes-nmstate-operator) echo "nmstate" ;;
-        kubevirt-hyperconverged) echo "virtualization" ;;
-        *) echo "${package%-operator}" ;;  # Strip -operator suffix
-    esac
-}
-
-# Get policy values.yaml file for a label
-get_policy_file_for_label() {
-    local label="$1"
-
-    case "$label" in
-        gitops) echo "$PROJECT_ROOT/policies/openshift-gitops/values.yaml" ;;
-        pipelines) echo "$PROJECT_ROOT/policies/openshift-pipelines/values.yaml" ;;
-        acm) echo "$PROJECT_ROOT/policies/advanced-cluster-management/values.yaml" ;;
-        acs) echo "$PROJECT_ROOT/policies/advanced-cluster-security/values.yaml" ;;
-        odf) echo "$PROJECT_ROOT/policies/openshift-data-foundation/values.yaml" ;;
-        dev-hub) echo "$PROJECT_ROOT/policies/developer-hub/values.yaml" ;;
-        dev-spaces) echo "$PROJECT_ROOT/policies/dev-spaces/values.yaml" ;;
-        compliance) echo "$PROJECT_ROOT/policies/openshift-compliance-operator/values.yaml" ;;
-        coo) echo "$PROJECT_ROOT/policies/cluster-observabilty/values.yaml" ;;
-        tas) echo "$PROJECT_ROOT/policies/trusted-artifact-signer/values.yaml" ;;
-        virtualization) echo "$PROJECT_ROOT/policies/openshift-virtualization/values.yaml" ;;
-        loki) echo "$PROJECT_ROOT/policies/loki/values.yaml" ;;
-        logging) echo "$PROJECT_ROOT/policies/logging/values.yaml" ;;
-        quay) echo "$PROJECT_ROOT/policies/quay/values.yaml" ;;
-        metallb) echo "$PROJECT_ROOT/policies/metallb/values.yaml" ;;
-        nmstate) echo "$PROJECT_ROOT/policies/nmstate/values.yaml" ;;
-        lvm) echo "$PROJECT_ROOT/policies/lvm/values.yaml" ;;
-        local-storage) echo "$PROJECT_ROOT/policies/local-storage/values.yaml" ;;
-        *) echo "$PROJECT_ROOT/policies/$label/values.yaml" ;;
-    esac
-}
-
-# ============================================================================
 # UPDATE FUNCTIONS
 # ============================================================================
 
@@ -481,8 +373,6 @@ update_autoshift_channel() {
                     updated=1
                 fi
             else
-                # Ensure exactly one space after colon for proper YAML formatting
-                # The .* matches the old value to replace it entirely
                 sed -i.bak "s/\(${label}-channel:\)[[:space:]]*.*/\1 ${new_channel}/" "$file"
                 rm -f "$file.bak"
                 updated=1
@@ -502,7 +392,7 @@ update_policy_channel() {
     local file
     file=$(get_policy_file_for_label "$label")
 
-    if [[ -f "$file" ]] && grep -qE "^[[:space:]]+channel:" "$file" 2>/dev/null; then
+    if [[ -n "$file" ]] && [[ -f "$file" ]] && grep -qE "^[[:space:]]+channel:" "$file" 2>/dev/null; then
         if $DRY_RUN; then
             local current
             current=$(grep -E "^[[:space:]]+channel:" "$file" | head -1 | \
@@ -512,8 +402,6 @@ update_policy_channel() {
                 updated=1
             fi
         else
-            # Ensure exactly one space after colon for proper YAML formatting
-            # The .* matches the old value to replace it entirely
             sed -i.bak "s/^\([[:space:]]*channel:\)[[:space:]]*.*/\1 ${new_channel}/" "$file"
             rm -f "$file.bak"
             updated=1
@@ -542,7 +430,7 @@ get_current_channel() {
     # Check policy values file
     local policy_file
     policy_file=$(get_policy_file_for_label "$label")
-    if [[ -f "$policy_file" ]]; then
+    if [[ -n "$policy_file" ]] && [[ -f "$policy_file" ]]; then
         current=$(grep -E "^[[:space:]]+channel:" "$policy_file" 2>/dev/null | head -1 | \
                   sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
         if [[ -n "$current" ]]; then
@@ -561,13 +449,15 @@ get_current_channel() {
 main() {
     check_requirements
 
-    log "AutoShift Operator Channel Updater (Auto-Discovery)"
+    log "AutoShift Operator Channel Updater (Dynamic Discovery)"
     echo ""
 
-    # Discover operators from values files
-    log "Discovering operators from values files..."
+    # Build operator mappings from values files (no hardcoding!)
+    log "Building operator mappings from subscription-name entries..."
+    build_operator_mappings
+
     local discovered_labels
-    discovered_labels=$(discover_operators)
+    discovered_labels=$(get_discovered_labels)
     local label_count
     label_count=$(echo "$discovered_labels" | wc -w | tr -d ' ')
     success "Found $label_count operators: $discovered_labels"

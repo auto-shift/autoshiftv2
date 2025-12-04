@@ -4,6 +4,19 @@
 
 set -e
 
+# Colors (enabled if stdout is a terminal)
+if [[ -t 1 ]]; then
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    RED='\033[0;31m'
+    NC='\033[0m'
+else
+    GREEN=''
+    YELLOW=''
+    RED=''
+    NC=''
+fi
+
 QUAY_TOKEN="${1:-}"
 ORG="${2:-autoshift}"
 
@@ -42,11 +55,11 @@ create_repo() {
         }')
 
     if echo "$response" | grep -q '"name"'; then
-        echo "✓ Created"
+        echo -e "${GREEN}✓ Created${NC}"
     elif echo "$response" | grep -q "already exists"; then
-        echo "⊙ Already exists"
+        echo -e "${YELLOW}⊙ Already exists${NC}"
     else
-        echo "✗ Failed"
+        echo -e "${RED}✗ Failed${NC}"
         echo "Response: $response"
     fi
 }
