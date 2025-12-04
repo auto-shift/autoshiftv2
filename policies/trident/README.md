@@ -4,12 +4,11 @@ The workflow is straightforward: first, it will deploy the operator, then deploy
 
 In your `autoshift/values.hub.yaml` file, you can configure these toggles:
 
-You will have to create a secret for your trident credentials on the ACM cluster in the policies-autoshift namespace.
+You will have to create the secret for your trident credentials on the ACM cluster in the policies-autoshift namespace.
 
-oc create secret generic <secret-name> -n policies-autoshift --from-literal=username=vsadmin --from-literal=password='password'
+oc create secret generic cle-svm1 -n policies-autoshift --from-literal=username=vsadmin --from-literal=password='password'
 
 * `trident: true` → Autoshift will deploy the policies and start installing the operator and the orchestrator.
-* `trident-creds-secret: <secret-name>` → When you create the secret containing your Trident credentials on the ACM cluster, Autoshift will copy that secret into the trident namespace on the target hub.
 * `trident-config-<file type>-*: config.yaml.example` → List the files you want deployed when Trident is available. Each label must be unique, and must match the file name from files folder in your policy.
 
 Once your configuration is ready, push your changes to your git repo.
