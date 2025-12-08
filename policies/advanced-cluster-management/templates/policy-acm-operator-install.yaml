@@ -47,6 +47,12 @@ spec:
           remediationAction: enforce
           severity: high
           complianceType: musthave
+          operatorGroup:
+            # if operator group exists in namespace use that
+            name: {{ "{{" }} (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.acm.namespace }}" "").items[0].metadata.name | default {{ .Values.acm.namespace }} {{ "}}" }}
+            namespace: {{ .Values.acm.namespace }}
+            targetNamespaces:
+              - {{ .Values.acm.namespace }}
           subscription:
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-version" | default "" {{ "hub}}" }}'
             namespace: {{ .Values.acm.namespace }}
