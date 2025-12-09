@@ -11,12 +11,6 @@ metadata:
     policy.open-cluster-management.io/categories: Trident
     policy.open-cluster-management.io/controls: OpenShift Standard
 spec:
-  dependencies:
-    - name: policy-trident-orchestrator
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -30,7 +24,7 @@ spec:
           severity: high
           object-templates:
             {{- range $path, $_ := $files }}
-            - complianceType: mustonlyhave
+            - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: ConfigMap
@@ -48,20 +42,10 @@ metadata:
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
-  {{- range $clusterSet, $value := .Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
   {{- range $clusterSet, $value := .Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/trident'
-              operator: In
-              values:
-              - 'true'
+  predicates: []
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
