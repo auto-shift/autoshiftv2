@@ -1,0 +1,53 @@
+{{ $policyName := "managed-hub-autoshift" }}
+{{ $policyNamespace := $.Values.policy_namespace }}
+{{ "{{hub-" }} $app_name := index .ManagedClusterLabels "autoshift.io/autoshift_app_name" | default "{{ $.Values.autoshift.app_name }}" {{ "-hub}}" }}
+{{ "{{hub-" }}  $repo_url := index .ManagedClusterLabels "autoshift.io/autoshift_repo_url" | default "{{ $.Values.autoshift.repo_url }}"   {{ "-hub}}" }}
+{{ "{{hub-" }}  $values_file := index .ManagedClusterLabels "autoshift.io/autoshift_values_file" | default "{{ $.Values.autoshift.values_file }}"   {{ "-hub}}" }}
+{{ "{{hub-" }}  $argo_project := index .ManagedClusterLabels "autoshift.io/autoshift_argo_project" | default "{{ $.Values.autoshift.argo_project }}"   {{ "-hub}}" }}
+{{ "{{hub-" }}  $gitops_namespace := index .ManagedClusterLabels "autoshift.io/autoshift_gitops_namespace" | default "{{ $.Values.autoshift.gitops_namespace }}"   {{ "-hub}}" }}
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec: 
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      metadata:
+        name: autoshift-deployment
+      spec:
+        remediationAction: enforce
+        severity: high
+        object-templates-raw: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: {{ "{{hub" }} $app_name {{ "hub}}" }}
+            namespace: {{ $.Values.autoshift.namespace }}
+          spec:
+            destination:
+              namespace: ''
+              server: https://kubernetes.default.svc
+            source:
+              path: autoshift
+              repoURL: $REPO_URL
+              targetRevision: $TARGET_REVISION
+              helm:
+                valueFiles:
+                  - $VALUES_FILE
+                values: |-
+                  autoshiftGitRepo: $REPO_URL
+                  autoshiftGitBranchTag: $TARGET_REVISION
+            sources: []
+            project: $ARGO_PROJECT
+            syncPolicy:
+              automated:
+                prune: false
+                selfHeal: true

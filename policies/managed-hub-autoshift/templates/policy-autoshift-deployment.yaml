@@ -1,0 +1,75 @@
+{{ $policyName := "managed-hub-autoshift" }}
+{{ $policyNamespace := $.Values.policy_namespace }}
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec: 
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-gitops-systems-argocd
+      namespace: {{  $policyNamespace }}
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-managed-hub-namespace
+      namespace: {{  $policyNamespace }}
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-acm-mch-install
+      namespace: {{  $policyNamespace }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-deploy
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            {{ "{{" }} $appName := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-app-name" | default "{{ $.Values.autoshift.appName }}" {{ "hub}}" }} {{ "}}" }}
+            {{ "{{" }} $repoUrl := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-repo-url" | default "{{ $.Values.autoshift.repoUrl }}"   {{ "hub}}" }} {{ "}}" }}
+            {{ "{{" }} $valuesFile := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-values-file"   {{ "hub}}" }} {{ "}}" }}
+            {{ "{{" }} $argoProject := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-argo-project" | default "{{ $.Values.autoshift.argo_project }}"   {{ "hub}}" }}
+            {{ "{{" }} $gitopsNamespace := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-gitops-namespace" | default "{{ $.Values.autoshift.gitops_namespace }}" {{ "hub}}" }} {{ "}}" }}
+            {{ "{{" }} $policyNamespace := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/policy-namespace" | default "" {{ "hub}}" }} {{ "}}" }}
+            {{ "{{" }} $targetRevision := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/target-revision" | default "" {{ "hub}}" }} {{ "}}" }}
+            {{ "{{" }} if and (ne $policyNamespace "") (ne $targetRevision "") (ne $gitopsNamespace "") (ne $valuesFile "") {{ "}}" }}
+            - complianceType: musthave
+              apiVersion: argoproj.io/v1alpha1
+              kind: Application
+              metadata:
+                name: {{ "{{" }} $appName {{ "}}" }}
+                namespace: {{ "{{" }} $policyNamespace {{ "}}" }}
+              spec:
+                destination:
+                  namespace: {{ "{{" }} $policyNamespace {{ "}}" }}
+                  server: https://kubernetes.default.svc
+                source:
+                  path: autoshift
+                  repoURL: {{ "{{" }} $repoUrl {{ "}}" }}
+                  targetRevision: {{ "{{" }} $targetRevision {{ "}}" }}
+                  helm:
+                    valueFiles:
+                      - {{ "{{" }} $valuesFile {{ "}}" }}
+                    values: |-
+                      autoshiftGitRepo: {{ "{{" }} $repoUrl {{ "}}" }}
+                      autoshiftGitBranchTag: {{ "{{" }} $targetRevision {{ "}}" }}
+                sources: []
+                project: {{ "{{" }} $argoProject {{ "}}" }}
+                syncPolicy:
+                  automated:
+                    prune: false
+                    selfHeal: true
+            {{ "{{" }} end {{ "}}" }}
