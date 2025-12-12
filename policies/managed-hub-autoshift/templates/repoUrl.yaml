@@ -1,0 +1,22 @@
+{{- $policyName := "managed-hub-autoshift" }}
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $placementName := printf "%s-%s" "placement" $policyName }}
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigMap
+metadata:
+  name: autoshift-repo-urls
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec: 
+  data:
+{{- range $clusterSetName, $clusterSet := $.Values.hubClusterSets }}
+  {{- $repoUrl := (index $clusterSet "autoshiftReopUrl" | default $.Values.autoshiftGitRepo) }}
+  {{- if ne $repoUrl "" }}
+    $clusterSetName: $repoUrl
+  {{- end }}
+{{- end }}
+
