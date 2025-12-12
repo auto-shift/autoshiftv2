@@ -10,7 +10,7 @@
 {{- $policyNamespace := $.Values.policy_namespace }}
 {{- range $_, $target := (list "hubofhubs" "managedHub") }}
   {{- /* Skip managedHub target if there are no managed hubs */ -}}
-  {{- if and (eq $target "managedHub") (empty $managedHubs) }}
+ {{- if and (eq $target "managedHub") (empty $managedHubs) }}
     {{- continue }}
   {{- end }}
   {{- $policyName := (printf "policy-%s-labels" ($target | lower)) }}
@@ -79,6 +79,10 @@ spec:
                         {{ "{{-" }} $_ := set $newLabels $label $value {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} $metadata := set $cluster.metadata "labels" $newLabels {{ "}}" }}
+                    {{ "{{-" }} $_ = unset $metadata "generation" {{ "}}" }}
+                    {{ "{{-" }} $_ = unset $metadata "creationTimestamp" {{ "}}" }}
+                    {{ "{{-" }} $_ = unset $metadata "resourceVersion" {{ "}}" }}
+                    {{ "{{-" }} $_ = unset $metadata "uid" {{ "}}" }}
                     {{ "{{-" }} $objectDefinition := set $cluster "metadata" $metadata {{ "}}" }}
                     {{ "{{-" }} $_ := unset $objectDefinition "status" {{ "}}" }}
                     {
