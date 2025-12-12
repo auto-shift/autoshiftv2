@@ -32,66 +32,50 @@ spec:
                   name: cluster-set-{{ $clusterSetKey }}-lookup-debug
                   namespace: {{ $.Values.policy_namespace }}
                 data:
-                  noNamespaceConfigMaps: |
-                    {{ "{{-" }} $clusterName := "managed-hub" {{ "}}" }}
-                    {{ "{{-" }} (lookup "v1" "ConfigMap" "" (print "managed-cluster." $clusterName) "autoshift.io/cluster-labels" | default dict) | toRawJson {{ "}}" }}
-                  lookupResult: |
-                    test
-                    {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}
-                    - complianceType: musthave
-                        objectDefinition:
-                          apiVersion: v1
-                          kind: Secret
-                          metadata:
-                            name: image-registry-private-configuration
-                            namespace: openshift-image-registry
-                          type: Opaque
-                          data:
-                            REGISTRY_STORAGE_S3_ACCESSKEY: {{`{{ fromSecret "openshift-image-registry" "image-registry-storage" "AWS_ACCESS_KEY_ID" }}`}}
-                            REGISTRY_STORAGE_S3_SECRETKEY: {{`{{ fromSecret "openshift-image-registry" "image-registry-storage" "AWS_SECRET_ACCESS_KEY" }}`}}
-                    - complianceType: musthave
-                      objectDefinition:
-                        apiVersion: v1
-                        kind: ConfigMap
-                        metadata:
-                          name: image-registry-s3-bundle
-                          namespace: openshift-config
-                        data:
-                          ca-bundle.crt: '{{`{{ fromSecret "openshift-ingress" (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default").spec.defaultCertificate.name "tls.crt" | base64dec | toRawJson | toLiteral }}`}}'
-                    {{`{{hub- end hub}}`}}
-                    - complianceType: musthave
-                      objectDefinition:
-                        apiVersion: imageregistry.operator.openshift.io/v1
-                        kind: Config
-                        metadata:
-                          name: cluster
-                        spec:
-                          logLevel: Normal
-                          rolloutStrategy: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-rollout-strategy" | default "Recreate" hub}}`}}
-                          operatorLogLevel: Normal
-                          requests:
-                            read:
-                              maxWaitInQueue: 0s
-                            write:
-                              maxWaitInQueue: 0s
-                          replicas: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-replicas" | default "1" hub}}`}}
-                          managementState: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-management-state" | default "Managed" hub}}`}}
-                          storage:
-                            managementState: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-storage-management-state" | default "Managed" hub}}`}}
-                            {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}}`}}
-                            pvc:
-                              claim: image-registry-storage
-                            {{`{{hub- else if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}
-                            s3:
-                              managementState: Unmanaged
-                              region: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-s3-region" | default "us-east-1" hub}}`}}
-                              bucket: {{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_NAME" }}`}}
-                              regionEndpoint: 'https://{{`{{ (lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3").spec.host }}`}}'
-                              virtualHostedStyle: false
-                              encrypt: false
-                              trustedCA:
-                                name: image-registry-s3-bundle
-                            {{`{{hub- end hub}}`}}
+                  desiredClusterDefinition: |
+                    [
+                      {{ "{{-" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
+                      {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "}}" }}
+                      {{ "{{-" }} if not (empty $managedClusterLookupResult) {{ "}}" }}
+                        {{ "{{-" }} $managedClusters := (index $managedClusterLookupResult "items") | default list {{ "}}" }}
+                        {{ "{{-" }} $lastIndex := (sub (len $managedClusters) 1) {{ "}}" }}
+                        {{ "{{-" }} if (ne $lastIndex -1) {{ "}}" }}
+                          {{ "{{-" }} range $index, $cluster := $managedClusters {{ "}}" }}
+                            {{ "{{-" }} $existingLabels :=  (index $cluster "metadata" "labels") {{ "}}" }}
+                            {{ "{{-" }} $clusterSet := (index $existingLabels "cluster.open-cluster-management.io/clusterset") | default "" {{ "}}" }}
+                            {{ "{{-" }} $clusterName := (index $cluster "metadata" "name") {{ "}}" }}
+                            {{ "{{-" }} $clusterConfigMap := (lookup "v1" "ConfigMap" $policyNamespace (print "managed-cluster." $clusterName) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
+                            {{ "{{-" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" $policyNamespace (print "cluster-set." $clusterSet) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
+                            {{ "{{-" }} $clusterData := (index $clusterConfigMap "data" | default dict) {{ "}}" }}
+                            {{ "{{-" }} $clusterSetData := (index $clusterSetConfigMap "data" | default dict) {{ "}}" }}
+                            {{ "{{-" }} $labelPrefix := (index $clusterData "labelPrefix" | default (index $clusterSetData "labelPrefix" | default "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}")) {{ "}}" }}
+                            {{ "{{-" }} if (ne $clusterSet "") {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} $existingLabelsNoAutoshift := (dict) {{ "}}" }}
+                            {{ "{{-" }} range $label, $value := $existingLabels {{ "}}" }}
+                              {{ "{{-" }} if not (hasPrefix $labelPrefix $label) {{ "}}" }}
+                                {{ "{{-" }} $_ :=  set $existingLabelsNoAutoshift $label $value {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} $clusterSetLabels := (index $clusterSetData "labels" | default "") | fromJson | default dict{{ "}}" }}
+                            {{ "{{-" }} $clusterLabels := (index $clusterData "labels" | default "") | fromJson | default dict{{ "}}" }}
+                            {{ "{{-" }} $tempLabels := merge (dict) $clusterLabels $clusterSetLabels $existingLabelsNoAutoshift {{ "}}" }}
+                            {{ "{{-" }} $newLabels := dict {{ "}}" }}
+                            {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
+                              {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
+                                {{ "{{-" }} $_ := set $newLabels $label $value {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} $metadata := set $cluster.metadata "labels" $newLabels {{ "}}" }}
+                            {{ "{{-" }} $objectDefinition := set $cluster "metadata" $metadata {{ "}}" }}
+                            {{ "{{-" }} $_ := unset $objectDefinition "status" {{ "}}" }}
+                            {
+                              "complianceType": "mustonlyhave",
+                              "objectDefinition": {{ "{{" }} $objectDefinition | toRawJson  {{ "}}" }}
+                            }{{ "{{-" }} if ne $lastIndex $index {{ "}}" }},{{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    ]
 ---
 {{/* (index ((index (lookup "v1" "ConfigMap" "{{ .Values.policy_namespace }}" (printf "cluster-set.%s"  $clusterSet)) "data" "values") | fromJson) "labels") | default dict */}}
                     {{/*{{ "{{-" }} (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | toRawJson {{ "}}" }} */}}
