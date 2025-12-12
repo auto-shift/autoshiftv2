@@ -1,5 +1,6 @@
 {{ $policyName := "managed-hub-autoshift" }}
 {{ $policyNamespace := $.Values.policy_namespace }}
+{{ $placementName := printf "%s-%s" "placement" $policyName }}
 ---
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -40,18 +41,17 @@ spec:
             {{ "{{" }} $argoProject := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-argo-project" | default "{{ $.Values.autoshift.argo_project }}"   {{ "hub}}" }}
             {{ "{{" }} $targetRevision := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/target-revision" | default "" {{ "hub}}" }} {{ "}}" }}
             {{ "{{" }} $gitopsNamespace := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-gitops-namespace" | default "{{ $.Values.autoshift.gitops_namespace }}" {{ "hub}}" }} {{ "}}" }}
-            {{ "{{" }} $policyNamespace := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/policy-namespace" | default "" {{ "hub}}" }} {{ "}}" }}
             {{ "{{" }} $autoshiftEnabled := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/enable-autoshift-install" | default "" {{ "hub}}" }} {{ "}}" }}
-            {{ "{{" }} if and (ne $policyNamespace "") (ne $targetRevision "") (ne $gitopsNamespace "") (ne $valuesFile "") (eq $autoshiftEnabled "true") {{ "}}" }}
+            {{ "{{" }} if and  (ne $targetRevision "") (ne $gitopsNamespace "") (ne $valuesFile "") (eq $autoshiftEnabled "true") {{ "}}" }}
             - complianceType: musthave
               apiVersion: argoproj.io/v1alpha1
               kind: Application
               metadata:
                 name: {{ "{{" }} $appName {{ "}}" }}
-                namespace: {{ "{{" }} $policyNamespace {{ "}}" }}
+                namespace: {{ "{{" }} $gitopsNamespace {{ "}}" }}
               spec:
                 destination:
-                  namespace: {{ "{{" }} $gitopsNamespace {{ "}}" }}
+                  namespace: ''
                   server: https://kubernetes.default.svc
                 source:
                   path: autoshift
@@ -70,3 +70,40 @@ spec:
                     prune: false
                     selfHeal: true
             {{ "{{" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+    {{- range $_, $clusterSet := $managedHubs }}
+    - {{ $clusterSet }}
+    {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchLabels:
+            {{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "enable-autoshift-install" }}: "true"
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName}}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+---
