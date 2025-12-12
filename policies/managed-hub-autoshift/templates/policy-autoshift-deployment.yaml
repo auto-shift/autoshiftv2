@@ -36,9 +36,8 @@ spec:
           object-templates-raw: |
             {{ "{{" }} $appName := {{ "{{hub" }} .ManagedClusterName {{ "hub}}" }} {{ "}}" }}
             {{ "{{" }} $repoUrl := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-repo-url" | default "{{ $.Values.autoshift.repoUrl }}"   {{ "hub}}" }} {{ "}}" }}
-            {{ "{{" }} $valuesFile := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-values-file" | default ""   {{ "hub}}" }} {{ "}}" }}
             {{ "{{" }} $valuesFile := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-values-file" | default (printf "%s.%s.%s" "values" .ManagedClusterName "yaml")   {{ "hub}}" }} {{ "}}" }}
-            {{ "{{" }} $argoProject := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-argo-project" | default "{{ $.Values.autoshift.argo_project }}"   {{ "hub}}" }}
+            {{ "{{" }} $argoProject := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-argo-project" | default "{{ $.Values.autoshift.argo_project }}" | default "default"  {{ "hub}}" }}
             {{ "{{" }} $targetRevision := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/target-revision" | default "" {{ "hub}}" }} {{ "}}" }}
             {{ "{{" }} $gitopsNamespace := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-gitops-namespace" | default "{{ $.Values.autoshift.gitops_namespace }}" {{ "hub}}" }} {{ "}}" }}
             {{ "{{" }} $autoshiftEnabled := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/enable-autoshift-install" | default "" {{ "hub}}" }} {{ "}}" }}
@@ -78,7 +77,7 @@ metadata:
   namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
-    {{- range $_, $clusterSet := $managedHubs }}
+    {{- range $_, $clusterSet := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
     {{- end }}
   predicates:
@@ -86,6 +85,7 @@ spec:
         labelSelector:
           matchLabels:
             {{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "enable-autoshift-install" }}: "true"
+            {{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "self-managed" }}: "false"
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
