@@ -1,0 +1,103 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-dynatrace-deploy-dynakube
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+spec:
+  dependencies:
+    - name: policy-dynatrace-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: deploy-dynatrace-dynakube
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: dynatrace.com/v1beta3
+                kind: DynaKube
+                metadata:
+                  name: dynakube
+                  namespace: dynatrace
+                spec:
+                  apiUrl: {{ .Values.dynatrace.apiUrl }}
+                  skipCertCheck: true
+                  metadataEnrichment:
+                    enabled: true
+                  oneAgent:
+                    hostGroup: {{ .Values.dynatrace.hostGroup }}
+                    cloudNativeFullStack:
+                      tolerations:
+                        - effect: NoSchedule
+                          key: node-role.kubernetes.io/master
+                          operator: Exists
+                        - effect: NoSchedule
+                          key: node-role.kubernetes.io/control-plane
+                          operator: Exists
+                  activeGate:
+                    capabilities:
+                      - routing
+                      - kubernetes-monitoring
+                      - dynatrace-api
+                    resources:
+                      requests:
+                        cpu: 500m
+                        memory: 512Mi
+                      limits:
+                        cpu: 1000m
+                        memory: 1.5Gi
+                  logMonitoring: {}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-dynatrace-deploy-dynakube
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/dynatrace'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-dynatrace-deploy-dynakube
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-dynatrace-deploy-dynakube
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-dynatrace-deploy-dynakube
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
