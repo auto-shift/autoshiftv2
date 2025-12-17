@@ -35,7 +35,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.quay.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} ((index (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.quay.namespace }}" "").items 0).metadata).name | default "{{ .Values.quay.namespace }}" {{ "}}" }}'
             namespace: {{ .Values.quay.namespace }}
           subscription:
             namespace: {{ .Values.quay.namespace }}

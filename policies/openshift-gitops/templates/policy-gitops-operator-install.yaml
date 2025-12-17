@@ -39,7 +39,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.gitops.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} ((index (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.gitops.namespace }}" "").items 0).metadata).name | default "{{ .Values.gitops.namespace }}" {{ "}}" }}'
             namespace: {{ .Values.gitops.namespace }}
           subscription:
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-version" | default "" {{ "hub}}" }}'

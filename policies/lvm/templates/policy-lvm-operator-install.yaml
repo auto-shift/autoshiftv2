@@ -39,7 +39,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.lvm.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} ((index (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.lvm.namespace }}" "").items 0).metadata).name | default "{{ .Values.lvm.namespace }}" {{ "}}" }}'
             namespace: {{ .Values.lvm.namespace }}
             targetNamespaces:
               - {{ .Values.lvm.namespace }}

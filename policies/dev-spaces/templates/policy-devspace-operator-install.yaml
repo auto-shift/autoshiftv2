@@ -35,7 +35,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.devspaces.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} ((index (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.devspaces.namespace }}" "").items 0).metadata).name | default "{{ .Values.devspaces.namespace }}" {{ "}}" }}'
             namespace: {{ .Values.devspaces.namespace }}
           subscription:
             namespace: {{ .Values.devspaces.namespace }}

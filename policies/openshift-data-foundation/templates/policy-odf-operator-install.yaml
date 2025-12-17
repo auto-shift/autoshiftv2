@@ -41,7 +41,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.odf.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} ((index (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.odf.namespace }}" "").items 0).metadata).name | default "{{ .Values.odf.namespace }}" {{ "}}" }}'
             namespace: {{ .Values.odf.namespace }}
             targetNamespaces:
               - {{ .Values.odf.namespace }}

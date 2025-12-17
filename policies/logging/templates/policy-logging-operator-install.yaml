@@ -39,7 +39,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.logging.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} ((index (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.logging.namespace }}" "").items 0).metadata).name | default "{{ .Values.logging.namespace }}" {{ "}}" }}'
             namespace: {{ .Values.logging.namespace }}
             targetNamespaces:
               - {{ .Values.logging.namespace }}

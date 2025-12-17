@@ -37,7 +37,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.nmstate.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} ((index (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.nmstate.namespace }}" "").items 0).metadata).name | default "{{ .Values.nmstate.namespace }}" {{ "}}" }}'
             namespace: {{ .Values.nmstate.namespace }}
             targetNamespaces:
               - {{ .Values.nmstate.namespace }}

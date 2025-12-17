@@ -41,7 +41,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.loki.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} ((index (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.loki.namespace }}" "").items 0).metadata).name | default "{{ .Values.loki.namespace }}" {{ "}}" }}'
             namespace: {{ .Values.loki.namespace }}
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-subscription-name" | default "{{ .Values.loki.name }}" {{ "hub}}" }}'
