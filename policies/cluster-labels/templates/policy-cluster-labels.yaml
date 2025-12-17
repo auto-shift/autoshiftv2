@@ -47,7 +47,7 @@ spec:
           severity: high
           object-templates-raw: |
             [
-              {{ "{{-" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default (printf "%s-%s" "policies" .ManagedClusterName) {{ "hub}}" }}" {{ "}}" }}
+              {{ "{{-" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
               {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "}}" }}
               {{ "{{-" }} if not (empty $managedClusterLookupResult) {{ "}}" }}
                 {{ "{{-" }} $managedClusters := (index $managedClusterLookupResult "items") | default list {{ "}}" }}
@@ -78,7 +78,8 @@ spec:
                       {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
                         {{ "{{-" }} $_ := set $newLabels $label $value {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} $metadata := set $cluster.metadata "labels" $newLabels {{ "}}" }}
+                    {{ "{{-" }} $metadata := index $cluster "metadata" {{ "}}" }}
+                    {{ "{{-" }} $_ := set $metadata "labels" $newLabels {{ "}}" }}
                     {{ "{{-" }} $objectDefinition := set $cluster "metadata" $metadata {{ "}}" }}
                     {{ "{{-" }} $_ := unset $objectDefinition "status" {{ "}}" }}
                     {
