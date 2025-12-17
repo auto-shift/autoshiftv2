@@ -35,12 +35,9 @@ spec:
           severity: high
           object-templates-raw: |
             {{ "{{" }} $appName := {{ "{{hub" }} .ManagedClusterName {{ "hub}}" }} {{ "}}" }}
-            {{ "{{hub" }} $repoUrlRef :=  (index .ManagedClusterLabels "autoshift.io/autoshift-repo-url-ref" | default "autoshift-repo-urls")   {{ "hub}}" }}
-            {{ "{{hub" }} if ne $repoUrlRef "" {{ "hub}}" }}
             {{ "{{hub" }} $repoUrlConfigMap := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" "autoshift-repo-urls" | default "") {{ "hub}}" }} 
             {{ "{{hub" }} if ne $repoUrlConfigMap "" {{ "hub}}" }}
             {{ "{{" }} $repoUrl := "{{ "{{hub" }} (index $repoUrlConfigMap "data" (index .ManagedClusterLabels "cluster.open-cluster-management.io/clusterset" | default "") | default "") {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{hub" }} end {{ "hub}}" }}
             {{ "{{hub" }} end {{ "hub}}" }}
             {{ "{{" }} $valuesFile := {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-values-file" | default (printf "%s.%s.%s" "values" .ManagedClusterName "yaml")   {{ "hub}}" }} {{ "}}" }}
             {{ "{{" }} $argoProject := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-argo-project" | default "{{ $.Values.autoshift.argoProject }}" | default "default"  {{ "hub}}" }}"
@@ -90,7 +87,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchLabels:
-            {{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "enable-autoshift-install" }}: "true"
+            {{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "autoshift-enable-install" }}: "true"
             {{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "self-managed" }}: "false"
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
