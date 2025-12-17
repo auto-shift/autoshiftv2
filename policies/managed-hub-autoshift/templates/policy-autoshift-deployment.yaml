@@ -46,31 +46,32 @@ spec:
             {{ "{{" }} $autoshiftEnabled := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-enable-install" | default "" {{ "hub}}" }}" {{ "}}" }}
             {{ "{{" }} if and  (ne $targetRevision "") (ne $gitopsNamespace "") (ne $valuesFile "") (eq $autoshiftEnabled "true") (ne ($repoUrl | default "") "") {{ "}}" }}
             - complianceType: musthave
-              apiVersion: argoproj.io/v1alpha1
-              kind: Application
-              metadata:
-                name: {{ "{{" }} $appName {{ "}}" }}
-                namespace: {{ "{{" }} $gitopsNamespace {{ "}}" }}
-              spec:
-                destination:
-                  namespace: ''
-                  server: https://kubernetes.default.svc
-                source:
-                  path: autoshift
-                  repoURL: {{ "{{" }} $repoUrl {{ "}}" }}
-                  targetRevision: {{ "{{" }} $targetRevision {{ "}}" }}
-                  helm:
-                    valueFiles:
-                      - {{ "{{" }} $valuesFile {{ "}}" }}
-                    values: |-
-                      autoshiftGitRepo: {{ "{{" }} $repoUrl {{ "}}" }}
-                      autoshiftGitBranchTag: {{ "{{" }} $targetRevision {{ "}}" }}
-                sources: []
-                project: {{ "{{" }} $argoProject {{ "}}" }}
-                syncPolicy:
-                  automated:
-                    prune: false
-                    selfHeal: true
+              objectDefinition:
+                apiVersion: argoproj.io/v1alpha1
+                kind: Application
+                metadata:
+                  name: {{ "{{" }} $appName {{ "}}" }}
+                  namespace: {{ "{{" }} $gitopsNamespace {{ "}}" }}
+                spec:
+                  destination:
+                    namespace: ''
+                    server: https://kubernetes.default.svc
+                  source:
+                    path: autoshift
+                    repoURL: {{ "{{" }} $repoUrl {{ "}}" }}
+                    targetRevision: {{ "{{" }} $targetRevision {{ "}}" }}
+                    helm:
+                      valueFiles:
+                        - {{ "{{" }} $valuesFile {{ "}}" }}
+                      values: |-
+                        autoshiftGitRepo: {{ "{{" }} $repoUrl {{ "}}" }}
+                        autoshiftGitBranchTag: {{ "{{" }} $targetRevision {{ "}}" }}
+                  sources: []
+                  project: {{ "{{" }} $argoProject {{ "}}" }}
+                  syncPolicy:
+                    automated:
+                      prune: false
+                      selfHeal: true
             {{ "{{" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
