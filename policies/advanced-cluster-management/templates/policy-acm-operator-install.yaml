@@ -57,7 +57,13 @@ spec:
             namespace: {{ .Values.acm.namespace }}
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-channel" | default "{{ .Values.acm.channel }}" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-subscription-name" | default "{{ .Values.acm.name }}" {{ "hub}}" }}'
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-source" | default "{{ .Values.acm.source }}" {{ "hub}}" }}'
+            # Source Selection Logic (evaluated on hub for each managed cluster):
+            # 1. If cluster has explicit 'autoshift.io/acm-source' label → use that value
+            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
+            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
+            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
+            # 3. Else → use standard source (e.g., redhat-operators)
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-source" | default (ternary (printf "%s-%s" "{{ .Values.acm.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.acm.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-source-namespace" | default "{{ .Values.acm.sourceNamespace }}" {{ "hub}}" }}'
           # Upgrade approval for subscription will be set based on if version is set not this flag
           # If version is set install plan is set to manual and only the version specified will be installed

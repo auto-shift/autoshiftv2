@@ -6,6 +6,17 @@ AutoShiftv2 is an opinionated [Infrastructure-as-Code (IaC)](https://martinfowle
 
 What AutoShift does is it uses OpenShift GitOps to declaratively manage RHACM which then manages various OpenShift and/or Kubernetes cluster resources and components. This eliminates much of the operator toil associated with installing and managing day 2 tasks, by letting declarative GitOps do that for you.
 
+## Documentation
+
+📚 **[Complete Documentation](docs/)** - Start here for guides and tutorials
+
+**Quick Links:**
+- 🚀 [Quick Start Guide](docs/quickstart-oci.md) - Get started in 15 minutes
+- 📦 [OCI Deployment](docs/deploy-oci.md) - Production deployment guide
+- 🔄 [Release Process](docs/releases.md) - Create and publish releases
+- 📊 [Gradual Rollout](docs/gradual-rollout.md) - Multi-version deployments
+- 🔧 [Developer Guide](docs/developer-guide.md) - Contributing and advanced topics
+
 ## Architecture
 
 AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert. RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass, with built-in governance, cluster lifecycle management, application lifecycle management, and observability features. OpenShift GitOps provides declarative GitOps for multicluster continuous delivery.
@@ -30,7 +41,51 @@ The hub cluster is the main cluster with RHACM and its core components installed
 * [helm](https://helm.sh/docs/intro/install/) installed locally on the machine from which you will be executing this repo
 * The OpenShift CLI [oc](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli) client utility installed locally on the machine from which you will be executing this repo
 
-### Prepping for Installation
+#### Minimum Hub Cluster Requirements
+
+All hub clusters **must** have the following configuration in their `hubClusterSets`:
+
+* `gitops: 'true'` - OpenShift GitOps (ArgoCD) is required to deploy AutoShift
+* ACM is automatically installed on all hub clustersets by policy (no labels required)
+
+See `autoshift/values.minimal.yaml` for a minimal configuration example that shows only the required settings.
+
+### Installation from OCI Release (Recommended)
+
+For production deployments, install from the OCI registry:
+
+1. Download the installation scripts from the [latest release](https://github.com/auto-shift/autoshiftv2/releases):
+
+   ```bash
+   # Download and extract release artifacts
+   VERSION=0.1.0  # Replace with desired version
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/INSTALL.md -O
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-bootstrap.sh -O
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-autoshift.sh -O
+   chmod +x install-*.sh
+   ```
+
+2. Run the bootstrap installer to deploy GitOps and ACM:
+
+   ```bash
+   ./install-bootstrap.sh
+   ```
+
+3. Wait for ACM to be ready, then install AutoShift:
+
+   ```bash
+   # Wait for MultiClusterHub to be running
+   oc get mch -A -w
+
+   # Install AutoShift (edit the script first to set your values file)
+   ./install-autoshift.sh
+   ```
+
+The charts are pulled directly from `oci://quay.io/autoshift/` - no git clone required.
+
+### Installation from Source
+
+For development or customization, install directly from the git repository:
 
 1.  Login to the **hub** cluster via the [`oc` utility](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#cli-logging-in_cli-developer-commands).
 
@@ -249,26 +304,26 @@ Labels can also be set at the individual cluster level in the `clusters:` sectio
 
 Every managed operator supports version control via its respective label:
 
-| Operator | Version Label | Example CSV |
-|----------|--------------|-------------|
-| Advanced Cluster Management | `acm-version` | `advanced-cluster-management.v2.14.0` |
-| Advanced Cluster Security | `acs-version` | `rhacs-operator.v4.6.1` |
-| OpenShift GitOps | `gitops-version` | `openshift-gitops-operator.v1.18.0` |
-| OpenShift Pipelines | `pipelines-version` | `openshift-pipelines-operator-rh.v1.18.1` |
-| OpenShift Data Foundation | `odf-version` | `odf-operator.v4.18.11-rhodf` |
-| MetalLB | `metallb-version` | `metallb-operator.v4.18.0-202509240837` |
-| Quay | `quay-version` | `quay-operator.v3.15.0` |
-| Developer Hub | `dev-hub-version` | `rhdh.v1.5.0` |
-| Developer Spaces | `dev-spaces-version` | `devspaces.v3.21.0` |
-| Trusted Artifact Signer | `tas-version` | `rhtas-operator.v1.2.0` |
-| Loki | `loki-version` | `loki-operator.v6.3.0` |
-| OpenShift Logging | `logging-version` | `cluster-logging.v6.3.0` |
-| Cluster Observability | `coo-version` | `cluster-observability-operator.v0.4.0` |
-| Compliance Operator | `compliance-version` | `compliance-operator.v1.8.0` |
-| LVM Storage | `lvm-version` | `lvms-operator.v4.18.0-202410091522` |
-| Local Storage | `local-storage-version` | `local-storage-operator.v4.18.0-202410091522` |
-| NMState | `nmstate-version` | `kubernetes-nmstate-operator.v4.18.0-202410091522` |
-| OpenShift Virtualization | `virt-version` | `kubevirt-hyperconverged.v4.18.0` |
+| Operator                    | Version Label           | Example CSV                                        |
+| --------------------------- | ----------------------- | -------------------------------------------------- |
+| Advanced Cluster Management | `acm-version`           | `advanced-cluster-management.v2.14.0`              |
+| Advanced Cluster Security   | `acs-version`           | `rhacs-operator.v4.6.1`                            |
+| OpenShift GitOps            | `gitops-version`        | `openshift-gitops-operator.v1.18.0`                |
+| OpenShift Pipelines         | `pipelines-version`     | `openshift-pipelines-operator-rh.v1.18.1`          |
+| OpenShift Data Foundation   | `odf-version`           | `odf-operator.v4.18.11-rhodf`                      |
+| MetalLB                     | `metallb-version`       | `metallb-operator.v4.18.0-202509240837`            |
+| Quay                        | `quay-version`          | `quay-operator.v3.15.0`                            |
+| Developer Hub               | `dev-hub-version`       | `rhdh.v1.5.0`                                      |
+| Developer Spaces            | `dev-spaces-version`    | `devspaces.v3.21.0`                                |
+| Trusted Artifact Signer     | `tas-version`           | `rhtas-operator.v1.2.0`                            |
+| Loki                        | `loki-version`          | `loki-operator.v6.3.0`                             |
+| OpenShift Logging           | `logging-version`       | `cluster-logging.v6.3.0`                           |
+| Cluster Observability       | `coo-version`           | `cluster-observability-operator.v0.4.0`            |
+| Compliance Operator         | `compliance-version`    | `compliance-operator.v1.8.0`                       |
+| LVM Storage                 | `lvm-version`           | `lvms-operator.v4.18.0-202410091522`               |
+| Local Storage               | `local-storage-version` | `local-storage-operator.v4.18.0-202410091522`      |
+| NMState                     | `nmstate-version`       | `kubernetes-nmstate-operator.v4.18.0-202410091522` |
+| OpenShift Virtualization    | `virt-version`          | `kubevirt-hyperconverged.v4.18.0`                  |
 
 ### Finding Available CSV Versions
 
@@ -293,12 +348,20 @@ oc get packagemanifests openshift-pipelines-operator-rh -o yaml | grep currentCS
 | Variable                    | Type      | Default Value             | Notes |
 |-----------------------------|-----------|---------------------------|-------|
 | `self-managed`              | bool      | `true` or `false`         |       |
+| `acm-enable-provisioning`   | bool      | `false`                   | Configures ACM to provision clusters |
+| `acm-provisioning-storage-class` | string |                         | (optional) name of StorageClass to use if non default is desired |
+| `acm-provisioning-database-size` | string | `10Gi`                  | DatabaseStorage defines the spec of the PersistentVolumeClaim to be
+created for the database's filesystem. Minimum 10GiB is recommended. |
+| `acm-provisioning-filesystem-storage-size` | string | `100Gi`       | FileSystemStorage defines the spec of the PersistentVolumeClaim to be
+created for the assisted-service's filesystem (logs, etc). Minimum 100GiB recommended |
+| `acm-provisioning-image-storage-size` | string | `50Gi`             | ImageStorage defines the spec of the PersistentVolumeClaim to be
+created for each replica of the image service. 2GiB per OSImage entry is required. |
 | `acm-channel`               | string    | `release-2.14`            |       |
 | `acm-version`               | string    | (optional)                | Specific CSV version for controlled upgrades |
 | `acm-source`                | string    | `redhat-operators`        |       |
 | `acm-source-namespace`      | string    | `openshift-marketplace`   |       |
 | `acm-availability-config`   | string    | `Basic` or `High`         |       |
-| `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a nooba bucket for acm. ODF will have to be enabled as well |
+| `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a noobaa bucket for acm. ODF will have to be enabled as well |
 
 ### Cluster Labels
 
@@ -502,7 +565,8 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `compliance`                          | bool              |                           | If not set Compliance Operator will not be managed. Helm chart config map must be set with profiles and remediations |
-| `compliance-name`                     | string            | `compliance-operator`     |       |
+| `compliance-auto-remediate`           | bool              | `true`                    |       |
+| `compliance-subscription-name`        | string            | `compliance-operator`     |       |
 | `compliance-version`                  | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `compliance-source`                   | string            | `redhat-operators`        |       |
 | `compliance-source-namespace`         | string            | `openshift-marketplace`   |       |
@@ -554,10 +618,10 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `odf`                             | bool              |                           | If not set OpenShift Data Foundation will not be managed. if Storage Nodes are enable will deploy ODF on local storage/ storage nodes |
-| `odf-multi-cloud-gateway`         | string            |                           | values `standalone` or `standard`. Install ODF with only nooba object gateway or full odf |
-| `odf-nooba-pvpool`                | bool              |                           | if not set nooba will be deployed with default settings. Recomended don't set for cloud providers. Use pv pool for storage |
-| `odf-nooba-store-size`            | string            |                           | example `500Gi`. if pvpool set. Size of nooba backing store |
-| `odf-nooba-store-num-volumes`     | string            |                           | example `1`. if pvpool set. number of volumes |
+| `odf-multi-cloud-gateway`         | string            |                           | values `standalone` or `standard`. Install ODF with only noobaa object gateway or full odf |
+| `odf-noobaa-pvpool`                | bool              |                           | if not set noobaa will be deployed with default settings. Recommended don't set for cloud providers. Use pv pool for storage |
+| `odf-noobaa-store-size`            | string            |                           | example `500Gi`. if pvpool set. Size of noobaa backing store |
+| `odf-noobaa-store-num-volumes`     | string            |                           | example `1`. if pvpool set. number of volumes |
 | `odf-ocs-storage-class-name`      | string            |                           | if not using local-storage, storage class to use for ocs |
 | `odf-ocs-storage-size`            | string            |                           | storage size per nvme |
 | `odf-ocs-storage-count`           | string            |                           | number of replica sets of nvme drives, note total amount will count * replicas |
