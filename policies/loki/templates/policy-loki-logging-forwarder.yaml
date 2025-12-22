@@ -22,8 +22,10 @@ spec:
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
-      kind: Policy    
-  remediationAction: enforce
+      kind: Policy
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -32,7 +34,7 @@ spec:
         metadata:
           name: logging-install
         spec:
-          remediationAction: inform # will be overridden by remediationAction in parent policy
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
           object-templates:
             - complianceType: musthave
