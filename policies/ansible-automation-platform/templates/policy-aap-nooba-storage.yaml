@@ -1,0 +1,109 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-aap-nooba-storage
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+  disabled: false
+  dependencies:
+    - name: policy-aap-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    # - name: policy-storage-cluster-test
+    #   namespace: {{ .Values.policy_namespace }}
+    #   apiVersion: policy.open-cluster-management.io/v1
+    #   compliance: Compliant
+    #   kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: openshift-aap-bucketclaim
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: objectbucket.io/v1alpha1
+                kind: ObjectBucketClaim
+                metadata:
+                  name: aap-bucket-odf
+                  namespace: {{ .Values.aap.namespace }}
+                spec:
+                  storageClassName: openshift-storage.noobaa.io
+                  generateBucketName: aap-bucket-odf
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: aap-bucket-odf
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: s3-aap-odf
+                  namespace: {{ .Values.aap.namespace }}
+                type: Opaque
+                stringData: 
+                  s3-access-key-id: '{{`{{ fromSecret "ansible-automation-platform" "aap-bucket-odf" "AWS_ACCESS_KEY_ID" }}`}}'
+                  s3-secret-access-key: '{{`{{ fromSecret "ansible-automation-platform" "aap-bucket-odf" "AWS_SECRET_ACCESS_KEY" }}`}}'
+                  s3-bucket-name: {{ "s3-aap-odf" | b64enc }}
+                  s3-endpoint: '{{`{{ (lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3").spec.host }}:{{ (fromConfigMap "ansible-automation-platform" "aap-bucket-odf" "BUCKET_PORT") }}`}}'
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-aap-nooba-storage
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/aap-nooba-s3-storage'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/aap'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-aap-nooba-storage
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-aap-nooba-storage
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-aap-nooba-storage
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
