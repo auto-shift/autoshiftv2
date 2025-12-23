@@ -7,6 +7,7 @@ This directory contains utility scripts for AutoShiftv2 policy generation and ma
 | Script | Purpose |
 |--------|---------|
 | `generate-operator-policy.sh` | Generate new operator policies |
+| `update-operator-policies.sh` | Regenerate existing policies from template |
 | `generate-imageset-config.sh` | Generate ImageSetConfiguration for oc-mirror |
 | `update-operator-channels.sh` | Update operator channels from catalog |
 | `dev-checks.sh` | Run development quality checks (shellcheck, kubeconform) |
@@ -113,6 +114,67 @@ Each generated policy includes these AutoShift labels in values.yaml:
 ```
 
 
+---
+
+## 🔄 update-operator-policies.sh
+
+Regenerate existing operator policies from the template. Use this when the template has been updated with new features and you want to apply those changes to all existing policies.
+
+### Usage
+
+```bash
+./scripts/update-operator-policies.sh [options]
+```
+
+### Options
+
+- `--operator NAME`: Only regenerate a specific operator (e.g., kiali)
+- `--verbose`: Show detailed extraction info (component_name, component_camel, label_prefix)
+- `--help`: Display help message
+
+### Examples
+
+```bash
+# Regenerate all operator policies
+./scripts/update-operator-policies.sh
+
+# Regenerate only tempo
+./scripts/update-operator-policies.sh --operator tempo
+
+# Regenerate with verbose output
+./scripts/update-operator-policies.sh --verbose
+```
+
+### Workflow
+
+The script regenerates policies and relies on git for review:
+
+```bash
+# 1. Run the script
+./scripts/update-operator-policies.sh
+
+# 2. Review changes
+git diff
+
+# 3. Discard all changes if not needed
+git checkout -- policies/
+
+# 4. Or selectively stage changes
+git add -p
+```
+
+### How It Works
+
+The script extracts three values from each existing policy:
+
+- **component_name**: From filename (e.g., `virtualization` from `policy-virtualization-operator-install.yaml`)
+- **component_camel**: From `.Values.XXX.namespace` pattern (e.g., `virt`)
+- **label_prefix**: From `autoshift.io/XXX-channel` pattern (e.g., `virt`)
+
+This preserves operator-specific naming conventions when regenerating from the template.
+
+---
+
 ## 📝 Template Files
 
 The `scripts/templates/` directory contains templates used by the policy generator:
@@ -129,14 +191,15 @@ The `scripts/templates/` directory contains templates used by the policy generat
 
 Templates use these placeholders:
 
-- `{{COMPONENT_NAME}}`: Component name (e.g., 'cert-manager')
+- `{{COMPONENT_NAME}}`: Component name used in policy names (e.g., 'virtualization' in `policy-virtualization-operator-install`)
+- `{{COMPONENT_CAMEL}}`: Component name in camelCase for values.yaml references (e.g., 'virt' in `.Values.virt.namespace`)
+- `{{LABEL_PREFIX}}`: Prefix used for cluster labels (e.g., 'virt' in `autoshift.io/virt-channel`). For new operators, this matches COMPONENT_NAME. For existing operators with different conventions, it preserves their label prefix.
 - `{{SUBSCRIPTION_NAME}}`: Operator subscription name
 - `{{NAMESPACE}}`: Target namespace for operator installation
 - `{{CHANNEL}}`: Operator channel
 - `{{SOURCE}}`: Operator catalog source (e.g., 'redhat-operators')
 - `{{SOURCE_NAMESPACE}}`: Catalog source namespace (e.g., 'openshift-marketplace')
 - `{{VERSION}}`: Operator version (CSV name, optional)
-- `{{COMPONENT_CAMEL}}`: Component name in camelCase for values.yaml
 - `{{OPERATOR_NAME}}`: Formatted operator name (deprecated, use SUBSCRIPTION_NAME)
 - `{{COMPONENT_NAME_LOWER}}`: Lowercase component name (deprecated)
 - `{{TIMESTAMP}}`: Generation timestamp (deprecated)
