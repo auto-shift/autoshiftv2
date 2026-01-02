@@ -38,7 +38,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.nodeFeatureDiscovery.operatorGroupName }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.nodeFeatureDiscovery.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.nodeFeatureDiscovery.operatorGroupName }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.nodeFeatureDiscovery.namespace }}
             {{- if .Values.nodeFeatureDiscovery.targetNamespaces }}
             targetNamespaces:
@@ -47,12 +48,18 @@ spec:
               {{- end }}
             {{- end }}
           subscription:
-            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-version" | default "" {{ "hub}}" }}'
-            namespace: {{ .Values.nodeFeatureDiscovery.namespace }}
-            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-channel" | default "{{ .Values.nodeFeatureDiscovery.channel }}" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-subscription-name" | default "{{ .Values.nodeFeatureDiscovery.name }}" {{ "hub}}" }}'
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-source" | default "{{ .Values.nodeFeatureDiscovery.source }}" {{ "hub}}" }}'
+            namespace: {{ .Values.nodeFeatureDiscovery.namespace }}
+            # Source Selection Logic (evaluated on hub for each managed cluster):
+            # 1. If cluster has explicit 'autoshift.io/node-feature-discovery-source' label → use that value
+            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
+            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
+            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
+            # 3. Else → use standard source (e.g., redhat-operators)
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-source" | default (ternary (printf "%s-%s" "{{ .Values.nodeFeatureDiscovery.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.nodeFeatureDiscovery.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-source-namespace" | default "{{ .Values.nodeFeatureDiscovery.sourceNamespace }}" {{ "hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-channel" | default "{{ .Values.nodeFeatureDiscovery.channel }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-version" | default "" {{ "hub}}" }}'
           # Upgrade approval for subscription will be set based on if version is set not this flag
           # If version is set install plan is set to manual and only the version specified will be installed
           upgradeApproval: Automatic

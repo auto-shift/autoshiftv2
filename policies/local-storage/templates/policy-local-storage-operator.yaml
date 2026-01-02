@@ -44,7 +44,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.localStorage.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.localStorage.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.localStorage.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.localStorage.namespace }}
             targetNamespaces:
               - {{ .Values.localStorage.namespace }}

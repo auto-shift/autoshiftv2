@@ -37,7 +37,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: global-operators # Default OG Created by OpenShift
+            # if operator group exists in namespace use that (defaults to global-operators created by OpenShift)
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.pipelines.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}global-operators{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.pipelines.namespace }}
           subscription:
             namespace: {{ .Values.pipelines.namespace }}

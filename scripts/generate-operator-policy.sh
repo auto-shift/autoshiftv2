@@ -224,6 +224,7 @@ substitute_template() {
         -e "s/{{CHANNEL}}/$CHANNEL/g" \
         -e "s/{{VERSION}}/$VERSION/g" \
         -e "s/{{COMPONENT_CAMEL}}/$COMPONENT_CAMEL/g" \
+        -e "s/{{LABEL_PREFIX}}/$COMPONENT_NAME/g" \
         "$template_file" > "$output_file"
 }
 

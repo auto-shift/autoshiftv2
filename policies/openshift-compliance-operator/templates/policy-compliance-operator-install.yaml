@@ -43,7 +43,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.compliance.name }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.compliance.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.compliance.name }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.compliance.namespace }}
             targetNamespaces:
               - {{ .Values.compliance.namespace }}

@@ -38,7 +38,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.tempo.operatorGroupName }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.tempo.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.tempo.operatorGroupName }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.tempo.namespace }}
             {{- if .Values.tempo.targetNamespaces }}
             targetNamespaces:
@@ -47,12 +48,18 @@ spec:
               {{- end }}
             {{- end }}
           subscription:
-            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/tempo-version" | default "" {{ "hub}}" }}'
-            namespace: {{ .Values.tempo.namespace }}
-            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/tempo-channel" | default "{{ .Values.tempo.channel }}" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/tempo-subscription-name" | default "{{ .Values.tempo.name }}" {{ "hub}}" }}'
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/tempo-source" | default "{{ .Values.tempo.source }}" {{ "hub}}" }}'
+            namespace: {{ .Values.tempo.namespace }}
+            # Source Selection Logic (evaluated on hub for each managed cluster):
+            # 1. If cluster has explicit 'autoshift.io/tempo-source' label → use that value
+            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
+            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
+            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
+            # 3. Else → use standard source (e.g., redhat-operators)
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/tempo-source" | default (ternary (printf "%s-%s" "{{ .Values.tempo.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.tempo.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/tempo-source-namespace" | default "{{ .Values.tempo.sourceNamespace }}" {{ "hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/tempo-channel" | default "{{ .Values.tempo.channel }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/tempo-version" | default "" {{ "hub}}" }}'
           # Upgrade approval for subscription will be set based on if version is set not this flag
           # If version is set install plan is set to manual and only the version specified will be installed
           upgradeApproval: Automatic

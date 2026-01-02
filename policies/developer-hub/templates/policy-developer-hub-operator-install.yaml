@@ -41,7 +41,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.developerHub.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.developerHub.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.developerHub.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.developerHub.namespace }}
           subscription:
             namespace: {{ .Values.developerHub.namespace }}
