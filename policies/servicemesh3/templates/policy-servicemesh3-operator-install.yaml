@@ -1,5 +1,5 @@
-{{- $policyName := "policy-{{COMPONENT_NAME}}-operator-install" }}
-{{- $placementName := "placement-policy-{{COMPONENT_NAME}}-operator-install" }}
+{{- $policyName := "policy-servicemesh3-operator-install" }}
+{{- $placementName := "placement-policy-servicemesh3-operator-install" }}
 
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -11,16 +11,13 @@ metadata:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
-{{ if .Values.autoshift.dryRun }}
-  remediationAction: inform
-{{ end }}
   disabled: false
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: {{COMPONENT_NAME}}-operator-ns
+          name: servicemesh3-operator-ns
         spec:
           remediationAction: enforce
           severity: high
@@ -30,46 +27,44 @@ spec:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
-                  name: {{ .Values.{{COMPONENT_CAMEL}}.namespace }}
-                  labels:
-                    openshift.io/cluster-monitoring: "true"
+                  name: {{ .Values.servicemesh3.namespace }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
         metadata:
-          name: install-operator-{{COMPONENT_NAME}}
+          name: install-servicemesh3
         spec:
           remediationAction: enforce
           severity: high
           complianceType: musthave
           operatorGroup:
-            # if operator group exists in namespace use that, otherwise use namespace name as default
-            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.{{COMPONENT_CAMEL}}.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.{{COMPONENT_CAMEL}}.namespace }}{{ "{{" }} end {{ "}}" }}'
-            namespace: {{ .Values.{{COMPONENT_CAMEL}}.namespace }}
-            {{- if .Values.{{COMPONENT_CAMEL}}.targetNamespaces }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.servicemesh3.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.servicemesh3.operatorGroupName }}{{ "{{" }} end {{ "}}" }}'
+            namespace: {{ .Values.servicemesh3.namespace }}
+            {{- if .Values.servicemesh3.targetNamespaces }}
             targetNamespaces:
-              {{- range .Values.{{COMPONENT_CAMEL}}.targetNamespaces }}
+              {{- range .Values.servicemesh3.targetNamespaces }}
               - {{ . }}
               {{- end }}
             {{- end }}
           subscription:
-            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-subscription-name" | default "{{ .Values.{{COMPONENT_CAMEL}}.name }}" {{ "hub}}" }}'
-            namespace: {{ .Values.{{COMPONENT_CAMEL}}.namespace }}
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/servicemesh3-subscription-name" | default "{{ .Values.servicemesh3.name }}" {{ "hub}}" }}'
+            namespace: {{ .Values.servicemesh3.namespace }}
             # Source Selection Logic (evaluated on hub for each managed cluster):
-            # 1. If cluster has explicit 'autoshift.io/{{LABEL_PREFIX}}-source' label → use that value
+            # 1. If cluster has explicit 'autoshift.io/servicemesh3-source' label → use that value
             # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
             #    → use {source}{suffix} (e.g., redhat-operators-mirror)
             #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
             # 3. Else → use standard source (e.g., redhat-operators)
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-source" | default (ternary (printf "%s-%s" "{{ .Values.{{COMPONENT_CAMEL}}.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.{{COMPONENT_CAMEL}}.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
-            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-source-namespace" | default "{{ .Values.{{COMPONENT_CAMEL}}.sourceNamespace }}" {{ "hub}}" }}'
-            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-channel" | default "{{ .Values.{{COMPONENT_CAMEL}}.channel }}" {{ "hub}}" }}'
-            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-version" | default "" {{ "hub}}" }}'
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/servicemesh3-source" | default (ternary (printf "%s-%s" "{{ .Values.servicemesh3.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.servicemesh3.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/servicemesh3-source-namespace" | default "{{ .Values.servicemesh3.sourceNamespace }}" {{ "hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/servicemesh3-channel" | default "{{ .Values.servicemesh3.channel }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/servicemesh3-version" | default "" {{ "hub}}" }}'
           # Upgrade approval for subscription will be set based on if version is set not this flag
           # If version is set install plan is set to manual and only the version specified will be installed
           upgradeApproval: Automatic
           versions:
-            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-version" | default "" {{ "hub}}" }}'
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/servicemesh3-version" | default "" {{ "hub}}" }}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -88,7 +83,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/{{LABEL_PREFIX}}'
+            - key: 'autoshift.io/servicemesh3'
               operator: In
               values:
               - 'true'

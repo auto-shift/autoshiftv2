@@ -34,6 +34,8 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.loki.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
@@ -44,7 +46,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.loki.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.loki.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.loki.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.loki.namespace }}
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-subscription-name" | default "{{ .Values.loki.name }}" {{ "hub}}" }}'
