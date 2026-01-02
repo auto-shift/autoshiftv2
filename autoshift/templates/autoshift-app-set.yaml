@@ -64,6 +64,8 @@ spec:
           valuesObject:
             selfManagedHubSet: {{ .Values.selfManagedHubSet }}
             policy_namespace: {{ printf "policies-%s" .Release.Name }}
+            autoshift:
+              dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
             {{- if .Values.hubClusterSets }}
             hubClusterSets:
             {{-  range $cluster, $clustervalue := .Values.hubClusterSets }}
@@ -102,8 +104,8 @@ spec:
         - /metadata/labels
       syncPolicy:
         automated:
-          prune: true
-          selfHeal: true
+          prune: {{ if ((.Values.autoshift).dryRun) }}false{{ else }}true{{ end }}
+          selfHeal: {{ if ((.Values.autoshift).dryRun) }}false{{ else }}true{{ end }}
         syncOptions:
         - RespectIgnoreDifferences=true
         - CreateNamespace=true

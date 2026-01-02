@@ -35,7 +35,9 @@ spec:
       name:  "policy-managed-hub-namespace"
       namespace: {{ $policyNamespace }}
     {{- end }}
-  remediationAction: enforce
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -44,6 +46,7 @@ spec:
         metadata:
           name: {{ $configPolicyName }}
         spec:
+          remediationAction: enforce
           severity: high
           object-templates-raw: |
             [
