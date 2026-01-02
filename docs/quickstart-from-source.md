@@ -123,7 +123,7 @@ oc get policies -n policies-autoshift
 Add operators by patching the AutoShift application with updated labels:
 
 ```bash
-oc patch application autoshift -n openshift-gitops --type=merge -p '
+oc patch applications.argoproj.io autoshift -n openshift-gitops --type=merge -p '
 spec:
   source:
     helm:
