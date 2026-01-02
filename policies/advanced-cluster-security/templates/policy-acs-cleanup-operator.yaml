@@ -1,0 +1,109 @@
+{{- if ((.Values.cleanup).enabled) }}
+{{- $policyName := "policy-acs-cleanup-operator" }}
+{{- $placementName := "placement-policy-acs-cleanup-operator" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-2 Security Assessments
+spec:
+  disabled: false
+  # Only proceed after CRs are fully deleted (Job succeeded)
+  dependencies:
+    - name: policy-acs-cleanup-crs
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # Delete the operator
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1beta1
+        kind: OperatorPolicy
+        metadata:
+          name: cleanup-acs-operator
+        spec:
+          remediationAction: enforce
+          severity: high
+          complianceType: mustnothave
+          subscription:
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-subscription-name" | default "{{ .Values.acs.name }}" {{ "hub}}" }}'
+            namespace: {{ .Values.acs.operatorNamespace }}
+          upgradeApproval: Automatic
+          # Safe to delete now that CRs are gone
+          removalBehavior:
+            operatorGroups: DeleteIfUnused
+            subscriptions: Delete
+            clusterServiceVersions: Delete
+            installPlans: Delete
+            customResourceDefinitions: Delete
+    # Delete the namespace
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-cleanup-namespace
+        spec:
+          remediationAction: enforce
+          severity: high
+          pruneObjectBehavior: None
+          object-templates:
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.acs.namespace }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.acs.operatorNamespace }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acs'
+              operator: In
+              values:
+              - 'false'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

@@ -1,0 +1,204 @@
+{{- if ((.Values.cleanup).enabled) }}
+{{- $policyName := "policy-acs-cleanup-crds" }}
+{{- $placementName := "placement-policy-acs-cleanup-crds" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-2 Security Assessments
+spec:
+  disabled: false
+  policy-templates:
+    # Step 1: Delete SecuredCluster CR
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-cleanup-securedcluster
+        spec:
+          remediationAction: enforce
+          severity: high
+          pruneObjectBehavior: None
+          object-templates:
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: platform.stackrox.io/v1alpha1
+                kind: SecuredCluster
+                metadata:
+                  namespace: {{ .Values.acs.namespace }}
+                  name: stackrox-secured-cluster-services
+    # Step 2: Delete Central CR (hub only)
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-cleanup-central
+        spec:
+          remediationAction: enforce
+          severity: high
+          pruneObjectBehavior: None
+          object-templates:
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: platform.stackrox.io/v1alpha1
+                kind: Central
+                metadata:
+                  namespace: {{ .Values.acs.namespace }}
+                  name: stackrox-central-services
+    # Step 3: Create verification Job
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-cleanup-verification-job
+        spec:
+          remediationAction: enforce
+          severity: high
+          pruneObjectBehavior: DeleteIfCreated
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: batch/v1
+                kind: Job
+                metadata:
+                  name: acs-cleanup-verify
+                  namespace: {{ .Values.acs.namespace }}
+                spec:
+                  ttlSecondsAfterFinished: 300
+                  backoffLimit: 30
+                  template:
+                    spec:
+                      restartPolicy: Never
+                      serviceAccountName: acs-cleanup-sa
+                      containers:
+                        - name: verify-cleanup
+                          image: {{ .Values.acs.cliImage }}
+                          command:
+                            - /bin/bash
+                            - -c
+                            - |
+                              echo "Waiting for ACS CRs to be fully deleted..."
+
+                              # Wait for Central to be gone
+                              while oc get central -n {{ .Values.acs.namespace }} 2>/dev/null | grep -q stackrox; do
+                                echo "Waiting for Central to be deleted..."
+                                sleep 10
+                              done
+                              echo "Central deleted."
+
+                              # Wait for SecuredCluster to be gone
+                              while oc get securedcluster -n {{ .Values.acs.namespace }} 2>/dev/null | grep -q stackrox; do
+                                echo "Waiting for SecuredCluster to be deleted..."
+                                sleep 10
+                              done
+                              echo "SecuredCluster deleted."
+
+                              echo "All ACS CRs have been fully deleted."
+    # Step 4: Create ServiceAccount for the Job
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-cleanup-rbac
+        spec:
+          remediationAction: enforce
+          severity: high
+          pruneObjectBehavior: DeleteIfCreated
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: acs-cleanup-sa
+                  namespace: {{ .Values.acs.namespace }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRole
+                metadata:
+                  name: acs-cleanup-role
+                rules:
+                  - apiGroups: ["platform.stackrox.io"]
+                    resources: ["centrals", "securedclusters"]
+                    verbs: ["get", "list", "watch"]
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRoleBinding
+                metadata:
+                  name: acs-cleanup-rolebinding
+                subjects:
+                  - kind: ServiceAccount
+                    name: acs-cleanup-sa
+                    namespace: {{ .Values.acs.namespace }}
+                roleRef:
+                  kind: ClusterRole
+                  name: acs-cleanup-role
+                  apiGroup: rbac.authorization.k8s.io
+    # Step 5: Gate - Job must succeed for policy to be Compliant
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-cleanup-verification-complete
+        spec:
+          remediationAction: inform
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: batch/v1
+                kind: Job
+                metadata:
+                  name: acs-cleanup-verify
+                  namespace: {{ .Values.acs.namespace }}
+                status:
+                  succeeded: 1
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acs'
+              operator: In
+              values:
+              - 'false'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}
