@@ -5,8 +5,9 @@ Complete documentation for AutoShift - Infrastructure as Code for OpenShift usin
 ## Quick Links
 
 ### Getting Started
-- **[Quick Start Guide](quickstart-oci.md)** - Get started with AutoShift in 15 minutes
-- **[OCI Deployment Guide](deploy-oci.md)** - Deploy AutoShift from OCI registries (recommended)
+- **[Quick Start from Source](quickstart-from-source.md)** - Deploy from Git for testing/development
+- **[Quick Start (OCI)](quickstart-oci.md)** - Deploy from OCI registry in 15 minutes
+- **[OCI Deployment Guide](deploy-oci.md)** - Full OCI deployment guide (recommended for production)
 
 ### Release & Operations
 - **[Release Guide](releases.md)** - How to create and publish AutoShift releases
@@ -14,6 +15,7 @@ Complete documentation for AutoShift - Infrastructure as Code for OpenShift usin
 
 ### Development
 - **[Developer Guide](developer-guide.md)** - Contributing to AutoShift and advanced configuration
+- **[Adding New Operators](adding-new-operators.md)** - Step-by-step guide to add operators and contribute upstream
 
 ## Documentation Overview
 
@@ -46,8 +48,9 @@ See `autoshift/values.minimal.yaml` for a minimal configuration example.
 
 #### Development Workflow
 1. Review [Developer Guide](developer-guide.md) for contribution guidelines
-2. Use `values.minimal.yaml` as a starting point for new features
-3. Test with Git mode before creating OCI releases
+2. Follow [Adding New Operators](adding-new-operators.md) to add operator policies
+3. Use `values.minimal.yaml` as a starting point for new features
+4. Test with Git mode before creating OCI releases
 
 ## Architecture
 
