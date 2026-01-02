@@ -40,7 +40,7 @@ spec:
           complianceType: musthave
           operatorGroup:
             # if operator group exists in namespace use that
-            name: '{{ "{{" }} ((index (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.coo.namespace }}" "").items 0).metadata).name | default "{{ .Values.coo.namespace }}" {{ "}}" }}'
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.coo.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.coo.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.coo.namespace }}
           subscription:
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/coo-version" | default "" {{ "hub}}" }}'

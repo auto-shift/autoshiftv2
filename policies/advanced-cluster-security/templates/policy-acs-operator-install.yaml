@@ -46,7 +46,7 @@ spec:
           complianceType: musthave
           operatorGroup:
             # if operator group exists in namespace use that
-            name: '{{ "{{" }} ((index (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.acs.operatorNamespace }}" "").items 0).metadata).name | default "{{ .Values.acs.operatorNamespace }}" {{ "}}" }}'
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.acs.operatorNamespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.acs.operatorNamespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.acs.operatorNamespace }}
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-subscription-name" | default "{{ .Values.acs.name }}" {{ "hub}}" }}'

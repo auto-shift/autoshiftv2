@@ -38,8 +38,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            # if operator group exists in namespace use that
-            name: '{{ "{{" }} ((index (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.{{COMPONENT_CAMEL}}.namespace }}" "").items 0).metadata).name | default "{{ .Values.{{COMPONENT_CAMEL}}.namespace }}" {{ "}}" }}'
+            # if operator group exists in namespace use that, otherwise use namespace name as default
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.{{COMPONENT_CAMEL}}.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.{{COMPONENT_CAMEL}}.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.{{COMPONENT_CAMEL}}.namespace }}
             {{- if .Values.{{COMPONENT_CAMEL}}.targetNamespaces }}
             targetNamespaces:
