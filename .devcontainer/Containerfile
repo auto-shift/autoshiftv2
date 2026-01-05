@@ -1,29 +1,33 @@
 FROM registry.access.redhat.com/ubi9/ubi
 
 ARG OCP_VERSION=stable-4.18
-ARG HELM_VERSION=latest
+ARG HELM_VERSION=v3.16.3
 
 LABEL description="A container for administrating OpenShift Clusters."
 
-# Install skopeo and podman
+# Install dependencies and yq from EPEL
 RUN dnf -y update &&\
     dnf -y install \
         bash-completion \
         git \
         jq \
         ncurses \
-        procps-ng &&\
+        procps-ng \
+        python3-pyyaml \
+        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm &&\
+    dnf -y install yq &&\
     dnf clean all
 
-# Download oc
+# Download oc from Red Hat mirrors and helm from official releases
 RUN curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OCP_VERSION}/openshift-client-linux.tar.gz \
     | tar xvzf - -C /usr/local/bin &&\
     chmod +x /usr/local/bin/oc &&\
     oc completion bash > /etc/bash_completion.d/oc &&\
     chmod +x /usr/local/bin/kubectl &&\
-# Download helm
-    curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/helm/${HELM_VERSION}/helm-linux-amd64 -o /usr/local/bin/helm &&\
-    chmod +x /usr/local/bin/helm
+    curl -sL https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz | tar xz -C /tmp &&\
+    mv /tmp/linux-amd64/helm /usr/local/bin/helm &&\
+    chmod +x /usr/local/bin/helm &&\
+    rm -rf /tmp/linux-amd64
 
 # Create vscode user
 RUN mkdir -p /workspaces/.kube &&\

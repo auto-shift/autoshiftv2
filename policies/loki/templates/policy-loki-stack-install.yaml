@@ -1,4 +1,4 @@
-# This policy creates a loki stack using a nooba bucket from OpenShift Data Foundation.
+# This policy creates a loki stack using a noobaa bucket from OpenShift Data Foundation.
 #
 # Note that OpenShift 4.18 is required.
 apiVersion: policy.open-cluster-management.io/v1
@@ -8,8 +8,8 @@ metadata:
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
-    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-7 Continuous Monitoring
 spec:
   dependencies:
     - name: policy-loki-operator-install
@@ -52,8 +52,8 @@ spec:
                       queries:
                         queryTimeout: 3m
                   managementState: Managed
-                  storageClassName: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/loki-storageclass" | default "{{ .Values.loki.storageClass }}" hub{{ "}}" }}'
-                  size: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/loki-size" | default "{{ .Values.loki.size }}" hub{{ "}}" }}'
+                  storageClassName: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-storageclass" | default "{{ .Values.loki.storageClass }}" {{ "hub}}" }}'
+                  size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-size" | default "{{ .Values.loki.size }}" {{ "hub}}" }}'
                   storage:
                     schemas:
                       - effectiveDate: '2024-09-22'
@@ -97,7 +97,7 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates:
-            - complianceType: mustonlyhave
+            - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: Secret

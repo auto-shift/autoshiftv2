@@ -32,6 +32,9 @@ spec:
                   name: cluster-set-{{ $clusterSetKey }}-lookup-debug
                   namespace: {{ $.Values.policy_namespace }}
                 data:
+                  noNamespaceConfigMaps: |
+                    {{ "{{-" }} $clusterName := "managed-hub" {{ "}}" }}
+                    {{ "{{-" }} (lookup "v1" "ConfigMap" "" (print "managed-cluster." $clusterName) "autoshift.io/cluster-labels" | default dict) | toRawJson {{ "}}" }}
                   lookupResult: |
                     test
                     {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}

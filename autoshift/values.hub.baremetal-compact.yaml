@@ -8,10 +8,9 @@ autoshiftGitBranchTag: main
 selfManagedHubSet: hub
 
 # Optional: If you want to exclude policies from all clusters, you can add the folder name here.
-# excludePolicies:
-#   - infra-nodes
-#   - worker-nodes
-
+excludePolicies:
+  - infra-nodes
+  - worker-nodes
 
 # Hub Cluster Sets with Feature Flags. Blank will remove
 hubClusterSets:
@@ -24,9 +23,14 @@ hubClusterSets:
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'High'
       acm-observability: 'true'
+      # acm-enable-provisioning: 'false'
+      # acm-provisioning-storage-class: (optional)
+      # acm-provisioning-database-size: 10Gi
+      # acm-provisioning-filesystem-storage-size: 100Gi
+      # acm-provisioning-image-storage-size: 50Gi
       ### OpenShift Gitops
       gitops: 'true' # is expected to be installed on all hub clusters
-      gitops-channel: latest
+      gitops-channel: gitops-1.18
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
       ### MetalLB 
@@ -66,30 +70,23 @@ hubClusterSets:
       ### Master Nodes
       master-nodes: 'false'
       master-max-pods: 500
-      ### Infrastructure Nodes
-      infra-nodes: ''
-      infra-nodes-numcpu: ''
-      infra-nodes-memory-mib: ''
-      infra-nodes-numcores-per-socket: ''
-      infra-nodes-zone-1: ''
-      ### Worker Nodes
-      worker-nodes: ''
-      worker-nodes-numcpu: ''
-      worker-nodes-memory-mib: ''
-      worker-nodes-numcores-per-socket: ''
-      worker-nodes-zone-1: ''
+      # ### Infrastructure Nodes
+      # infra-nodes: ''
+      # infra-nodes-numcpu: ''
+      # infra-nodes-memory-mib: ''
+      # infra-nodes-numcores-per-socket: ''
+      # infra-nodes-zone-1: ''
+      # ### Worker Nodes
+      # worker-nodes: ''
+      # worker-nodes-numcpu: ''
+      # worker-nodes-memory-mib: ''
+      # worker-nodes-numcores-per-socket: ''
+      # worker-nodes-zone-1: ''
       ### Storage Nodes
       storage-nodes: '3'
-      # storage-nodes-zone-1: 'us-east-2a'
-      # storage-nodes-zone-2: 'us-east-2b'
-      # storage-nodes-zone-3: 'us-east-2c'
-      # storage-nodes-region: 'us-east-2'
       storage-nodes-provider: baremetal
       # storage-nodes-node-[iterator]: node-1 # For use with baremetal
       # storage-nodes-node-[iterator]: node-2 # For use with baremetal
-      storage-nodes-numcpu: ''
-      storage-nodes-memory-mib: ''
-      storage-nodes-numcores-per-socket: ''
       ### LVM Operator
       lvm: 'false'
       lvm-default: 'true'
@@ -107,11 +104,11 @@ hubClusterSets:
       ### OpenShift Data Foundation
       odf: 'true'
       odf-multi-cloud-gateway: standard
-      odf-nooba-pvpool: ''
-      odf-nooba-store-size: ''
-      odf-nooba-store-num-volumes: ''
-      odf-ocs-storage-class-name: ''
-      odf-ocs-storage-size: ''
+      # odf-nooba-pvpool: ''
+      # odf-nooba-store-size: ''
+      # odf-nooba-store-num-volumes: ''
+      # odf-ocs-storage-class-name: ''
+      # odf-ocs-storage-size: ''
       odf-ocs-storage-count: '3'
       odf-ocs-storage-replicas: '1' # Flexible Scaling uses replica 1 and count is the total of all your drives/OSDs
       odf-ocs-flexible-scaling: 'true'
@@ -119,6 +116,17 @@ hubClusterSets:
       odf-channel: stable-4.18
       odf-source: redhat-operators
       odf-source-namespace: openshift-marketplace
+      # ### OpenShift Internal Registry
+      # imageregistry: 'true'
+      # imageregistry-management-state: Managed
+      # imageregistry-replicas: '1'
+      # imageregistry-storage-type: s3 # pvc
+      # imageregistry-s3-region: us-east-2
+      # imageregistry-pvc-access-mode: ReadWriteMany
+      # imageregistry-pvc-size: 100Gi
+      # imageregistry-pvc-storage-class: ocs-storagecluster-ceph-rbd
+      # imageregistry-pvc-volume-mode: Block
+      # imageregistry-rollout-strategy: RollingUpdate
       ### Kubernetes NMState Operator
       nmstate: 'false'
       # Example nmstate-nncp labels. Label must start with nmstate-nncp
@@ -127,7 +135,7 @@ hubClusterSets:
       # nmstate-nncp-example-vlan10: example-vlan10
       ### Advanced Cluster Security
       acs: 'false'
-      acs-egress-connectivity: 'Offline'
+      acs-egress-connectivity: 'Online'
       acs-channel: stable
       acs-source: redhat-operators
       acs-source-namespace: openshift-marketplace
@@ -138,12 +146,12 @@ hubClusterSets:
       dev-spaces-source-namespace: openshift-marketplace
       ### Developer Hub
       dev-hub: 'false'
-      dev-hub-channel: fast
+      dev-hub-channel: fast-1.8
       dev-hub-source: redhat-operators
       dev-hub-source-namespace: openshift-marketplace
       ### OpenShift Pipelines
       pipelines: 'false'
-      pipelines-channel: latest
+      pipelines-channel: pipelines-1.20
       pipelines-source: redhat-operators
       pipelines-source-namespace: openshift-marketplace
       ### Trusted Artifact Signer
@@ -153,7 +161,8 @@ hubClusterSets:
       tas-source-namespace: openshift-marketplace
       ### Quay
       quay: 'false'
-      quay-channel: stable-3.13
+      quay-channel: stable-3.15
+      quay-install-plan-approval: Automatic
       quay-source: redhat-operators
       quay-source-namespace: openshift-marketplace
       ### Developer OpenShift Gitops
@@ -162,15 +171,17 @@ hubClusterSets:
       # gitops-dev-team-{INSERT_TEAM_NAME}
       ### Loki
       loki: 'false'
-      loki-channel: stable-6.2
+      loki-channel: stable-6.4
+      loki-install-plan-approval: Automatic
       loki-source: redhat-operators
       loki-source-namespace: openshift-marketplace
       loki-size: 1x.extra-small
-      loki-storageclass: lvms-vg1
+      loki-storageclass: ocs-storagecluster-ceph-rbd
       loki-lokistack-name: logging-lokistack
       ### OpenShift Logging
       logging: 'false'
-      logging-channel:  stable-6.2
+      logging-channel: stable-6.4
+      logging-install-plan-approval: Automatic
       logging-source: redhat-operators
       logging-source-namespace: openshift-marketplace
       ### Cluster Observability Operator
@@ -180,7 +191,8 @@ hubClusterSets:
       coo-source-namespace: openshift-marketplace
       ### Compliance Operator Stig Apply
       compliance: 'false'
-      compliance-name: compliance-operator
+      compliance-auto-remediate: 'true'
+      compliance-subscription-name: compliance-operator
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
@@ -237,12 +249,12 @@ managedClusterSets:
       dev-spaces-source-namespace: openshift-marketplace
       ### Developer Hub
       dev-hub: 'false'
-      dev-hub-channel: '' #fast
+      dev-hub-channel: fast-1.8
       dev-hub-source: '' #redhat-operators
       dev-hub-source-namespace: '' #openshift-marketplace
       ### OpenShift Pipelines
       pipelines: 'false'
-      pipelines-channel: '' #latest
+      pipelines-channel: pipelines-1.20
       pipelines-source: '' #redhat-operators
       pipelines-source-namespace: '' #openshift-marketplace
       ### Trusted Artifact Signer
@@ -252,7 +264,8 @@ managedClusterSets:
       tas-source-namespace: '' #openshift-marketplace
       ### Quay
       quay: 'false'
-      quay-channel: '' # stable-3.13
+      quay-channel: '' # stable-3.15
+      quay-install-plan-approval: '' # Automatic
       quay-source: '' # redhat-operators
       quay-source-namespace: '' # openshift-marketplace
       ### Developer OpenShift Gitops
@@ -261,7 +274,8 @@ managedClusterSets:
       # gitops-dev-team-{INSERT_TEAM_NAME}
       ### Loki
       loki: 'true'
-      loki-channel: stable-6.2
+      loki-channel: stable-6.4
+      loki-install-plan-approval: Automatic
       loki-source: redhat-operators
       loki-source-namespace: openshift-marketplace
       loki-size: 1x.extra-small
@@ -269,7 +283,8 @@ managedClusterSets:
       loki-lokistack-name: logging-lokistack
       ### OpenShift Logging
       logging: 'true'
-      logging-channel:  stable-6.2
+      logging-channel: stable-6.4
+      logging-install-plan-approval: Automatic
       logging-source: redhat-operators
       logging-source-namespace: openshift-marketplace
       ### Cluster Observability Operator
@@ -279,7 +294,8 @@ managedClusterSets:
       coo-source-namespace: openshift-marketplace
       ### Compliance Operator Stig Apply
       compliance: 'true'
-      compliance-name: compliance-operator
+      compliance-auto-remediate: 'true'
+      compliance-subscription-name: compliance-operator
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
