@@ -1,95 +1,140 @@
-{{- if (.Values.enabled | default false) }}
-{{- $allClusterSets := (merge (.Values.hubClusterSets | default dict) (.Values.managedClusterSets | default dict)) }}
-{{- range $clusterSetKey, $clusterSetValue := $allClusterSets }}
-{{- $hubClusterSet := $.Values.hubClusterSet | default "hub" }}
-{{- $policyName := printf "policy-%s-cluster-labels" $clusterSetKey }}
-{{- $configPolicyName := printf "cluster-labels-%s" $clusterSetKey }}
-{{- $placementName := printf "placement-%s" $policyName }}
+{{- $managedHubs := dict }}
+{{- $selfManagedHubs := dict }}
+{{- range $k, $v := $.Values.hubClusterSets  }}
+  {{-  if eq ((index $v.labels "self-managed") | default "true")  "false" }}
+    {{- $_ := set $managedHubs $k $k }}
+  {{- else }}
+    {{- $_ := set $selfManagedHubs $k $k }}
+  {{- end }}
+{{- end }}
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $targets := list "hubofhubs" }}
+{{- if not (empty $managedHubs) }}
+  {{- $targets = append $targets "managedHub" }}
+{{- end }}
+{{- range $_, $target := $targets }}
+  {{- $policyName := (printf "policy-%s-labels" ($target | lower)) }}
+  {{- $configPolicyName := printf "configure-%s" $policyName }}
+  {{- $placementName := printf "placement-%s" $policyName }}
+---
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
   name: {{ $policyName }}
-  namespace: {{ $.Values.policy_namespace }}
+  namespace: {{ $policyNamespace }}
   annotations:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
     policy.open-cluster-management.io/standards: NIST SP 800-53
 spec:
-  disabled: false
+    {{- if (eq $target "managedHub") }}
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name:  "policy-managed-hub-namespace"
+      namespace: {{ $policyNamespace }}
+    {{- end }}
   remediationAction: enforce
+  disabled: false
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
           name: {{ $configPolicyName }}
-          annotations:
         spec:
-          severity: high 
+          severity: high
           object-templates-raw: |
             [
-              {{ "{{-" }} $thisClusterSet := "{{ $clusterSetKey }}" {{ "}}" }}
-              {{ "{{-" }} $clusters := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items {{ "}}" }}
-              {{ "{{-" }} $lastIndex := sub (len $clusters) 1 {{ "}}" }}
-              {{ "{{-" }} range $index, $value := $clusters {{ "}}" }}
-                {{ "{{-" }} $clusterSet := ((index $value.metadata.labels "cluster.open-cluster-management.io/clusterset") | default "") {{ "}}" }}
-                {{ "{{-" }} if or (eq $clusterSet "") (ne $clusterSet $thisClusterSet) {{ "}}" }}
-                  {{ "{{-" }} continue {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $newLabels := dict {{ "}}" }}
-                {{ "{{-" }} $managedCluster := $value.metadata.name {{ "}}" }}
-                {{ "{{-" }} $existingClusterLabels := $value.metadata.labels {{ "}}" }}
-                {{ "{{-" }} range $existingKey, $existingValue := $existingClusterLabels {{ "}}" }}
-                  {{ "{{-" }} if ($existingKey | hasPrefix "{{ $.Values.autoshiftLabelPrefix }}") {{ "}}" }}
-                    {{ "{{-" }} $_ := unset $existingClusterLabels $existingKey {{ "}}" }}
+              {{ "{{-" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
+              {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "}}" }}
+              {{ "{{-" }} if not (empty $managedClusterLookupResult) {{ "}}" }}
+                {{ "{{-" }} $managedClusters := (index $managedClusterLookupResult "items") | default list {{ "}}" }}
+                {{ "{{-" }} $lastIndex := (sub (len $managedClusters) 1) {{ "}}" }}
+                {{ "{{-" }} if (ne $lastIndex -1) {{ "}}" }}
+                  {{ "{{-" }} range $index, $cluster := $managedClusters {{ "}}" }}
+                    {{ "{{-" }} $existingLabels :=  (index $cluster "metadata" "labels") {{ "}}" }}
+                    {{ "{{-" }} $clusterSet := (index $existingLabels "cluster.open-cluster-management.io/clusterset") | default "" {{ "}}" }}
+                    {{ "{{-" }} $clusterName := (index $cluster "metadata" "name") {{ "}}" }}
+                    {{ "{{-" }} $clusterConfigMap := (lookup "v1" "ConfigMap" $policyNamespace (print "managed-cluster." $clusterName) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
+                    {{ "{{-" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" $policyNamespace (print "cluster-set." $clusterSet) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
+                    {{ "{{-" }} $clusterData := (index $clusterConfigMap "data" | default dict) {{ "}}" }}
+                    {{ "{{-" }} $clusterSetData := (index $clusterSetConfigMap "data" | default dict) {{ "}}" }}
+                    {{ "{{-" }} $labelPrefix := (index $clusterData "labelPrefix" | default (index $clusterSetData "labelPrefix" | default "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}")) {{ "}}" }}
+                    {{ "{{-" }} if (ne $clusterSet "") {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $existingLabelsNoAutoshift := (dict) {{ "}}" }}
+                    {{ "{{-" }} range $label, $value := $existingLabels {{ "}}" }}
+                      {{ "{{-" }} if not (hasPrefix $labelPrefix $label) {{ "}}" }}
+                        {{ "{{-" }} $_ :=  set $existingLabelsNoAutoshift $label $value {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $clusterSetLabels := (index $clusterSetData "labels" | default "") | fromJson | default dict{{ "}}" }}
+                    {{ "{{-" }} $clusterLabels := (index $clusterData "labels" | default "") | fromJson | default dict{{ "}}" }}
+                    {{ "{{-" }} $tempLabels := merge (dict) $clusterLabels $clusterSetLabels $existingLabelsNoAutoshift {{ "}}" }}
+                    {{ "{{-" }} $newLabels := dict {{ "}}" }}
+                    {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
+                      {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
+                        {{ "{{-" }} $_ := set $newLabels $label $value {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $metadata := set $cluster.metadata "labels" $newLabels {{ "}}" }}
+                    {{ "{{-" }} $objectDefinition := set $cluster "metadata" $metadata {{ "}}" }}
+                    {{ "{{-" }} $_ := unset $objectDefinition "status" {{ "}}" }}
+                    {
+                      "complianceType": "mustonlyhave",
+                      "objectDefinition": {{ "{{" }} $objectDefinition | toRawJson  {{ "}}" }}
+                    }{{ "{{-" }} if ne $lastIndex $index {{ "}}" }},{{ "{{-" }} end {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
-                {{ "{{/*" }} // Setting up this block to work on the label extraction code and maybe make it more readable :) {{ "*/}}" }}
-                  {{ "{{-" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "cluster-set.%s" $clusterSet)) | default dict {{ "}}" }}   
-                  {{ "{{-" }} $clusterSetConfigMapData := (index $clusterSetConfigMap "data") | default dict {{ "}}" }} 
-                  {{ "{{-" }} $clusterSetConfigMapValues := (index $clusterSetConfigMapData "values") | default "" {{ "}}" }}  
-                  {{ "{{-" }} $clusterSetLabels := (index ($clusterSetConfigMapValues | fromJson | default dict) "labels") | default dict {{ "}}" }} 
-                  {{ "{{-" }} $clusterConfigMap := (lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "managed-cluster.%s" $value.metadata.name)) | default dict {{ "}}" }}   
-                  {{ "{{-" }} $clusterConfigMapData := (index $clusterConfigMap "data") | default dict {{ "}}" }} 
-                  {{ "{{-" }} $clusterConfigMapValues := (index $clusterConfigMapData "values") | default "" {{ "}}" }}  
-                  {{ "{{-" }} $clusterLabels := (index ($clusterConfigMapValues | fromJson | default dict) "labels") | default dict {{ "}}" }} 
-                {{ "{{/*" }} // End of label extraction {{ "*/}}" }}
-                {{ "{{-" }} $configMapLabels := merge $clusterLabels $clusterSetLabels {{ "}}" }}
-                {{ "{{-" }} $labels := merge $clusterLabels $clusterSetLabels $existingClusterLabels {{ "}}" }} 
-                {{ "{{-" }} range $label, $labelValue := $labels {{ "}}" }}
-                  {{ "{{-" }} if not (and ($label | hasPrefix "{{ $.Values.autoshiftLabelPrefix }}") (eq $labelValue "_")) {{ "}}" }}
-                    {{ "{{-" }} $_ := set $newLabels $label $labelValue {{ "}}" }}
-                  {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $metadata := set $value.metadata "labels" $newLabels {{ "}}" }}
-                {{ "{{-" }} $objectDefinition := set $value "metadata" $metadata {{ "}}" }}
-                {{ "{{-" }} $_ := unset $objectDefinition "status" {{ "}}" }}
-                {
-                  "complianceType": "mustonlyhave",
-                  "objectDefinition": {{ "{{" }} $objectDefinition | toRawJson  {{ "}}" }}
-                }{{ "{{-" }} if ne $lastIndex $index {{ "}}" }},{{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             ]
+---
+
+  {{- if (eq $target "managedHub") }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
   name: {{ $placementName }}
-  namespace: {{ $.Values.policy_namespace }}
+  namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
-    - {{ $.Values.selfManagedHubSet }}
+  {{- range $managedHub, $_ := $managedHubs }}
+    - {{ $managedHub }}
+  {{- end }}
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
     - key: cluster.open-cluster-management.io/unavailable
       operator: Exists
 ---
+  {{- end }}
+  {{- if (eq $target "hubofhubs") }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $selfManagedHub, $_ := $selfManagedHubs }}
+    - {{ $selfManagedHub }}
+  {{- end }}
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+  {{- end }}
+---
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
   name: {{ $placementName }}
-  namespace: {{ $.Values.policy_namespace }}
+  namespace: {{ $policyNamespace }}
 placementRef:
   name: {{ $placementName}}
   apiGroup: cluster.open-cluster-management.io
@@ -100,6 +145,3 @@ subjects:
     kind: Policy
 ---
 {{- end }}
-{{- end }}
-{{/* $clusterSetLabels := (index ((index (index ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "cluster-set.%s"  $clusterSet)) | default dict) "data" | default dict) "values" | default "" | fromJson) | default dict) "labels") | default dict */}}
-{{/* $clusterLabels := (index ((index (index ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "managed-cluster.%s"  $value.metadata.name)) | default dict) "data" | default dict) "values" | default "" | fromJson) | default dict) "labels") | default dict */}}

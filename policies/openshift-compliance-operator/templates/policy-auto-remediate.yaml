@@ -4,8 +4,8 @@ metadata:
   name: policy-auto-remediate
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    policy.open-cluster-management.io/categories: CM Configuration Management
-    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-2 Security Assessments
     policy.open-cluster-management.io/standards: NIST SP 800-53
 spec:
   dependencies:
@@ -24,29 +24,29 @@ spec:
           name: auto-remediate
         spec:
           object-templates-raw: |
-              {{ "{{" }}hub range (fromConfigMap "{{ .Values.policy_namespace }}" "stig-remediation" "ocp4-stig" | trim | split "\n") hub{{ "}}" }}
-              - complianceType: musthave
-                objectDefinition:
-                  apiVersion: compliance.openshift.io/v1alpha1
-                  kind: ComplianceRemediation
-                  metadata:
-                    name: {{ "{{" }}hub . hub{{ "}}" }}
-                    namespace: {{ .Values.compliance.namespace }}
-                  spec:
-                    apply: true
-              {{ "{{" }}hub end hub{{ "}}" }}
+            {{ "{{hub-" }} range (fromConfigMap "{{ .Values.policy_namespace }}" "stig-remediation" "ocp4-stig" | trim | split "\n") {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: compliance.openshift.io/v1alpha1
+                kind: ComplianceRemediation
+                metadata:
+                  name: {{ "{{hub" }} . {{ "hub}}" }}
+                  namespace: {{ .Values.compliance.namespace }}
+                spec:
+                  apply: true
+            {{ "{{hub- end hub}}" }}
 
-              {{ "{{" }}hub range (fromConfigMap "{{ .Values.policy_namespace }}" "stig-remediation" "rhcos4-stig" | trim | split "\n") hub{{ "}}" }}
-              - complianceType: musthave
-                objectDefinition:
-                  apiVersion: compliance.openshift.io/v1alpha1
-                  kind: ComplianceRemediation
-                  metadata:
-                    name: {{ "{{" }}hub . hub{{ "}}" }}
-                    namespace: {{ .Values.compliance.namespace }}
-                  spec:
-                    apply: true
-              {{ "{{" }}hub end hub{{ "}}" }}
+            {{ "{{hub-" }} range (fromConfigMap "{{ .Values.policy_namespace }}" "stig-remediation" "rhcos4-stig" | trim | split "\n") {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: compliance.openshift.io/v1alpha1
+                kind: ComplianceRemediation
+                metadata:
+                  name: {{ "{{hub" }} . {{ "hub}}" }}
+                  namespace: {{ .Values.compliance.namespace }}
+                spec:
+                  apply: true
+            {{ "{{hub- end hub}}" }}
           pruneObjectBehavior: None
           remediationAction: inform
           severity: high
@@ -72,6 +72,10 @@ spec:
               operator: In
               values:
               - 'true'
+            - key: 'autoshift.io/compliance-auto-remediate'
+              operator: NotIn
+              values:
+              - 'false'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

@@ -23,7 +23,7 @@ spec:
           object-templates-raw: |
               {{ "{{-" }} /* Specify the parameters needed to create the MachineSet  */ {{ "-}}" }}
               {{ "{{-" }} $machineset_role := "infra" {{ "}}" }}
-              {{ "{{-" }} $zones_from_labels := list {{ "{{hub" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub" }} if $label | hasPrefix (printf "%s%s" $labelPrefix "infra-nodes-zone") {{ "hub}}" }}"{{ "{{hub" }} $labelvalue {{ "hub}}" }}"{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }} {{ "}}" }}
+              {{ "{{-" }} $zones_from_labels := list {{ "{{hub" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub" }} if $label | hasPrefix (printf "%s-%s" $labelPrefix "infra-nodes-zone") {{ "hub}}" }}"{{ "{{hub" }} $labelvalue {{ "hub}}" }}"{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }} {{ "}}" }}
               {{ "{{-" }} $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName {{ "}}" }}
               {{ "{{-" }} $worker_ms := (index (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items 0) {{ "}}" }}
               {{ "{{-" }} /* Generate the MachineSet for each zone as specified or default to worker az */ {{ "-}}" }}
@@ -39,7 +39,7 @@ spec:
                     namespace: openshift-machine-api
                   spec:
                     deletePolicy: Oldest
-                    replicas: {{ "{{hub" }} index .ManagedClusterLabels "{{ printf "%s%s" $labelPrefix "infra-nodes" }}" {{ "hub}}" }}
+                    replicas: {{ "{{hub" }} index .ManagedClusterLabels "{{ printf "%s-%s" $labelPrefix "infra-nodes" }}" {{ "hub}}" }}
                     selector:
                       matchLabels:
                         machine.openshift.io/cluster-api-cluster: {{ "{{" }} $infrastructure_id {{ "}}" }}
@@ -67,13 +67,13 @@ spec:
                             snapshot: ''
                             userDataSecret:
                               name: {{ "{{" }} $worker_ms.spec.template.spec.providerSpec.value.userDataSecret.name {{ "}}" }}
-                            memoryMiB: {{ "{{" }} {{ "{{hub" }} (index .ManagedClusterLabels "{{ printf "%s%s"  $labelPrefix "infra-nodes-memory-mib" }}") {{ "hub}}" }} | default $worker_ms.spec.template.spec.providerSpec.value.memoryMiB  {{ "}}" }}
+                            memoryMiB: {{ "{{" }} {{ "{{hub" }} (index .ManagedClusterLabels "{{ printf "%s-%s"  $labelPrefix "infra-nodes-memory-mib" }}") {{ "hub}}" }} | default $worker_ms.spec.template.spec.providerSpec.value.memoryMiB  {{ "}}" }}
                             credentialsSecret:
                               name: {{ "{{" }} $worker_ms.spec.template.spec.providerSpec.value.credentialsSecret.name {{ "}}" }}
                             network:
                               devices:
                                 - networkName: {{ "{{" }} (index ($worker_ms.spec.template.spec.providerSpec.value.network.devices) 0).networkName {{ "}}" }}
-                            numCPUs: {{ "{{" }} {{ "{{hub" }} (index .ManagedClusterLabels "{{ printf "%s%s"  $labelPrefix "infra-nodes-numcpu" }}") {{ "hub}}" }} | default $worker_ms.spec.template.spec.providerSpec.value.numCPUs {{ "}}" }}
+                            numCPUs: {{ "{{" }} {{ "{{hub" }} (index .ManagedClusterLabels "{{ printf "%s-%s"  $labelPrefix "infra-nodes-numcpu" }}") {{ "hub}}" }} | default $worker_ms.spec.template.spec.providerSpec.value.numCPUs {{ "}}" }}
                             kind: VSphereMachineProviderSpec
                             workspace:
                               datacenter: {{ "{{" }} $worker_ms.spec.template.spec.providerSpec.value.workspace.datacenter {{ "}}" }}
@@ -105,9 +105,13 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: {{ printf "%s%s" $labelPrefix "infra-nodes" }}
+            - key: {{ printf "%s-%s" $labelPrefix "infra-nodes" }}
               operator: Exists
-            - key: {{ printf "%s%s" $labelPrefix "infra-nodes-provider" }}
+            - key: {{ printf "%s-%s" $labelPrefix "infra-nodes" }}
+              operator: NotIn
+              values:
+                - "0"
+            - key: {{ printf "%s-%s" $labelPrefix "infra-nodes-provider" }}
               operator: In
               values:
               - 'vmware'

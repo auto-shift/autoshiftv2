@@ -5,8 +5,8 @@ metadata:
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
-    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
   disabled: false
   dependencies:
@@ -36,6 +36,8 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.quay.enterpriseNamespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     {{- if .Values.quay.registry_config_bundle }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -88,7 +90,6 @@ metadata:
   name: placement-policy-quay-deploy
   namespace: {{ .Values.policy_namespace }}
 spec:
-  clusterSets:
   clusterSets:
   {{- range $clusterSet, $value := .Values.managedClusterSets }}
     - {{ $clusterSet }}

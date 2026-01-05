@@ -5,8 +5,8 @@ metadata:
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
-    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
   disabled: false
   policy-templates:
@@ -25,6 +25,8 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.quay.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
@@ -35,16 +37,27 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.quay.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.quay.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.quay.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.quay.namespace }}
           subscription:
             namespace: {{ .Values.quay.namespace }}
-            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/quay-channel" | default "{{ .Values.quay.channel }}" hub{{ "}}" }}'
-            name: {{ .Values.quay.name }}
-            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/quay-source" | default "{{ .Values.quay.source }}" hub{{ "}}" }}'
-            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/quay-source-namespace" | default "{{ .Values.quay.sourceNamespace }}" hub{{ "}}" }}'
-          # Getting Label and then capitalizing first letter
-          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/quay-install-plan-approval" | default "{{ .Values.quay.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/quay-channel" | default "{{ .Values.quay.channel }}" {{ "hub}}" }}'
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/quay-subscription-name" | default "{{ .Values.quay.name }}" {{ "hub}}" }}'
+            # Source Selection Logic (evaluated on hub for each managed cluster):
+            # 1. If cluster has explicit 'autoshift.io/quay-source' label → use that value
+            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
+            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
+            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
+            # 3. Else → use standard source (e.g., redhat-operators)
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/quay-source" | default (ternary (printf "%s-%s" "{{ .Values.quay.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.quay.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/quay-source-namespace" | default "{{ .Values.quay.sourceNamespace }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/quay-version" | default "" {{ "hub}}" }}'
+            # Upgrade approval for subscription will be set based on if version is set not this flag
+            # If version is set install plan is set to manual and only the version specified will be installed
+          upgradeApproval: Automatic
+          versions:
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/quay-version" | default "" {{ "hub}}" }}'
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -71,7 +84,6 @@ metadata:
   name: placement-policy-quay-operator-install
   namespace: {{ .Values.policy_namespace }}
 spec:
-  clusterSets:
   clusterSets:
   {{- range $clusterSet, $value := .Values.managedClusterSets }}
     - {{ $clusterSet }}

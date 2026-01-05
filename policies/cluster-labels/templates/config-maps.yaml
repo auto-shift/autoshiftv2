@@ -1,12 +1,13 @@
+{{- $labelPrefix := ($.Values.autoshiftLabelPrefix | default "autoshift.io/") }}
 {{- if (.Values.enabled | default false) }}
 {{- range $cluster, $data := $.Values.clusters }}
 ---
   {{- $prefixedClusterLabels := dict -}}
   {{- range $label, $value := $data.labels -}}
     {{- if eq ($value | trim) "" -}}
-      {{- $_ := set $prefixedClusterLabels (printf "%s%s" $.Values.autoshiftLabelPrefix $label) "_" -}}
+      {{- $_ := set $prefixedClusterLabels (printf "%s%s" $labelPrefix $label) "_" -}}
     {{- else -}}
-      {{- $_ := set $prefixedClusterLabels (printf "%s%s" $.Values.autoshiftLabelPrefix $label) ($value | trim) -}}
+      {{- $_ := set $prefixedClusterLabels (printf "%s%s" $labelPrefix $label) ($value | trim) -}}
     {{- end -}}
   {{- end -}}
   {{- $_ := set $data "labels" $prefixedClusterLabels -}}
@@ -15,19 +16,21 @@ kind: ConfigMap
 metadata: 
   name: "{{ printf "managed-cluster.%s" $cluster }}"
   namespace: "{{ $.Values.policy_namespace }}" 
+  labels:
+    autoshift.io/cluster-labels: ""
 data: 
   values: '{{ $data | toJson }}'
   labels: '{{ $prefixedClusterLabels | toJson }}'
 {{- end }}
 
-{{- range $clusterSet, $data := merge ($.Values.hubClusterSets | default dict) ($.Values.managedClusterSets | default dict) }}
+{{- range $clusterSet, $data := merge (dict) (deepCopy ($.Values.hubClusterSets | default dict)) (deepCopy ($.Values.managedClusterSets | default dict)) }}
 ---
   {{- $prefixedClusterSetLabels := dict -}}
   {{- range $label, $value := $data.labels -}}
     {{- if eq ($value | trim) "" -}}
-      {{- $_ := set $prefixedClusterSetLabels (printf "%s%s" $.Values.autoshiftLabelPrefix $label) "_" -}}
+      {{- $_ := set $prefixedClusterSetLabels (printf "%s%s" $labelPrefix $label) "_" -}}
     {{- else -}}
-      {{- $_ := set $prefixedClusterSetLabels (printf "%s%s" $.Values.autoshiftLabelPrefix $label) ($value | trim) -}}
+      {{- $_ := set $prefixedClusterSetLabels (printf "%s%s" $labelPrefix $label) ($value | trim) -}}
     {{- end -}}
   {{- end -}}
   {{- $_ := set $data "labels" $prefixedClusterSetLabels -}}
@@ -36,6 +39,8 @@ kind: ConfigMap
 metadata: 
   name: {{ printf "cluster-set.%s" $clusterSet }}
   namespace: "{{ $.Values.policy_namespace }}" 
+  labels:
+    autoshift.io/cluster-labels: ""
 data:
   values: '{{ $data | toJson }}'
   labels: '{{ $prefixedClusterSetLabels | toJson }}'

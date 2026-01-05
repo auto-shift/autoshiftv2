@@ -25,6 +25,8 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.virt.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
@@ -35,18 +37,29 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.virt.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.virt.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.virt.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.virt.namespace }}
             targetNamespaces:
               - {{ .Values.virt.namespace }}
           subscription:
             namespace: {{ .Values.virt.namespace }}
-            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/virt-channel" | default "{{ .Values.virt.channel }}" hub{{ "}}" }}'
-            name: {{ .Values.virt.name }}
-            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/virt-source" | default "{{ .Values.virt.source }}" hub{{ "}}" }}'
-            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/virt-source-namespace" | default "{{ .Values.virt.sourceNamespace }}" hub{{ "}}" }}'
-          # Getting Label and then capitalizing first letter
-          upgradeApproval: '{{ "{{hub" }} $upgrade_approval := index .ManagedClusterLabels "autoshift.io/virt-install-plan-approval" | default "{{ .Values.virt.installPlanApproval }}" {{ "-hub}}" }} {{ "{{hub" }} print (substr 0 1 $upgrade_approval | upper) (substr 1 (len $upgrade_approval) $upgrade_approval) {{ "-hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virt-channel" | default "{{ .Values.virt.channel }}" {{ "hub}}" }}'
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virt-subscription-name" | default "{{ .Values.virt.name }}" {{ "hub}}" }}'
+            # Source Selection Logic (evaluated on hub for each managed cluster):
+            # 1. If cluster has explicit 'autoshift.io/virt-source' label → use that value
+            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
+            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
+            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
+            # 3. Else → use standard source (e.g., redhat-operators)
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virt-source" | default (ternary (printf "%s-%s" "{{ .Values.virt.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.virt.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virt-source-namespace" | default "{{ .Values.virt.sourceNamespace }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virtualization-version" | default "" {{ "hub}}" }}'
+            # Upgrade approval for subscription will be set based on if version is set not this flag
+            # If version is set install plan is set to manual and only the version specified will be installed
+          upgradeApproval: Automatic
+          versions:
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/virtualization-version" | default "" {{ "hub}}" }}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

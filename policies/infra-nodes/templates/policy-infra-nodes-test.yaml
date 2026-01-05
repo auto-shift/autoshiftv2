@@ -40,7 +40,7 @@ spec:
                     name: {{ "{{" }} $infrastructure_id {{ "}}" }}-{{ "{{" }} $machineset_role {{ "}}" }}-{{ "{{" }} $zone {{ "}}" }}
                     namespace: openshift-machine-api
                   spec:
-                    replicas: {{ "{{hub" }} index .ManagedClusterLabels "{{ printf "%s%s" $labelPrefix "infra-nodes" }}" {{ "hub}}" }}
+                    replicas: {{ "{{hub" }} index .ManagedClusterLabels "{{ printf "%s-%s" $labelPrefix "infra-nodes" }}" {{ "hub}}" }}
               {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -60,8 +60,12 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: {{ printf "%s%s" $labelPrefix "infra-nodes" }}
+            - key: {{ printf "%s-%s" $labelPrefix "infra-nodes" }}
               operator: Exists
+            - key: {{ printf "%s-%s" $labelPrefix "infra-nodes" }}
+              operator: NotIn
+              values:
+                - "0"
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

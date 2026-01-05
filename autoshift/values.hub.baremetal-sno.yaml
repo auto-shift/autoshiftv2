@@ -8,10 +8,9 @@ autoshiftGitBranchTag: main
 selfManagedHubSet: hub
 
 # Optional: If you want to exclude policies from all clusters, you can add the folder name here.
-# excludePolicies:
-#   - infra-nodes
-#   - worker-nodes
-
+excludePolicies:
+  - infra-nodes
+  - worker-nodes
 
 # Hub Cluster Sets with Feature Flags. Blank will remove
 hubClusterSets:
@@ -19,78 +18,105 @@ hubClusterSets:
     labels:
       self-managed: 'true'
       ### Advance Cluster Manager
-      acm-channel: release-2.13
-      acm-install-plan-approval: Automatic
+      acm-channel: release-2.14
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'Basic'
-      ### SNO Tweaks
-      sno: 'true'
-      sno-max-pods: 500
+      acm-observability: 'false'
+      # acm-enable-provisioning: 'false'
+      # acm-provisioning-storage-class: (optional)
+      # acm-provisioning-database-size: 10Gi
+      # acm-provisioning-filesystem-storage-size: 100Gi
+      # acm-provisioning-image-storage-size: 50Gi
+      ### Master Nodes
+      master-nodes: 'true'
+      master-max-pods: 500
+      ### Storage Nodes
+      storage-nodes: '1'
+      storage-nodes-provider: baremetal
+      ### Kubernetes NMState Operator
+      nmstate: 'false'
+      nmstate-subscription-name: kubernetes-nmstate-operator
+      # Example nmstate-nncp labels. Label must start with nmstate-nncp
+      # also the value must be the name of the config file you want to apply
+      # nmstate-nncp-example-bond1: example-bond
+      # nmstate-nncp-example-vlan10: example-vlan10
       ### LVM Operator
       lvm: 'true'
+      lvm-subscription-name: lvms-operator
       lvm-default: 'true'
       lvm-fstype: xfs
       lvm-size-percent: 90
       lvm-overprovision-ratio: 10
       lvm-channel: stable-4.18
-      lvm-install-plan-approval: Automatic
       lvm-source: redhat-operators
       lvm-source-namespace: openshift-marketplace
       ### Local Storage Operator
       local-storage: 'false'
+      local-storage-subscription-name: local-storage-operator
       local-storage-channel: stable
-      local-storage-install-plan-approval: Automatic
       local-storage-source: redhat-operators
       local-storage-source-namespace: openshift-marketplace
       ### OpenShift Data Foundation
       odf: 'true'
+      odf-subscription-name: odf-operator
       odf-multi-cloud-gateway: standalone
-      odf-nooba-pvpool: ''
-      odf-nooba-store-size: ''
-      odf-nooba-store-num-volumes: ''
-      odf-ocs-storage-class-name: ''
-      odf-ocs-storage-size: ''
-      odf-ocs-storage-count: ''
-      odf-ocs-storage-replicas: ''
-      odf-resource-profile: ''
+      # odf-nooba-pvpool: ''
+      # odf-nooba-store-size: ''
+      # odf-nooba-store-num-volumes: ''
+      # odf-ocs-storage-class-name: ''
+      # odf-ocs-storage-size: ''
+      # odf-ocs-storage-count: ''
+      # odf-ocs-storage-replicas: ''
+      # odf-resource-profile: ''
       odf-channel: stable-4.18
-      odf-install-plan-approval: Automatic
       odf-source: redhat-operators
       odf-source-namespace: openshift-marketplace
+      ### OpenShift Internal Registry
+      imageregistry: 'true'
+      imageregistry-management-state: Managed
+      imageregistry-replicas: '1'
+      imageregistry-storage-type: s3 # pvc
+      imageregistry-s3-region: us-east-2
+      imageregistry-pvc-access-mode: ReadWriteMany
+      imageregistry-pvc-size: 100Gi
+      imageregistry-pvc-storage-class: ocs-storagecluster-ceph-rbd
+      imageregistry-pvc-volume-mode: Block
+      imageregistry-rollout-strategy: RollingUpdate
       ### Advanced Cluster Security
       acs: 'false'
+      acs-subscription-name: rhacs-operator
+      acs-egress-connectivity: Online
       acs-channel: stable
-      acs-install-plan-approval: Automatic
       acs-source: redhat-operators
       acs-source-namespace: openshift-marketplace
       ### Developer Spaces
       dev-spaces: 'false'
+      dev-spaces-subscription-name: devspaces
       dev-spaces-channel: stable
-      dev-spaces-install-plan-approval:  Automatic
       dev-spaces-source: redhat-operators
       dev-spaces-source-namespace: openshift-marketplace
       ### Developer Hub
       dev-hub: 'false'
-      dev-hub-channel: fast
-      dev-hub-install-plan-approval: Automatic
+      dev-hub-subscription-name: rhdh
+      dev-hub-channel: fast-1.8
       dev-hub-source: redhat-operators
       dev-hub-source-namespace: openshift-marketplace
       ### OpenShift Pipelines
       pipelines: 'false'
-      pipelines-channel: latest
-      pipelines-install-plan-approval: Automatic
+      pipelines-subscription-name: openshift-pipelines-operator-rh
+      pipelines-channel: pipelines-1.20
       pipelines-source: redhat-operators
       pipelines-source-namespace: openshift-marketplace
       ### Trusted Artifact Signer
       tas: 'false'
+      tas-subscription-name: rhtas-operator
       tas-channel:  stable
-      tas-install-plan-approval: Automatic
       tas-source: redhat-operators
       tas-source-namespace: openshift-marketplace
       ### Quay
       quay: 'false'
-      quay-channel: stable-3.13
+      quay-channel: stable-3.15
       quay-install-plan-approval: Automatic
       quay-source: redhat-operators
       quay-source-namespace: openshift-marketplace
@@ -98,7 +124,7 @@ hubClusterSets:
       gitops-dev: 'true'
       ### Loki
       loki: 'false' 
-      loki-channel: stable-6.2
+      loki-channel: stable-6.4
       loki-install-plan-approval: Automatic
       loki-source: redhat-operators
       loki-source-namespace: openshift-marketplace
@@ -107,20 +133,20 @@ hubClusterSets:
       loki-lokistack-name: logging-lokistack
       ### OpenShift Logging
       logging: 'false'
-      logging-channel:  stable-6.2
+      logging-channel: stable-6.4
       logging-install-plan-approval: Automatic
       logging-source: redhat-operators
       logging-source-namespace: openshift-marketplace
       ### Cluster Observability Operator
       coo: 'false'
+      coo-subscription-name: cluster-observability-operator
       coo-channel: stable
-      coo-install-plan-approval: Automatic
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
       ### Compliance Operator Stig Apply
       compliance: 'false'
-      compliance-name: compliance-operator
-      compliance-install-plan-approval: Automatic
+      compliance-auto-remediate: 'false'
+      compliance-subscription-name: compliance-operator
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
@@ -149,7 +175,6 @@ managedClusterSets:
       ### Local Storage Operator
       local-storage: 'false'
       local-storage-channel: stable
-      local-storage-install-plan-approval: Automatic
       local-storage-source: redhat-operators
       local-storage-source-namespace: openshift-marketplace
       ### OpenShift Data Foundation
@@ -163,43 +188,44 @@ managedClusterSets:
       odf-ocs-storage-count: ''
       odf-ocs-storage-replicas: ''
       odf-resource-profile: balanced
-      odf-channel: stable-4.17
-      odf-install-plan-approval: Automatic
+      odf-channel: stable-4.18
       odf-source: redhat-operators
       odf-source-namespace: openshift-marketplace
+      ### Kubernetes NMState Operator
+      nmstate: 'false'
+      nmstate-subscription-name: kubernetes-nmstate-operator
+      # Example nmstate-nncp labels. Label must start with nmstate-nncp
+      # also the value must be the name of the config file you want to apply
+      # nmstate-nncp-example-bond1: example-bond
+      # nmstate-nncp-example-vlan10: example-vlan10
       ### Advanced Cluster Security
       acs: 'false'
       acs-channel: stable
-      acs-install-plan-approval: Automatic
       acs-source: redhat-operators
       acs-source-namespace: openshift-marketplace
       ### Developer Spaces
       dev-spaces: 'false'
       dev-spaces-channel: '' #stable
-      dev-spaces-install-plan-approval:  '' #Automatic
       dev-spaces-source: redhat-operators
       dev-spaces-source-namespace: openshift-marketplace
       ### Developer Hub
       dev-hub: 'false'
-      dev-hub-channel: '' #fast
-      dev-hub-install-plan-approval: '' #Automatic
+      dev-hub-channel: fast-1.8
       dev-hub-source: '' #redhat-operators
       dev-hub-source-namespace: '' #openshift-marketplace
       ### OpenShift Pipelines
       pipelines: 'false'
-      pipelines-channel: '' #latest
-      pipelines-install-plan-approval: '' #Automatic
+      pipelines-channel: pipelines-1.20
       pipelines-source: '' #redhat-operators
       pipelines-source-namespace: '' #openshift-marketplace
       ### Trusted Artifact Signer
       tas: 'false'
       tas-channel:  '' #latest
-      tas-install-plan-approval: '' #Automatic
       tas-source: '' #redhat-operators
       tas-source-namespace: '' #openshift-marketplace
       ### Quay
       quay: 'false'
-      quay-channel: '' # stable-3.13
+      quay-channel: '' # stable-3.15
       quay-install-plan-approval: '' # Automatic
       quay-source: '' # redhat-operators
       quay-source-namespace: '' # openshift-marketplace
@@ -208,7 +234,7 @@ managedClusterSets:
       gitops-dev-team-dev: 'true'
       ### Loki
       loki: 'false' 
-      loki-channel: stable-6.2
+      loki-channel: stable-6.4
       loki-install-plan-approval: Automatic
       loki-source: redhat-operators
       loki-source-namespace: openshift-marketplace
@@ -217,20 +243,20 @@ managedClusterSets:
       loki-lokistack-name: logging-lokistack
       ### OpenShift Logging
       logging: 'false'
-      logging-channel:  stable-6.2
+      logging-channel: stable-6.4
       logging-install-plan-approval: Automatic
       logging-source: redhat-operators
       logging-source-namespace: openshift-marketplace
       ### Cluster Observability Operator
       coo: 'false'
+      coo-subscription-name: cluster-observability-operator
       coo-channel: stable
-      coo-install-plan-approval: Automatic
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
       ### Compliance Operator Stig Apply
       compliance: 'false'
-      compliance-name: compliance-operator
-      compliance-install-plan-approval: Automatic
+      compliance-auto-remediate: 'true'
+      compliance-subscription-name: compliance-operator
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
