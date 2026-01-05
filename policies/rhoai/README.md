@@ -1,274 +1,237 @@
-# rhoai AutoShift Policy
+# RHOAI (Red Hat OpenShift AI) Policy
 
-## Overview
-This policy installs the rhods-operator operator using AutoShift patterns.
+This policy installs and configures Red Hat OpenShift AI (RHOAI) 3.0+ on OpenShift clusters.
 
-## Status
-✅ **Operator Installation**: Ready to deploy  
-🔧 **Configuration**: Requires operator-specific setup (see below)
+## What Gets Installed
 
-## Quick Deploy
+| Policy | Description |
+|--------|-------------|
+| `policy-rhoai-operator-install` | Installs the rhods-operator |
+| `policy-rhoai-config` | Creates DSCInitialization and DataScienceCluster |
 
-### Test Locally
-```bash
-# Validate policy renders correctly
-helm template policies/rhoai/
-```
+## Dependencies
 
-### Enable on Clusters
-Edit AutoShift values files to add the operator labels:
+RHOAI requires these operators to be installed first:
+
+| Dependency | Policy | Required For |
+|------------|--------|--------------|
+| OpenShift Serverless | `policies/serverless/` | KServe model serving |
+| OpenShift Service Mesh 3 | `policies/servicemesh3/` | Traffic routing, mTLS |
+| OpenShift Pipelines | `policies/openshift-pipelines/` | Data Science Pipelines |
+| Node Feature Discovery | `policies/node-feature-discovery/` | GPU detection (optional) |
+
+## Quick Start
+
+Enable RHOAI with all dependencies:
 
 ```yaml
-# In autoshift/values.hub.yaml (or values.sbx.yaml, etc.)
 hubClusterSets:
   hub:
     labels:
+      # Dependencies
+      serverless: 'true'
+      serverless-subscription-name: serverless-operator
+      serverless-channel: stable
+      serverless-source: redhat-operators
+      serverless-source-namespace: openshift-marketplace
+      
+      servicemesh3: 'true'
+      servicemesh3-subscription-name: servicemeshoperator3
+      servicemesh3-channel: stable-3.2
+      servicemesh3-source: redhat-operators
+      servicemesh3-source-namespace: openshift-marketplace
+      
+      pipelines: 'true'
+      pipelines-subscription-name: openshift-pipelines-operator-rh
+      pipelines-channel: pipelines-1.20
+      pipelines-source: redhat-operators
+      pipelines-source-namespace: openshift-marketplace
+      
+      # RHOAI
       rhoai: 'true'
-      rhoai-subscription-name: 'rhods-operator'
-      rhoai-channel: 'fast'
-      rhoai-source: 'redhat-operators'
-      rhoai-source-namespace: 'openshift-marketplace'
-      # rhoai-version: 'rhods-operator.v1.x.x'  # Optional: pin to specific CSV version
-
-managedClusterSets:
-  managed:
-    labels:
-      rhoai: 'true'
-      rhoai-subscription-name: 'rhods-operator'
-      rhoai-channel: 'fast'
-      rhoai-source: 'redhat-operators'
-      rhoai-source-namespace: 'openshift-marketplace'
-      # rhoai-version: 'rhods-operator.v1.x.x'  # Optional: pin to specific CSV version
-
-# For specific clusters (optional override)
-clusters:
-  my-cluster:
-    labels:
-      rhoai: 'true'
-      rhoai-channel: 'fast'  # Override channel for this cluster
+      rhoai-subscription-name: rhods-operator
+      rhoai-channel: fast-3.x
+      rhoai-source: redhat-operators
+      rhoai-source-namespace: openshift-marketplace
 ```
 
-Labels are automatically propagated to clusters via the cluster-labels policy.
+## Configuration Labels
 
-### Add to AutoShift ApplicationSet
-Edit `autoshift/templates/applicationset.yaml` and add:
+### Operator Configuration
+
+| Label | Default | Description |
+|-------|---------|-------------|
+| `rhoai` | - | Enable RHOAI (`'true'` or `'false'`) |
+| `rhoai-subscription-name` | `rhods-operator` | OLM package name |
+| `rhoai-channel` | `fast-3.x` | Operator channel |
+| `rhoai-version` | - | Pin to specific CSV version (optional) |
+| `rhoai-source` | `redhat-operators` | Catalog source |
+| `rhoai-source-namespace` | `openshift-marketplace` | Catalog namespace |
+
+### DataScienceCluster Component Configuration
+
+Each component can be set to `Managed` or `Removed`:
+
+| Label | Default | Description |
+|-------|---------|-------------|
+| `rhoai-dashboard` | `Managed` | RHOAI Dashboard UI |
+| `rhoai-workbenches` | `Managed` | Jupyter notebooks and workbenches |
+| `rhoai-pipelines` | `Managed` | Data Science Pipelines (Kubeflow) |
+| `rhoai-kserve` | `Managed` | KServe single-model serving |
+| `rhoai-modelmesh` | `Managed` | ModelMesh multi-model serving |
+| `rhoai-codeflare` | `Managed` | CodeFlare distributed training |
+| `rhoai-ray` | `Managed` | Ray distributed computing |
+| `rhoai-kueue` | `Managed` | Kueue job queuing |
+| `rhoai-training` | `Managed` | Training Operator (PyTorchJob, etc.) |
+| `rhoai-trustyai` | `Managed` | TrustyAI model explainability |
+
+### Infrastructure Configuration
+
+| Label | Default | Description |
+|-------|---------|-------------|
+| `rhoai-monitoring` | `Managed` | Monitoring stack |
+| `rhoai-servicemesh` | `Managed` | Service Mesh integration |
+| `rhoai-trustedca` | `Managed` | Trusted CA bundle management |
+
+## Examples
+
+### Minimal RHOAI (Dashboard + Workbenches only)
+
 ```yaml
-- name: rhoai
-  path: policies/rhoai
-  helm:
-    valueFiles:
-    - values.yaml
+rhoai: 'true'
+rhoai-subscription-name: rhods-operator
+rhoai-channel: fast-3.x
+rhoai-source: redhat-operators
+rhoai-source-namespace: openshift-marketplace
+# Disable components not needed
+rhoai-pipelines: 'Removed'
+rhoai-kserve: 'Removed'
+rhoai-modelmesh: 'Removed'
+rhoai-codeflare: 'Removed'
+rhoai-ray: 'Removed'
+rhoai-kueue: 'Removed'
+rhoai-training: 'Removed'
+rhoai-trustyai: 'Removed'
 ```
 
-## Configuration
+### Full RHOAI with Model Serving
 
-### Namespace Scope
-This operator is configured as:
-- **Cluster-scoped**: Manages resources across all namespaces (default)
-- **Namespace-scoped**: Limited to specific target namespaces (if `targetNamespaces` enabled in values.yaml)
-
-To change scope, edit `values.yaml` and uncomment/configure the `targetNamespaces` field.
-
-### Version Control
-This policy supports AutoShift's operator version control system:
-
-- **Automatic Upgrades**: By default, the operator follows automatic upgrade paths within its channel
-- **Version Pinning**: Add `rhoai-version` label to pin to a specific CSV version
-- **Manual Control**: Pinned versions require manual updates to upgrade
-
-To pin to a specific version, add the version label to your cluster or clusterset:
 ```yaml
-rhoai-version: 'rhods-operator.v1.x.x'
+rhoai: 'true'
+rhoai-subscription-name: rhods-operator
+rhoai-channel: fast-3.x
+rhoai-source: redhat-operators
+rhoai-source-namespace: openshift-marketplace
+# All components managed (default)
+rhoai-dashboard: 'Managed'
+rhoai-workbenches: 'Managed'
+rhoai-pipelines: 'Managed'
+rhoai-kserve: 'Managed'
+rhoai-modelmesh: 'Managed'
 ```
 
-Find available CSV versions:
+### Pin to Specific Version
+
+```yaml
+rhoai: 'true'
+rhoai-subscription-name: rhods-operator
+rhoai-channel: fast-3.x
+rhoai-version: 'rhods-operator.3.0.0'
+rhoai-source: redhat-operators
+rhoai-source-namespace: openshift-marketplace
+```
+
+## Verification
+
+Check RHOAI installation status:
+
 ```bash
-# List available versions for this operator
-oc get packagemanifests rhods-operator -o jsonpath='{.status.channels[*].currentCSV}'
-```
+# Check operator
+oc get csv -n redhat-ods-operator | grep rhods
 
-## Next Steps: Configuration
+# Check DSCInitialization
+oc get dscinitializations
 
-### 1. Explore Installed CRDs
-After operator installation, check what Custom Resources are available:
-```bash
-# Wait for operator to install
-oc get pods -n redhat-ods-operator
+# Check DataScienceCluster
+oc get datascienceclusters
 
-# Check available CRDs
-oc get crds | grep rhoai
+# Check RHOAI pods
+oc get pods -n redhat-ods-applications
 
-# Explore CRD specifications
-oc explain <CustomResourceName>
-```
-
-### 2. Create Configuration Policies
-Add operator-specific configuration policies to `templates/` directory.
-
-#### Common Patterns:
-- `policy-rhoai-config.yaml` - Main configuration
-- `policy-rhoai-<feature>.yaml` - Feature-specific configs
-
-#### Template Structure:
-```yaml
-{{- $policyName := "policy-rhoai-config" }}
-{{- $placementName := "placement-policy-rhoai-config" }}
-
-apiVersion: policy.open-cluster-management.io/v1
-kind: Policy
-metadata:
-  name: {{ $policyName }}
-  namespace: {{ .Values.policy_namespace }}
-  annotations:
-    policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CM Configuration Management
-    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
-spec:
-  disabled: false
-  dependencies:
-    - name: policy-rhoai-operator-install
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-  policy-templates:
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: rhoai-config
-        spec:
-          remediationAction: enforce
-          severity: high
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: # Your operator's API version
-                kind: # Your operator's Custom Resource
-                metadata:
-                  name: rhoai-config
-                  namespace: {{ .Values.rhoai.namespace }}
-                spec:
-                  # Your operator-specific configuration
-                  # Use dynamic labels when needed:
-                  # setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-setting" | default "default-value" {{ "hub}}" }}'
-          pruneObjectBehavior: None
----
-# Use same placement as operator install or create specific targeting
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/rhoai'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-placementRef:
-  name: {{ $placementName }}
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: {{ $policyName }}
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
-```
-
-### 3. Reference Examples
-**Study similar complexity policies:**
-- **Simple**: `policies/openshift-gitops/` - Basic operator + ArgoCD config
-- **Medium**: `policies/advanced-cluster-security/` - Multiple related policies
-- **Complex**: `policies/metallb/` - Multiple configuration types (L2, BGP, etc.)
-- **Advanced**: `policies/openshift-data-foundation/` - Storage cluster configuration
-
-### 4. AutoShift Labels
-Add configuration labels to `values.yaml` and use in templates:
-
-```yaml
-# Add to values.yaml AutoShift Labels Documentation:
-# rhoai-setting<string>: Configuration option (default: 'value')
-# rhoai-feature-enabled<bool>: Enable optional feature (default: 'false')
-# rhoai-provider<string>: Provider-specific config (default: 'generic')
-
-# Use in templates:
-setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-setting" | default "default-value" {{ "hub}}" }}'
-```
-
-## Common Patterns
-
-### CSV Status Checking (Optional)
-For operators that need installation verification:
-```yaml
-- objectDefinition:
-    apiVersion: policy.open-cluster-management.io/v1
-    kind: ConfigurationPolicy
-    metadata:
-      name: rhoai-csv-status
-    spec:
-      remediationAction: inform
-      severity: high
-      object-templates:
-        - complianceType: musthave
-          objectDefinition:
-            apiVersion: operators.coreos.com/v1alpha1
-            kind: ClusterServiceVersion
-            metadata:
-              namespace: {{ .Values.rhoai.namespace }}
-            status:
-              phase: Succeeded
-```
-
-### ArgoCD Sync Annotations (If Needed)
-For policies requiring special sync behavior:
-```yaml
-annotations:
-  argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
-  argocd.argoproj.io/compare-options: IgnoreExtraneous
-  argocd.argoproj.io/sync-wave: "1"
+# Check Dashboard route
+oc get route -n redhat-ods-applications rhods-dashboard
 ```
 
 ## Troubleshooting
 
-### Policy Not Applied
-1. Check cluster labels: `oc get managedcluster <cluster> --show-labels`
-2. Verify placement: `oc get placement -n open-cluster-policies`
-3. Check policy status: `oc describe policy policy-rhoai-operator-install`
+### Policies not applying
 
-### Operator Installation Issues
-1. Check subscription: `oc get subscription -n redhat-ods-operator`
-2. Check install plan: `oc get installplan -n redhat-ods-operator`
-3. Verify operator source exists: `oc get catalogsource -n openshift-marketplace`
+```bash
+# Check policy status
+oc get policies -n policies-autoshift | grep rhoai
 
-### Template Rendering Issues
-1. Test locally: `helm template policies/rhoai/`
-2. Check hub escaping: Look for `{{ "{{hub" }} ... {{ "hub}}" }}` patterns
-3. Validate YAML: `helm lint policies/rhoai/`
+# Check operator policy on spoke
+oc describe operatorpolicy install-rhoai -n <cluster-name>
 
-## Resources
-- [Operator Documentation](https://operatorhub.io/operator/rhods-operator) - Find your operator details
-- [AutoShift Policy Patterns](../../README-DEVELOPER.md) - Comprehensive policy development guide  
-- [ACM Policy Documentation](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes) - Policy syntax reference in Governence Section
-- [Similar Policies](../) - Browse other policies for patterns and examples
+# Check config policy
+oc describe configurationpolicy rhoai-dsc -n <cluster-name>
+```
+
+### DSCInitialization stuck
+
+```bash
+# Check DSCI status
+oc describe dscinitializations default-dsci
+
+# Check operator logs
+oc logs -n redhat-ods-operator -l app.kubernetes.io/name=rhods-operator --tail=100
+```
+
+### DataScienceCluster not ready
+
+```bash
+# Check DSC status
+oc describe datascienceclusters default-dsc
+
+# Check component status
+oc get pods -n redhat-ods-applications
+oc get pods -n redhat-ods-monitoring
+```
+
+## values.yaml Reference
+
+```yaml
+rhoai:
+  # Operator settings
+  name: rhods-operator
+  namespace: redhat-ods-operator
+  channel: fast-3.x
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  operatorGroupName: rhoai-operator-group
+
+  # DSCInitialization settings
+  dsci:
+    name: default-dsci
+    applicationsNamespace: redhat-ods-applications
+    monitoringNamespace: redhat-ods-monitoring
+    monitoringState: Managed
+    serviceMeshState: Managed
+    serviceMeshNamespace: istio-system
+    serviceMeshControlPlaneName: data-science-smcp
+    trustedCABundleState: Managed
+
+  # DataScienceCluster settings
+  dsc:
+    name: default-dsc
+    dashboard: Managed
+    workbenches: Managed
+    datasciencepipelines: Managed
+    kserve: Managed
+    modelmeshserving: Managed
+    codeflare: Managed
+    ray: Managed
+    kueue: Managed
+    trainingoperator: Managed
+    trustyai: Managed
+```
