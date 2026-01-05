@@ -2,42 +2,81 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 policy_namespace: open-cluster-policies
+
 rhoai:
+  # Operator settings
   name: rhods-operator
   namespace: redhat-ods-operator
-  channel: fast
+  channel: fast-3.x
   source: redhat-operators
   sourceNamespace: openshift-marketplace
   operatorGroupName: rhoai-operator-group
   # targetNamespaces: # Optional: specify target namespaces for namespace-scoped operators
   #   - redhat-ods-operator
-  
+
+  # DSCInitialization settings
+  dsci:
+    name: default-dsci
+    applicationsNamespace: redhat-ods-applications
+    monitoringNamespace: redhat-ods-monitoring
+    monitoringState: Managed
+    serviceMeshState: Managed
+    serviceMeshNamespace: istio-system
+    serviceMeshControlPlaneName: data-science-smcp
+    trustedCABundleState: Managed
+
+  # DataScienceCluster settings
+  dsc:
+    name: default-dsc
+    # Component states - can be Managed or Removed
+    dashboard: Managed
+    workbenches: Managed
+    datasciencepipelines: Managed
+    kserve: Managed
+    modelmeshserving: Managed
+    codeflare: Managed
+    ray: Managed
+    kueue: Managed
+    trainingoperator: Managed
+    trustyai: Managed
+
 # hubClusterSets:
 #   hub:
 #     labels:
-#       test1: 'test'
+#       rhoai: 'true'
 # managedClusterSets:
 #   managed:
 #     labels:
-#       test4: 'test'
+#       rhoai: 'true'
 
 ### AutoShift Labels Documentation
 # The following labels can be set at the cluster or clusterset level to configure this policy:
 #
 # Enable/Disable:
-# rhoai<bool>: 'true' or 'false' - Controls whether rhoai is managed
+# rhoai: 'true' or 'false' - Controls whether RHOAI is managed
 #
-# Configuration:
-# rhoai-subscription-name<string>: Operator subscription name (default: 'rhods-operator')
-# rhoai-channel<string>: Operator channel (default: 'fast')
-# rhoai-version<string>: Specific operator version (CSV) to install (optional)
-# rhoai-source<string>: Operator catalog source (default: 'redhat-operators')
-# rhoai-source-namespace<string>: Catalog namespace (default: 'openshift-marketplace')
+# Operator Configuration:
+# rhoai-subscription-name: Operator subscription name (default: 'rhods-operator')
+# rhoai-channel: Operator channel (default: 'fast-3.x')
+# rhoai-version: Specific operator version (CSV) to install (optional)
+# rhoai-source: Operator catalog source (default: 'redhat-operators')
+# rhoai-source-namespace: Catalog namespace (default: 'openshift-marketplace')
+#
+# DataScienceCluster Component Configuration (Managed or Removed):
+# rhoai-dashboard: Dashboard UI (default: 'Managed')
+# rhoai-workbenches: Jupyter workbenches (default: 'Managed')
+# rhoai-pipelines: Data Science Pipelines (default: 'Managed')
+# rhoai-kserve: KServe model serving (default: 'Managed')
+# rhoai-modelmesh: ModelMesh serving (default: 'Managed')
+# rhoai-codeflare: CodeFlare distributed training (default: 'Managed')
+# rhoai-ray: Ray distributed computing (default: 'Managed')
+# rhoai-kueue: Kueue job queuing (default: 'Managed')
+# rhoai-training: Training Operator (default: 'Managed')
+# rhoai-trustyai: TrustyAI explainability (default: 'Managed')
 #
 # Examples:
 # autoshift.io/rhoai: 'true'
-# autoshift.io/rhoai-subscription-name: 'rhods-operator'
-# autoshift.io/rhoai-channel: 'fast'
-# autoshift.io/rhoai-version: 'operator-name.v1.x.x'
-# autoshift.io/rhoai-source: 'redhat-operators'
-# autoshift.io/rhoai-source-namespace: 'openshift-marketplace'
+# autoshift.io/rhoai-channel: 'fast-3.x'
+# autoshift.io/rhoai-dashboard: 'Managed'
+# autoshift.io/rhoai-kserve: 'Managed'
+# autoshift.io/rhoai-modelmesh: 'Removed'  # Disable ModelMesh if not needed
