@@ -25,6 +25,8 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.pipelines.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
@@ -35,7 +37,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: global-operators # Default OG Created by OpenShift
+            # if operator group exists in namespace use that (defaults to global-operators created by OpenShift)
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.pipelines.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}global-operators{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.pipelines.namespace }}
           subscription:
             namespace: {{ .Values.pipelines.namespace }}

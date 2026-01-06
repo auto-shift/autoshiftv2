@@ -31,6 +31,8 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.odf.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
@@ -41,7 +43,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.odf.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.odf.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.odf.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.odf.namespace }}
             targetNamespaces:
               - {{ .Values.odf.namespace }}

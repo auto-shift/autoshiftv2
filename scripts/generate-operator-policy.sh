@@ -224,6 +224,7 @@ substitute_template() {
         -e "s/{{CHANNEL}}/$CHANNEL/g" \
         -e "s/{{VERSION}}/$VERSION/g" \
         -e "s/{{COMPONENT_CAMEL}}/$COMPONENT_CAMEL/g" \
+        -e "s/{{LABEL_PREFIX}}/$COMPONENT_NAME/g" \
         "$template_file" > "$output_file"
 }
 
@@ -278,8 +279,9 @@ generate_policy() {
     
     # Enable targetNamespaces if namespace-scoped flag is set
     if [[ "$NAMESPACE_SCOPED" == "true" ]]; then
-        sed_inplace "s/  # targetNamespaces: # Optional: specify target namespaces for namespace-scoped operators/  targetNamespaces: # Target namespaces for namespace-scoped operators/" "$POLICY_DIR/values.yaml"
-        sed_inplace "s/  #   - $NAMESPACE/    - $NAMESPACE/" "$POLICY_DIR/values.yaml"
+        # Use | as delimiter to avoid conflicts with / in comments
+        sed_inplace "s|  # targetNamespaces: # Optional: specify target namespaces for namespace-scoped operators|  targetNamespaces: # Target namespaces for namespace-scoped operators|" "$POLICY_DIR/values.yaml"
+        sed_inplace "s|  #   - $NAMESPACE|    - $NAMESPACE|" "$POLICY_DIR/values.yaml"
     fi
     
     log_success "Created values.yaml"

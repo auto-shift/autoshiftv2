@@ -29,6 +29,8 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.coo.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
@@ -39,7 +41,8 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.coo.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.coo.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.coo.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.coo.namespace }}
           subscription:
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/coo-version" | default "" {{ "hub}}" }}'
