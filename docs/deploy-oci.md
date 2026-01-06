@@ -29,7 +29,54 @@ This guide explains how to deploy AutoShift from an OCI registry (Quay, GHCR, Ha
 
 ## Deployment Steps
 
-### Step 1: Configure OCI Registry Credentials
+### Step 1: Install OpenShift GitOps Operator
+
+OpenShift GitOps must be installed before deploying AutoShift:
+
+```bash
+# Install OpenShift GitOps from the local chart
+helm upgrade --install openshift-gitops ./openshift-gitops \
+  --namespace openshift-gitops \
+  --create-namespace
+
+# Wait for GitOps to be ready
+echo "Waiting for GitOps operator..."
+oc wait --for=condition=Available deployment/openshift-gitops-operator-controller-manager \
+  -n openshift-gitops-operator --timeout=300s
+
+# Wait for ArgoCD instance
+oc wait --for=condition=Available deployment/argocd-server \
+  -n openshift-gitops --timeout=300s
+
+# Verify GitOps is ready
+oc get pods -n openshift-gitops
+```
+
+### Step 2: Install Red Hat ACM Operator
+
+Advanced Cluster Management is required for policy-based management:
+
+```bash
+# Install ACM from the local chart
+helm upgrade --install advanced-cluster-management ./advanced-cluster-management \
+  --namespace open-cluster-management \
+  --create-namespace
+
+# Wait for ACM operator
+echo "Waiting for ACM operator..."
+oc wait --for=condition=Available deployment -l app=multiclusterhub-operator \
+  -n open-cluster-management --timeout=600s
+
+# Wait for MultiClusterHub to be ready (this takes ~10 minutes)
+echo "Waiting for MultiClusterHub (this takes ~10 minutes)..."
+oc wait --for=condition=Complete mch multiclusterhub \
+  -n open-cluster-management --timeout=1200s
+
+# Verify ACM is ready
+oc get mch -A
+```
+
+### Step 3: Configure OCI Registry Credentials
 
 If your OCI registry is private, configure credentials for ArgoCD:
 
@@ -58,7 +105,7 @@ oc rollout restart deployment/argocd-repo-server -n openshift-gitops
 oc rollout restart deployment/argocd-applicationset-controller -n openshift-gitops
 ```
 
-### Step 1b: Configure Custom CA Certificate (Optional)
+### Step 3b: Configure Custom CA Certificate (Optional)
 
 If your OCI registry uses a custom CA certificate (e.g., private registry with self-signed certs), you need to configure ArgoCD to trust it.
 
@@ -94,7 +141,7 @@ oc label configmap custom-ca-certs \
 
 Then reference it in your ArgoCD configuration by enabling `cluster_ca_bundle: true` in your values.
 
-### Step 2: Install AutoShift from OCI Registry
+### Step 4: Install AutoShift from OCI Registry
 
 #### Option A: Using Helm
 
@@ -182,7 +229,36 @@ spec:
 EOF
 ```
 
-### Step 3: Verify Deployment
+### Step 5: Configure Cluster Labels
+
+After installing AutoShift, apply labels to your managed cluster to enable operators:
+
+```bash
+# Move local-cluster to the 'hub' ClusterSet
+oc label managedcluster local-cluster \
+  cluster.open-cluster-management.io/clusterset=hub --overwrite
+
+# Apply AutoShift labels to enable desired operators
+# Customize these based on which operators you want to install
+oc label managedcluster local-cluster \
+  autoshift.io/self-managed='true' \
+  autoshift.io/openshift-version='4.20.0' \
+  autoshift.io/gitops='true' \
+  autoshift.io/gitops-subscription-name='openshift-gitops-operator' \
+  autoshift.io/gitops-channel='gitops-1.18' \
+  autoshift.io/gitops-source='redhat-operators' \
+  autoshift.io/gitops-source-namespace='openshift-marketplace' \
+  autoshift.io/acm-subscription-name='advanced-cluster-management' \
+  autoshift.io/acm-channel='release-2.14' \
+  autoshift.io/acm-source='redhat-operators' \
+  autoshift.io/acm-source-namespace='openshift-marketplace' \
+  --overwrite
+
+# Verify labels applied
+oc get managedcluster local-cluster -o jsonpath='{.metadata.labels}' | jq 'to_entries[] | select(.key | startswith("autoshift"))'
+```
+
+### Step 6: Verify Deployment
 
 ```bash
 # Check AutoShift Application
