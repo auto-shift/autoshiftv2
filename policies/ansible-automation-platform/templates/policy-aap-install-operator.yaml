@@ -1,7 +1,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-quay-deploy
+  name: policy-aap-operator-install
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -9,23 +9,12 @@ metadata:
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
   disabled: false
-  dependencies:
-  - apiVersion: policy.open-cluster-management.io/v1
-    compliance: Compliant
-    kind: Policy
-    name: policy-quay-operator-install
-    namespace: {{ .Values.policy_namespace }}
-  - apiVersion: policy.open-cluster-management.io/v1
-    compliance: Compliant
-    kind: Policy
-    name: policy-storage-cluster
-    namespace: {{ .Values.policy_namespace }}
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: {{ .Values.quay.enterpriseNamespace }}-ns
+          name: create-aap-namespace
         spec:
           remediationAction: enforce
           severity: high
@@ -35,59 +24,52 @@ spec:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
-                  name: {{ .Values.quay.enterpriseNamespace }}
-                  labels:
-                    openshift.io/cluster-monitoring: "true"
-    {{- if .Values.quay.registry_config_bundle }}
+                  name: {{ .Values.aap.namespace }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1beta1
+        kind: OperatorPolicy
+        metadata:
+          name: install-operator-aap
+        spec:
+          remediationAction: enforce
+          severity: high
+          complianceType: musthave
+          operatorGroup:
+            name: {{ .Values.aap.name }}
+            namespace: {{ .Values.aap.namespace }}
+            targetNamespaces:
+              - {{ .Values.aap.namespace }}
+          subscription:
+            namespace: {{ .Values.aap.namespace }}
+            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-channel" | default "{{ .Values.aap.channel }}" hub{{ "}}" }}'
+            name: {{ .Values.aap.name }}
+            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-source" | default "{{ .Values.aap.source }}" hub{{ "}}" }}'
+            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-source-namespace" | default "{{ .Values.aap.sourceNamespace }}" hub{{ "}}" }}'
+          upgradeApproval: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-install-plan-approval" | default "{{ .Values.aap.installPlanApproval }}" hub{{ "}}" }}'
+          versions:
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-version" | default "" {{ "hub}}" }}'
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: quay-registry-config-bundle
+          name: openshift-aap-csv-check
         spec:
-          remediationAction: enforce
+          remediationAction: inform
           severity: high
           object-templates:
             - complianceType: musthave
               objectDefinition:
-                apiVersion: v1
-                kind: Secret
+                apiVersion: operators.coreos.com/v1alpha1
+                kind: ClusterServiceVersion
                 metadata:
-                  name: quay-registry-config-bundle
-                  namespace: {{ .Values.quay.enterpriseNamespace }}
-                type: Opaque 
-                data: 
-                  config.yaml: {{ .Values.quay.registry_config_bundle | toYaml | trim | b64enc }}
-    {{- end }}
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: quay-registry
-        spec:
-          remediationAction: enforce
-          severity: high
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: quay.redhat.com/v1
-                kind: QuayRegistry
-                metadata:
-                  name: registry
-                  namespace: {{ .Values.quay.enterpriseNamespace }}
-                spec:
-                  {{- if .Values.quay.registry_components }}
-                  components:
-                    {{- .Values.quay.registry_components | toYaml | trim | nindent 20 }}
-                  {{- end }}
-                  {{- if .Values.quay.registry_config_bundle }}
-                  configBundleSecret: quay-registry-config-bundle
-                  {{- end }}
+                  namespace: {{ .Values.aap.namespace }}
+                status:
+                  phase: Succeeded
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-quay-deploy
+  name: placement-policy-aap-operator-install
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -101,7 +83,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/quay'
+            - key: 'autoshift.io/aap'
               operator: In
               values:
               - 'true'
@@ -114,13 +96,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-quay-deploy
+  name: placement-policy-aap-operator-install
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-quay-deploy
+  name: placement-policy-aap-operator-install
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-quay-deploy
+  - name: policy-aap-operator-install
     apiGroup: policy.open-cluster-management.io
     kind: Policy

@@ -596,6 +596,25 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `local-storage-source`                | string            | `redhat-operators`        | Operator catalog source |
 | `local-storage-source-namespace`      | string            | `openshift-marketplace`   | Catalog namespace |
 
+### Ansible Automation Platform
+
+| Variable                         | Type      | Default Value              | Notes |
+|----------------------------------|-----------|----------------------------|-------|
+| `aap`                            | bool      | `true` or `false`          |  |
+| `aap-channel`                    | string    | `stable-2.5`             |  |
+| `aap-install-plan-approval`      | string    | `Automatic`                |  |
+| `aap-source`                     | string    | `redhat-operators`         |  |
+| `aap-hub-disabled`               | bool      | `true` or `false`          | 'false' will include Hub content storage in your deployment, 'true' will omit.       |
+| `aap-file-storage`               | bool      | `true` or `false`          | 'false' will use file storage for Hub content storage in your deployment, 'true' will omit. |
+| `aap-file_storage_storage_class` | string    | `ocs-storagecluster-cephfs`| you will set the storage class for your file storage, defaults to ODF. you must have a RWX capable storage class if using anything else. |
+| `aap-file_storage_size`          | bool      | `10G`                      | set the pvc claim size for your file storage.  |
+| `aap-s3-storage`                 | bool      | `true` or `false`          | 'false' will use ODF NooBa for Hub content storage in your deployment, 'true' will omit. |
+| `aap-eda-disabled`               | bool      | `true` or `false`          | 'false' will include EDA in your deployment, 'true' will omit. |
+| `aap-lightspeed-disabled`        | bool      | `true` or `false`          | 'false' will include Ansible Lightspeed in your deployment, 'true' will omit. |
+| `aap-version`                    | bool      | `aap-operator.v2.6.0-0.1762261205`          | Specific CSV version for controlled upgrades  |
+| `aap-custom-cabundle`            | bool      | `true` or `false`          | 'true' will inject cluster CA Bundle into AAP CRD |
+| `aap-cabundle-name`              | string    | `user-ca-bundle`           |  name of the secret to be created for CA Bundle injection |
+
 ### OpenShift Data Foundation
 
 | Variable                          | Type              | Default Value             | Notes |
