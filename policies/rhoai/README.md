@@ -9,6 +9,19 @@ This policy installs and configures Red Hat OpenShift AI (RHOAI) 3.0+ on OpenShi
 | `policy-rhoai-operator-install` | Installs the rhods-operator |
 | `policy-rhoai-config` | Creates DSCInitialization and DataScienceCluster |
 
+### ConfigurationPolicies Created
+
+| ConfigurationPolicy | Description |
+|---------------------|-------------|
+| `rhoai-dsci` | Creates DSCInitialization with monitoring and service mesh config |
+| `rhoai-dsc-bootstrap` | Creates DataScienceCluster with minimal spec (RHOAI 3.0 workaround) |
+| `rhoai-dsc` | Configures DSC component managementState values |
+| `rhoai-dashboard-config` | Configures OdhDashboardConfig settings |
+| `rhoai-knative-serving` | Creates KnativeServing for KServe |
+| `rhoai-dashboard-route` | Creates Route to expose the dashboard |
+
+> **RHOAI 3.0 Note**: The RHOAI 3.0 webhook rejects `managementState: Managed` on CREATE operations but allows it on PATCH. The `rhoai-dsc-bootstrap` policy creates the DSC first with an empty spec, then `rhoai-dsc` patches it to configure component states.
+
 ## Dependencies
 
 RHOAI requires these operators to be installed first:
@@ -79,6 +92,7 @@ Each component can be set to `Managed` or `Removed`:
 | `rhoai-pipelines` | `Managed` | Data Science Pipelines (Kubeflow) |
 | `rhoai-kserve` | `Managed` | KServe single-model serving |
 | `rhoai-modelmesh` | `Managed` | ModelMesh multi-model serving |
+| `rhoai-modelregistry` | `Managed` | Model Registry for model versioning |
 | `rhoai-codeflare` | `Managed` | CodeFlare distributed training |
 | `rhoai-ray` | `Managed` | Ray distributed computing |
 | `rhoai-kueue` | `Managed` | Kueue job queuing |
@@ -198,6 +212,31 @@ oc get pods -n redhat-ods-applications
 oc get pods -n redhat-ods-monitoring
 ```
 
+### Components stuck in "Removed" state (RHOAI 3.0)
+
+If components remain in "Removed" state despite policy being applied:
+
+```bash
+# Check DSC spec vs status
+oc get datasciencecluster default-dsc -o yaml | grep -A20 "spec:"
+oc get datasciencecluster default-dsc -o yaml | grep -A30 "status:"
+
+# Check ConfigurationPolicy compliance
+oc get configurationpolicy -n local-cluster | grep rhoai
+
+# Manually patch DSC if needed (workaround)
+oc patch datasciencecluster default-dsc --type=merge -p '{
+  "spec": {
+    "components": {
+      "dashboard": {"managementState": "Managed"},
+      "workbenches": {"managementState": "Managed"},
+      "kserve": {"managementState": "Managed"},
+      "modelregistry": {"managementState": "Managed"}
+    }
+  }
+}'
+```
+
 ## values.yaml Reference
 
 ```yaml
@@ -229,9 +268,23 @@ rhoai:
     datasciencepipelines: Managed
     kserve: Managed
     modelmeshserving: Managed
+    modelregistry: Managed
     codeflare: Managed
     ray: Managed
     kueue: Managed
     trainingoperator: Managed
     trustyai: Managed
+
+  # OdhDashboardConfig settings
+  dashboard:
+    disableTracking: false
+    disableModelRegistry: false
+    disableModelCatalog: false
+    disableKServeMetrics: false
+    genAiStudio: true
+    modelAsService: true
+    disableLMEval: false
+    notebookControllerEnabled: true
+    notebookNamespace: rhods-notebooks
+    pvcSize: 20Gi
 ```
