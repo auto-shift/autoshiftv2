@@ -1,0 +1,283 @@
+# GitLab CI/CD Configuration for AutoShift
+# Equivalent to .github/workflows/ci.yaml and release.yaml
+
+stages:
+  - lint
+  - test
+  - validate
+  - release
+
+variables:
+  HELM_VERSION: "v3.14.0"
+  OCP_VERSION: "stable"
+  REGISTRY: "quay.io"
+  REGISTRY_NAMESPACE: "autoshift"
+
+# Common setup for all jobs using Red Hat UBI
+.setup-tools: &setup-tools
+  image: registry.access.redhat.com/ubi9/ubi:latest
+  before_script:
+    - |
+      # Install dependencies and yq from EPEL
+      dnf -y install \
+        jq \
+        git \
+        findutils \
+        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+      dnf -y install yq
+    - |
+      # Install Helm from official releases
+      curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp
+      mv /tmp/linux-amd64/helm /usr/local/bin/helm
+      chmod +x /usr/local/bin/helm
+      helm version
+
+# =============================================================================
+# CI Pipeline (runs on push to main/feature branches and merge requests)
+# =============================================================================
+
+lint-helm-charts:
+  stage: lint
+  <<: *setup-tools
+  script:
+    - |
+      echo "=== Linting main autoshift chart ==="
+      helm lint autoshift
+    - |
+      echo ""
+      echo "=== Linting bootstrap charts ==="
+      for chart in $(find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" -exec dirname {} \;); do
+        echo "Linting $(basename $chart)..."
+        helm lint "$chart"
+      done
+    - |
+      echo ""
+      echo "=== Linting policy charts ==="
+      for chart in policies/*/; do
+        if [ -f "${chart}Chart.yaml" ]; then
+          echo "Linting $(basename $chart)..."
+          helm lint "$chart"
+        fi
+      done
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+validate-yaml:
+  stage: lint
+  <<: *setup-tools
+  script:
+    - |
+      echo "=== Validating values files ==="
+      for f in autoshift/values*.yaml; do
+        echo "Checking $f..."
+        yq eval '.' "$f" > /dev/null
+      done
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+template-rendering:
+  stage: test
+  <<: *setup-tools
+  script:
+    - |
+      echo "=== Testing template rendering ==="
+      helm template autoshift autoshift -f autoshift/values.hub.yaml > /dev/null
+      echo "Template rendering successful"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+dry-run-packaging:
+  stage: test
+  <<: *setup-tools
+  script:
+    - dnf -y install make
+    - |
+      echo "=== Dry-run chart packaging ==="
+      make package-only VERSION=0.0.0-ci
+      echo ""
+      echo "Packaged charts:"
+      find .helm-charts -name "*.tgz" | sort
+  artifacts:
+    paths:
+      - .helm-charts/
+    expire_in: 1 hour
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+verify-chart-discovery:
+  stage: validate
+  image: registry.access.redhat.com/ubi9/ubi:latest
+  needs:
+    - dry-run-packaging
+  script:
+    - |
+      echo "=== Verifying Makefile dynamic discovery ==="
+
+      # Count bootstrap charts (root-level Chart.yaml excluding policies/ and autoshift/)
+      BOOTSTRAP_DIRS=$(find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" | wc -l | tr -d ' ')
+      POLICY_DIRS=$(find policies -maxdepth 1 -type d ! -name "policies" | wc -l | tr -d ' ')
+
+      BOOTSTRAP_CHARTS=$(ls .helm-charts/bootstrap/*.tgz 2>/dev/null | wc -l | tr -d ' ')
+      POLICY_CHARTS=$(ls .helm-charts/policies/*.tgz 2>/dev/null | wc -l | tr -d ' ')
+
+      echo "Bootstrap: $BOOTSTRAP_DIRS source charts -> $BOOTSTRAP_CHARTS packaged"
+      echo "Policies: $POLICY_DIRS source charts -> $POLICY_CHARTS packaged"
+
+      # Verify all charts were packaged
+      if [ "$BOOTSTRAP_DIRS" != "$BOOTSTRAP_CHARTS" ]; then
+        echo "ERROR: Bootstrap chart count mismatch! Expected $BOOTSTRAP_DIRS, got $BOOTSTRAP_CHARTS"
+        exit 1
+      fi
+
+      if [ "$POLICY_DIRS" != "$POLICY_CHARTS" ]; then
+        echo "ERROR: Policy chart count mismatch! Expected $POLICY_DIRS, got $POLICY_CHARTS"
+        exit 1
+      fi
+
+      echo "All charts discovered and packaged correctly"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+verify-policy-list:
+  stage: validate
+  image: registry.access.redhat.com/ubi9/ubi:latest
+  needs:
+    - dry-run-packaging
+  script:
+    - |
+      echo "=== Verifying policy-list.txt ==="
+
+      if [ ! -f autoshift/files/policy-list.txt ]; then
+        echo "ERROR: policy-list.txt not generated!"
+        exit 1
+      fi
+
+      POLICY_COUNT=$(wc -l < autoshift/files/policy-list.txt | tr -d ' ')
+      EXPECTED=$(find policies -maxdepth 1 -type d ! -name "policies" | wc -l | tr -d ' ')
+
+      echo "policy-list.txt contains $POLICY_COUNT entries"
+      echo "Expected $EXPECTED policies"
+
+      if [ "$POLICY_COUNT" != "$EXPECTED" ]; then
+        echo "ERROR: policy-list.txt count mismatch!"
+        echo "Contents:"
+        cat autoshift/files/policy-list.txt
+        exit 1
+      fi
+
+      echo "policy-list.txt generated correctly"
+      echo "Policies:"
+      cat autoshift/files/policy-list.txt
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+validate-policy-templates:
+  stage: validate
+  <<: *setup-tools
+  script:
+    - |
+      echo "=== Validating policy templates ==="
+      for policy_dir in policies/*/; do
+        if [ -f "${policy_dir}Chart.yaml" ]; then
+          policy_name=$(basename "$policy_dir")
+          echo "Rendering ${policy_name}..."
+          helm template "$policy_name" "$policy_dir" > /dev/null || {
+            echo "ERROR: Failed to render $policy_name"
+            exit 1
+          }
+        fi
+      done
+      echo "All policy templates rendered successfully"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# =============================================================================
+# Release Pipeline (runs on tag push)
+# =============================================================================
+
+release:
+  stage: release
+  image: registry.access.redhat.com/ubi9/ubi:latest
+  before_script:
+    - |
+      # Install dependencies and yq from EPEL
+      dnf -y install \
+        make \
+        jq \
+        git \
+        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+      dnf -y install yq
+    - |
+      # Install Helm from official releases
+      curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp
+      mv /tmp/linux-amd64/helm /usr/local/bin/helm
+      chmod +x /usr/local/bin/helm
+      helm version
+    - |
+      # Install OpenShift CLI from Red Hat mirror
+      curl -fsSL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/${OCP_VERSION}/openshift-client-linux.tar.gz | tar xz
+      mv oc kubectl /usr/local/bin/
+      oc version --client
+    - |
+      # Setup Red Hat registry pull secret (if provided)
+      if [ -n "$PULL_SECRET" ]; then
+        mkdir -p ~/.docker
+        echo "$PULL_SECRET" > ~/.docker/config.json
+        chmod 600 ~/.docker/config.json
+      fi
+    - |
+      # Login to Quay.io
+      echo "$QUAY_PASSWORD" | helm registry login $REGISTRY -u "$QUAY_USERNAME" --password-stdin
+  script:
+    - |
+      # Extract version from tag
+      VERSION=${CI_COMMIT_TAG#v}
+      echo "Releasing version: $VERSION"
+    - |
+      # Run release
+      make release-mirror VERSION=$VERSION
+  artifacts:
+    paths:
+      - release-artifacts/
+      - .helm-charts/autoshift-*.tgz
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/
+
+# Create GitLab Release (requires release-cli)
+create-release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - release
+  script:
+    - echo "Creating GitLab release for $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "AutoShift $CI_COMMIT_TAG"
+    description: |
+      ## AutoShift ${CI_COMMIT_TAG#v}
+
+      ### Installation
+
+      Install from OCI registry:
+      ```bash
+      helm install autoshift oci://$REGISTRY/$REGISTRY_NAMESPACE/autoshift \
+        --version ${CI_COMMIT_TAG#v} \
+        -f values.hub.yaml
+      ```
+
+      ### Charts Published
+
+      - Main chart: `oci://$REGISTRY/$REGISTRY_NAMESPACE/autoshift:${CI_COMMIT_TAG#v}`
+      - Bootstrap charts: `oci://$REGISTRY/$REGISTRY_NAMESPACE/bootstrap/<name>:${CI_COMMIT_TAG#v}`
+      - Policy charts: `oci://$REGISTRY/$REGISTRY_NAMESPACE/policies/<name>:${CI_COMMIT_TAG#v}`
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/

@@ -6,6 +6,17 @@ AutoShiftv2 is an opinionated [Infrastructure-as-Code (IaC)](https://martinfowle
 
 What AutoShift does is it uses OpenShift GitOps to declaratively manage RHACM which then manages various OpenShift and/or Kubernetes cluster resources and components. This eliminates much of the operator toil associated with installing and managing day 2 tasks, by letting declarative GitOps do that for you.
 
+## Documentation
+
+📚 **[Complete Documentation](docs/)** - Start here for guides and tutorials
+
+**Quick Links:**
+- 🚀 [Quick Start Guide](docs/quickstart-oci.md) - Get started in 15 minutes
+- 📦 [OCI Deployment](docs/deploy-oci.md) - Production deployment guide
+- 🔄 [Release Process](docs/releases.md) - Create and publish releases
+- 📊 [Gradual Rollout](docs/gradual-rollout.md) - Multi-version deployments
+- 🔧 [Developer Guide](docs/developer-guide.md) - Contributing and advanced topics
+
 ## Architecture
 
 AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert. RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass, with built-in governance, cluster lifecycle management, application lifecycle management, and observability features. OpenShift GitOps provides declarative GitOps for multicluster continuous delivery.
@@ -30,7 +41,51 @@ The hub cluster is the main cluster with RHACM and its core components installed
 * [helm](https://helm.sh/docs/intro/install/) installed locally on the machine from which you will be executing this repo
 * The OpenShift CLI [oc](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli) client utility installed locally on the machine from which you will be executing this repo
 
-### Prepping for Installation
+#### Minimum Hub Cluster Requirements
+
+All hub clusters **must** have the following configuration in their `hubClusterSets`:
+
+* `gitops: 'true'` - OpenShift GitOps (ArgoCD) is required to deploy AutoShift
+* ACM is automatically installed on all hub clustersets by policy (no labels required)
+
+See `autoshift/values.minimal.yaml` for a minimal configuration example that shows only the required settings.
+
+### Installation from OCI Release (Recommended)
+
+For production deployments, install from the OCI registry:
+
+1. Download the installation scripts from the [latest release](https://github.com/auto-shift/autoshiftv2/releases):
+
+   ```bash
+   # Download and extract release artifacts
+   VERSION=0.1.0  # Replace with desired version
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/INSTALL.md -O
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-bootstrap.sh -O
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-autoshift.sh -O
+   chmod +x install-*.sh
+   ```
+
+2. Run the bootstrap installer to deploy GitOps and ACM:
+
+   ```bash
+   ./install-bootstrap.sh
+   ```
+
+3. Wait for ACM to be ready, then install AutoShift:
+
+   ```bash
+   # Wait for MultiClusterHub to be running
+   oc get mch -A -w
+
+   # Install AutoShift (edit the script first to set your values file)
+   ./install-autoshift.sh
+   ```
+
+The charts are pulled directly from `oci://quay.io/autoshift/` - no git clone required.
+
+### Installation from Source
+
+For development or customization, install directly from the git repository:
 
 1.  Login to the **hub** cluster via the [`oc` utility](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#cli-logging-in_cli-developer-commands).
 
@@ -306,7 +361,7 @@ created for each replica of the image service. 2GiB per OSImage entry is require
 | `acm-source`                | string    | `redhat-operators`        |       |
 | `acm-source-namespace`      | string    | `openshift-marketplace`   |       |
 | `acm-availability-config`   | string    | `Basic` or `High`         |       |
-| `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a nooba bucket for acm. ODF will have to be enabled as well |
+| `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a noobaa bucket for acm. ODF will have to be enabled as well |
 
 ### Cluster Labels
 
@@ -510,7 +565,8 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `compliance`                          | bool              |                           | If not set Compliance Operator will not be managed. Helm chart config map must be set with profiles and remediations |
-| `compliance-name`                     | string            | `compliance-operator`     |       |
+| `compliance-auto-remediate`           | bool              | `true`                    |       |
+| `compliance-subscription-name`        | string            | `compliance-operator`     |       |
 | `compliance-version`                  | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `compliance-source`                   | string            | `redhat-operators`        |       |
 | `compliance-source-namespace`         | string            | `openshift-marketplace`   |       |
@@ -540,15 +596,34 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `local-storage-source`                | string            | `redhat-operators`        | Operator catalog source |
 | `local-storage-source-namespace`      | string            | `openshift-marketplace`   | Catalog namespace |
 
+### Ansible Automation Platform
+
+| Variable                         | Type      | Default Value              | Notes |
+|----------------------------------|-----------|----------------------------|-------|
+| `aap`                            | bool      | `true` or `false`          |  |
+| `aap-channel`                    | string    | `stable-2.5`             |  |
+| `aap-install-plan-approval`      | string    | `Automatic`                |  |
+| `aap-source`                     | string    | `redhat-operators`         |  |
+| `aap-hub-disabled`               | bool      | `true` or `false`          | 'false' will include Hub content storage in your deployment, 'true' will omit.       |
+| `aap-file-storage`               | bool      | `true` or `false`          | 'false' will use file storage for Hub content storage in your deployment, 'true' will omit. |
+| `aap-file_storage_storage_class` | string    | `ocs-storagecluster-cephfs`| you will set the storage class for your file storage, defaults to ODF. you must have a RWX capable storage class if using anything else. |
+| `aap-file_storage_size`          | bool      | `10G`                      | set the pvc claim size for your file storage.  |
+| `aap-s3-storage`                 | bool      | `true` or `false`          | 'false' will use ODF NooBa for Hub content storage in your deployment, 'true' will omit. |
+| `aap-eda-disabled`               | bool      | `true` or `false`          | 'false' will include EDA in your deployment, 'true' will omit. |
+| `aap-lightspeed-disabled`        | bool      | `true` or `false`          | 'false' will include Ansible Lightspeed in your deployment, 'true' will omit. |
+| `aap-version`                    | bool      | `aap-operator.v2.6.0-0.1762261205`          | Specific CSV version for controlled upgrades  |
+| `aap-custom-cabundle`            | bool      | `true` or `false`          | 'true' will inject cluster CA Bundle into AAP CRD |
+| `aap-cabundle-name`              | string    | `user-ca-bundle`           |  name of the secret to be created for CA Bundle injection |
+
 ### OpenShift Data Foundation
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `odf`                             | bool              |                           | If not set OpenShift Data Foundation will not be managed. if Storage Nodes are enable will deploy ODF on local storage/ storage nodes |
-| `odf-multi-cloud-gateway`         | string            |                           | values `standalone` or `standard`. Install ODF with only nooba object gateway or full odf |
-| `odf-nooba-pvpool`                | bool              |                           | if not set nooba will be deployed with default settings. Recomended don't set for cloud providers. Use pv pool for storage |
-| `odf-nooba-store-size`            | string            |                           | example `500Gi`. if pvpool set. Size of nooba backing store |
-| `odf-nooba-store-num-volumes`     | string            |                           | example `1`. if pvpool set. number of volumes |
+| `odf-multi-cloud-gateway`         | string            |                           | values `standalone` or `standard`. Install ODF with only noobaa object gateway or full odf |
+| `odf-noobaa-pvpool`                | bool              |                           | if not set noobaa will be deployed with default settings. Recommended don't set for cloud providers. Use pv pool for storage |
+| `odf-noobaa-store-size`            | string            |                           | example `500Gi`. if pvpool set. Size of noobaa backing store |
+| `odf-noobaa-store-num-volumes`     | string            |                           | example `1`. if pvpool set. number of volumes |
 | `odf-ocs-storage-class-name`      | string            |                           | if not using local-storage, storage class to use for ocs |
 | `odf-ocs-storage-size`            | string            |                           | storage size per nvme |
 | `odf-ocs-storage-count`           | string            |                           | number of replica sets of nvme drives, note total amount will count * replicas |

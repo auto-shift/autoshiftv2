@@ -1,0 +1,104 @@
+# Policy to configure ImageDigestMirrorSet for disconnected environments
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-disconnected-image-mirrors
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    {{- if .Values.disconnectedMirror.useIDMS }}
+    # ImageDigestMirrorSet (OCP 4.13+)
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: disconnected-image-digest-mirror-set
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: config.openshift.io/v1
+                kind: ImageDigestMirrorSet
+                metadata:
+                  name: autoshift-disconnected-mirrors
+                spec:
+                  imageDigestMirrors:
+                    {{- range .Values.disconnectedMirror.mirrors }}
+                    - source: {{ .source }}
+                      mirrors:
+                        - '{{ "{{hub" }} (index .ManagedClusterLabels "autoshift.io/mirror-registry-host") | default "{{ $.Values.disconnectedMirror.host }}" {{ "hub}}" }}:{{ "{{hub" }} (index .ManagedClusterLabels "autoshift.io/mirror-registry-port") | default "{{ $.Values.disconnectedMirror.port }}" {{ "hub}}" }}{{ "{{hub" }} $path := (index .ManagedClusterLabels "autoshift.io/mirror-registry-path") | default "{{ $.Values.disconnectedMirror.path }}" }}{{ "{{" }} if $path {{ "}}" }}/{{ "{{" }} $path {{ "}}" }}{{ "{{" }} end {{ "hub}}" }}'
+                    {{- end }}
+    {{- else }}
+    # Legacy ImageContentSourcePolicy (OCP 4.12 and earlier)
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: disconnected-image-content-source-policy
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operator.openshift.io/v1alpha1
+                kind: ImageContentSourcePolicy
+                metadata:
+                  name: autoshift-disconnected-mirrors
+                spec:
+                  repositoryDigestMirrors:
+                    {{- range .Values.disconnectedMirror.mirrors }}
+                    - source: {{ .source }}
+                      mirrors:
+                        - '{{ "{{hub" }} (index .ManagedClusterLabels "autoshift.io/mirror-registry-host") | default "{{ $.Values.disconnectedMirror.host }}" {{ "hub}}" }}:{{ "{{hub" }} (index .ManagedClusterLabels "autoshift.io/mirror-registry-port") | default "{{ $.Values.disconnectedMirror.port }}" {{ "hub}}" }}{{ "{{hub" }} $path := (index .ManagedClusterLabels "autoshift.io/mirror-registry-path") | default "{{ $.Values.disconnectedMirror.path }}" }}{{ "{{" }} if $path {{ "}}" }}/{{ "{{" }} $path {{ "}}" }}{{ "{{" }} end {{ "hub}}" }}'
+                    {{- end }}
+    {{- end }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-disconnected-image-mirrors
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/disconnected-mirror'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-disconnected-image-mirrors
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-disconnected-image-mirrors
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-disconnected-image-mirrors
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

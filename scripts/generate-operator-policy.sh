@@ -8,12 +8,20 @@
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Colors for output (enabled if stdout or stderr is a terminal)
+if [[ -t 1 ]] || [[ -t 2 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    NC=''
+fi
 
 # Default values
 DEFAULT_SOURCE="redhat-operators"
@@ -192,6 +200,17 @@ log_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
+# Portable in-place sed (works on both macOS and Linux)
+sed_inplace() {
+    local pattern="$1"
+    local file="$2"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "$pattern" "$file"
+    else
+        sed -i "$pattern" "$file"
+    fi
+}
+
 # Template substitution function
 substitute_template() {
     local template_file="$1"
@@ -205,6 +224,7 @@ substitute_template() {
         -e "s/{{CHANNEL}}/$CHANNEL/g" \
         -e "s/{{VERSION}}/$VERSION/g" \
         -e "s/{{COMPONENT_CAMEL}}/$COMPONENT_CAMEL/g" \
+        -e "s/{{LABEL_PREFIX}}/$COMPONENT_NAME/g" \
         "$template_file" > "$output_file"
 }
 
@@ -259,8 +279,9 @@ generate_policy() {
     
     # Enable targetNamespaces if namespace-scoped flag is set
     if [[ "$NAMESPACE_SCOPED" == "true" ]]; then
-        sed -i '' "s/  # targetNamespaces: # Optional: specify target namespaces for namespace-scoped operators/  targetNamespaces: # Target namespaces for namespace-scoped operators/" "$POLICY_DIR/values.yaml"
-        sed -i '' "s/  #   - $NAMESPACE/    - $NAMESPACE/" "$POLICY_DIR/values.yaml"
+        # Use | as delimiter to avoid conflicts with / in comments
+        sed_inplace "s|  # targetNamespaces: # Optional: specify target namespaces for namespace-scoped operators|  targetNamespaces: # Target namespaces for namespace-scoped operators|" "$POLICY_DIR/values.yaml"
+        sed_inplace "s|  #   - $NAMESPACE|    - $NAMESPACE|" "$POLICY_DIR/values.yaml"
     fi
     
     log_success "Created values.yaml"
@@ -354,7 +375,8 @@ add_labels_to_all_sections() {
     
     # Check for hubClusterSets
     if grep -q "^hubClusterSets:" "$file_path"; then
-        local hub_clustersets=$(awk '/^hubClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
+        local hub_clustersets
+        hub_clustersets=$(awk '/^hubClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
         while IFS= read -r clusterset; do
             [[ -z "$clusterset" ]] && continue
             add_labels_to_section "$file_path" "hubClusterSets" "$clusterset" false
@@ -362,9 +384,10 @@ add_labels_to_all_sections() {
         done <<< "$hub_clustersets"
     fi
     
-    # Check for managedClusterSets  
+    # Check for managedClusterSets
     if grep -q "^managedClusterSets:" "$file_path"; then
-        local managed_clustersets=$(awk '/^managedClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
+        local managed_clustersets
+        managed_clustersets=$(awk '/^managedClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
         while IFS= read -r clusterset; do
             [[ -z "$clusterset" ]] && continue
             add_labels_to_section "$file_path" "managedClusterSets" "$clusterset" false
@@ -375,7 +398,8 @@ add_labels_to_all_sections() {
     # Check for clusters (commented or active)
     if grep -q "^clusters:" "$file_path"; then
         # Active clusters section
-        local active_clusters=$(awk '/^clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
+        local active_clusters
+        active_clusters=$(awk '/^clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
         while IFS= read -r cluster; do
             [[ -z "$cluster" ]] && continue
             add_labels_to_section "$file_path" "clusters" "$cluster" false
@@ -385,7 +409,8 @@ add_labels_to_all_sections() {
     
     if grep -q "^# clusters:" "$file_path"; then
         # Commented clusters section
-        local commented_clusters=$(awk '/^# clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^#   [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^#   /, ""); print}' "$file_path")
+        local commented_clusters
+        commented_clusters=$(awk '/^# clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^#   [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^#   /, ""); print}' "$file_path")
         while IFS= read -r cluster; do
             [[ -z "$cluster" ]] && continue
             add_labels_to_section "$file_path" "clusters" "$cluster" true
@@ -448,11 +473,13 @@ $version_line"
     fi
     
     # Find the labels line for this section
-    local labels_line=$(find_labels_line "$file_path" "$section_type" "$clusterset" "$is_commented")
-    
+    local labels_line
+    labels_line=$(find_labels_line "$file_path" "$section_type" "$clusterset" "$is_commented")
+
     if [[ -n "$labels_line" ]]; then
         # Insert the labels after the labels: line
-        local temp_file=$(mktemp)
+        local temp_file
+        temp_file=$(mktemp)
         
         # Copy everything up to the labels line
         head -n "$labels_line" "$file_path" > "$temp_file"

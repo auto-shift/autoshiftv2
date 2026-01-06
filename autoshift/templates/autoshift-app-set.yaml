@@ -9,6 +9,19 @@ spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
+  {{- if .Values.autoshiftOciRegistry }}
+  # OCI Registry mode - deploy from published Helm charts
+  # Policy list is read from bundled files/policy-list.txt file (generated at release time)
+  - list:
+      elements:
+      {{- $policyList := .Files.Get "files/policy-list.txt" | trim | split "\n" }}
+      {{- range $policyList }}
+      {{- if not (has . $.Values.excludePolicies) }}
+      - name: {{ . }}
+      {{- end }}
+      {{- end }}
+  {{- else }}
+  # Git mode - discover policies from Git repository
   - git:
       repoURL: {{ .Values.autoshiftGitRepo }}
       revision: {{ .Values.autoshiftGitBranchTag }}
@@ -20,18 +33,31 @@ spec:
         exclude: true
       {{- end }}
       {{- end }}
+  {{- end }}
   template:
     metadata:
+      {{- if .Values.autoshiftOciRegistry }}
+      name: '{{ .Release.Name }}-{{"{{"}} .name {{"}}"}}'
+      {{- else }}
       name: '{{ .Release.Name }}-{{"{{"}} .path.basename {{"}}"}}'
+      {{- end }}
       labels:
         app: "{{ .Release.Name }}-policies"
         velero.io/exclude-from-backup: "true"
     spec:
       project: default
       source:
+        {{- if .Values.autoshiftOciRegistry }}
+        # OCI mode - use Helm chart from registry
+        path: .
+        repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
+        targetRevision: {{ .Values.autoshiftOciVersion | default .Chart.Version }}
+        {{- else }}
+        # Git mode - use path in Git repository
         path: '{{"{{"}} .path.path {{"}}"}}'
         repoURL: {{ .Values.autoshiftGitRepo }}
         targetRevision: {{ .Values.autoshiftGitBranchTag }}
+        {{- end }}
         helm:
           valueFiles:
           - values.yaml

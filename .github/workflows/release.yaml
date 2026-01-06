@@ -1,0 +1,133 @@
+name: Release AutoShift Charts
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  REGISTRY: quay.io
+  REGISTRY_NAMESPACE: autoshift
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container:
+      image: registry.access.redhat.com/ubi9/ubi:latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      PULL_SECRET: ${{ secrets.PULL_SECRET }}
+
+    steps:
+      - name: Install dependencies
+        run: |
+          dnf -y install \
+            make \
+            jq \
+            git \
+            findutils \
+            https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+          dnf -y install yq
+          # Install Helm from official releases
+          curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp
+          mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          chmod +x /usr/local/bin/helm
+          helm version
+          # Install OpenShift CLI from Red Hat mirror
+          curl -fsSL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
+          mv oc kubectl /usr/local/bin/
+          oc version --client
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Red Hat registry pull secret
+        if: ${{ env.PULL_SECRET != '' }}
+        run: |
+          mkdir -p ~/.docker
+          echo "$PULL_SECRET" > ~/.docker/config.json
+          chmod 600 ~/.docker/config.json
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Log in to Quay.io
+        env:
+          QUAY_USER: ${{ secrets.QUAY_USERNAME }}
+          QUAY_PASS: ${{ secrets.QUAY_PASSWORD }}
+        run: |
+          echo "$QUAY_PASS" | helm registry login ${{ env.REGISTRY }} -u "$QUAY_USER" --password-stdin
+
+      - name: Run release
+        run: |
+          make release-mirror VERSION=${{ steps.version.outputs.version }}
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            release-artifacts/*
+            .helm-charts/autoshift-*.tgz
+
+      - name: Summary
+        run: |
+          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Released AutoShift version: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Published Charts:" >> $GITHUB_STEP_SUMMARY
+          find .helm-charts -name "*.tgz" -exec basename {} \; | sort >> $GITHUB_STEP_SUMMARY
+
+  create-release:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+          body: |
+            ## AutoShift ${{ steps.version.outputs.version }}
+
+            ### Installation
+
+            Install from OCI registry:
+            ```bash
+            helm install autoshift oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift \
+              --version ${{ steps.version.outputs.version }} \
+              -f values.hub.yaml
+            ```
+
+            See INSTALL.md in release artifacts for detailed installation instructions.
+
+            ### Charts Published
+
+            - Main chart: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/autoshift:${{ steps.version.outputs.version }}`
+            - Bootstrap charts: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/bootstrap/<name>:${{ steps.version.outputs.version }}`
+            - Policy charts: `oci://${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/policies/<name>:${{ steps.version.outputs.version }}`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

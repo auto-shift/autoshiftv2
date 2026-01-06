@@ -5,8 +5,8 @@ metadata:
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
-    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
   disabled: false
   policy-templates:
@@ -25,6 +25,8 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.metallb.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
@@ -35,13 +37,20 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.metallb.name }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.metallb.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.metallb.name }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.metallb.namespace }}
           subscription:
             namespace: {{ .Values.metallb.namespace }}
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-channel" | default "{{ .Values.metallb.channel }}" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-subscription-name" | default "{{ .Values.metallb.name }}" {{ "hub}}" }}'
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-source" | default "{{ .Values.metallb.source }}" {{ "hub}}" }}'
+            # Source Selection Logic (evaluated on hub for each managed cluster):
+            # 1. If cluster has explicit 'autoshift.io/metallb-source' label → use that value
+            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
+            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
+            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
+            # 3. Else → use standard source (e.g., redhat-operators)
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-source" | default (ternary (printf "%s-%s" "{{ .Values.metallb.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.metallb.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-source-namespace" | default "{{ .Values.metallb.sourceNamespace }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-version" | default "" {{ "hub}}" }}'
             # Upgrade approval for subscription will be set based on if version is set not this flag
