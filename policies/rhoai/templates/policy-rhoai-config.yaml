@@ -49,7 +49,28 @@ spec:
                     managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-servicemesh" | default "{{ .Values.rhoai.dsci.serviceMeshState }}" {{ "hub}}" }}'
                   trustedCABundle:
                     managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-trustedca" | default "{{ .Values.rhoai.dsci.trustedCABundleState }}" {{ "hub}}" }}'
-    # DataScienceCluster - the main RHOAI instance
+    # DataScienceCluster - Phase 1: Create with empty specs (RHOAI 3.0 workaround)
+    # RHOAI 3.0 webhook rejects 'Managed' on CREATE but allows on PATCH
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rhoai-dsc-create
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: datasciencecluster.opendatahub.io/v1
+                kind: DataScienceCluster
+                metadata:
+                  name: {{ .Values.rhoai.dsc.name }}
+                spec:
+                  components:
+                    dashboard: {}
+                    workbenches: {}
+    # DataScienceCluster - Phase 2: Patch with desired component states
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -87,6 +108,8 @@ spec:
                       managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-trustyai" | default "{{ .Values.rhoai.dsc.trustyai }}" {{ "hub}}" }}'
                     workbenches:
                       managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-workbenches" | default "{{ .Values.rhoai.dsc.workbenches }}" {{ "hub}}" }}'
+                    modelregistry:
+                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-modelregistry" | default "{{ .Values.rhoai.dsc.modelregistry }}" {{ "hub}}" }}'
     # OdhDashboardConfig - customize dashboard settings
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
