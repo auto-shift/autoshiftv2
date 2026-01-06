@@ -1,7 +1,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-pipelines-operator-install
+  name: policy-aap-operator-install
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -14,7 +14,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: pipelines-operator-ns
+          name: create-aap-namespace
         spec:
           remediationAction: enforce
           severity: high
@@ -24,36 +24,35 @@ spec:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
-                  name: {{ .Values.pipelines.namespace }}
+                  name: {{ .Values.aap.namespace }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
         metadata:
-          name: install-operator-pipelines
+          name: install-operator-aap
         spec:
           remediationAction: enforce
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: global-operators # Default OG Created by OpenShift
-            namespace: {{ .Values.pipelines.namespace }}
+            name: {{ .Values.aap.name }}
+            namespace: {{ .Values.aap.namespace }}
+            targetNamespaces:
+              - {{ .Values.aap.namespace }}
           subscription:
-            namespace: {{ .Values.pipelines.namespace }}
-            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-channel" | default "{{ .Values.pipelines.channel }}" {{ "hub}}" }}'
-            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-subscription-name" | default "{{ .Values.pipelines.name }}" {{ "hub}}" }}'
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-source" | default "{{ .Values.pipelines.source }}" {{ "hub}}" }}'
-            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-source-namespace" | default "{{ .Values.pipelines.sourceNamespace }}" {{ "hub}}" }}'
-            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-version" | default "" {{ "hub}}" }}'
-            # Upgrade approval for subscription will be set based on if version is set not this flag
-            # If version is set install plan is set to manual and only the version specified will be installed
-          upgradeApproval: Automatic
+            namespace: {{ .Values.aap.namespace }}
+            channel: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-channel" | default "{{ .Values.aap.channel }}" hub{{ "}}" }}'
+            name: {{ .Values.aap.name }}
+            source: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-source" | default "{{ .Values.aap.source }}" hub{{ "}}" }}'
+            sourceNamespace: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-source-namespace" | default "{{ .Values.aap.sourceNamespace }}" hub{{ "}}" }}'
+          upgradeApproval: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/aap-install-plan-approval" | default "{{ .Values.aap.installPlanApproval }}" hub{{ "}}" }}'
           versions:
-            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/pipelines-version" | default "" {{ "hub}}" }}'
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-version" | default "" {{ "hub}}" }}'
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: openshift-pipelines-status
+          name: openshift-aap-csv-check
         spec:
           remediationAction: inform
           severity: high
@@ -63,16 +62,14 @@ spec:
                 apiVersion: operators.coreos.com/v1alpha1
                 kind: ClusterServiceVersion
                 metadata:
-                  namespace: {{ .Values.pipelines.namespace }}
-                spec:
-                  displayName: 'Red Hat OpenShift Pipelines'     
+                  namespace: {{ .Values.aap.namespace }}
                 status:
                   phase: Succeeded
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-pipelines-operator-install
+  name: placement-policy-aap-operator-install
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -86,21 +83,26 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/pipelines'
+            - key: 'autoshift.io/aap'
               operator: In
               values:
               - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
 ---
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-pipelines-operator-install
+  name: placement-policy-aap-operator-install
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-pipelines-operator-install
+  name: placement-policy-aap-operator-install
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-pipelines-operator-install
+  - name: policy-aap-operator-install
     apiGroup: policy.open-cluster-management.io
     kind: Policy

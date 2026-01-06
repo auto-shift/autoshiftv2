@@ -1,0 +1,65 @@
+# Minimal AutoShift Configuration
+# This file contains the minimum required configuration for AutoShift
+# Use this as a starting point and add additional features as needed
+#
+# IMPORTANT: Operator Label Requirements
+# For each enabled operator, you must define ALL of these labels:
+#   - {operator}: 'true'                    # Enable the operator
+#   - {operator}-subscription-name: '...'   # OLM package name (required for scripts)
+#   - {operator}-channel: '...'             # Operator channel
+#   - {operator}-source: '...'              # Catalog source (usually redhat-operators)
+#   - {operator}-source-namespace: '...'    # Catalog namespace (usually openshift-marketplace)
+#
+# The subscription-name label is required for:
+#   - generate-imageset-config.sh: Detects operators for disconnected mirroring
+#   - update-operator-channels.sh: Updates operator channels from catalog
+#
+# See docs/developer-guide.md for more details on label requirements.
+
+# Git repository configuration (for Git mode)
+autoshiftGitRepo: https://github.com/auto-shift/autoshiftv2.git
+autoshiftGitBranchTag: main
+
+# Which hub clusterset this AutoShift instance manages
+selfManagedHubSet: hub
+
+# Minimum Hub Cluster Configuration
+hubClusterSets:
+  hub:
+    labels:
+      # Required: Indicates this is a self-managed hub cluster
+      self-managed: 'true'
+
+      # Required: OpenShift version for image mirroring and compatibility
+      openshift-version: '4.18.28'
+
+      ### OpenShift GitOps (REQUIRED)
+      # GitOps is required to deploy AutoShift itself
+      gitops: 'true'
+      gitops-subscription-name: openshift-gitops-operator
+      gitops-channel: gitops-1.18
+      gitops-source: redhat-operators
+      gitops-source-namespace: openshift-marketplace
+
+      ### Advanced Cluster Management (AUTOMATIC)
+      # ACM is automatically installed on all hub clustersets by policy
+      acm-subscription-name: advanced-cluster-management
+      acm-channel: release-2.14
+      acm-source: redhat-operators
+      acm-source-namespace: openshift-marketplace
+
+# Optional: Managed (spoke) cluster sets
+# Uncomment and configure if you have managed clusters
+# managedClusterSets:
+#   managed:
+#     labels:
+#       openshift-version: '4.18.28'
+#       # Add additional labels for managed cluster features
+
+# Optional: Exclude specific policies from deployment
+# excludePolicies:
+#   - policy-name-to-exclude
+
+# Optional: Enable dry-run mode (policies in inform mode only)
+# autoshift:
+#   dryRun: false

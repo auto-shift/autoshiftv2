@@ -5,8 +5,8 @@ metadata:
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
-    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
   disabled: false
   policy-templates:
@@ -25,6 +25,8 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.devspaces.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
@@ -35,13 +37,20 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.devspaces.namespace }}
+            # if operator group exists in namespace use that
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.devspaces.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.devspaces.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.devspaces.namespace }}
           subscription:
             namespace: {{ .Values.devspaces.namespace }}
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-channel" | default "{{ .Values.devspaces.channel }}" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-subscription-name" | default "{{ .Values.devspaces.name }}" {{ "hub}}" }}'
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-source" | default "{{ .Values.devspaces.source }}" {{ "hub}}" }}'
+            # Source Selection Logic (evaluated on hub for each managed cluster):
+            # 1. If cluster has explicit 'autoshift.io/dev-spaces-source' label → use that value
+            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
+            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
+            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
+            # 3. Else → use standard source (e.g., redhat-operators)
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-source" | default (ternary (printf "%s-%s" "{{ .Values.devspaces.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.devspaces.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-source-namespace" | default "{{ .Values.devspaces.sourceNamespace }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-version" | default "" {{ "hub}}" }}'
             # Upgrade approval for subscription will be set based on if version is set not this flag
