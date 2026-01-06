@@ -11,9 +11,11 @@ This policy installs and configures the NVIDIA GPU Operator on OpenShift cluster
 
 ## Prerequisites
 
-- Nodes with NVIDIA GPUs
-- Node Feature Discovery (NFD) operator installed (recommended)
+- Nodes with NVIDIA GPUs (e.g., AWS g4dn, g5, g6e instances)
+- **Node Feature Discovery (NFD) operator installed (REQUIRED)** - Creates the `pci-10de.present=true` label that triggers GPU detection
 - Entitled RHEL nodes (for driver compilation) OR pre-built driver containers
+
+> **Important**: The `policy-nvidia-gpu-config` has a dependency on `policy-nfd-instance-deploy`. You must enable NFD when using the NVIDIA GPU operator.
 
 ## Quick Start
 
@@ -61,9 +63,7 @@ hubClusterSets:
 | `nvidia-gpu-device-plugin` | `true` | Enable Kubernetes device plugin |
 | `nvidia-gpu-dcgm` | `true` | Enable DCGM exporter for metrics |
 | `nvidia-gpu-gfd` | `true` | Enable GPU Feature Discovery |
-| `nvidia-gpu-mig` | `true` | Enable MIG (Multi-Instance GPU) manager |
-| `nvidia-gpu-mps` | `false` | Enable MPS (Multi-Process Service) |
-| `nvidia-gpu-nfd` | `false` | Use built-in NFD (set false if using separate NFD) |
+| `nvidia-gpu-mig` | `false` | Enable MIG manager (A30/A100/H100 only) |
 | `nvidia-gpu-sandbox` | `false` | Enable sandbox workloads |
 | `nvidia-gpu-vgpu` | `false` | Enable vGPU support (requires license) |
 
@@ -79,23 +79,22 @@ nvidia-gpu-source: certified-operators
 nvidia-gpu-source-namespace: openshift-marketplace
 ```
 
-### GPU with Separate NFD Operator
+### GPU with NFD Operator (Required)
 
 ```yaml
-# Use the separate NFD operator (recommended)
+# NFD is REQUIRED for GPU detection
 node-feature-discovery: 'true'
 node-feature-discovery-subscription-name: nfd
 node-feature-discovery-channel: stable
 node-feature-discovery-source: redhat-operators
 node-feature-discovery-source-namespace: openshift-marketplace
 
-# GPU Operator with built-in NFD disabled
+# GPU Operator (uses NFD for hardware detection)
 nvidia-gpu: 'true'
 nvidia-gpu-subscription-name: gpu-operator-certified
 nvidia-gpu-channel: stable
 nvidia-gpu-source: certified-operators
 nvidia-gpu-source-namespace: openshift-marketplace
-nvidia-gpu-nfd: 'false'
 ```
 
 ### GPU with MIG Enabled
@@ -236,13 +235,9 @@ nvidiaGpu:
     dcgmExporter:
       enabled: true
     migManager:
-      enabled: true
-    nfd:
-      enabled: false  # Use separate NFD operator
+      enabled: false  # Enable only for MIG-capable GPUs (A30/A100/H100)
     gfd:
       enabled: true
-    mps:
-      enabled: false
     sandboxWorkloads:
       enabled: false
     vgpuManager:
@@ -250,3 +245,14 @@ nvidiaGpu:
     vgpuDeviceManager:
       enabled: false
 ```
+
+## Supported GPUs
+
+| GPU | AWS Instance | MIG Support | Notes |
+|-----|--------------|-------------|-------|
+| NVIDIA T4 | g4dn.* | No | Good for inference |
+| NVIDIA L4 | g6.* | No | Newer, efficient |
+| NVIDIA A10G | g5.* | No | Training + inference |
+| NVIDIA L40S | g6e.* | No | High performance |
+| NVIDIA A100 | p4d.* | Yes | Enable `nvidia-gpu-mig: 'true'` |
+| NVIDIA H100 | p5.* | Yes | Enable `nvidia-gpu-mig: 'true'` |

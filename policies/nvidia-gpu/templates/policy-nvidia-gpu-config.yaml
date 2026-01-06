@@ -12,9 +12,15 @@ metadata:
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
   disabled: false
-  # Wait for NVIDIA GPU operator to be installed first
+  # Wait for NVIDIA GPU operator and NFD to be installed first
+  # NFD is required to detect GPU hardware and create pci-10de.present label
   dependencies:
     - name: policy-nvidia-gpu-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-nfd-instance-deploy
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -40,7 +46,7 @@ spec:
                   operator:
                     defaultRuntime: crio
                     use_ocp_driver_toolkit: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-driver-toolkit" | default "{{ .Values.nvidiaGpu.clusterPolicy.driver.useOpenShiftDriverToolkit }}" {{ "hub}}" }}'
-                    upgradeCRD: true
+                  daemonsets: {}
                   driver:
                     enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-driver" | default "{{ .Values.nvidiaGpu.clusterPolicy.driver.enabled }}" {{ "hub}}" }}'
                     upgradePolicy:
@@ -82,8 +88,6 @@ spec:
                     enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-mig" | default "{{ .Values.nvidiaGpu.clusterPolicy.migManager.enabled }}" {{ "hub}}" }}'
                   nodeStatusExporter:
                     enabled: true
-                  mps:
-                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-mps" | default "{{ .Values.nvidiaGpu.clusterPolicy.mps.enabled }}" {{ "hub}}" }}'
                   sandboxWorkloads:
                     enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-sandbox" | default "{{ .Values.nvidiaGpu.clusterPolicy.sandboxWorkloads.enabled }}" {{ "hub}}" }}'
                   validator:
@@ -99,9 +103,6 @@ spec:
                     enabled: true
                   sandboxDevicePlugin:
                     enabled: true
-                  # Use external NFD if nvidia-gpu-nfd is false
-                  nodeFeatureDiscovery:
-                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-nfd" | default "{{ .Values.nvidiaGpu.clusterPolicy.nfd.enabled }}" {{ "hub}}" }}'
     # Status check - verify ClusterPolicy is ready
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1

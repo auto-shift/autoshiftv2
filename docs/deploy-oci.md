@@ -173,11 +173,10 @@ EOF
 # Install AutoShift main chart from OCI
 helm registry login quay.io -u myorg+robot -p TOKEN
 
-helm install autoshift oci://quay.io/myorg/autoshift/autoshift \
+helm install autoshift oci://quay.io/autoshift/autoshift \
   --version 1.0.0 \
   --namespace openshift-gitops \
-  --create-namespace \
-  -f my-oci-values.yaml
+  -f my-values.yaml
 ```
 
 #### Option B: Using ArgoCD Application
@@ -229,15 +228,28 @@ spec:
 EOF
 ```
 
-### Step 5: Configure Cluster Labels
+### Step 5: Move Cluster to Hub ClusterSet (Required)
 
-After installing AutoShift, apply labels to your managed cluster to enable operators:
+**Important:** By default, `local-cluster` is in the `default` ClusterSet, but AutoShift policies target the `hub` ClusterSet. You must move your cluster to `hub` for policies to apply.
 
 ```bash
+# Check current ClusterSet (will show 'default')
+oc get managedcluster local-cluster -o jsonpath='{.metadata.labels.cluster\.open-cluster-management\.io/clusterset}'
+
 # Move local-cluster to the 'hub' ClusterSet
 oc label managedcluster local-cluster \
   cluster.open-cluster-management.io/clusterset=hub --overwrite
 
+# Verify the change
+oc get managedcluster local-cluster -o jsonpath='{.metadata.labels.cluster\.open-cluster-management\.io/clusterset}'
+# Should output: hub
+```
+
+### Step 6: Apply AutoShift Labels to Enable Operators
+
+AutoShift uses labels on ManagedClusters to determine which operators to install. Apply the `autoshift.io/` labels for the operators you want:
+
+```bash
 # Apply AutoShift labels to enable desired operators
 # Customize these based on which operators you want to install
 oc label managedcluster local-cluster \
@@ -258,7 +270,53 @@ oc label managedcluster local-cluster \
 oc get managedcluster local-cluster -o jsonpath='{.metadata.labels}' | jq 'to_entries[] | select(.key | startswith("autoshift"))'
 ```
 
-### Step 6: Verify Deployment
+#### Example: Enable RHOAI with Dependencies
+
+```bash
+# RHOAI 3.0 with all dependencies
+oc label managedcluster local-cluster \
+  autoshift.io/serverless='true' \
+  autoshift.io/serverless-subscription-name='serverless-operator' \
+  autoshift.io/serverless-channel='stable' \
+  autoshift.io/serverless-source='redhat-operators' \
+  autoshift.io/serverless-source-namespace='openshift-marketplace' \
+  autoshift.io/servicemesh3='true' \
+  autoshift.io/servicemesh3-subscription-name='servicemeshoperator3' \
+  autoshift.io/servicemesh3-channel='stable-3.2' \
+  autoshift.io/servicemesh3-source='redhat-operators' \
+  autoshift.io/servicemesh3-source-namespace='openshift-marketplace' \
+  autoshift.io/pipelines='true' \
+  autoshift.io/pipelines-subscription-name='openshift-pipelines-operator-rh' \
+  autoshift.io/pipelines-channel='pipelines-1.20' \
+  autoshift.io/pipelines-source='redhat-operators' \
+  autoshift.io/pipelines-source-namespace='openshift-marketplace' \
+  autoshift.io/node-feature-discovery='true' \
+  autoshift.io/node-feature-discovery-subscription-name='nfd' \
+  autoshift.io/node-feature-discovery-channel='stable' \
+  autoshift.io/node-feature-discovery-source='redhat-operators' \
+  autoshift.io/node-feature-discovery-source-namespace='openshift-marketplace' \
+  autoshift.io/rhoai='true' \
+  autoshift.io/rhoai-subscription-name='rhods-operator' \
+  autoshift.io/rhoai-channel='fast-3.x' \
+  autoshift.io/rhoai-source='redhat-operators' \
+  autoshift.io/rhoai-source-namespace='openshift-marketplace' \
+  --overwrite
+```
+
+#### Example: Enable NVIDIA GPU Operator
+
+```bash
+# NVIDIA GPU Operator (requires x86 instance with GPU)
+oc label managedcluster local-cluster \
+  autoshift.io/nvidia-gpu='true' \
+  autoshift.io/nvidia-gpu-subscription-name='gpu-operator-certified' \
+  autoshift.io/nvidia-gpu-channel='stable' \
+  autoshift.io/nvidia-gpu-source='certified-operators' \
+  autoshift.io/nvidia-gpu-source-namespace='openshift-marketplace' \
+  --overwrite
+```
+
+### Step 7: Verify Deployment
 
 ```bash
 # Check AutoShift Application
