@@ -125,6 +125,63 @@ spec:
                     pvcSize: {{ .Values.rhoai.dashboard.pvcSize | default "20Gi" }}
                   templateDisablement: []
                   templateOrder: []
+    # KnativeServing - required for KServe model serving
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rhoai-knative-serving
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: knative-serving
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operator.knative.dev/v1beta1
+                kind: KnativeServing
+                metadata:
+                  name: knative-serving
+                  namespace: knative-serving
+                spec:
+                  config:
+                    network:
+                      ingress-class: "kourier.ingress.networking.knative.dev"
+                  ingress:
+                    kourier:
+                      enabled: true
+    # Dashboard Route - expose the RHOAI dashboard
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rhoai-dashboard-route
+        spec:
+          remediationAction: enforce
+          severity: medium
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: route.openshift.io/v1
+                kind: Route
+                metadata:
+                  name: rhods-dashboard
+                  namespace: {{ .Values.rhoai.dsci.applicationsNamespace }}
+                spec:
+                  port:
+                    targetPort: 8443
+                  tls:
+                    insecureEdgeTerminationPolicy: Redirect
+                    termination: reencrypt
+                  to:
+                    kind: Service
+                    name: rhods-dashboard
+                    weight: 100
     # Status check - verify DSCInitialization is ready
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
