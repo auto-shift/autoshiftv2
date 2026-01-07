@@ -69,36 +69,46 @@ spec:
                   name: {{ .Values.rhoai.dsc.name }}
                 spec:
                   components:
-                    # RHOAI 3.0 v2 API - components enabled with empty objects {} (no managementState field)
-                    # v2 API only supports managementState: Removed, Unmanaged, or nil
-                    # To enable: use {} or specific config without managementState
+                    # RHOAI 3.0 v2 API - most components require explicit managementState: Managed
+                    # kueue is an exception - it only supports Unmanaged or Removed (presence enables it)
                     # Hub template checks cluster labels, falls back to values.yaml defaults
                     {{- if or (eq (.Values.rhoai.dsc.aipipelines | toString) "true") (eq (.Values.rhoai.dsc.aipipelines | toString) "Managed") }}
-                    aipipelines: {}
+                    aipipelines:
+                      managementState: Managed
                     {{- end }}
                     {{- if or (eq (.Values.rhoai.dsc.dashboard | toString) "true") (eq (.Values.rhoai.dsc.dashboard | toString) "Managed") }}
-                    dashboard: {}
+                    dashboard:
+                      managementState: Managed
                     {{- end }}
                     {{- if or (eq (.Values.rhoai.dsc.kserve | toString) "true") (eq (.Values.rhoai.dsc.kserve | toString) "Managed") }}
-                    kserve: {}
+                    kserve:
+                      managementState: Managed
                     {{- end }}
                     {{- if or (eq (.Values.rhoai.dsc.kueue | toString) "true") (eq (.Values.rhoai.dsc.kueue | toString) "Managed") }}
-                    kueue: {}
+                    # kueue only supports Unmanaged/Removed - presence with config enables it
+                    kueue:
+                      defaultClusterQueueName: default
+                      defaultLocalQueueName: default
                     {{- end }}
                     {{- if or (eq (.Values.rhoai.dsc.modelregistry | toString) "true") (eq (.Values.rhoai.dsc.modelregistry | toString) "Managed") }}
-                    modelregistry: {}
+                    modelregistry:
+                      managementState: Managed
                     {{- end }}
                     {{- if or (eq (.Values.rhoai.dsc.ray | toString) "true") (eq (.Values.rhoai.dsc.ray | toString) "Managed") }}
-                    ray: {}
+                    ray:
+                      managementState: Managed
                     {{- end }}
                     {{- if or (eq (.Values.rhoai.dsc.trainingoperator | toString) "true") (eq (.Values.rhoai.dsc.trainingoperator | toString) "Managed") }}
-                    trainingoperator: {}
+                    trainingoperator:
+                      managementState: Managed
                     {{- end }}
                     {{- if or (eq (.Values.rhoai.dsc.trustyai | toString) "true") (eq (.Values.rhoai.dsc.trustyai | toString) "Managed") }}
-                    trustyai: {}
+                    trustyai:
+                      managementState: Managed
                     {{- end }}
                     {{- if or (eq (.Values.rhoai.dsc.workbenches | toString) "true") (eq (.Values.rhoai.dsc.workbenches | toString) "Managed") }}
-                    workbenches: {}
+                    workbenches:
+                      managementState: Managed
                     {{- end }}
     # OdhDashboardConfig - REMOVED in RHOAI 3.0
     # Dashboard configuration is now managed through the Dashboard component in DataScienceCluster
