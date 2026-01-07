@@ -49,25 +49,7 @@ spec:
                     managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-servicemesh" | default "{{ .Values.rhoai.dsci.serviceMeshState }}" {{ "hub}}" }}'
                   trustedCABundle:
                     managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-trustedca" | default "{{ .Values.rhoai.dsci.trustedCABundleState }}" {{ "hub}}" }}'
-    # DataScienceCluster Bootstrap - create with empty spec first (RHOAI 3.0 workaround)
-    # RHOAI 3.0 webhook rejects 'managementState: Managed' on CREATE but allows on PATCH
-    # This policy ensures the DSC exists, then rhoai-dsc will patch it with component states
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: rhoai-dsc-bootstrap
-        spec:
-          remediationAction: enforce
-          severity: high
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: datasciencecluster.opendatahub.io/v1
-                kind: DataScienceCluster
-                metadata:
-                  name: {{ .Values.rhoai.dsc.name }}
-    # DataScienceCluster - configure component states (runs after bootstrap)
+    # DataScienceCluster - configure component states
     # RHOAI 3.0 API uses empty objects {} for enabled components (no managementState)
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -80,7 +62,7 @@ spec:
           object-templates:
             - complianceType: musthave
               objectDefinition:
-                apiVersion: datasciencecluster.opendatahub.io/v2
+                apiVersion: datasciencecluster.opendatahub.io/v1
                 kind: DataScienceCluster
                 metadata:
                   name: {{ .Values.rhoai.dsc.name }}
