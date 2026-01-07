@@ -1,13 +1,19 @@
+{{- $policyName := "policy-aap-instance" }}
+{{- $placementName := "placement-policy-aap-instance" }}
+
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-aap-instance
+  name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   dependencies:
     - name: policy-aap-operator-install
@@ -57,14 +63,14 @@ spec:
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-aap-instance
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
   predicates:
@@ -84,14 +90,14 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-aap-instance
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-aap-instance
+  name: {{ $placementName }}
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-aap-instance
+  - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy
 
