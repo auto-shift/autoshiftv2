@@ -48,9 +48,9 @@ spec:
           object-templates-raw: |
             [
               {{- if eq $target "managedHub" }}
-              {{ "{{-" }} $policyNamespace := "{{ "{{hub" }} printf "%s-%s" "policies" .ManagedClusterName  {{ "hub}}" }}" {{ "}}" }}
+              {{ "{{-" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}autoshift-policy-namespace") | default  (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default (printf "%s-%s" "policies" .ManagedClusterName) {{ "hub}}" }}" {{ "}}" }}
               {{- else }}
-              {{ "{{-" }} $policyNamespace := "{{ $.Values.policy_namespace }}" {{ "}}" }}
+              {{ "{{-" }} $policyNamespace := "{{ $.Values.policy_namesapce }}" {{ "}}" }}
               {{- end }}
               {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "}}" }}
               {{ "{{-" }} if not (empty $managedClusterLookupResult) {{ "}}" }}
@@ -150,6 +150,3 @@ subjects:
     kind: Policy
 ---
 {{- end }}
-{{/*
-              {{ "{{-" }} $policyNamespace := "{{ "{{hub" }} printf "%s-%s" "policies" .ManagedClusterName  {{ "hub}}" }}" {{ "}}" }}
-              */}}
