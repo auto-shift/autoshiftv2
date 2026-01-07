@@ -50,7 +50,7 @@ spec:
                   trustedCABundle:
                     managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-trustedca" | default "{{ .Values.rhoai.dsci.trustedCABundleState }}" {{ "hub}}" }}'
     # DataScienceCluster - configure component states
-    # RHOAI 3.0 requires explicit managementState: Managed to enable components
+    # RHOAI 3.0 uses v2 API with explicit managementState: Managed to enable components
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -59,10 +59,11 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          recreateOption: IfRequired
           object-templates:
             - complianceType: musthave
               objectDefinition:
-                apiVersion: datasciencecluster.opendatahub.io/v1
+                apiVersion: datasciencecluster.opendatahub.io/v2
                 kind: DataScienceCluster
                 metadata:
                   name: {{ .Values.rhoai.dsc.name }}
