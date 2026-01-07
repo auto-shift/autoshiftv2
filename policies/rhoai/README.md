@@ -14,13 +14,18 @@ This policy installs and configures Red Hat OpenShift AI (RHOAI) 3.0+ on OpenShi
 | ConfigurationPolicy | Description |
 |---------------------|-------------|
 | `rhoai-dsci` | Creates DSCInitialization with monitoring and service mesh config |
-| `rhoai-dsc-bootstrap` | Creates DataScienceCluster with minimal spec (RHOAI 3.0 workaround) |
-| `rhoai-dsc` | Configures DSC component managementState values |
-| `rhoai-dashboard-config` | Configures OdhDashboardConfig settings |
+| `rhoai-dsc-bootstrap` | Creates DataScienceCluster with minimal spec |
+| `rhoai-dsc` | Configures DSC components using v2 API (empty specs for enabled components) |
 | `rhoai-knative-serving` | Creates KnativeServing for KServe |
 | `rhoai-dashboard-route` | Creates Route to expose the dashboard |
 
-> **RHOAI 3.0 Note**: The RHOAI 3.0 webhook rejects `managementState: Managed` on CREATE operations but allows it on PATCH. The `rhoai-dsc-bootstrap` policy creates the DSC first with an empty spec, then `rhoai-dsc` patches it to configure component states.
+> **RHOAI 3.0 v2 API Changes**:
+> - Uses `datasciencecluster.opendatahub.io/v2` API
+> - Components are enabled by including them with empty specs `{}`
+> - No `managementState` field (removed in v2)
+> - Component name changes: `datasciencepipelines` → `aipipelines`
+> - Removed components: `codeflare`, `modelmeshserving` (deprecated)
+> - `OdhDashboardConfig` CRD removed (dashboard config managed by Dashboard component)
 
 ## Dependencies
 
@@ -81,23 +86,26 @@ hubClusterSets:
 | `rhoai-source` | `redhat-operators` | Catalog source |
 | `rhoai-source-namespace` | `openshift-marketplace` | Catalog namespace |
 
-### DataScienceCluster Component Configuration
+### DataScienceCluster Component Configuration (v2 API)
 
-Each component can be set to `Managed` or `Removed`:
+Components are controlled via values.yaml (set to `true` to enable, `false` to disable):
 
-| Label | Default | Description |
-|-------|---------|-------------|
-| `rhoai-dashboard` | `Managed` | RHOAI Dashboard UI |
-| `rhoai-workbenches` | `Managed` | Jupyter notebooks and workbenches |
-| `rhoai-pipelines` | `Managed` | Data Science Pipelines (Kubeflow) |
-| `rhoai-kserve` | `Managed` | KServe single-model serving |
-| `rhoai-modelmesh` | `Managed` | ModelMesh multi-model serving |
-| `rhoai-modelregistry` | `Managed` | Model Registry for model versioning |
-| `rhoai-codeflare` | `Managed` | CodeFlare distributed training |
-| `rhoai-ray` | `Managed` | Ray distributed computing |
-| `rhoai-kueue` | `Managed` | Kueue job queuing |
-| `rhoai-training` | `Managed` | Training Operator (PyTorchJob, etc.) |
-| `rhoai-trustyai` | `Managed` | TrustyAI model explainability |
+| Component | Default | Description |
+|-----------|---------|-------------|
+| `dashboard` | `true` | RHOAI Dashboard UI |
+| `workbenches` | `true` | Jupyter notebooks and workbenches |
+| `aipipelines` | `true` | AI Pipelines (formerly datasciencepipelines) |
+| `kserve` | `true` | KServe model serving |
+| `modelregistry` | `true` | Model Registry for model versioning |
+| `ray` | `true` | Ray distributed computing |
+| `kueue` | `true` | Kueue job queuing |
+| `trainingoperator` | `true` | Training Operator (PyTorchJob, etc.) |
+| `trustyai` | `true` | TrustyAI model explainability |
+
+**Removed in v2:**
+- `codeflare` - functionality merged into other components
+- `modelmeshserving` - use KServe instead
+- `datasciencepipelines` - renamed to `aipipelines`
 
 ### Infrastructure Configuration
 
@@ -111,37 +119,39 @@ Each component can be set to `Managed` or `Removed`:
 
 ### Minimal RHOAI (Dashboard + Workbenches only)
 
+Configure via `values.yaml`:
+
 ```yaml
-rhoai: 'true'
-rhoai-subscription-name: rhods-operator
-rhoai-channel: fast-3.x
-rhoai-source: redhat-operators
-rhoai-source-namespace: openshift-marketplace
-# Disable components not needed
-rhoai-pipelines: 'Removed'
-rhoai-kserve: 'Removed'
-rhoai-modelmesh: 'Removed'
-rhoai-codeflare: 'Removed'
-rhoai-ray: 'Removed'
-rhoai-kueue: 'Removed'
-rhoai-training: 'Removed'
-rhoai-trustyai: 'Removed'
+rhoai:
+  dsc:
+    dashboard: true
+    workbenches: true
+    # Disable other components
+    aipipelines: false
+    kserve: false
+    modelregistry: false
+    ray: false
+    kueue: false
+    trainingoperator: false
+    trustyai: false
 ```
 
-### Full RHOAI with Model Serving
+### Full RHOAI with Model Serving (Default)
+
+All components enabled by default in `values.yaml`:
 
 ```yaml
-rhoai: 'true'
-rhoai-subscription-name: rhods-operator
-rhoai-channel: fast-3.x
-rhoai-source: redhat-operators
-rhoai-source-namespace: openshift-marketplace
-# All components managed (default)
-rhoai-dashboard: 'Managed'
-rhoai-workbenches: 'Managed'
-rhoai-pipelines: 'Managed'
-rhoai-kserve: 'Managed'
-rhoai-modelmesh: 'Managed'
+rhoai:
+  dsc:
+    dashboard: true
+    workbenches: true
+    aipipelines: true
+    kserve: true
+    modelregistry: true
+    ray: true
+    kueue: true
+    trainingoperator: true
+    trustyai: true
 ```
 
 ### Pin to Specific Version
@@ -212,29 +222,28 @@ oc get pods -n redhat-ods-applications
 oc get pods -n redhat-ods-monitoring
 ```
 
-### Components stuck in "Removed" state (RHOAI 3.0)
+### Components not deploying (RHOAI 3.0 v2)
 
-If components remain in "Removed" state despite policy being applied:
+If components are not deploying:
 
 ```bash
 # Check DSC spec vs status
-oc get datasciencecluster default-dsc -o yaml | grep -A20 "spec:"
-oc get datasciencecluster default-dsc -o yaml | grep -A30 "status:"
+oc get datasciencecluster default-dsc -o yaml
+
+# Check if components are present in spec (v2 API)
+oc get datasciencecluster default-dsc -o jsonpath='{.spec.components}' | jq
+
+# Check component status
+oc get datasciencecluster default-dsc -o jsonpath='{.status.components}' | jq
 
 # Check ConfigurationPolicy compliance
 oc get configurationpolicy -n local-cluster | grep rhoai
 
-# Manually patch DSC if needed (workaround)
-oc patch datasciencecluster default-dsc --type=merge -p '{
-  "spec": {
-    "components": {
-      "dashboard": {"managementState": "Managed"},
-      "workbenches": {"managementState": "Managed"},
-      "kserve": {"managementState": "Managed"},
-      "modelregistry": {"managementState": "Managed"}
-    }
-  }
-}'
+# View policy details
+oc describe configurationpolicy rhoai-dsc -n local-cluster
+
+# Check Dashboard component CRD (v2 uses components.platform.opendatahub.io)
+oc get dashboard -A
 ```
 
 ## values.yaml Reference
@@ -260,23 +269,26 @@ rhoai:
     serviceMeshControlPlaneName: data-science-smcp
     trustedCABundleState: Managed
 
-  # DataScienceCluster settings
+  # DataScienceCluster settings (v2 API)
   dsc:
     name: default-dsc
-    dashboard: Managed
-    workbenches: Managed
-    datasciencepipelines: Managed
-    kserve: Managed
-    modelmeshserving: Managed
-    modelregistry: Managed
-    codeflare: Managed
-    ray: Managed
-    kueue: Managed
-    trainingoperator: Managed
-    trustyai: Managed
+    # Set to true to enable, false to disable
+    dashboard: true
+    workbenches: true
+    aipipelines: true        # Renamed from datasciencepipelines
+    kserve: true
+    modelregistry: true
+    ray: true
+    kueue: true
+    trainingoperator: true
+    trustyai: true
+    # Removed in v2: codeflare, modelmeshserving
 
-  # OdhDashboardConfig settings
+  # Dashboard configuration (v2 API)
+  # Note: OdhDashboardConfig CRD removed in RHOAI 3.0
+  # Dashboard settings managed via Dashboard component
   dashboard:
+    # These settings may be used for future dashboard configuration
     disableTracking: false
     disableModelRegistry: false
     disableModelCatalog: false
