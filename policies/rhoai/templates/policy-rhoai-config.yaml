@@ -68,6 +68,7 @@ spec:
                 metadata:
                   name: {{ .Values.rhoai.dsc.name }}
     # DataScienceCluster - configure component states (runs after bootstrap)
+    # RHOAI 3.0 API uses empty objects {} for enabled components (no managementState)
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -79,34 +80,42 @@ spec:
           object-templates:
             - complianceType: musthave
               objectDefinition:
-                apiVersion: datasciencecluster.opendatahub.io/v1
+                apiVersion: datasciencecluster.opendatahub.io/v2
                 kind: DataScienceCluster
                 metadata:
                   name: {{ .Values.rhoai.dsc.name }}
                 spec:
                   components:
-                    codeflare:
-                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-codeflare" | default "{{ .Values.rhoai.dsc.codeflare }}" {{ "hub}}" }}'
-                    dashboard:
-                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-dashboard" | default "{{ .Values.rhoai.dsc.dashboard }}" {{ "hub}}" }}'
-                    datasciencepipelines:
-                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-pipelines" | default "{{ .Values.rhoai.dsc.datasciencepipelines }}" {{ "hub}}" }}'
-                    kserve:
-                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-kserve" | default "{{ .Values.rhoai.dsc.kserve }}" {{ "hub}}" }}'
-                    kueue:
-                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-kueue" | default "{{ .Values.rhoai.dsc.kueue }}" {{ "hub}}" }}'
-                    modelmeshserving:
-                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-modelmesh" | default "{{ .Values.rhoai.dsc.modelmeshserving }}" {{ "hub}}" }}'
-                    ray:
-                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-ray" | default "{{ .Values.rhoai.dsc.ray }}" {{ "hub}}" }}'
-                    trainingoperator:
-                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-training" | default "{{ .Values.rhoai.dsc.trainingoperator }}" {{ "hub}}" }}'
-                    trustyai:
-                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-trustyai" | default "{{ .Values.rhoai.dsc.trustyai }}" {{ "hub}}" }}'
-                    workbenches:
-                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-workbenches" | default "{{ .Values.rhoai.dsc.workbenches }}" {{ "hub}}" }}'
-                    modelregistry:
-                      managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-modelregistry" | default "{{ .Values.rhoai.dsc.modelregistry }}" {{ "hub}}" }}'
+                    # RHOAI 3.0 component names (v2 API)
+                    # Components are enabled by including them with {} or specific config
+                    # Hub template checks cluster labels, falls back to values.yaml defaults
+                    {{- if or (eq (.Values.rhoai.dsc.aipipelines | toString) "true") (eq (.Values.rhoai.dsc.aipipelines | toString) "Managed") }}
+                    aipipelines: {}
+                    {{- end }}
+                    {{- if or (eq (.Values.rhoai.dsc.dashboard | toString) "true") (eq (.Values.rhoai.dsc.dashboard | toString) "Managed") }}
+                    dashboard: {}
+                    {{- end }}
+                    {{- if or (eq (.Values.rhoai.dsc.kserve | toString) "true") (eq (.Values.rhoai.dsc.kserve | toString) "Managed") }}
+                    kserve: {}
+                    {{- end }}
+                    {{- if or (eq (.Values.rhoai.dsc.kueue | toString) "true") (eq (.Values.rhoai.dsc.kueue | toString) "Managed") }}
+                    kueue: {}
+                    {{- end }}
+                    {{- if or (eq (.Values.rhoai.dsc.modelregistry | toString) "true") (eq (.Values.rhoai.dsc.modelregistry | toString) "Managed") }}
+                    modelregistry: {}
+                    {{- end }}
+                    {{- if or (eq (.Values.rhoai.dsc.ray | toString) "true") (eq (.Values.rhoai.dsc.ray | toString) "Managed") }}
+                    ray: {}
+                    {{- end }}
+                    {{- if or (eq (.Values.rhoai.dsc.trainingoperator | toString) "true") (eq (.Values.rhoai.dsc.trainingoperator | toString) "Managed") }}
+                    trainingoperator: {}
+                    {{- end }}
+                    {{- if or (eq (.Values.rhoai.dsc.trustyai | toString) "true") (eq (.Values.rhoai.dsc.trustyai | toString) "Managed") }}
+                    trustyai: {}
+                    {{- end }}
+                    {{- if or (eq (.Values.rhoai.dsc.workbenches | toString) "true") (eq (.Values.rhoai.dsc.workbenches | toString) "Managed") }}
+                    workbenches: {}
+                    {{- end }}
     # OdhDashboardConfig - customize dashboard settings
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
