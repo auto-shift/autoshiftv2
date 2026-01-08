@@ -8,6 +8,9 @@ metadata:
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-2 Security Assessments
     policy.open-cluster-management.io/standards: NIST SP 800-53
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   dependencies:
     - name: policy-stig-scan
       namespace: {{ .Values.policy_namespace }}
@@ -15,7 +18,6 @@ spec:
       compliance: Compliant
       kind: Policy
   disabled: false
-  remediationAction: enforce
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -48,7 +50,7 @@ spec:
                   apply: true
             {{ "{{hub- end hub}}" }}
           pruneObjectBehavior: None
-          remediationAction: inform
+          remediationAction: enforce
           severity: high
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1

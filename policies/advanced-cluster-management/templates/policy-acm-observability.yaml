@@ -13,6 +13,9 @@ metadata:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   dependencies:
     - name: policy-acm-mch-install
@@ -94,10 +97,13 @@ spec:
                     type: s3
                     config:
                       bucket: {{`{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_NAME" }}`}}
-                      endpoint: '{{`{{ (lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3").spec.host }}`}}:443'
+                      endpoint: '{{`{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_HOST" }}`}}:{{`{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_PORT" }}`}}'
                       insecure: false
                       access_key: {{`{{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_ACCESS_KEY_ID" | base64dec }}`}}
                       secret_key: {{`{{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_SECRET_ACCESS_KEY" | base64dec }}`}}
+                      http_config:
+                        tls_config:
+                          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
             - complianceType: musthave
               objectDefinition:
                 apiVersion: observability.open-cluster-management.io/v1beta2

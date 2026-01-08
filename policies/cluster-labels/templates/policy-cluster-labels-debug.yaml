@@ -14,8 +14,10 @@ metadata:
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
     policy.open-cluster-management.io/standards: NIST SP 800-53
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
-  remediationAction: enforce
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -86,7 +88,7 @@ spec:
                               managementState: Unmanaged
                               region: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-s3-region" | default "us-east-1" hub}}`}}
                               bucket: {{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_NAME" }}`}}
-                              regionEndpoint: 'https://{{`{{ (lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3").spec.host }}`}}'
+                              regionEndpoint: 'https://{{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_HOST" }}`}}:{{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_PORT" }}`}}'
                               virtualHostedStyle: false
                               encrypt: false
                               trustedCA:
