@@ -347,6 +347,28 @@ spec:
 EOF
 ```
 
+## Versioned ClusterSets for Gradual Rollout
+
+AutoShift supports running multiple versions side-by-side using **versioned ClusterSets**:
+
+```yaml
+# Enable automatic version suffixes on all ClusterSet names
+versionedClusterSets: true
+
+# OCI mode: uses autoshiftOciVersion for suffix
+autoshiftOciVersion: "0.0.1"   # hub → hub-0-0-1
+
+# Git mode: uses autoshiftGitBranchTag for suffix
+autoshiftGitBranchTag: "main"  # hub → hub-main
+```
+
+**Benefits:**
+- Deploy multiple AutoShift versions simultaneously
+- Migrate clusters gradually between versions
+- Easy rollback by moving clusters back to previous ClusterSet
+
+See [Gradual Rollout Guide](docs/gradual-rollout.md) for detailed instructions.
+
 ## Autoshift Cluster Labels Values Reference
 
 Values can be set on a per cluster and clusterset level to decide what features of autoshift will be applied to each cluster. If a value is defined in helm values, a clusterset label and a cluster label precedence will be **cluster > clusterset > helm** values where helm values is the least. Helm values, `values.yaml` are meant to be defaults.

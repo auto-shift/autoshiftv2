@@ -62,14 +62,26 @@ spec:
           valueFiles:
           - values.yaml
           valuesObject:
-            selfManagedHubSet: {{ .Values.selfManagedHubSet }}
+            {{- $clusterSetSuffix := "" }}
+            {{- if .Values.versionedClusterSets }}
+              {{- $versionTag := "" }}
+              {{- if .Values.autoshiftOciRegistry }}
+                {{- $versionTag = .Values.autoshiftOciVersion | default .Chart.Version }}
+              {{- else }}
+                {{- $versionTag = .Values.autoshiftGitBranchTag | default "main" }}
+              {{- end }}
+              {{- /* Sanitize for DNS: replace dots and slashes with dashes, lowercase */ -}}
+              {{- $clusterSetSuffix = printf "-%s" ($versionTag | replace "." "-" | replace "/" "-" | lower) }}
+            {{- end }}
+            selfManagedHubSet: {{ .Values.selfManagedHubSet }}{{ $clusterSetSuffix }}
             policy_namespace: {{ printf "policies-%s" .Release.Name }}
+            clusterSetSuffix: {{ $clusterSetSuffix }}
             autoshift:
               dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
             {{- if .Values.hubClusterSets }}
             hubClusterSets:
             {{-  range $cluster, $clustervalue := .Values.hubClusterSets }}
-              {{ $cluster }}:
+              {{ $cluster }}{{ $clusterSetSuffix }}:
                 labels:
                 {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
                   {{ $labelkey }}: '{{ $labelvalue }}'
@@ -79,7 +91,7 @@ spec:
             {{- if .Values.managedClusterSets }}
             managedClusterSets:
               {{-  range $cluster, $clustervalue := .Values.managedClusterSets }}
-              {{ $cluster }}:
+              {{ $cluster }}{{ $clusterSetSuffix }}:
                 labels:
                 {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
                   {{ $labelkey }}: '{{ $labelvalue }}'
