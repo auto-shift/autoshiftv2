@@ -1,0 +1,165 @@
+{{- $policyName := "policy-serverless-config" }}
+{{- $placementName := "placement-policy-serverless-config" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+  disabled: false
+  # Wait for Serverless operator to be installed first
+  dependencies:
+    - name: policy-serverless-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # Create knative-serving namespace
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: serverless-knative-serving-ns
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: knative-serving
+    # Create KnativeServing instance
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: serverless-knative-serving
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operator.knative.dev/v1beta1
+                kind: KnativeServing
+                metadata:
+                  name: knative-serving
+                  namespace: knative-serving
+                spec:
+                  config:
+                    network:
+                      ingress-class: "kourier.ingress.networking.knative.dev"
+                  ingress:
+                    kourier:
+                      enabled: true
+                  high-availability:
+                    replicas: {{ .Values.serverless.serving.replicas | default 2 }}
+    # Create knative-eventing namespace (if enabled)
+    {{- if .Values.serverless.eventing.enabled }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: serverless-knative-eventing-ns
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: knative-eventing
+    # Create KnativeEventing instance (if enabled)
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: serverless-knative-eventing
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operator.knative.dev/v1beta1
+                kind: KnativeEventing
+                metadata:
+                  name: knative-eventing
+                  namespace: knative-eventing
+                spec:
+                  high-availability:
+                    replicas: {{ .Values.serverless.eventing.replicas | default 2 }}
+    {{- end }}
+    # Status check - verify KnativeServing is ready
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: serverless-knative-serving-status
+        spec:
+          remediationAction: inform
+          severity: medium
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operator.knative.dev/v1beta1
+                kind: KnativeServing
+                metadata:
+                  name: knative-serving
+                  namespace: knative-serving
+                status:
+                  conditions:
+                    - status: "True"
+                      type: Ready
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/serverless'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+
