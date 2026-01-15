@@ -1,0 +1,140 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vault
+  namespace: openshift-gitops
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    chart: vault
+    repoURL: https://helm.releases.hashicorp.com
+    targetRevision: 0.28.1
+    helm:
+      values: |
+        global:
+          openshift: true
+          tlsDisable: false
+        
+        injector:
+          enabled: true
+          image:
+            repository: "hashicorp/vault-k8s"
+            tag: "1.4.1"
+          
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 250m
+            limits:
+              memory: 256Mi
+              cpu: 250m
+        
+        server:
+          image:
+            repository: "hashicorp/vault"
+            tag: "1.15.4"
+          
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 250m
+            limits:
+              memory: 256Mi
+              cpu: 256Mi
+          
+          # OpenShift Route configuration
+          route:
+            enabled: true
+            host: ""
+            tls:
+              termination: edge
+          
+          # Disable service (Route will be used instead)
+          service:
+            enabled: true
+          
+          # HA configuration with Raft storage
+          ha:
+            enabled: true
+            replicas: 3
+            
+            raft:
+              enabled: true
+              setNodeId: true
+              
+              config: |
+                ui = true
+                
+                listener "tcp" {
+                  tls_disable = 0
+                  address = "[::]:8200"
+                  cluster_address = "[::]:8201"
+                  tls_cert_file = "/vault/userconfig/vault-server-tls/tls.crt"
+                  tls_key_file  = "/vault/userconfig/vault-server-tls/tls.key"
+                  tls_client_ca_file = "/vault/userconfig/vault-server-tls/ca.crt"
+                }
+                
+                storage "raft" {
+                  path = "/vault/data"
+                  
+                  retry_join {
+                    leader_api_addr = "https://vault-0.vault-internal:8200"
+                    leader_ca_cert_file = "/vault/userconfig/vault-server-tls/ca.crt"
+                    leader_client_cert_file = "/vault/userconfig/vault-server-tls/tls.crt"
+                    leader_client_key_file = "/vault/userconfig/vault-server-tls/tls.key"
+                  }
+                  
+                  retry_join {
+                    leader_api_addr = "https://vault-1.vault-internal:8200"
+                    leader_ca_cert_file = "/vault/userconfig/vault-server-tls/ca.crt"
+                    leader_client_cert_file = "/vault/userconfig/vault-server-tls/tls.crt"
+                    leader_client_key_file = "/vault/userconfig/vault-server-tls/tls.key"
+                  }
+                  
+                  retry_join {
+                    leader_api_addr = "https://vault-2.vault-internal:8200"
+                    leader_ca_cert_file = "/vault/userconfig/vault-server-tls/ca.crt"
+                    leader_client_cert_file = "/vault/userconfig/vault-server-tls/tls.crt"
+                    leader_client_key_file = "/vault/userconfig/vault-server-tls/tls.key"
+                  }
+                }
+                
+                service_registration "kubernetes" {}
+          
+          # Data storage
+          dataStorage:
+            enabled: true
+            size: 10Gi
+            storageClass: null
+            accessMode: ReadWriteOnce
+          
+          # Audit storage
+          auditStorage:
+            enabled: true
+            size: 10Gi
+            storageClass: null
+            accessMode: ReadWriteOnce
+        
+        ui:
+          enabled: true
+          serviceType: "ClusterIP"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: vault
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
