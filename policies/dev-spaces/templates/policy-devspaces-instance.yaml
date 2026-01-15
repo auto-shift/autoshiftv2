@@ -1,0 +1,167 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-devspaces-instance
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    # Dependency: Wait for DevSpaces operator to be compliant before creating instance
+    policy.open-cluster-management.io/dependencies: '[{"apiVersion":"policy.open-cluster-management.io/v1","compliance":"Compliant","kind":"Policy","name":"policy-devspaces-operator-install","namespace":"{{ .Values.policy_namespace }}"}]'
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  policy-templates:
+    # Create the openshift-devspaces namespace for the CheCluster
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: devspaces-instance-ns
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: openshift-devspaces
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
+    # Deploy the CheCluster instance
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: devspaces-checluster
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: org.eclipse.che/v2
+                kind: CheCluster
+                metadata:
+                  name: devspaces
+                  namespace: openshift-devspaces
+                spec:
+                  components:
+                    cheServer:
+                      debug: false
+                      logLevel: INFO
+                    dashboard:
+                      headerMessage:
+                        show: true
+                        text: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-banner-text" | default "Welcome to OpenShift Dev Spaces" {{ "hub}}" }}'
+                    database:
+                      externalDb: false
+                    devWorkspace: {}
+                    devfileRegistry:
+                      disableInternalRegistry: false
+                    imagePuller:
+                      enable: false
+                    metrics:
+                      enable: true
+                    pluginRegistry:
+                      disableInternalRegistry: false
+                  containerRegistry: {}
+                  devEnvironments:
+                    startTimeoutSeconds: 600
+                    secondsOfRunBeforeIdling: -1
+                    maxNumberOfWorkspacesPerUser: -1
+                    maxNumberOfRunningWorkspacesPerUser: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-max-workspaces" | default "5" {{ "hub}}" }}'
+                    containerBuildConfiguration:
+                      openShiftSecurityContextConstraint: container-build
+                    disableContainerBuildCapabilities: false
+                    defaultComponents:
+                      - name: dev-tools
+                        container:
+                          image: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-default-image" | default "registry.redhat.io/devspaces/udi-rhel8:latest" {{ "hub}}" }}'
+                          memoryLimit: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-memory-limit" | default "6Gi" {{ "hub}}" }}'
+                          memoryRequest: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-memory-request" | default "1Gi" {{ "hub}}" }}'
+                          cpuLimit: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-cpu-limit" | default "2" {{ "hub}}" }}'
+                          cpuRequest: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-cpu-request" | default "500m" {{ "hub}}" }}'
+                    defaultEditor: che-incubator/che-code/latest
+                    defaultNamespace:
+                      autoProvision: true
+                      template: <username>-devspaces
+                    secondsOfInactivityBeforeIdling: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/dev-spaces-idle-timeout" | default "1800" {{ "hub}}" }}'
+                    storage:
+                      pvcStrategy: per-user
+                  gitServices: {}
+                  networking:
+                    auth:
+                      gateway:
+                        configLabels:
+                          app: che
+                          component: che-gateway-config
+    # Verify CheCluster is active
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: devspaces-checluster-status
+        spec:
+          remediationAction: inform
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: org.eclipse.che/v2
+                kind: CheCluster
+                metadata:
+                  name: devspaces
+                  namespace: openshift-devspaces
+                status:
+                  chePhase: Active
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-devspaces-instance
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/dev-spaces'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/dev-spaces-instance'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-devspaces-instance
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-devspaces-instance
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-devspaces-instance
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
