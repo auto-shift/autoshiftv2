@@ -7,6 +7,8 @@ metadata:
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    # Dependency: Wait for DevSpaces operator to be compliant before installing Web Terminal
+    policy.open-cluster-management.io/dependencies: '[{"apiVersion":"policy.open-cluster-management.io/v1","compliance":"Compliant","kind":"Policy","name":"policy-devspaces-operator-install","namespace":"{{ .Values.policy_namespace }}"}]'
 spec:
 {{ if (($.Values.autoshift).dryRun) }}
   remediationAction: inform
@@ -99,6 +101,11 @@ spec:
         labelSelector:
           matchExpressions:
             - key: 'autoshift.io/web-terminal'
+              operator: In
+              values:
+              - 'true'
+            # Require DevSpaces to be enabled (dependency)
+            - key: 'autoshift.io/dev-spaces'
               operator: In
               values:
               - 'true'
