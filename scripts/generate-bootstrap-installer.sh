@@ -117,6 +117,29 @@ log() { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+usage() {
+    echo "Usage: $0 [OPTIONS] [VALUES_FILE]"
+    echo ""
+    echo "Arguments:"
+    echo "  VALUES_FILE    Values file to use: hub, minimal, sbx, hubofhubs (default: hub)"
+    echo ""
+    echo "Options:"
+    echo "  --versioned    Enable versioned ClusterSets for gradual rollout"
+    echo "                 - Application name includes version (e.g., autoshift-0-0-1)"
+    echo "                 - ClusterSet names include version suffix (e.g., hub-0-0-1)"
+    echo "                 - Allows multiple versions to run side-by-side"
+    echo "  --dry-run      Enable dry run mode (policies report but don't enforce)"
+    echo "  --name NAME    Custom application name (default: autoshift or autoshift-VERSION)"
+    echo "  -h, --help     Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0 hub                      # Standard deployment"
+    echo "  $0 --versioned hub          # Versioned deployment for gradual rollout"
+    echo "  $0 --dry-run hub            # Dry run mode"
+    echo "  $0 --versioned --dry-run    # Versioned + dry run"
+    exit 0
+}
+
 AUTOSHIFT_EOF
 
 cat >> "$ARTIFACTS_DIR/install-autoshift.sh" << AUTOSHIFT_VARS
@@ -128,14 +151,59 @@ AUTOSHIFT_VARS
 
 cat >> "$ARTIFACTS_DIR/install-autoshift.sh" << 'AUTOSHIFT_EOF'
 
-# Default values file
-VALUES_FILE="${1:-hub}"
+# Parse arguments
+VERSIONED=false
+DRY_RUN=false
+CUSTOM_NAME=""
+VALUES_FILE="hub"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --versioned)
+            VERSIONED=true
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --name)
+            CUSTOM_NAME="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            ;;
+        -*)
+            error "Unknown option: $1"
+            ;;
+        *)
+            VALUES_FILE="$1"
+            shift
+            ;;
+    esac
+done
+
+# Sanitize version for DNS-compatible names (dots -> dashes)
+VERSION_SUFFIX=$(echo "${VERSION}" | tr '.' '-' | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+
+# Determine application name
+if [ -n "$CUSTOM_NAME" ]; then
+    APP_NAME="$CUSTOM_NAME"
+elif [ "$VERSIONED" = true ]; then
+    APP_NAME="autoshift-${VERSION_SUFFIX}"
+else
+    APP_NAME="autoshift"
+fi
 
 log "AutoShift Installation"
 log "======================"
 log "Version: ${VERSION}"
 log "Registry: ${OCI_REPO}"
 log "Values: ${VALUES_FILE}"
+log "Application: ${APP_NAME}"
+[ "$VERSIONED" = true ] && log "Mode: Versioned ClusterSets (gradual rollout)"
+[ "$DRY_RUN" = true ] && log "Mode: Dry Run (policies won't enforce)"
 echo ""
 
 # Check prerequisites
@@ -163,13 +231,32 @@ case "$VALUES_FILE" in
         ;;
 esac
 
+# Build values override
+VALUES_OVERRIDE="# Enable OCI registry mode for ApplicationSet
+        autoshiftOciRegistry: true
+        autoshiftOciRepo: ${OCI_REPO}/policies
+        autoshiftOciVersion: \"${VERSION}\""
+
+if [ "$VERSIONED" = true ]; then
+    VALUES_OVERRIDE="${VALUES_OVERRIDE}
+        # Enable versioned ClusterSets for gradual rollout
+        versionedClusterSets: true"
+fi
+
+if [ "$DRY_RUN" = true ]; then
+    VALUES_OVERRIDE="${VALUES_OVERRIDE}
+        # Dry run mode - policies report but don't enforce
+        autoshift:
+          dryRun: true"
+fi
+
 log "Creating ArgoCD Application for AutoShift..."
 
 cat <<EOF | oc apply -f -
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: autoshift
+  name: ${APP_NAME}
   namespace: openshift-gitops
 spec:
   project: default
@@ -181,10 +268,7 @@ spec:
       valueFiles:
         - ${VALUES_FILE_PATH}
       values: |
-        # Enable OCI registry mode for ApplicationSet
-        autoshiftOciRegistry: true
-        autoshiftOciRepo: ${OCI_REPO}/policies
-        autoshiftOciVersion: "${VERSION}"
+        ${VALUES_OVERRIDE}
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops
@@ -201,7 +285,7 @@ echo ""
 
 log "Monitoring sync status..."
 sleep 5
-oc get application autoshift -n openshift-gitops
+oc get application ${APP_NAME} -n openshift-gitops
 
 echo ""
 log "========================================="
@@ -209,12 +293,23 @@ log "AutoShift installation initiated!"
 log "========================================="
 echo ""
 log "Monitor deployment:"
-echo "  oc get application autoshift -n openshift-gitops -w"
+echo "  oc get application ${APP_NAME} -n openshift-gitops -w"
 echo "  oc get applicationset -n openshift-gitops"
-echo "  oc get applications -n openshift-gitops | grep autoshift"
+echo "  oc get applications -n openshift-gitops | grep ${APP_NAME}"
 echo ""
 log "View policies:"
 echo "  oc get policies -A"
+
+if [ "$VERSIONED" = true ]; then
+    echo ""
+    log "Versioned ClusterSets created:"
+    echo "  Hub ClusterSet: hub-${VERSION_SUFFIX}"
+    echo "  Managed ClusterSet: managed-${VERSION_SUFFIX}"
+    echo ""
+    log "Assign clusters to this version:"
+    echo "  oc label managedcluster <cluster-name> cluster.open-cluster-management.io/clusterset=hub-${VERSION_SUFFIX} --overwrite"
+fi
+
 echo ""
 log "Access ArgoCD UI:"
 echo "  oc get route argocd-server -n openshift-gitops"
@@ -282,6 +377,11 @@ Use the provided scripts for a streamlined installation:
 
 # Step 2: Install AutoShift (deploys policies)
 ./install-autoshift.sh hub  # Use 'hub' values file
+
+# Optional flags:
+#   --versioned    Enable versioned ClusterSets for gradual rollout
+#   --dry-run      Test policies without enforcement
+#   --help         Show all options
 ```
 
 ### Manual Installation
@@ -505,6 +605,55 @@ cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
       prune: true
       selfHeal: true
 EOFAPP
+```
+
+## Gradual Rollout with Multiple Versions
+
+AutoShift supports running multiple versions side-by-side for gradual rollout:
+
+```bash
+# Deploy first version with versioned ClusterSets
+./install-autoshift.sh --versioned hub
+
+# This creates:
+# - Application: autoshift-X-Y-Z (e.g., autoshift-1-0-0)
+# - Hub ClusterSet: hub-X-Y-Z (e.g., hub-1-0-0)
+# - Managed ClusterSet: managed-X-Y-Z (e.g., managed-1-0-0)
+
+# Assign clusters to this version
+oc label managedcluster local-cluster cluster.open-cluster-management.io/clusterset=hub-1-0-0 --overwrite
+oc label managedcluster spoke-1 cluster.open-cluster-management.io/clusterset=managed-1-0-0 --overwrite
+```
+
+When a new version is released, deploy it alongside:
+
+```bash
+# Deploy new version (after updating scripts from new release)
+./install-autoshift.sh --versioned hub
+
+# Migrate clusters one at a time
+oc label managedcluster spoke-1 cluster.open-cluster-management.io/clusterset=managed-2-0-0 --overwrite
+
+# After validation, migrate remaining clusters
+# Then delete old version
+oc delete application autoshift-1-0-0 -n openshift-gitops
+```
+
+See [Gradual Rollout Guide](https://github.com/auto-shift/autoshiftv2/blob/main/docs/gradual-rollout.md) for detailed instructions.
+
+## Testing with Dry Run Mode
+
+Test policy changes without enforcement:
+
+```bash
+# Deploy in dry run mode
+./install-autoshift.sh --dry-run hub
+
+# Policies will report compliance status but won't make changes
+oc get policies -A
+
+# Switch to enforcement
+./install-autoshift.sh hub  # Re-run without --dry-run
 ```
 
 ## Testing with Release Candidates
