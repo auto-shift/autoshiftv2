@@ -223,7 +223,7 @@ setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/vault-secrets-
 
 Overview
 
-This Autoshift policy ensures that the operator has the correct HashiCorp Vault credentials and connections configured for accessing secrets. It automates the creation and enforcement of Vault-related resources, including:
+This Autoshift policy ensures that your operator has the correct HashiCorp Vault credentials and connections configured for accessing secrets. It automates the creation and enforcement of Vault-related resources, including:
 
 Vault connections – Ensures the operator can connect to your HashiCorp Vault server.
 
