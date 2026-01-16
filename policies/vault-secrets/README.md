@@ -28,6 +28,7 @@ hubClusterSets:
       vault-secrets-channel: 'stable'
       vault-secrets-source: 'redhat-operators'
       vault-secrets-source-namespace: 'openshift-marketplace'
+      vault-secrets-ref: 'secret-name'
       # vault-secrets-version: 'vault-secrets-operator.v1.x.x'  # Optional: pin to specific CSV version
 
 managedClusterSets:
@@ -38,6 +39,7 @@ managedClusterSets:
       vault-secrets-channel: 'stable'
       vault-secrets-source: 'redhat-operators'
       vault-secrets-source-namespace: 'openshift-marketplace'
+      vault-secrets-ref: 'secret-name'
       # vault-secrets-version: 'vault-secrets-operator.v1.x.x'  # Optional: pin to specific CSV version
 
 # For specific clusters (optional override)
@@ -221,7 +223,7 @@ setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/vault-secrets-
 
 Overview
 
-This OpenShift policy ensures that the operator has the correct HashiCorp Vault credentials and connections configured for accessing secrets. It automates the creation and enforcement of Vault-related resources, including:
+This Autoshift policy ensures that the operator has the correct HashiCorp Vault credentials and connections configured for accessing secrets. It automates the creation and enforcement of Vault-related resources, including:
 
 Vault connections – Ensures the operator can connect to your HashiCorp Vault server.
 
@@ -229,12 +231,9 @@ Vault authentication via AppRole – Configures the operator to authenticate usi
 
 Vault static secrets – Synchronizes secrets from HashiCorp Vault to OpenShift.
 
-AppRole secret in your namespace – Ensures the AppRole secret is available in the target namespace.
-
-⚠️ This requires the secret to already exist in the policies-autoshift namespace on the hub cluster.
+AppRole secret in your namespace – Ensures the AppRole secret is available in the target namespace. ---- ⚠️ This requires the secret to already exist in the policies-autoshift namespace on the hub cluster.
 
 By enforcing these resources, the policy ensures your operator can securely access and manage storage secrets across managed clusters.
-
 
 
 ### Adding the Policy to Your Operator’s Templates Folder
@@ -265,7 +264,27 @@ vault:
   secretRef:           # Name of the secret in the policies-autoshift namespace containing your Secret ID
   operatorNamespace:   # Namespace where the Vault operator is installed
 ```
+Edit AutoShift values files to add the operator labels. Set the vault-secret-ref value to the name of the secret containing your secret ID on the hub, located in the policies-autoshift namespace.
+``` yaml 
+vault-secrets-ref: 'example'
+``` 
 
+Create an Autoshift value to go with your operator titled "youroperator-vault-secret" with an option for either true or false. This will activate your policy to be used alongside your operators policies.
+``` yaml 
+operator-vault-secret: 'true'
+``` 
+
+Make sure this same value is mentioned in the predicates of your policy:
+``` yaml 
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/CHANGEME-vault-secret'
+              operator: In
+              values:
+              - 'true'
+``` 
 
 ## Common Patterns
 
