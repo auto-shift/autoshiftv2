@@ -1,7 +1,7 @@
 # vault-secrets AutoShift Policy
 
 ## Overview
-This policy installs the vault-secrets-operator operator using AutoShift patterns.
+This policy installs the vault-secrets-operator operator using AutoShift patterns. 
 
 ## Status
 ✅ **Operator Installation**: Ready to deploy  
@@ -217,7 +217,59 @@ Add configuration labels to `values.yaml` and use in templates:
 setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/vault-secrets-setting" | default "default-value" {{ "hub}}" }}'
 ```
 
+## Vault Sidecar Policy
+
+Overview
+
+This OpenShift policy ensures that the operator has the correct HashiCorp Vault credentials and connections configured for accessing secrets. It automates the creation and enforcement of Vault-related resources, including:
+
+Vault connections – Ensures the operator can connect to your HashiCorp Vault server.
+
+Vault authentication via AppRole – Configures the operator to authenticate using Vault AppRole credentials.
+
+Vault static secrets – Synchronizes secrets from HashiCorp Vault to OpenShift.
+
+AppRole secret in your namespace – Ensures the AppRole secret is available in the target namespace.
+
+⚠️ This requires the secret to already exist in the policies-autoshift namespace on the hub cluster.
+
+By enforcing these resources, the policy ensures your operator can securely access and manage storage secrets across managed clusters.
+
+
+
+### Adding the Policy to Your Operator’s Templates Folder
+
+To include this policy in your operator’s deployment:
+
+Place the YAML file in the templates folder of your operator chart.
+
+Typically:
+``` yaml
+my-operator/
+├─ charts/
+├─ templates/
+│  ├─ policy-vault-user-secret.yaml
+│  └─ other-policy-files.yaml
+└─ values.yaml
+```
+
+Add the Vault configuration values to the values.yaml file of your policy:
+```yaml
+vault:
+  connectionAddress:   # URL of your Vault server (e.g., https://vault.example.com)
+  mount:               # Name of your Vault secrets engine (e.g., "kv")
+  path:                # Path to the secret in the secrets engine (e.g., "operator/config")
+  authMountName:       # Name of your Vault auth method (e.g., "approle")
+  secretName:          # Name of the secret in OpenShift to sync Vault data
+  roleID:              # Vault AppRole Role ID
+  secretRef:           # Name of the secret in the policies-autoshift namespace containing your Secret ID
+  operatorNamespace:   # Namespace where the Vault operator is installed
+```
+
+
 ## Common Patterns
+
+
 
 ### CSV Status Checking (Optional)
 For operators that need installation verification:
