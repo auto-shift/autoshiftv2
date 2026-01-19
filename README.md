@@ -384,6 +384,21 @@ Manages the automated cluster labeling system that applies `autoshift.io/` prefi
 | `metallb-bgp-1`                     | string            |                           | Name of config file for BGP Advertisement (copy this value if more than one, increasing number each time) |
 | `metallb-peer-1`                    | string            |                           | Name of config file for BGP Peer (copy this value if more than one, increasing number each time) |
 
+### Trident
+
+Manages the Trident operator installation and systems Trident Orchestrator instance. This policy ensures the Trident operator is installed and creates the main Trident Orchestrator instance to deploy the configurations necessary to setup NetApp storage.
+
+| Variable                        | Type      | Default Value             | Notes |
+|---------------------------------|-----------|---------------------------|-------|
+| `trident`                       | bool      |                           | If not set to `true`, Trident will not be managed |
+| `trident-install-plan-approval` | string    | `Automatic`               |  |
+| `trident-name`                  | string    | `trident-operator`        | Name of operator |
+| `trident-version`               | string    | `trident-operator.v25.6.2`| Specific CSV version for controlled upgrades |
+| `trident-source`                | string    | `certified-operators`     | Operator catalog source |
+| `trident-source-namespace`      | string    | `openshift-marketplace`   | Namespace for operator catalog |
+| `trident-channel`               | string    | `stable`                  | Operator channel for Trident updates |
+
+
 ### OpenShift GitOps
 
 Manages the OpenShift GitOps operator installation and systems ArgoCD instance. This policy ensures the GitOps operator is installed and creates the main ArgoCD instance used by AutoShift to declaratively manage all cluster configurations.
