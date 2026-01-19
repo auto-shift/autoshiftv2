@@ -225,9 +225,9 @@ Overview
 
 This Autoshift policy ensures that your operator has the correct HashiCorp Vault credentials and connections configured for accessing secrets. It automates the creation and enforcement of Vault-related resources, including:
 
-Vault connections – Ensures the operator can connect to your HashiCorp Vault server.
+Vault connections – Ensures the namespace can connect to your HashiCorp Vault server.
 
-Vault authentication via AppRole – Configures the operator to authenticate using Vault AppRole credentials.
+Vault authentication via AppRole – Configures the namespace to authenticate using Vault AppRole credentials.
 
 Vault static secrets – Synchronizes secrets from HashiCorp Vault to OpenShift.
 
@@ -235,6 +235,24 @@ AppRole secret in your namespace – Ensures the AppRole secret is available in 
 
 By enforcing these resources, the policy ensures your operator can securely access and manage storage secrets across managed clusters.
 
+
+### Making the AppRole Secret ID available on the hub
+In order to utilize your AppRole credentials, you will need to make sure your secret ID is created in the namespace your secrets will be synced to. This will require you to create this secret on the hub itself, in the policies-autoshift namespace. The vault secret policy has a step to pull that secret from the hub cluster into your namespace automatically. 
+
+When you create your secret, it must be in this format: 
+
+``` yaml
+kind: Secret
+apiVersion: v1
+metadata:
+  name: approle-creds
+  namespace: policies-autoshift
+data:
+  id: YOUR-APPROLE-SECRET-ID
+type: Opaque
+```
+
+⚠️ This will be a manual step on every hubofhub you deploy. The Role ID that accompanies it will be put in the values file below. 
 
 ### Adding the Policy to Your Operator’s Templates Folder
 
