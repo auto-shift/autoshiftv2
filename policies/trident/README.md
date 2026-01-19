@@ -2,6 +2,8 @@ With these Autoshift policies, you can automate the deployment of the Trident op
 
 The workflow is straightforward: first, it will deploy the operator, then deploy the Orchestrator once the operator is available. You will have the ability to manage your Trident content such as Trident Backends, storage classes, storage profiles, etc.
 
+⚠️ Warning: These policies include Machine Configs that will trigger node reboots.
+
 In your `autoshift/values.hub.yaml` file, you can configure these toggles:
 
 You will have to create the secret for your trident credentials on the ACM cluster in the policies-autoshift namespace. You also have the option to utilize Vault Secrets to pull in your secret. 
