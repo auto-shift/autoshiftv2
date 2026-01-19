@@ -396,6 +396,21 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-source`                 | string    | `redhat-operators`        | Operator catalog source |
 | `gitops-source-namespace`       | string    | `openshift-marketplace`   | Namespace for operator catalog |
 
+### Vault Secrets Operator
+
+Manages the Vault Secrets Operator installation. This policy ensures the Vault Secrets Operator is installed give you the CRDs to connect and sync secrets from a Hashicorp Vault server.
+
+| Variable                           | Type     | Default Value             | Notes |
+|-----------------------------------|-----------|---------------------------|-------|
+| `vault-secrets`                   | bool      |                           | If not set to `true`, Vault Secrets Operator |
+| `vault-secrets-subscription-name` | string    | `vault-secrets-operator`  | Operator name |
+| `vault-secrets-channel`           | string    | 'stable'                  |  |
+| `vault-secrets-source`            | string    | `redhat-operators`        | Operator catalog source |
+| `vault-secrets-source-namespace`  | string    | `openshift-marketplace`   | Namespace for operator catalog |
+| `vault-secrets-version`           | string    | `vault-secrets-operator.v1.0.1`   | Specific CSV version for controlled upgrades |
+| `vault-secret-ref`                | string    | (optional)                | Name of the AppRole secret existing on the Autoshift hub |
+
+
 ### Master Nodes
 
 Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. You may have to increase the number of pods per node in these resource constrained environments.
