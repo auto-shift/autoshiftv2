@@ -218,7 +218,14 @@ generate-dependencies: ## Generate operator dependencies JSON (requires oc CLI a
 	@command -v oc >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) oc CLI is required. Install from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/\n"; exit 1; }
 	@command -v jq >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) jq is required. Install: brew install jq\n"; exit 1; }
 	@mkdir -p $(ARTIFACTS_DIR)
-	@bash scripts/get-operator-dependencies.sh --all --json > $(ARTIFACTS_DIR)/operator-dependencies.json
+	@bash scripts/get-operator-dependencies.sh --all --json > $(ARTIFACTS_DIR)/operator-dependencies-auto.json
+	@if [ -f "scripts/known-dependencies.json" ]; then \
+		printf "$(BLUE)[INFO]$(NC) Merging with scripts/known-dependencies.json...\n"; \
+		jq -s '.[0] * .[1] | del(._comment)' $(ARTIFACTS_DIR)/operator-dependencies-auto.json scripts/known-dependencies.json > $(ARTIFACTS_DIR)/operator-dependencies.json; \
+		rm -f $(ARTIFACTS_DIR)/operator-dependencies-auto.json; \
+	else \
+		mv $(ARTIFACTS_DIR)/operator-dependencies-auto.json $(ARTIFACTS_DIR)/operator-dependencies.json; \
+	fi
 	@printf "$(GREEN)✓$(NC) Dependencies saved to $(ARTIFACTS_DIR)/operator-dependencies.json\n"
 
 # All values files for complete operator coverage

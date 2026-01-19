@@ -20,7 +20,9 @@ spec:
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
-  remediationAction: enforce
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -29,7 +31,7 @@ spec:
         metadata:
           name: image-registry-config
         spec:
-          remediationAction: inform # will be overridden by remediationAction in parent policy
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
           object-templates-raw: |
             {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}
@@ -52,7 +54,7 @@ spec:
                   name: image-registry-s3-bundle
                   namespace: openshift-config
                 data:
-                  ca-bundle.crt: '{{`{{ fromSecret "openshift-ingress" (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default").spec.defaultCertificate.name "tls.crt" | base64dec | toRawJson | toLiteral }}`}}'
+                  ca-bundle.crt: '{{`{{ fromConfigMap "openshift-image-registry" "openshift-service-ca.crt" "service-ca.crt" }}`}}'
             {{`{{hub- end hub}}`}}
             - complianceType: musthave
               objectDefinition:
@@ -81,7 +83,7 @@ spec:
                     s3:
                       region: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-s3-region" | default "us-east-1" hub}}`}}
                       bucket: {{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_NAME" }}`}}
-                      regionEndpoint: 'https://{{`{{ (lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3").spec.host }}`}}'
+                      regionEndpoint: 'https://{{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_HOST" }}`}}:{{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_PORT" }}`}}'
                       virtualHostedStyle: false
                       encrypt: false
                       trustedCA:

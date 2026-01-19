@@ -22,7 +22,9 @@ spec:
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
-  remediationAction: enforce
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -31,7 +33,7 @@ spec:
         metadata:
           name: openshift-loki-stack
         spec:
-          remediationAction: inform # will be overridden by remediationAction in parent policy
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
           object-templates:
             - complianceType: musthave
@@ -97,7 +99,7 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates:
-            - complianceType: musthave
+            - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: v1
                 kind: Secret
@@ -106,10 +108,11 @@ spec:
                   namespace: {{ .Values.loki.lokistackNamespace }}
                 type: Opaque
                 stringData:
-                  access_key_id: '{{`{{ fromSecret "openshift-logging" "loki-bucket-odf" "AWS_ACCESS_KEY_ID" }}`}}'
-                  access_key_secret: '{{`{{ fromSecret "openshift-logging" "loki-bucket-odf" "AWS_SECRET_ACCESS_KEY" }}`}}'
-                  bucketnames: {{ "logging-loki-odf" | b64enc }}
-                  endpoint: https://'{{`{{ (lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3").spec.host }}`}}'
+                  access_key_id: '{{`{{ fromSecret "openshift-logging" "loki-bucket-odf" "AWS_ACCESS_KEY_ID" | base64dec }}`}}'
+                  access_key_secret: '{{`{{ fromSecret "openshift-logging" "loki-bucket-odf" "AWS_SECRET_ACCESS_KEY" | base64dec }}`}}'
+                  bucketnames: '{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_NAME" }}`}}'
+                  endpoint: 'https://{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_HOST" }}`}}:{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_PORT" }}`}}'
+                  region: '{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_REGION" }}`}}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
