@@ -4,13 +4,16 @@
 policy_namespace: open-cluster-policies
 
 vault:
-  test: test
+  version: 0.32.0
+  namespace: vault
 
-# hubClusterSets:
-#   hub:
-#     labels:
-#       test1: 'test'
-# managedClusterSets:
+tlsEnabled: false
+
+hubClusterSets:
+  hub: #Deploys Vault and vault-agent-injector
+    labels:
+      test1: 'test'
+# managedClusterSets: #Deploys vault-agent-injector
 #   managed:
 #     labels:
 #       test4: 'test'
@@ -21,8 +24,87 @@ vault:
 # Enable/Disable:
 # vault<bool>: 'true' or 'false' - Enable HashiCorp Vault 
 #
-# Performance:
-# odf-resource-profile<String>: Resource profile - 'lean', 'balanced', or 'performance' (default: 'balanced')
-#
 # Examples:
 # autoshift.io/vault: 'true'
+
+##################################
+##################################
+
+# Values applied in Application for vault deployment
+##################################
+##################################
+
+vault_values: |
+  enabled: true
+  global:
+    tlsDisable: true 
+    openshift: true
+  injector:
+    enabled: false
+    image:
+      repository: "registry.connect.redhat.com/hashicorp/vault-k8s"
+      tag: "1.7.2-ubi"
+    agentImage:
+      repository: "registry.connect.redhat.com/hashicorp/vault"
+      tag: "1.21.2-ubi"
+  ui:
+    enabled: true
+  server:
+    image:
+      repository: "registry.connect.redhat.com/hashicorp/vault"
+      tag: "1.21.2-ubi"
+    route:
+      enabled: true
+      host:
+    # extraEnvironmentVars:
+    #   VAULT_CACERT: "/etc/vault-tls/vault-certs/ca.crt"
+    #   VAULT_TLS_SERVER_NAME: ""
+    standalone:
+      enabled: false
+    #   config: |
+    #     ui = true
+    #     listener "tcp" {
+    #       address = "[::]:8200"
+    #       cluster_address = "[::]:8201"
+    #       tls_cert_file = "/etc/vault-tls/vault-certs/tls.crt"
+    #       tls_key_file = "/etc/vault-tls/vault-certs/tls.key"
+    #       tls_client_ca_file = "/etc/vault-tls/vault-certs/ca.crt"
+    #     }
+    #     storage "file" {
+    #       path = "/vault/data"
+    #     }
+    # auditStorage:
+    #   enabled: false
+    #   size: 5Gi
+    # extraVolumes:
+    #   - type: "secret"
+    #     name: "vault-certs"
+    #     path: "/etc/vault-tls"
+    ha:
+      enabled: true
+      raft:
+        enabled: true
+        setNodeId: true
+        # config: |
+        #   ui = true
+        #   listener "tcp" {
+        #     address = "[::]:8200"
+        # #     cluster_address = "[::]:8201"
+        # #     tls_cert_file = "/etc/vault-tls/vault-certs/tls.crt"
+        # #     tls_key_file = "/etc/vault-tls/vault-certs/tls.key"
+        # #     tls_client_ca_file = "/etc/vault-tls/vault-certs/ca.crt"
+        #   }
+        #   storage "raft" {
+        #     path = "/vault/data"
+        #     retry_join {
+        #       leader_api_addr = "https://vault-internal.vault.svc:8200"
+        # #       leader_ca_cert_file = "/etc/vault-tls/vault-certs/ca.crt"
+        #     }
+        #   }
+        # log_level = "debug"
+        # service_registration "kubernetes" {}
+    service:
+      enabled: true
+    # tolerations[0]:
+    #   operator: Exists
+    #   effect: NoSchedule

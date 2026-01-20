@@ -1,7 +1,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-hashicorp-vault-install
+  name: policy-vault-install
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -30,132 +30,21 @@ spec:
                   name: {{ .Values.vault.namespace }}
                   labels:
                     openshift.io/cluster-monitoring: "true"
----                   
+---  
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: vault
-  namespace: argocd
-  finalizers:
-    - resources-finalizer.argocd.argoproj.io
+  namespace: openshift-gitops
 spec:
   project: default
-  
   source:
     chart: vault
     repoURL: https://helm.releases.hashicorp.com
-    targetRevision: 0.28.1
+    targetRevision: {{ .Values.vault.version }}
     helm:
-      values: |
-        global:
-          openshift: true
-          tlsDisable: true
-        
-        injector:
-          enabled: true
-          image:
-            repository: "hashicorp/vault-k8s"
-            tag: "1.4.1"
-          
-          resources:
-            requests:
-              memory: 256Mi
-              cpu: 250m
-            limits:
-              memory: 256Mi
-              cpu: 250m
-        
-        server:
-          image:
-            repository: "hashicorp/vault"
-            tag: "1.15.4"
-          
-          resources:
-            requests:
-              memory: 256Mi
-              cpu: 250m
-            limits:
-              memory: 256Mi
-              cpu: 256Mi
-          
-          # OpenShift Route configuration
-          route:
-            enabled: true
-            host: ""
-            tls:
-              termination: edge
-          
-          service:
-            enabled: true
-          
-          # HA configuration with Raft storage
-          ha:
-            enabled: true
-            replicas: 3
-            
-            raft:
-              enabled: true
-              setNodeId: true
-              
-              config: |
-                ui = true
-                
-                listener "tcp" {
-                  tls_disable = 1
-                  address = "[::]:8200"
-                  cluster_address = "[::]:8201"
-                }
-                
-                storage "raft" {
-                  path = "/vault/data"
-                  
-                  retry_join {
-                    leader_api_addr = "http://vault-0.vault-internal:8200"
-                  }
-                  
-                  retry_join {
-                    leader_api_addr = "http://vault-1.vault-internal:8200"
-                  }
-                  
-                  retry_join {
-                    leader_api_addr = "http://vault-2.vault-internal:8200"
-                  }
-                }
-                
-                service_registration "kubernetes" {}
-          
-          # Data storage
-          dataStorage:
-            enabled: true
-            size: 10Gi
-            storageClass: null
-            accessMode: ReadWriteOnce
-          
-          # Audit storage
-          auditStorage:
-            enabled: true
-            size: 10Gi
-            storageClass: null
-            accessMode: ReadWriteOnce
-          
-          # Extra files to mount into Vault pods
-          extraVolumes:
-            - type: secret
-              name: vault-config-extra
-          
-          volumeMounts:
-            - name: vault-config-extra
-              mountPath: /vault/extra-config
-              readOnly: true
-        
-        ui:
-          enabled: true
-          serviceType: "ClusterIP"
-
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: vault
-
+      values: | 
+      {{- .Values.vault_values | nindent 8 }}
   syncPolicy:
     automated:
       prune: true
@@ -170,11 +59,19 @@ spec:
         duration: 5s
         factor: 2
         maxDuration: 3m
+  # ignoreDifferences:
+  #   - group: admissionregistration.k8s.io
+  #     kind: MutatingWebhookConfiguration
+  #     jqPathExpressions:
+  #       - .webhooks[]?.clientConfig.caBundle
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: vault
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-hashicorp-vault-install
+  name: placement-policy-vault-install
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -188,7 +85,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/pipelines'
+            - key: 'autoshift.io/vault'
               operator: In
               values:
               - 'true'
@@ -196,13 +93,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-hashicorp-vault-install
+  name: placement-policy-vault-install
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-hashicorp-vault-install
+  name: placement-policy-vault-install
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-hashicorp-vault-install
+  - name: policy-vault-install
     apiGroup: policy.open-cluster-management.io
     kind: Policy
