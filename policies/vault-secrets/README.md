@@ -292,17 +292,25 @@ Create an Autoshift value to go with your operator titled "youroperator-vault-se
 operator-vault-secret: 'true'
 ``` 
 
-Make sure this same value is mentioned in the predicates of your policy:
+Make sure this same value is mentioned in the predicates of your vault-secret-creation policy:
 ``` yaml 
   predicates:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/CHANGEME-vault-secret'
+            - key: 'autoshift.io/operator-vault-secret'
               operator: In
               values:
               - 'true'
 ``` 
+
+Edit the top few lines of the vault-secret-creation policy to match the name of your operator. The policy name should not be the same as the placement name, and they must start with policy or placement. 
+
+``` yaml
+{{- $policyName := "policy-operator-vault-secret" }}
+{{- $placementName := "placement-policy-operator-vault-secret" }}
+```
+
 
 ## Common Patterns
 
