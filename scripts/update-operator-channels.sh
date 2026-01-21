@@ -291,16 +291,38 @@ get_channels() {
         return 1
     fi
 
+    local channels=""
+
+    # Method 1: catalog.json with olm.channel entries
     if [[ -f "$package_dir/catalog.json" ]]; then
-        jq -r 'select(.schema == "olm.channel") | .name' "$package_dir/catalog.json" 2>/dev/null | sort -u
-    elif [[ -f "$package_dir/channels.json" ]]; then
-        sed 's/}{/}\n{/g' "$package_dir/channels.json" | jq -r '.name' 2>/dev/null | sort -u
-    elif [[ -d "$package_dir/channels" ]]; then
-        # Directory-based format: channels/*.json files
-        ls "$package_dir/channels"/*.json 2>/dev/null | xargs -n1 basename | sed 's/\.json$//' | sort -u
-    else
-        return 1
+        channels=$(jq -r 'select(.schema == "olm.channel") | .name' "$package_dir/catalog.json" 2>/dev/null)
     fi
+
+    # Method 2: Standalone channel JSON files (stable-3.16.json, etc.)
+    # These may contain newer channels not in catalog.json
+    local standalone_channels
+    standalone_channels=$(ls "$package_dir"/*.json 2>/dev/null | xargs -n1 basename 2>/dev/null | \
+        grep -E '^(stable|fast|latest|release)-' | sed 's/\.json$//' || true)
+    if [[ -n "$standalone_channels" ]]; then
+        channels=$(printf '%s\n%s' "$channels" "$standalone_channels")
+    fi
+
+    # Method 3: channels.json file
+    if [[ -f "$package_dir/channels.json" ]]; then
+        local json_channels
+        json_channels=$(sed 's/}{/}\n{/g' "$package_dir/channels.json" | jq -r '.name' 2>/dev/null)
+        channels=$(printf '%s\n%s' "$channels" "$json_channels")
+    fi
+
+    # Method 4: channels/ subdirectory
+    if [[ -d "$package_dir/channels" ]]; then
+        local dir_channels
+        dir_channels=$(ls "$package_dir/channels"/*.json 2>/dev/null | xargs -n1 basename | sed 's/\.json$//' || true)
+        channels=$(printf '%s\n%s' "$channels" "$dir_channels")
+    fi
+
+    # Dedupe and return
+    echo "$channels" | grep -v '^$' | sort -u
 }
 
 # Determine the best channel for an operator
@@ -348,6 +370,43 @@ get_best_channel() {
     fi
 
     echo "$best"
+}
+
+# Compare two channels and determine if the second is newer
+# Returns 0 if channel2 > channel1, 1 otherwise
+is_newer_channel() {
+    local channel1="$1"
+    local channel2="$2"
+
+    # If they're the same, not newer
+    [[ "$channel1" == "$channel2" ]] && return 1
+
+    # Extract version numbers from channels like "stable-3.15" or "release-2.14"
+    local ver1="" ver2=""
+
+    # Try to extract version from channel name
+    if [[ "$channel1" =~ -([0-9]+\.[0-9]+)$ ]]; then
+        ver1="${BASH_REMATCH[1]}"
+    fi
+    if [[ "$channel2" =~ -([0-9]+\.[0-9]+)$ ]]; then
+        ver2="${BASH_REMATCH[1]}"
+    fi
+
+    # If both have versions, compare them
+    if [[ -n "$ver1" && -n "$ver2" ]]; then
+        # Use sort -V to compare versions
+        local newer
+        newer=$(printf '%s\n%s\n' "$ver1" "$ver2" | sort -V | tail -1)
+        if [[ "$newer" == "$ver2" && "$ver1" != "$ver2" ]]; then
+            return 0  # channel2 is newer
+        else
+            return 1  # channel1 is newer or same
+        fi
+    fi
+
+    # If only one has a version, can't reliably compare
+    # If neither has version (e.g., "stable" vs "latest"), can't compare
+    return 1
 }
 
 # ============================================================================
@@ -514,7 +573,7 @@ main() {
             printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${GREEN}up to date${NC}"
         elif [[ "$current_channel" == "-" ]]; then
             printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${CYAN}not configured${NC}"
-        else
+        elif is_newer_channel "$current_channel" "$best_channel"; then
             printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${YELLOW}update available${NC}"
             updates_available=1
 
@@ -526,6 +585,9 @@ main() {
                     ((updates_made++)) || true
                 fi
             fi
+        else
+            # best_channel is older or can't compare - current is newer or same, don't downgrade
+            printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${GREEN}up to date${NC} (catalog has older)"
         fi
     done
 

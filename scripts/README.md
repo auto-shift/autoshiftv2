@@ -8,7 +8,7 @@ This directory contains utility scripts for AutoShiftv2 policy generation and ma
 |--------|---------|
 | `generate-operator-policy.sh` | Generate new operator policies |
 | `update-operator-policies.sh` | Regenerate existing policies from template |
-| `generate-imageset-config.sh` | Generate ImageSetConfiguration for oc-mirror |
+| `generate-imageset-config.sh` | Generate ImageSetConfiguration for oc-mirror (auto-resolves dependencies) |
 | `update-operator-channels.sh` | Update operator channels from catalog |
 | `dev-checks.sh` | Run development quality checks (shellcheck, kubeconform) |
 | `sync-bootstrap-values.sh` | Sync bootstrap chart values from policies |
@@ -184,7 +184,6 @@ The `scripts/templates/` directory contains templates used by the policy generat
 - `Chart.yaml.template`: Helm chart metadata template
 - `values.yaml.template`: Default values with AutoShift labels
 - `policy-operator-install.yaml.template`: RHACM OperatorPolicy template
-- `policy-namespace-operator-install.yaml.template`: Namespace-scoped operator template
 - `README.md.template`: Policy documentation template
 
 ### Template Variables
@@ -226,12 +225,10 @@ rm -rf policies/test-op/
 helm template policies/test-op/
 rm -rf policies/test-op/
 
-# Test oc-mirror imageset generation (see oc-mirror/README.md)
-cd oc-mirror
-./generate-imageset-config.sh values.hub.yaml --output test-imageset.yaml
+# Test imageset generation
+./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --operators-only --output test-imageset.yaml
 cat test-imageset.yaml
 rm test-imageset.yaml
-cd ..
 ```
 
 ### Common Issues
@@ -249,6 +246,12 @@ cd ..
 
 Generate ImageSetConfiguration YAML for oc-mirror disconnected mirroring.
 
+This script automatically:
+- Discovers all enabled operators from your values files
+- Resolves operator dependencies recursively (e.g., `odf-operator` → `odf-dependencies` → sub-operators)
+- Adds default channels for each operator (required by oc-mirror)
+- Generates a complete ImageSetConfiguration ready for mirroring
+
 ### Usage
 
 ```bash
@@ -258,19 +261,35 @@ Generate ImageSetConfiguration YAML for oc-mirror disconnected mirroring.
 ### Examples
 
 ```bash
-# Generate for single environment
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --output imageset.yaml
+# Generate for single environment (auto-resolves all dependencies)
+./scripts/generate-imageset-config.sh autoshift/values.hub.yaml
 
 # Operators only (skip OpenShift platform)
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --operators-only -o imageset.yaml
+./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --operators-only
 
 # Multiple environments (merges channels)
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml,autoshift/values.sbx.yaml -o imageset.yaml
+./scripts/generate-imageset-config.sh autoshift/values.hub.yaml,autoshift/values.sbx.yaml
+
+# Custom output file
+./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --output my-imageset.yaml
 ```
+
+### Features
+
+- **Automatic Dependency Resolution**: Recursively discovers operator dependencies from the Red Hat operator catalog. For example, `odf-operator` automatically includes `odf-dependencies`, which in turn includes `ocs-operator`, `mcg-operator`, etc.
+
+- **Default Channel Inclusion**: oc-mirror requires the default channel for each operator. The script automatically looks up and includes default channels from the catalog cache.
+
+- **Channel Merging**: When using multiple values files with different channels for the same operator, all channels are included.
 
 ### Requirements
 
-Operators must have `{operator}-subscription-name` labels in values files. See [Developer Guide](../docs/developer-guide.md#autoshift-scripts-and-label-requirements).
+- `oc` CLI installed (for catalog extraction)
+- `jq` installed (for JSON parsing)
+- Pull secret configured for registry.redhat.io
+- Operators must have `{operator}-subscription-name` labels in values files
+
+See [Developer Guide](../docs/developer-guide.md#autoshift-scripts-and-label-requirements).
 
 ---
 
@@ -292,7 +311,16 @@ Update operator channels to latest versions from the Red Hat operator catalog.
 
 # Apply updates
 ./scripts/update-operator-channels.sh --pull-secret ~/.docker/config.json
+
+# Check only (exit 1 if updates available, for CI)
+./scripts/update-operator-channels.sh --pull-secret ~/.docker/config.json --check
 ```
+
+### Features
+
+- **Version-aware comparisons**: Only suggests upgrades, never downgrades. If your values file has a newer channel than the catalog, it shows "up to date (catalog has older)".
+- **Auto-discovery**: Finds all operators from `{operator}-subscription-name` labels in values files.
+- **Multi-format catalog support**: Reads channels from `catalog.json`, standalone channel files (`stable-3.16.json`), and `channels/` subdirectories.
 
 ### Requirements
 
@@ -403,7 +431,14 @@ Used internally by `make release`.
 
 ## 🔍 get-operator-dependencies.sh
 
-Extract operator dependencies from the Red Hat operator catalog.
+Extract operator dependencies from the Red Hat operator catalog. This script is automatically called by `generate-imageset-config.sh`, but can also be used standalone.
+
+### How It Works
+
+1. Extracts the operator catalog index image to a local cache
+2. Parses bundle metadata to find `olm.package.required` dependencies
+3. Recursively resolves transitive dependencies
+4. Merges in "known dependencies" from `known-dependencies.json` for operators that don't declare dependencies in the catalog (e.g., `odf-operator` → `odf-dependencies`)
 
 ### Usage
 
@@ -411,19 +446,46 @@ Extract operator dependencies from the Red Hat operator catalog.
 ./scripts/get-operator-dependencies.sh [options]
 ```
 
+### Options
+
+- `--catalog CATALOG`: Catalog image (default: registry.redhat.io/redhat/redhat-operator-index:v4.18)
+- `--operators PKG1,PKG2`: Comma-separated list of operators to check
+- `--all`: Show all operators with dependencies
+- `--no-recursive`: Disable recursive resolution (recursive is default)
+- `--json`: Output in JSON format
+- `--cache-dir DIR`: Directory to cache extracted catalog
+
 ### Examples
 
 ```bash
-# Check specific operators
-./scripts/get-operator-dependencies.sh --operators devspaces,odf-operator
+# Check specific operators with recursive resolution
+./scripts/get-operator-dependencies.sh --operators odf-operator --json
+
+# Check multiple operators
+./scripts/get-operator-dependencies.sh --operators devspaces,odf-operator,rhacs-operator
 
 # Show all operators with dependencies
 ./scripts/get-operator-dependencies.sh --all --json
+
+# Use specific catalog version
+./scripts/get-operator-dependencies.sh --catalog registry.redhat.io/redhat/redhat-operator-index:v4.17 --operators odf-operator
 ```
+
+### Known Dependencies
+
+The file `scripts/known-dependencies.json` contains manual dependencies for operators that don't declare them in the catalog. Currently:
+
+```json
+{
+  "odf-operator": ["odf-dependencies"]
+}
+```
+
+The script will recursively resolve `odf-dependencies` from the catalog to get the full dependency tree.
 
 ---
 
 ## 📚 See Also
 
 - [AutoShift Developer Guide](../docs/developer-guide.md)
-- [oc-mirror Documentation](../oc-mirror/README.md)
+- [oc-mirror Documentation](https://docs.openshift.com/container-platform/latest/installing/disconnected_install/installing-mirroring-disconnected.html)
