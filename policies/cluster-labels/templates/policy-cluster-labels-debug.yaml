@@ -26,7 +26,7 @@ spec:
           name: {{ $configPolicyName }}
         spec:
           remediationAction: enforce
-          object-templates-raw: | 
+          object-templates:
             - complianceType: mustonlyhave 
               objectDefinition: 
                 apiVersion: v1 
@@ -39,22 +39,62 @@ spec:
                     {{ "{{-" }} $clusterName := "managed-hub" {{ "}}" }}
                     {{ "{{-" }} (lookup "v1" "ConfigMap" "" (print "managed-cluster." $clusterName) "autoshift.io/cluster-labels" | default dict) | toRawJson {{ "}}" }}
                   lookupResult: |
-                    [
-                    {{ "{{-" }} $RegistryConfig := lookup "imageregistry.operator.openshift.io/v1" "Config" "" "cluster"  {{ "}}" }}
-                      {{ "{{-" }} if  not (empty $RegistryConfig)  {{ "}}" }}
-                        {{ "{{-" }} $spec := $RegistryConfig.spec {{ "}}" }} 
-                        {{ "{{-" }} $newSpec := unset $spec "nodeSelector" {{ "}}" }}
-                        {{ "{{-" }} $RegistryConfigNoStatus := unset $RegistryConfig "status"  {{ "}}" }}
-                        {{ "{{-" }} $objectDefinition := set $RegistryConfigNoStatus "spec" $newSpec {{ "}}" }}
-                          {
-                            "complianceType": "mustonlyhave",
-                            "pruneObjectBehavior": "{{ (((.Values).infraNodes).imageRegistry).pruneObjectBehavior | default "None" }}",
-                            "remediationAction": "enforce",
-                            "severity": "high",
-                            "objectDefinition": {{ "{{" }} $objectDefinition | toRawJson {{ "}}" }} 
-                          }
-                      {{ "{{-" }} end {{ "}}" }} 
-                    ]
+                    test
+                    {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}
+                    - complianceType: musthave
+                        objectDefinition:
+                          apiVersion: v1
+                          kind: Secret
+                          metadata:
+                            name: image-registry-private-configuration
+                            namespace: openshift-image-registry
+                          type: Opaque
+                          data:
+                            REGISTRY_STORAGE_S3_ACCESSKEY: {{`{{ fromSecret "openshift-image-registry" "image-registry-storage" "AWS_ACCESS_KEY_ID" }}`}}
+                            REGISTRY_STORAGE_S3_SECRETKEY: {{`{{ fromSecret "openshift-image-registry" "image-registry-storage" "AWS_SECRET_ACCESS_KEY" }}`}}
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: v1
+                        kind: ConfigMap
+                        metadata:
+                          name: image-registry-s3-bundle
+                          namespace: openshift-config
+                        data:
+                          ca-bundle.crt: '{{`{{ fromSecret "openshift-ingress" (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default").spec.defaultCertificate.name "tls.crt" | base64dec | toRawJson | toLiteral }}`}}'
+                    {{`{{hub- end hub}}`}}
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: imageregistry.operator.openshift.io/v1
+                        kind: Config
+                        metadata:
+                          name: cluster
+                        spec:
+                          logLevel: Normal
+                          rolloutStrategy: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-rollout-strategy" | default "Recreate" hub}}`}}
+                          operatorLogLevel: Normal
+                          requests:
+                            read:
+                              maxWaitInQueue: 0s
+                            write:
+                              maxWaitInQueue: 0s
+                          replicas: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-replicas" | default "1" hub}}`}}
+                          managementState: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-management-state" | default "Managed" hub}}`}}
+                          storage:
+                            managementState: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-storage-management-state" | default "Managed" hub}}`}}
+                            {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}}`}}
+                            pvc:
+                              claim: image-registry-storage
+                            {{`{{hub- else if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}
+                            s3:
+                              managementState: Unmanaged
+                              region: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-s3-region" | default "us-east-1" hub}}`}}
+                              bucket: {{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_NAME" }}`}}
+                              regionEndpoint: 'https://{{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_HOST" }}`}}:{{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_PORT" }}`}}'
+                              virtualHostedStyle: false
+                              encrypt: false
+                              trustedCA:
+                                name: image-registry-s3-bundle
+                            {{`{{hub- end hub}}`}}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
