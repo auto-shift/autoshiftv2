@@ -39,7 +39,7 @@ spec:
                     {{ "{{-" }} $clusterName := "managed-hub" {{ "}}" }}
                     {{ "{{-" }} (lookup "v1" "ConfigMap" "" (print "managed-cluster." $clusterName) "autoshift.io/cluster-labels" | default dict) | toRawJson {{ "}}" }}
                   lookupResult: |
-                    test
+                    [
                     {{ "{{-" }} $RegistryConfig := lookup "imageregistry.operator.openshift.io/v1" "Config" "" "cluster"  {{ "}}" }}
                       {{ "{{-" }} if  not (empty $RegistryConfig)  {{ "}}" }}
                         {{ "{{-" }} $spec := $RegistryConfig.spec {{ "}}" }} 
@@ -48,12 +48,13 @@ spec:
                         {{ "{{-" }} $objectDefinition := set $RegistryConfigNoStatus "spec" $newSpec {{ "-}}" }}
                           {
                             "complianceType": "mustonlyhave",
-                            "pruneObjectBehavior": "{{ "None" }}",
+                            "pruneObjectBehavior": "{{ .Values.infraNodes.imageRegistry.pruneObjectBehavior | default "None" }}",
                             "remediationAction": "enforce",
                             "severity": "high",
                             "objectDefinition": {{ "{{" }} $objectDefinition | toRawJson {{ "}}" }} 
                           }
                       {{ "{{-" }} end {{ "}}" }} 
+                    ]
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
