@@ -1,9 +1,9 @@
 # AUTOSHIFT
-# Vault Helm Chart v0.1
+# Vault Helm Chart
 
-## v0.1 Features
+## Features
 * Vault and vault-agent-injector deployed to hub cluster via policy
-
+* HA w/ raft storage, no tls option (yet)
 
 
 
