@@ -23,22 +23,22 @@ spec:
         metadata:
           name: {{ $configPolicyName }}
         spec:
-          object-templates-raw: | 
+          object-templates-raw: |
             [
-            {{ "{{-" }} $RegistryConfig := lookup "imageregistry.operator.openshift.io/v1" "Config" "" "cluster"  {{ "}}" }}
-              {{ "{{-" }} if  not (empty $RegistryConfig)  {{ "}}" }}
-                {{ "{{-" }} $spec := $RegistryConfig.spec {{ "}}" }} 
-                {{ "{{-" }} $newSpec := unset $spec "nodeSelector" {{ "}}" }}
-                {{ "{{-" }} $RegistryConfigNoStatus := unset $RegistryConfig "status"  {{ "}}" }}
-                {{ "{{-" }} $objectDefinition := set $RegistryConfigNoStatus "spec" $newSpec {{ "-}}" }}
-                  {
-                    "complianceType": "mustonlyhave",
-                    "pruneObjectBehavior": "{{ .Values.infraNodes.imageRegistry.pruneObjectBehavior | default "None" }}",
-                    "remediationAction": "enforce",
-                    "severity": "high",
-                    "objectDefinition": {{ "{{" }} $objectDefinition | toRawJson {{ "}}" }} 
-                  }
-              {{ "{{-" }} end {{ "}}" }} 
+            {{ "{{-" }} $RegistryConfig := lookup "imageregistry.operator.openshift.io/v1" "Config" "" "cluster" {{ "-}}" }}
+            {{ "{{-" }} if not (empty $RegistryConfig) {{ "-}}" }}
+            {{ "{{-" }} $spec := $RegistryConfig.spec {{ "-}}" }}
+            {{ "{{-" }} $newSpec := unset $spec "nodeSelector" {{ "-}}" }}
+            {{ "{{-" }} $RegistryConfigNoStatus := unset $RegistryConfig "status" {{ "-}}" }}
+            {{ "{{-" }} $objectDefinition := set $RegistryConfigNoStatus "spec" $newSpec {{ "-}}" }}
+            {
+              "complianceType": "mustonlyhave",
+              "pruneObjectBehavior": "{{ .Values.infraNodes.imageRegistry.pruneObjectBehavior | default "None" }}",
+              "remediationAction": "enforce",
+              "severity": "high",
+              "objectDefinition": {{ "{{" }} $objectDefinition | toRawJson {{ "}}" }}
+            }
+            {{ "{{-" }} end {{ "-}}" }}
             ]
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
