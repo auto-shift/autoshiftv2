@@ -1,0 +1,78 @@
+---
+kind: CronJob
+apiVersion: batch/v1
+metadata:
+  name: cronjob-vault-unseal
+  namespace: vault
+spec:
+  schedule: '*/10 * * * *'
+  concurrencyPolicy: Forbid
+  suspend: false
+  jobTemplate:
+    metadata:
+      creationTimestamp: null
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          creationTimestamp: null
+        spec:
+          restartPolicy: Never
+          activeDeadlineSeconds: 500
+          serviceAccountName: vault
+          schedulerName: default-scheduler
+          terminationGracePeriodSeconds: 30
+          securityContext: {}
+          containers:
+            - name: vault-unseal
+              image: 'quay.io/openshift/origin-cli:latest'
+              command:
+                - /bin/bash
+                - '-c'
+                - >-
+                  oc -n vault exec -ti vault-0 -- vault operator unseal -tls-skip-verify $(cat /etc/secrets/password)
+              resources: {}
+              volumeMounts:
+                - name: vault-unseal
+                  mountPath: /etc/secrets
+              terminationMessagePath: /dev/termination-log
+              terminationMessagePolicy: File
+              imagePullPolicy: Always
+          serviceAccount: vault
+          volumes:
+            - name: vault-unseal
+              secret:
+                secretName: vault-unseal
+                defaultMode: 420
+          dnsPolicy: ClusterFirst
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 5
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: vault-unseal
+  namespace: vault
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "update", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: vault-unseal
+  namespace: vault
+subjects:
+  - kind: ServiceAccount
+    name: vault
+roleRef:
+  kind: Role
+  name: vault-unseal
+  apiGroup: rbac.authorization.k8s.io
