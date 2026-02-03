@@ -144,6 +144,29 @@ Map OVS bridges to OVN localnet networks for User Defined Networks. This is requ
 | `nmstate-ovn-mapping-{N}-localnet` | Localnet network name | `localnet1` |
 | `nmstate-ovn-mapping-{N}-bridge` | OVS bridge to map | `ovs-br1` |
 
+### Host-Specific Configuration
+
+For scenarios where different nodes need different configurations (e.g., different static IPs), use the `nmstate-host-{H}` prefix. Each host identifier `{H}` creates a separate NNCP targeting that specific hostname.
+
+| Label | Description | Example |
+|-------|-------------|---------|
+| `nmstate-host-{H}-hostname` | Target node hostname | `worker-0.ocp.example.com` |
+| `nmstate-host-{H}-bond-{N}` | Bond interface name | `bond0` |
+| `nmstate-host-{H}-bond-{N}-mode` | Bond mode | `802.3ad` |
+| `nmstate-host-{H}-bond-{N}-port-{M}` | Bond port | `eno1` |
+| `nmstate-host-{H}-bond-{N}-ipv4` | IPv4 mode | `static` |
+| `nmstate-host-{H}-bond-{N}-ipv4-address-{M}` | Static IP | `192.168.1.10` |
+| `nmstate-host-{H}-bond-{N}-ipv4-address-{M}-cidr` | CIDR prefix | `24` |
+
+The same pattern applies for all other interface types:
+- `nmstate-host-{H}-vlan-{N}...`
+- `nmstate-host-{H}-ethernet-{N}...`
+- `nmstate-host-{H}-ovs-bridge-{N}...`
+- `nmstate-host-{H}-ovn-mapping-{N}...`
+- `nmstate-host-{H}-route-{N}...`
+- `nmstate-host-{H}-dns-server-{N}`
+- `nmstate-host-{H}-dns-search-{N}`
+
 ## Examples
 
 ### Basic Bond with DHCP
@@ -284,6 +307,50 @@ spec:
       role: Secondary
       physicalNetworkName: localnet1
 ```
+
+### Per-Host Static IP Configuration
+
+When each node needs a unique static IP address:
+
+```yaml
+labels:
+  nmstate: 'true'
+  # Worker 0 - 192.168.1.10
+  nmstate-host-1-hostname: 'worker-0.ocp.example.com'
+  nmstate-host-1-bond-1: 'bond0'
+  nmstate-host-1-bond-1-mode: '802.3ad'
+  nmstate-host-1-bond-1-port-1: 'eno1'
+  nmstate-host-1-bond-1-port-2: 'eno2'
+  nmstate-host-1-bond-1-ipv4: 'static'
+  nmstate-host-1-bond-1-ipv4-address-1: '192.168.1.10'
+  nmstate-host-1-bond-1-ipv4-address-1-cidr: '24'
+  nmstate-host-1-bond-1-ipv6: 'disabled'
+  # Worker 1 - 192.168.1.11
+  nmstate-host-2-hostname: 'worker-1.ocp.example.com'
+  nmstate-host-2-bond-1: 'bond0'
+  nmstate-host-2-bond-1-mode: '802.3ad'
+  nmstate-host-2-bond-1-port-1: 'eno1'
+  nmstate-host-2-bond-1-port-2: 'eno2'
+  nmstate-host-2-bond-1-ipv4: 'static'
+  nmstate-host-2-bond-1-ipv4-address-1: '192.168.1.11'
+  nmstate-host-2-bond-1-ipv4-address-1-cidr: '24'
+  nmstate-host-2-bond-1-ipv6: 'disabled'
+  # Worker 2 - 192.168.1.12
+  nmstate-host-3-hostname: 'worker-2.ocp.example.com'
+  nmstate-host-3-bond-1: 'bond0'
+  nmstate-host-3-bond-1-mode: '802.3ad'
+  nmstate-host-3-bond-1-port-1: 'eno1'
+  nmstate-host-3-bond-1-port-2: 'eno2'
+  nmstate-host-3-bond-1-ipv4: 'static'
+  nmstate-host-3-bond-1-ipv4-address-1: '192.168.1.12'
+  nmstate-host-3-bond-1-ipv4-address-1-cidr: '24'
+  nmstate-host-3-bond-1-ipv6: 'disabled'
+```
+
+This generates three separate NNCPs:
+- `nmstate-host-1` → targets `worker-0.ocp.example.com`
+- `nmstate-host-2` → targets `worker-1.ocp.example.com`
+- `nmstate-host-3` → targets `worker-2.ocp.example.com`
 
 ## MAC Address Format
 

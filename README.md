@@ -863,6 +863,18 @@ See [policies/nmstate/README.md](policies/nmstate/README.md) for detailed docume
 | `nmstate-ovn-mapping-{N}-localnet`        | string   |                | Localnet network name for UDN (e.g., `localnet1`)          |
 | `nmstate-ovn-mapping-{N}-bridge`          | string   |                | OVS bridge to map (e.g., `ovs-br1`)                        |
 
+#### Host-Specific Configuration
+
+For per-node configurations (different IPs per host), use the `nmstate-host-{H}` prefix. Each host gets its own NNCP.
+
+| Variable                                       | Type     | Default Value  | Notes                                                      |
+| ---------------------------------------------- | -------- | -------------- | ---------------------------------------------------------- |
+| `nmstate-host-{H}-hostname`                    | string   |                | Target node hostname (e.g., `worker-0.ocp.example.com`)    |
+| `nmstate-host-{H}-bond-{N}`                    | string   |                | Bond interface name                                        |
+| `nmstate-host-{H}-bond-{N}-ipv4-address-{M}`   | string   |                | Static IP for this host                                    |
+
+All interface types support host-specific prefixes: `nmstate-host-{H}-bond-*`, `nmstate-host-{H}-vlan-*`, `nmstate-host-{H}-ovs-bridge-*`, etc.
+
 #### Legacy File-Based Configuration (Deprecated)
 
 | Variable                        | Type           | Default Value         | Notes                                                                             |
@@ -897,6 +909,30 @@ nmstate-ovs-bridge-1-port-1: 'bond1'
 # Map OVS bridge to OVN localnet for UDN
 nmstate-ovn-mapping-1-localnet: 'localnet1'
 nmstate-ovn-mapping-1-bridge: 'ovs-br1'
+```
+
+#### NMState Example: Per-Host Static IPs
+
+```yaml
+nmstate: 'true'
+# Host 1 - worker-0 with 192.168.1.10
+nmstate-host-1-hostname: 'worker-0.ocp.example.com'
+nmstate-host-1-bond-1: 'bond0'
+nmstate-host-1-bond-1-mode: '802.3ad'
+nmstate-host-1-bond-1-port-1: 'eno1'
+nmstate-host-1-bond-1-port-2: 'eno2'
+nmstate-host-1-bond-1-ipv4: 'static'
+nmstate-host-1-bond-1-ipv4-address-1: '192.168.1.10'
+nmstate-host-1-bond-1-ipv4-address-1-cidr: '24'
+# Host 2 - worker-1 with 192.168.1.11
+nmstate-host-2-hostname: 'worker-1.ocp.example.com'
+nmstate-host-2-bond-1: 'bond0'
+nmstate-host-2-bond-1-mode: '802.3ad'
+nmstate-host-2-bond-1-port-1: 'eno1'
+nmstate-host-2-bond-1-port-2: 'eno2'
+nmstate-host-2-bond-1-ipv4: 'static'
+nmstate-host-2-bond-1-ipv4-address-1: '192.168.1.11'
+nmstate-host-2-bond-1-ipv4-address-1-cidr: '24'
 ```
 
 ### Manual Remediations
