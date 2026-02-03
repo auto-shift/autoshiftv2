@@ -1,4 +1,4 @@
-# Default values for logging.
+# Default values for nmstate.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 policy_namespace: open-cluster-policies
@@ -12,25 +12,131 @@ nmstate:
 ### AutoShift Labels Documentation
 # The following labels can be set at the cluster or clusterset level to configure this policy:
 #
-# Enable/Disable:
-# nmstate<bool>: 'true' or 'false' - Enable Kubernetes NMState Operator for network configuration (default: 'false')
+# ============================================
+# ENABLE/DISABLE
+# ============================================
+# nmstate<bool>: 'true' or 'false' - Enable Kubernetes NMState Operator (default: 'false')
 #
-# Configuration:
+# ============================================
+# OPERATOR CONFIGURATION
+# ============================================
 # nmstate-channel<String>: Operator channel (default: 'stable')
 # nmstate-version<String>: Specific operator version (CSV) to install (optional)
 # nmstate-source<String>: Operator catalog source (default: 'redhat-operators')
 # nmstate-source-namespace<String>: Catalog namespace (default: 'openshift-marketplace')
 #
-# Network Configuration:
+# ============================================
+# ETHERNET INTERFACES
+# ============================================
+# nmstate-ethernet-{N}<String>: Interface name (e.g., 'eno1')
+# nmstate-ethernet-{N}-state<String>: 'up' or 'down' (default: 'up')
+# nmstate-ethernet-{N}-mac<String>: MAC address with dots (e.g., 'aa.bb.cc.dd.ee.ff')
+# nmstate-ethernet-{N}-mtu<String>: MTU value (e.g., '9000')
+#
+# ============================================
+# BOND INTERFACES
+# ============================================
+# nmstate-bond-{N}<String>: Bond interface name (e.g., 'bond0')
+# nmstate-bond-{N}-state<String>: 'up' or 'down' (default: 'up')
+# nmstate-bond-{N}-mode<String>: Bond mode - 'balance-rr', 'active-backup', 'balance-xor',
+#                                'broadcast', '802.3ad', 'balance-tlb', 'balance-alb'
+# nmstate-bond-{N}-mtu<String>: MTU value (e.g., '9000')
+# nmstate-bond-{N}-mac<String>: MAC address with dots (e.g., 'aa.bb.cc.dd.ee.ff')
+# nmstate-bond-{N}-miimon<String>: MII monitoring interval in ms (e.g., '100')
+# nmstate-bond-{N}-port-{M}<String>: Port interface name (e.g., 'eno1')
+#
+# Bond IPv4 Configuration:
+# nmstate-bond-{N}-ipv4<String>: 'dhcp', 'static', or 'disabled'
+# nmstate-bond-{N}-ipv4-address-{M}<String>: IP address (e.g., '192.168.1.10')
+# nmstate-bond-{N}-ipv4-address-{M}-cidr<String>: CIDR prefix length (e.g., '24')
+# nmstate-bond-{N}-ipv4-gateway<String>: Default gateway (e.g., '192.168.1.1')
+#
+# Bond IPv6 Configuration:
+# nmstate-bond-{N}-ipv6<String>: 'dhcp', 'autoconf', 'static', or 'disabled'
+# nmstate-bond-{N}-ipv6-address-{M}<String>: IPv6 address
+# nmstate-bond-{N}-ipv6-address-{M}-cidr<String>: CIDR prefix length
+# nmstate-bond-{N}-ipv6-gateway<String>: Default gateway
+#
+# ============================================
+# VLAN INTERFACES
+# ============================================
+# nmstate-vlan-{N}<String>: VLAN interface name (e.g., 'bond0.100')
+# nmstate-vlan-{N}-id<String>: VLAN ID (e.g., '100')
+# nmstate-vlan-{N}-base<String>: Base interface name (e.g., 'bond0')
+# nmstate-vlan-{N}-state<String>: 'up' or 'down' (default: 'up')
+# nmstate-vlan-{N}-mtu<String>: MTU value
+#
+# VLAN IPv4 Configuration:
+# nmstate-vlan-{N}-ipv4<String>: 'dhcp', 'static', or 'disabled'
+# nmstate-vlan-{N}-ipv4-address-{M}<String>: IP address
+# nmstate-vlan-{N}-ipv4-address-{M}-cidr<String>: CIDR prefix length
+# nmstate-vlan-{N}-ipv4-gateway<String>: Default gateway
+#
+# ============================================
+# STATIC ROUTES
+# ============================================
+# nmstate-route-{N}-dest<String>: Destination network (e.g., '10.0.0.0')
+# nmstate-route-{N}-cidr<String>: CIDR prefix length (e.g., '8')
+# nmstate-route-{N}-gateway<String>: Next hop gateway (e.g., '192.168.1.1')
+# nmstate-route-{N}-interface<String>: Outgoing interface (e.g., 'bond0')
+# nmstate-route-{N}-metric<String>: Route metric (optional)
+# nmstate-route-{N}-table<String>: Route table ID (optional, default: '254')
+#
+# ============================================
+# DNS CONFIGURATION
+# ============================================
+# nmstate-dns-server-{N}<String>: DNS server IP (e.g., '8.8.8.8')
+# nmstate-dns-search-{N}<String>: DNS search domain (e.g., 'example.com')
+#
+# ============================================
+# NODE SELECTOR
+# ============================================
+# nmstate-nodeselector-{N}-key<String>: Node label key (e.g., 'node-role.kubernetes.io/worker')
+# nmstate-nodeselector-{N}-value<String>: Node label value (e.g., '' for exists)
+#
+# ============================================
+# EXAMPLES
+# ============================================
+# Basic bond with DHCP:
+#   autoshift.io/nmstate: 'true'
+#   autoshift.io/nmstate-bond-1: 'bond0'
+#   autoshift.io/nmstate-bond-1-mode: '802.3ad'
+#   autoshift.io/nmstate-bond-1-port-1: 'eno1'
+#   autoshift.io/nmstate-bond-1-port-2: 'eno2'
+#   autoshift.io/nmstate-bond-1-ipv4: 'dhcp'
+#   autoshift.io/nmstate-bond-1-ipv6: 'disabled'
+#
+# Bond with static IP:
+#   autoshift.io/nmstate: 'true'
+#   autoshift.io/nmstate-bond-1: 'bond0'
+#   autoshift.io/nmstate-bond-1-mode: '802.3ad'
+#   autoshift.io/nmstate-bond-1-mtu: '9000'
+#   autoshift.io/nmstate-bond-1-port-1: 'eno1'
+#   autoshift.io/nmstate-bond-1-port-2: 'eno2'
+#   autoshift.io/nmstate-bond-1-ipv4: 'static'
+#   autoshift.io/nmstate-bond-1-ipv4-address-1: '192.168.1.10'
+#   autoshift.io/nmstate-bond-1-ipv4-address-1-cidr: '24'
+#   autoshift.io/nmstate-bond-1-ipv4-gateway: '192.168.1.1'
+#
+# VLAN on bond:
+#   autoshift.io/nmstate-vlan-1: 'bond0.100'
+#   autoshift.io/nmstate-vlan-1-id: '100'
+#   autoshift.io/nmstate-vlan-1-base: 'bond0'
+#   autoshift.io/nmstate-vlan-1-ipv4: 'dhcp'
+#
+# Static route:
+#   autoshift.io/nmstate-route-1-dest: '10.0.0.0'
+#   autoshift.io/nmstate-route-1-cidr: '8'
+#   autoshift.io/nmstate-route-1-gateway: '192.168.1.1'
+#   autoshift.io/nmstate-route-1-interface: 'bond0'
+#
+# Apply to specific nodes:
+#   autoshift.io/nmstate-nodeselector-1-key: 'node-role.kubernetes.io/worker'
+#   autoshift.io/nmstate-nodeselector-1-value: ''
+#
+# ============================================
+# LEGACY FILE-BASED CONFIGURATION (deprecated)
+# ============================================
 # nmstate-nncp-<name><String>: Filename of NMState config in files/ directory
 #                             Can be specified multiple times for multiple configs
 #                             Must have unique suffixes (e.g., nmstate-nncp-bond1, nmstate-nncp-vlan2)
-#
-# Note: Declaratively configures Red Hat CoreOS network settings
-# Common uses include bonds, VLANs, and bridges
-# Configuration files must exist in the files/ directory
-#
-# Examples:
-# autoshift.io/nmstate: 'true'
-# autoshift.io/nmstate-nncp-bond1: 'example-1g-bond'
-# autoshift.io/nmstate-nncp-vlan2: 'example-vlan-config'
