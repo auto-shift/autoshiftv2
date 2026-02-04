@@ -28,7 +28,6 @@ spec:
           name: nmstate-operator-nmstate-nncp
         spec:
           remediationAction: enforce
-          recreateOption: IfRequired
           severity: high
           object-templates-raw: |
             {{ "{{hub-" }} $labels := .ManagedClusterLabels {{ "hub}}" }}
@@ -109,7 +108,7 @@ spec:
 
             {{ "{{hub-" }} $nodeSelectorIds := list {{ "hub}}" }}
             {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
-              {{ "{{hub-" }} $nsLabel := printf "autoshift.io/nmstate-nodeselector-%s-key" $id {{ "hub}}" }}
+              {{ "{{hub-" }} $nsLabel := printf "autoshift.io/nmstate-nodeselector-%s-name" $id {{ "hub}}" }}
               {{ "{{hub-" }} if index $labels $nsLabel {{ "hub}}" }}
                 {{ "{{hub-" }} $nodeSelectorIds = append $nodeSelectorIds $id {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
@@ -126,9 +125,14 @@ spec:
                   {{ "{{hub-" }} if gt (len $nodeSelectorIds) 0 {{ "hub}}" }}
                   nodeSelector:
                     {{ "{{hub-" }} range $nsId := $nodeSelectorIds {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsKey := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-key" $nsId) {{ "hub}}" }}
+                    {{ "{{hub-" }} $nsPrefix := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-prefix" $nsId) | default "" {{ "hub}}" }}
+                    {{ "{{hub-" }} $nsName := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-name" $nsId) {{ "hub}}" }}
                     {{ "{{hub-" }} $nsValue := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-value" $nsId) | default "" {{ "hub}}" }}
-                    {{ "{{hub" }} $nsKey {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
+                    {{ "{{hub-" }} if $nsPrefix {{ "hub}}" }}
+                    {{ "{{hub" }} $nsPrefix {{ "hub}}" }}/{{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
+                    {{ "{{hub-" }} else {{ "hub}}" }}
+                    {{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   desiredState:

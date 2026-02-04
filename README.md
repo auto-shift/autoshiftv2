@@ -843,7 +843,8 @@ See [policies/nmstate/README.md](policies/nmstate/README.md) for detailed docume
 
 | Variable                                  | Type     | Default Value  | Notes                                                      |
 | ----------------------------------------- | -------- | -------------- | ---------------------------------------------------------- |
-| `nmstate-nodeselector-{N}-key`            | string   |                | Node label key (e.g., `node-role.kubernetes.io/worker`)    |
+| `nmstate-nodeselector-{N}-prefix`         | string   |                | Node label prefix (e.g., `node-role.kubernetes.io`) - optional |
+| `nmstate-nodeselector-{N}-name`           | string   |                | Node label name (e.g., `worker`)                           |
 | `nmstate-nodeselector-{N}-value`          | string   |                | Node label value (empty string for exists)                 |
 
 #### OVS Bridge Configuration (for UDN)
