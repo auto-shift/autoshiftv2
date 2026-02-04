@@ -1,5 +1,5 @@
 # This policy creates per-host NodeNetworkConfigurationPolicy resources from labels
-# Each host can have unique network configuration (different IPs, bonds, etc.)
+# Use this when different hosts need different network configurations (e.g., different IPs)
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -30,17 +30,14 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates-raw: |
-
             {{ "{{hub-" }} $labels := .ManagedClusterLabels {{ "hub}}" }}
+            {{ "{{hub-" }} $idRange := list "1" "2" "3" "4" "5" "6" "7" "8" "9" "10" {{ "hub}}" }}
 
             {{ "{{hub-" }} $hostIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/nmstate-host-") ($label | hasSuffix "-hostname") {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix "autoshift.io/nmstate-host-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} $id = trimSuffix "-hostname" $id {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $hostIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $hostIds = append $hostIds $id {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $hostLabel := printf "autoshift.io/nmstate-host-%s-hostname" $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $hostLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $hostIds = append $hostIds $id {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
@@ -49,78 +46,66 @@ spec:
             {{ "{{hub-" }} $hostPrefix := printf "autoshift.io/nmstate-host-%s-" $hostId {{ "hub}}" }}
 
             {{ "{{hub-" }} $bondIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sbond-" $hostPrefix)) (not ($label | contains "-port-")) (not ($label | contains "-mode")) (not ($label | contains "-mtu")) (not ($label | contains "-mac")) (not ($label | contains "-miimon")) (not ($label | contains "-ipv4")) (not ($label | contains "-ipv6")) (not ($label | contains "-state")) {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix (printf "%sbond-" $hostPrefix) $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $bondIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $bondIds = append $bondIds $id {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $bondLabel := printf "%sbond-%s" $hostPrefix $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $bondLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $bondIds = append $bondIds $id {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
             {{ "{{hub-" }} $vlanIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix (printf "%svlan-" $hostPrefix)) (not ($label | contains "-id")) (not ($label | contains "-base")) (not ($label | contains "-mtu")) (not ($label | contains "-ipv4")) (not ($label | contains "-ipv6")) (not ($label | contains "-state")) {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix (printf "%svlan-" $hostPrefix) $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $vlanIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $vlanIds = append $vlanIds $id {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $vlanLabel := printf "%svlan-%s" $hostPrefix $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $vlanLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $vlanIds = append $vlanIds $id {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
             {{ "{{hub-" }} $ethernetIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sethernet-" $hostPrefix)) (not ($label | contains "-mac")) (not ($label | contains "-mtu")) (not ($label | contains "-state")) (not ($label | contains "-ipv4")) (not ($label | contains "-ipv6")) {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix (printf "%sethernet-" $hostPrefix) $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $ethernetIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $ethernetIds = append $ethernetIds $id {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $ethLabel := printf "%sethernet-%s" $hostPrefix $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $ethLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $ethernetIds = append $ethernetIds $id {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
             {{ "{{hub-" }} $ovsBridgeIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sovs-bridge-" $hostPrefix)) (not ($label | contains "-port-")) (not ($label | contains "-stp")) (not ($label | contains "-allow-extra-patch-ports")) (not ($label | contains "-mcast-snooping")) {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix (printf "%sovs-bridge-" $hostPrefix) $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $ovsBridgeIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $ovsBridgeIds = append $ovsBridgeIds $id {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $ovsLabel := printf "%sovs-bridge-%s" $hostPrefix $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $ovsLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $ovsBridgeIds = append $ovsBridgeIds $id {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
             {{ "{{hub-" }} $ovnMappingIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sovn-mapping-" $hostPrefix)) ($label | hasSuffix "-localnet") {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix (printf "%sovn-mapping-" $hostPrefix) $label {{ "hub}}" }}
-                {{ "{{hub-" }} $id = trimSuffix "-localnet" $id {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $ovnMappingIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $ovnMappingIds = append $ovnMappingIds $id {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $ovnLabel := printf "%sovn-mapping-%s-localnet" $hostPrefix $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $ovnLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $ovnMappingIds = append $ovnMappingIds $id {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
             {{ "{{hub-" }} $routeIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sroute-" $hostPrefix)) ($label | hasSuffix "-dest") {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix (printf "%sroute-" $hostPrefix) $label {{ "hub}}" }}
-                {{ "{{hub-" }} $id = trimSuffix "-dest" $id {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $routeIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $routeIds = append $routeIds $id {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $routeLabel := printf "%sroute-%s-dest" $hostPrefix $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $routeLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $routeIds = append $routeIds $id {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} $dnsServers := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if $label | hasPrefix (printf "%sdns-server-" $hostPrefix) {{ "hub}}" }}
-                {{ "{{hub-" }} $dnsServers = append $dnsServers $value {{ "hub}}" }}
+            {{ "{{hub-" }} $dnsServerIds := list {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $dnsLabel := printf "%sdns-server-%s" $hostPrefix $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $dnsLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $dnsServerIds = append $dnsServerIds $id {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} $dnsSearch := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if $label | hasPrefix (printf "%sdns-search-" $hostPrefix) {{ "hub}}" }}
-                {{ "{{hub-" }} $dnsSearch = append $dnsSearch $value {{ "hub}}" }}
+            {{ "{{hub-" }} $dnsSearchIds := list {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $searchLabel := printf "%sdns-search-%s" $hostPrefix $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $searchLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $dnsSearchIds = append $dnsSearchIds $id {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
@@ -162,27 +147,31 @@ spec:
                       {{ "{{hub-" }} $bondIpv6 := index $labels (printf "%sbond-%s-ipv6" $hostPrefix $bondId) | default "disabled" {{ "hub}}" }}
 
                       {{ "{{hub-" }} $bondPorts := list {{ "hub}}" }}
-                      {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-                        {{ "{{hub-" }} if $label | hasPrefix (printf "%sbond-%s-port-" $hostPrefix $bondId) {{ "hub}}" }}
-                          {{ "{{hub-" }} $bondPorts = append $bondPorts $value {{ "hub}}" }}
+                      {{ "{{hub-" }} range $portId := $idRange {{ "hub}}" }}
+                        {{ "{{hub-" }} $portLabel := printf "%sbond-%s-port-%s" $hostPrefix $bondId $portId {{ "hub}}" }}
+                        {{ "{{hub-" }} $portValue := index $labels $portLabel {{ "hub}}" }}
+                        {{ "{{hub-" }} if $portValue {{ "hub}}" }}
+                          {{ "{{hub-" }} $bondPorts = append $bondPorts $portValue {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
                       {{ "{{hub-" }} $bondIpv4Addrs := list {{ "hub}}" }}
-                      {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-                        {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sbond-%s-ipv4-address-" $hostPrefix $bondId)) (not ($label | hasSuffix "-cidr")) {{ "hub}}" }}
-                          {{ "{{hub-" }} $addrId := trimPrefix (printf "%sbond-%s-ipv4-address-" $hostPrefix $bondId) $label {{ "hub}}" }}
+                      {{ "{{hub-" }} range $addrId := $idRange {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrLabel := printf "%sbond-%s-ipv4-address-%s" $hostPrefix $bondId $addrId {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrValue := index $labels $addrLabel {{ "hub}}" }}
+                        {{ "{{hub-" }} if $addrValue {{ "hub}}" }}
                           {{ "{{hub-" }} $cidr := index $labels (printf "%sbond-%s-ipv4-address-%s-cidr" $hostPrefix $bondId $addrId) | default "24" {{ "hub}}" }}
-                          {{ "{{hub-" }} $bondIpv4Addrs = append $bondIpv4Addrs (dict "ip" $value "prefix" $cidr) {{ "hub}}" }}
+                          {{ "{{hub-" }} $bondIpv4Addrs = append $bondIpv4Addrs (dict "ip" $addrValue "prefix" $cidr) {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
                       {{ "{{hub-" }} $bondIpv6Addrs := list {{ "hub}}" }}
-                      {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-                        {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sbond-%s-ipv6-address-" $hostPrefix $bondId)) (not ($label | hasSuffix "-cidr")) {{ "hub}}" }}
-                          {{ "{{hub-" }} $addrId := trimPrefix (printf "%sbond-%s-ipv6-address-" $hostPrefix $bondId) $label {{ "hub}}" }}
+                      {{ "{{hub-" }} range $addrId := $idRange {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrLabel := printf "%sbond-%s-ipv6-address-%s" $hostPrefix $bondId $addrId {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrValue := index $labels $addrLabel {{ "hub}}" }}
+                        {{ "{{hub-" }} if $addrValue {{ "hub}}" }}
                           {{ "{{hub-" }} $cidr := index $labels (printf "%sbond-%s-ipv6-address-%s-cidr" $hostPrefix $bondId $addrId) | default "64" {{ "hub}}" }}
-                          {{ "{{hub-" }} $bondIpv6Addrs = append $bondIpv6Addrs (dict "ip" $value "prefix" $cidr) {{ "hub}}" }}
+                          {{ "{{hub-" }} $bondIpv6Addrs = append $bondIpv6Addrs (dict "ip" $addrValue "prefix" $cidr) {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
@@ -256,11 +245,12 @@ spec:
                       {{ "{{hub-" }} $vlanIpv4 := index $labels (printf "%svlan-%s-ipv4" $hostPrefix $vlanId) | default "disabled" {{ "hub}}" }}
 
                       {{ "{{hub-" }} $vlanIpv4Addrs := list {{ "hub}}" }}
-                      {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-                        {{ "{{hub-" }} if and ($label | hasPrefix (printf "%svlan-%s-ipv4-address-" $hostPrefix $vlanId)) (not ($label | hasSuffix "-cidr")) {{ "hub}}" }}
-                          {{ "{{hub-" }} $addrId := trimPrefix (printf "%svlan-%s-ipv4-address-" $hostPrefix $vlanId) $label {{ "hub}}" }}
+                      {{ "{{hub-" }} range $addrId := $idRange {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrLabel := printf "%svlan-%s-ipv4-address-%s" $hostPrefix $vlanId $addrId {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrValue := index $labels $addrLabel {{ "hub}}" }}
+                        {{ "{{hub-" }} if $addrValue {{ "hub}}" }}
                           {{ "{{hub-" }} $cidr := index $labels (printf "%svlan-%s-ipv4-address-%s-cidr" $hostPrefix $vlanId $addrId) | default "24" {{ "hub}}" }}
-                          {{ "{{hub-" }} $vlanIpv4Addrs = append $vlanIpv4Addrs (dict "ip" $value "prefix" $cidr) {{ "hub}}" }}
+                          {{ "{{hub-" }} $vlanIpv4Addrs = append $vlanIpv4Addrs (dict "ip" $addrValue "prefix" $cidr) {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
@@ -299,9 +289,11 @@ spec:
                       {{ "{{hub-" }} $ovsMcastSnooping := index $labels (printf "%sovs-bridge-%s-mcast-snooping" $hostPrefix $ovsId) | default "" {{ "hub}}" }}
 
                       {{ "{{hub-" }} $ovsBridgePorts := list {{ "hub}}" }}
-                      {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-                        {{ "{{hub-" }} if $label | hasPrefix (printf "%sovs-bridge-%s-port-" $hostPrefix $ovsId) {{ "hub}}" }}
-                          {{ "{{hub-" }} $ovsBridgePorts = append $ovsBridgePorts $value {{ "hub}}" }}
+                      {{ "{{hub-" }} range $portId := $idRange {{ "hub}}" }}
+                        {{ "{{hub-" }} $portLabel := printf "%sovs-bridge-%s-port-%s" $hostPrefix $ovsId $portId {{ "hub}}" }}
+                        {{ "{{hub-" }} $portValue := index $labels $portLabel {{ "hub}}" }}
+                        {{ "{{hub-" }} if $portValue {{ "hub}}" }}
+                          {{ "{{hub-" }} $ovsBridgePorts = append $ovsBridgePorts $portValue {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
@@ -345,18 +337,20 @@ spec:
                         {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
 
-                    {{ "{{hub-" }} if or (gt (len $dnsServers) 0) (gt (len $dnsSearch) 0) {{ "hub}}" }}
+                    {{ "{{hub-" }} if or (gt (len $dnsServerIds) 0) (gt (len $dnsSearchIds) 0) {{ "hub}}" }}
                     dns-resolver:
                       config:
-                        {{ "{{hub-" }} if gt (len $dnsServers) 0 {{ "hub}}" }}
+                        {{ "{{hub-" }} if gt (len $dnsServerIds) 0 {{ "hub}}" }}
                         server:
-                          {{ "{{hub-" }} range $server := $dnsServers {{ "hub}}" }}
+                          {{ "{{hub-" }} range $dnsId := $dnsServerIds {{ "hub}}" }}
+                          {{ "{{hub-" }} $server := index $labels (printf "%sdns-server-%s" $hostPrefix $dnsId) {{ "hub}}" }}
                           - {{ "{{hub" }} $server {{ "hub}}" }}
                           {{ "{{hub-" }} end {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
-                        {{ "{{hub-" }} if gt (len $dnsSearch) 0 {{ "hub}}" }}
+                        {{ "{{hub-" }} if gt (len $dnsSearchIds) 0 {{ "hub}}" }}
                         search:
-                          {{ "{{hub-" }} range $domain := $dnsSearch {{ "hub}}" }}
+                          {{ "{{hub-" }} range $searchId := $dnsSearchIds {{ "hub}}" }}
+                          {{ "{{hub-" }} $domain := index $labels (printf "%sdns-search-%s" $hostPrefix $searchId) {{ "hub}}" }}
                           - {{ "{{hub" }} $domain {{ "hub}}" }}
                           {{ "{{hub-" }} end {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}

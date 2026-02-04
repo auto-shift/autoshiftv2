@@ -32,97 +32,85 @@ spec:
           object-templates-raw: |
             {{ "{{hub-" }} $labels := .ManagedClusterLabels {{ "hub}}" }}
             {{ "{{hub-" }} $hasLabelConfig := false {{ "hub}}" }}
+            {{ "{{hub-" }} $idRange := list "1" "2" "3" "4" "5" "6" "7" "8" "9" "10" {{ "hub}}" }}
 
             {{ "{{hub-" }} $bondIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/nmstate-bond-") (not ($label | contains "-port-")) (not ($label | contains "-mode")) (not ($label | contains "-mtu")) (not ($label | contains "-mac")) (not ($label | contains "-miimon")) (not ($label | contains "-ipv4")) (not ($label | contains "-ipv6")) (not ($label | contains "-state")) {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix "autoshift.io/nmstate-bond-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $bondIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $bondIds = append $bondIds $id {{ "hub}}" }}
-                  {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $bondLabel := printf "autoshift.io/nmstate-bond-%s" $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $bondLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $bondIds = append $bondIds $id {{ "hub}}" }}
+                {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
             {{ "{{hub-" }} $vlanIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/nmstate-vlan-") (not ($label | contains "-id")) (not ($label | contains "-base")) (not ($label | contains "-mtu")) (not ($label | contains "-ipv4")) (not ($label | contains "-ipv6")) (not ($label | contains "-state")) {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix "autoshift.io/nmstate-vlan-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $vlanIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $vlanIds = append $vlanIds $id {{ "hub}}" }}
-                  {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $vlanLabel := printf "autoshift.io/nmstate-vlan-%s" $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $vlanLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $vlanIds = append $vlanIds $id {{ "hub}}" }}
+                {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
             {{ "{{hub-" }} $ethernetIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/nmstate-ethernet-") (not ($label | contains "-mac")) (not ($label | contains "-mtu")) (not ($label | contains "-state")) (not ($label | contains "-ipv4")) (not ($label | contains "-ipv6")) {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix "autoshift.io/nmstate-ethernet-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $ethernetIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $ethernetIds = append $ethernetIds $id {{ "hub}}" }}
-                  {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $ethLabel := printf "autoshift.io/nmstate-ethernet-%s" $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $ethLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $ethernetIds = append $ethernetIds $id {{ "hub}}" }}
+                {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
             {{ "{{hub-" }} $ovsBridgeIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/nmstate-ovs-bridge-") (not ($label | contains "-port-")) (not ($label | contains "-stp")) (not ($label | contains "-allow-extra-patch-ports")) (not ($label | contains "-mcast-snooping")) {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix "autoshift.io/nmstate-ovs-bridge-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $ovsBridgeIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $ovsBridgeIds = append $ovsBridgeIds $id {{ "hub}}" }}
-                  {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $ovsLabel := printf "autoshift.io/nmstate-ovs-bridge-%s" $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $ovsLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $ovsBridgeIds = append $ovsBridgeIds $id {{ "hub}}" }}
+                {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
             {{ "{{hub-" }} $ovnMappingIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/nmstate-ovn-mapping-") ($label | hasSuffix "-localnet") {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix "autoshift.io/nmstate-ovn-mapping-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} $id = trimSuffix "-localnet" $id {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $ovnMappingIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $ovnMappingIds = append $ovnMappingIds $id {{ "hub}}" }}
-                  {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $ovnLabel := printf "autoshift.io/nmstate-ovn-mapping-%s-localnet" $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $ovnLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $ovnMappingIds = append $ovnMappingIds $id {{ "hub}}" }}
+                {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
             {{ "{{hub-" }} $routeIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/nmstate-route-") ($label | hasSuffix "-dest") {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix "autoshift.io/nmstate-route-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} $id = trimSuffix "-dest" $id {{ "hub}}" }}
-                {{ "{{hub-" }} if not (has $id $routeIds) {{ "hub}}" }}
-                  {{ "{{hub-" }} $routeIds = append $routeIds $id {{ "hub}}" }}
-                  {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{ "{{hub-" }} $dnsServers := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if $label | hasPrefix "autoshift.io/nmstate-dns-server-" {{ "hub}}" }}
-                {{ "{{hub-" }} $dnsServers = append $dnsServers $value {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $routeLabel := printf "autoshift.io/nmstate-route-%s-dest" $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $routeLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $routeIds = append $routeIds $id {{ "hub}}" }}
                 {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} $dnsSearch := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if $label | hasPrefix "autoshift.io/nmstate-dns-search-" {{ "hub}}" }}
-                {{ "{{hub-" }} $dnsSearch = append $dnsSearch $value {{ "hub}}" }}
+            {{ "{{hub-" }} $dnsServerIds := list {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $dnsLabel := printf "autoshift.io/nmstate-dns-server-%s" $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $dnsLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $dnsServerIds = append $dnsServerIds $id {{ "hub}}" }}
                 {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} $nodeSelectorKeys := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-              {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/nmstate-nodeselector-") ($label | hasSuffix "-key") {{ "hub}}" }}
-                {{ "{{hub-" }} $id := trimPrefix "autoshift.io/nmstate-nodeselector-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} $id = trimSuffix "-key" $id {{ "hub}}" }}
-                {{ "{{hub-" }} $nodeSelectorKeys = append $nodeSelectorKeys $id {{ "hub}}" }}
+            {{ "{{hub-" }} $dnsSearchIds := list {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $searchLabel := printf "autoshift.io/nmstate-dns-search-%s" $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $searchLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $dnsSearchIds = append $dnsSearchIds $id {{ "hub}}" }}
+                {{ "{{hub-" }} $hasLabelConfig = true {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+
+            {{ "{{hub-" }} $nodeSelectorIds := list {{ "hub}}" }}
+            {{ "{{hub-" }} range $id := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $nsLabel := printf "autoshift.io/nmstate-nodeselector-%s-key" $id {{ "hub}}" }}
+              {{ "{{hub-" }} if index $labels $nsLabel {{ "hub}}" }}
+                {{ "{{hub-" }} $nodeSelectorIds = append $nodeSelectorIds $id {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
@@ -134,9 +122,9 @@ spec:
                 metadata:
                   name: nmstate-label-config
                 spec:
-                  {{ "{{hub-" }} if gt (len $nodeSelectorKeys) 0 {{ "hub}}" }}
+                  {{ "{{hub-" }} if gt (len $nodeSelectorIds) 0 {{ "hub}}" }}
                   nodeSelector:
-                    {{ "{{hub-" }} range $nsId := $nodeSelectorKeys {{ "hub}}" }}
+                    {{ "{{hub-" }} range $nsId := $nodeSelectorIds {{ "hub}}" }}
                     {{ "{{hub-" }} $nsKey := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-key" $nsId) {{ "hub}}" }}
                     {{ "{{hub-" }} $nsValue := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-value" $nsId) | default "" {{ "hub}}" }}
                     {{ "{{hub" }} $nsKey {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
@@ -169,31 +157,33 @@ spec:
                       {{ "{{hub-" }} $bondMiimon := index $labels (printf "autoshift.io/nmstate-bond-%s-miimon" $bondId) | default "" {{ "hub}}" }}
                       {{ "{{hub-" }} $bondIpv4 := index $labels (printf "autoshift.io/nmstate-bond-%s-ipv4" $bondId) | default "disabled" {{ "hub}}" }}
                       {{ "{{hub-" }} $bondIpv6 := index $labels (printf "autoshift.io/nmstate-bond-%s-ipv6" $bondId) | default "disabled" {{ "hub}}" }}
-                      {{ "{{hub-" }} $bondIpv4Gateway := index $labels (printf "autoshift.io/nmstate-bond-%s-ipv4-gateway" $bondId) | default "" {{ "hub}}" }}
-                      {{ "{{hub-" }} $bondIpv6Gateway := index $labels (printf "autoshift.io/nmstate-bond-%s-ipv6-gateway" $bondId) | default "" {{ "hub}}" }}
 
                       {{ "{{hub-" }} $bondPorts := list {{ "hub}}" }}
-                      {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-                        {{ "{{hub-" }} if $label | hasPrefix (printf "autoshift.io/nmstate-bond-%s-port-" $bondId) {{ "hub}}" }}
-                          {{ "{{hub-" }} $bondPorts = append $bondPorts $value {{ "hub}}" }}
+                      {{ "{{hub-" }} range $portId := $idRange {{ "hub}}" }}
+                        {{ "{{hub-" }} $portLabel := printf "autoshift.io/nmstate-bond-%s-port-%s" $bondId $portId {{ "hub}}" }}
+                        {{ "{{hub-" }} $portValue := index $labels $portLabel {{ "hub}}" }}
+                        {{ "{{hub-" }} if $portValue {{ "hub}}" }}
+                          {{ "{{hub-" }} $bondPorts = append $bondPorts $portValue {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
                       {{ "{{hub-" }} $bondIpv4Addrs := list {{ "hub}}" }}
-                      {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-                        {{ "{{hub-" }} if and ($label | hasPrefix (printf "autoshift.io/nmstate-bond-%s-ipv4-address-" $bondId)) (not ($label | hasSuffix "-cidr")) {{ "hub}}" }}
-                          {{ "{{hub-" }} $addrId := trimPrefix (printf "autoshift.io/nmstate-bond-%s-ipv4-address-" $bondId) $label {{ "hub}}" }}
+                      {{ "{{hub-" }} range $addrId := $idRange {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrLabel := printf "autoshift.io/nmstate-bond-%s-ipv4-address-%s" $bondId $addrId {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrValue := index $labels $addrLabel {{ "hub}}" }}
+                        {{ "{{hub-" }} if $addrValue {{ "hub}}" }}
                           {{ "{{hub-" }} $cidr := index $labels (printf "autoshift.io/nmstate-bond-%s-ipv4-address-%s-cidr" $bondId $addrId) | default "24" {{ "hub}}" }}
-                          {{ "{{hub-" }} $bondIpv4Addrs = append $bondIpv4Addrs (dict "ip" $value "prefix" $cidr) {{ "hub}}" }}
+                          {{ "{{hub-" }} $bondIpv4Addrs = append $bondIpv4Addrs (dict "ip" $addrValue "prefix" $cidr) {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
                       {{ "{{hub-" }} $bondIpv6Addrs := list {{ "hub}}" }}
-                      {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-                        {{ "{{hub-" }} if and ($label | hasPrefix (printf "autoshift.io/nmstate-bond-%s-ipv6-address-" $bondId)) (not ($label | hasSuffix "-cidr")) {{ "hub}}" }}
-                          {{ "{{hub-" }} $addrId := trimPrefix (printf "autoshift.io/nmstate-bond-%s-ipv6-address-" $bondId) $label {{ "hub}}" }}
+                      {{ "{{hub-" }} range $addrId := $idRange {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrLabel := printf "autoshift.io/nmstate-bond-%s-ipv6-address-%s" $bondId $addrId {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrValue := index $labels $addrLabel {{ "hub}}" }}
+                        {{ "{{hub-" }} if $addrValue {{ "hub}}" }}
                           {{ "{{hub-" }} $cidr := index $labels (printf "autoshift.io/nmstate-bond-%s-ipv6-address-%s-cidr" $bondId $addrId) | default "64" {{ "hub}}" }}
-                          {{ "{{hub-" }} $bondIpv6Addrs = append $bondIpv6Addrs (dict "ip" $value "prefix" $cidr) {{ "hub}}" }}
+                          {{ "{{hub-" }} $bondIpv6Addrs = append $bondIpv6Addrs (dict "ip" $addrValue "prefix" $cidr) {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
@@ -265,14 +255,14 @@ spec:
                       {{ "{{hub-" }} $vlanState := index $labels (printf "autoshift.io/nmstate-vlan-%s-state" $vlanId) | default "up" {{ "hub}}" }}
                       {{ "{{hub-" }} $vlanMtu := index $labels (printf "autoshift.io/nmstate-vlan-%s-mtu" $vlanId) | default "" {{ "hub}}" }}
                       {{ "{{hub-" }} $vlanIpv4 := index $labels (printf "autoshift.io/nmstate-vlan-%s-ipv4" $vlanId) | default "disabled" {{ "hub}}" }}
-                      {{ "{{hub-" }} $vlanIpv4Gateway := index $labels (printf "autoshift.io/nmstate-vlan-%s-ipv4-gateway" $vlanId) | default "" {{ "hub}}" }}
 
                       {{ "{{hub-" }} $vlanIpv4Addrs := list {{ "hub}}" }}
-                      {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-                        {{ "{{hub-" }} if and ($label | hasPrefix (printf "autoshift.io/nmstate-vlan-%s-ipv4-address-" $vlanId)) (not ($label | hasSuffix "-cidr")) {{ "hub}}" }}
-                          {{ "{{hub-" }} $addrId := trimPrefix (printf "autoshift.io/nmstate-vlan-%s-ipv4-address-" $vlanId) $label {{ "hub}}" }}
+                      {{ "{{hub-" }} range $addrId := $idRange {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrLabel := printf "autoshift.io/nmstate-vlan-%s-ipv4-address-%s" $vlanId $addrId {{ "hub}}" }}
+                        {{ "{{hub-" }} $addrValue := index $labels $addrLabel {{ "hub}}" }}
+                        {{ "{{hub-" }} if $addrValue {{ "hub}}" }}
                           {{ "{{hub-" }} $cidr := index $labels (printf "autoshift.io/nmstate-vlan-%s-ipv4-address-%s-cidr" $vlanId $addrId) | default "24" {{ "hub}}" }}
-                          {{ "{{hub-" }} $vlanIpv4Addrs = append $vlanIpv4Addrs (dict "ip" $value "prefix" $cidr) {{ "hub}}" }}
+                          {{ "{{hub-" }} $vlanIpv4Addrs = append $vlanIpv4Addrs (dict "ip" $addrValue "prefix" $cidr) {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
@@ -311,9 +301,11 @@ spec:
                       {{ "{{hub-" }} $ovsMcastSnooping := index $labels (printf "autoshift.io/nmstate-ovs-bridge-%s-mcast-snooping" $ovsId) | default "" {{ "hub}}" }}
 
                       {{ "{{hub-" }} $ovsBridgePorts := list {{ "hub}}" }}
-                      {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
-                        {{ "{{hub-" }} if $label | hasPrefix (printf "autoshift.io/nmstate-ovs-bridge-%s-port-" $ovsId) {{ "hub}}" }}
-                          {{ "{{hub-" }} $ovsBridgePorts = append $ovsBridgePorts $value {{ "hub}}" }}
+                      {{ "{{hub-" }} range $portId := $idRange {{ "hub}}" }}
+                        {{ "{{hub-" }} $portLabel := printf "autoshift.io/nmstate-ovs-bridge-%s-port-%s" $ovsId $portId {{ "hub}}" }}
+                        {{ "{{hub-" }} $portValue := index $labels $portLabel {{ "hub}}" }}
+                        {{ "{{hub-" }} if $portValue {{ "hub}}" }}
+                          {{ "{{hub-" }} $ovsBridgePorts = append $ovsBridgePorts $portValue {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
@@ -357,18 +349,20 @@ spec:
                         {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
 
-                    {{ "{{hub-" }} if or (gt (len $dnsServers) 0) (gt (len $dnsSearch) 0) {{ "hub}}" }}
+                    {{ "{{hub-" }} if or (gt (len $dnsServerIds) 0) (gt (len $dnsSearchIds) 0) {{ "hub}}" }}
                     dns-resolver:
                       config:
-                        {{ "{{hub-" }} if gt (len $dnsServers) 0 {{ "hub}}" }}
+                        {{ "{{hub-" }} if gt (len $dnsServerIds) 0 {{ "hub}}" }}
                         server:
-                          {{ "{{hub-" }} range $server := $dnsServers {{ "hub}}" }}
+                          {{ "{{hub-" }} range $dnsId := $dnsServerIds {{ "hub}}" }}
+                          {{ "{{hub-" }} $server := index $labels (printf "autoshift.io/nmstate-dns-server-%s" $dnsId) {{ "hub}}" }}
                           - {{ "{{hub" }} $server {{ "hub}}" }}
                           {{ "{{hub-" }} end {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
-                        {{ "{{hub-" }} if gt (len $dnsSearch) 0 {{ "hub}}" }}
+                        {{ "{{hub-" }} if gt (len $dnsSearchIds) 0 {{ "hub}}" }}
                         search:
-                          {{ "{{hub-" }} range $domain := $dnsSearch {{ "hub}}" }}
+                          {{ "{{hub-" }} range $searchId := $dnsSearchIds {{ "hub}}" }}
+                          {{ "{{hub-" }} $domain := index $labels (printf "autoshift.io/nmstate-dns-search-%s" $searchId) {{ "hub}}" }}
                           - {{ "{{hub" }} $domain {{ "hub}}" }}
                           {{ "{{hub-" }} end {{ "hub}}" }}
                         {{ "{{hub-" }} end {{ "hub}}" }}
