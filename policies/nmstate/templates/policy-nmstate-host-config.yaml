@@ -30,13 +30,9 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates-raw: |
-            {{ "{{hub-" }} /* ============================================ */ {{ "hub}}" }}
-            {{ "{{hub-" }} /* DISCOVER HOST IDENTIFIERS */ {{ "hub}}" }}
-            {{ "{{hub-" }} /* ============================================ */ {{ "hub}}" }}
 
             {{ "{{hub-" }} $labels := .ManagedClusterLabels {{ "hub}}" }}
 
-            {{ "{{hub-" }} /* Find all host IDs from nmstate-host-{H}-hostname labels */ {{ "hub}}" }}
             {{ "{{hub-" }} $hostIds := list {{ "hub}}" }}
             {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
               {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/nmstate-host-") ($label | hasSuffix "-hostname") {{ "hub}}" }}
@@ -48,14 +44,10 @@ spec:
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} /* ============================================ */ {{ "hub}}" }}
-            {{ "{{hub-" }} /* GENERATE PER-HOST NNCPs */ {{ "hub}}" }}
-            {{ "{{hub-" }} /* ============================================ */ {{ "hub}}" }}
             {{ "{{hub-" }} range $hostId := $hostIds {{ "hub}}" }}
             {{ "{{hub-" }} $hostname := index $labels (printf "autoshift.io/nmstate-host-%s-hostname" $hostId) {{ "hub}}" }}
             {{ "{{hub-" }} $hostPrefix := printf "autoshift.io/nmstate-host-%s-" $hostId {{ "hub}}" }}
 
-            {{ "{{hub-" }} /* Discover bond identifiers for this host */ {{ "hub}}" }}
             {{ "{{hub-" }} $bondIds := list {{ "hub}}" }}
             {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
               {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sbond-" $hostPrefix)) (not ($label | contains "-port-")) (not ($label | contains "-mode")) (not ($label | contains "-mtu")) (not ($label | contains "-mac")) (not ($label | contains "-miimon")) (not ($label | contains "-ipv4")) (not ($label | contains "-ipv6")) (not ($label | contains "-state")) {{ "hub}}" }}
@@ -66,7 +58,6 @@ spec:
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} /* Discover VLAN identifiers for this host */ {{ "hub}}" }}
             {{ "{{hub-" }} $vlanIds := list {{ "hub}}" }}
             {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
               {{ "{{hub-" }} if and ($label | hasPrefix (printf "%svlan-" $hostPrefix)) (not ($label | contains "-id")) (not ($label | contains "-base")) (not ($label | contains "-mtu")) (not ($label | contains "-ipv4")) (not ($label | contains "-ipv6")) (not ($label | contains "-state")) {{ "hub}}" }}
@@ -77,7 +68,6 @@ spec:
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} /* Discover ethernet identifiers for this host */ {{ "hub}}" }}
             {{ "{{hub-" }} $ethernetIds := list {{ "hub}}" }}
             {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
               {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sethernet-" $hostPrefix)) (not ($label | contains "-mac")) (not ($label | contains "-mtu")) (not ($label | contains "-state")) (not ($label | contains "-ipv4")) (not ($label | contains "-ipv6")) {{ "hub}}" }}
@@ -88,7 +78,6 @@ spec:
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} /* Discover OVS bridge identifiers for this host */ {{ "hub}}" }}
             {{ "{{hub-" }} $ovsBridgeIds := list {{ "hub}}" }}
             {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
               {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sovs-bridge-" $hostPrefix)) (not ($label | contains "-port-")) (not ($label | contains "-stp")) (not ($label | contains "-allow-extra-patch-ports")) (not ($label | contains "-mcast-snooping")) {{ "hub}}" }}
@@ -99,7 +88,6 @@ spec:
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} /* Discover OVN bridge-mapping identifiers for this host */ {{ "hub}}" }}
             {{ "{{hub-" }} $ovnMappingIds := list {{ "hub}}" }}
             {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
               {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sovn-mapping-" $hostPrefix)) ($label | hasSuffix "-localnet") {{ "hub}}" }}
@@ -111,7 +99,6 @@ spec:
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} /* Discover route identifiers for this host */ {{ "hub}}" }}
             {{ "{{hub-" }} $routeIds := list {{ "hub}}" }}
             {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
               {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sroute-" $hostPrefix)) ($label | hasSuffix "-dest") {{ "hub}}" }}
@@ -123,7 +110,6 @@ spec:
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} /* Discover DNS servers for this host */ {{ "hub}}" }}
             {{ "{{hub-" }} $dnsServers := list {{ "hub}}" }}
             {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
               {{ "{{hub-" }} if $label | hasPrefix (printf "%sdns-server-" $hostPrefix) {{ "hub}}" }}
@@ -131,7 +117,6 @@ spec:
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} /* Discover DNS search domains for this host */ {{ "hub}}" }}
             {{ "{{hub-" }} $dnsSearch := list {{ "hub}}" }}
             {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
               {{ "{{hub-" }} if $label | hasPrefix (printf "%sdns-search-" $hostPrefix) {{ "hub}}" }}
@@ -139,7 +124,6 @@ spec:
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 
-            {{ "{{hub-" }} /* Generate NNCP for this host */ {{ "hub}}" }}
             - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: nmstate.io/v1
@@ -151,7 +135,6 @@ spec:
                     kubernetes.io/hostname: {{ "{{hub" }} $hostname {{ "hub}}" }}
                   desiredState:
                     interfaces:
-                      {{ "{{hub-" }} /* ======== ETHERNET INTERFACES ======== */ {{ "hub}}" }}
                       {{ "{{hub-" }} range $ethId := $ethernetIds {{ "hub}}" }}
                       {{ "{{hub-" }} $ethName := index $labels (printf "%sethernet-%s" $hostPrefix $ethId) {{ "hub}}" }}
                       {{ "{{hub-" }} $ethState := index $labels (printf "%sethernet-%s-state" $hostPrefix $ethId) | default "up" {{ "hub}}" }}
@@ -168,7 +151,6 @@ spec:
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
-                      {{ "{{hub-" }} /* ======== BOND INTERFACES ======== */ {{ "hub}}" }}
                       {{ "{{hub-" }} range $bondId := $bondIds {{ "hub}}" }}
                       {{ "{{hub-" }} $bondName := index $labels (printf "%sbond-%s" $hostPrefix $bondId) {{ "hub}}" }}
                       {{ "{{hub-" }} $bondState := index $labels (printf "%sbond-%s-state" $hostPrefix $bondId) | default "up" {{ "hub}}" }}
@@ -179,7 +161,6 @@ spec:
                       {{ "{{hub-" }} $bondIpv4 := index $labels (printf "%sbond-%s-ipv4" $hostPrefix $bondId) | default "disabled" {{ "hub}}" }}
                       {{ "{{hub-" }} $bondIpv6 := index $labels (printf "%sbond-%s-ipv6" $hostPrefix $bondId) | default "disabled" {{ "hub}}" }}
 
-                      {{ "{{hub-" }} /* Collect bond ports */ {{ "hub}}" }}
                       {{ "{{hub-" }} $bondPorts := list {{ "hub}}" }}
                       {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
                         {{ "{{hub-" }} if $label | hasPrefix (printf "%sbond-%s-port-" $hostPrefix $bondId) {{ "hub}}" }}
@@ -187,7 +168,6 @@ spec:
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
-                      {{ "{{hub-" }} /* Collect IPv4 addresses */ {{ "hub}}" }}
                       {{ "{{hub-" }} $bondIpv4Addrs := list {{ "hub}}" }}
                       {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
                         {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sbond-%s-ipv4-address-" $hostPrefix $bondId)) (not ($label | hasSuffix "-cidr")) {{ "hub}}" }}
@@ -197,7 +177,6 @@ spec:
                         {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
-                      {{ "{{hub-" }} /* Collect IPv6 addresses */ {{ "hub}}" }}
                       {{ "{{hub-" }} $bondIpv6Addrs := list {{ "hub}}" }}
                       {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
                         {{ "{{hub-" }} if and ($label | hasPrefix (printf "%sbond-%s-ipv6-address-" $hostPrefix $bondId)) (not ($label | hasSuffix "-cidr")) {{ "hub}}" }}
@@ -268,7 +247,6 @@ spec:
                           {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
-                      {{ "{{hub-" }} /* ======== VLAN INTERFACES ======== */ {{ "hub}}" }}
                       {{ "{{hub-" }} range $vlanId := $vlanIds {{ "hub}}" }}
                       {{ "{{hub-" }} $vlanName := index $labels (printf "%svlan-%s" $hostPrefix $vlanId) {{ "hub}}" }}
                       {{ "{{hub-" }} $vlanVid := index $labels (printf "%svlan-%s-id" $hostPrefix $vlanId) {{ "hub}}" }}
@@ -277,7 +255,6 @@ spec:
                       {{ "{{hub-" }} $vlanMtu := index $labels (printf "%svlan-%s-mtu" $hostPrefix $vlanId) | default "" {{ "hub}}" }}
                       {{ "{{hub-" }} $vlanIpv4 := index $labels (printf "%svlan-%s-ipv4" $hostPrefix $vlanId) | default "disabled" {{ "hub}}" }}
 
-                      {{ "{{hub-" }} /* Collect VLAN IPv4 addresses */ {{ "hub}}" }}
                       {{ "{{hub-" }} $vlanIpv4Addrs := list {{ "hub}}" }}
                       {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
                         {{ "{{hub-" }} if and ($label | hasPrefix (printf "%svlan-%s-ipv4-address-" $hostPrefix $vlanId)) (not ($label | hasSuffix "-cidr")) {{ "hub}}" }}
@@ -315,14 +292,12 @@ spec:
                           {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
-                      {{ "{{hub-" }} /* ======== OVS BRIDGE INTERFACES ======== */ {{ "hub}}" }}
                       {{ "{{hub-" }} range $ovsId := $ovsBridgeIds {{ "hub}}" }}
                       {{ "{{hub-" }} $ovsBridgeName := index $labels (printf "%sovs-bridge-%s" $hostPrefix $ovsId) {{ "hub}}" }}
                       {{ "{{hub-" }} $ovsStp := index $labels (printf "%sovs-bridge-%s-stp" $hostPrefix $ovsId) | default "false" {{ "hub}}" }}
                       {{ "{{hub-" }} $ovsAllowExtraPatch := index $labels (printf "%sovs-bridge-%s-allow-extra-patch-ports" $hostPrefix $ovsId) | default "true" {{ "hub}}" }}
                       {{ "{{hub-" }} $ovsMcastSnooping := index $labels (printf "%sovs-bridge-%s-mcast-snooping" $hostPrefix $ovsId) | default "" {{ "hub}}" }}
 
-                      {{ "{{hub-" }} /* Collect OVS bridge ports */ {{ "hub}}" }}
                       {{ "{{hub-" }} $ovsBridgePorts := list {{ "hub}}" }}
                       {{ "{{hub-" }} range $label, $value := $labels {{ "hub}}" }}
                         {{ "{{hub-" }} if $label | hasPrefix (printf "%sovs-bridge-%s-port-" $hostPrefix $ovsId) {{ "hub}}" }}
@@ -348,7 +323,6 @@ spec:
                           {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} end {{ "hub}}" }}
 
-                    {{ "{{hub-" }} /* ======== ROUTES ======== */ {{ "hub}}" }}
                     {{ "{{hub-" }} if gt (len $routeIds) 0 {{ "hub}}" }}
                     routes:
                       config:
@@ -371,7 +345,6 @@ spec:
                         {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
 
-                    {{ "{{hub-" }} /* ======== DNS ======== */ {{ "hub}}" }}
                     {{ "{{hub-" }} if or (gt (len $dnsServers) 0) (gt (len $dnsSearch) 0) {{ "hub}}" }}
                     dns-resolver:
                       config:
@@ -389,7 +362,6 @@ spec:
                         {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
 
-                    {{ "{{hub-" }} /* ======== OVN BRIDGE MAPPINGS ======== */ {{ "hub}}" }}
                     {{ "{{hub-" }} if gt (len $ovnMappingIds) 0 {{ "hub}}" }}
                     ovn:
                       bridge-mappings:
