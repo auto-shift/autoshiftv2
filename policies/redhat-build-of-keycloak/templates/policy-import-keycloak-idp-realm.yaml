@@ -1,0 +1,143 @@
+{{- /* ===== derive common hosts up front ===== */ -}}
+{{- $cluster := required ".Values.openshift.clustername is required" .Values.openshift.clustername -}}
+{{- $base    := required ".Values.openshift.basedomain is required"  .Values.openshift.basedomain  -}}
+{{- $apps    := printf "apps.%s.%s" $cluster $base -}}
+{{- $oauth   := printf "oauth-openshift.%s" $apps -}}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-import-keycloak-idp-realm
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-wave: "6"
+    policy.open-cluster-management.io/depends-on: policy:{{ .Values.policy_namespace }}/policy-create-keycloak-instance
+spec:
+  dependencies:
+    - name: policy-create-keycloak-instance
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    {{- if not .Values.ignoreHelmHooks }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: import-keycloak-idp-realm
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+           # Ensure target namespace exists
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.namespace }}
+            # Create keycloak  IDP realm
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: k8s.keycloak.org/v2alpha1
+                kind: KeycloakRealmImport
+                metadata:
+                  name: {{ .Values.realm.name }}-import
+                  namespace: {{ .Values.namespace }}
+                spec:
+                  keycloakCRName: {{ .Values.keycloak.name }}
+                  realm:
+                    id: {{ .Values.realm.name }}
+                    realm: {{ .Values.realm.name }}
+                    displayName: {{ .Values.realm.displayName }}
+                    enabled: true
+                
+                    clients:
+                    {{- range .Values.realm.clients }}
+                      - clientId: {{ .clientId | quote }}
+                        name: {{ .name | quote }}
+                        secret: {{ .secret | quote }}
+                        description: {{ .description | quote }}
+                        enabled: {{ .enabled }}
+                        publicClient: {{ .publicClient }}
+                        serviceAccountsEnabled: {{ .serviceAccountsEnabled }}
+                        directAccessGrantsEnabled: {{ .directAccessGrantsEnabled }}
+                        standardFlowEnabled: {{ .standardFlowEnabled }}
+                        redirectUris:
+                        {{- toYaml ( default (list (printf "https://%s/*" $oauth)) .redirectUris ) | nindent 24 }}
+                        webOrigins:
+                        {{- toYaml ( default (list (printf "https://%s" $oauth)) .webOrigins ) | nindent 24 }}
+                    {{- end }}
+                
+                    groups:
+                    {{- range .Values.realm.groups }}
+                      - name: {{ .name | quote }}
+                    {{- end }}
+                
+                    users:
+                    {{- $emailDomain := .Values.realm.emailDomain | default $base -}}
+                    {{- range .Values.realm.users }}
+                      - username: {{ .username | quote }}
+                        enabled: {{ .enabled }}
+                        email: {{ .email | default (printf "%s@%s" .emailLocal $emailDomain) | quote }}
+                        firstName: {{ .firstName | quote }}
+                        lastName: {{ .lastName | quote }}
+                        emailVerified: {{ .emailVerified }}
+                        createdTimestamp: {{ mul now.Unix 1000 }}
+                        credentials:
+                          - type: "password"
+                            value: {{ .password | quote }}
+                            temporary: false
+                        groups:
+                        {{- toYaml .groups | nindent 24 }}
+                        realmRoles:
+                        {{- toYaml .realmRoles | nindent 24 }}
+                    {{- end }}
+    {{- end }}
+
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-import-keycloak-idp-realm
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/rhbk'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placementbinding-policy-import-keycloak-idp-realm
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: placement-policy-import-keycloak-idp-realm
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-import-keycloak-idp-realm

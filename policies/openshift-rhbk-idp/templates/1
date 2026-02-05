@@ -1,0 +1,164 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-check-rhbk-health
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    {{- if not .Values.ignoreHelmHooks }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: check-rhbk-health.yaml
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            # 1) Create namespace exists
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.namespace }}
+
+            # 2) CA bundle
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: ns1-ca-configmap
+                  namespace: {{ .Values.namespace }}
+                data:
+                  ca.crt: |-
+                    {{- (.Files.Get .Values.idp.cafile) | nindent 20 }}
+
+            # 3) Allow writing the health CM in the target ns
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: Role
+                metadata:
+                  name: {{ .Values.namespace }}-cm-writer
+                  namespace: {{ .Values.namespace }}
+                rules:
+                - apiGroups: [""]
+                  resources: ["configmaps"]
+                  verbs: ["get","create","update","patch"]
+            # 4) Update service account
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: {{ .Values.namespace }}-cm-writer-binding
+                  namespace: {{ .Values.namespace }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: Role
+                  name: {{ .Values.namespace }}-cm-writer
+                subjects:
+                - kind: ServiceAccount
+                  name: {{ .Values.namespace }}-patch-sa
+                  namespace: {{ .Values.namespace }}
+
+            # 5) Job to check RHBK and stamp a ConfigMap
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: batch/v1
+                kind: Job
+                metadata:
+                  name: rhbk-health-check
+                  namespace: {{ .Values.namespace }}
+                spec:
+                  backoffLimit: 100
+                  template:
+                    spec:
+                      serviceAccountName: {{ .Values.namespace }}-patch-sa   # reuse your SA with RBAC
+                      restartPolicy: OnFailure
+                      volumes:
+                        - name: ns1-ca-configmap
+                          configMap:
+                            name: ns1-ca-configmap
+                            items:
+                              - key: ca.crt
+                                path: ca.crt
+                      containers:
+                        - name: check
+                          image: {{ .Values.image }}   # e.g. openshift/cli
+                          command: ["/bin/bash","-c"]
+                          args:
+                            - |
+                              set -euo pipefail
+                              HOST="{{ .Values.keycloak.hostname }}"
+                              REALM="{{ .Values.realm.name }}"
+                              echo "Checking https://${HOST}/realms/${REALM}/.well-known/openid-configuration"
+                              body="$(curl --cacert /mnt/ca/ca.crt -fsS --connect-timeout 5 --max-time 10 \
+                                "https://${HOST}/realms/${REALM}/.well-known/openid-configuration")"
+                              echo "$body" | grep -q "\"issuer\":\"https://${HOST}/realms/${REALM}\""
+                              oc -n {{ .Values.namespace }} create configmap rhbk-health \
+                                --from-literal=ready=true \
+                                --from-literal=when="$(date -u +%FT%TZ)" \
+                                --dry-run=client -o yaml | oc apply -f -
+                          volumeMounts:
+                            - name: ns1-ca-configmap
+                              mountPath: /mnt/ca
+
+            # 6) Gate: require the success stamp
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: rhbk-health
+                  namespace: {{ .Values.namespace }}
+                data:
+                  ready: "true"
+    {{- end }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-check-rhbk-health
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/rhbk-idp'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placementbinding-policy-check-rhbk-health
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: placement-policy-check-rhbk-health
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-check-rhbk-health
+

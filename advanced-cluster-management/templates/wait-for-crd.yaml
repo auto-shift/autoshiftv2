@@ -3,7 +3,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: crd-check 
+  name: crd-check
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-1"
@@ -11,10 +11,37 @@ metadata:
   namespace: {{ .Values.acm.namespace }}
 spec:
   containers:
-  - name: crd-check 
+  - name: crd-check
     image: {{ .Values.image }}
     imagePullPolicy: IfNotPresent
-    command: ['sh', '-c', 'while [ true ]; do oc get crd multiclusterhubs.operator.open-cluster-management.io; if [ $? -eq 0 ]; then break; fi ; sleep 5s; done']
+    # This command now performs three checks for maximum reliability:
+    # 1. Waits for the CRD to be established.
+    # 2. Waits for the operator's Deployment to be Available.
+    # 3. Explicitly waits for the webhook Service to have active Endpoints.
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "Waiting for MultiClusterHub CRD to be established..."
+        oc wait --for=condition=Established crd/multiclusterhubs.operator.open-cluster-management.io --timeout=300s
+        
+        echo "CRD found. Waiting for multiclusterhub-operator deployment to become available..."
+        oc wait --for=condition=Available deployment/multiclusterhub-operator -n {{ .Values.acm.namespace }} --timeout=300s
+        
+        echo "Operator deployment is available. Now waiting for webhook endpoint to be active..."
+        ATTEMPTS=0
+        MAX_ATTEMPTS=60 # Wait up to 5 minutes (60 * 5s)
+        while [ -z "$(oc get endpoints multiclusterhub-operator-webhook -n {{ .Values.acm.namespace }} -o=jsonpath='{.subsets[?(@.addresses)].addresses[?(@.ip)].ip}')" ]; do
+          if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
+            echo "ERROR: Timed out waiting for webhook endpoint."
+            exit 1
+          fi
+          echo "Webhook endpoint not ready, waiting 5s..."
+          ATTEMPTS=$((ATTEMPTS + 1))
+          sleep 5
+        done
+        
+        echo "Webhook endpoint is active. Hook succeeded."
   restartPolicy: Never
   terminationGracePeriodSeconds: 0
   serviceAccount: default

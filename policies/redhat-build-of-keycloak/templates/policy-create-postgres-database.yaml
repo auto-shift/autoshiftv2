@@ -1,0 +1,140 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-create-postgres-database
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-wave: "2"
+
+spec:
+  dependencies:
+    - name: policy-install-rhbk-and-crunchy-operators
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    {{- if not .Values.ignoreHelmHooks }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: create-hapostgres-database
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            # Creates postgres database
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgres-operator.crunchydata.com/v1beta1
+                kind: PostgresCluster
+                metadata:
+                  name: {{ .Values.postgres.clusterName }}
+                  namespace: {{ .Values.namespace }}
+                spec:
+                  postgresVersion: {{ .Values.postgres.postgresVersion }}
+                  instances:
+                    - name: {{ .Values.postgres.instanceName }}
+                      replicas: {{ .Values.postgres.pgDatabaseReplicas }}
+                      dataVolumeClaimSpec:
+                        accessModes:
+                        - "ReadWriteOnce"
+                        resources:
+                          requests:
+                            storage: {{ .Values.postgres.pgdbStorageSize }}
+                        storageClassName: {{ .Values.postgres.storageClassName }}
+                      affinity:
+                        podAntiAffinity:
+                          preferredDuringSchedulingIgnoredDuringExecution:
+                          - weight: 1
+                            podAffinityTerm:
+                              topologyKey: kubernetes.io/hostname
+                              labelSelector:
+                                matchLabels:
+                                  postgres-operator.crunchydata.com/cluster: {{ .Values.postgres.clusterName }}
+                                  postgres-operator.crunchydata.com/instance-set: {{ .Values.postgres.instanceName }}
+                  backups:
+                    pgbackrest:
+                      repos:
+                      - name: repo1
+                        volume:
+                          volumeClaimSpec:
+                            accessModes:
+                            - "ReadWriteOnce"
+                            resources:
+                              requests:
+                                storage: {{ .Values.postgres.backupStorageSize }}
+                            storageClassName: {{ .Values.postgres.storageClassName }}
+                  proxy:
+                    pgBouncer:
+                      replicas: {{ .Values.postgres.pgBouncerReplicas }}
+                      affinity:
+                        podAntiAffinity:
+                          preferredDuringSchedulingIgnoredDuringExecution:
+                          - weight: 1
+                            podAffinityTerm:
+                              topologyKey: kubernetes.io/hostname
+                              labelSelector:
+                                matchLabels:
+                                  postgres-operator.crunchydata.com/cluster: {{ .Values.postgres.clusterName }}
+                                  postgres-operator.crunchydata.com/role: pgbouncer
+                  users:
+                    - name: {{ .Values.postgres.dbUser.name }}
+                      password:
+                        type: "ASCII"
+                      databases:
+                        - {{ .Values.postgres.dbUser.database }}
+                    - name: postgres
+                      password:
+                        type: "ASCII"
+
+
+    {{- end }}
+
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-create-postgres-database
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/rhbk'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placementbinding-policy-create-postgres-database
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: placement-policy-create-postgres-database
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-create-postgres-database

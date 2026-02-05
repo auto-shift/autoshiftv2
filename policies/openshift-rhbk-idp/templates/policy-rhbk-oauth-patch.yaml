@@ -1,0 +1,124 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-rhbk-oauth-patch
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  dependencies:
+    - name: policy-create-idp-serviceaccount
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-create-rhbk-clientsecret
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-create-rhbk-configmap
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-check-rhbk-health
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    {{- if not .Values.ignoreHelmHooks }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: create-rhbk-oauth-patch
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            # Create namespace exists
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.namespace }}
+            # OAuth Patch Job
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                apiVersion: batch/v1
+                kind: Job
+                metadata:
+                  name: {{ .Values.namespace }}-patch-oauth-job
+                  namespace: {{ .Values.namespace | default "openshift-rhbk" }}
+                  labels:
+                    app.kubernetes.io/managed-by: Helm
+                spec:
+                  backoffLimit: 10
+                  template:
+                    spec:
+                      serviceAccountName: {{ .Values.namespace }}-patch-sa
+                      restartPolicy: OnFailure
+                      containers:
+                        - name: patcher
+                          image: {{ .Values.image }}
+                          command:
+                            - /bin/sh
+                            - -c
+                            - |
+                              echo "Patching OAuth resource..."
+                              PATCH_DATA='{"spec":{"identityProviders":[{"mappingMethod":"claim","name":"{{ .Values.idp.name }}","type":"OpenID","openID":{"ca":{"name":"{{ .Values.namespace }}-ca-cm"},"clientID":"{{ .Values.idp.clientID }}","clientSecret":{"name":"{{ .Values.namespace }}-client-secret"},"claims":{"email":["email"],"name":["name"],"preferredUsername":["preferred_username"]},"issuer": "{{ .Values.idp.issuerURL}}"}}]}}'
+                              oc patch oauth cluster --type=merge --patch="${PATCH_DATA}"
+                          securityContext:
+                            runAsNonRoot: true
+    {{- end }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-rhbk-oauth-patch
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/rhbk-idp'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placementbinding-policy-rhbk-oauth-patch
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: placement-policy-rhbk-oauth-patch
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-rhbk-oauth-patch
+

@@ -1,0 +1,107 @@
+# autoshift-idp/values.yaml
+policy_namespace: policies-autoshift
+operatorNamespace: openshift-rhbk
+namespace: openshift-rhbk
+image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+installPlanApproval: Automatic
+sourceNamespace: openshift-marketplace
+
+openshift:
+  clustername: ocpacm
+  basedomain: example.priv
+
+crunchy:
+  name: crunchy-postgres-operator
+  channel: v5
+  source: cs-certified-operator-index-v4-18
+  postgrescli: dcregistry.example.priv:8443/applications/crunchy-postgres:ubi8-17.0-0
+
+rhbk:
+  name: rhbk-operator
+  channel: stable-v26.2
+  source: cs-redhat-operator-index-v4-18
+
+# PostgreSQL Configuration
+postgres:
+  clusterName: hapg4rhbk
+  postgresVersion: 17
+  instanceName: rhbk
+  pgDatabaseReplicas: 1
+  storageClassName: "nfs-storage-class"
+  pgdbStorageSize: 1Gi
+  backupStorageSize: 1Gi
+  pgBouncerReplicas: 1
+  dbUser:
+    name: pghauser
+    database: hapg4rhbk
+
+# Keycloak Configuration
+keycloak:
+  enabled: true
+  name: openshift-rhbk
+  instances: 1
+  db:
+    vendor: postgres
+  tls:
+    secretname: openshift-rhbk-tls-secret
+    crtpath: "files/tls.pem"
+    keypath: "files/tls.key"
+  hostname: "openshift-rhbk.apps.ocpacm.example.priv"
+
+# Realm Configuration
+realm:
+  name: "autoshift"
+  displayName: "AutoShift Realm"
+  emailDomain: "example.priv"
+  clients:
+    - enabled: true
+      clientId: "rhbk-autoshift-client"
+      name: "Autoshift-RHBK-Client"
+      description: "Autoshift RHBK Client"
+      secret: "krahYBwk0vikKoy3YnLdCSXVgzaUfONt"
+      serviceAccountsEnabled: true
+      directAccessGrantsEnabled: true
+      standardFlowEnabled: true
+      publicClient: false
+      redirectUris:
+        - "https://oauth-openshift.apps.ocpacm.example.priv/oauth2callback/rhbk-idp"
+        - "https://oauth-openshift.apps.ocpacm.example.priv/*"
+        - "https://oauth-openshift.apps.dcocp.example.priv/oauth2callback/rhbk-idp"
+        - "https://oauth-openshift.apps.dcocp.example.priv/*"
+      webOrigins:
+        - "https://oauth-openshift.apps.ocpacm.example.priv"
+        - "https://oauth-openshift.apps.dcocp.example.priv"
+  groups:
+    - name: "ocp-admins"
+    - name: "ocp-users"
+  users:
+    - username: "ocpadmin"
+      password: "REDHAT12redhat"
+      enabled: true
+      groups:
+        - "ocp-admins"
+      emailLocal: "ocpadmin"
+      firstName: "OpenShift"
+      lastName: "Administrator"
+      emailVerified: true
+      realmRoles:
+        - "default-roles-autoshift"
+    - username: "ocpuser"
+      password: "redhat12REDHAT"
+      enabled: true
+      groups:
+        - "ocp-users"
+      emailLocal: "ocpuser"
+      firstName: "OpenShift"
+      lastName: "User"
+      emailVerified: true
+      realmRoles:
+        - "default-roles-autoshift"
+
+# OpenShift OAuth Configuration
+idp:
+  name: "rhbk-idp"
+  clientID: "rhbk-autoshift-client"
+  clientSecret: "krahYBwk0vikKoy3YnLdCSXVgzaUfONt"
+  issuerURL: "https://openshift-rhbk.apps.ocpacm.example.priv/realms/autoshift"
+  cafile: "files/ca.crt"

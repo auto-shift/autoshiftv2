@@ -1,0 +1,118 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-install-rhbk-and-crunchy-operators
+  namespace: {{ .Values.policy_namespace }}          # HUB namespace for policy objects
+  annotations: 
+    argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-wave: "1"
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+
+spec:
+  disabled: false
+  remediationAction: enforce
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: hubcluster-installing-rhbk-operators
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            # 1) Namespace for both operators
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.operatorNamespace }}
+
+            # 2) Single-namespace OperatorGroup
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1
+                kind: OperatorGroup
+                metadata:
+                  name: {{ .Values.operatorNamespace }}-og
+                  namespace: {{ .Values.operatorNamespace }}
+                spec:
+                  targetNamespaces:
+                    - {{ .Values.operatorNamespace }}
+
+            # 3) Crunchy Postgres Operator Subscription
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1alpha1
+                kind: Subscription
+                metadata:
+                  name: {{ .Values.crunchy.name }}
+                  namespace: {{ .Values.operatorNamespace }}
+                spec:
+                  channel: {{ .Values.crunchy.channel }}
+                  installPlanApproval: {{ .Values.installPlanApproval }}
+                  name: {{ .Values.crunchy.name }}
+                  source: {{ .Values.crunchy.source }}
+                  sourceNamespace: {{ .Values.sourceNamespace }}
+
+            # 4) Red Hat build of Keycloak (RHBK) Operator Subscription
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operators.coreos.com/v1alpha1
+                kind: Subscription
+                metadata:
+                  name: {{ .Values.rhbk.name }}
+                  namespace: {{ .Values.operatorNamespace }}
+                spec:
+                  channel: {{ .Values.rhbk.channel }}
+                  installPlanApproval: {{ .Values.installPlanApproval }}
+                  name: {{ .Values.rhbk.name }}
+                  source: {{ .Values.rhbk.source }}
+                  sourceNamespace: {{ .Values.sourceNamespace }}
+
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-install-rhbk-and-crunchy-operators
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/rhbk'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placementbinding-policy-install-rhbk-and-crunchy-operators
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: placement-policy-install-rhbk-and-crunchy-operators
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-install-rhbk-and-crunchy-operators

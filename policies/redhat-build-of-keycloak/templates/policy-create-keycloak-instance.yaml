@@ -1,0 +1,121 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-create-keycloak-instance
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  dependencies:
+    - name: policy-create-tls-secrets
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-install-rhbk-and-crunchy-operators
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-create-postgres-database
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-initialize-postgres-database
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+    {{- if not .Values.ignoreHelmHooks }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: create-keycloak-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+           # Ensure target namespace exists
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.namespace }}
+            # Create keycloak  instance
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: k8s.keycloak.org/v2alpha1
+                kind: Keycloak
+                metadata:
+                  name: {{ .Values.keycloak.name }}
+                  namespace: {{ .Values.namespace }}
+                  labels:
+                    app: {{ .Values.keycloak.name }}
+                spec:
+                  instances: {{ .Values.keycloak.instances }}
+                  db:
+                    vendor: {{ .Values.keycloak.db.vendor }}
+                    host: {{ .Values.postgres.clusterName }}-primary.{{ .Values.namespace }}.svc.cluster.local
+                    database: {{ .Values.postgres.dbUser.database  }}
+                    usernameSecret:
+                      name: {{ .Values.postgres.dbUser.database }}-pguser-{{ .Values.postgres.dbUser.name }}
+                      key: user
+                    passwordSecret:
+                      name: {{ .Values.postgres.dbUser.database }}-pguser-{{ .Values.postgres.dbUser.name }}
+                      key: password
+                  http:
+                    tlsSecret: {{ .Values.keycloak.tls.secretname }}
+                  hostname:
+                    hostname: {{ .Values.keycloak.hostname | quote}}
+    {{- end }}
+
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-create-keycloak-instance
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/rhbk'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placementbinding-policy-create-keycloak-instance
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: placement-policy-create-keycloak-instance
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-create-keycloak-instance
