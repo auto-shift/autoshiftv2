@@ -2,7 +2,9 @@ With these Autoshift policies, you can automate the deployment of the Trident op
 
 The workflow is straightforward: first, it will deploy the operator, then deploy the Orchestrator once the operator is available. You will have the ability to manage your Trident content such as Trident Backends, storage classes, storage profiles, etc.
 
-⚠️ Warning: These policies include Machine Configs that will trigger node reboots.
+⚠️ Warning: These policies include Machine Configs that will trigger node reboots. ⚠️  There is an openshift bug that sets the same NQN ID on each node in the cluster, which causes issues in NetApp ONTAP when creating pvcs. This machine config will ensure each node has it's own unique NQN that reflects it's hostname. Example: nqn.2024-05.io.openshift:<HOSTNAME>
+
+NQN bug: https://issues.redhat.com/browse/RHEL-8041
 
 In your `autoshift/values.hub.yaml` file, you can configure these toggles:
 
