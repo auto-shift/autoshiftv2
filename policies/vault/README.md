@@ -20,10 +20,11 @@
     `oc exec -n vault -ti vault-2 -- vault operator unseal <unseal key>` 
 4) Log into vault via the route using the initial root token.
 
-
+## TODO: Integrate tls
 ## TODO: Automate init
 
-## Updating **more todo
+
+## Updating **more later** todo
 
 To update to a specific release of vault, reference the `values.openshift.yaml` in the [vault-helm repo](https://github.com/hashicorp/vault-helm.git)
  
