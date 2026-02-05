@@ -11,6 +11,10 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+var (
+	ocpDialog, gitDialog *dialog.CustomDialog
+)
+
 func showUpdateConfigsModal(policy *structs.Policy) {
 	labels := allLabels[policy.Alias]
 
@@ -59,3 +63,34 @@ func addHubClusterSet() {
 
 	csFormDialog.Show()
 }
+
+func ShowPolicyModal(hubName string, pols *[]structs.Policy) {
+	hubDialog := dialog.NewCustom(hubName, "Close", createPolicyCheckGroup(pols), mainWin)
+	hubDialog.Show()
+	hubDialog.SetOnClosed(func() {
+		fmt.Println("dialog closed")
+		fmt.Print(hubConfigs)
+		// data_io.WritePolicies(policies)
+	})
+}
+
+func showOCPDialog() {
+	data_io.SourceTestInputs()
+	ocpDialog = dialog.NewCustom("LogIn", "Close", deploymentConfigs(), mainWin)
+	ocpDialog.Resize(fyne.NewSize(mainWin.Canvas().Size().Width/2, mainWin.Canvas().Size().Height/2))
+	ocpDialog.Show()
+
+}
+
+func showGitDialog() {
+	data_io.SourceTestInputs()
+	gitDialog = dialog.NewCustom("Git Repository", "Cancel", gitConfigs(), mainWin)
+	gitDialog.Resize(fyne.NewSize(mainWin.Canvas().Size().Width/2, mainWin.Canvas().Size().Height/2))
+	gitDialog.Show()
+}
+
+// func showPolicyModal() {
+
+// 	policyDialog := dialog.NewCustom("Policies", "close", Policies(mainWin), mainWin)
+// 	policyDialog.Show()
+// }

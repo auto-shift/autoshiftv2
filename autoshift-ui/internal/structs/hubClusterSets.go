@@ -12,6 +12,11 @@ func (csl *ClusterSetLabels) SetIsSelfManaged(smVal bool) {
 	csl.Labels.IsSelfManaged = smVal
 }
 
+// getters
+func (csl ClusterSetLabels) GetAllLabels() map[string]string {
+	return csl.Labels.Labels
+}
+
 // utils
 func (csl *ClusterSetLabels) initCSLabels() {
 	csl.Labels.Labels = make(map[string]string)

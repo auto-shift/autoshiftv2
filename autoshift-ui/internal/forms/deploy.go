@@ -80,15 +80,17 @@ func retLoginBtn() {
 			}
 		} else {
 			ocp.Login(ocpUserNameEntry.Text, ocpAccessTokenEntry.Text, ocpApiUrlEntry.Text)
-			// if ocp.IsLoggedIn() {
-			// 	ocp.BLogs.Append("Successful Connection")
-			// }
-			ocpUserNameEntry.Disable()
-			ocpAccessTokenEntry.Disable()
-			ocpApiUrlEntry.Disable()
-			retLogoutBtn()
-			ocpFormButton.Refresh()
+			if ocp.IsLoggedIn() {
+				// 	ocp.BLogs.Append("Successful Connection")
+				// }
+				ocpUserNameEntry.Disable()
+				ocpAccessTokenEntry.Disable()
+				ocpApiUrlEntry.Disable()
+				retLogoutBtn()
+				ocpFormButton.Refresh()
+			}
 		}
+		ocpDialog.Dismiss()
 	}
 }
 

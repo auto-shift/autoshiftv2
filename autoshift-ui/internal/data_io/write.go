@@ -3,6 +3,7 @@ package data_io
 import (
 	"asui/internal/utils"
 	"bytes"
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -31,4 +32,10 @@ func WritePolicies(policies any) {
 	utils.CheckIfError(err)
 	err = os.WriteFile("../../data/policies.yaml", buf.Bytes(), 0644)
 	utils.CheckIfError(err)
+	fmt.Println("Policies Updated")
+	fmt.Println(policies)
+}
+
+func writeYaml() {
+
 }

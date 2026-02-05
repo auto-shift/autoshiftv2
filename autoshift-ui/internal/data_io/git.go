@@ -3,19 +3,39 @@ package data_io
 import (
 	"asui/internal/utils"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"os/exec"
+	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 
 	git "github.com/go-git/go-git/v5"
 	http "github.com/go-git/go-git/v5/plumbing/transport/http"
 
-	"github.com/go-git/go-billy/v5/memfs"
+	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5/storage/memory"
 )
 
+func init() {
+	Tdir = utils.CreateTempDir()
+	fmt.Println("Temp directory:")
+	fmt.Println(Tdir)
+}
+
 // vars
+var (
+	GitRepo *git.Repository
+	File    billy.File
+	Tdir    string
+	// package only
+	storer *memory.Storage
+	fs     billy.Filesystem
+	once   sync.Once
+)
+
 // structs
 type GitVars struct {
 	GitDir  string `yaml:"gitDir"`
@@ -23,19 +43,51 @@ type GitVars struct {
 	GitUser string `yaml:"gitUser"`
 }
 
-func GitCloneToMemory(gitUser, gitPass, gitUrl string) git.Repository {
-	storer := memory.NewStorage()
-	fs := memfs.New()
+// func GitCloneToMemory(gitUser, gitPass, gitUrl string) {
+// 	storer = memory.NewStorage()
+// 	fs = memfs.New()
+// 	log.Println("Cloning git repository " + gitUrl + " ...")
+// 	// Cloning a remote repository into memory
+// 	var err error
+// 	GitRepo, err = git.Clone(storer, fs, &git.CloneOptions{
+// 		Auth: &http.BasicAuth{
+// 			Username: gitUser, // yes, this can be anything except an empty string
+// 			Password: gitPass,
+// 		},
+// 		URL: gitUrl,
+// 	})
+// 	utils.CheckIfError(err)
 
-	// Cloning a remote repository into memory
-	repo, err := git.Clone(storer, fs, &git.CloneOptions{
-		Auth: &http.BasicAuth{
-			Username: gitUser, // yes, this can be anything except an empty string
-			Password: gitPass,
-		},
-		URL: gitUrl,
-	})
+// }
+
+func FetchOcpYaml() {
+	log.Println("Parsing worktree...")
+	wt, err := GitRepo.Worktree()
 	utils.CheckIfError(err)
+
+	if wt == nil {
+		fmt.Println("no worktree present")
+	} else {
+
+		filePath := "policies/openshift-gitops/values.yaml"
+		log.Println("opening file: " + filePath)
+		// Open the file from the worktree's filesystem
+		File, err = wt.Filesystem.Open(filePath)
+		if err != nil {
+			log.Fatalf("Error opening file: %v", err)
+		}
+		defer File.Close()
+
+		// Read the file content
+		content, err := io.ReadAll(File)
+		if err != nil {
+			log.Fatalf("Error reading file: %v", err)
+		} else {
+			//cont to be saved to temp file. Logged to prevent none use error.
+			log.Println(content)
+		}
+
+	}
 
 	// // ... retrieves the branch pointed by HEAD
 	// ref, err := repo.Head()
@@ -52,7 +104,7 @@ func GitCloneToMemory(gitUser, gitPass, gitUrl string) git.Repository {
 	// })
 	// utils.CheckIfError(err)
 
-	return *repo
+	// GitRepo = *repo
 	// Or initializing a new repository in memory
 	// repo, err := git.PlainInit(storer, fs, &git.PlainInitOptions{})
 	// if err != nil {
@@ -68,7 +120,6 @@ func GitCloneToMemory(gitUser, gitPass, gitUrl string) git.Repository {
 	// Read the file content
 	// content, err := io.ReadAll(file)
 	// ...
-
 }
 
 // Methods for interacting with a git repository
@@ -123,6 +174,67 @@ func GitClone(gitUser, gitPass, gitDir, gitUrl string) {
 	// return resp
 	fmt.Println(commit)
 
+}
+
+func GitCloneToTemp(gitUser, gitPass, gitUrl string) {
+
+	r, err := git.PlainClone(Tdir, false, &git.CloneOptions{
+		// The intended use of a GitHub personal access token is in replace of your password
+		// because access tokens can easily be revoked.
+		// https://help.github.com/articles/creating-a-personal-access-token-for-the-command-line/
+		Auth: &http.BasicAuth{
+			Username: gitUser, // yes, this can be anything except an empty string
+			Password: gitPass,
+		},
+		URL:      gitUrl,
+		Progress: os.Stdout,
+	})
+	if err != nil {
+		fmt.Println("err1")
+		fmt.Println(err)
+	}
+
+	ref, err := r.Head()
+	if err != nil {
+		fmt.Println("err2")
+		fmt.Println(err)
+	}
+
+	err = r.Storer.SetReference(ref)
+	utils.CheckIfError(err)
+
+	// ... retrieving the commit object
+	commit, err := r.CommitObject(ref.Hash())
+	if os.IsNotExist(err) {
+
+		// resp[0] = "Clone Failed"
+		// resp[1] = fmt.Sprintln(err)
+		// return resp
+		fmt.Println(err)
+	}
+
+	// resp[0] = "Clone Successful"
+	// resp[1] = fmt.Sprintln(commit)
+	// return resp
+	fmt.Println(commit)
+	verifyRepo()
+}
+
+func verifyRepo() {
+	cmd := exec.Command("ls", Tdir)
+	var out strings.Builder
+	var stderr strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	fmt.Println("output string:")
+	fmt.Println(out.String())
+	err := cmd.Run()
+	if err != nil {
+		fmt.Println(stderr.String())
+	} else {
+
+		fmt.Println(out.String())
+	}
 }
 
 // func gitBranch() {

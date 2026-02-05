@@ -9,10 +9,10 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-var logList *widget.List
+var LogList *widget.List
 
 func OutputCard() fyne.CanvasObject {
-	logList = widget.NewListWithData(ocp.BLogs,
+	LogList = widget.NewListWithData(ocp.BLogs,
 		func() fyne.CanvasObject {
 			// Template for each list item
 			listItem := widget.NewLabel("Placeholder")
@@ -26,11 +26,11 @@ func OutputCard() fyne.CanvasObject {
 			label.Bind(strBinding) // Bind the label directly to the string binding
 		},
 	)
-
+	LogList.ScrollToBottom()
 	return widget.NewCard("output: ", "",
-		container.NewVScroll(logList),
+		container.NewVScroll(LogList),
 	)
 }
 
-// logList.Refresh()
-// logList.ScrollToBottom()
+// LogList.Refresh()
+// LogList.ScrollToBottom()

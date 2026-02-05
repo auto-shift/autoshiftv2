@@ -11,14 +11,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func init() {
-
-}
-
 var (
 	policies = structs.CreatePolicies()
 	TestVars = structs.CreateTestVals()
 	AppDir   string
+	PData    = structs.CreatePolicies()
 )
 
 func ReadPolicies() {
@@ -34,6 +31,11 @@ func ReadPolicies() {
 		}
 
 		err = yaml.Unmarshal(data, &policies)
+		if err != nil {
+			log.Fatalf("Error unmarshaling YAML: %v", err)
+		}
+
+		err = yaml.Unmarshal(data, &PData)
 		if err != nil {
 			log.Fatalf("Error unmarshaling YAML: %v", err)
 		}

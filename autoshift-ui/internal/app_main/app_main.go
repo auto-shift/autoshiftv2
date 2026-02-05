@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/widget"
 )
 
 func init() {
@@ -17,19 +18,21 @@ func init() {
 }
 
 var (
-	HubValues = structs.CreateHubValues()
+	HubValues    = structs.CreateHubValues()
+	deployButton *widget.Button
 )
 
 func Home(win fyne.Window) fyne.CanvasObject {
 
-	mainTabs := container.NewAppTabs(
-		container.NewTabItem("Configs", forms.Configs()),
-		container.NewTabItem("Policies", forms.Policies(win)),
-		// container.NewTabItem("Deployment", forms.Deployment()),
-	)
+	// mainTabs := container.NewAppTabs(
+	// 	container.NewTabItem("Configs", forms.Configs()),
+	// container.NewTabItem("Policies", forms.Policies(win)),
+	// container.NewTabItem("Deployment", forms.Deployment()),
+	// )
 	// logCont := container.NewGridWrap(fyne.NewSize(mainTabs.MinSize().Width/3, mainTabs.MinSize().Height), OutputCard())
 
-	mainTabs.SetTabLocation(container.TabLocationLeading)
+	mainTabs := container.NewStack(forms.Configs(win))
+	// mainTabs.SetTabLocation(container.TabLocationLeading)
 	homeContainer := container.NewBorder(topBorder(), bottomBorder(), nil, nil, mainTabs)
 	return homeContainer
 }
@@ -43,10 +46,14 @@ func bottomBorder() fyne.CanvasObject {
 
 	// updateButton := widget.NewButton("Update", func() {
 	// 	// data_io.WriteConfigs()
-	// 	impl.UpdateLabels()
+	// 	// impl.UpdateLabels()
 	// })
-	// deployButton := widget.NewButton("Deploy", func() {})
+	// deployButton = widget.NewButton("Deploy", func() {})
 	// homeActions := container.NewHBox(layout.NewSpacer(), updateButton, deployButton)
 
 	return container.NewVBox(canvas.NewLine(color.RGBA{R: 128, G: 128, B: 128, A: 255}))
 }
+
+// func SetDeployBtn(){
+// 	if()
+// }

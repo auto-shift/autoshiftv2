@@ -10,12 +10,6 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-func init() {
-	hubConfigs.InitClusterSets()
-	hubConfigs.InitManagedLabelsMap()
-
-}
-
 var clusterSetTabs container.AppTabs
 
 func Policies(win fyne.Window) fyne.CanvasObject {
@@ -57,9 +51,9 @@ func createPolicyCheckGroup(pols *[]structs.Policy) fyne.CanvasObject {
 	return policyCheckGroupScroll
 }
 
-func addManagedLabels() {
+// func addManagedLabels() {
 
-}
+// }
 
 func policyCard(policy *structs.Policy) *widget.Card {
 

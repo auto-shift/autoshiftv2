@@ -2,6 +2,7 @@ package ocp
 
 import (
 	"asui/internal/utils"
+	"bufio"
 	"fmt"
 	"log"
 	"os/exec"
@@ -75,6 +76,72 @@ func Logout() bool {
 		}
 		return true
 	}
+}
+
+func InstallPreReqs() {
+	cmd := exec.Command("/bin/bash", "-c", "../../scripts/install-bootstrap.sh")
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		log.Println(err)
+	}
+	errPipe, err := cmd.StderrPipe()
+	if err != nil {
+		log.Println(err)
+	}
+
+	go func() {
+		if err := cmd.Start(); err != nil {
+			log.Println(err)
+		}
+	}()
+
+	go func() {
+		reader := bufio.NewReader(pipe)
+		line, err := reader.ReadString('\n')
+		for err == nil {
+			log.Println(line)
+			line, err = reader.ReadString('\n')
+		}
+	}()
+
+	go func() {
+		reader := bufio.NewReader(errPipe)
+		line, err := reader.ReadString('\n')
+		for err == nil {
+			log.Println(line)
+			line, err = reader.ReadString('\n')
+		}
+	}()
+}
+
+func InstallAutoShift() {
+	cmd := exec.Command("/bin/bash", "-c", "../../scripts/install-autoshift.sh")
+	var out strings.Builder
+	var stderr strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		fmt.Println(out)
+	}
+}
+
+// checks if the multiclusterhub is running
+func CheckMch() string {
+	cmd := exec.Command("/usr/local/bin/oc", "get", "mch", "multiclusterhub", "-n", "open-cluster-management", "-o", "jsonpath='{.status.phase}'")
+	var out strings.Builder
+	var stderr strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		fmt.Println(err)
+		return "error"
+	}
+	fmt.Println(out)
+	return out.String()
 }
 
 // func Get_nodes() string {

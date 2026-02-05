@@ -2,6 +2,8 @@ package main
 
 import (
 	"asui/internal/app_main"
+	"asui/internal/data_io"
+	"os"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -14,8 +16,8 @@ func main() {
 	Win = app.NewWindow("AutoShift UI")
 	Win.Resize(fyne.NewSize(800, 600))
 	Win.SetContent(app_main.Home(Win))
-	// loggingSetup()
 	Win.ShowAndRun()
+	tidyup()
 }
 
 // func loggingSetup() {
@@ -35,4 +37,6 @@ func main() {
 // 	}
 // }
 
-func tidyup() {}
+func tidyup() {
+	defer os.RemoveAll(data_io.Tdir)
+}
