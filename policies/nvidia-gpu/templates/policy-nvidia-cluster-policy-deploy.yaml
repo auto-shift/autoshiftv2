@@ -1,0 +1,164 @@
+{{- $policyName := "policy-nvidia-cluster-policy-deploy" }}
+{{- $placementName := "placement-policy-nvidia-cluster-policy-deploy" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-nvidia-gpu-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: nvidia-cluster-policy-deploy
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                kind: ClusterPolicy
+                apiVersion: nvidia.com/v1
+                metadata:
+                  name: gpu-cluster-policy
+                spec:
+                  operator:
+                    defaultRuntime: crio
+                    use_ocp_driver_toolkit: true
+                    initContainer: {}
+                  cdi:
+                    enabled: true
+                  sandboxWorkloads:
+                    enabled: true
+                    defaultWorkload: container
+                  driver:
+                    enabled: true
+                    useNvidiaDriverCRD: false
+                    kernelModuleType: auto
+                    upgradePolicy:
+                      autoUpgrade: true
+                      drain:
+                        deleteEmptyDir: false
+                        enable: false
+                        force: false
+                        timeoutSeconds: 300
+                      maxParallelUpgrades: 1
+                      maxUnavailable: 25%
+                      podDeletion:
+                        deleteEmptyDir: false
+                        force: false
+                        timeoutSeconds: 300
+                      waitForCompletion:
+                        timeoutSeconds: 0
+                    repoConfig:
+                      configMapName: ''
+                    certConfig:
+                      name: ''
+                    licensingConfig:
+                      nlsEnabled: true
+                      secretName: ''
+                    virtualTopology:
+                      config: ''
+                    kernelModuleConfig:
+                      name: ''
+                  dcgmExporter:
+                    enabled: true
+                    config:
+                      name: ''
+                    serviceMonitor:
+                      enabled: true
+                  dcgm:
+                    enabled: true
+                  daemonsets:
+                    updateStrategy: RollingUpdate
+                    rollingUpdate:
+                      maxUnavailable: '1'
+                  devicePlugin:
+                    enabled: true
+                    config:
+                      name: ''
+                      default: ''
+                    mps:
+                      root: /run/nvidia/mps
+                  gfd:
+                    enabled: true
+                  migManager:
+                    enabled: true
+                  nodeStatusExporter:
+                    enabled: true
+                  mig:
+                    strategy: single
+                  toolkit:
+                    enabled: true
+                  validator:
+                    plugin:
+                      env: []
+                  vgpuManager:
+                    enabled: false
+                  vgpuDeviceManager:
+                    enabled: true
+                  sandboxDevicePlugin:
+                    enabled: true
+                  vfioManager:
+                    enabled: true
+                  gds:
+                    enabled: false
+                  gdrcopy:
+                    enabled: false
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/nvidia-gpu'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
