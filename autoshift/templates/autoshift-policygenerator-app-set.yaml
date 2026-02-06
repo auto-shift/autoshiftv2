@@ -1,0 +1,66 @@
+{{- if not .Values.autoshiftOciRegistry }}
+# PolicyGenerator ApplicationSet - Git mode only
+# Uses CMP plugin to run PolicyGenerator with dynamic values
+#
+# For OCI mode, PolicyGenerator policies are pre-built as Helm charts
+# and included in the main ApplicationSet
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: "{{ .Release.Name }}-policygenerator"
+  namespace: openshift-gitops
+  labels:
+    velero.io/exclude-from-backup: "true"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - git:
+      repoURL: {{ .Values.autoshiftGitRepo }}
+      revision: {{ .Values.autoshiftGitBranchTag }}
+      directories:
+      - path: 'policy-generator/*'
+      {{- if .Values.excludePolicies }}
+      {{- range .Values.excludePolicies }}
+      - path: 'policy-generator/{{ . }}'
+        exclude: true
+      {{- end }}
+      {{- end }}
+  template:
+    metadata:
+      name: '{{ .Release.Name }}-pg-{{"{{"}} .path.basename {{"}}"}}'
+      labels:
+        app: "{{ .Release.Name }}-policygenerator"
+        velero.io/exclude-from-backup: "true"
+    spec:
+      project: default
+      source:
+        path: '{{"{{"}} .path.path {{"}}"}}'
+        repoURL: {{ .Values.autoshiftGitRepo }}
+        targetRevision: {{ .Values.autoshiftGitBranchTag }}
+        plugin:
+          name: policygenerator
+          env:
+            - name: PARAM_POLICY_NAMESPACE
+              value: {{ printf "policies-%s" .Release.Name }}
+            - name: PARAM_HUB_CLUSTER_SETS
+              value: "{{- range $cluster, $clustervalue := .Values.hubClusterSets }}{{ $cluster }} {{- end }}"
+            - name: PARAM_MANAGED_CLUSTER_SETS
+              value: "{{- range $cluster, $clustervalue := .Values.managedClusterSets }}{{ $cluster }} {{- end }}"
+      ignoreDifferences:
+      - group: "policy.open-cluster-management.io"
+        kind: "Policy"
+        jsonPointers:
+        - /metadata/annotations
+        - /metadata/labels
+      syncPolicy:
+        automated:
+          prune: {{ if ((.Values.autoshift).dryRun) }}false{{ else }}true{{ end }}
+          selfHeal: {{ if ((.Values.autoshift).dryRun) }}false{{ else }}true{{ end }}
+        syncOptions:
+        - RespectIgnoreDifferences=true
+        - CreateNamespace=true
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: {{ printf "policies-%s" .Release.Name }}
+{{- end }}

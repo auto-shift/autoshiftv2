@@ -1,0 +1,29 @@
+# Node Feature Discovery Operator
+# Portable Helm chart - works with or without ACM
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.nodeFeatureDiscovery.namespace }}
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: {{ .Values.nodeFeatureDiscovery.operatorGroupName }}
+  namespace: {{ .Values.nodeFeatureDiscovery.namespace }}
+spec:
+  targetNamespaces:
+  {{- range .Values.nodeFeatureDiscovery.targetNamespaces }}
+    - {{ . }}
+  {{- end }}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: {{ .Values.nodeFeatureDiscovery.name }}
+  namespace: {{ .Values.nodeFeatureDiscovery.namespace }}
+spec:
+  channel: {{ .Values.nodeFeatureDiscovery.channel }}
+  name: {{ .Values.nodeFeatureDiscovery.name }}
+  source: {{ .Values.nodeFeatureDiscovery.source }}
+  sourceNamespace: {{ .Values.nodeFeatureDiscovery.sourceNamespace }}

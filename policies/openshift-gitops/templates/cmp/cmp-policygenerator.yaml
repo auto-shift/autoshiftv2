@@ -1,0 +1,71 @@
+{{- if .Values.hubClusterSets }}
+# Config Management Plugin for PolicyGenerator
+# This enables PolicyGenerator policies with dynamic values from ApplicationSet
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cmp-policygenerator
+  namespace: {{ .Values.gitops.argoNamespace | default "openshift-gitops" }}
+data:
+  plugin.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: policygenerator
+    spec:
+      version: v1.0
+      init:
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            # Use PolicyGenerator binary from ACM (mounted from init container)
+            mkdir -p ~/.config/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+            cp /policy-generator/PolicyGenerator ~/.config/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator/PolicyGenerator
+            chmod +x ~/.config/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator/PolicyGenerator
+            echo "PolicyGenerator ready (from ACM image)"
+      generate:
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+
+            # Build CLUSTER_SETS from parameters (space-separated list)
+            CLUSTER_SETS=""
+            if [ -n "$PARAM_HUB_CLUSTER_SETS" ]; then
+              for cs in $PARAM_HUB_CLUSTER_SETS; do
+                CLUSTER_SETS="${CLUSTER_SETS}    - ${cs}\n"
+              done
+            fi
+            if [ -n "$PARAM_MANAGED_CLUSTER_SETS" ]; then
+              for cs in $PARAM_MANAGED_CLUSTER_SETS; do
+                CLUSTER_SETS="${CLUSTER_SETS}    - ${cs}\n"
+              done
+            fi
+            export CLUSTER_SETS=$(echo -e "$CLUSTER_SETS")
+
+            # Set namespace from parameter
+            export POLICY_NAMESPACE="${PARAM_POLICY_NAMESPACE:-policies-autoshift}"
+
+            # Substitute variables in all YAML files (including nested directories)
+            find . -name "*.yaml" -type f | while read f; do
+              envsubst '${POLICY_NAMESPACE} ${CLUSTER_SETS}' < "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+            done
+
+            # Run kustomize with PolicyGenerator
+            kustomize build --enable-alpha-plugins --enable-helm .
+      discover:
+        find:
+          glob: "**/policy-generator.yaml"
+      parameters:
+        static:
+          - name: policy_namespace
+            title: Policy Namespace
+            required: true
+            string: policies-autoshift
+          - name: hub_cluster_sets
+            title: Hub Cluster Sets (space-separated)
+            string: ""
+          - name: managed_cluster_sets
+            title: Managed Cluster Sets (space-separated)
+            string: ""
+{{- end }}

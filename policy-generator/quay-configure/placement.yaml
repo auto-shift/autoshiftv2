@@ -1,0 +1,38 @@
+---
+# Template file - variables substituted by CMP before kustomize runs
+# Uses gomplate for complex structure handling
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-quay-configure
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  clusterSets:
+${CLUSTER_SETS}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/quay'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: policy-quay
+  namespace: ${POLICY_NAMESPACE}
+placementRef:
+  name: placement-policy-quay-configure
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-quay-configure
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
