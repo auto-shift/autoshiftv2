@@ -478,7 +478,7 @@ created for each replica of the image service. 2GiB per OSImage entry is require
 | `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a noobaa bucket for acm. ODF will have to be enabled as well |
 | `acm-search-storage`        | bool      | `true` or `false`         | Enable persistent storage for ACM Search (recommended for production) |
 | `acm-search-storage-class`  | string    | `ocs-storagecluster-ceph-rbd` | Storage class for Search database |
-| `acm-search-storage-size`   | string    | `10Gi`                    | Storage size for Search database |
+| `acm-search-storage-size`   | string    | `100Gi`                   | Storage size for Search database. Sizing: Small (<50 clusters): 20Gi, Medium (50-200): 50Gi, Large (200-500): 100Gi, Very Large (500+): 200Gi+ |
 
 ### Cluster Labels
 
