@@ -31,14 +31,9 @@ spec:
           name: set-default-storageclass
         spec:
           object-templates-raw: |
-              {{ "{{-" }} $labels := .ManagedClusterLabels {{ "}}" }}
-              {{ "{{-" }} $defaultSC := "ocs-storagecluster-ceph-rbd" {{ "}}" }}
-              {{ "{{-" }} if (index $labels "autoshift.io/odf-default-storageclass") {{ "}}" }}
-              {{ "{{-" }}   $defaultSC = (index $labels "autoshift.io/odf-default-storageclass") {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{hub" }} $defaultSC := index .ManagedClusterLabels "autoshift.io/odf-default-storageclass" | default "ocs-storagecluster-ceph-rbd" {{ "hub}}" }}
               {{ "{{-" }} $storageclasses := (lookup "storage.k8s.io/v1" "StorageClass" "" "").items {{ "}}" }}
               {{ "{{-" }} range $sc := $storageclasses {{ "}}" }}
-              {{ "{{-" }} $isDefault := eq $sc.metadata.name $defaultSC {{ "}}" }}
               - complianceType: musthave
                 objectDefinition:
                   apiVersion: storage.k8s.io/v1
@@ -46,7 +41,7 @@ spec:
                   metadata:
                     name: {{ "{{" }} $sc.metadata.name {{ "}}" }}
                     annotations:
-                      storageclass.kubernetes.io/is-default-class: "{{ "{{" }} if $isDefault {{ "}}" }}true{{ "{{" }} else {{ "}}" }}false{{ "{{" }} end {{ "}}" }}"
+                      storageclass.kubernetes.io/is-default-class: '{{ "{{" }} if eq $sc.metadata.name "{{ "{{hub" }} $defaultSC {{ "hub}}" }}" {{ "}}" }}true{{ "{{" }} else {{ "}}" }}false{{ "{{" }} end {{ "}}" }}'
               {{ "{{-" }} end {{ "}}" }}
           pruneObjectBehavior: None
           remediationAction: enforce
