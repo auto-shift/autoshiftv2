@@ -521,10 +521,19 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 
 ### Machine Health Checks
 
-| Variable                          | Type              | Default Value             | Notes |
-|-----------------------------------|-------------------|---------------------------|-------|
-| `machine-health-checks`           | bool              |                           | If not set Machine Health Checks will not be managed |
-| `machine-health-checks-zones`     | <list<String>>    |                           | List of availability zones for health checks. Automated node health monitoring and remediation |
+Automated node health monitoring and remediation.
+
+| Variable                          | Type   | Default | Notes |
+|-----------------------------------|--------|---------|-------|
+| `machine-health-checks`           | bool   |         | Enable the MachineHealthCheck policy |
+| `machine-health-checks-worker`    | bool   |         | Enable MHC for all worker MachineSets (timeout=300s, maxUnhealthy=40%) |
+| `machine-health-checks-infra`     | bool   |         | Enable MHC for all infra MachineSets (timeout=300s, maxUnhealthy=40%) |
+| `machine-health-checks-storage`   | bool   |         | Enable MHC for storage MachineSets (timeout=600s, maxUnhealthy=1) |
+
+**Notes:**
+- Storage nodes are identified by `cluster.ocs.openshift.io/openshift-storage` label (same as ODF)
+- Storage uses longer timeouts and maxUnhealthy=1 to allow Ceph recovery
+- Never create MachineHealthChecks for control plane nodes
 
 ### Infra Nodes
 
