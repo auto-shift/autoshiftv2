@@ -3,6 +3,9 @@
 #
 # By default, sets ocs-storagecluster-ceph-rbd as the default storage class.
 # Configure via label: autoshift.io/odf-default-storageclass: 'storageclass-name'
+#
+# Note: This policy does NOT apply when odf-multi-cloud-gateway: 'standalone'
+# because standalone mode only deploys NooBaa (object storage), not block storage.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -68,6 +71,10 @@ spec:
               operator: In
               values:
               - 'true'
+            - key: 'autoshift.io/odf-multi-cloud-gateway'
+              operator: NotIn
+              values:
+              - 'standalone'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
