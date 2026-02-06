@@ -488,27 +488,7 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-source`                 | string    | `redhat-operators`        | Operator catalog source |
 | `gitops-source-namespace`       | string    | `openshift-marketplace`   | Namespace for operator catalog |
 
-### Migration Toolkit for OpenShift Virtualization
 
-Manages the Migration Toolkit for OpenShift Virtualization operator installation and forklift instance. This policy ensures the Migration Toolkit for OpenShift Virtualization operator is installed and creates the main Forklift instance used to migrate VMs. 
-
-| Variable                        | Type      | Default Value             | Notes |
-|---------------------------------|-----------|---------------------------|-------|
-| `mtv`                           | bool      |                           | If not set to `true`, OpenShift GitOps will not be managed |
-| `mtv-channel`                   | string    | `release-v2.9`            | Operator channel for GitOps updates |
-| `mtv-source`                    | string    | `redhat-operators`        | Operator catalog source |
-| `mtv-source-namespace`          | string    | `openshift-marketplace`   | Namespace for operator catalog |
-| `mtv-version`                   | string    | `mtv-operator.v2.9.6`     | Specific CSV version for controlled upgrades 
-
-
-mtv-version: 'mtv-operator.v2.9.6'
-
-
-      ### Migration Toolkit for Openshift Virtualization
-      mtv: 'true'
-      mtv-channel: release-v2.9
-      mtv-source: redhat-operators
-      mtv-source-namespace: openshift-marketplace
 ### Master Nodes
 
 Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. You may have to increase the number of pods per node in these resource constrained environments.
