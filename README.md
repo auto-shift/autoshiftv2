@@ -476,6 +476,9 @@ created for each replica of the image service. 2GiB per OSImage entry is require
 | `acm-source-namespace`      | string    | `openshift-marketplace`   |       |
 | `acm-availability-config`   | string    | `Basic` or `High`         |       |
 | `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a noobaa bucket for acm. ODF will have to be enabled as well |
+| `acm-search-storage`        | bool      | `true` or `false`         | Enable persistent storage for ACM Search (recommended for production) |
+| `acm-search-storage-class`  | string    | `ocs-storagecluster-ceph-rbd` | Storage class for Search database |
+| `acm-search-storage-size`   | string    | `10Gi`                    | Storage size for Search database |
 
 ### Cluster Labels
 
@@ -748,6 +751,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `odf-version`                     | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `odf-source`                      | string            | `redhat-operators`        |       |
 | `odf-source-namespace`            | string            | `openshift-marketplace`   |       |
+| `odf-default-storageclass`        | string            | `ocs-storagecluster-ceph-rbd` | Sets specified storage class as default and all others as non-default |
 
 ### OpenShift Internal Registry
 | Variable                          | Type              | Default Value             | Notes |
