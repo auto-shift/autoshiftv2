@@ -1,5 +1,8 @@
 # AutoShiftv2
 
+![OpenShift Version](https://img.shields.io/badge/OpenShift-4.20.12-red?logo=redhatopenshift&logoColor=white)
+![ACM Version](https://img.shields.io/badge/ACM-2.15-blue?logo=redhat&logoColor=white)
+
 ## What is AutoShift?
 
 AutoShiftv2 is an opinionated [Infrastructure-as-Code (IaC)](https://martinfowler.com/bliki/InfrastructureAsCode.html) framework designed to manage infrastructure components after an OpenShift installation using Advanced Cluster Management (ACM) and OpenShift GitOps. It provides a modular, extensible model to support infrastructure elements deployed on OpenShift — particularly those in [OpenShift Platform Plus](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet). AutoShiftv2 emphasizes ease of adoption, configurable features (taggable on/off), and production-ready capabilities for installation, upgrades, and maintenance.
