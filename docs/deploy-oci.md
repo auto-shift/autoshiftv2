@@ -14,18 +14,12 @@ This guide explains how to deploy AutoShift from an OCI registry (Quay, GHCR, Ha
 
 ## Prerequisites
 
-1. **AutoShift charts published to OCI registry**
-   ```bash
-   # Release charts to registry
-   ./scripts/release.sh --version 1.0.0 --namespace myorg/autoshift
-   ```
-
-2. **OpenShift cluster with**:
+1. **OpenShift cluster with**:
    - OpenShift GitOps operator
    - Red Hat ACM operator
    - Access to OCI registry (Quay, GHCR, etc.)
 
-3. **OCI registry credentials** (if private)
+2. **OCI registry credentials** (if private)
 
 ## Deployment Steps
 
