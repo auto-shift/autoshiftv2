@@ -15,7 +15,6 @@ Complete documentation for AutoShift - Infrastructure as Code for OpenShift usin
 
 ### Development
 - **[Developer Guide](developer-guide.md)** - Contributing to AutoShift and advanced configuration
-- **[Adding New Operators](adding-new-operators.md)** - Step-by-step guide to add operators and contribute upstream
 
 ## Documentation Overview
 
