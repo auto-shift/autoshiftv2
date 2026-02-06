@@ -1,12 +1,15 @@
-# This policy verifies the installation of the official & supported version of
-# the Compliance Operator on the managed clusters.
+# This policy sets the default storage class annotation on all storage classes.
+# It ensures only the configured storage class is set as default.
 #
-# If set to "enforce" it'll install the operator.
+# By default, sets ocs-storagecluster-ceph-rbd as the default storage class.
+# Configure via label: autoshift.io/odf-default-storageclass: 'storageclass-name'
 #
+# Note: This policy does NOT apply when odf-multi-cloud-gateway: 'standalone'
+# because standalone mode only deploys NooBaa (object storage), not block storage.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-storage-cluster-standalone
+  name: policy-default-storageclass
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -17,7 +20,7 @@ spec:
   remediationAction: inform
 {{ end }}
   dependencies:
-    - name: policy-odf-operator-install
+    - name: policy-storage-cluster-test
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -28,42 +31,29 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: storage-cluster-install-standalone
+          name: set-default-storageclass
         spec:
-          remediationAction: enforce
-          severity: high
           object-templates-raw: |
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: ocs.openshift.io/v1
-                kind: StorageCluster
-                metadata:
-                  name: ocs-storagecluster
-                  namespace: {{ .Values.odf.namespace }}
-                spec:
-                  arbiter: {}
-                  encryption:
-                    kms: {}
-                  externalStorage: {}
-                  managedResources:
-                    cephObjectStoreUsers: {}
-                    cephCluster: {}
-                    cephBlockPools: {}
-                    cephNonResilientPools: {}
-                    cephObjectStores: {}
-                    cephFilesystems: {}
-                    cephRBDMirror: {}
-                    cephToolbox: {}
-                    cephDashboard: {}
-                    cephConfig: {}
-                  mirroring: {}
-                  multiCloudGateway:
-                    reconcileStrategy: standalone
+              {{ "{{hub" }} $defaultSC := index .ManagedClusterLabels "autoshift.io/odf-default-storageclass" | default "ocs-storagecluster-ceph-rbd" {{ "hub}}" }}
+              {{ "{{-" }} $storageclasses := (lookup "storage.k8s.io/v1" "StorageClass" "" "").items {{ "}}" }}
+              {{ "{{-" }} range $sc := $storageclasses {{ "}}" }}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: storage.k8s.io/v1
+                  kind: StorageClass
+                  metadata:
+                    name: {{ "{{" }} $sc.metadata.name {{ "}}" }}
+                    annotations:
+                      storageclass.kubernetes.io/is-default-class: '{{ "{{" }} if eq $sc.metadata.name "{{ "{{hub" }} $defaultSC {{ "hub}}" }}" {{ "}}" }}true{{ "{{" }} else {{ "}}" }}false{{ "{{" }} end {{ "}}" }}'
+              {{ "{{-" }} end {{ "}}" }}
+          pruneObjectBehavior: None
+          remediationAction: enforce
+          severity: medium
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-storage-cluster-standalone
+  name: placement-policy-default-storageclass
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -82,7 +72,7 @@ spec:
               values:
               - 'true'
             - key: 'autoshift.io/odf-multi-cloud-gateway'
-              operator: In
+              operator: NotIn
               values:
               - 'standalone'
   tolerations:
@@ -94,13 +84,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-storage-cluster-standalone
+  name: placement-policy-default-storageclass
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-storage-cluster-standalone
+  name: placement-policy-default-storageclass
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-storage-cluster-standalone
+  - name: policy-default-storageclass
     apiGroup: policy.open-cluster-management.io
     kind: Policy

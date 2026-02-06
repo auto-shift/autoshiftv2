@@ -1,14 +1,20 @@
-# This policy verifies the installation of the official & supported version of
-# the Compliance Operator on the managed clusters.
+# This policy configures persistent storage for RHACM Search.
+# Search uses PostgreSQL for indexing and by default uses ephemeral storage.
+# This policy ensures Search uses persistent storage for production environments.
 #
-# If set to "enforce" it'll install the operator.
-#
+# Configure via labels:
+#   autoshift.io/acm-search-storage-class: 'storage-class-name' (default: ocs-storagecluster-ceph-rbd)
+#   autoshift.io/acm-search-storage-size: '10Gi' (default: 10Gi)
+{{- if .Values.hubClusterSets }}
+{{- $policyName := "policy-acm-search-storage" }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-odf-console-plugin
+  name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "9"
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
@@ -17,7 +23,7 @@ spec:
   remediationAction: inform
 {{ end }}
   dependencies:
-    - name: policy-storage-cluster-test
+    - name: policy-acm-mch-install
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -28,39 +34,41 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: policy-odf-console-plugin-enable
+          name: acm-search-storage
         spec:
           remediationAction: enforce
-          severity: high
+          severity: medium
           object-templates:
             - complianceType: musthave
               objectDefinition:
-                apiVersion: operator.openshift.io/v1
-                kind: Console
+                apiVersion: search.open-cluster-management.io/v1alpha1
+                kind: Search
                 metadata:
-                  name: cluster
+                  name: search-v2-operator
+                  namespace: {{ .Values.acm.namespace }}
                 spec:
-                  plugins:
-                    - odf-console
+                  dbStorage:
+                    storageClassName: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-search-storage-class" | default "ocs-storagecluster-ceph-rbd" {{ "hub}}" }}'
+                    size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-search-storage-size" | default "100Gi" {{ "hub}}" }}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-odf-console-plugin
+  name: placement-{{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "9"
 spec:
   clusterSets:
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
   predicates:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/odf'
+            - key: 'autoshift.io/acm-search-storage'
               operator: In
               values:
               - 'true'
@@ -73,13 +81,17 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-odf-console-plugin
+  name: placement-{{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "9"
 placementRef:
-  name: placement-policy-odf-console-plugin
+  name: placement-{{ $policyName }}
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-odf-console-plugin
+  - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy
+{{- end }}
