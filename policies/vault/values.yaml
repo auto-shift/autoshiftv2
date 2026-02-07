@@ -1,0 +1,117 @@
+# Default values for HashiCorp Vault
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+policy_namespace: open-cluster-policies
+
+vault:
+  version: 0.32.0
+  namespace: vault
+
+tlsEnabled: false
+
+hubClusterSets:
+  hub: #Deploys Vault and vault-agent-injector
+    labels:
+      autoshift.io/vault: 'true'
+# managedClusterSets: #Deploys vault-agent-injector
+#   managed:
+#     labels:
+#       test4: 'test'
+
+### AutoShift Labels Documentation
+# The following labels can be set at the cluster or clusterset level to configure this policy:
+#
+# Enable/Disable:
+# vault<bool>: 'true' or 'false' - Enable HashiCorp Vault 
+#
+# Examples:
+# autoshift.io/vault: 'true'
+
+##################################
+### Values applied in Application for HaschiCorp Vault Chart
+##################################
+
+server_image_override: false 
+injector_image_override: false
+
+#Most basic openshift vault deployment
+#move overrides to application yaml
+
+vault_values: |
+  enabled: true
+  global:
+    enabled: true
+    tlsDisable: true
+    openshift: true
+  injector:
+    enabled: true
+    image:
+      repository: "hashicorp/vault-k8s"
+      tag: "latest"
+    agentImage:
+      repository: "hashicorp/vault"
+      tag: "latest"
+  server:
+    image:
+      repository: "hashicorp/vault"
+      tag: "latest"
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 250m
+      limits:
+        memory: 256Mi
+        cpu: 250m
+    route: 
+      enabled: true
+      host: 
+      tls:
+        termination: edge
+      annotations: 
+        argocd.argoproj.io/compare-options: IgnoreDifferences=/spec/host
+    updateStrategyType: "OnDelete"
+    service:
+      enabled: true
+      type: ClusterIP
+      port: 8200
+      targetPort: 8200
+    dataStorage:
+      enabled: true
+      size: 10Gi
+      storageClass: null
+      accessMode: ReadWriteOnce
+    auditStorage:
+      enabled: true
+      size: 10Gi
+      storageClass: null
+      accessMode: ReadWriteOnce
+    ha:
+      enabled: true
+      replicas: 3
+      raft:
+        enabled: true
+        setNodeId: true
+        config: |
+          ui = true
+          listener "tcp" {
+            tls_disable = 1
+            address = "[::]:8200"
+            cluster_address = "[::]:8201"
+          }
+          storage "raft" {
+            path = "/vault/data"
+            retry_join {
+              leader_api_addr = "http://vault-0.vault-internal:8200"
+            }
+            retry_join {
+              leader_api_addr = "http://vault-1.vault-internal:8200"
+            }
+            retry_join {
+              leader_api_addr = "http://vault-2.vault-internal:8200"
+            }
+          }
+          service_registration "kubernetes" {}
+  ui:
+    enabled: true
+    serviceType: "ClusterIP"
+    externalPort: 8200  
