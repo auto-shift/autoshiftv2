@@ -14,59 +14,47 @@ spec:
   disabled: false
   policy-templates:
     - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
+        apiVersion: argoproj.io/v1alpha1
+        kind: Application
         metadata:
           name: vault
+          namespace: openshift-gitops
         spec:
-          remediationAction: enforce
-          severity: high
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: Namespace
-                metadata:
-                  name: {{ .Values.vault.namespace }}
-                  labels:
-                    openshift.io/cluster-monitoring: "true"
----  
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: vault
-  namespace: openshift-gitops
-spec:
-  project: default
-  source:
-    chart: vault
-    repoURL: https://helm.releases.hashicorp.com
-    targetRevision: {{ .Values.vault.version }}
-    helm:
-      values: | 
-      {{- .Values.vault_values | nindent 8 }}
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-      allowEmpty: false
-    syncOptions:
-      - CreateNamespace=true
-      - ServerSideApply=true
-    retry:
-      limit: 5
-      backoff:
-        duration: 5s
-        factor: 2
-        maxDuration: 3m
-  # ignoreDifferences:
-  #   - group: admissionregistration.k8s.io
-  #     kind: MutatingWebhookConfiguration
-  #     jqPathExpressions:
-  #       - .webhooks[]?.clientConfig.caBundle
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: vault
+          ignoreDifferences:
+          - group: apps
+            kind: Route
+            jsonPointers:
+            - /spec/host
+          project: default
+          source:
+            chart: vault
+            repoURL: https://helm.releases.hashicorp.com
+            targetRevision: {{ .Values.vault.version }}
+            helm:
+              values: | 
+              {{- .Values.vault_values | nindent 8 }}
+          syncPolicy:
+            automated:
+              prune: true
+              selfHeal: true
+              allowEmpty: false
+            syncOptions:
+              - CreateNamespace=true
+              - ServerSideApply=true
+            retry:
+              limit: 5
+              backoff:
+                duration: 5s
+                factor: 2
+                maxDuration: 3m
+          # ignoreDifferences:
+          #   - group: admissionregistration.k8s.io
+          #     kind: MutatingWebhookConfiguration
+          #     jqPathExpressions:
+          #       - .webhooks[]?.clientConfig.caBundle
+          destination:
+            server: https://kubernetes.default.svc
+            namespace: vault
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
