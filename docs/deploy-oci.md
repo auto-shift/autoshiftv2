@@ -25,11 +25,12 @@ This guide explains how to deploy AutoShift from an OCI registry (Quay, GHCR, Ha
 
 ### Step 1: Install OpenShift GitOps Operator
 
-OpenShift GitOps must be installed before deploying AutoShift:
+OpenShift GitOps must be installed before deploying AutoShift. Deploy the bootstrap from OCI:
 
 ```bash
-# Install OpenShift GitOps from the local chart
-helm upgrade --install openshift-gitops ./openshift-gitops \
+# Install OpenShift GitOps from OCI registry
+helm upgrade --install openshift-gitops oci://quay.io/auto-shift/autoshift/openshift-gitops \
+  --version <VERSION> \
   --namespace openshift-gitops \
   --create-namespace
 
@@ -48,11 +49,12 @@ oc get pods -n openshift-gitops
 
 ### Step 2: Install Red Hat ACM Operator
 
-Advanced Cluster Management is required for policy-based management:
+Advanced Cluster Management is required for policy-based management. Deploy the bootstrap from OCI:
 
 ```bash
-# Install ACM from the local chart
-helm upgrade --install advanced-cluster-management ./advanced-cluster-management \
+# Install ACM from OCI registry
+helm upgrade --install advanced-cluster-management oci://quay.io/auto-shift/autoshift/advanced-cluster-management \
+  --version <VERSION> \
   --namespace open-cluster-management \
   --create-namespace
 
@@ -239,76 +241,78 @@ oc get managedcluster local-cluster -o jsonpath='{.metadata.labels.cluster\.open
 # Should output: hub
 ```
 
-### Step 6: Apply AutoShift Labels to Enable Operators
+### Step 6: Configure Operator Labels via values.hub.yaml
 
-AutoShift uses labels on ManagedClusters to determine which operators to install. Apply the `autoshift.io/` labels for the operators you want:
+AutoShift uses labels on ManagedClusters to determine which operators to install. Labels are applied automatically through the **labels policy** — do not apply them manually.
 
-```bash
-# Apply AutoShift labels to enable desired operators
-# Customize these based on which operators you want to install
-oc label managedcluster local-cluster \
-  autoshift.io/self-managed='true' \
-  autoshift.io/openshift-version='4.20.0' \
-  autoshift.io/gitops='true' \
-  autoshift.io/gitops-subscription-name='openshift-gitops-operator' \
-  autoshift.io/gitops-channel='gitops-1.18' \
-  autoshift.io/gitops-source='redhat-operators' \
-  autoshift.io/gitops-source-namespace='openshift-marketplace' \
-  autoshift.io/acm-subscription-name='advanced-cluster-management' \
-  autoshift.io/acm-channel='release-2.14' \
-  autoshift.io/acm-source='redhat-operators' \
-  autoshift.io/acm-source-namespace='openshift-marketplace' \
-  --overwrite
+Configure the desired operators in your `values.hub.yaml` (or via the Helm values override):
 
-# Verify labels applied
-oc get managedcluster local-cluster -o jsonpath='{.metadata.labels}' | jq 'to_entries[] | select(.key | startswith("autoshift"))'
+```yaml
+# Example: Enable operators via hub cluster set labels in values.hub.yaml
+hubClusterSets:
+  hub:
+    labels:
+      self-managed: 'true'
+      openshift-version: '4.20.0'
+      gitops: 'true'
+      gitops-subscription-name: openshift-gitops-operator
+      gitops-channel: gitops-1.18
+      gitops-source: redhat-operators
+      gitops-source-namespace: openshift-marketplace
+      acm-subscription-name: advanced-cluster-management
+      acm-channel: release-2.14
+      acm-source: redhat-operators
+      acm-source-namespace: openshift-marketplace
 ```
 
 #### Example: Enable RHOAI with Dependencies
 
-```bash
-# RHOAI 3.0 with all dependencies
-oc label managedcluster local-cluster \
-  autoshift.io/serverless='true' \
-  autoshift.io/serverless-subscription-name='serverless-operator' \
-  autoshift.io/serverless-channel='stable' \
-  autoshift.io/serverless-source='redhat-operators' \
-  autoshift.io/serverless-source-namespace='openshift-marketplace' \
-  autoshift.io/servicemesh3='true' \
-  autoshift.io/servicemesh3-subscription-name='servicemeshoperator3' \
-  autoshift.io/servicemesh3-channel='stable-3.2' \
-  autoshift.io/servicemesh3-source='redhat-operators' \
-  autoshift.io/servicemesh3-source-namespace='openshift-marketplace' \
-  autoshift.io/pipelines='true' \
-  autoshift.io/pipelines-subscription-name='openshift-pipelines-operator-rh' \
-  autoshift.io/pipelines-channel='pipelines-1.20' \
-  autoshift.io/pipelines-source='redhat-operators' \
-  autoshift.io/pipelines-source-namespace='openshift-marketplace' \
-  autoshift.io/node-feature-discovery='true' \
-  autoshift.io/node-feature-discovery-subscription-name='nfd' \
-  autoshift.io/node-feature-discovery-channel='stable' \
-  autoshift.io/node-feature-discovery-source='redhat-operators' \
-  autoshift.io/node-feature-discovery-source-namespace='openshift-marketplace' \
-  autoshift.io/rhoai='true' \
-  autoshift.io/rhoai-subscription-name='rhods-operator' \
-  autoshift.io/rhoai-channel='fast-3.x' \
-  autoshift.io/rhoai-source='redhat-operators' \
-  autoshift.io/rhoai-source-namespace='openshift-marketplace' \
-  --overwrite
+```yaml
+# Add to hubClusterSets.hub.labels (or managedClusterSets.managed.labels):
+      # Serverless (required for KServe)
+      serverless: 'true'
+      serverless-subscription-name: serverless-operator
+      serverless-channel: stable
+      serverless-source: redhat-operators
+      serverless-source-namespace: openshift-marketplace
+      # Service Mesh 3 (required for RHOAI)
+      servicemesh3: 'true'
+      servicemesh3-subscription-name: servicemeshoperator3
+      servicemesh3-channel: stable-3.2
+      servicemesh3-source: redhat-operators
+      servicemesh3-source-namespace: openshift-marketplace
+      # Pipelines
+      pipelines: 'true'
+      pipelines-subscription-name: openshift-pipelines-operator-rh
+      pipelines-channel: pipelines-1.20
+      pipelines-source: redhat-operators
+      pipelines-source-namespace: openshift-marketplace
+      # Node Feature Discovery
+      node-feature-discovery: 'true'
+      node-feature-discovery-subscription-name: nfd
+      node-feature-discovery-channel: stable
+      node-feature-discovery-source: redhat-operators
+      node-feature-discovery-source-namespace: openshift-marketplace
+      # RHOAI
+      rhoai: 'true'
+      rhoai-subscription-name: rhods-operator
+      rhoai-channel: fast-3.x
+      rhoai-source: redhat-operators
+      rhoai-source-namespace: openshift-marketplace
 ```
 
 #### Example: Enable NVIDIA GPU Operator
 
-```bash
-# NVIDIA GPU Operator (requires x86 instance with GPU)
-oc label managedcluster local-cluster \
-  autoshift.io/nvidia-gpu='true' \
-  autoshift.io/nvidia-gpu-subscription-name='gpu-operator-certified' \
-  autoshift.io/nvidia-gpu-channel='stable' \
-  autoshift.io/nvidia-gpu-source='certified-operators' \
-  autoshift.io/nvidia-gpu-source-namespace='openshift-marketplace' \
-  --overwrite
+```yaml
+# Add to hubClusterSets.hub.labels (or managedClusterSets.managed.labels):
+      nvidia-gpu: 'true'
+      nvidia-gpu-subscription-name: gpu-operator-certified
+      nvidia-gpu-channel: stable
+      nvidia-gpu-source: certified-operators
+      nvidia-gpu-source-namespace: openshift-marketplace
 ```
+
+> **Note:** Labels are managed declaratively via the labels policy. Avoid using `oc label` commands directly, as the labels policy will reconcile and overwrite manual changes.
 
 ### Step 7: Verify Deployment
 

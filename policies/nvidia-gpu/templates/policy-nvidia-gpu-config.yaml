@@ -11,6 +11,9 @@ metadata:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   # Wait for NVIDIA GPU operator to be installed first
   # Note: NFD is optional - the GPU operator includes its own GPU Feature Discovery (GFD)
@@ -41,12 +44,11 @@ spec:
                 spec:
                   operator:
                     defaultRuntime: crio
-                    # Note: ClusterPolicy CRD requires native booleans, not strings
-                    # Hub templating cannot be used for these boolean fields
-                    use_ocp_driver_toolkit: {{ .Values.nvidiaGpu.clusterPolicy.driver.useOpenShiftDriverToolkit }}
+                    # Hub templating for per-cluster configuration via labels
+                    use_ocp_driver_toolkit: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-driver-toolkit" | default "{{ .Values.nvidiaGpu.clusterPolicy.driver.useOpenShiftDriverToolkit }}" | toBool {{ "hub}}" }}'
                   daemonsets: {}
                   driver:
-                    enabled: {{ .Values.nvidiaGpu.clusterPolicy.driver.enabled }}
+                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-driver" | default "{{ .Values.nvidiaGpu.clusterPolicy.driver.enabled }}" | toBool {{ "hub}}" }}'
                     upgradePolicy:
                       autoUpgrade: true
                       maxParallelUpgrades: 1
@@ -69,34 +71,34 @@ spec:
                     kernelModuleConfig:
                       name: ""
                   toolkit:
-                    enabled: {{ .Values.nvidiaGpu.clusterPolicy.toolkit.enabled }}
+                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-toolkit" | default "{{ .Values.nvidiaGpu.clusterPolicy.toolkit.enabled }}" | toBool {{ "hub}}" }}'
                   devicePlugin:
-                    enabled: {{ .Values.nvidiaGpu.clusterPolicy.devicePlugin.enabled }}
+                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-device-plugin" | default "{{ .Values.nvidiaGpu.clusterPolicy.devicePlugin.enabled }}" | toBool {{ "hub}}" }}'
                   dcgm:
-                    enabled: {{ .Values.nvidiaGpu.clusterPolicy.dcgmExporter.enabled }}
+                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-dcgm" | default "{{ .Values.nvidiaGpu.clusterPolicy.dcgmExporter.enabled }}" | toBool {{ "hub}}" }}'
                   dcgmExporter:
-                    enabled: {{ .Values.nvidiaGpu.clusterPolicy.dcgmExporter.enabled }}
+                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-dcgm" | default "{{ .Values.nvidiaGpu.clusterPolicy.dcgmExporter.enabled }}" | toBool {{ "hub}}" }}'
                     config:
                       name: ""
                     serviceMonitor:
                       enabled: true
                   gfd:
-                    enabled: {{ .Values.nvidiaGpu.clusterPolicy.gfd.enabled }}
+                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-gfd" | default "{{ .Values.nvidiaGpu.clusterPolicy.gfd.enabled }}" | toBool {{ "hub}}" }}'
                   migManager:
-                    enabled: {{ .Values.nvidiaGpu.clusterPolicy.migManager.enabled }}
+                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-mig" | default "{{ .Values.nvidiaGpu.clusterPolicy.migManager.enabled }}" | toBool {{ "hub}}" }}'
                   nodeStatusExporter:
                     enabled: true
                   sandboxWorkloads:
-                    enabled: {{ .Values.nvidiaGpu.clusterPolicy.sandboxWorkloads.enabled }}
+                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-sandbox" | default "{{ .Values.nvidiaGpu.clusterPolicy.sandboxWorkloads.enabled }}" | toBool {{ "hub}}" }}'
                   validator:
                     plugin:
                       env:
                         - name: WITH_WORKLOAD
                           value: "false"
                   vgpuManager:
-                    enabled: {{ .Values.nvidiaGpu.clusterPolicy.vgpuManager.enabled }}
+                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-vgpu-manager" | default "{{ .Values.nvidiaGpu.clusterPolicy.vgpuManager.enabled }}" | toBool {{ "hub}}" }}'
                   vgpuDeviceManager:
-                    enabled: {{ .Values.nvidiaGpu.clusterPolicy.vgpuDeviceManager.enabled }}
+                    enabled: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nvidia-gpu-vgpu-device-manager" | default "{{ .Values.nvidiaGpu.clusterPolicy.vgpuDeviceManager.enabled }}" | toBool {{ "hub}}" }}'
                   vfioManager:
                     enabled: true
                   sandboxDevicePlugin:
