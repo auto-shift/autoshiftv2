@@ -11,6 +11,9 @@ metadata:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   # Wait for Service Mesh 3 operator to be installed first
   dependencies:
@@ -54,7 +57,7 @@ spec:
                 metadata:
                   name: {{ .Values.servicemesh3.istioCni.name | default "default" }}
                 spec:
-                  version: {{ .Values.servicemesh3.istioCni.version | default "v1.24.3" | quote }}
+                  version: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/servicemesh3-istio-cni-version" | default "{{ .Values.servicemesh3.istioCni.version | default "v1.24.3" }}" {{ "hub}}" }}'
                   namespace: {{ .Values.servicemesh3.istio.namespace | default "istio-cni" }}
     {{- end }}
     # Create Istio control plane
@@ -74,7 +77,7 @@ spec:
                 metadata:
                   name: {{ .Values.servicemesh3.istio.name | default "default" }}
                 spec:
-                  version: {{ .Values.servicemesh3.istio.version | default "v1.24.3" | quote }}
+                  version: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/servicemesh3-istio-version" | default "{{ .Values.servicemesh3.istio.version | default "v1.24.3" }}" {{ "hub}}" }}'
                   namespace: {{ .Values.servicemesh3.istio.namespace | default "istio-cni" }}
                   updateStrategy:
                     type: {{ .Values.servicemesh3.istio.updateStrategy | default "InPlace" }}

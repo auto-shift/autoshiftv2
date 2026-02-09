@@ -11,6 +11,9 @@ metadata:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   # Wait for RHOAI operator to be installed first
   dependencies:
@@ -69,47 +72,30 @@ spec:
                   name: {{ .Values.rhoai.dsc.name }}
                 spec:
                   components:
-                    # RHOAI 3.0 v2 API - most components require explicit managementState: Managed
-                    # kueue is an exception - it only supports Unmanaged or Removed (presence enables it)
-                    # Hub template checks cluster labels, falls back to values.yaml defaults
-                    {{- if or (eq (.Values.rhoai.dsc.aipipelines | toString) "true") (eq (.Values.rhoai.dsc.aipipelines | toString) "Managed") }}
+                    # RHOAI 3.0 v2 API - components controlled via hub labels for per-cluster configuration
+                    # Hub template checks cluster labels, falls back to 'true' (Managed) by default
+                    # Set label to 'false' to remove a component on a specific cluster
                     aipipelines:
-                      managementState: Managed
-                    {{- end }}
-                    {{- if or (eq (.Values.rhoai.dsc.dashboard | toString) "true") (eq (.Values.rhoai.dsc.dashboard | toString) "Managed") }}
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-aipipelines" | default "{{ .Values.rhoai.dsc.aipipelines | default "true" }}") "true") {{ "hub}}" }}'
                     dashboard:
-                      managementState: Managed
-                    {{- end }}
-                    {{- if or (eq (.Values.rhoai.dsc.kserve | toString) "true") (eq (.Values.rhoai.dsc.kserve | toString) "Managed") }}
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-dashboard" | default "{{ .Values.rhoai.dsc.dashboard | default "true" }}") "true") {{ "hub}}" }}'
                     kserve:
-                      managementState: Managed
-                    {{- end }}
-                    {{- if or (eq (.Values.rhoai.dsc.kueue | toString) "true") (eq (.Values.rhoai.dsc.kueue | toString) "Managed") }}
-                    # kueue only supports Unmanaged/Removed - presence with config enables it
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-kserve" | default "{{ .Values.rhoai.dsc.kserve | default "true" }}") "true") {{ "hub}}" }}'
+                    # kueue uses Managed/Removed; presence with config enables queue defaults
                     kueue:
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-kueue" | default "{{ .Values.rhoai.dsc.kueue | default "true" }}") "true") {{ "hub}}" }}'
                       defaultClusterQueueName: default
                       defaultLocalQueueName: default
-                    {{- end }}
-                    {{- if or (eq (.Values.rhoai.dsc.modelregistry | toString) "true") (eq (.Values.rhoai.dsc.modelregistry | toString) "Managed") }}
                     modelregistry:
-                      managementState: Managed
-                    {{- end }}
-                    {{- if or (eq (.Values.rhoai.dsc.ray | toString) "true") (eq (.Values.rhoai.dsc.ray | toString) "Managed") }}
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-modelregistry" | default "{{ .Values.rhoai.dsc.modelregistry | default "true" }}") "true") {{ "hub}}" }}'
                     ray:
-                      managementState: Managed
-                    {{- end }}
-                    {{- if or (eq (.Values.rhoai.dsc.trainingoperator | toString) "true") (eq (.Values.rhoai.dsc.trainingoperator | toString) "Managed") }}
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-ray" | default "{{ .Values.rhoai.dsc.ray | default "true" }}") "true") {{ "hub}}" }}'
                     trainingoperator:
-                      managementState: Managed
-                    {{- end }}
-                    {{- if or (eq (.Values.rhoai.dsc.trustyai | toString) "true") (eq (.Values.rhoai.dsc.trustyai | toString) "Managed") }}
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-training" | default "{{ .Values.rhoai.dsc.trainingoperator | default "true" }}") "true") {{ "hub}}" }}'
                     trustyai:
-                      managementState: Managed
-                    {{- end }}
-                    {{- if or (eq (.Values.rhoai.dsc.workbenches | toString) "true") (eq (.Values.rhoai.dsc.workbenches | toString) "Managed") }}
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-trustyai" | default "{{ .Values.rhoai.dsc.trustyai | default "true" }}") "true") {{ "hub}}" }}'
                     workbenches:
-                      managementState: Managed
-                    {{- end }}
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-workbenches" | default "{{ .Values.rhoai.dsc.workbenches | default "true" }}") "true") {{ "hub}}" }}'
     # OdhDashboardConfig - REMOVED in RHOAI 3.0
     # Dashboard configuration is now managed through the Dashboard component in DataScienceCluster
     # Additional dashboard settings can be configured via OdhDashboardConfig if the CRD becomes available
