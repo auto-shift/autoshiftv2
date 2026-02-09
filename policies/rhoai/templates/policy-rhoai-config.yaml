@@ -1,0 +1,236 @@
+{{- $policyName := "policy-rhoai-config" }}
+{{- $placementName := "placement-policy-rhoai-config" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  # Wait for RHOAI operator to be installed first
+  dependencies:
+    - name: policy-rhoai-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # DSCInitialization - must be created before DataScienceCluster
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rhoai-dsci
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: dscinitialization.opendatahub.io/v1
+                kind: DSCInitialization
+                metadata:
+                  name: {{ .Values.rhoai.dsci.name }}
+                spec:
+                  applicationsNamespace: {{ .Values.rhoai.dsci.applicationsNamespace }}
+                  monitoring:
+                    managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-monitoring" | default "{{ .Values.rhoai.dsci.monitoringState }}" {{ "hub}}" }}'
+                    namespace: {{ .Values.rhoai.dsci.monitoringNamespace }}
+                  serviceMesh:
+                    controlPlane:
+                      metricsCollection: Istio
+                      name: {{ .Values.rhoai.dsci.serviceMeshControlPlaneName }}
+                      namespace: {{ .Values.rhoai.dsci.serviceMeshNamespace }}
+                    managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-servicemesh" | default "{{ .Values.rhoai.dsci.serviceMeshState }}" {{ "hub}}" }}'
+                  trustedCABundle:
+                    managementState: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/rhoai-trustedca" | default "{{ .Values.rhoai.dsci.trustedCABundleState }}" {{ "hub}}" }}'
+    # DataScienceCluster - configure component states
+    # RHOAI 3.0 uses v2 API with explicit managementState: Managed to enable components
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rhoai-dsc
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              recreateOption: IfRequired
+              objectDefinition:
+                apiVersion: datasciencecluster.opendatahub.io/v2
+                kind: DataScienceCluster
+                metadata:
+                  name: {{ .Values.rhoai.dsc.name }}
+                spec:
+                  components:
+                    # RHOAI 3.0 v2 API - components controlled via hub labels for per-cluster configuration
+                    # Hub template checks cluster labels, falls back to 'true' (Managed) by default
+                    # Set label to 'false' to remove a component on a specific cluster
+                    aipipelines:
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-aipipelines" | default "{{ .Values.rhoai.dsc.aipipelines | default "true" }}") "true") {{ "hub}}" }}'
+                    dashboard:
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-dashboard" | default "{{ .Values.rhoai.dsc.dashboard | default "true" }}") "true") {{ "hub}}" }}'
+                    kserve:
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-kserve" | default "{{ .Values.rhoai.dsc.kserve | default "true" }}") "true") {{ "hub}}" }}'
+                    # kueue only supports Unmanaged/Removed (not Managed) per RHOAI v2 API
+                    kueue:
+                      managementState: '{{ "{{hub" }} ternary "Unmanaged" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-kueue" | default "{{ .Values.rhoai.dsc.kueue | default "true" }}") "true") {{ "hub}}" }}'
+                      defaultClusterQueueName: default
+                      defaultLocalQueueName: default
+                    modelregistry:
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-modelregistry" | default "{{ .Values.rhoai.dsc.modelregistry | default "true" }}") "true") {{ "hub}}" }}'
+                    ray:
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-ray" | default "{{ .Values.rhoai.dsc.ray | default "true" }}") "true") {{ "hub}}" }}'
+                    trainingoperator:
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-training" | default "{{ .Values.rhoai.dsc.trainingoperator | default "true" }}") "true") {{ "hub}}" }}'
+                    trustyai:
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-trustyai" | default "{{ .Values.rhoai.dsc.trustyai | default "true" }}") "true") {{ "hub}}" }}'
+                    workbenches:
+                      managementState: '{{ "{{hub" }} ternary "Managed" "Removed" (eq (index .ManagedClusterLabels "autoshift.io/rhoai-workbenches" | default "{{ .Values.rhoai.dsc.workbenches | default "true" }}") "true") {{ "hub}}" }}'
+    # OdhDashboardConfig - REMOVED in RHOAI 3.0
+    # Dashboard configuration is now managed through the Dashboard component in DataScienceCluster
+    # Additional dashboard settings can be configured via OdhDashboardConfig if the CRD becomes available
+    # KnativeServing - required for KServe model serving
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rhoai-knative-serving
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: knative-serving
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operator.knative.dev/v1beta1
+                kind: KnativeServing
+                metadata:
+                  name: knative-serving
+                  namespace: knative-serving
+                spec:
+                  config:
+                    network:
+                      ingress-class: "kourier.ingress.networking.knative.dev"
+                  ingress:
+                    kourier:
+                      enabled: true
+    # Dashboard Route - expose the RHOAI dashboard
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rhoai-dashboard-route
+        spec:
+          remediationAction: enforce
+          severity: medium
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: route.openshift.io/v1
+                kind: Route
+                metadata:
+                  name: rhods-dashboard
+                  namespace: {{ .Values.rhoai.dsci.applicationsNamespace }}
+                spec:
+                  port:
+                    targetPort: 8443
+                  tls:
+                    insecureEdgeTerminationPolicy: Redirect
+                    termination: reencrypt
+                  to:
+                    kind: Service
+                    name: rhods-dashboard
+                    weight: 100
+    # Status check - verify DSCInitialization is ready
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rhoai-dsci-status
+        spec:
+          remediationAction: inform
+          severity: medium
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: dscinitialization.opendatahub.io/v1
+                kind: DSCInitialization
+                metadata:
+                  name: {{ .Values.rhoai.dsci.name }}
+                status:
+                  phase: Ready
+    # Status check - verify DataScienceCluster is ready
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rhoai-dsc-status
+        spec:
+          remediationAction: inform
+          severity: medium
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: datasciencecluster.opendatahub.io/v1
+                kind: DataScienceCluster
+                metadata:
+                  name: {{ .Values.rhoai.dsc.name }}
+                status:
+                  phase: Ready
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/rhoai'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+

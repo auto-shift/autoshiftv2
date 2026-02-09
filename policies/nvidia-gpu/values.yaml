@@ -1,0 +1,100 @@
+# Default values for nvidia-gpu
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+policy_namespace: open-cluster-policies
+
+nvidiaGpu:
+  # Operator settings
+  name: gpu-operator-certified
+  namespace: nvidia-gpu-operator
+  channel: stable
+  source: certified-operators
+  sourceNamespace: openshift-marketplace
+  operatorGroupName: nvidia-gpu-operator-group
+
+  # ClusterPolicy settings
+  clusterPolicy:
+    name: gpu-cluster-policy
+    
+    # Driver configuration
+    driver:
+      enabled: true
+      # Use pre-installed driver on the host (for OpenShift with entitled nodes)
+      usePrecompiled: false
+      # For OpenShift, typically use the OpenShift driver toolkit
+      useOpenShiftDriverToolkit: true
+      # Upgrade policy: OnDelete, Immediate
+      upgradePolicy: OnDelete
+      
+    # CUDA Toolkit configuration
+    toolkit:
+      enabled: true
+      
+    # Device Plugin configuration  
+    devicePlugin:
+      enabled: true
+      
+    # DCGM (Data Center GPU Manager) Exporter for metrics
+    dcgmExporter:
+      enabled: true
+      
+    # MIG (Multi-Instance GPU) Manager
+    migManager:
+      enabled: false  # Enable only if using MIG-capable GPUs (A30, A100, H100)
+      
+    # GPU Feature Discovery
+    gfd:
+      enabled: true
+      
+    # Sandbox workloads (for vGPU)
+    sandboxWorkloads:
+      enabled: false
+      
+    # vGPU Manager (requires vGPU license)
+    vgpuManager:
+      enabled: false
+      
+    # vGPU Device Manager
+    vgpuDeviceManager:
+      enabled: false
+
+# hubClusterSets:
+#   hub:
+#     labels:
+#       nvidia-gpu: 'true'
+# managedClusterSets:
+#   managed:
+#     labels:
+#       nvidia-gpu: 'true'
+
+### AutoShift Labels Documentation
+# The following labels can be set at the cluster or clusterset level to configure this policy:
+#
+# Enable/Disable:
+# nvidia-gpu: 'true' or 'false' - Controls whether NVIDIA GPU operator is managed
+#
+# Operator Configuration:
+# nvidia-gpu-subscription-name: Operator subscription name (default: 'gpu-operator-certified')
+# nvidia-gpu-channel: Operator channel (default: 'stable')
+# nvidia-gpu-version: Specific operator version (CSV) to install (optional)
+# nvidia-gpu-source: Operator catalog source (default: 'certified-operators')
+# nvidia-gpu-source-namespace: Catalog namespace (default: 'openshift-marketplace')
+#
+# ClusterPolicy Configuration:
+# nvidia-gpu-driver: Enable GPU driver installation (default: 'true')
+# nvidia-gpu-driver-toolkit: Use OpenShift Driver Toolkit (default: 'true')
+# nvidia-gpu-toolkit: Enable CUDA toolkit (default: 'true')
+# nvidia-gpu-device-plugin: Enable device plugin (default: 'true')
+# nvidia-gpu-dcgm: Enable DCGM exporter for metrics (default: 'true')
+# nvidia-gpu-mig: Enable MIG manager (default: 'false' - for A30/A100/H100 only)
+# nvidia-gpu-gfd: Enable GPU Feature Discovery (default: 'true')
+#
+# Note: NFD (Node Feature Discovery) is OPTIONAL. The NVIDIA GPU Operator 
+# includes its own GPU Feature Discovery (GFD) component that detects GPUs
+# independently. GFD is enabled by default (nvidia-gpu-gfd: 'true').
+#
+# Examples:
+# autoshift.io/nvidia-gpu: 'true'
+# autoshift.io/nvidia-gpu-channel: 'stable'
+# autoshift.io/nvidia-gpu-driver: 'true'
+# autoshift.io/nvidia-gpu-dcgm: 'true'

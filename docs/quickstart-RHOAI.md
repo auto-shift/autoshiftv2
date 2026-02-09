@@ -101,15 +101,64 @@ hubClusterSets:
   hub:
     labels:
       self-managed: 'true'
-      openshift-version: '4.18.28'
-      # GitOps is required for hub clusters
+      openshift-version: '4.20.0'
+      
+      ### Required: GitOps
       gitops: 'true'
-      # ACM is automatically installed on all hub clustersets by policy
-      # Optional: Additional operators
-      acs: 'true'
-      acs-channel: 'stable'
-      odf: 'true'
-      odf-channel: 'stable-4.18'
+      gitops-subscription-name: openshift-gitops-operator
+      gitops-channel: gitops-1.18
+      gitops-source: redhat-operators
+      gitops-source-namespace: openshift-marketplace
+      
+      ### Required: ACM (automatically installed on hub clustersets)
+      acm-subscription-name: advanced-cluster-management
+      acm-channel: release-2.14
+      acm-source: redhat-operators
+      acm-source-namespace: openshift-marketplace
+      
+      ### ===== RHOAI 3.0 AND DEPENDENCIES =====
+      
+      ### OpenShift Serverless (required for KServe model serving)
+      serverless: 'true'
+      serverless-subscription-name: serverless-operator
+      serverless-channel: stable
+      serverless-source: redhat-operators
+      serverless-source-namespace: openshift-marketplace
+      
+      ### OpenShift Service Mesh 3 (required for model serving)
+      servicemesh3: 'true'
+      servicemesh3-subscription-name: servicemeshoperator3
+      servicemesh3-channel: stable-3.2
+      servicemesh3-source: redhat-operators
+      servicemesh3-source-namespace: openshift-marketplace
+      
+      ### OpenShift Pipelines (for ML pipelines)
+      pipelines: 'true'
+      pipelines-subscription-name: openshift-pipelines-operator-rh
+      pipelines-channel: pipelines-1.20
+      pipelines-source: redhat-operators
+      pipelines-source-namespace: openshift-marketplace
+      
+      ### Node Feature Discovery (for GPU detection)
+      node-feature-discovery: 'true'
+      node-feature-discovery-subscription-name: nfd
+      node-feature-discovery-channel: stable
+      node-feature-discovery-source: redhat-operators
+      node-feature-discovery-source-namespace: openshift-marketplace
+      
+      ### NVIDIA GPU Operator
+      nvidia-gpu: 'true'
+      nvidia-gpu-subscription-name: gpu-operator-certified
+      nvidia-gpu-channel: stable
+      nvidia-gpu-source: certified-operators
+      nvidia-gpu-source-namespace: openshift-marketplace
+      
+      ### Red Hat OpenShift AI 3.0
+      rhoai: 'true'
+      rhoai-subscription-name: rhods-operator
+      rhoai-channel: fast-3.x
+      rhoai-source: redhat-operators
+      rhoai-source-namespace: openshift-marketplace
 EOF
 
 # 3. Install

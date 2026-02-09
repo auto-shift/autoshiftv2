@@ -14,22 +14,65 @@ This guide explains how to deploy AutoShift from an OCI registry (Quay, GHCR, Ha
 
 ## Prerequisites
 
-1. **AutoShift charts published to OCI registry**
-   ```bash
-   # Release charts to registry
-   ./scripts/release.sh --version 1.0.0 --namespace myorg/autoshift
-   ```
-
-2. **OpenShift cluster with**:
+1. **OpenShift cluster with**:
    - OpenShift GitOps operator
    - Red Hat ACM operator
    - Access to OCI registry (Quay, GHCR, etc.)
 
-3. **OCI registry credentials** (if private)
+2. **OCI registry credentials** (if private)
 
 ## Deployment Steps
 
-### Step 1: Configure OCI Registry Credentials
+### Step 1: Install OpenShift GitOps Operator
+
+OpenShift GitOps must be installed before deploying AutoShift. Deploy the bootstrap from OCI:
+
+```bash
+# Install OpenShift GitOps from OCI registry
+helm upgrade --install openshift-gitops oci://quay.io/auto-shift/autoshift/openshift-gitops \
+  --version <VERSION> \
+  --namespace openshift-gitops \
+  --create-namespace
+
+# Wait for GitOps to be ready
+echo "Waiting for GitOps operator..."
+oc wait --for=condition=Available deployment/openshift-gitops-operator-controller-manager \
+  -n openshift-gitops-operator --timeout=300s
+
+# Wait for ArgoCD instance
+oc wait --for=condition=Available deployment/argocd-server \
+  -n openshift-gitops --timeout=300s
+
+# Verify GitOps is ready
+oc get pods -n openshift-gitops
+```
+
+### Step 2: Install Red Hat ACM Operator
+
+Advanced Cluster Management is required for policy-based management. Deploy the bootstrap from OCI:
+
+```bash
+# Install ACM from OCI registry
+helm upgrade --install advanced-cluster-management oci://quay.io/auto-shift/autoshift/advanced-cluster-management \
+  --version <VERSION> \
+  --namespace open-cluster-management \
+  --create-namespace
+
+# Wait for ACM operator
+echo "Waiting for ACM operator..."
+oc wait --for=condition=Available deployment -l app=multiclusterhub-operator \
+  -n open-cluster-management --timeout=600s
+
+# Wait for MultiClusterHub to be ready (this takes ~10 minutes)
+echo "Waiting for MultiClusterHub (this takes ~10 minutes)..."
+oc wait --for=condition=Complete mch multiclusterhub \
+  -n open-cluster-management --timeout=1200s
+
+# Verify ACM is ready
+oc get mch -A
+```
+
+### Step 3: Configure OCI Registry Credentials
 
 If your OCI registry is private, configure credentials for ArgoCD:
 
@@ -58,7 +101,7 @@ oc rollout restart deployment/argocd-repo-server -n openshift-gitops
 oc rollout restart deployment/argocd-applicationset-controller -n openshift-gitops
 ```
 
-### Step 1b: Configure Custom CA Certificate (Optional)
+### Step 3b: Configure Custom CA Certificate (Optional)
 
 If your OCI registry uses a custom CA certificate (e.g., private registry with self-signed certs), you need to configure ArgoCD to trust it.
 
@@ -94,7 +137,7 @@ oc label configmap custom-ca-certs \
 
 Then reference it in your ArgoCD configuration by enabling `cluster_ca_bundle: true` in your values.
 
-### Step 2: Install AutoShift from OCI Registry
+### Step 4: Install AutoShift from OCI Registry
 
 #### Option A: Using Helm
 
@@ -126,11 +169,10 @@ EOF
 # Install AutoShift main chart from OCI
 helm registry login quay.io -u myorg+robot -p TOKEN
 
-helm install autoshift oci://quay.io/myorg/autoshift/autoshift \
+helm install autoshift oci://quay.io/autoshift/autoshift \
   --version 1.0.0 \
   --namespace openshift-gitops \
-  --create-namespace \
-  -f my-oci-values.yaml
+  -f my-values.yaml
 ```
 
 #### Option B: Using ArgoCD Application
@@ -182,7 +224,97 @@ spec:
 EOF
 ```
 
-### Step 3: Verify Deployment
+### Step 5: Move Cluster to Hub ClusterSet (Required)
+
+**Important:** By default, `local-cluster` is in the `default` ClusterSet, but AutoShift policies target the `hub` ClusterSet. You must move your cluster to `hub` for policies to apply.
+
+```bash
+# Check current ClusterSet (will show 'default')
+oc get managedcluster local-cluster -o jsonpath='{.metadata.labels.cluster\.open-cluster-management\.io/clusterset}'
+
+# Move local-cluster to the 'hub' ClusterSet
+oc label managedcluster local-cluster \
+  cluster.open-cluster-management.io/clusterset=hub --overwrite
+
+# Verify the change
+oc get managedcluster local-cluster -o jsonpath='{.metadata.labels.cluster\.open-cluster-management\.io/clusterset}'
+# Should output: hub
+```
+
+### Step 6: Configure Operator Labels via values.hub.yaml
+
+AutoShift uses labels on ManagedClusters to determine which operators to install. Labels are applied automatically through the **labels policy** — do not apply them manually.
+
+Configure the desired operators in your `values.hub.yaml` (or via the Helm values override):
+
+```yaml
+# Example: Enable operators via hub cluster set labels in values.hub.yaml
+hubClusterSets:
+  hub:
+    labels:
+      self-managed: 'true'
+      openshift-version: '4.20.0'
+      gitops: 'true'
+      gitops-subscription-name: openshift-gitops-operator
+      gitops-channel: gitops-1.18
+      gitops-source: redhat-operators
+      gitops-source-namespace: openshift-marketplace
+      acm-subscription-name: advanced-cluster-management
+      acm-channel: release-2.14
+      acm-source: redhat-operators
+      acm-source-namespace: openshift-marketplace
+```
+
+#### Example: Enable RHOAI with Dependencies
+
+```yaml
+# Add to hubClusterSets.hub.labels (or managedClusterSets.managed.labels):
+      # Serverless (required for KServe)
+      serverless: 'true'
+      serverless-subscription-name: serverless-operator
+      serverless-channel: stable
+      serverless-source: redhat-operators
+      serverless-source-namespace: openshift-marketplace
+      # Service Mesh 3 (required for RHOAI)
+      servicemesh3: 'true'
+      servicemesh3-subscription-name: servicemeshoperator3
+      servicemesh3-channel: stable-3.2
+      servicemesh3-source: redhat-operators
+      servicemesh3-source-namespace: openshift-marketplace
+      # Pipelines
+      pipelines: 'true'
+      pipelines-subscription-name: openshift-pipelines-operator-rh
+      pipelines-channel: pipelines-1.20
+      pipelines-source: redhat-operators
+      pipelines-source-namespace: openshift-marketplace
+      # Node Feature Discovery
+      node-feature-discovery: 'true'
+      node-feature-discovery-subscription-name: nfd
+      node-feature-discovery-channel: stable
+      node-feature-discovery-source: redhat-operators
+      node-feature-discovery-source-namespace: openshift-marketplace
+      # RHOAI
+      rhoai: 'true'
+      rhoai-subscription-name: rhods-operator
+      rhoai-channel: fast-3.x
+      rhoai-source: redhat-operators
+      rhoai-source-namespace: openshift-marketplace
+```
+
+#### Example: Enable NVIDIA GPU Operator
+
+```yaml
+# Add to hubClusterSets.hub.labels (or managedClusterSets.managed.labels):
+      nvidia-gpu: 'true'
+      nvidia-gpu-subscription-name: gpu-operator-certified
+      nvidia-gpu-channel: stable
+      nvidia-gpu-source: certified-operators
+      nvidia-gpu-source-namespace: openshift-marketplace
+```
+
+> **Note:** Labels are managed declaratively via the labels policy. Avoid using `oc label` commands directly, as the labels policy will reconcile and overwrite manual changes.
+
+### Step 7: Verify Deployment
 
 ```bash
 # Check AutoShift Application
