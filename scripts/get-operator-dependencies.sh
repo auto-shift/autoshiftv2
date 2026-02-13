@@ -198,12 +198,17 @@ get_catalog_deps() {
 
     local deps=""
 
-    # Check bundles directory for the latest bundle
+    # Check bundles directory for the latest bundle (individual JSON files per version)
     if [[ -d "$pkg_dir/bundles" ]]; then
         local latest_bundle=$(ls "$pkg_dir/bundles/"*.json 2>/dev/null | sort -V | tail -1)
         if [[ -n "$latest_bundle" && -f "$latest_bundle" ]]; then
             deps=$(jq -r '.properties[]? | select(.type == "olm.package.required") | .value.packageName' "$latest_bundle" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
         fi
+    fi
+
+    # Check bundles.json JSONL format (one JSON object per line, used by ACM/MCE)
+    if [[ -z "$deps" && -f "$pkg_dir/bundles.json" ]]; then
+        deps=$(jq -rs '.[-1].properties[]? | select(.type == "olm.package.required") | .value.packageName' "$pkg_dir/bundles.json" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
     fi
 
     # Fallback to old catalog.json format
