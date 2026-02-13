@@ -1,5 +1,8 @@
 # AutoShiftv2
 
+![OpenShift Version](https://img.shields.io/badge/OpenShift-4.20.12-red?logo=redhatopenshift&logoColor=white)
+![ACM Version](https://img.shields.io/badge/ACM-2.15-blue?logo=redhat&logoColor=white)
+
 ## What is AutoShift?
 
 AutoShiftv2 is an opinionated [Infrastructure-as-Code (IaC)](https://martinfowler.com/bliki/InfrastructureAsCode.html) framework designed to manage infrastructure components after an OpenShift installation using Advanced Cluster Management (ACM) and OpenShift GitOps. It provides a modular, extensible model to support infrastructure elements deployed on OpenShift — particularly those in [OpenShift Platform Plus](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet). AutoShiftv2 emphasizes ease of adoption, configurable features (taggable on/off), and production-ready capabilities for installation, upgrades, and maintenance.
@@ -476,6 +479,9 @@ created for each replica of the image service. 2GiB per OSImage entry is require
 | `acm-source-namespace`      | string    | `openshift-marketplace`   |       |
 | `acm-availability-config`   | string    | `Basic` or `High`         |       |
 | `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a noobaa bucket for acm. ODF will have to be enabled as well |
+| `acm-search-storage`        | bool      | `true` or `false`         | Enable persistent storage for ACM Search (recommended for production) |
+| `acm-search-storage-class`  | string    | `ocs-storagecluster-ceph-rbd` | Storage class for Search database |
+| `acm-search-storage-size`   | string    | `100Gi`                   | Storage size for Search database. Sizing: Small (<50 clusters): 20Gi, Medium (50-200): 50Gi, Large (200-500): 100Gi, Very Large (500+): 200Gi+ |
 
 ### Cluster Labels
 
@@ -758,6 +764,7 @@ Automated node health monitoring and remediation.
 | `odf-version`                     | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `odf-source`                      | string            | `redhat-operators`        |       |
 | `odf-source-namespace`            | string            | `openshift-marketplace`   |       |
+| `odf-default-storageclass`        | string            | `ocs-storagecluster-ceph-rbd` | Sets specified storage class as default and all others as non-default |
 
 ### OpenShift Internal Registry
 | Variable                          | Type              | Default Value             | Notes |
