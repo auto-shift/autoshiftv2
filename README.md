@@ -510,6 +510,7 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-source`                 | string    | `redhat-operators`        | Operator catalog source |
 | `gitops-source-namespace`       | string    | `openshift-marketplace`   | Namespace for operator catalog |
 
+
 ### Master Nodes
 
 Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. You may have to increase the number of pods per node in these resource constrained environments.
