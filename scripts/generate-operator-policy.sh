@@ -323,7 +323,7 @@ add_to_autoshift_values() {
     # Determine which values files to update
     local values_files_to_update=()
     if [[ -z "$VALUES_FILES" ]]; then
-        # Default: update all clusterset values files
+        # Default: update all clusterset values files (excluding examples)
         while IFS= read -r -d '' file; do
             # Get path relative to autoshift/ directory
             local rel_path="${file#autoshift/}"
@@ -341,6 +341,12 @@ add_to_autoshift_values() {
             fi
         done
     fi
+
+    # Always include example files (clustersets and clusters)
+    while IFS= read -r -d '' file; do
+        local rel_path="${file#autoshift/}"
+        values_files_to_update+=("$rel_path")
+    done < <(find autoshift/values/clustersets autoshift/values/clusters -name "_example*.yaml" -print0 2>/dev/null)
     
     if [[ ${#values_files_to_update[@]} -eq 0 ]]; then
         log_error "No valid values files found to update"
