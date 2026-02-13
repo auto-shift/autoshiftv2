@@ -35,7 +35,7 @@ All hub clusters must have:
 - `gitops: 'true'` - OpenShift GitOps (ArgoCD) is required
 - ACM is automatically installed on all hub clustersets by policy (no labels required)
 
-See `autoshift/values.minimal.yaml` for a minimal configuration example.
+See `autoshift/values/clustersets/hub-minimal.yaml` for a minimal configuration example.
 
 ### For Contributors
 
@@ -46,7 +46,7 @@ See `autoshift/values.minimal.yaml` for a minimal configuration example.
 
 #### Development Workflow
 1. Review [Developer Guide](developer-guide.md) for contribution guidelines
-2. Use `values.minimal.yaml` as a starting point for new features
+2. Use `values/clustersets/hub-minimal.yaml` as a starting point for new features
 3. Test with Git mode before creating OCI releases
 
 ## Architecture
@@ -92,15 +92,17 @@ quay.io/autoshift/
 
 ## Values Files
 
-Pre-configured values files for different scenarios:
+AutoShift uses a composable values directory structure. Combine files for your deployment:
 
 | Values File | Description | Use Case |
 |-------------|-------------|----------|
-| `values.minimal.yaml` | Minimal config (GitOps + ACM only) | Starting point, learning |
-| `values.hub.yaml` | Standard hub with common operators | Production hub clusters |
-| `values.sbx.yaml` | Sandbox/spoke configuration | Development, testing |
-| `values.hubofhubs.yaml` | Hub managing other hubs | Large deployments |
-| `values.hub.baremetal-*.yaml` | Baremetal configurations | On-premise deployments |
+| `values/global.yaml` | Shared config (git repo, branch) | Always included |
+| `values/clustersets/hub.yaml` | Standard hub cluster labels | Production hub clusters |
+| `values/clustersets/hub-minimal.yaml` | Minimal hub (GitOps + ACM) | Starting point, learning |
+| `values/clustersets/managed.yaml` | Managed spoke cluster labels | Spoke clusters |
+| `values/clustersets/sbx.yaml` | Sandbox cluster labels | Development, testing |
+| `values/clustersets/hubofhubs.yaml` | Hub-of-hubs config | Large deployments |
+| `values/clustersets/hub-baremetal-*.yaml` | Baremetal hub configs | On-premise deployments |
 
 ## Support & Contributing
 

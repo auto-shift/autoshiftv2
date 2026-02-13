@@ -18,11 +18,11 @@
 # No hardcoded operator lists - new operators are auto-discovered when added to AutoShift!
 #
 # Usage: ./generate-imageset-config.sh <values-files> [options]
-# Example: ./generate-imageset-config.sh values.hub.yaml
-# Example: ./generate-imageset-config.sh values.hub.yaml,values.sbx.yaml --openshift-version 4.18
-# Example: ./generate-imageset-config.sh values.hub.yaml --openshift-version 4.18.22
-# Example: ./generate-imageset-config.sh values.hub.yaml --openshift-version 4.18 --min-version 4.18.15 --max-version 4.18.25
-# Example: ./generate-imageset-config.sh values.hub.baremetal-sno.yaml --operators-only
+# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml
+# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml,values/clustersets/sbx.yaml --openshift-version 4.20
+# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml --openshift-version 4.20.12
+# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml --openshift-version 4.20 --min-version 4.20.5 --max-version 4.20.12
+# Example: ./generate-imageset-config.sh values/clustersets/hub-baremetal-sno.yaml --operators-only
 
 set -e
 
@@ -82,8 +82,10 @@ trap cleanup_temp_files EXIT
 build_operator_mappings() {
     MAPPINGS_FILE=$(mktemp)
 
-    for values_file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
+    for values_file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
         [[ -f "$values_file" ]] || continue
+        # Skip example files
+        [[ "$(basename "$values_file")" == _* ]] && continue
 
         # Find all *-subscription-name: entries
         grep -oE '[a-z][-a-z0-9]*-subscription-name:[[:space:]]*[^[:space:]]+' "$values_file" 2>/dev/null | \
@@ -228,10 +230,11 @@ usage() {
     echo ""
     echo "Arguments:"
     echo "  values-files          AutoShift values file(s) to process. Can be:"
-    echo "                        - Single file: values.hub.yaml"
-    echo "                        - Multiple files: values.hub.yaml,values.sbx.yaml"
-    echo "                        - Available files: values.hub.yaml, values.sbx.yaml,"
-    echo "                          values.hub.baremetal-sno.yaml, values.huhofhubs.yaml"
+    echo "                        - Single file: values/clustersets/hub.yaml"
+    echo "                        - Multiple files: values/clustersets/hub.yaml,values/clustersets/sbx.yaml"
+    echo "                        - Available files in autoshift/values/clustersets/:"
+    echo "                          hub.yaml, managed.yaml, sbx.yaml, hubofhubs.yaml,"
+    echo "                          hub-baremetal-sno.yaml, hub-baremetal-compact.yaml"
     echo ""
     echo "Options:"
     echo "  --openshift-version VERSION    OpenShift version to mirror (default: $OPENSHIFT_VERSION)"
@@ -251,12 +254,12 @@ usage() {
     echo "  --help                         Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 values.hub.yaml"
-    echo "  $0 values.hub.yaml,values.sbx.yaml --openshift-version 4.17"
-    echo "  $0 values.hub.yaml --openshift-version 4.18.22"
-    echo "  $0 values.hub.yaml --openshift-version 4.18 --min-version 4.18.15 --max-version 4.18.25"
-    echo "  $0 values.hub.baremetal-sno.yaml --operators-only"
-    echo "  $0 values.hub.yaml --output my-imageset.yaml"
+    echo "  $0 values/clustersets/hub.yaml"
+    echo "  $0 values/clustersets/hub.yaml,values/clustersets/sbx.yaml --openshift-version 4.20"
+    echo "  $0 values/clustersets/hub.yaml --openshift-version 4.20.12"
+    echo "  $0 values/clustersets/hub.yaml --openshift-version 4.20 --min-version 4.20.5 --max-version 4.20.12"
+    echo "  $0 values/clustersets/hub-baremetal-sno.yaml --operators-only"
+    echo "  $0 values/clustersets/hub.yaml --output my-imageset.yaml"
     echo ""
     echo "Channel Merging:"
     echo "  When multiple files specify different channels for the same operator,"

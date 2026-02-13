@@ -40,7 +40,7 @@ Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structur
 
 - `--version <version>`: Pin to specific operator version (CSV name, optional)
 - `--namespace-scoped`: Generate a namespace-scoped operator policy (default: cluster-scoped)
-- `--add-to-autoshift`: Automatically add the component to autoshift/values.hub.yaml
+- `--add-to-autoshift`: Automatically add the component to autoshift values files
 - `--values-files <files>`: Comma-separated list of values files to update (e.g., 'hub,sbx')
 - `--show-integration`: Show manual integration instructions
 - `--help`: Display help message
@@ -226,7 +226,7 @@ helm template policies/test-op/
 rm -rf policies/test-op/
 
 # Test imageset generation
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --operators-only --output test-imageset.yaml
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --operators-only --output test-imageset.yaml
 cat test-imageset.yaml
 rm test-imageset.yaml
 ```
@@ -262,16 +262,16 @@ This script automatically:
 
 ```bash
 # Generate for single environment (auto-resolves all dependencies)
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml
 
 # Operators only (skip OpenShift platform)
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --operators-only
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --operators-only
 
 # Multiple environments (merges channels)
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml,autoshift/values.sbx.yaml
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml,autoshift/values/clustersets/sbx.yaml
 
 # Custom output file
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --output my-imageset.yaml
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --output my-imageset.yaml
 ```
 
 ### Features

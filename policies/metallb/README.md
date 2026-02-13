@@ -10,7 +10,7 @@ In your MetalLB policy folder, you will see a directory called files.
 
 These directories will store any of your manifest files based on what you want to configure. When MetalLB is deployed through Autoshift, it will detect these files and apply them as needed. Autoshift will convert these files into data on a ConfigMap, and that ConfigMap will be applied to the metallb-system namespace as an object.
 
-In your autoshift/values.hub.yaml file, you will specify which files you’ve added and want to process.
+In your clusterset values file (e.g., `autoshift/values/clustersets/hub.yaml`), you will specify which files you've added and want to process.
 
 
 This true or false flag controls if MetalLB should be installed or not.
@@ -44,4 +44,4 @@ metallb-peer-1: ''
 
 Once you have everything set, you can apply the new labels through Autoshift.
 
-helm template autoshift autoshift -f autoshift/values.hub.yaml | oc apply -f -
+helm template autoshift autoshift -f autoshift/values/global.yaml -f autoshift/values/clustersets/hub.yaml -f autoshift/values/clustersets/managed.yaml | oc apply -f -

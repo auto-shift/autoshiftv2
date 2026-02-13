@@ -69,7 +69,8 @@ validate-yaml:
   script:
     - |
       echo "=== Validating values files ==="
-      for f in autoshift/values*.yaml; do
+      for f in autoshift/values/global.yaml autoshift/values/clustersets/*.yaml autoshift/values/clusters/*.yaml; do
+        [ -f "$f" ] || continue
         echo "Checking $f..."
         yq eval '.' "$f" > /dev/null
       done
@@ -83,7 +84,7 @@ template-rendering:
   script:
     - |
       echo "=== Testing template rendering ==="
-      helm template autoshift autoshift -f autoshift/values.hub.yaml > /dev/null
+      helm template autoshift autoshift -f autoshift/values/global.yaml -f autoshift/values/clustersets/hub.yaml -f autoshift/values/clustersets/managed.yaml > /dev/null
       echo "Template rendering successful"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -271,7 +272,7 @@ create-release:
       ```bash
       helm install autoshift oci://$REGISTRY/$REGISTRY_NAMESPACE/autoshift \
         --version ${CI_COMMIT_TAG#v} \
-        -f values.hub.yaml
+        -f values/global.yaml -f values/clustersets/hub.yaml -f values/clustersets/managed.yaml
       ```
 
       ### Charts Published

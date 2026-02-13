@@ -213,7 +213,7 @@ package-only: validate clean generate-policy-list package-charts ## Package char
 	@echo "Charts are ready in: $(CHARTS_DIR)/"
 
 # All values files for complete operator coverage
-VALUES_FILES := $(shell ls autoshift/values*.yaml | tr '\n' ',' | sed 's/,$$//')
+VALUES_FILES := $(shell find autoshift/values/clustersets -name '*.yaml' -not -name '_*' 2>/dev/null | sort | tr '\n' ',' | sed 's/,$$//')
 
 .PHONY: generate-imageset
 generate-imageset: ## Generate ImageSetConfiguration for disconnected mirroring (auto-resolves dependencies)

@@ -35,6 +35,66 @@ The hub cluster is the main cluster with RHACM and its core components installed
 
 ![alt text](images/AutoShiftv2-HubOfHubs.jpg)
 
+## Values File Architecture
+
+AutoShift uses a **composable values file** pattern. Instead of a single monolithic values file, configuration is split into focused files under `autoshift/values/` that you combine in your ArgoCD Application:
+
+```
+autoshift/values/
+  global.yaml                        # Shared config: git repo, branch, dryRun
+  clustersets/
+    _example-hub.yaml                # Reference: ALL hub clusterset options
+    _example-managed.yaml            # Reference: ALL managed clusterset options
+    hub.yaml                         # Hub clusterset — full enterprise profile
+    hub-minimal.yaml                 # Hub clusterset — minimal (GitOps + ACM only)
+    hub-baremetal-sno.yaml           # Hub clusterset — baremetal single-node
+    hub-baremetal-compact.yaml       # Hub clusterset — baremetal compact (3 node)
+    hubofhubs.yaml                   # Hub-of-hubs clusterset + selfManagedHubSet override
+    hub1.yaml                        # Spoke hub (managed by hub-of-hubs)
+    hub2.yaml                        # Spoke hub (managed by hub-of-hubs)
+    managed.yaml                     # Managed spoke clusterset — full enterprise
+    sbx.yaml                         # Managed spoke clusterset — sandbox
+  clusters/
+    _example.yaml                    # Reference: ALL per-cluster override options
+```
+
+### How Composition Works
+
+Helm **deep-merges** multiple `-f` value files in order. Each clusterset file defines a unique key (e.g., `hubClusterSets.hub`, `managedClusterSets.managed`), so they combine without conflict:
+
+```yaml
+# hub.yaml defines hubClusterSets.hub
+# managed.yaml defines managedClusterSets.managed
+# Result: both .hubClusterSets.hub and .managedClusterSets.managed exist
+```
+
+For scalar values like `selfManagedHubSet`, later files override earlier ones (last-file-wins). This lets profile files like `hubofhubs.yaml` override defaults from `global.yaml`.
+
+### Precedence
+
+Labels follow this override precedence (highest to lowest):
+
+1. **Per-cluster overrides** (`values/clusters/my-cluster.yaml`)
+2. **Clusterset labels** (`values/clustersets/hub.yaml`)
+3. **Helm chart defaults** (`values.yaml`)
+
+### Creating Custom Profiles
+
+Copy an `_example-*.yaml` file and uncomment/modify the labels you need:
+
+```bash
+# Create a custom hub profile
+cp autoshift/values/clustersets/_example-hub.yaml autoshift/values/clustersets/my-hub.yaml
+
+# Create a custom managed profile
+cp autoshift/values/clustersets/_example-managed.yaml autoshift/values/clustersets/my-managed.yaml
+
+# Create per-cluster overrides
+cp autoshift/values/clusters/_example.yaml autoshift/values/clusters/my-cluster.yaml
+```
+
+See `autoshift/README.md` for detailed chart documentation.
+
 ## Installation Instructions
 
 ### Assumptions / Prerequisites
@@ -51,7 +111,7 @@ All hub clusters **must** have the following configuration in their `hubClusterS
 * `gitops: 'true'` - OpenShift GitOps (ArgoCD) is required to deploy AutoShift
 * ACM is automatically installed on all hub clustersets by policy (no labels required)
 
-See `autoshift/values.minimal.yaml` for a minimal configuration example that shows only the required settings.
+See `autoshift/values/clustersets/hub-minimal.yaml` for a minimal configuration example that shows only the required settings.
 
 ### Installation from OCI Release (Recommended)
 
@@ -198,15 +258,21 @@ For development or customization, install directly from the git repository:
 > [!TIP]
 > The previously installed OpenShift GitOps and ACM will be controlled by Autoshift after it is installed for version upgrading
 
-1.  Update `autoshift/values.yaml` with desired feature flags and repo url as define in [Autoshift Cluster Labels Values Reference](#Autoshift-Cluster-Labels-Values-Reference)
+1.  Update the values files in `autoshift/values/` with desired feature flags and repo url as defined in [Autoshift Cluster Labels Values Reference](#Autoshift-Cluster-Labels-Values-Reference)
 
-2.  Using helm and the values you set for cluster labels, install autoshift. Here is an example using the hub values file:
+    Values are split into composable files under `autoshift/values/`:
+    - `values/global.yaml` — shared config (git repo, branch, selfManagedHubSet, dryRun)
+    - `values/clustersets/*.yaml` — one file per clusterset profile
+    - `values/clusters/*.yaml` — optional per-cluster label overrides
+
+    Helm deep-merges multiple value files in order. Compose your deployment by listing the files you need.
+
+2.  Using helm and the values you set for cluster labels, install autoshift. Here is an example using the full hub + managed values:
 
     ```console
     export APP_NAME="autoshift"
     export REPO_URL="https://github.com/auto-shift/autoshiftv2.git"
     export TARGET_REVISION="main"
-    export VALUES_FILE="values.hub.yaml"
     export ARGO_PROJECT="default"
     export GITOPS_NAMESPACE="openshift-gitops"
     cat << EOF | oc apply -f -
@@ -225,7 +291,9 @@ For development or customization, install directly from the git repository:
         targetRevision: $TARGET_REVISION
         helm:
           valueFiles:
-            - $VALUES_FILE
+            - values/global.yaml
+            - values/clustersets/hub.yaml
+            - values/clustersets/managed.yaml
           values: |-
             autoshiftGitRepo: $REPO_URL
             autoshiftGitBranchTag: $TARGET_REVISION
@@ -236,6 +304,40 @@ For development or customization, install directly from the git repository:
           prune: false
           selfHeal: true
     EOF
+    ```
+
+    **Other composition examples:**
+
+    ```yaml
+    # Minimal hub only:
+    valueFiles:
+      - values/global.yaml
+      - values/clustersets/hub-minimal.yaml
+
+    # Baremetal SNO + managed:
+    valueFiles:
+      - values/global.yaml
+      - values/clustersets/hub-baremetal-sno.yaml
+      - values/clustersets/managed.yaml
+
+    # Sandbox spoke-only:
+    valueFiles:
+      - values/global.yaml
+      - values/clustersets/sbx.yaml
+
+    # Hub of hubs with spoke hubs:
+    valueFiles:
+      - values/global.yaml
+      - values/clustersets/hubofhubs.yaml
+      - values/clustersets/hub1.yaml
+      - values/clustersets/hub2.yaml
+
+    # Hub + managed + per-cluster overrides:
+    valueFiles:
+      - values/global.yaml
+      - values/clustersets/hub.yaml
+      - values/clustersets/managed.yaml
+      - values/clusters/my-cluster.yaml
     ```
 
 3.  Given the labels and cluster sets specified in the supplied values file, ACM cluster sets will be created. To view the cluster sets, In the OpenShift web console go to **All Clusters > Infrastructure > Clusters > Cluster Sets** in the ACM Console
@@ -284,7 +386,6 @@ autoshift:
 export APP_NAME="autoshift"
 export REPO_URL="https://github.com/auto-shift/autoshiftv2.git"
 export TARGET_REVISION="main"
-export VALUES_FILE="values.hub.yaml"
 export ARGO_PROJECT="default"
 export GITOPS_NAMESPACE="openshift-gitops"
 cat << EOF | oc apply -f -
@@ -303,7 +404,9 @@ spec:
     targetRevision: $TARGET_REVISION
     helm:
       valueFiles:
-        - $VALUES_FILE
+        - values/global.yaml
+        - values/clustersets/hub.yaml
+        - values/clustersets/managed.yaml
       values: |-
         autoshiftGitRepo: $REPO_URL
         autoshiftGitBranchTag: $TARGET_REVISION
@@ -337,7 +440,9 @@ spec:
     targetRevision: $TARGET_REVISION
     helm:
       valueFiles:
-        - $VALUES_FILE
+        - values/global.yaml
+        - values/clustersets/hub.yaml
+        - values/clustersets/managed.yaml
       values: |-
         autoshiftGitRepo: $REPO_URL
         autoshiftGitBranchTag: $TARGET_REVISION
@@ -393,7 +498,7 @@ When no version is specified:
 
 ### Setting Operator Versions
 
-Operator versions are controlled through the AutoShift values files (`autoshift/values.hub.yaml`, `autoshift/values.sbx.yaml`, etc.) using cluster labels with the pattern `autoshift.io/OPERATOR_NAME-version`:
+Operator versions are controlled through the AutoShift values files (e.g., `autoshift/values/clustersets/hub.yaml`, `autoshift/values/clustersets/sbx.yaml`, etc.) using cluster labels with the pattern `autoshift.io/OPERATOR_NAME-version`:
 
 ```yaml
 # Example: Pin Advanced Cluster Security to specific version

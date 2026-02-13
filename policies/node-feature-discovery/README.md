@@ -19,7 +19,7 @@ helm template policies/node-feature-discovery/
 Edit AutoShift values files to add the operator labels:
 
 ```yaml
-# In autoshift/values.hub.yaml (or values.sbx.yaml, etc.)
+# In autoshift/values/clustersets/hub.yaml (or other clusterset files)
 hubClusterSets:
   hub:
     labels:
