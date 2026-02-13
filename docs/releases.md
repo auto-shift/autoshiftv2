@@ -182,7 +182,9 @@ spec:
     targetRevision: "1.0.0"
     helm:
       valueFiles:
-        - values.hub.yaml  # Use existing configuration
+        - values/global.yaml
+        - values/clustersets/hub.yaml  # Or other clusterset files
+        - values/clustersets/managed.yaml
       values: |
         # Enable OCI mode
         autoshiftOciRegistry: true

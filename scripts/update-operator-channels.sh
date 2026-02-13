@@ -164,8 +164,10 @@ check_requirements() {
 build_operator_mappings() {
     MAPPINGS_FILE=$(mktemp)
 
-    for values_file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
+    for values_file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
         [[ -f "$values_file" ]] || continue
+        # Skip example files
+        [[ "$(basename "$values_file")" == _* ]] && continue
 
         # Find all *-subscription-name: entries
         grep -oE '[a-z][-a-z0-9]*-subscription-name:[[:space:]]*[^[:space:]]+' "$values_file" 2>/dev/null | \
@@ -419,8 +421,9 @@ update_autoshift_channel() {
     local new_channel="$2"
     local updated=0
 
-    for file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
+    for file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
         [[ -f "$file" ]] || continue
+        [[ "$(basename "$file")" == _* ]] && continue
 
         if grep -q "${label}-channel:" "$file" 2>/dev/null; then
             if $DRY_RUN; then
@@ -476,8 +479,9 @@ get_current_channel() {
     local current=""
 
     # Check autoshift values files first
-    for file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
+    for file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
         [[ -f "$file" ]] || continue
+        [[ "$(basename "$file")" == _* ]] && continue
         current=$(grep -E "^[[:space:]]*${label}-channel:" "$file" 2>/dev/null | head -1 | \
                   sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
         if [[ -n "$current" ]]; then

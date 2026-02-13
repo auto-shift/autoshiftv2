@@ -374,7 +374,7 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 Labels are configured in AutoShift values files and propagated to clusters by the cluster-labels policy:
 
 ```yaml
-# In autoshift/values.hub.yaml - configure labels for cluster sets
+# In autoshift/values/clustersets/hub.yaml - configure labels for hub clusterset
 hubClusterSets:
   hub:
     labels:
@@ -382,13 +382,14 @@ hubClusterSets:
       my-component-subscription-name: 'my-component-operator'
       my-component-channel: 'stable'
 
+# In autoshift/values/clustersets/managed.yaml - configure labels for managed clusterset
 managedClusterSets:
   managed:
     labels:
       my-component: 'true'
       my-component-subscription-name: 'my-component-operator'
-      my-component-channel: 'fast'  
-# Individual cluster overrides in same values file
+      my-component-channel: 'fast'
+# Individual cluster overrides in autoshift/values/clusters/my-cluster.yaml
 clusters:
   prod-cluster-1:
     labels:
@@ -444,8 +445,8 @@ vi policies/my-component/templates/policy-my-component-config.yaml
 helm template policies/my-component/
 
 # 3. Update with different label values
-vi autoshift/values.sbx.yaml
-vi autoshift/values.hub.yaml
+vi autoshift/values/clustersets/sbx.yaml
+vi autoshift/values/clustersets/hub.yaml
 
 # 4. Commit and deploy
 git add policies/my-component/
@@ -475,7 +476,7 @@ oc get applications -n openshift-gitops my-component -o yaml
 ```bash
 # Generate ImageSet for disconnected environments (see oc-mirror/README.md)
 cd oc-mirror
-./generate-imageset-config.sh values.hub.yaml,values.sbx.yaml \
+./generate-imageset-config.sh values/clustersets/hub.yaml,values/clustersets/sbx.yaml \
   --operators-only \
   --output imageset-multi-env.yaml
 cd ..
