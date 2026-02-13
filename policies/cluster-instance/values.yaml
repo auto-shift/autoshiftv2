@@ -1,0 +1,93 @@
+# Default values for cluster-instance.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+# Labels can be set from Application Set
+---
+debug: false
+autoshiftLabelPrefix: "autoshift.io/"
+policy_namespace: open-cluster-policies
+# hubClusterSets:
+#   hub:
+#     labels:
+#       self-managed: 'true'
+
+### ClusterInstance Labels Documentation
+#
+# This policy creates ClusterInstance CRs on the hub cluster for bare-metal
+# cluster provisioning via ACM SiteConfig operator (ACM 2.15+ / OCP 4.20+).
+#
+# At runtime, the policy reads labels from ConfigMaps created by the
+# cluster-labels chart (managed-cluster.{name}). It does NOT read from
+# Helm values directly — cluster configuration is driven by labels.
+#
+# IMPORTANT: All label values must be k8s-label-safe (alphanumeric, dots,
+# hyphens, underscores only — no slashes or colons). The template reconstructs
+# full values (CIDRs, BMC addresses, MAC addresses, device paths) from
+# label-safe components.
+#
+# === Required Labels ===
+# cluster-instance: 'true'                          Enable provisioning for this cluster
+# cluster-instance-base-domain: example.com          Base domain for the cluster
+# cluster-instance-image-set: openshift-v4.18.28     ClusterImageSet name
+# cluster-instance-node-{N}-hostname: ...            Node FQDN (N=1-10)
+# cluster-instance-node-{N}-bmc-host: ...            BMC IP address or hostname
+# cluster-instance-node-{N}-bmc-secret: ...          Name of BMC credentials Secret
+# cluster-instance-node-{N}-boot-mac: AA.BB.CC.DD.EE.FF  Boot MAC (dots, converted to colons)
+#
+# === Optional Labels (with defaults) ===
+# cluster-instance-pull-secret: pull-secret           Pull secret name in cluster namespace
+# cluster-instance-ssh-secret: ssh-key                SSH key secret name in cluster namespace
+# cluster-instance-clusterset: ''                     ManagedClusterSet to join
+#
+# Network addresses and prefixes (split for label safety — no / allowed):
+# cluster-instance-cluster-network: '10.128.0.0'     Pod network address
+# cluster-instance-cluster-network-prefix: '14'       Pod network CIDR prefix
+# cluster-instance-cluster-network-host-prefix: '23'  Per-node subnet prefix
+# cluster-instance-service-network: '172.30.0.0'     Service network address
+# cluster-instance-service-network-prefix: '16'       Service network CIDR prefix
+# cluster-instance-machine-network: '10.0.0.0'       Machine/BMC network address
+# cluster-instance-machine-network-prefix: '24'       Machine network CIDR prefix
+#
+# Node configuration:
+# cluster-instance-node-{N}-role: master              Node role (master or worker)
+# cluster-instance-node-{N}-bmc-type: redfish-virtualmedia  BMC type prefix
+# cluster-instance-node-{N}-bmc-system: System.Embedded.1   Redfish system ID
+#   Template builds: {bmc-type}+https://{bmc-host}/redfish/v1/Systems/{bmc-system}
+# cluster-instance-node-{N}-root-device: sda          Root device (without /dev/ prefix)
+#   Template builds: /dev/{root-device}
+#
+# === BMC Address ===
+# The BMC address is constructed from label-safe components:
+#   {bmc-type}+https://{bmc-host}/redfish/v1/Systems/{bmc-system}
+#
+# Common bmc-type values:
+#   redfish-virtualmedia  - HPE iLO, generic Redfish with virtual media
+#   idrac-virtualmedia    - Dell iDRAC with virtual media
+#   redfish               - Standard Redfish without virtual media
+#
+# Common bmc-system values:
+#   System.Embedded.1     - Dell iDRAC (default)
+#   1                     - HPE iLO, Supermicro, generic Redfish
+#
+# === SSH Key ===
+# The SSH public key is read from a Secret on the hub cluster at policy
+# evaluation time using the config policy fromSecret function. The Secret must:
+#   - Exist in the cluster namespace (same name as cluster)
+#   - Have a data key named 'ssh-publickey'
+#   - Be created before enabling cluster-instance: 'true'
+#
+# === Prerequisites ===
+# Before enabling cluster-instance for a cluster, create these on the hub:
+#   1. Namespace: oc create namespace <cluster-name>
+#   2. Pull secret: oc create secret generic pull-secret -n <cluster-name> \
+#        --from-file=.dockerconfigjson=pull-secret.json \
+#        --type=kubernetes.io/dockerconfigjson
+#   3. SSH key: oc create secret generic ssh-key -n <cluster-name> \
+#        --from-literal=ssh-publickey='ssh-rsa AAAA...'
+#   4. BMC credentials (per node): oc create secret generic <bmc-secret> -n <cluster-name> \
+#        --from-literal=username=admin --from-literal=password=password
+#
+# === Day 2 Integration ===
+# All non-cluster-instance-* labels are passed as clusterLabels in the
+# ClusterInstance spec with the autoshift.io/ prefix. When ACM creates the
+# ManagedCluster, these labels activate Day 2 policies automatically.

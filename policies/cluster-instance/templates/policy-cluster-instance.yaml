@@ -1,0 +1,133 @@
+{{- $labelPrefix := ($.Values.autoshiftLabelPrefix | default "autoshift.io/") }}
+{{- $policyNamespace := $.Values.policy_namespace }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-cluster-instance
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: configure-cluster-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            {{ "{{-" }} $policyNamespace := "{{ $policyNamespace }}" {{ "}}" }}
+            {{ "{{-" }} $labelPrefix := "{{ $labelPrefix }}" {{ "}}" }}
+            {{ "{{-" }} $ciKey := (print $labelPrefix "cluster-instance") {{ "}}" }}
+            {{ "{{-" }} $allCMs := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/cluster-labels") | default dict {{ "}}" }}
+            {{ "{{-" }} $cmItems := (index $allCMs "items") | default list {{ "}}" }}
+            {{ "{{-" }} range $cm := $cmItems {{ "}}" }}
+            {{ "{{-" }} $cmName := (index $cm "metadata" "name") {{ "}}" }}
+            {{ "{{-" }} if hasPrefix "managed-cluster." $cmName {{ "}}" }}
+            {{ "{{-" }} $cluster := trimPrefix "managed-cluster." $cmName {{ "}}" }}
+            {{ "{{-" }} $labelsJson := (index $cm "data" "labels" | default "{}") {{ "}}" }}
+            {{ "{{-" }} $labels := ($labelsJson | fromJson | default dict) {{ "}}" }}
+            {{ "{{-" }} if eq (index $labels $ciKey | default "false") "true" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{" }} $cluster {{ "}}" }}
+            {{ "{{-" }} $sshSecret := (index $labels (print $labelPrefix "cluster-instance-ssh-secret") | default "ssh-key") {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: siteconfig.open-cluster-management.io/v1alpha1
+                kind: ClusterInstance
+                metadata:
+                  name: {{ "{{" }} $cluster {{ "}}" }}
+                  namespace: {{ "{{" }} $cluster {{ "}}" }}
+                spec:
+                  baseDomain: {{ "{{" }} index $labels (print $labelPrefix "cluster-instance-base-domain") {{ "}}" }}
+                  clusterImageSetNameRef: {{ "{{" }} index $labels (print $labelPrefix "cluster-instance-image-set") {{ "}}" }}
+                  pullSecretRef:
+                    name: {{ "{{" }} index $labels (print $labelPrefix "cluster-instance-pull-secret") | default "pull-secret" {{ "}}" }}
+                  sshPublicKey: '{{ "{{" }} fromSecret $cluster $sshSecret "ssh-publickey" {{ "}}" }}'
+                  {{ "{{-" }} $clusterSet := (index $labels (print $labelPrefix "cluster-instance-clusterset") | default "") {{ "}}" }}
+                  clusterLabels:
+                    {{ "{{-" }} if $clusterSet {{ "}}" }}
+                    cluster.open-cluster-management.io/clusterset: {{ "{{" }} $clusterSet {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} range $key, $value := $labels {{ "}}" }}
+                    {{ "{{-" }} if and (not (hasPrefix (print $labelPrefix "cluster-instance") $key)) (hasPrefix $labelPrefix $key) (ne $value "") (ne $value "_") {{ "}}" }}
+                    {{ "{{" }} $key {{ "}}" }}: '{{ "{{" }} $value {{ "}}" }}'
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  clusterNetwork:
+                    - cidr: {{ "{{" }} printf "%s/%s" (index $labels (print $labelPrefix "cluster-instance-cluster-network") | default "10.128.0.0") (index $labels (print $labelPrefix "cluster-instance-cluster-network-prefix") | default "14") {{ "}}" }}
+                      hostPrefix: {{ "{{" }} index $labels (print $labelPrefix "cluster-instance-cluster-network-host-prefix") | default "23" {{ "}}" }}
+                  serviceNetwork:
+                    - cidr: {{ "{{" }} printf "%s/%s" (index $labels (print $labelPrefix "cluster-instance-service-network") | default "172.30.0.0") (index $labels (print $labelPrefix "cluster-instance-service-network-prefix") | default "16") {{ "}}" }}
+                  machineNetwork:
+                    - cidr: {{ "{{" }} printf "%s/%s" (index $labels (print $labelPrefix "cluster-instance-machine-network") | default "10.0.0.0") (index $labels (print $labelPrefix "cluster-instance-machine-network-prefix") | default "24") {{ "}}" }}
+                  nodes:
+                    {{ "{{-" }} $nodeRange := list "1" "2" "3" "4" "5" "6" "7" "8" "9" "10" {{ "}}" }}
+                    {{ "{{-" }} range $nodeId := $nodeRange {{ "}}" }}
+                    {{ "{{-" }} $hostnameKey := print $labelPrefix "cluster-instance-node-" $nodeId "-hostname" {{ "}}" }}
+                    {{ "{{-" }} $hostname := (index $labels $hostnameKey | default "") {{ "}}" }}
+                    {{ "{{-" }} if $hostname {{ "}}" }}
+                    {{ "{{-" }} $bmcType := (index $labels (print $labelPrefix "cluster-instance-node-" $nodeId "-bmc-type") | default "redfish-virtualmedia") {{ "}}" }}
+                    {{ "{{-" }} $bmcHost := (index $labels (print $labelPrefix "cluster-instance-node-" $nodeId "-bmc-host")) {{ "}}" }}
+                    {{ "{{-" }} $bmcSystem := (index $labels (print $labelPrefix "cluster-instance-node-" $nodeId "-bmc-system") | default "System.Embedded.1") {{ "}}" }}
+                    {{ "{{-" }} $bmcSecret := (index $labels (print $labelPrefix "cluster-instance-node-" $nodeId "-bmc-secret")) {{ "}}" }}
+                    {{ "{{-" }} $bootMac := (index $labels (print $labelPrefix "cluster-instance-node-" $nodeId "-boot-mac") | default "") {{ "}}" }}
+                    {{ "{{-" }} $role := (index $labels (print $labelPrefix "cluster-instance-node-" $nodeId "-role") | default "master") {{ "}}" }}
+                    {{ "{{-" }} $rootDevice := (index $labels (print $labelPrefix "cluster-instance-node-" $nodeId "-root-device") | default "") {{ "}}" }}
+                    - hostName: {{ "{{" }} $hostname {{ "}}" }}
+                      role: {{ "{{" }} $role {{ "}}" }}
+                      bmcAddress: '{{ "{{" }} printf "%s+https://%s/redfish/v1/Systems/%s" $bmcType $bmcHost $bmcSystem {{ "}}" }}'
+                      bmcCredentialsName:
+                        name: {{ "{{" }} $bmcSecret {{ "}}" }}
+                      bootMACAddress: '{{ "{{" }} $bootMac | replace "." ":" {{ "}}" }}'
+                      {{ "{{-" }} if $rootDevice {{ "}}" }}
+                      rootDeviceHints:
+                        deviceName: /dev/{{ "{{" }} $rootDevice {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-cluster-instance
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $_ := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-cluster-instance
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: placement-policy-cluster-instance
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-cluster-instance
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
