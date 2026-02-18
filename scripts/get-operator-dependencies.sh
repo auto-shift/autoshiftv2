@@ -41,6 +41,8 @@ OPERATORS=""
 SHOW_ALL=false
 OUTPUT_FORMAT="text"
 CACHE_DIR="$PROJECT_ROOT/.cache/catalog-cache"
+RECURSIVE=true
+KNOWN_DEPS_FILE="$SCRIPT_DIR/known-dependencies.json"
 
 usage() {
     cat << EOF
@@ -57,11 +59,16 @@ Options:
   --catalog CATALOG      Catalog image (default: $CATALOG)
   --operators PKG1,PKG2  Comma-separated list of operators to check
   --all                  Show all operators with dependencies
+  --no-recursive         Disable recursive resolution (recursive is default)
   --json                 Output in JSON format
   --cache-dir DIR        Directory to cache extracted catalog (default: $CACHE_DIR)
   --help                 Show this help
 
+The script also reads known-dependencies.json for dependencies not declared
+in the catalog (e.g., odf-operator -> odf-dependencies).
+
 Examples:
+  $0 --operators odf-operator --recursive --json
   $0 --operators devspaces,odf-operator
   $0 --all --json
   $0 --catalog registry.redhat.io/redhat/redhat-operator-index:v4.17 --all
@@ -104,6 +111,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --all)
             SHOW_ALL=true
+            shift
+            ;;
+        --no-recursive)
+            RECURSIVE=false
             shift
             ;;
         --json)
@@ -176,8 +187,8 @@ else
     log "Using cached catalog from $CATALOG_DIR"
 fi
 
-# Function to get dependencies for a package
-get_deps() {
+# Function to get dependencies for a package from catalog
+get_catalog_deps() {
     local pkg="$1"
     local pkg_dir="$CATALOG_DIR/configs/$pkg"
 
@@ -186,18 +197,93 @@ get_deps() {
     fi
 
     local deps=""
-    if [[ -f "$pkg_dir/catalog.json" ]]; then
-        deps=$(cat "$pkg_dir/catalog.json" | jq -r '.properties[]? | select(.type == "olm.package.required") | .value.packageName' 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
-    elif [[ -f "$pkg_dir/catalog.yaml" ]]; then
-        deps=$(grep -A2 "olm.package.required" "$pkg_dir/catalog.yaml" 2>/dev/null | grep "packageName:" | sed 's/.*packageName: //' | sort -u | tr '\n' ',' | sed 's/,$//')
+
+    # Check bundles directory for the latest bundle (individual JSON files per version)
+    if [[ -d "$pkg_dir/bundles" ]]; then
+        local latest_bundle=$(ls "$pkg_dir/bundles/"*.json 2>/dev/null | sort -V | tail -1)
+        if [[ -n "$latest_bundle" && -f "$latest_bundle" ]]; then
+            deps=$(jq -r '.properties[]? | select(.type == "olm.package.required") | .value.packageName' "$latest_bundle" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
+        fi
+    fi
+
+    # Check bundles.json JSONL format (one JSON object per line, used by ACM/MCE)
+    if [[ -z "$deps" && -f "$pkg_dir/bundles.json" ]]; then
+        deps=$(jq -rs '.[-1].properties[]? | select(.type == "olm.package.required") | .value.packageName' "$pkg_dir/bundles.json" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
+    fi
+
+    # Fallback to old catalog.json format
+    if [[ -z "$deps" && -f "$pkg_dir/catalog.json" ]]; then
+        deps=$(jq -r '.properties[]? | select(.type == "olm.package.required") | .value.packageName' "$pkg_dir/catalog.json" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
     fi
 
     echo "$deps"
 }
 
+# Function to get known dependencies from JSON file
+get_known_deps() {
+    local pkg="$1"
+
+    if [[ -f "$KNOWN_DEPS_FILE" ]]; then
+        local deps=$(jq -r --arg pkg "$pkg" '.[$pkg] // [] | join(",")' "$KNOWN_DEPS_FILE" 2>/dev/null)
+        echo "$deps"
+    fi
+}
+
+# Function to merge and dedupe dependencies
+merge_deps() {
+    local deps1="$1"
+    local deps2="$2"
+
+    local all_deps=""
+    [[ -n "$deps1" ]] && all_deps="$deps1"
+    [[ -n "$deps2" ]] && all_deps="${all_deps:+$all_deps,}$deps2"
+
+    # Dedupe
+    echo "$all_deps" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//'
+}
+
+# Function to get all dependencies (catalog + known)
+get_deps() {
+    local pkg="$1"
+
+    local catalog_deps=$(get_catalog_deps "$pkg")
+    local known_deps=$(get_known_deps "$pkg")
+
+    merge_deps "$catalog_deps" "$known_deps"
+}
+
 # Collect results using temp file (avoid associative arrays for bash 3.x compatibility)
 RESULTS_FILE=$(mktemp)
-trap "rm -f $RESULTS_FILE" EXIT
+VISITED_FILE=$(mktemp)
+trap "rm -f $RESULTS_FILE $VISITED_FILE" EXIT
+
+# Function to recursively resolve dependencies
+resolve_recursive() {
+    local pkg="$1"
+
+    # Skip if already visited
+    if grep -q "^${pkg}$" "$VISITED_FILE" 2>/dev/null; then
+        return
+    fi
+    echo "$pkg" >> "$VISITED_FILE"
+
+    local deps=$(get_deps "$pkg")
+
+    if [[ -n "$deps" ]]; then
+        echo "$pkg|$deps" >> "$RESULTS_FILE"
+
+        # Recurse into each dependency
+        if [[ "$RECURSIVE" == "true" ]]; then
+            IFS=',' read -ra DEP_ARRAY <<< "$deps"
+            for dep in "${DEP_ARRAY[@]}"; do
+                dep=$(echo "$dep" | xargs)  # trim whitespace
+                resolve_recursive "$dep"
+            done
+        fi
+    else
+        echo "$pkg|" >> "$RESULTS_FILE"
+    fi
+}
 
 if [[ "$SHOW_ALL" == "true" ]]; then
     # Check all operators
@@ -209,16 +295,11 @@ if [[ "$SHOW_ALL" == "true" ]]; then
         fi
     done
 else
-    # Check specific operators
+    # Check specific operators (with recursive resolution)
     IFS=',' read -ra PKGS <<< "$OPERATORS"
     for pkg in "${PKGS[@]}"; do
         pkg=$(echo "$pkg" | xargs)  # trim whitespace
-        deps=$(get_deps "$pkg")
-        if [[ -n "$deps" ]]; then
-            echo "$pkg|$deps" >> "$RESULTS_FILE"
-        else
-            echo "$pkg|" >> "$RESULTS_FILE"
-        fi
+        resolve_recursive "$pkg"
     done
 fi
 

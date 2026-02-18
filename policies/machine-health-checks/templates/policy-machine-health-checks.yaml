@@ -8,6 +8,9 @@ metadata:
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
     policy.open-cluster-management.io/standards: NIST SP 800-53
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -17,36 +20,62 @@ spec:
           name: create-machine-health-checks
         spec:
           object-templates-raw: |
-              {{ "{{-" }} /* Specify the parameters needed to create the MachineSet  */ {{ "-}}" }}
-              {{ "{{-" }} $machineset_role := "worker" {{ "}}" }}
-              {{ "{{-" }} $zones := list{{ range (toStrings .Values.machinehealthchecks.zones) }} "{{ . }}"{{ end }} {{ "}}" }}
-              {{ "{{-" }} $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName {{ "}}" }}
-              {{ "{{-" }} /* Generate the MachineSet for each zone as specified  */ {{ "-}}" }}
-              {{ "{{-" }} range $zone := $zones {{ "}}" }}
+              {{ "{{-" }} $labels := .ManagedClusterLabels {{ "}}" }}
+              {{ "{{-" }} $workerEnabled := eq (index $labels "autoshift.io/machine-health-checks-worker") "true" {{ "}}" }}
+              {{ "{{-" }} $infraEnabled := eq (index $labels "autoshift.io/machine-health-checks-infra") "true" {{ "}}" }}
+              {{ "{{-" }} $storageEnabled := eq (index $labels "autoshift.io/machine-health-checks-storage") "true" {{ "}}" }}
+              {{ "{{-" }} $machinesets := (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items {{ "}}" }}
+              {{ "{{-" }} range $ms := $machinesets {{ "}}" }}
+              {{ "{{-" }} $role := index $ms.spec.template.metadata.labels "machine.openshift.io/cluster-api-machine-role" {{ "}}" }}
+              {{ "{{-" }} $name := $ms.metadata.name {{ "}}" }}
+              {{ "{{-" }} $isStorage := hasKey $ms.spec.template.spec.metadata.labels "cluster.ocs.openshift.io/openshift-storage" {{ "}}" }}
+              {{ "{{-" }} $isWorker := and (eq $role "worker") (not $isStorage) {{ "}}" }}
+              {{ "{{-" }} $isInfra := and (eq $role "infra") (not $isStorage) {{ "}}" }}
+              {{ "{{-" }} if and $storageEnabled $isStorage {{ "}}" }}
               - complianceType: musthave
                 objectDefinition:
                   apiVersion: machine.openshift.io/v1beta1
                   kind: MachineHealthCheck
                   metadata:
-                    name: worker-machine-health-check 
+                    name: {{ "{{" }} $name {{ "}}" }}
                     namespace: openshift-machine-api
                   spec:
                     selector:
                       matchLabels:
-                        machine.openshift.io/cluster-api-machine-role: {{ "{{" }} $machineset_role {{ "}}" }} 
-                        machine.openshift.io/cluster-api-machine-type: {{ "{{" }} $machineset_role {{ "}}" }}
-                        machine.openshift.io/cluster-api-machineset: {{ "{{" }} $infrastructure_id {{ "}}" }}-{{ "{{" }} $machineset_role {{ "}}" }}-{{ "{{" }} $zone {{ "}}" }}
+                        machine.openshift.io/cluster-api-machineset: {{ "{{" }} $name {{ "}}" }}
                     unhealthyConditions:
-                    - type:    "Ready"
-                      timeout: "300s" 
+                    - type: "Ready"
+                      timeout: "600s"
                       status: "False"
-                    - type:    "Ready"
-                      timeout: "300s" 
+                    - type: "Ready"
+                      timeout: "600s"
                       status: "Unknown"
-                    maxUnhealthy: "40%" 
-                    nodeStartupTimeout: "10m"              
+                    maxUnhealthy: 1
+                    nodeStartupTimeout: "15m"
+              {{ "{{-" }} else if or (and $workerEnabled $isWorker) (and $infraEnabled $isInfra) {{ "}}" }}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: machine.openshift.io/v1beta1
+                  kind: MachineHealthCheck
+                  metadata:
+                    name: {{ "{{" }} $name {{ "}}" }}
+                    namespace: openshift-machine-api
+                  spec:
+                    selector:
+                      matchLabels:
+                        machine.openshift.io/cluster-api-machineset: {{ "{{" }} $name {{ "}}" }}
+                    unhealthyConditions:
+                    - type: "Ready"
+                      timeout: "300s"
+                      status: "False"
+                    - type: "Ready"
+                      timeout: "300s"
+                      status: "Unknown"
+                    maxUnhealthy: "40%"
+                    nodeStartupTimeout: "10m"
               {{ "{{-" }} end {{ "}}" }}
-          pruneObjectBehavior: None
+              {{ "{{-" }} end {{ "}}" }}
+          pruneObjectBehavior: DeleteIfCreated
           remediationAction: enforce
           severity: high
 ---
