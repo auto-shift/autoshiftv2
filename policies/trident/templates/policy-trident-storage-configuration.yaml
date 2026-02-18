@@ -9,50 +9,63 @@ metadata:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
-{{ if (($.Values.autoshift).dryRun) }}
+{{- if (($.Values.autoshift).dryRun) }}
   remediationAction: inform
-{{ end }}
+{{- end }}
   dependencies:
-    - name: policy-trident-configmaps
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-    - name: policy-trident-orchestrator
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-    - name: policy-trident-machineconfigs
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
+  - name: policy-trident-orchestrator
+    namespace: {{ .Values.policy_namespace }}
+    apiVersion: policy.open-cluster-management.io/v1
+    compliance: Compliant
+    kind: Policy
+  - name: policy-trident-machineconfigs
+    namespace: {{ .Values.policy_namespace }}
+    apiVersion: policy.open-cluster-management.io/v1
+    compliance: Compliant
+    kind: Policy
   disabled: false
   policy-templates:
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: policy-storage-configuration
-        spec:
-          remediationAction: enforce # will be overridden by remediationAction in parent policy
-          severity: high
-          object-templates-raw: |
-            {{ "{{hub-" }} $tridentconfig_list := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if $label | hasPrefix "autoshift.io/trident-config-" {{ "hub}}" }}
-                {{ "{{hub-" }} $tridentconfig_list = append $tridentconfig_list $labelvalue {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-storage-configuration
+      spec:
+        remediationAction: enforce
+        severity: high
+        object-templates-raw: |
+          {{ "{{hub-" }} $tridentconfig_list := list {{ "hub}}" }}
+          {{ "{{hub-" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}
+            {{ "{{hub-" }} if $label | hasPrefix "autoshift.io/trident-config-" {{ "hub}}" }}
+              {{ "{{hub-" }} $tridentconfig_list = append $tridentconfig_list $labelvalue {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} range $tridentconfig_list {{ "hub}}" }}
-              {{ "{{hub-" }} $cfg := ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (print "trident-" .)).data) {{ "hub}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                {{ "{{hub-" }} if $cfg.adv {{ "hub}}" }}
-                    {{ "{{hub " }} $cfg.adv | base64dec | autoindent {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+          {{ "{{hub-" }} end {{ "hub}}" }}
+          {{ "{{hub-" }} range $tridentconfig_list {{ "hub}}" }}
+            {{ "{{hub-" }} $cfg := (lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (print "trident-" .)) {{ "hub}}" }}
+            {{ "{{hub-" }} if $cfg {{ "hub}}" }}
+          - complianceType: mustonlyhave
+            objectDefinition:
+              {{ "{{hub" }} $cfg.data.adv | base64dec | autoindent {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+          {{ "{{hub-" }} end {{ "hub}}" }}
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-storage-configuration-test
+      spec:
+        remediationAction: inform
+        severity: high
+        object-templates:
+          - complianceType: musthave
+            objectDefinition:
+              apiVersion: trident.netapp.io/v1
+              kind: TridentBackendConfig
+              metadata:
+                name: backend-tbc-ontap-nvme
+                namespace: {{ .Values.trident.namespace }}
+              status:
+                lastOperationStatus: Success
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -62,24 +75,24 @@ metadata:
 spec:
   clusterSets:
   {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-    - {{ $clusterSet }}
+  - {{ $clusterSet }}
   {{- end }}
   {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
+  - {{ $clusterSet }}
   {{- end }}
   predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/trident'
-              operator: In
-              values:
-              - 'true'
+  - requiredClusterSelector:
+      labelSelector:
+        matchExpressions:
+        - key: autoshift.io/trident
+          operator: In
+          values:
+          - "true"
   tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
+  - key: cluster.open-cluster-management.io/unreachable
+    operator: Exists
+  - key: cluster.open-cluster-management.io/unavailable
+    operator: Exists
 ---
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
