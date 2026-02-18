@@ -8,7 +8,7 @@ NQN bug: https://issues.redhat.com/browse/RHEL-8041
 
 You will have to create the secret for your trident credentials on the ACM cluster in the policies-autoshift namespace. You also have the option to utilize Vault Secrets to pull in your secret. 
 
-oc create secret generic cle-svm1 -n policies-autoshift --from-literal=username=vsadmin --from-literal=password='password'
+oc create secret generic netapp-creds -n policies-autoshift --from-literal=username=vsadmin --from-literal=password='password'
 
 In your `autoshift/values.hub.yaml` file, you can configure these toggles:
 
