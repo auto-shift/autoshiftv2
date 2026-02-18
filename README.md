@@ -114,6 +114,18 @@ For development or customization, install directly from the git repository:
 > [!NOTE]
 > If OpenShift GitOps is already installed manually on cluster and the default argo instance exists this step can be skipped. Make sure that argocd controller has cluster-admin
 
+> [!TIP]
+> **Custom GitOps Namespace:** If the GitOps operator is already installed and you want to deploy the ArgoCD instance into a different namespace, use `skipOperatorInstall` to skip the operator installation and only create the ArgoCD instance:
+>
+> ```console
+> helm upgrade --install openshift-gitops openshift-gitops \
+>   -f policies/openshift-gitops/values.yaml \
+>   --set skipOperatorInstall=true \
+>   --set gitops.argoNamespace=openshift-infra-gitops
+> ```
+>
+> This creates only the ArgoCD namespace, ArgoCD instance, ClusterRoleBinding, and secrets -- skipping the Subscription, OperatorGroup, and CRD wait.
+
 2.  After the installation is complete, verify that all the pods in the `openshift-gitops` namespace are running. This can take a few minutes depending on your network to even return anything.
 
     ```console
@@ -201,6 +213,9 @@ For development or customization, install directly from the git repository:
 1.  Update `autoshift/values.yaml` with desired feature flags and repo url as define in [Autoshift Cluster Labels Values Reference](#Autoshift-Cluster-Labels-Values-Reference)
 
 2.  Using helm and the values you set for cluster labels, install autoshift. Here is an example using the hub values file:
+
+> [!IMPORTANT]
+> The `GITOPS_NAMESPACE` must match the namespace where your ArgoCD instance is running. If you bootstrapped into a custom namespace (e.g., `openshift-infra-gitops`), update this variable accordingly. The `gitopsNamespace` helm value ensures all downstream policy charts also target the correct namespace.
 
     ```console
     export APP_NAME="autoshift"
@@ -359,7 +374,7 @@ By default, AutoShift deploys into the `openshift-gitops` namespace. To use a cu
 
 ```yaml
 # In your autoshift values file (e.g., values.hub.yaml)
-gitopsNamespace: custom-gitops
+gitopsNamespace: openshift-infra-gitops
 ```
 
 This propagates the namespace to all downstream policy charts (openshift-gitops, infra-nodes, etc.) via the ApplicationSet `valuesObject`.

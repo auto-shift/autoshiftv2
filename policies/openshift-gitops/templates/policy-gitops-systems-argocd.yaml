@@ -31,25 +31,14 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: operators.coreos.com/v1alpha1
-                kind: Subscription
-                metadata:
-                  name: {{ .Values.gitops.name }}
-                  namespace: {{ .Values.gitops.namespace }}
-                spec:
-                  config:
-                    env:
-                    - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
-                      value: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default "{{ .Values.gitops.disableDefaultArgoCD }}" {{ "hub}}" }}'
+          object-templates-raw: |
+            {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
-                  name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}'
+                  name: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                   labels:
                     openshift.io/cluster-monitoring: "true"
             - complianceType: musthave
@@ -67,14 +56,14 @@ spec:
                 subjects:
                 - kind: ServiceAccount
                   name: {{ .Values.gitops.argoName }}-argocd-application-controller
-                  namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}'
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: argoproj.io/v1beta1
                 kind: ArgoCD
                 metadata:
                   name: {{ .Values.gitops.argoName }}
-                  namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}'
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                   annotations:
                     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
                     argocd.argoproj.io/sync-wave: "2"
@@ -167,7 +156,7 @@ spec:
                 kind: Placement
                 metadata:
                   name: systems-argocd-cluster-placement
-                  namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}'
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   clusterSets:
                   {{- range $clusterSet, $value := .Values.hubClusterSets }}
@@ -187,16 +176,16 @@ spec:
                 kind: GitOpsCluster
                 metadata:
                   name: argo-acm-importer
-                  namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}'
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   argoServer:
                     cluster: notused
-                    argoNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}'
+                    argoNamespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                   placementRef:
                     kind: Placement
                     apiVersion: cluster.open-cluster-management.io/v1beta1
                     name: systems-argocd-cluster-placement
-                    namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}'
+                    namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
             {{- range $clusterSet, $value := .Values.managedClusterSets }}
             - complianceType: musthave
               objectDefinition:
@@ -204,7 +193,7 @@ spec:
                 kind: ManagedClusterSetBinding
                 metadata:
                   name: {{ $clusterSet }}
-                  namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ $.Values.gitopsNamespace | default $.Values.gitops.argoNamespace }}" {{ "hub}}" }}'
+                  namespace: '{{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   clusterSet: {{ $clusterSet }}
             {{- end }}
@@ -215,7 +204,7 @@ spec:
                 kind: ManagedClusterSetBinding
                 metadata:
                   name: {{ $clusterSet }}
-                  namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ $.Values.gitopsNamespace | default $.Values.gitops.argoNamespace }}" {{ "hub}}" }}'
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   clusterSet: {{ $clusterSet }}
             {{- end }}
