@@ -27,7 +27,8 @@ spec:
           remediationAction: enforce
           object-templates-raw: | 
             [
-            {{ "{{-" }} $ArgoCD := (lookup "{{ .Values.infraNodes.gitops.apiVersion }}" "{{ .Values.infraNodes.gitops.kind }}" "{{ .Values.infraNodes.gitops.namespace }}" "{{ .Values.infraNodes.gitops.metadata.name }}") | default dict  {{ "}}" }}
+            {{ "{{-" }} $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace") | default "{{ .Values.gitopsNamespace | default .Values.infraNodes.gitops.namespace }}" {{ "}}" }}
+            {{ "{{-" }} $ArgoCD := (lookup "{{ .Values.infraNodes.gitops.apiVersion }}" "{{ .Values.infraNodes.gitops.kind }}" $gitopsNs "{{ .Values.infraNodes.gitops.metadata.name }}") | default dict  {{ "}}" }}
               {{ "{{-" }} if  not (empty $ArgoCD)  {{ "}}" }}
                 {{ "{{-" }} $spec := $ArgoCD.spec {{ "}}" }} 
                 {{ "{{-" }} $newSpecNoTolerations := unset $spec "tolerations" {{ "}}" }}

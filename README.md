@@ -229,6 +229,7 @@ For development or customization, install directly from the git repository:
           values: |-
             autoshiftGitRepo: $REPO_URL
             autoshiftGitBranchTag: $TARGET_REVISION
+            gitopsNamespace: $GITOPS_NAMESPACE
       sources: []
       project: $ARGO_PROJECT
       syncPolicy:
@@ -307,6 +308,7 @@ spec:
       values: |-
         autoshiftGitRepo: $REPO_URL
         autoshiftGitBranchTag: $TARGET_REVISION
+        gitopsNamespace: $GITOPS_NAMESPACE
         autoshift:
           dryRun: true
   sources: []
@@ -341,6 +343,7 @@ spec:
       values: |-
         autoshiftGitRepo: $REPO_URL
         autoshiftGitBranchTag: $TARGET_REVISION
+        gitopsNamespace: $GITOPS_NAMESPACE
   sources: []
   project: $ARGO_PROJECT
   syncPolicy:
@@ -348,6 +351,28 @@ spec:
       prune: false
       selfHeal: true
 EOF
+```
+
+## Custom GitOps Namespace
+
+By default, AutoShift deploys into the `openshift-gitops` namespace. To use a custom namespace, set `gitopsNamespace` in your values file and the `GITOPS_NAMESPACE` environment variable during install:
+
+```yaml
+# In your autoshift values file (e.g., values.hub.yaml)
+gitopsNamespace: custom-gitops
+```
+
+This propagates the namespace to all downstream policy charts (openshift-gitops, infra-nodes, etc.) via the ApplicationSet `valuesObject`.
+
+### Keeping the Default ArgoCD Instance
+
+When using a custom namespace, the GitOps operator's default ArgoCD instance in `openshift-gitops` is disabled by default. To keep it running alongside your custom instance, set the `gitops-disable-default-argocd` label to `'false'` on your hub clusterset:
+
+```yaml
+hubClusterSets:
+  hub:
+    labels:
+      gitops-disable-default-argocd: 'false'
 ```
 
 ## Versioned ClusterSets for Gradual Rollout
@@ -515,6 +540,8 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-version`                | string    | (optional)                | Specific CSV version for controlled upgrades |
 | `gitops-source`                 | string    | `redhat-operators`        | Operator catalog source |
 | `gitops-source-namespace`       | string    | `openshift-marketplace`   | Namespace for operator catalog |
+| `gitops-disable-default-argocd` | string    | `true`                    | Controls DISABLE_DEFAULT_ARGOCD_INSTANCE on the operator Subscription |
+| `gitops-namespace`              | string    | `openshift-gitops`        | Namespace for the ArgoCD instance (per-cluster override) |
 
 
 ### Master Nodes
