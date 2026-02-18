@@ -212,8 +212,8 @@ helm upgrade --install openshift-gitops openshift-gitops \
 
 2.  Using helm and the values you set for cluster labels, install autoshift. Here is an example using the hub values file:
 
-> [!IMPORTANT]
-> The `GITOPS_NAMESPACE` must match the namespace where your ArgoCD instance is running. If you bootstrapped into a custom namespace (e.g., `openshift-infra-gitops`), update this variable accordingly. The `gitopsNamespace` helm value ensures all downstream policy charts also target the correct namespace.
+    > [!IMPORTANT]
+    > The `GITOPS_NAMESPACE` must match the namespace where your ArgoCD instance is running. If you bootstrapped into a custom namespace (e.g., `openshift-infra-gitops`), update this variable accordingly. The `gitopsNamespace` helm value ensures all downstream policy charts also target the correct namespace.
 
     ```console
     export APP_NAME="autoshift"
