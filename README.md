@@ -115,16 +115,14 @@ For development or customization, install directly from the git repository:
 > If OpenShift GitOps is already installed manually on cluster and the default argo instance exists this step can be skipped. Make sure that argocd controller has cluster-admin
 
 > [!TIP]
-> **Custom GitOps Namespace:** If the GitOps operator is already installed and you want to deploy the ArgoCD instance into a different namespace, use `skipOperatorInstall` to skip the operator installation and only create the ArgoCD instance:
->
-> ```console
-> helm upgrade --install openshift-gitops openshift-gitops \
->   -f policies/openshift-gitops/values.yaml \
->   --set skipOperatorInstall=true \
->   --set gitops.argoNamespace=openshift-infra-gitops
-> ```
->
-> This creates only the ArgoCD namespace, ArgoCD instance, ClusterRoleBinding, and secrets -- skipping the Subscription, OperatorGroup, and CRD wait.
+> **Custom GitOps Namespace:** If the GitOps operator is already installed and you want to deploy the ArgoCD instance into a different namespace, use `skipOperatorInstall` to skip the operator installation and only create the ArgoCD instance. This creates only the ArgoCD namespace, ArgoCD instance, ClusterRoleBinding, and secrets -- skipping the Subscription, OperatorGroup, and CRD wait.
+
+```console
+helm upgrade --install openshift-gitops openshift-gitops \
+  -f policies/openshift-gitops/values.yaml \
+  --set skipOperatorInstall=true \
+  --set gitops.argoNamespace=openshift-infra-gitops
+```
 
 2.  After the installation is complete, verify that all the pods in the `openshift-gitops` namespace are running. This can take a few minutes depending on your network to even return anything.
 
