@@ -358,7 +358,7 @@ AutoShift provides a complete Infrastructure-as-Code solution for OpenShift usin
                          ↓
 ┌─────────────────────────────────────────────────────────┐
 │  Phase 3: Policy Deployment (via ApplicationSet)       │
-│  ├─ 28 ACM Policy Charts from OCI Registry             │
+│  ├─ ACM Policy Charts from OCI Registry                │
 │  ├─ policies/openshift-gitops (takes over GitOps)      │
 │  └─ policies/advanced-cluster-management (takes over)  │
 └─────────────────────────────────────────────────────────┘
@@ -685,7 +685,7 @@ For testing in non-production environments, use release candidate versions:
 
 ## Policy Management
 
-AutoShift deploys 28 ACM policies that manage various OpenShift components:
+AutoShift deploys ACM policies that manage various OpenShift components:
 
 - **Infrastructure**: infra-nodes, worker-nodes, storage-nodes
 - **Operators**: ACS, ODF, Logging, Loki, GitOps, Pipelines, etc.

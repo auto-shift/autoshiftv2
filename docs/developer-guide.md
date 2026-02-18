@@ -752,7 +752,7 @@ oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 ## 📖 Additional Resources
 
 ### Documentation
-- [Policy Quick Start Documentation](scripts/README.md)
+- [Policy Quick Start Documentation](../scripts/README.md)
 - [OpenShift GitOps Documentation](https://docs.openshift.com/container-platform/latest/cicd/gitops/understanding-openshift-gitops.html)
 - [RHACM Policy Framework](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes/)
 
@@ -765,4 +765,4 @@ oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 
 ---
 
-**Ready to contribute?** Start by [creating your first policy](#-creating-your-first-policy) or explore our [existing policies](policies/) for examples!
+**Ready to contribute?** Start by [creating your first policy](#-creating-your-first-policy) or explore our [existing policies](../policies/) for examples!

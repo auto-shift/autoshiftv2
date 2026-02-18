@@ -42,6 +42,10 @@ metallb-bgp-1: ''
 BGP Peer Files:
 metallb-peer-1: ''
 
-Once you have everything set, you can apply the new labels through Autoshift.
+Once you have everything set, push your changes to your git repo. The ApplicationSet will automatically detect the changes and deploy MetalLB to the appropriate clusters.
 
-helm template autoshift autoshift -f autoshift/values/global.yaml -f autoshift/values/clustersets/hub.yaml -f autoshift/values/clustersets/managed.yaml | oc apply -f -
+To test locally before pushing:
+
+```bash
+helm template autoshift autoshift -f autoshift/values/global.yaml -f autoshift/values/clustersets/hub.yaml -f autoshift/values/clustersets/managed.yaml
+```

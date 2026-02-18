@@ -113,42 +113,17 @@ All hub clusters **must** have the following configuration in their `hubClusterS
 
 See `autoshift/values/clustersets/hub-minimal.yaml` for a minimal configuration example that shows only the required settings.
 
-### Installation from OCI Release (Recommended)
+### Choose Your Installation Method
 
-For production deployments, install from the OCI registry:
-
-1. Download the installation scripts from the [latest release](https://github.com/auto-shift/autoshiftv2/releases):
-
-   ```bash
-   # Download and extract release artifacts
-   VERSION=0.1.0  # Replace with desired version
-   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/INSTALL.md -O
-   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-bootstrap.sh -O
-   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-autoshift.sh -O
-   chmod +x install-*.sh
-   ```
-
-2. Run the bootstrap installer to deploy GitOps and ACM:
-
-   ```bash
-   ./install-bootstrap.sh
-   ```
-
-3. Wait for ACM to be ready, then install AutoShift:
-
-   ```bash
-   # Wait for MultiClusterHub to be running
-   oc get mch -A -w
-
-   # Install AutoShift (edit the script first to set your values file)
-   ./install-autoshift.sh
-   ```
-
-The charts are pulled directly from `oci://quay.io/autoshift/` - no git clone required.
+| | **Source (Git)** | **OCI (Registry)** |
+|---|---|---|
+| **Best for** | Development, customization, getting started | Production, version-pinned deployments |
+| **Bootstrap from** | Local git clone | OCI artifacts from Quay |
+| **Git clone required** | Yes | No |
+| **Customizable policies** | Edit directly in repo | Fork or overlay |
+| **Air-gapped support** | Mirror git repo | Mirror OCI registry |
 
 ### Installation from Source
-
-For development or customization, install directly from the git repository:
 
 1.  Login to the **hub** cluster via the [`oc` utility](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#cli-logging-in_cli-developer-commands).
 
@@ -340,25 +315,65 @@ For development or customization, install directly from the git repository:
       - values/clusters/my-cluster.yaml
     ```
 
-3.  Given the labels and cluster sets specified in the supplied values file, ACM cluster sets will be created. To view the cluster sets, In the OpenShift web console go to **All Clusters > Infrastructure > Clusters > Cluster Sets** in the ACM Console
+3.  Given the labels and cluster sets specified in the supplied values file, ACM cluster sets will be created. Add the hub cluster (`local-cluster`) to the appropriate clusterset:
+
+    ```console
+    # Replace 'hub' with the name of your clusterset
+    oc label managedcluster local-cluster cluster.open-cluster-management.io/clusterset=hub --overwrite
+    ```
+
+    For managed clusters, assign them to their clusterset the same way:
+
+    ```console
+    oc label managedcluster <cluster-name> cluster.open-cluster-management.io/clusterset=managed --overwrite
+    ```
+
+    Alternatively, you can assign clusters via the ACM Console at **All Clusters > Infrastructure > Clusters > Cluster Sets**:
 
     ![Cluster Sets in ACM Console](images/acm-cluster-sets.png)
 
-4.  Select add cluster and manage resource assignments.
+    Select a clusterset, then manage resource assignments to add clusters:
 
     ![Cluster Set Details in ACM Console](images/acm-add-hub-cluster.png)
 
-5.  Manually select which cluster will belong to each cluster set, or when provisioning a new cluster from ACM you can select the desired cluster set from ACM at time of creation.
-
     ![Cluster Set Details in ACM Console](images/acm-resource-assignment.png)
-
-6. Confirm the selected cluster.
 
     ![Cluster Set Details in ACM Console](images/acm-confirm-changes.png)
 
-5.  That's it. Welcome to OpenShift Platform Plus and all of it's many capabilities!
+    When provisioning a new cluster from ACM, you can also select the desired clusterset at time of creation.
+
+4.  That's it. Welcome to OpenShift Platform Plus and all of it's many capabilities!
 
     ![Cluster Set Details in ACM Console](images/acm-local-cluster-labels.png)
+
+### Installation from OCI Release
+
+For production or version-pinned deployments, AutoShift can be installed directly from OCI artifacts hosted on Quay — no git clone required. The bootstrap scripts pull GitOps, ACM, and AutoShift charts from the OCI registry instead of from a local repository.
+
+1. Download the installation scripts from the [latest release](https://github.com/auto-shift/autoshiftv2/releases):
+
+   ```bash
+   VERSION=0.1.0  # Replace with desired version
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/INSTALL.md -O
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-bootstrap.sh -O
+   curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-autoshift.sh -O
+   chmod +x install-*.sh
+   ```
+
+2. Run the bootstrap installer to deploy GitOps and ACM from Quay:
+
+   ```bash
+   ./install-bootstrap.sh
+   ```
+
+3. Wait for ACM to be ready, then install AutoShift:
+
+   ```bash
+   oc get mch -A -w
+   ./install-autoshift.sh
+   ```
+
+For full OCI deployment details, see [OCI Deployment Guide](docs/deploy-oci.md) and [OCI Quickstart](docs/quickstart-oci.md).
 
 ## Dry Run Mode
 
@@ -801,6 +816,7 @@ Automated node health monitoring and remediation.
 |---------------------------------------|-------------------|---------------------------|-------|
 | `compliance`                          | bool              |                           | If not set Compliance Operator will not be managed. Helm chart config map must be set with profiles and remediations |
 | `compliance-auto-remediate`           | bool              | `true`                    |       |
+| `compliance-storage-class`            | string            |                           | StorageClass for compliance scan raw results. Use when default StorageClass isn't available on master nodes (e.g., Ceph RBD) |
 | `compliance-subscription-name`        | string            | `compliance-operator`     |       |
 | `compliance-version`                  | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `compliance-source`                   | string            | `redhat-operators`        |       |
@@ -865,7 +881,9 @@ Automated node health monitoring and remediation.
 | `odf-ocs-storage-replicas`        | string            |                           | replicas, `3` is recommended; if using flexibleScaling use `1` |
 | `odf-ocs-flexible-scaling`        | bool              | `false`*                  | Sets failure domain to host and evenly spreads OSDs over hosts. Defaults to true on baremetal with a number of storage nodes that isn't a multiple of 3 |
 | `odf-resource-profile`            | string            | `balanced`                | `lean`: suitable for clusters with limited resources, `balanced`: suitable for most use cases, `performance`: suitable for clusters with high amount of resources |
-| `odf-channel`                     | string            | `stable-4.18`             |       |
+| `odf-default-storageclass`        | string            | `ocs-storagecluster-ceph-rbd` | Sets specified storage class as default and all others as non-default |
+| `odf-csi-all-nodes`              | bool              | `false`                   | `true` runs CSI plugins on all nodes (masters, infra, storage) allowing PVCs on non-storage nodes. `false` restricts CSI plugins to storage-labeled nodes only |
+| `odf-channel`                     | string            | `stable-4.20`             |       |
 | `odf-version`                     | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `odf-source`                      | string            | `redhat-operators`        |       |
 | `odf-source-namespace`            | string            | `openshift-marketplace`   |       |

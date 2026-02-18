@@ -4,10 +4,10 @@ This document describes how to create and publish AutoShift releases to OCI-comp
 
 ## Overview
 
-AutoShift releases consist of **31 Helm charts**:
+AutoShift releases consist of multiple Helm charts:
 - **2 bootstrap charts**: `openshift-gitops`, `advanced-cluster-management`
 - **1 main chart**: `autoshift` (ApplicationSet)
-- **28 policy charts**: ACM policies for Day 2 operations
+- **Policy charts**: ACM policies for Day 2 operations (one per `policies/` subdirectory)
 
 All charts are version-synchronized and published to an OCI registry for deployment without Git dependencies.
 
@@ -88,7 +88,7 @@ make release VERSION=1.0.0 DRY_RUN=true
 The `make release` command:
 
 1. **Validates** - Checks tools and version format
-2. **Updates versions** - Sets all 31 charts to the same version
+2. **Updates versions** - Sets all charts to the same version
 3. **Generates policy list** - Creates `policy-list.txt` with discovered policies
 4. **Packages charts** - Creates `.tgz` files for all charts (includes policy-list.txt)
 5. **Pushes to OCI** - Uploads charts to registry
@@ -162,7 +162,7 @@ helm install advanced-cluster-management oci://quay.io/autoshift/bootstrap/advan
 oc apply -f autoshift-application.yaml  # Points to OCI
 
 # 3. ApplicationSet deploys policies (from OCI policies namespace)
-# All 28 policy charts pulled from oci://quay.io/autoshift/policies/
+# All policy charts pulled from oci://quay.io/autoshift/policies/
 ```
 
 ## OCI Deployment

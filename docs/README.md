@@ -67,7 +67,7 @@ AutoShift uses a three-phase deployment model:
                          ↓
 ┌─────────────────────────────────────────────────────────┐
 │  Phase 3: Policy Deployment (via ApplicationSet)       │
-│  ├─ 28 ACM Policy Charts from OCI Registry             │
+│  ├─ ACM Policy Charts from OCI Registry                │
 │  ├─ policies/openshift-gitops (takes over GitOps)      │
 │  └─ policies/advanced-cluster-management (takes over)  │
 └─────────────────────────────────────────────────────────┘
@@ -87,7 +87,7 @@ quay.io/autoshift/
     ├── openshift-gitops
     ├── advanced-cluster-management
     ├── advanced-cluster-security
-    └── ... (25 more policy charts)
+    └── ... (additional policy charts)
 ```
 
 ## Values Files
