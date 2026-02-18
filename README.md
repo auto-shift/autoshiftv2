@@ -113,14 +113,17 @@ For development or customization, install directly from the git repository:
 
     > [!TIP]
     > **Already have OpenShift GitOps installed?** If the GitOps operator is already installed on the cluster, we recommend bootstrapping AutoShift's ArgoCD instance into a custom namespace to avoid conflicts with the existing default instance. Use `skipOperatorInstall` to skip the operator installation and only create the ArgoCD instance, namespace, ClusterRoleBinding, and secrets.
-    > To keep the existing default ArgoCD instance running, set `gitops.disableDefaultArgoCD=false` at bootstrap time **and** `gitops-disable-default-argocd: 'false'` on your hub clusterset labels:
+    > To keep the existing default ArgoCD instance running, set `gitops.disableDefaultArgoCD=false` at bootstrap time **and** `gitops-disable-default-argocd: 'false'` on your hub clusterset labels.
+    >
+    > **Note:** When using `skipOperatorInstall`, you must use `helm template | oc apply` instead of `helm install` because Helm cannot take ownership of the existing operator Subscription:
 
     ```console
-    helm upgrade --install openshift-gitops openshift-gitops \
+    helm template openshift-gitops openshift-gitops/ \
       -f policies/openshift-gitops/values.yaml \
       --set skipOperatorInstall=true \
       --set gitops.argoNamespace=openshift-infra-gitops \
-      --set gitops.disableDefaultArgoCD=false
+      --set gitops.disableDefaultArgoCD=false \
+      | oc apply --server-side --force-conflicts -f -
     ```
 
 2.  After the installation is complete, verify that all the pods in your ArgoCD namespace are running. This can take a few minutes depending on your network to even return anything.
