@@ -111,50 +111,30 @@ For development or customization, install directly from the git repository:
     helm upgrade --install openshift-gitops openshift-gitops -f policies/openshift-gitops/values.yaml
     ```
 
-> [!NOTE]
-> If OpenShift GitOps is already installed manually on cluster and the default argo instance exists this step can be skipped. Make sure that argocd controller has cluster-admin
-
-> [!TIP]
-> **Custom GitOps Namespace:** If the GitOps operator is already installed and you want to deploy the ArgoCD instance into a different namespace, use `skipOperatorInstall` to skip the operator installation and only create the ArgoCD instance. This creates only the ArgoCD namespace, ArgoCD instance, ClusterRoleBinding, and secrets -- skipping the Subscription, OperatorGroup, and CRD wait.
-
-```console
-helm upgrade --install openshift-gitops openshift-gitops \
-  -f policies/openshift-gitops/values.yaml \
-  --set skipOperatorInstall=true \
-  --set gitops.argoNamespace=openshift-infra-gitops
-```
-
-2.  After the installation is complete, verify that all the pods in the `openshift-gitops` namespace are running. This can take a few minutes depending on your network to even return anything.
+    > [!TIP]
+    > **Already have OpenShift GitOps installed?** If the GitOps operator is already installed on the cluster, we recommend bootstrapping AutoShift's ArgoCD instance into a custom namespace to avoid conflicts with the existing default instance. Use `skipOperatorInstall` to skip the operator installation and only create the ArgoCD instance, namespace, ClusterRoleBinding, and secrets.
+    > To keep the existing default ArgoCD instance running, set `gitops.disableDefaultArgoCD=false` at bootstrap time **and** `gitops-disable-default-argocd: 'false'` on your hub clusterset labels:
 
     ```console
-    oc get pods -n openshift-gitops
+    helm upgrade --install openshift-gitops openshift-gitops \
+      -f policies/openshift-gitops/values.yaml \
+      --set skipOperatorInstall=true \
+      --set gitops.argoNamespace=openshift-infra-gitops \
+      --set gitops.disableDefaultArgoCD=false
     ```
 
-    This command should return something like this:
+2.  After the installation is complete, verify that all the pods in your ArgoCD namespace are running. This can take a few minutes depending on your network to even return anything.
 
     ```console
-    NAME                                                      	      READY   STATUS    RESTARTS   AGE
-    cluster-b5798d6f9-zr576                                   	      1/1 	  Running   0          65m
-    kam-69866d7c48-8nsjv                                      	      1/1 	  Running   0          65m
-    openshift-gitops-application-controller-0                 	      1/1 	  Running   0          53m
-    openshift-gitops-applicationset-controller-6447b8dfdd-5ckgh       1/1 	  Running   0          65m
-    openshift-gitops-dex-server-569b498bd9-vf6mr                      1/1     Running   0          65m
-    openshift-gitops-redis-74bd8d7d96-49bjf                   	      1/1 	  Running   0          65m
-    openshift-gitops-repo-server-c999f75d5-l4rsg              	      1/1 	  Running   0          65m
-    openshift-gitops-server-5785f7668b-wj57t                  	      1/1 	  Running   0          53m
+    oc get pods -n <argocd-namespace>
     ```
+
+    Where `<argocd-namespace>` is `openshift-gitops` (default) or your custom namespace (e.g., `openshift-infra-gitops`).
 
 3.  Verify that the pod/s in the `openshift-gitops-operator` namespace are running.
 
     ```console
     oc get pods -n openshift-gitops-operator
-    ```
-
-    This command should return something like this:
-
-    ```
-    NAME                                                            READY   STATUS    RESTARTS   AGE
-    openshift-gitops-operator-controller-manager-664966d547-vr4vb   2/2     Running   0          65m
     ```
 
 4.  Now test if OpenShift GitOps was installed correctly, this may take some time
@@ -163,14 +143,7 @@ helm upgrade --install openshift-gitops openshift-gitops \
     oc get argocd -A
     ```
 
-    This command should return something like this:
-
-    ```console
-    NAMESPACE          NAME               AGE
-    openshift-gitops   infra-gitops       29s
-    ```
-
-    If this is not the case you may need to run `helm upgrade ...` command again.
+    This should show your ArgoCD instance (e.g., `infra-gitops`) in the expected namespace. If this is not the case you may need to run `helm upgrade ...` command again.
 
 ### Install Advanced Cluster Management (ACM)
 
