@@ -130,13 +130,15 @@ usage() {
     echo "                 - Allows multiple versions to run side-by-side"
     echo "  --dry-run      Enable dry run mode (policies report but don't enforce)"
     echo "  --name NAME    Custom application name (default: autoshift or autoshift-VERSION)"
+    echo "  --gitops-namespace NS  GitOps namespace (default: openshift-gitops)"
     echo "  -h, --help     Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 hub                      # Standard deployment"
-    echo "  $0 --versioned hub          # Versioned deployment for gradual rollout"
-    echo "  $0 --dry-run hub            # Dry run mode"
-    echo "  $0 --versioned --dry-run    # Versioned + dry run"
+    echo "  $0 hub                                    # Standard deployment"
+    echo "  $0 --versioned hub                        # Versioned deployment for gradual rollout"
+    echo "  $0 --dry-run hub                          # Dry run mode"
+    echo "  $0 --versioned --dry-run                  # Versioned + dry run"
+    echo "  $0 --gitops-namespace custom-gitops hub   # Custom GitOps namespace"
     exit 0
 }
 
@@ -156,6 +158,7 @@ VERSIONED=false
 DRY_RUN=false
 CUSTOM_NAME=""
 VALUES_FILE="hub"
+GITOPS_NAMESPACE="openshift-gitops"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -169,6 +172,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --name)
             CUSTOM_NAME="$2"
+            shift 2
+            ;;
+        --gitops-namespace)
+            GITOPS_NAMESPACE="$2"
             shift 2
             ;;
         -h|--help)
@@ -235,7 +242,8 @@ esac
 VALUES_OVERRIDE="# Enable OCI registry mode for ApplicationSet
         autoshiftOciRegistry: true
         autoshiftOciRepo: ${OCI_REPO}/policies
-        autoshiftOciVersion: \"${VERSION}\""
+        autoshiftOciVersion: \"${VERSION}\"
+        gitopsNamespace: ${GITOPS_NAMESPACE}"
 
 if [ "$VERSIONED" = true ]; then
     VALUES_OVERRIDE="${VALUES_OVERRIDE}
@@ -264,7 +272,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: ${APP_NAME}
-  namespace: openshift-gitops
+  namespace: ${GITOPS_NAMESPACE}
 spec:
   project: default
   source:
@@ -277,7 +285,7 @@ ${VALUEFILES_YAML}      values: |
         ${VALUES_OVERRIDE}
   destination:
     server: https://kubernetes.default.svc
-    namespace: openshift-gitops
+    namespace: ${GITOPS_NAMESPACE}
   syncPolicy:
     automated:
       prune: true
@@ -291,7 +299,7 @@ echo ""
 
 log "Monitoring sync status..."
 sleep 5
-oc get application ${APP_NAME} -n openshift-gitops
+oc get application ${APP_NAME} -n ${GITOPS_NAMESPACE}
 
 echo ""
 log "========================================="
@@ -299,9 +307,9 @@ log "AutoShift installation initiated!"
 log "========================================="
 echo ""
 log "Monitor deployment:"
-echo "  oc get application ${APP_NAME} -n openshift-gitops -w"
-echo "  oc get applicationset -n openshift-gitops"
-echo "  oc get applications -n openshift-gitops | grep ${APP_NAME}"
+echo "  oc get application ${APP_NAME} -n ${GITOPS_NAMESPACE} -w"
+echo "  oc get applicationset -n ${GITOPS_NAMESPACE}"
+echo "  oc get applications -n ${GITOPS_NAMESPACE} | grep ${APP_NAME}"
 echo ""
 log "View policies:"
 echo "  oc get policies -A"
@@ -318,7 +326,7 @@ fi
 
 echo ""
 log "Access ArgoCD UI:"
-echo "  oc get route argocd-server -n openshift-gitops"
+echo "  oc get route argocd-server -n ${GITOPS_NAMESPACE}"
 AUTOSHIFT_EOF
 
 chmod +x "$ARTIFACTS_DIR/install-autoshift.sh"

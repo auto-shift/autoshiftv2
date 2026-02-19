@@ -2,7 +2,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
   name: "{{ .Release.Name }}-policies"
-  namespace: openshift-gitops
+  namespace: {{ .Values.gitopsNamespace | default "openshift-gitops" }}
   labels:
     velero.io/exclude-from-backup: "true"
 spec:
@@ -73,6 +73,7 @@ spec:
               {{- /* Sanitize for DNS: replace dots and slashes with dashes, lowercase */ -}}
               {{- $clusterSetSuffix = printf "-%s" ($versionTag | replace "." "-" | replace "/" "-" | lower) }}
             {{- end }}
+            gitopsNamespace: {{ .Values.gitopsNamespace | default "openshift-gitops" }}
             selfManagedHubSet: {{ .Values.selfManagedHubSet }}{{ $clusterSetSuffix }}
             policy_namespace: {{ printf "policies-%s" .Release.Name }}
             clusterSetSuffix: {{ $clusterSetSuffix }}

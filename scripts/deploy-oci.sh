@@ -214,7 +214,8 @@ if [ "$METHOD" = "argocd" ]; then
         OCI_VALUES="      values: |
         autoshiftOciRegistry: true
         autoshiftOciRepo: ${POLICIES_REGISTRY}
-        autoshiftOciVersion: \"${VERSION}\""
+        autoshiftOciVersion: \"${VERSION}\"
+        gitopsNamespace: ${NAMESPACE}"
     fi
 
     # Build valueFiles YAML entries
@@ -230,7 +231,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: ${RELEASE_NAME}
-  namespace: openshift-gitops
+  namespace: ${NAMESPACE}
 spec:
   project: default
   source:
@@ -263,10 +264,10 @@ EOF
         log "✓ ArgoCD Application created"
         echo ""
         log "Monitor deployment:"
-        echo "  oc get application ${RELEASE_NAME} -n openshift-gitops -w"
+        echo "  oc get application ${RELEASE_NAME} -n ${NAMESPACE} -w"
         echo ""
         log "View in ArgoCD UI:"
-        echo "  oc get route argocd-server -n openshift-gitops"
+        echo "  oc get route argocd-server -n ${NAMESPACE}"
     fi
 
 elif [ "$METHOD" = "helm" ]; then

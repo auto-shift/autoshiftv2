@@ -85,6 +85,39 @@ autoshift:
 
 Add the `dryRun` override in your ArgoCD Application's `helm.values` field. See the [Quick Start Guide](docs/quickstart.md) for the full Application manifest.
 
+## Custom GitOps Namespace
+
+By default, AutoShift deploys into the `openshift-gitops` namespace. To use a custom namespace, set `gitopsNamespace` in your values file:
+
+```yaml
+# In autoshift/values/global.yaml
+gitopsNamespace: openshift-infra-gitops
+```
+
+This propagates the namespace to all downstream policy charts via the ApplicationSet `valuesObject`.
+
+### Keeping the Default ArgoCD Instance
+
+When using a custom namespace, the GitOps operator's default ArgoCD instance in `openshift-gitops` is disabled by default. To keep it running alongside your custom instance, set the `gitops-disable-default-argocd` label to `'false'` on your hub clusterset:
+
+```yaml
+hubClusterSets:
+  hub:
+    labels:
+      gitops-disable-default-argocd: 'false'
+```
+
+## Versioned ClusterSets for Gradual Rollout
+
+AutoShift supports running multiple versions side-by-side using **versioned ClusterSets**:
+
+```yaml
+versionedClusterSets: true
+autoshiftOciVersion: "0.0.1"   # hub -> hub-0-0-1
+```
+
+See [Gradual Rollout Guide](docs/gradual-rollout.md) for detailed instructions.
+
 ## References
 
 * [OpenShift Platform Plus DataShift](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet)
