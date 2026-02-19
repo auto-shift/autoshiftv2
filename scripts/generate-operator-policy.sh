@@ -168,7 +168,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_DIR="$SCRIPT_DIR/templates"
 
 # Convert kebab-case to camelCase for values.yaml
-COMPONENT_CAMEL=$(echo "$COMPONENT_NAME" | perl -pe 's/-([a-z])/\u$1/g')
+COMPONENT_CAMEL=$(echo "$COMPONENT_NAME" | awk -F'-' '{for(i=1;i<=NF;i++){if(i==1){printf "%s",$i}else{printf "%s%s",toupper(substr($i,1,1)),substr($i,2)}}}')
 
 # Validation checks
 if [[ -d "$POLICY_DIR" ]]; then
