@@ -166,55 +166,31 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 	fi
 
 .PHONY: tag-latest
-tag-latest: ## Tag all pushed charts with 'latest' in the OCI registry
+tag-latest: ## Tag all pushed charts with 'latest' in the OCI registry (requires oras CLI)
 	@if [ "$(DRY_RUN)" = "true" ]; then \
 		printf "$(YELLOW)[WARN]$(NC) DRY RUN: Skipping latest tagging\n"; \
 	else \
-		printf "$(BLUE)[INFO]$(NC) Tagging charts as 'latest'...\n"; \
-		TMPDIR=$$(mktemp -d); \
+		if ! command -v oras &>/dev/null; then \
+			printf "$(RED)[ERROR]$(NC) oras CLI is required for tagging. Install from: https://oras.land/docs/installation\n"; \
+			exit 1; \
+		fi; \
+		printf "$(BLUE)[INFO]$(NC) Tagging charts as 'latest' ($(VERSION) -> latest)...\n"; \
 		echo ""; \
 		printf "$(BLUE)[INFO]$(NC) Tagging bootstrap charts as latest...\n"; \
 		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
 			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
 			echo "  - $$CHART_NAME:latest"; \
-			cp $$chart $$TMPDIR/$$CHART_NAME-latest.tgz; \
+			oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap/$$CHART_NAME:$(VERSION) latest || exit 1; \
 		done; \
 		printf "$(BLUE)[INFO]$(NC) Tagging main chart as latest...\n"; \
 		echo "  - autoshift:latest"; \
-		cp $(CHARTS_DIR)/autoshift-$(VERSION).tgz $$TMPDIR/autoshift-latest.tgz; \
+		oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/autoshift:$(VERSION) latest || exit 1; \
 		printf "$(BLUE)[INFO]$(NC) Tagging policy charts as latest...\n"; \
 		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
 			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
 			echo "  - $$CHART_NAME:latest"; \
-			cp $$chart $$TMPDIR/$$CHART_NAME-latest.tgz; \
+			oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/policies/$$CHART_NAME:$(VERSION) latest || exit 1; \
 		done; \
-		echo ""; \
-		printf "$(BLUE)[INFO]$(NC) Re-packaging charts with version 'latest'...\n"; \
-		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
-			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
-			EXTRACT_DIR=$$(mktemp -d); \
-			tar xzf $$chart -C $$EXTRACT_DIR; \
-			yq eval -i '.version = "latest"' $$EXTRACT_DIR/$$CHART_NAME/Chart.yaml; \
-			helm package $$EXTRACT_DIR/$$CHART_NAME -d $$TMPDIR >/dev/null; \
-			helm push $$TMPDIR/$$CHART_NAME-latest.tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap || exit 1; \
-			rm -rf $$EXTRACT_DIR; \
-		done; \
-		EXTRACT_DIR=$$(mktemp -d); \
-		tar xzf $(CHARTS_DIR)/autoshift-$(VERSION).tgz -C $$EXTRACT_DIR; \
-		yq eval -i '.version = "latest"' $$EXTRACT_DIR/autoshift/Chart.yaml; \
-		helm package $$EXTRACT_DIR/autoshift -d $$TMPDIR >/dev/null; \
-		helm push $$TMPDIR/autoshift-latest.tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE) || exit 1; \
-		rm -rf $$EXTRACT_DIR; \
-		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
-			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
-			EXTRACT_DIR=$$(mktemp -d); \
-			tar xzf $$chart -C $$EXTRACT_DIR; \
-			yq eval -i '.version = "latest"' $$EXTRACT_DIR/$$CHART_NAME/Chart.yaml; \
-			helm package $$EXTRACT_DIR/$$CHART_NAME -d $$TMPDIR >/dev/null; \
-			helm push $$TMPDIR/$$CHART_NAME-latest.tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies || exit 1; \
-			rm -rf $$EXTRACT_DIR; \
-		done; \
-		rm -rf $$TMPDIR; \
 		echo ""; \
 		printf "$(GREEN)✓$(NC) All charts tagged as 'latest'\n"; \
 	fi

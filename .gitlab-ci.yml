@@ -222,6 +222,11 @@ release:
       chmod +x /usr/local/bin/helm
       helm version
     - |
+      # Install oras CLI for OCI tagging
+      curl -fsSL https://github.com/oras-project/oras/releases/download/v1.2.2/oras_1.2.2_linux_amd64.tar.gz | tar xz -C /tmp
+      mv /tmp/oras /usr/local/bin/oras
+      chmod +x /usr/local/bin/oras
+    - |
       # Install OpenShift CLI from Red Hat mirror
       curl -fsSL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/${OCP_VERSION}/openshift-client-linux.tar.gz | tar xz
       mv oc kubectl /usr/local/bin/
@@ -236,6 +241,7 @@ release:
     - |
       # Login to Quay.io
       echo "$QUAY_PASSWORD" | helm registry login $REGISTRY -u "$QUAY_USERNAME" --password-stdin
+      echo "$QUAY_PASSWORD" | oras login $REGISTRY -u "$QUAY_USERNAME" --password-stdin
   script:
     - |
       # Extract version from tag
