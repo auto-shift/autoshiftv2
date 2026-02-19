@@ -26,6 +26,27 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
+          name: compliance-scan-setting-storage
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: compliance.openshift.io/v1alpha1
+                kind: ScanSetting
+                metadata:
+                  name: default
+                  namespace: {{ .Values.compliance.namespace }}
+                rawResultStorage:
+                  enabled: true
+                  {{ "{{hub-" }} if (index .ManagedClusterLabels "autoshift.io/compliance-storage-class") {{ "hub}}" }}
+                  storageClassName: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/compliance-storage-class" {{ "hub}}" }}'
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
           name: compliance-stig-scan
         spec:
           remediationAction: enforce

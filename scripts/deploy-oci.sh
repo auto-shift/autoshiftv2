@@ -152,25 +152,25 @@ if [[ ! "$METHOD" =~ ^(argocd|helm)$ ]]; then
     error "Invalid method: $METHOD. Must be 'argocd' or 'helm'"
 fi
 
-# Map values file names to actual files
+# Map values file names to composable values files
 case "$VALUES_FILE" in
     hub)
-        VALUES_FILE_PATH="values.hub.yaml"
+        VALUES_FILE_PATHS=("values/global.yaml" "values/clustersets/hub.yaml" "values/clustersets/managed.yaml")
         ;;
     minimal|min)
-        VALUES_FILE_PATH="values.minimal.yaml"
+        VALUES_FILE_PATHS=("values/global.yaml" "values/clustersets/hub-minimal.yaml")
         ;;
     sbx|sandbox)
-        VALUES_FILE_PATH="values.sbx.yaml"
+        VALUES_FILE_PATHS=("values/global.yaml" "values/clustersets/sbx.yaml")
         ;;
     hubofhubs|hoh)
-        VALUES_FILE_PATH="values.hubofhubs.yaml"
+        VALUES_FILE_PATHS=("values/global.yaml" "values/clustersets/hubofhubs.yaml" "values/clustersets/hub1.yaml" "values/clustersets/hub2.yaml")
         ;;
     baremetal-sno|sno)
-        VALUES_FILE_PATH="values.hub.baremetal-sno.yaml"
+        VALUES_FILE_PATHS=("values/global.yaml" "values/clustersets/hub-baremetal-sno.yaml" "values/clustersets/managed.yaml")
         ;;
     baremetal-compact|compact)
-        VALUES_FILE_PATH="values.hub.baremetal-compact.yaml"
+        VALUES_FILE_PATHS=("values/global.yaml" "values/clustersets/hub-baremetal-compact.yaml" "values/clustersets/managed.yaml")
         ;;
     *)
         error "Unknown values file: $VALUES_FILE. Use: hub, minimal, sbx, hubofhubs, baremetal-sno, or baremetal-compact"
@@ -187,7 +187,7 @@ log "AutoShift OCI Deployment"
 log "========================"
 log "Registry: $REGISTRY"
 log "Version: $VERSION"
-log "Values: $VALUES_FILE_PATH"
+log "Values: ${VALUES_FILE_PATHS[*]}"
 log "Method: $METHOD"
 log "Namespace: $NAMESPACE"
 log "Release: $RELEASE_NAME"
@@ -218,6 +218,13 @@ if [ "$METHOD" = "argocd" ]; then
         gitopsNamespace: ${NAMESPACE}"
     fi
 
+    # Build valueFiles YAML entries
+    VALUEFILES_YAML=""
+    for f in "${VALUES_FILE_PATHS[@]}"; do
+        VALUEFILES_YAML="${VALUEFILES_YAML}        - ${f}
+"
+    done
+
     # Create Application manifest
     APP_MANIFEST=$(cat <<EOF
 apiVersion: argoproj.io/v1alpha1
@@ -233,8 +240,7 @@ spec:
     targetRevision: "${VERSION}"
     helm:
       valueFiles:
-        - ${VALUES_FILE_PATH}
-${OCI_VALUES}
+${VALUEFILES_YAML}${OCI_VALUES}
   destination:
     server: https://kubernetes.default.svc
     namespace: ${NAMESPACE}
@@ -284,17 +290,20 @@ elif [ "$METHOD" = "helm" ]; then
     tar -xzf autoshift-${VERSION}.tgz
 
     if [ "$DRY_RUN" = "true" ]; then
-        warn "DRY RUN: Would install with these values:"
-        echo ""
-        cat "autoshift/${VALUES_FILE_PATH}" | head -50
-        echo ""
-        echo "... (values file truncated)"
+        warn "DRY RUN: Would install with these values files:"
+        for f in "${VALUES_FILE_PATHS[@]}"; do
+            echo "  - autoshift/$f"
+        done
         echo ""
         log "To install: $0 --version $VERSION --values $VALUES_FILE --method helm"
     else
         log "Installing chart..."
+        HELM_VALUES_ARGS=()
+        for f in "${VALUES_FILE_PATHS[@]}"; do
+            HELM_VALUES_ARGS+=(-f "autoshift/$f")
+        done
         helm install "$RELEASE_NAME" ./autoshift \
-            -f "autoshift/${VALUES_FILE_PATH}" \
+            "${HELM_VALUES_ARGS[@]}" \
             --namespace "$NAMESPACE" \
             --create-namespace
 

@@ -10,7 +10,7 @@ VERSION ?= $(error VERSION is required. Usage: make release VERSION=1.0.0)
 REGISTRY ?= quay.io
 REGISTRY_NAMESPACE ?= autoshift
 DRY_RUN ?= false
-INCLUDE_MIRROR ?= false
+INCLUDE_MIRROR ?= true
 CHARTS_DIR := .helm-charts
 ARTIFACTS_DIR := release-artifacts
 
@@ -165,6 +165,60 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 		echo "  Policies: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
 	fi
 
+.PHONY: tag-latest
+tag-latest: ## Tag all pushed charts with 'latest' in the OCI registry
+	@if [ "$(DRY_RUN)" = "true" ]; then \
+		printf "$(YELLOW)[WARN]$(NC) DRY RUN: Skipping latest tagging\n"; \
+	else \
+		printf "$(BLUE)[INFO]$(NC) Tagging charts as 'latest'...\n"; \
+		TMPDIR=$$(mktemp -d); \
+		echo ""; \
+		printf "$(BLUE)[INFO]$(NC) Tagging bootstrap charts as latest...\n"; \
+		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
+			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
+			echo "  - $$CHART_NAME:latest"; \
+			cp $$chart $$TMPDIR/$$CHART_NAME-latest.tgz; \
+		done; \
+		printf "$(BLUE)[INFO]$(NC) Tagging main chart as latest...\n"; \
+		echo "  - autoshift:latest"; \
+		cp $(CHARTS_DIR)/autoshift-$(VERSION).tgz $$TMPDIR/autoshift-latest.tgz; \
+		printf "$(BLUE)[INFO]$(NC) Tagging policy charts as latest...\n"; \
+		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
+			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
+			echo "  - $$CHART_NAME:latest"; \
+			cp $$chart $$TMPDIR/$$CHART_NAME-latest.tgz; \
+		done; \
+		echo ""; \
+		printf "$(BLUE)[INFO]$(NC) Re-packaging charts with version 'latest'...\n"; \
+		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
+			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
+			EXTRACT_DIR=$$(mktemp -d); \
+			tar xzf $$chart -C $$EXTRACT_DIR; \
+			yq eval -i '.version = "latest"' $$EXTRACT_DIR/$$CHART_NAME/Chart.yaml; \
+			helm package $$EXTRACT_DIR/$$CHART_NAME -d $$TMPDIR >/dev/null; \
+			helm push $$TMPDIR/$$CHART_NAME-latest.tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap || exit 1; \
+			rm -rf $$EXTRACT_DIR; \
+		done; \
+		EXTRACT_DIR=$$(mktemp -d); \
+		tar xzf $(CHARTS_DIR)/autoshift-$(VERSION).tgz -C $$EXTRACT_DIR; \
+		yq eval -i '.version = "latest"' $$EXTRACT_DIR/autoshift/Chart.yaml; \
+		helm package $$EXTRACT_DIR/autoshift -d $$TMPDIR >/dev/null; \
+		helm push $$TMPDIR/autoshift-latest.tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE) || exit 1; \
+		rm -rf $$EXTRACT_DIR; \
+		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
+			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
+			EXTRACT_DIR=$$(mktemp -d); \
+			tar xzf $$chart -C $$EXTRACT_DIR; \
+			yq eval -i '.version = "latest"' $$EXTRACT_DIR/$$CHART_NAME/Chart.yaml; \
+			helm package $$EXTRACT_DIR/$$CHART_NAME -d $$TMPDIR >/dev/null; \
+			helm push $$TMPDIR/$$CHART_NAME-latest.tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies || exit 1; \
+			rm -rf $$EXTRACT_DIR; \
+		done; \
+		rm -rf $$TMPDIR; \
+		echo ""; \
+		printf "$(GREEN)✓$(NC) All charts tagged as 'latest'\n"; \
+	fi
+
 .PHONY: generate-artifacts
 generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@printf "$(BLUE)[INFO]$(NC) Generating bootstrap installation artifacts...\n"
@@ -173,7 +227,7 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@printf "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/\n"
 
 .PHONY: release
-release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts generate-artifacts ## Full release process (add INCLUDE_MIRROR=true for mirror artifacts)
+release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts tag-latest generate-artifacts ## Full release process (add INCLUDE_MIRROR=false to skip mirror artifacts)
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
 		printf "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
 		$(MAKE) generate-imageset VERSION=$(VERSION) || { \
@@ -202,9 +256,9 @@ release: validate validate-version clean sync-values update-versions generate-po
 		echo "  3. Create GitHub/GitLab release with artifacts from: $(ARTIFACTS_DIR)/"; \
 	fi
 
-.PHONY: release-mirror
-release-mirror: ## Full release with mirror artifacts (imageset-config.yaml, operator-dependencies.json)
-	@$(MAKE) release VERSION=$(VERSION) INCLUDE_MIRROR=true
+.PHONY: release-no-mirror
+release-no-mirror: ## Full release without mirror artifacts
+	@$(MAKE) release VERSION=$(VERSION) INCLUDE_MIRROR=false
 
 .PHONY: package-only
 package-only: validate clean generate-policy-list package-charts ## Package charts without updating versions or pushing
@@ -213,7 +267,7 @@ package-only: validate clean generate-policy-list package-charts ## Package char
 	@echo "Charts are ready in: $(CHARTS_DIR)/"
 
 # All values files for complete operator coverage
-VALUES_FILES := $(shell ls autoshift/values*.yaml | tr '\n' ',' | sed 's/,$$//')
+VALUES_FILES := $(shell find autoshift/values/clustersets -name '*.yaml' -not -name '_*' 2>/dev/null | sort | tr '\n' ',' | sed 's/,$$//')
 
 .PHONY: generate-imageset
 generate-imageset: ## Generate ImageSetConfiguration for disconnected mirroring (auto-resolves dependencies)
