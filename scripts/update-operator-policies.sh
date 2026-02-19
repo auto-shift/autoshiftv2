@@ -117,7 +117,7 @@ extract_component_info() {
 
     # If still no camelCase, derive from component name
     if [[ -z "$component_camel" ]]; then
-        component_camel=$(echo "$component_name" | perl -pe 's/-([a-z])/\u$1/g')
+        component_camel=$(echo "$component_name" | awk -F'-' '{for(i=1;i<=NF;i++){if(i==1){printf "%s",$i}else{printf "%s%s",toupper(substr($i,1,1)),substr($i,2)}}}')
     fi
 
     # Extract label prefix from autoshift.io/XXX-channel pattern
