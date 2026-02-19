@@ -244,16 +244,16 @@ validate_generated_policy() {
         log_warning "No hub functions found - this is unusual for AutoShift policies"
     fi
     
-    # Check YAML syntax for non-template files only
-    for yaml_file in "$POLICY_DIR"/*.yaml; do
-        if [[ -f "$yaml_file" ]] && ! python3 -c "import yaml; yaml.safe_load(open('$yaml_file'))" 2>/dev/null; then
-            log_error "Invalid YAML syntax in $yaml_file"
-            return 1
-        fi
-    done
-    
-    # Template files are validated via helm template above
-    
+    # Additional YAML syntax check (non-template files only, advisory)
+    # helm template above already validates the full chart; this is a secondary check
+    if command -v yq >/dev/null 2>&1; then
+        for yaml_file in "$POLICY_DIR"/*.yaml; do
+            if [[ -f "$yaml_file" ]] && ! yq eval '.' "$yaml_file" >/dev/null 2>&1; then
+                log_warning "YAML syntax issue detected in $yaml_file (helm template passed)"
+            fi
+        done
+    fi
+
     log_success "Policy validation passed"
     return 0
 }
@@ -563,7 +563,7 @@ main() {
         # Show next steps
         echo -e "${BLUE}📋 Next Steps:${NC}"
         echo "1. Review generated files in $POLICY_DIR/"
-        echo "2. Test locally: ${YELLOW}helm template $POLICY_DIR/${NC}"
+        echo -e "2. Test locally: ${YELLOW}helm template $POLICY_DIR/${NC}"
         echo "3. Customize values.yaml if needed"
         echo "4. Add to AutoShift ApplicationSet (see below)"
         echo "5. Add operator-specific configuration policies"
