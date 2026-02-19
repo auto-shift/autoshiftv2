@@ -35,6 +35,10 @@ jobs:
           mv /tmp/linux-amd64/helm /usr/local/bin/helm
           chmod +x /usr/local/bin/helm
           helm version
+          # Install oras CLI for OCI tagging
+          curl -fsSL https://github.com/oras-project/oras/releases/download/v1.2.2/oras_1.2.2_linux_amd64.tar.gz | tar xz -C /tmp
+          mv /tmp/oras /usr/local/bin/oras
+          chmod +x /usr/local/bin/oras
           # Install OpenShift CLI from Red Hat mirror
           curl -fsSL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
           mv oc kubectl /usr/local/bin/
@@ -65,6 +69,7 @@ jobs:
           QUAY_PASS: ${{ secrets.QUAY_PASSWORD }}
         run: |
           echo "$QUAY_PASS" | helm registry login ${{ env.REGISTRY }} -u "$QUAY_USER" --password-stdin
+          echo "$QUAY_PASS" | oras login ${{ env.REGISTRY }} -u "$QUAY_USER" --password-stdin
 
       - name: Run release
         run: |
