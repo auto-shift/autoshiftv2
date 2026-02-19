@@ -165,6 +165,60 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 		echo "  Policies: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
 	fi
 
+.PHONY: tag-latest
+tag-latest: ## Tag all pushed charts with 'latest' in the OCI registry
+	@if [ "$(DRY_RUN)" = "true" ]; then \
+		printf "$(YELLOW)[WARN]$(NC) DRY RUN: Skipping latest tagging\n"; \
+	else \
+		printf "$(BLUE)[INFO]$(NC) Tagging charts as 'latest'...\n"; \
+		TMPDIR=$$(mktemp -d); \
+		echo ""; \
+		printf "$(BLUE)[INFO]$(NC) Tagging bootstrap charts as latest...\n"; \
+		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
+			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
+			echo "  - $$CHART_NAME:latest"; \
+			cp $$chart $$TMPDIR/$$CHART_NAME-latest.tgz; \
+		done; \
+		printf "$(BLUE)[INFO]$(NC) Tagging main chart as latest...\n"; \
+		echo "  - autoshift:latest"; \
+		cp $(CHARTS_DIR)/autoshift-$(VERSION).tgz $$TMPDIR/autoshift-latest.tgz; \
+		printf "$(BLUE)[INFO]$(NC) Tagging policy charts as latest...\n"; \
+		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
+			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
+			echo "  - $$CHART_NAME:latest"; \
+			cp $$chart $$TMPDIR/$$CHART_NAME-latest.tgz; \
+		done; \
+		echo ""; \
+		printf "$(BLUE)[INFO]$(NC) Re-packaging charts with version 'latest'...\n"; \
+		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
+			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
+			EXTRACT_DIR=$$(mktemp -d); \
+			tar xzf $$chart -C $$EXTRACT_DIR; \
+			yq eval -i '.version = "latest"' $$EXTRACT_DIR/$$CHART_NAME/Chart.yaml; \
+			helm package $$EXTRACT_DIR/$$CHART_NAME -d $$TMPDIR >/dev/null; \
+			helm push $$TMPDIR/$$CHART_NAME-latest.tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap || exit 1; \
+			rm -rf $$EXTRACT_DIR; \
+		done; \
+		EXTRACT_DIR=$$(mktemp -d); \
+		tar xzf $(CHARTS_DIR)/autoshift-$(VERSION).tgz -C $$EXTRACT_DIR; \
+		yq eval -i '.version = "latest"' $$EXTRACT_DIR/autoshift/Chart.yaml; \
+		helm package $$EXTRACT_DIR/autoshift -d $$TMPDIR >/dev/null; \
+		helm push $$TMPDIR/autoshift-latest.tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE) || exit 1; \
+		rm -rf $$EXTRACT_DIR; \
+		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
+			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
+			EXTRACT_DIR=$$(mktemp -d); \
+			tar xzf $$chart -C $$EXTRACT_DIR; \
+			yq eval -i '.version = "latest"' $$EXTRACT_DIR/$$CHART_NAME/Chart.yaml; \
+			helm package $$EXTRACT_DIR/$$CHART_NAME -d $$TMPDIR >/dev/null; \
+			helm push $$TMPDIR/$$CHART_NAME-latest.tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies || exit 1; \
+			rm -rf $$EXTRACT_DIR; \
+		done; \
+		rm -rf $$TMPDIR; \
+		echo ""; \
+		printf "$(GREEN)✓$(NC) All charts tagged as 'latest'\n"; \
+	fi
+
 .PHONY: generate-artifacts
 generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@printf "$(BLUE)[INFO]$(NC) Generating bootstrap installation artifacts...\n"
@@ -173,7 +227,7 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@printf "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/\n"
 
 .PHONY: release
-release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts generate-artifacts ## Full release process (add INCLUDE_MIRROR=true for mirror artifacts)
+release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts tag-latest generate-artifacts ## Full release process (add INCLUDE_MIRROR=true for mirror artifacts)
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
 		printf "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
 		$(MAKE) generate-imageset VERSION=$(VERSION) || { \

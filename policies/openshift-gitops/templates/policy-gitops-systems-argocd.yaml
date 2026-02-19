@@ -60,6 +60,15 @@ spec:
                 - kind: ServiceAccount
                   name: {{ .Values.gitops.argoName }}-argocd-application-controller
                   namespace: {{ .Values.gitops.argoNamespace }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-systems-argocd-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
             - complianceType: musthave
               objectDefinition:
                 apiVersion: argoproj.io/v1beta1
@@ -67,9 +76,6 @@ spec:
                 metadata:
                   name: {{ .Values.gitops.argoName }}
                   namespace: {{ .Values.gitops.argoNamespace }}
-                  annotations:
-                    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-                    argocd.argoproj.io/sync-wave: "2"
                 spec:
                   server:
                     resources:
@@ -110,7 +116,7 @@ spec:
                       requests:
                         cpu: {{ ((.Values.gitops.repo).requests).cpu | default "250m" }}
                         memory: {{ ((.Values.gitops.repo).requests).memory | default "256Mi" }}
-                    {{- if .Values.gitops.repo.cluster_ca_bundle }}
+                    {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default "{{ .Values.gitops.repo.cluster_ca_bundle }}") "true" {{ "hub}}" }}
                     volumeMounts:
                       - name: user-ca-bundle
                         mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
@@ -119,7 +125,7 @@ spec:
                       - name: user-ca-bundle
                         configMap:
                           name: user-ca-bundle
-                    {{- end }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                   ha:
                     resources:
                       limits:
@@ -153,6 +159,15 @@ spec:
                       requests:
                         cpu: {{ ((.Values.gitops.applicationSet).requests).cpu | default "250m" }}
                         memory: {{ ((.Values.gitops.applicationSet).requests).memory | default "512Mi" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-systems-argocd-cluster-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
             - complianceType: musthave
               objectDefinition:
                 apiVersion: cluster.open-cluster-management.io/v1beta1

@@ -1,4 +1,4 @@
-{{- if and .Values.hubClusterSets .Values.gitops.repo.cluster_ca_bundle }}
+{{- if .Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -28,7 +28,8 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
-          object-templates:
+          object-templates-raw: |
+            {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default "{{ .Values.gitops.repo.cluster_ca_bundle }}") "true" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -38,6 +39,7 @@ spec:
                   name: user-ca-bundle
                   labels:
                     config.openshift.io/inject-trusted-cabundle: "true"
+            {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

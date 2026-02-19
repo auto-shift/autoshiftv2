@@ -474,12 +474,9 @@ oc get applications -n openshift-gitops my-component -o yaml
 ### Working with Disconnected Environments
 
 ```bash
-# Generate ImageSet for disconnected environments (see oc-mirror/README.md)
-cd oc-mirror
-./generate-imageset-config.sh values/clustersets/hub.yaml,values/clustersets/sbx.yaml \
-  --operators-only \
+# Generate ImageSet for disconnected environments
+bash scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml,autoshift/values/clustersets/sbx.yaml \
   --output imageset-multi-env.yaml
-cd ..
 ```
 
 ### AutoShift Scripts and Label Requirements

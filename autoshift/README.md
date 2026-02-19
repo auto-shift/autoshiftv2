@@ -10,7 +10,7 @@ This Helm chart deploys AutoShift via an ArgoCD ApplicationSet that uses RHACM (
 | Type | `application` |
 | Version | `0.0.1` |
 
-The chart generates an ArgoCD `ApplicationSet` that dynamically creates RHACM governance policies based on cluster labels. Clusters are organized into **ClusterSets** (hub, managed, sandbox, etc.) and each cluster inherits labels from its ClusterSet, with optional per-cluster overrides.
+The chart generates an ArgoCD `ApplicationSet` that deploys all selected RHACM governance policies. Each policy uses ACM Placement with label selectors to determine which clusters it applies to. Clusters are organized into **ClusterSets** (hub, managed, sandbox, etc.) and cluster labels — set in the values files and propagated by the `cluster-labels` policy — control which policies are placed on each cluster.
 
 ## Values Directory Structure
 
