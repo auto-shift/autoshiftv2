@@ -474,8 +474,8 @@ cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
     helm:
       valueFiles:
         - values/global.yaml
-        - values/clustersets/hub.yaml  # Or other clusterset files
-        - values/clustersets/managed.yaml
+        - values/clustersets/hub.yaml          # Or other clusterset profile
+        - values/clustersets/managed.yaml      # Add managed spoke clusters
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops
@@ -546,8 +546,8 @@ cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
     helm:
       valueFiles:
         - values/global.yaml
-        - values/clustersets/hub.yaml  # Or other clusterset files
-        - values/clustersets/managed.yaml
+        - values/clustersets/hub.yaml          # Or other clusterset profile
+        - values/clustersets/managed.yaml      # Add managed spoke clusters
       values: |
         # Enable OCI mode for policy deployment
         autoshiftOciRegistry: true

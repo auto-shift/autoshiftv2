@@ -65,9 +65,9 @@ GET_DEPS_SCRIPT="$SCRIPT_DIR/get-operator-dependencies.sh"
 MAPPINGS_FILE=""
 
 cleanup_temp_files() {
-    [[ -n "$MAPPINGS_FILE" ]] && rm -f "$MAPPINGS_FILE"
+    [[ -n "$MAPPINGS_FILE" ]] && rm -f "$MAPPINGS_FILE" || true
     # Only cleanup DEPENDENCIES_FILE if it was auto-generated (not passed via --dependencies-file)
-    [[ -n "$DEPENDENCIES_FILE" && "$DEPENDENCIES_FILE" == /tmp/* ]] && rm -f "$DEPENDENCIES_FILE"
+    [[ -n "$DEPENDENCIES_FILE" && "$DEPENDENCIES_FILE" == /tmp/* ]] && rm -f "$DEPENDENCIES_FILE" || true
 }
 trap cleanup_temp_files EXIT
 

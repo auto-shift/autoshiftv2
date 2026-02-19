@@ -10,7 +10,7 @@ VERSION ?= $(error VERSION is required. Usage: make release VERSION=1.0.0)
 REGISTRY ?= quay.io
 REGISTRY_NAMESPACE ?= autoshift
 DRY_RUN ?= false
-INCLUDE_MIRROR ?= false
+INCLUDE_MIRROR ?= true
 CHARTS_DIR := .helm-charts
 ARTIFACTS_DIR := release-artifacts
 
@@ -227,7 +227,7 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@printf "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/\n"
 
 .PHONY: release
-release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts tag-latest generate-artifacts ## Full release process (add INCLUDE_MIRROR=true for mirror artifacts)
+release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts tag-latest generate-artifacts ## Full release process (add INCLUDE_MIRROR=false to skip mirror artifacts)
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
 		printf "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
 		$(MAKE) generate-imageset VERSION=$(VERSION) || { \
@@ -256,9 +256,9 @@ release: validate validate-version clean sync-values update-versions generate-po
 		echo "  3. Create GitHub/GitLab release with artifacts from: $(ARTIFACTS_DIR)/"; \
 	fi
 
-.PHONY: release-mirror
-release-mirror: ## Full release with mirror artifacts (imageset-config.yaml, operator-dependencies.json)
-	@$(MAKE) release VERSION=$(VERSION) INCLUDE_MIRROR=true
+.PHONY: release-no-mirror
+release-no-mirror: ## Full release without mirror artifacts
+	@$(MAKE) release VERSION=$(VERSION) INCLUDE_MIRROR=false
 
 .PHONY: package-only
 package-only: validate clean generate-policy-list package-charts ## Package charts without updating versions or pushing
