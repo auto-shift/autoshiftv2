@@ -121,7 +121,7 @@ usage() {
     echo "Usage: $0 [OPTIONS] [VALUES_FILE]"
     echo ""
     echo "Arguments:"
-    echo "  VALUES_FILE    Values file to use: hub, minimal, sbx, hubofhubs (default: hub)"
+    echo "  VALUES_FILE    Values profile to use: hub, minimal, sbx, hubofhubs (default: hub)"
     echo ""
     echo "Options:"
     echo "  --versioned    Enable versioned ClusterSets for gradual rollout"
@@ -212,19 +212,19 @@ command -v oc >/dev/null 2>&1 || error "oc CLI is required"
 # Check cluster connection
 oc whoami >/dev/null 2>&1 || error "Not logged in to OpenShift. Run: oc login"
 
-# Map values file names
+# Map values file names to composable values files
 case "$VALUES_FILE" in
     hub)
-        VALUES_FILE_PATH="values.hub.yaml"
+        VALUES_FILE_PATHS=("values/global.yaml" "values/clustersets/hub.yaml" "values/clustersets/managed.yaml")
         ;;
     minimal|min)
-        VALUES_FILE_PATH="values.minimal.yaml"
+        VALUES_FILE_PATHS=("values/global.yaml" "values/clustersets/hub-minimal.yaml")
         ;;
     sbx|sandbox)
-        VALUES_FILE_PATH="values.sbx.yaml"
+        VALUES_FILE_PATHS=("values/global.yaml" "values/clustersets/sbx.yaml")
         ;;
     hubofhubs|hoh)
-        VALUES_FILE_PATH="values.hubofhubs.yaml"
+        VALUES_FILE_PATHS=("values/global.yaml" "values/clustersets/hubofhubs.yaml" "values/clustersets/hub1.yaml" "values/clustersets/hub2.yaml")
         ;;
     *)
         error "Unknown values file: $VALUES_FILE. Use: hub, minimal, sbx, or hubofhubs"
@@ -250,6 +250,13 @@ if [ "$DRY_RUN" = true ]; then
           dryRun: true"
 fi
 
+# Build valueFiles YAML entries
+VALUEFILES_YAML=""
+for f in "${VALUES_FILE_PATHS[@]}"; do
+    VALUEFILES_YAML="${VALUEFILES_YAML}        - ${f}
+"
+done
+
 log "Creating ArgoCD Application for AutoShift..."
 
 cat <<EOF | oc apply -f -
@@ -266,8 +273,7 @@ spec:
     targetRevision: "${VERSION}"
     helm:
       valueFiles:
-        - ${VALUES_FILE_PATH}
-      values: |
+${VALUEFILES_YAML}      values: |
         ${VALUES_OVERRIDE}
   destination:
     server: https://kubernetes.default.svc
@@ -352,7 +358,7 @@ AutoShift provides a complete Infrastructure-as-Code solution for OpenShift usin
                          ↓
 ┌─────────────────────────────────────────────────────────┐
 │  Phase 3: Policy Deployment (via ApplicationSet)       │
-│  ├─ 28 ACM Policy Charts from OCI Registry             │
+│  ├─ ACM Policy Charts from OCI Registry                │
 │  ├─ policies/openshift-gitops (takes over GitOps)      │
 │  └─ policies/advanced-cluster-management (takes over)  │
 └─────────────────────────────────────────────────────────┘
@@ -467,7 +473,9 @@ GUIDE_VERSION
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
     helm:
       valueFiles:
-        - values.hub.yaml  # Or: values.sbx.yaml, values.hubofhubs.yaml
+        - values/global.yaml
+        - values/clustersets/hub.yaml          # Or other clusterset profile
+        - values/clustersets/managed.yaml      # Add managed spoke clusters
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops
@@ -498,14 +506,19 @@ oc get policies -A
 
 ## Configuration
 
-### Available Values Files
+### Values File Architecture
 
-The AutoShift chart includes pre-configured values files:
+The AutoShift chart uses a composable values directory structure. Compose your
+deployment by combining multiple values files:
 
-- **values.hub.yaml** - Standard hub cluster configuration (includes common operators)
-- **values.minimal.yaml** - Minimal required configuration (GitOps + ACM only)
-- **values.sbx.yaml** - Sandbox/development environment
-- **values.hubofhubs.yaml** - Hub of hubs configuration
+- **values/global.yaml** - Shared configuration (git repo, branch, settings)
+- **values/clustersets/hub.yaml** - Standard hub cluster labels
+- **values/clustersets/hub-minimal.yaml** - Minimal hub (GitOps + ACM only)
+- **values/clustersets/managed.yaml** - Managed spoke cluster labels
+- **values/clustersets/sbx.yaml** - Sandbox environment labels
+- **values/clustersets/hubofhubs.yaml** - Hub-of-hubs configuration
+- **values/clustersets/hub-baremetal-sno.yaml** - Baremetal single-node hub
+- **values/clustersets/hub-baremetal-compact.yaml** - Baremetal compact hub
 
 ### Deploying from OCI Registry (Recommended)
 
@@ -532,7 +545,9 @@ GUIDE_VERSION
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
     helm:
       valueFiles:
-        - values.hub.yaml  # Or: values.sbx.yaml, values.hubofhubs.yaml
+        - values/global.yaml
+        - values/clustersets/hub.yaml          # Or other clusterset profile
+        - values/clustersets/managed.yaml      # Add managed spoke clusters
       values: |
         # Enable OCI mode for policy deployment
         autoshiftOciRegistry: true
@@ -670,7 +685,7 @@ For testing in non-production environments, use release candidate versions:
 
 ## Policy Management
 
-AutoShift deploys 28 ACM policies that manage various OpenShift components:
+AutoShift deploys ACM policies that manage various OpenShift components:
 
 - **Infrastructure**: infra-nodes, worker-nodes, storage-nodes
 - **Operators**: ACS, ODF, Logging, Loki, GitOps, Pipelines, etc.

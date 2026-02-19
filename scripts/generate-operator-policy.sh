@@ -323,22 +323,30 @@ add_to_autoshift_values() {
     # Determine which values files to update
     local values_files_to_update=()
     if [[ -z "$VALUES_FILES" ]]; then
-        # Default: update all values files
+        # Default: update all clusterset values files (excluding examples)
         while IFS= read -r -d '' file; do
-            values_files_to_update+=("$(basename "$file")")
-        done < <(find autoshift -name "values*.yaml" -print0 2>/dev/null)
+            # Get path relative to autoshift/ directory
+            local rel_path="${file#autoshift/}"
+            values_files_to_update+=("$rel_path")
+        done < <(find autoshift/values/clustersets -name "*.yaml" -not -name "_*" -print0 2>/dev/null)
     else
-        # Parse comma-separated list
+        # Parse comma-separated list (e.g., 'hub,sbx,managed')
         IFS=',' read -ra file_list <<< "$VALUES_FILES"
         for file_prefix in "${file_list[@]}"; do
             file_prefix=$(echo "$file_prefix" | xargs)  # trim whitespace
-            if [[ -f "autoshift/values.$file_prefix.yaml" ]]; then
-                values_files_to_update+=("values.$file_prefix.yaml")
+            if [[ -f "autoshift/values/clustersets/$file_prefix.yaml" ]]; then
+                values_files_to_update+=("values/clustersets/$file_prefix.yaml")
             else
-                log_warning "Values file autoshift/values.$file_prefix.yaml not found, skipping"
+                log_warning "Values file autoshift/values/clustersets/$file_prefix.yaml not found, skipping"
             fi
         done
     fi
+
+    # Always include example files (clustersets and clusters)
+    while IFS= read -r -d '' file; do
+        local rel_path="${file#autoshift/}"
+        values_files_to_update+=("$rel_path")
+    done < <(find autoshift/values/clustersets autoshift/values/clusters -name "_example*.yaml" -print0 2>/dev/null)
     
     if [[ ${#values_files_to_update[@]} -eq 0 ]]; then
         log_error "No valid values files found to update"
