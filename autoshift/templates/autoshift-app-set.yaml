@@ -2,7 +2,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
   name: "{{ .Release.Name }}-policies"
-  namespace: openshift-gitops
+  namespace: {{ .Values.gitopsNamespace | default "openshift-gitops" }}
   labels:
     velero.io/exclude-from-backup: "true"
 spec:
@@ -51,7 +51,7 @@ spec:
         # OCI mode - use Helm chart from registry
         path: .
         repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
-        targetRevision: {{ .Values.autoshiftOciVersion | default .Chart.Version }}
+        targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
         {{- else }}
         # Git mode - use path in Git repository
         path: '{{"{{"}} .path.path {{"}}"}}'
@@ -66,13 +66,14 @@ spec:
             {{- if .Values.versionedClusterSets }}
               {{- $versionTag := "" }}
               {{- if .Values.autoshiftOciRegistry }}
-                {{- $versionTag = .Values.autoshiftOciVersion | default .Chart.Version }}
+                {{- $versionTag = .Values.autoshiftOciVersion | default "latest" }}
               {{- else }}
                 {{- $versionTag = .Values.autoshiftGitBranchTag | default "main" }}
               {{- end }}
               {{- /* Sanitize for DNS: replace dots and slashes with dashes, lowercase */ -}}
               {{- $clusterSetSuffix = printf "-%s" ($versionTag | replace "." "-" | replace "/" "-" | lower) }}
             {{- end }}
+            gitopsNamespace: {{ .Values.gitopsNamespace | default "openshift-gitops" }}
             selfManagedHubSet: {{ .Values.selfManagedHubSet }}{{ $clusterSetSuffix }}
             policy_namespace: {{ printf "policies-%s" .Release.Name }}
             clusterSetSuffix: {{ $clusterSetSuffix }}
