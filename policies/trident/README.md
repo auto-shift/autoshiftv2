@@ -1,45 +1,54 @@
-With these Autoshift policies, you can automate the deployment of the Trident operator, the Trident Orchestrator operand, and manage its objects directly from source control.
+## Autoshift Trident Automation ##
+
+With these Autoshift policies, you can automate the deployment of the
+Trident Operator, the Trident Orchestrator operand, and manage its
+objects directly from source control.
+
+
+**OVERVIEW**
 
 The workflow is straightforward:
 
-- Deploy the Trident Operator.
-- Deploy the Trident Orchestrator once the operator becomes available.
-- Automatically manage Trident resources such as:
-  - TridentBackendConfig
-  - StorageClass
-  - Storage Profiles
-  - Additional Trident CRs
+  - Deploy the Trident Operator
+  - Deploy the Trident Orchestrator once the operator becomes available
+  - Manage Trident resources such as:
+      - TridentBackendConfig
+      - StorageClass
 
-You can also create Trident backends and StorageClasses dynamically using ManagedCluster labels (see label section below).
+Backends can be created using:
 
-------------------------------------------------------------
-IMPORTANT WARNING
-------------------------------------------------------------
+  - Label-driven configuration (recommended)
+  - File-based configuration (legacy)
 
-WARNING: These policies include MachineConfigs that will trigger node reboots.
 
-There is an OpenShift bug that sets the same NQN ID on each node in the cluster. This causes issues in NetApp ONTAP when creating PVCs.
+**IMPORTANT WARNING**
+
+These policies include MachineConfigs that will trigger node reboots.
+
+There is an OpenShift bug that sets the same NQN ID on each node in the
+cluster. This causes issues in NetApp ONTAP when creating PVCs.
 
 Bug reference:
 https://issues.redhat.com/browse/RHEL-8041
 
 To resolve this:
 
-- One MachineConfig ensures each node has a unique NQN reflecting its hostname.
-  Example:
-  nqn.2024-05.io.openshift:<HOSTNAME>
+  - One MachineConfig ensures each node has a unique NQN reflecting its
+    hostname.
 
-- Another MachineConfig enables nvme-tcp in the kernel, which is required for Trident to provision NVMe storage.
+      Example:
+      nqn.2024-05.io.openshift:<HOSTNAME>
+
+  - Another MachineConfig enables nvme-tcp in the kernel, which is
+    required for Trident to provision NVMe storage.
 
 Plan maintenance windows accordingly.
 
-------------------------------------------------------------
-CREDENTIALS
-------------------------------------------------------------
 
-You must create the Trident credentials secret on the ACM hub cluster in the:
+## CREDENTIALS
 
-policies-autoshift namespace
+You must create the Trident credentials secret on the ACM hub cluster
+in the policies-autoshift namespace.
 
 Example:
 
@@ -50,129 +59,122 @@ oc create secret generic netapp-creds \
 
 You may also integrate with Vault Secrets if desired.
 
-------------------------------------------------------------
-VALUES CONFIGURATION
-------------------------------------------------------------
 
-In autoshift/values.hub.yaml you must define:
+## VALUES CONFIGURATION
 
-trident: true
+**In autoshift/values.hub.yaml you must define:**
 
-This enables the Trident deployment policies.
+  trident: true <br>
+  trident-creds-secret: netapp-creds <br>
 
-You must also define:
+**Enable label-driven configuration:**
 
-trident-creds-secret: netapp-creds
+  trident-label-config: true
 
-This is the name of the Trident credentials secret that exists on the hub
-cluster in the policies-autoshift namespace.
+**Optionally enable legacy file-based configuration:**
 
-Example values.hub.yaml:
+  trident-file-config: true
 
-trident: true
-trident-creds-secret: netapp-creds
+**Example values.hub.yaml:**
 
-------------------------------------------------------------
-DEPRECATED: trident-config-*-*
-------------------------------------------------------------
-
-This option is deprecated but still supported.
-
-It allows you to drop raw YAML files into the policy's files directory and have them applied automatically via ConfigMaps once Trident is installed.
-
-How it works (briefly):
-
-- You place a YAML file (backend, storageclass, etc.) in the files folder.
-- You reference that file using a trident-config-* value.
-- The policy wraps the file into a ConfigMap.
-- The ConfigMap content is decoded and applied to the managed cluster.
-
-This provides flexibility for advanced or custom configurations.
-
-However, label-driven backend automation is now the preferred and cleaner method.
-
-------------------------------------------------------------
-LABEL-DRIVEN BACKEND CREATION
-------------------------------------------------------------
-
-You can dynamically create TridentBackendConfig and StorageClass objects using ManagedCluster labels.
+  trident: true <br>
+  trident-creds-secret: netapp-creds <br>
+  trident-label-config: true <br>
 
 
-**Enable on a cluster:**
+## LABEL-DRIVEN CONFIGURATION (RECOMMENDED) ##
 
-trident=true
+**Enable:**
 
+  trident-label-config: true 
 
-**Create a backend (example increment 1):**
+This dynamically creates TridentBackendConfig and StorageClass objects
+using ManagedCluster labels.
 
-trident-backend-1-svm: Data-NFS-SVM-OpenShift
+**Example cluster labels:**
 
-trident-backend-1-managementlif: 192.168.1.1
+  trident-backend-1-svm: Data-NFS-SVM-OpenShift <br>
+  trident-backend-1-managementlif: 192.168.1.1 <br>
+  trident-backend-1-secret: netapp-creds
 
-trident-backend-1-secret: netapp-creds
+**Defaults:**
 
-**That is the minimum required configuration.**
+  storageDriverName = ontap-san <br>
+  sanType = nvme <br>
+  fsType = ext4 <br>
+  allowVolumeExpansion = true <br>
 
-## Defaults:
+**Generated objects:**
 
-storageDriverName = ontap-san 
+  TridentBackendConfig:
+    backend-data-nfs-svm-openshift-nvme
 
-sanType = nvme 
-
-fsType = ext4 
-
-allowVolumeExpansion = true 
-
-
-**Generated Objects:**
-
-TridentBackendConfig:
-backend-data-nfs-svm-openshift-nvme
-
-StorageClass:
-data-nfs-svm-openshift-nvme
-
+  StorageClass:
+    data-nfs-svm-openshift-nvme
 
 **To create multiple backends, increment the number:**
 
-trident-backend-2-svm: Data-SVM-Backup
-
-trident-backend-2-managementlif: 192.168.1.2
-
-trident-backend-2-secret: netapp-creds
-
-trident-backend-2-santype: iscsi
+  trident-backend-2-svm: Data-SVM-Backup <br>
+  trident-backend-2-managementlif: 192.168.1.2 <br>
+  trident-backend-2-secret: netapp-creds <br>
+  trident-backend-2-santype: iscsi <br>
 
 **Each increment creates:**
 
-- A separate backend
-- A separate StorageClass (with your trident backend as the storage pool)
+  - A separate backend
+  - A separate StorageClass
 
-------------------------------------------------------------
-DEPLOYMENT
-------------------------------------------------------------
+
+## FILE-BASED CONFIGURATION (LEGACY FEATURE) ##
+
+**Enable:**
+
+  trident-file-config: true
+
+This is a legacy compatibility feature and is not the preferred method.
+
+It allows you to drop raw YAML files into the policy's files directory
+and have them applied automatically via ConfigMaps once Trident is
+installed.
+
+How it works:
+
+  - Place a YAML file (backend, storageclass, etc.) in the files folder
+  - Reference that file using a trident-config-* value
+  - The policy wraps the file into a ConfigMap
+  - The ConfigMap content is decoded and applied to the managed cluster
+
+This method exists for:
+
+  - Backward compatibility
+  - Highly customized backend definitions
+  - Advanced ONTAP configuration not covered by labels
+
+*New deployments should use label-driven automation.*
+
+
+## DEPLOYMENT
 
 Once your configuration is ready:
 
-1. Commit changes to your Git repository.
-2. Push to the branch watched by your GitOps pipeline.
-3. ACM will reconcile and deploy.
+  1. Commit changes to your Git repository
+  2. Push to the branch watched by your GitOps pipeline
+  3. ACM will reconcile and deploy
 
-Typical deployment time:
-Approximately 15 minutes.
+**Typical deployment time: approximately 15 minutes.**
 
-------------------------------------------------------------
-SUMMARY
-------------------------------------------------------------
+
+## SUMMARY
 
 This policy stack provides:
 
-- Automated Trident operator installation
-- Automated NVMe kernel configuration
-- Automatic unique NQN enforcement
-- GitOps-driven backend management
-- Automatic StorageClass generation
-- Fully label-driven multi-backend provisioning
-- Optional legacy file-based injection via ConfigMaps
+  - Automated Trident operator installation
+  - Automated NVMe kernel configuration
+  - Automatic unique NQN enforcement
+  - GitOps-driven backend management
+  - Recommended label-based backend automation
+  - Legacy file-based backend support
+  - Automatic StorageClass generation
+  - Multi-backend provisioning support
 
 Everything is managed from source control.
