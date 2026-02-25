@@ -1,0 +1,85 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- range $idx, $cluster := $.Values.clusters }}
+{{- $clusterConfigs := index $cluster "config" }}
+  {{- if not empty $clusterConfigs }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: 
+  name: "{{ printf "managed-cluster-configs.%s" $cluster }}"
+  namespace: "{{ $.Values.policy_namespace }}" 
+  labels:
+    autoshift.io/cluster-configs: ""
+data:
+    config: '{{ $clusterConfigs | toJson }}'
+  {{- end }}
+{{- end }}
+
+{{- range $idx, $clusterSet := $.Values.clustersSets }}
+{{- $clusterConfigs := index $clusterSet "config" }}
+  {{- if not empty $clusterConfigs }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: 
+  name: "{{ printf "cluster-set-configs.%s" $clusterSet }}"
+  namespace: "{{ $.Values.policy_namespace }}" 
+  labels:
+    autoshift.io/cluster-set-configs: ""
+data:
+    config: '{{ $clusterConfigs | toJson }}'
+  {{- end }}
+{{- end }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: {{ $configPolicyName }}
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+
+            {{ "{{-" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "}}" }}
+            {{ "{{-" }} if not (empty $managedClusterLookupResult) {{ "}}" }}
+              {{ "{{-" }} $managedClusters := (index $managedClusterLookupResult "items") | default list {{ "}}" }}
+              {{ "{{-" }} $lastIndex := (sub (len $managedClusters) 1) {{ "}}" }}
+              {{ "{{-" }} if (ne $lastIndex -1) {{ "}}" }}
+                {{ "{{-" }} range $index, $cluster := $managedClusters {{ "}}" }}
+                  {{ "{{-" }} $clusterSet := (index $existingLabels "cluster.open-cluster-management.io/clusterset") | default "" {{ "}}" }}
+                  {{ "{{-" }} $clusterName := (index $cluster "metadata" "name") {{ "}}" }}
+                  {{ "{{-" }} $clusterConfigMapName := (print "managed-cluster-config." $clusterName) {{ "}}" }}
+                  {{ "{{-" }} $clusterSetConfigMapName := (print "cluster-set-configs." $clusterSet)  {{ "}}" }}
+                  {{ "{{-" }} $clusterConfigMap := (lookup "v1" "ConfigMap" $policyNamespace $clusterConfigMapName "autoshift.io/cluster-configs" | default dict) {{ "}}" }}
+                  {{ "{{-" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" $policyNamespace $clusterSetConfigMapName "autoshift.io/cluster-set-configs" | default dict) {{ "}}" }}
+                  {{ "{{-" }} $clusterConfig := ($clusterConfigMap.data.config | default "{}" | fromJson) {{ "}}" }}
+                  {{ "{{-" }} $clusterSetConfig := ($clusterSetConfigMap.data.config | default "{}" | fromJson) {{ "}}" }}
+                  {{ "{{-" }} $renderedConfig := (dict) {{ "}}" }}
+                  {{ "{{-" }} $_ := (merge $renderedConfig $clusterConfig $clusterSetConfig) {{ "}}" }}
+            - apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: {{ "{{" }} (printf "%s.%s" $clusterName "rendered-config") {{ "}}" }}
+                namespace: {{ "{{" }} $policyNamespace {{ "}}" }}
+                labels:
+                  autoshift.io/rendered-config-map: ""
+                data:
+                  config: |
+                    {{ "{{" }} $renderedConfig | toYaml | autoindent {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
