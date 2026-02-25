@@ -60,11 +60,15 @@ oc label managedcluster local-cluster cluster.open-cluster-management.io/cluster
 ### From OCI (Registry)
 
 ```bash
-# 1. Download release artifacts
-VERSION=0.1.0
-curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-bootstrap.sh -O
-curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-autoshift.sh -O
+# 1. Download latest release artifacts
+curl -sL https://github.com/auto-shift/autoshiftv2/releases/latest/download/install-bootstrap.sh -O
+curl -sL https://github.com/auto-shift/autoshiftv2/releases/latest/download/install-autoshift.sh -O
 chmod +x install-*.sh
+
+# To pin a specific version instead:
+# VERSION=X.Y.Z
+# curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-bootstrap.sh -O
+# curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-autoshift.sh -O
 
 # 2. Bootstrap and install
 ./install-bootstrap.sh
