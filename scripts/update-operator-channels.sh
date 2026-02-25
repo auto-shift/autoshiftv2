@@ -330,6 +330,25 @@ build_operator_mappings() {
     if [[ -f "$MAPPINGS_FILE" ]]; then
         sort -u "$MAPPINGS_FILE" -o "$MAPPINGS_FILE"
     fi
+
+    # Warn about operators with -channel but no -subscription-name
+    local discovered_labels_list
+    discovered_labels_list=$(cut -d'|' -f1 "$MAPPINGS_FILE" 2>/dev/null | sort -u)
+
+    while IFS= read -r values_file; do
+        # Find all *-channel: entries (skip comments, skip gitops-dev which isn't an operator)
+        grep -v '^\s*#' "$values_file" 2>/dev/null | \
+        grep -oE '[a-z][-a-z0-9]*-channel:' 2>/dev/null | \
+        sed 's/-channel://' | sort -u | \
+        while IFS= read -r label; do
+            [[ -z "$label" ]] && continue
+            # Skip known non-operator labels
+            [[ "$label" == "gitops-dev" ]] && continue
+            if ! echo "$discovered_labels_list" | grep -qx "$label"; then
+                warn "Operator '$label' has ${label}-channel but no ${label}-subscription-name in $(basename "$values_file")"
+            fi
+        done
+    done < <(get_values_files)
 }
 
 # Get all discovered operator labels
