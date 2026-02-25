@@ -14,7 +14,9 @@ metadata:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
-  remediationAction: enforce
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -23,7 +25,7 @@ spec:
         metadata:
           name: image-registry-storage
         spec:
-          remediationAction: inform # will be overridden by remediationAction in parent policy
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
           object-templates-raw: |
               {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}}`}}

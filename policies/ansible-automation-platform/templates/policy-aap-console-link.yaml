@@ -1,7 +1,10 @@
+{{- $policyName := "policy-aap-consolelink" }}
+{{- $placementName := "placement-policy-aap-consolelink" }}
+
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-aap-consolelink
+  name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
     argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
@@ -10,13 +13,15 @@ metadata:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   dependencies:
     - name: policy-aap-instance
       namespace: {{ $.Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
-  remediationAction: enforce
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -25,7 +30,7 @@ spec:
         metadata:
           name: aap-console-link
         spec:
-          remediationAction: inform
+          remediationAction: enforce
           severity: high
           object-templates-raw: |
             - complianceType: mustonlyhave
@@ -45,14 +50,14 @@ spec:
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: policy-aap-consolelink-placement
+  name: {{ $placementName }}
   namespace: {{ $.Values.policy_namespace }}
 spec:
   clusterSets:
-  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
-  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
   predicates:
@@ -72,13 +77,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: policy-aap-consolelink-placement
+  name: {{ $placementName }}
   namespace: {{ $.Values.policy_namespace }}
 placementRef:
-  name: policy-aap-consolelink-placement
+  name: {{ $placementName }}
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-aap-consolelink
+  - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy

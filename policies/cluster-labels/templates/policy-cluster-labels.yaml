@@ -35,7 +35,9 @@ spec:
       name:  "policy-managed-hub-namespace"
       namespace: {{ $policyNamespace }}
     {{- end }}
-  remediationAction: enforce
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -44,6 +46,7 @@ spec:
         metadata:
           name: {{ $configPolicyName }}
         spec:
+          remediationAction: enforce
           severity: high
           object-templates-raw: |
             [
@@ -119,8 +122,12 @@ metadata:
   namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
+  {{- if (empty $selfManagedHubs) }}
+    - {{ $.Values.selfManagedHubSet }}
+  {{- else }}
   {{- range $selfManagedHub, $_ := $selfManagedHubs }}
     - {{ $selfManagedHub }}
+  {{- end }}
   {{- end }}
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable

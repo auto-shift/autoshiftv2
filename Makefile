@@ -176,7 +176,7 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts generate-artifacts ## Full release process (add INCLUDE_MIRROR=true for mirror artifacts)
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
 		printf "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
-		$(MAKE) generate-imageset-full VERSION=$(VERSION) || { \
+		$(MAKE) generate-imageset VERSION=$(VERSION) || { \
 			printf "$(YELLOW)[WARN]$(NC) Mirror artifact generation failed - continuing without them\n"; \
 		}; \
 	fi
@@ -212,34 +212,18 @@ package-only: validate clean generate-policy-list package-charts ## Package char
 	@printf "$(GREEN)Packaging complete!$(NC)\n"
 	@echo "Charts are ready in: $(CHARTS_DIR)/"
 
-.PHONY: generate-dependencies
-generate-dependencies: ## Generate operator dependencies JSON (requires oc CLI and pull secret)
-	@printf "$(BLUE)[INFO]$(NC) Generating operator dependencies...\n"
-	@command -v oc >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) oc CLI is required. Install from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/\n"; exit 1; }
-	@command -v jq >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) jq is required. Install: brew install jq\n"; exit 1; }
-	@mkdir -p $(ARTIFACTS_DIR)
-	@bash scripts/get-operator-dependencies.sh --all --json > $(ARTIFACTS_DIR)/operator-dependencies.json
-	@printf "$(GREEN)✓$(NC) Dependencies saved to $(ARTIFACTS_DIR)/operator-dependencies.json\n"
-
 # All values files for complete operator coverage
 VALUES_FILES := $(shell ls autoshift/values*.yaml | tr '\n' ',' | sed 's/,$$//')
 
 .PHONY: generate-imageset
-generate-imageset: ## Generate ImageSetConfiguration for disconnected mirroring (all values files)
+generate-imageset: ## Generate ImageSetConfiguration for disconnected mirroring (auto-resolves dependencies)
 	@printf "$(BLUE)[INFO]$(NC) Generating ImageSetConfiguration from all values files...\n"
 	@printf "$(BLUE)[INFO]$(NC) Values files: $(VALUES_FILES)\n"
+	@command -v oc >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) oc CLI is required. Install from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/\n"; exit 1; }
+	@command -v jq >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) jq is required. Install: brew install jq\n"; exit 1; }
 	@mkdir -p $(ARTIFACTS_DIR)
-	@if [ -f "$(ARTIFACTS_DIR)/operator-dependencies.json" ]; then \
-		bash scripts/generate-imageset-config.sh $(VALUES_FILES) \
-			--output $(ARTIFACTS_DIR)/imageset-config.yaml \
-			--dependencies-file $(ARTIFACTS_DIR)/operator-dependencies.json \
-			--include-autoshift-charts; \
-	else \
-		bash scripts/generate-imageset-config.sh $(VALUES_FILES) \
-			--output $(ARTIFACTS_DIR)/imageset-config.yaml \
-			--include-autoshift-charts; \
-	fi
+	@bash scripts/generate-imageset-config.sh $(VALUES_FILES) \
+		--output $(ARTIFACTS_DIR)/imageset-config.yaml \
+		--include-autoshift-charts
 	@printf "$(GREEN)✓$(NC) ImageSetConfiguration saved to $(ARTIFACTS_DIR)/imageset-config.yaml\n"
 
-.PHONY: generate-imageset-full
-generate-imageset-full: generate-dependencies generate-imageset ## Generate ImageSetConfiguration with dependencies (requires oc CLI)
