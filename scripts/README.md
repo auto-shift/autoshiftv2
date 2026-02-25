@@ -7,6 +7,7 @@ This directory contains utility scripts for AutoShiftv2 policy generation and ma
 | Script | Purpose |
 |--------|---------|
 | `generate-operator-policy.sh` | Generate new operator policies |
+| `generate-policy.sh` | Generate configuration (non-operator) policies |
 | `update-operator-policies.sh` | Regenerate existing policies from template |
 | `generate-imageset-config.sh` | Generate ImageSetConfiguration for oc-mirror (auto-resolves dependencies) |
 | `update-operator-channels.sh` | Update operator channels from catalog |
@@ -40,7 +41,7 @@ Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structur
 
 - `--version <version>`: Pin to specific operator version (CSV name, optional)
 - `--namespace-scoped`: Generate a namespace-scoped operator policy (default: cluster-scoped)
-- `--add-to-autoshift`: Automatically add the component to autoshift/values.hub.yaml
+- `--add-to-autoshift`: Automatically add the component to autoshift values files
 - `--values-files <files>`: Comma-separated list of values files to update (e.g., 'hub,sbx')
 - `--show-integration`: Show manual integration instructions
 - `--help`: Display help message
@@ -116,6 +117,87 @@ Each generated policy includes these AutoShift labels in values.yaml:
 
 ---
 
+## 📦 generate-policy.sh
+
+Generate RHACM configuration (non-operator) policies for AutoShiftv2. Use this for policies that configure cluster resources (ConfigurationPolicy) rather than install operators (OperatorPolicy).
+
+### Usage
+
+```bash
+./scripts/generate-policy.sh [policy-name] [options]
+```
+
+Missing required values are prompted interactively.
+
+### Parameters
+
+- `<policy-name>` (positional): Kebab-case name for the policy (e.g., `my-config`, `dns-tolerations`)
+
+### Options
+
+- `--dir DIR`: Policy directory - existing or new (default: prompted)
+- `--target TARGET`: Placement target: `hub`, `spoke`, `both`, `all` (default: prompted)
+- `--label LABEL`: Label predicate key without `autoshift.io/` prefix (default: directory basename; ignored for `hub`/`all` targets)
+- `--dependency POLICY`: Policy dependency name, repeatable (e.g., `--dependency lvm-operator-install`)
+- `--add-to-autoshift`: Add enable label to AutoShift values files (only for `spoke`/`both` targets)
+- `--values-files FILES`: Comma-separated list of values files to update (e.g., `hub,sbx`). Default: all non-example files
+- `--help`: Display help message
+
+### Examples
+
+#### Generate a spoke configuration policy (new directory)
+```bash
+./scripts/generate-policy.sh my-config --dir policies/my-component --target spoke
+```
+
+#### Add a configuration policy to an existing policy directory
+```bash
+./scripts/generate-policy.sh dns-config --dir policies/openshift-dns --target hub
+```
+
+#### Generate with a dependency
+```bash
+./scripts/generate-policy.sh storage-config --dir policies/odf-config --target both --dependency odf-operator-install
+```
+
+#### Generate with AutoShift integration
+```bash
+./scripts/generate-policy.sh my-config --dir policies/my-component --target both --add-to-autoshift
+```
+
+#### Interactive mode (prompts for all values)
+```bash
+./scripts/generate-policy.sh
+```
+
+### Placement Targets
+
+| Target | ClusterSets | Label Selector | Wrapping |
+|--------|-------------|----------------|----------|
+| `hub` | hubClusterSets only | None | `{{- if .Values.hubClusterSets }}` |
+| `spoke` | managedClusterSets only | `autoshift.io/<label>` | None |
+| `both` | hub + managed | `autoshift.io/<label>` | None |
+| `all` | hub + managed | None (all clusters) | None |
+
+### Behavior
+
+- **New directory**: Creates full chart (`Chart.yaml`, `values.yaml`, and policy template)
+- **Existing directory**: Only creates the policy template file; does not modify `Chart.yaml` or `values.yaml`
+
+### Generated Structure (new directory)
+
+```
+policies/<dir-name>/
+├── Chart.yaml                          # Helm chart metadata
+├── values.yaml                         # Minimal values (policy_namespace only)
+└── templates/
+    └── policy-<policy-name>.yaml       # RHACM ConfigurationPolicy
+```
+
+The generated template includes a placeholder ConfigMap that should be replaced with your actual resource definition.
+
+---
+
 ## 🔄 update-operator-policies.sh
 
 Regenerate existing operator policies from the template. Use this when the template has been updated with new features and you want to apply those changes to all existing policies.
@@ -182,8 +264,10 @@ The `scripts/templates/` directory contains templates used by the policy generat
 ### Files
 
 - `Chart.yaml.template`: Helm chart metadata template
-- `values.yaml.template`: Default values with AutoShift labels
+- `values.yaml.template`: Default values with AutoShift labels (operator policies)
+- `values-minimal.yaml.template`: Minimal values for configuration policies
 - `policy-operator-install.yaml.template`: RHACM OperatorPolicy template
+- `policy-config.yaml.template`: RHACM ConfigurationPolicy template (with placement markers)
 - `README.md.template`: Policy documentation template
 
 ### Template Variables
@@ -225,8 +309,13 @@ rm -rf policies/test-op/
 helm template policies/test-op/
 rm -rf policies/test-op/
 
+# Test configuration policy generation
+./scripts/generate-policy.sh test-config --dir policies/test-config --target both
+helm template policies/test-config/
+rm -rf policies/test-config/
+
 # Test imageset generation
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --operators-only --output test-imageset.yaml
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --operators-only --output test-imageset.yaml
 cat test-imageset.yaml
 rm test-imageset.yaml
 ```
@@ -262,16 +351,16 @@ This script automatically:
 
 ```bash
 # Generate for single environment (auto-resolves all dependencies)
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml
 
 # Operators only (skip OpenShift platform)
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --operators-only
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --operators-only
 
 # Multiple environments (merges channels)
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml,autoshift/values.sbx.yaml
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml,autoshift/values/clustersets/sbx.yaml
 
 # Custom output file
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --output my-imageset.yaml
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --output my-imageset.yaml
 ```
 
 ### Features

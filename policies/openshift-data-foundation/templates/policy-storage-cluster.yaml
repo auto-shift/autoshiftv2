@@ -1,9 +1,5 @@
-# This policy verifies the installation of the official & supported version of
-# the Compliance Operator on the managed clusters.
+# This policy deploys the ODF StorageCluster on the managed clusters.
 #
-# If set to "enforce" it'll install the operator.
-#
-# Note that OpenShift 4.18 is required.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -30,7 +26,8 @@ spec:
       kind: Policy
   disabled: false
   policy-templates:
-  # Adding Toleration for csi plugin to run on all nodes.
+  # CSI plugin tolerations - controls which nodes can mount Ceph RBD/CephFS PVCs.
+  # Set autoshift.io/odf-csi-all-nodes: 'true' to run CSI plugins on all nodes (masters, infra, etc.)
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -39,7 +36,10 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
-          object-templates:
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
             - complianceType: musthave
               objectDefinition:
                 kind: ConfigMap
@@ -49,9 +49,16 @@ spec:
                   namespace: {{ .Values.odf.namespace }}
                 data:
                   CSI_LOG_LEVEL: '5'
-                  CSI_PLUGIN_TOLERATIONS: |2-
-
+                  {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/odf-csi-all-nodes" | default "false") "true" {{ "hub}}" }}
+                  CSI_PLUGIN_TOLERATIONS: |
                     - operator: Exists
+                  {{ "{{hub-" }} else {{ "hub}}" }}
+                  CSI_PLUGIN_TOLERATIONS: |
+                    - key: node.ocs.openshift.io/storage
+                      operator: Equal
+                      value: "true"
+                      effect: NoSchedule
+                  {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -60,6 +67,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             - complianceType: musthave
               objectDefinition:

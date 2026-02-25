@@ -19,7 +19,7 @@ helm template policies/node-feature-discovery/
 Edit AutoShift values files to add the operator labels:
 
 ```yaml
-# In autoshift/values.hub.yaml (or values.sbx.yaml, etc.)
+# In autoshift/values/clustersets/hub.yaml (or other clusterset files)
 hubClusterSets:
   hub:
     labels:
@@ -48,17 +48,10 @@ clusters:
       node-feature-discovery-channel: 'fast'  # Override channel for this cluster
 ```
 
-Labels are automatically propagated to clusters via the cluster-labels policy.
+Labels are defined in values files only — never directly on managed clusters. The cluster-labels policy handles propagating these labels from the values files to managed clusters.
 
-### Add to AutoShift ApplicationSet
-Edit `autoshift/templates/applicationset.yaml` and add:
-```yaml
-- name: node-feature-discovery
-  path: policies/node-feature-discovery
-  helm:
-    valueFiles:
-    - values.yaml
-```
+### AutoShift Policy Discovery
+New policies are automatically discovered by the ApplicationSet. In Git mode, the ApplicationSet uses a `policies/*` wildcard to pick up all subdirectories. No manual registration is required — simply adding your policy folder under `policies/` is sufficient.
 
 ## Configuration
 
@@ -76,7 +69,7 @@ This policy supports AutoShift's operator version control system:
 - **Version Pinning**: Add `node-feature-discovery-version` label to pin to a specific CSV version
 - **Manual Control**: Pinned versions require manual updates to upgrade
 
-To pin to a specific version, add the version label to your cluster or clusterset:
+To pin to a specific version, set the version label in your clusterset or per-cluster values file:
 ```yaml
 node-feature-discovery-version: 'nfd.v1.x.x'
 ```
@@ -269,6 +262,6 @@ annotations:
 
 ## Resources
 - [Operator Documentation](https://operatorhub.io/operator/nfd) - Find your operator details
-- [AutoShift Policy Patterns](../../README-DEVELOPER.md) - Comprehensive policy development guide  
+- [AutoShift Developer Guide](../../docs/developer-guide.md) - Comprehensive policy development guide
 - [ACM Policy Documentation](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes) - Policy syntax reference in Governence Section
 - [Similar Policies](../) - Browse other policies for patterns and examples

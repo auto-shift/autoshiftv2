@@ -36,6 +36,22 @@ variables:
 # CI Pipeline (runs on push to main/feature branches and merge requests)
 # =============================================================================
 
+secret-scan:
+  stage: lint
+  image: registry.access.redhat.com/ubi9/ubi:latest
+  before_script:
+    - |
+      curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz -C /tmp
+      mv /tmp/gitleaks /usr/local/bin/gitleaks
+      chmod +x /usr/local/bin/gitleaks
+  script:
+    - |
+      echo "=== Scanning for secrets and PII ==="
+      gitleaks detect --source . --verbose --config .gitleaks.toml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
 lint-helm-charts:
   stage: lint
   <<: *setup-tools
@@ -69,7 +85,8 @@ validate-yaml:
   script:
     - |
       echo "=== Validating values files ==="
-      for f in autoshift/values*.yaml; do
+      for f in autoshift/values/global.yaml autoshift/values/clustersets/*.yaml autoshift/values/clusters/*.yaml; do
+        [ -f "$f" ] || continue
         echo "Checking $f..."
         yq eval '.' "$f" > /dev/null
       done
@@ -83,7 +100,7 @@ template-rendering:
   script:
     - |
       echo "=== Testing template rendering ==="
-      helm template autoshift autoshift -f autoshift/values.hub.yaml > /dev/null
+      helm template autoshift autoshift -f autoshift/values/global.yaml -f autoshift/values/clustersets/hub.yaml -f autoshift/values/clustersets/managed.yaml > /dev/null
       echo "Template rendering successful"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -221,6 +238,11 @@ release:
       chmod +x /usr/local/bin/helm
       helm version
     - |
+      # Install oras CLI for OCI tagging
+      curl -fsSL https://github.com/oras-project/oras/releases/download/v1.2.2/oras_1.2.2_linux_amd64.tar.gz | tar xz -C /tmp
+      mv /tmp/oras /usr/local/bin/oras
+      chmod +x /usr/local/bin/oras
+    - |
       # Install OpenShift CLI from Red Hat mirror
       curl -fsSL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/${OCP_VERSION}/openshift-client-linux.tar.gz | tar xz
       mv oc kubectl /usr/local/bin/
@@ -235,6 +257,7 @@ release:
     - |
       # Login to Quay.io
       echo "$QUAY_PASSWORD" | helm registry login $REGISTRY -u "$QUAY_USERNAME" --password-stdin
+      echo "$QUAY_PASSWORD" | oras login $REGISTRY -u "$QUAY_USERNAME" --password-stdin
   script:
     - |
       # Extract version from tag
@@ -242,7 +265,7 @@ release:
       echo "Releasing version: $VERSION"
     - |
       # Run release
-      make release-mirror VERSION=$VERSION
+      make release VERSION=$VERSION
   artifacts:
     paths:
       - release-artifacts/
@@ -267,11 +290,10 @@ create-release:
 
       ### Installation
 
-      Install from OCI registry:
+      Download and run the install scripts from the release artifacts:
       ```bash
-      helm install autoshift oci://$REGISTRY/$REGISTRY_NAMESPACE/autoshift \
-        --version ${CI_COMMIT_TAG#v} \
-        -f values.hub.yaml
+      bash install-bootstrap.sh
+      bash install-autoshift.sh
       ```
 
       ### Charts Published

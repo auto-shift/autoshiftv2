@@ -1,7 +1,6 @@
 # This policy verifies the installation of the official & supported version of
 # the GitOps Operator.
 #
-# Note that OpenShift 4.18 is required.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -25,6 +24,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates:
             - complianceType: musthave
               objectDefinition:
@@ -52,6 +54,12 @@ spec:
             namespace: {{ .Values.gitops.namespace }}
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-channel" | default "{{ .Values.gitops.channel }}" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-subscription-name" | default "{{ .Values.gitops.name }}" {{ "hub}}" }}'
+            config:
+              env:
+              - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
+                value: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default "{{ .Values.gitops.disableDefaultArgoCD }}" {{ "hub}}" }}'
+              - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
+                value: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}'
             # Source Selection Logic (evaluated on hub for each managed cluster):
             # 1. If cluster has explicit 'autoshift.io/gitops-source' label → use that value
             # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':

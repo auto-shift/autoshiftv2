@@ -172,7 +172,7 @@ The same pattern applies for all other interface types:
 ### Basic Bond with DHCP
 
 ```yaml
-# In values.hub.yaml under your clusterset labels:
+# In your clusterset values file (e.g., autoshift/values/clustersets/hub.yaml):
 labels:
   nmstate: 'true'
   nmstate-bond-1: 'bond0'
@@ -380,10 +380,10 @@ This method is deprecated in favor of the label-based configuration described ab
 
 ## Applying Changes
 
-After updating your labels in `values.hub.yaml`:
+After updating your labels in the values files, push your changes to your git repo. The ApplicationSet will automatically detect the changes and propagate the policies to clusters with the `nmstate: 'true'` label, creating the appropriate NodeNetworkConfigurationPolicy resources.
+
+To test locally before pushing:
 
 ```bash
-helm template autoshift autoshift -f autoshift/values.hub.yaml | oc apply -f -
+helm template autoshift autoshift -f autoshift/values/global.yaml -f autoshift/values/clustersets/hub.yaml -f autoshift/values/clustersets/managed.yaml
 ```
-
-The policy will propagate to clusters with the `nmstate: 'true'` label and create the appropriate NodeNetworkConfigurationPolicy resources.

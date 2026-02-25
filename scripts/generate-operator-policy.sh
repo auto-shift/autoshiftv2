@@ -168,7 +168,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_DIR="$SCRIPT_DIR/templates"
 
 # Convert kebab-case to camelCase for values.yaml
-COMPONENT_CAMEL=$(echo "$COMPONENT_NAME" | perl -pe 's/-([a-z])/\u$1/g')
+COMPONENT_CAMEL=$(echo "$COMPONENT_NAME" | awk -F'-' '{for(i=1;i<=NF;i++){if(i==1){printf "%s",$i}else{printf "%s%s",toupper(substr($i,1,1)),substr($i,2)}}}')
 
 # Validation checks
 if [[ -d "$POLICY_DIR" ]]; then
@@ -244,16 +244,16 @@ validate_generated_policy() {
         log_warning "No hub functions found - this is unusual for AutoShift policies"
     fi
     
-    # Check YAML syntax for non-template files only
-    for yaml_file in "$POLICY_DIR"/*.yaml; do
-        if [[ -f "$yaml_file" ]] && ! python3 -c "import yaml; yaml.safe_load(open('$yaml_file'))" 2>/dev/null; then
-            log_error "Invalid YAML syntax in $yaml_file"
-            return 1
-        fi
-    done
-    
-    # Template files are validated via helm template above
-    
+    # Additional YAML syntax check (non-template files only, advisory)
+    # helm template above already validates the full chart; this is a secondary check
+    if command -v yq >/dev/null 2>&1; then
+        for yaml_file in "$POLICY_DIR"/*.yaml; do
+            if [[ -f "$yaml_file" ]] && ! yq eval '.' "$yaml_file" >/dev/null 2>&1; then
+                log_warning "YAML syntax issue detected in $yaml_file (helm template passed)"
+            fi
+        done
+    fi
+
     log_success "Policy validation passed"
     return 0
 }
@@ -322,23 +322,60 @@ add_to_autoshift_values() {
     
     # Determine which values files to update
     local values_files_to_update=()
-    if [[ -z "$VALUES_FILES" ]]; then
-        # Default: update all values files
-        while IFS= read -r -d '' file; do
-            values_files_to_update+=("$(basename "$file")")
-        done < <(find autoshift -name "values*.yaml" -print0 2>/dev/null)
-    else
-        # Parse comma-separated list
+    if [[ -n "$VALUES_FILES" ]]; then
+        # CLI flag: parse comma-separated list (e.g., 'hub,sbx,managed')
         IFS=',' read -ra file_list <<< "$VALUES_FILES"
         for file_prefix in "${file_list[@]}"; do
             file_prefix=$(echo "$file_prefix" | xargs)  # trim whitespace
-            if [[ -f "autoshift/values.$file_prefix.yaml" ]]; then
-                values_files_to_update+=("values.$file_prefix.yaml")
+            if [[ -f "autoshift/values/clustersets/$file_prefix.yaml" ]]; then
+                values_files_to_update+=("values/clustersets/$file_prefix.yaml")
             else
-                log_warning "Values file autoshift/values.$file_prefix.yaml not found, skipping"
+                log_warning "Values file autoshift/values/clustersets/$file_prefix.yaml not found, skipping"
             fi
         done
+    else
+        # Interactive: let user select which values files to update
+        local available_files=()
+        while IFS= read -r -d '' file; do
+            local rel_path="${file#autoshift/}"
+            available_files+=("$rel_path")
+        done < <(find autoshift/values/clustersets -name "*.yaml" -not -name "_*" -print0 2>/dev/null | sort -z)
+
+        if [[ ${#available_files[@]} -gt 0 ]]; then
+            echo ""
+            echo -e "${BLUE}Select values files to update (example files are always included):${NC}"
+            local idx=1
+            for f in "${available_files[@]}"; do
+                echo "  $idx) $f"
+                idx=$((idx + 1))
+            done
+            echo "  $idx) All of the above"
+            echo ""
+            read -rp "Choice (comma-separated, e.g. 1,3) [${idx}]: " files_choice
+            files_choice="${files_choice:-$idx}"
+
+            if [[ "$files_choice" -eq "$idx" ]] 2>/dev/null; then
+                # All files
+                values_files_to_update=("${available_files[@]}")
+            else
+                IFS=',' read -ra chosen <<< "$files_choice"
+                for c in "${chosen[@]}"; do
+                    c=$(echo "$c" | xargs)
+                    if [[ "$c" -ge 1 && "$c" -lt "$idx" ]] 2>/dev/null; then
+                        values_files_to_update+=("${available_files[$((c - 1))]}")
+                    else
+                        log_warning "Invalid choice '$c', skipping"
+                    fi
+                done
+            fi
+        fi
     fi
+
+    # Always include example files (clustersets and clusters)
+    while IFS= read -r -d '' file; do
+        local rel_path="${file#autoshift/}"
+        values_files_to_update+=("$rel_path")
+    done < <(find autoshift/values/clustersets autoshift/values/clusters -name "_example*.yaml" -print0 2>/dev/null)
     
     if [[ ${#values_files_to_update[@]} -eq 0 ]]; then
         log_error "No valid values files found to update"
@@ -438,6 +475,18 @@ add_labels_to_section() {
         return 0
     fi
     
+    # Determine comment style: example files use banner, others use ###
+    local basename_file
+    basename_file=$(basename "$file_path")
+    local is_example=false
+    if [[ "$basename_file" == _example* ]]; then
+        is_example=true
+    fi
+
+    # Convert component name to title case for banner header
+    local component_title
+    component_title=$(echo "$COMPONENT_NAME" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
+
     # Create labels with proper indentation and commenting
     local labels_content
     local version_line=""
@@ -455,6 +504,20 @@ add_labels_to_section() {
 #       $COMPONENT_NAME-channel: $CHANNEL
 #       $COMPONENT_NAME-source: $SOURCE
 #       $COMPONENT_NAME-source-namespace: $SOURCE_NAMESPACE"
+        if [[ -n "$version_line" ]]; then
+            labels_content="$labels_content
+$version_line"
+        fi
+    elif [[ "$is_example" == "true" ]]; then
+        labels_content="
+      # =======================================================================
+      # $component_title
+      # =======================================================================
+      $COMPONENT_NAME: 'false'
+      $COMPONENT_NAME-subscription-name: $SUBSCRIPTION_NAME
+      $COMPONENT_NAME-channel: $CHANNEL
+      $COMPONENT_NAME-source: $SOURCE
+      $COMPONENT_NAME-source-namespace: $SOURCE_NAMESPACE"
         if [[ -n "$version_line" ]]; then
             labels_content="$labels_content
 $version_line"
@@ -517,28 +580,34 @@ check_component_exists() {
     fi
 }
 
-# Find the line number of the labels: line for a specific section
+# Find the last label line number in a section/clusterset (to append at bottom)
 find_labels_line() {
     local file_path="$1"
     local section_type="$2"
     local clusterset="$3"
     local is_commented="$4"
-    
+
     if [[ "$is_commented" == "true" ]]; then
-        # Find in commented section
         awk "
             /^# $section_type:/ { found_section=1; next }
             found_section && /^#   $clusterset:/ { found_clusterset=1; next }
-            found_clusterset && /^#     labels:/ { print NR; exit }
-            /^[a-zA-Z]/ { found_section=0; found_clusterset=0 }
+            found_clusterset && /^#     labels:/ { in_labels=1; last=NR; next }
+            in_labels && /^#       / { last=NR; next }
+            in_labels && /^#$/ { last=NR; next }
+            in_labels { print last; exit }
+            /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
+            END { if (in_labels) print last }
         " "$file_path"
     else
-        # Find in active section
         awk "
             /^$section_type:/ { found_section=1; next }
             found_section && /^  $clusterset:/ { found_clusterset=1; next }
-            found_clusterset && /^    labels:/ { print NR; exit }
-            /^[a-zA-Z]/ { found_section=0; found_clusterset=0 }
+            found_clusterset && /^    labels:/ { in_labels=1; last=NR; next }
+            in_labels && /^      / { last=NR; next }
+            in_labels && /^$/ { last=NR; next }
+            in_labels { print last; exit }
+            /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
+            END { if (in_labels) print last }
         " "$file_path"
     fi
 }
@@ -555,7 +624,7 @@ main() {
         # Show next steps
         echo -e "${BLUE}📋 Next Steps:${NC}"
         echo "1. Review generated files in $POLICY_DIR/"
-        echo "2. Test locally: ${YELLOW}helm template $POLICY_DIR/${NC}"
+        echo -e "2. Test locally: ${YELLOW}helm template $POLICY_DIR/${NC}"
         echo "3. Customize values.yaml if needed"
         echo "4. Add to AutoShift ApplicationSet (see below)"
         echo "5. Add operator-specific configuration policies"

@@ -2,7 +2,7 @@ With these Autoshift policies, you can automate the deployment of the Ansible Au
 
 The workflow is straightforward: first, it will deploy the operator, then deploy the AAP object once the operator is available. This AAP object manages the deployment of containers for the controller, Hub, and Lightspeed.
 
-In your `autoshift/values.hub.yaml` file, you can configure these toggles:
+In your clusterset values file (e.g., `autoshift/values/clustersets/hub.yaml`), you can configure these toggles:
 
 * `aap: true` → Autoshift will deploy the policies and start installing the operator and its controller.
 * `aap-hub-disabled: false` → Includes Hub in your AAP deployment.
