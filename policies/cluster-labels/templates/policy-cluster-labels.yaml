@@ -8,7 +8,7 @@
   {{- end }}
 {{- end }}
 {{- $policyNamespace := $.Values.policy_namespace }}
-{{- $targets := list "hubofhubs" }}
+{{- $targets := list "selfmanagedhub" }}
 {{- if not (empty $managedHubs) }}
   {{- $targets = append $targets "managedHub" }}
 {{- end }}
@@ -48,6 +48,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             [
               {{ "{{-" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
@@ -113,7 +116,7 @@ spec:
       operator: Exists
 ---
   {{- end }}
-  {{- if (eq $target "hubofhubs") }}
+  {{- if (eq $target "selfmanagedhub") }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

@@ -1,7 +1,6 @@
 # This policy verifies the installation of the official & supported version of
 # the Advanced Cluster Operator on the hub cluster.
 #
-# Note that OpenShift 4.18 is required.
 {{- if .Values.hubClusterSets }}
 {{- $policyName :=  "policy-acm-mch-install" }}
 apiVersion: policy.open-cluster-management.io/v1
@@ -10,8 +9,6 @@ metadata:
   name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "8"
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
@@ -29,6 +26,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             - complianceType: musthave
               objectDefinition:
@@ -49,9 +49,6 @@ kind: Placement
 metadata:
   name: placement-{{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
-  annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "8"
 spec:
   clusterSets:
   {{- range $clusterSet, $value := .Values.hubClusterSets }}
@@ -68,9 +65,6 @@ kind: PlacementBinding
 metadata:
   name: placement-{{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
-  annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "8"
 placementRef:
   name: placement-{{ $policyName }}
   apiGroup: cluster.open-cluster-management.io

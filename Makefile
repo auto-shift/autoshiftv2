@@ -10,7 +10,7 @@ VERSION ?= $(error VERSION is required. Usage: make release VERSION=1.0.0)
 REGISTRY ?= quay.io
 REGISTRY_NAMESPACE ?= autoshift
 DRY_RUN ?= false
-INCLUDE_MIRROR ?= false
+INCLUDE_MIRROR ?= true
 CHARTS_DIR := .helm-charts
 ARTIFACTS_DIR := release-artifacts
 
@@ -165,6 +165,36 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 		echo "  Policies: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
 	fi
 
+.PHONY: tag-latest
+tag-latest: ## Tag all pushed charts with 'latest' in the OCI registry (requires oras CLI)
+	@if [ "$(DRY_RUN)" = "true" ]; then \
+		printf "$(YELLOW)[WARN]$(NC) DRY RUN: Skipping latest tagging\n"; \
+	else \
+		if ! command -v oras &>/dev/null; then \
+			printf "$(RED)[ERROR]$(NC) oras CLI is required for tagging. Install from: https://oras.land/docs/installation\n"; \
+			exit 1; \
+		fi; \
+		printf "$(BLUE)[INFO]$(NC) Tagging charts as 'latest' ($(VERSION) -> latest)...\n"; \
+		echo ""; \
+		printf "$(BLUE)[INFO]$(NC) Tagging bootstrap charts as latest...\n"; \
+		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
+			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
+			echo "  - $$CHART_NAME:latest"; \
+			oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap/$$CHART_NAME:$(VERSION) latest || exit 1; \
+		done; \
+		printf "$(BLUE)[INFO]$(NC) Tagging main chart as latest...\n"; \
+		echo "  - autoshift:latest"; \
+		oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/autoshift:$(VERSION) latest || exit 1; \
+		printf "$(BLUE)[INFO]$(NC) Tagging policy charts as latest...\n"; \
+		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
+			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
+			echo "  - $$CHART_NAME:latest"; \
+			oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/policies/$$CHART_NAME:$(VERSION) latest || exit 1; \
+		done; \
+		echo ""; \
+		printf "$(GREEN)✓$(NC) All charts tagged as 'latest'\n"; \
+	fi
+
 .PHONY: generate-artifacts
 generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@printf "$(BLUE)[INFO]$(NC) Generating bootstrap installation artifacts...\n"
@@ -173,7 +203,7 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@printf "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/\n"
 
 .PHONY: release
-release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts generate-artifacts ## Full release process (add INCLUDE_MIRROR=true for mirror artifacts)
+release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts tag-latest generate-artifacts ## Full release process (add INCLUDE_MIRROR=false to skip mirror artifacts)
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
 		printf "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
 		$(MAKE) generate-imageset VERSION=$(VERSION) || { \
@@ -202,9 +232,9 @@ release: validate validate-version clean sync-values update-versions generate-po
 		echo "  3. Create GitHub/GitLab release with artifacts from: $(ARTIFACTS_DIR)/"; \
 	fi
 
-.PHONY: release-mirror
-release-mirror: ## Full release with mirror artifacts (imageset-config.yaml, operator-dependencies.json)
-	@$(MAKE) release VERSION=$(VERSION) INCLUDE_MIRROR=true
+.PHONY: release-no-mirror
+release-no-mirror: ## Full release without mirror artifacts
+	@$(MAKE) release VERSION=$(VERSION) INCLUDE_MIRROR=false
 
 .PHONY: package-only
 package-only: validate clean generate-policy-list package-charts ## Package charts without updating versions or pushing
@@ -213,7 +243,7 @@ package-only: validate clean generate-policy-list package-charts ## Package char
 	@echo "Charts are ready in: $(CHARTS_DIR)/"
 
 # All values files for complete operator coverage
-VALUES_FILES := $(shell ls autoshift/values*.yaml | tr '\n' ',' | sed 's/,$$//')
+VALUES_FILES := $(shell find autoshift/values/clustersets -name '*.yaml' -not -name '_*' 2>/dev/null | sort | tr '\n' ',' | sed 's/,$$//')
 
 .PHONY: generate-imageset
 generate-imageset: ## Generate ImageSetConfiguration for disconnected mirroring (auto-resolves dependencies)

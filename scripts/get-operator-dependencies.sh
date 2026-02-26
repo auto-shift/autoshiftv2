@@ -36,7 +36,8 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
 error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 # Defaults
-CATALOG="registry.redhat.io/redhat/redhat-operator-index:v4.18"
+CATALOG=""
+CATALOG_OVERRIDE=false
 OPERATORS=""
 SHOW_ALL=false
 OUTPUT_FORMAT="text"
@@ -56,13 +57,17 @@ This script requires:
   - Valid pull secret for registry.redhat.io (in ~/.docker/config.json or REGISTRY_AUTH_FILE)
 
 Options:
-  --catalog CATALOG      Catalog image (default: $CATALOG)
+  --catalog CATALOG      Catalog image (overrides auto-detection from openshift-version)
   --operators PKG1,PKG2  Comma-separated list of operators to check
   --all                  Show all operators with dependencies
   --no-recursive         Disable recursive resolution (recursive is default)
   --json                 Output in JSON format
   --cache-dir DIR        Directory to cache extracted catalog (default: $CACHE_DIR)
   --help                 Show this help
+
+The catalog version is auto-detected from the 'openshift-version' label in your
+values files (e.g., openshift-version: '4.20.12' -> v4.20 catalog). Use --catalog
+to override this.
 
 The script also reads known-dependencies.json for dependencies not declared
 in the catalog (e.g., odf-operator -> odf-dependencies).
@@ -103,6 +108,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --catalog)
             CATALOG="$2"
+            CATALOG_OVERRIDE=true
             shift 2
             ;;
         --operators)
@@ -146,6 +152,37 @@ fi
 
 # Check dependencies
 check_dependencies
+
+# Auto-detect catalog version from openshift-version in values files
+if [[ "$CATALOG_OVERRIDE" == "false" ]]; then
+    OCP_VERSION=""
+    for values_file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
+        [[ -f "$values_file" ]] || continue
+        [[ "$(basename "$values_file")" == _* ]] && continue
+        ver=$(grep -E "^[[:space:]]*openshift-version:" "$values_file" 2>/dev/null | head -1 | \
+              sed "s/.*:[[:space:]]*//" | tr -d "'" | tr -d '"' | xargs)
+        if [[ -n "$ver" ]]; then
+            OCP_VERSION="$ver"
+            break
+        fi
+    done
+
+    if [[ -z "$OCP_VERSION" ]]; then
+        error "No openshift-version found in values files"
+        error "Set 'openshift-version' in your clusterset values file or use --catalog to specify the catalog image"
+        exit 1
+    fi
+
+    # Extract major.minor (e.g., 4.20.12 -> 4.20)
+    CATALOG_VERSION=$(echo "$OCP_VERSION" | grep -oE '^[0-9]+\.[0-9]+')
+    if [[ -z "$CATALOG_VERSION" ]]; then
+        error "Could not parse major.minor from openshift-version: $OCP_VERSION"
+        exit 1
+    fi
+
+    CATALOG="registry.redhat.io/redhat/redhat-operator-index:v${CATALOG_VERSION}"
+    log "Auto-detected catalog from openshift-version $OCP_VERSION: v${CATALOG_VERSION}"
+fi
 
 # Create cache directory
 mkdir -p "$CACHE_DIR"
@@ -198,12 +235,17 @@ get_catalog_deps() {
 
     local deps=""
 
-    # Check bundles directory for the latest bundle
+    # Check bundles directory for the latest bundle (individual JSON files per version)
     if [[ -d "$pkg_dir/bundles" ]]; then
         local latest_bundle=$(ls "$pkg_dir/bundles/"*.json 2>/dev/null | sort -V | tail -1)
         if [[ -n "$latest_bundle" && -f "$latest_bundle" ]]; then
             deps=$(jq -r '.properties[]? | select(.type == "olm.package.required") | .value.packageName' "$latest_bundle" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
         fi
+    fi
+
+    # Check bundles.json JSONL format (one JSON object per line, used by ACM/MCE)
+    if [[ -z "$deps" && -f "$pkg_dir/bundles.json" ]]; then
+        deps=$(jq -rs '.[-1].properties[]? | select(.type == "olm.package.required") | .value.packageName' "$pkg_dir/bundles.json" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
     fi
 
     # Fallback to old catalog.json format

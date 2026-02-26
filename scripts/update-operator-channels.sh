@@ -49,17 +49,24 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
 error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 # Defaults
-CATALOG="registry.redhat.io/redhat/redhat-operator-index:v4.18"
+CATALOG=""
+CATALOG_OVERRIDE=false
 CACHE_DIR="$PROJECT_ROOT/.cache/catalog-cache"
 DRY_RUN=false
 CHECK_ONLY=false
 PULL_SECRET=""
+CATALOG_VERSION=""
+VALUES_FILES=()  # User-specified values files (--values-file)
+UPDATE_ALL=false  # Update channels in all values files, not just scanned ones
 
 # Temp file for operator mappings (portable alternative to associative arrays)
 MAPPINGS_FILE=""
+# Temp file for catalog dir lookups (source -> catalog_dir)
+CATALOG_DIRS_FILE=""
 
 cleanup() {
     [[ -n "$MAPPINGS_FILE" ]] && rm -f "$MAPPINGS_FILE"
+    [[ -n "$CATALOG_DIRS_FILE" ]] && rm -f "$CATALOG_DIRS_FILE"
 }
 trap cleanup EXIT
 
@@ -76,16 +83,25 @@ Required:
   --pull-secret FILE  Path to pull secret JSON file for registry.redhat.io
 
 Options:
-  --catalog CATALOG   Operator catalog image (default: $CATALOG)
+  --values-file FILE  Only scan this values file (can be repeated for multiple files)
+  --update-all        Update channels in all values files, not just scanned ones
+  --catalog CATALOG   Operator catalog image (overrides auto-detection from openshift-version)
   --dry-run           Show what would be updated without making changes
   --check             Check for updates and exit with code 1 if updates available
   --no-cache          Force re-download of catalog
   -h, --help          Show this help message
 
+The catalog version is auto-detected from the 'openshift-version' label in your
+values files (e.g., openshift-version: '4.20.12' -> v4.20 catalog). Use --catalog
+to override this.
+
 Examples:
-  $0 --pull-secret pull-secret.json              # Update all operator channels
+  $0 --pull-secret pull-secret.json              # Update all (auto-detects catalog version)
+  $0 --pull-secret pull-secret.json --values-file autoshift/values/clustersets/hub.yaml
+  $0 --pull-secret pull-secret.json --values-file autoshift/values/clustersets/hub.yaml --update-all
   $0 --pull-secret pull-secret.json --dry-run   # Preview changes without applying
   $0 --pull-secret pull-secret.json --check     # Check if updates are available (for CI)
+  $0 --pull-secret pull-secret.json --catalog registry.redhat.io/redhat/redhat-operator-index:v4.18
 
 EOF
     exit 0
@@ -101,6 +117,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --catalog)
             CATALOG="$2"
+            CATALOG_OVERRIDE=true
             shift 2
             ;;
         --dry-run)
@@ -110,6 +127,14 @@ while [[ $# -gt 0 ]]; do
         --check)
             CHECK_ONLY=true
             DRY_RUN=true
+            shift
+            ;;
+        --values-file)
+            VALUES_FILES+=("$2")
+            shift 2
+            ;;
+        --update-all)
+            UPDATE_ALL=true
             shift
             ;;
         --no-cache)
@@ -138,8 +163,84 @@ if [[ ! -f "$PULL_SECRET" ]]; then
     exit 1
 fi
 
+# Validate and resolve --values-file paths
+for i in "${!VALUES_FILES[@]}"; do
+    vf="${VALUES_FILES[$i]}"
+    # Resolve relative paths against PROJECT_ROOT
+    if [[ "$vf" != /* ]]; then
+        vf="$PROJECT_ROOT/$vf"
+    fi
+    if [[ ! -f "$vf" ]]; then
+        error "Values file not found: ${VALUES_FILES[$i]}"
+        exit 1
+    fi
+    VALUES_FILES[$i]="$vf"
+done
+
+# Helper: returns the list of values files to scan
+# Uses --values-file entries if specified, otherwise discovers all clustersets
+get_values_files() {
+    if [[ ${#VALUES_FILES[@]} -gt 0 ]]; then
+        printf '%s\n' "${VALUES_FILES[@]}"
+    else
+        for f in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
+            [[ -f "$f" ]] || continue
+            [[ "$(basename "$f")" == _* ]] && continue
+            echo "$f"
+        done
+    fi
+}
+
+# Helper: returns the list of values files to write updates to
+# With --update-all, writes to all clustersets + example files regardless of --values-file
+get_update_files() {
+    if [[ "$UPDATE_ALL" == "true" ]]; then
+        for f in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml "$PROJECT_ROOT"/autoshift/values/clusters/_example*.yaml; do
+            [[ -f "$f" ]] || continue
+            echo "$f"
+        done
+    else
+        get_values_files
+    fi
+}
+
 # Export for oc image extract
 export REGISTRY_AUTH_FILE="$PULL_SECRET"
+
+# Auto-detect catalog version from openshift-version in values files
+if [[ "$CATALOG_OVERRIDE" == "false" ]]; then
+    OCP_VERSION=""
+    while IFS= read -r values_file; do
+        ver=$(grep -E "^[[:space:]]*openshift-version:" "$values_file" 2>/dev/null | head -1 | \
+              sed "s/.*:[[:space:]]*//" | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+        if [[ -n "$ver" ]]; then
+            # Use the highest version found across all files
+            if [[ -z "$OCP_VERSION" ]]; then
+                OCP_VERSION="$ver"
+            else
+                OCP_VERSION=$(printf '%s\n%s\n' "$OCP_VERSION" "$ver" | sort -V | tail -1)
+            fi
+        fi
+    done < <(get_values_files)
+
+    if [[ -z "$OCP_VERSION" ]]; then
+        error "No openshift-version found in values files"
+        error "Set 'openshift-version' in your clusterset values file or use --catalog to specify the catalog image"
+        exit 1
+    fi
+
+    # Extract major.minor (e.g., 4.20.12 -> 4.20)
+    CATALOG_VERSION=$(echo "$OCP_VERSION" | grep -oE '^[0-9]+\.[0-9]+')
+    if [[ -z "$CATALOG_VERSION" ]]; then
+        error "Could not parse major.minor from openshift-version: $OCP_VERSION"
+        exit 1
+    fi
+
+    log "Auto-detected OpenShift version $OCP_VERSION -> catalog v${CATALOG_VERSION}"
+else
+    # Extract version from --catalog override (e.g., .../redhat-operator-index:v4.18 -> 4.18)
+    CATALOG_VERSION=$(echo "$CATALOG" | grep -oE 'v[0-9]+\.[0-9]+' | sed 's/^v//')
+fi
 
 # Check requirements
 check_requirements() {
@@ -157,25 +258,59 @@ check_requirements() {
 # DYNAMIC OPERATOR MAPPINGS
 # Uses subscription-name as the canonical key - no hardcoded mappings!
 # Mappings stored in temp file for bash 3.x compatibility
-# Format: label|package|policy_dir
+# Format: label|package|policy_dir|source
 # ============================================================================
+
+# Map a CatalogSource name to a registry catalog index image
+# Strips mirror suffixes (e.g., redhat-operators-mirror -> redhat-operators)
+# Returns the full catalog image URL
+source_to_catalog_image() {
+    local source="$1"
+    local version="$2"
+
+    # Strip common mirror suffixes (e.g., redhat-operators-mirror -> redhat-operators)
+    local base_source
+    base_source=$(echo "$source" | sed 's/-mirror$//')
+
+    case "$base_source" in
+        redhat-operators)
+            echo "registry.redhat.io/redhat/redhat-operator-index:v${version}"
+            ;;
+        certified-operators)
+            echo "registry.redhat.io/redhat/certified-operator-index:v${version}"
+            ;;
+        community-operators)
+            echo "registry.redhat.io/redhat/community-operator-index:v${version}"
+            ;;
+        *)
+            # Unknown source - return empty (caller should warn)
+            return 1
+            ;;
+    esac
+}
 
 # Build operator mappings dynamically from values files
 build_operator_mappings() {
     MAPPINGS_FILE=$(mktemp)
 
-    for values_file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
-        [[ -f "$values_file" ]] || continue
-
-        # Find all *-subscription-name: entries
-        grep -oE '[a-z][-a-z0-9]*-subscription-name:[[:space:]]*[^[:space:]]+' "$values_file" 2>/dev/null | \
+    while IFS= read -r values_file; do
+        # Find all *-subscription-name: entries (skip commented lines)
+        grep -v '^\s*#' "$values_file" 2>/dev/null | \
+        grep -oE '[a-z][-a-z0-9]*-subscription-name:[[:space:]]*[^[:space:]]+' 2>/dev/null | \
         while IFS= read -r line; do
             # Extract label and package
-            local label package policy_dir=""
+            local label package policy_dir="" source=""
             label=$(echo "$line" | sed 's/-subscription-name:.*//')
-            package=$(echo "$line" | sed 's/.*-subscription-name:[[:space:]]*//' | tr -d "'" | tr -d '"')
+            package=$(echo "$line" | sed 's/.*-subscription-name:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r')
 
             [[ -z "$label" || -z "$package" ]] && continue
+
+            # Extract source for this operator (e.g., redhat-operators)
+            # Match only uncommented lines, strip inline comments and quotes
+            source=$(grep -E "^[[:space:]]+${label}-source:" "$values_file" 2>/dev/null | grep -v '^\s*#' | head -1 | \
+                     sed 's/.*:[[:space:]]*//' | sed 's/#.*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+            # Default to redhat-operators if not specified
+            [[ -z "$source" ]] && source="redhat-operators"
 
             # Find policy directory by searching for name: {package} in policies/*/values.yaml
             for policy_values in "$PROJECT_ROOT"/policies/*/values.yaml; do
@@ -186,15 +321,34 @@ build_operator_mappings() {
                 fi
             done
 
-            # Store mapping: label|package|policy_dir
-            echo "${label}|${package}|${policy_dir}" >> "$MAPPINGS_FILE"
+            # Store mapping: label|package|policy_dir|source
+            echo "${label}|${package}|${policy_dir}|${source}" >> "$MAPPINGS_FILE"
         done
-    done
+    done < <(get_values_files)
 
     # Deduplicate
     if [[ -f "$MAPPINGS_FILE" ]]; then
         sort -u "$MAPPINGS_FILE" -o "$MAPPINGS_FILE"
     fi
+
+    # Warn about operators with -channel but no -subscription-name
+    local discovered_labels_list
+    discovered_labels_list=$(cut -d'|' -f1 "$MAPPINGS_FILE" 2>/dev/null | sort -u)
+
+    while IFS= read -r values_file; do
+        # Find all *-channel: entries (skip comments, skip gitops-dev which isn't an operator)
+        grep -v '^\s*#' "$values_file" 2>/dev/null | \
+        grep -oE '[a-z][-a-z0-9]*-channel:' 2>/dev/null | \
+        sed 's/-channel://' | sort -u | \
+        while IFS= read -r label; do
+            [[ -z "$label" ]] && continue
+            # Skip known non-operator labels
+            [[ "$label" == "gitops-dev" ]] && continue
+            if ! echo "$discovered_labels_list" | grep -qx "$label"; then
+                warn "Operator '$label' has ${label}-channel but no ${label}-subscription-name in $(basename "$values_file")"
+            fi
+        done
+    done < <(get_values_files)
 }
 
 # Get all discovered operator labels
@@ -228,14 +382,37 @@ get_policy_file_for_label() {
     fi
 }
 
+# Get source for a label (dynamic lookup)
+get_source_for_label() {
+    local label="$1"
+    [[ -f "$MAPPINGS_FILE" ]] || return
+    grep "^${label}|" "$MAPPINGS_FILE" 2>/dev/null | head -1 | cut -d'|' -f4
+}
+
+# Get all unique sources across all operators
+get_unique_sources() {
+    [[ -f "$MAPPINGS_FILE" ]] || return
+    cut -d'|' -f4 "$MAPPINGS_FILE" | sort -u
+}
+
 # ============================================================================
 # CATALOG FUNCTIONS
 # ============================================================================
 
 # Extract catalog if not cached
+# Usage: ensure_catalog <catalog_image>
 ensure_catalog() {
+    local catalog_image="$1"
     local catalog_hash
-    catalog_hash=$(echo "$CATALOG" | md5sum | cut -d' ' -f1)
+
+    if command -v md5sum &> /dev/null; then
+        catalog_hash=$(echo "$catalog_image" | md5sum | cut -d' ' -f1)
+    elif command -v md5 &> /dev/null; then
+        catalog_hash=$(echo "$catalog_image" | md5)
+    else
+        catalog_hash=$(echo "$catalog_image" | cksum | cut -d' ' -f1)
+    fi
+
     local catalog_dir="$CACHE_DIR/$catalog_hash"
 
     if [[ "$NO_CACHE" == "true" ]] && [[ -d "$catalog_dir" ]]; then
@@ -249,23 +426,23 @@ ensure_catalog() {
         return 0
     fi
 
-    log "Extracting catalog $CATALOG..."
+    log "Extracting catalog $catalog_image..."
     mkdir -p "$catalog_dir"
 
     local extract_output
-    extract_output=$(oc image extract "$CATALOG" --path /:"$catalog_dir" --confirm --filter-by-os=linux/amd64 2>&1)
+    extract_output=$(oc image extract "$catalog_image" --path /:"$catalog_dir" --confirm --filter-by-os=linux/amd64 2>&1)
     local extract_rc=$?
 
     if [[ $extract_rc -ne 0 ]]; then
-        extract_output=$(oc image extract "$CATALOG" --path /:"$catalog_dir" --confirm 2>&1)
+        extract_output=$(oc image extract "$catalog_image" --path /:"$catalog_dir" --confirm 2>&1)
         extract_rc=$?
     fi
 
     if [[ $extract_rc -ne 0 ]]; then
-        error "Failed to extract catalog"
+        error "Failed to extract catalog: $catalog_image"
         echo "$extract_output" >&2
         rm -rf "$catalog_dir"
-        exit 1
+        return 1
     fi
 
     local extracted_count
@@ -274,11 +451,61 @@ ensure_catalog() {
         error "Catalog extraction produced no operator packages"
         echo "Extract output: $extract_output" >&2
         rm -rf "$catalog_dir"
-        exit 1
+        return 1
     fi
 
     success "Catalog extracted to $catalog_dir ($(echo $extracted_count | xargs) operators)"
     echo "$catalog_dir"
+}
+
+# Ensure all needed catalogs are extracted based on operator sources
+# Populates CATALOG_DIRS_FILE with source|catalog_dir mappings
+ensure_all_catalogs() {
+    CATALOG_DIRS_FILE=$(mktemp)
+
+    if [[ "$CATALOG_OVERRIDE" == "true" ]]; then
+        # User specified a single catalog - use it for everything
+        local catalog_dir
+        catalog_dir=$(ensure_catalog "$CATALOG")
+        if [[ -z "$catalog_dir" ]]; then
+            error "Failed to extract catalog: $CATALOG"
+            exit 1
+        fi
+        # Map all sources to this single catalog
+        for source in $(get_unique_sources); do
+            echo "${source}|${catalog_dir}" >> "$CATALOG_DIRS_FILE"
+        done
+        return 0
+    fi
+
+    # Auto mode: extract the right catalog for each unique source
+    local unique_sources
+    unique_sources=$(get_unique_sources)
+
+    for source in $unique_sources; do
+        local catalog_image
+        catalog_image=$(source_to_catalog_image "$source" "$CATALOG_VERSION" 2>/dev/null) || true
+        if [[ -z "$catalog_image" ]]; then
+            warn "Unknown operator source '$source' - cannot map to a catalog index. Skipping operators from this source."
+            continue
+        fi
+
+        local catalog_dir
+        catalog_dir=$(ensure_catalog "$catalog_image") || true
+        if [[ -z "$catalog_dir" ]]; then
+            warn "Failed to extract catalog for source '$source' ($catalog_image). Skipping."
+            continue
+        fi
+
+        echo "${source}|${catalog_dir}" >> "$CATALOG_DIRS_FILE"
+    done
+}
+
+# Get the catalog directory for a given source
+get_catalog_dir_for_source() {
+    local source="$1"
+    [[ -f "$CATALOG_DIRS_FILE" ]] || return
+    grep "^${source}|" "$CATALOG_DIRS_FILE" 2>/dev/null | head -1 | cut -d'|' -f2
 }
 
 # Get all channels for an operator package
@@ -385,10 +612,10 @@ is_newer_channel() {
     local ver1="" ver2=""
 
     # Try to extract version from channel name
-    if [[ "$channel1" =~ -([0-9]+\.[0-9]+)$ ]]; then
+    if [[ "$channel1" =~ -v?([0-9]+\.[0-9]+)$ ]]; then
         ver1="${BASH_REMATCH[1]}"
     fi
-    if [[ "$channel2" =~ -([0-9]+\.[0-9]+)$ ]]; then
+    if [[ "$channel2" =~ -v?([0-9]+\.[0-9]+)$ ]]; then
         ver2="${BASH_REMATCH[1]}"
     fi
 
@@ -419,9 +646,7 @@ update_autoshift_channel() {
     local new_channel="$2"
     local updated=0
 
-    for file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
-        [[ -f "$file" ]] || continue
-
+    while IFS= read -r file; do
         if grep -q "${label}-channel:" "$file" 2>/dev/null; then
             if $DRY_RUN; then
                 local current
@@ -437,7 +662,7 @@ update_autoshift_channel() {
                 updated=1
             fi
         fi
-    done
+    done < <(get_update_files)
 
     return $updated
 }
@@ -476,15 +701,14 @@ get_current_channel() {
     local current=""
 
     # Check autoshift values files first
-    for file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
-        [[ -f "$file" ]] || continue
+    while IFS= read -r file; do
         current=$(grep -E "^[[:space:]]*${label}-channel:" "$file" 2>/dev/null | head -1 | \
                   sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
         if [[ -n "$current" ]]; then
             echo "$current"
             return 0
         fi
-    done
+    done < <(get_values_files)
 
     # Check policy values file
     local policy_file
@@ -522,9 +746,8 @@ main() {
     success "Found $label_count operators: $discovered_labels"
     echo ""
 
-    # Extract or use cached catalog
-    local catalog_dir
-    catalog_dir=$(ensure_catalog)
+    # Extract or use cached catalogs (one per unique source)
+    ensure_all_catalogs
     echo ""
 
     # Track updates
@@ -547,9 +770,19 @@ main() {
             continue
         fi
 
+        # Get the correct catalog for this operator's source
+        local source catalog_dir
+        source=$(get_source_for_label "$label")
+        catalog_dir=$(get_catalog_dir_for_source "$source")
+
+        if [[ -z "$catalog_dir" ]]; then
+            printf "%-35s %-20s %-20s %s\n" "$package" "-" "-" "${YELLOW}no catalog for source: ${source}${NC}"
+            continue
+        fi
+
         # Get channels for this package from catalog
         local channels
-        channels=$(get_channels "$catalog_dir" "$package")
+        channels=$(get_channels "$catalog_dir" "$package" || true)
         if [[ -z "$channels" ]]; then
             printf "%-35s %-20s %-20s %s\n" "$package" "-" "-" "${YELLOW}not in catalog${NC}"
             continue
