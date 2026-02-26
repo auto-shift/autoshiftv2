@@ -1,5 +1,6 @@
 {{- $policyNamespace := $.Values.policy_namespace }}
 {{- $policyName := "policy-cluster-configs" }}
+{{- $placementName := "placement-cluster-configs" }}
 {{- $configPolicyName := "policy-cluster-configs" }}
 {{- range $clusterName, $cluster := $.Values.clusters }}
 {{- $clusterConfigs := index $cluster "config" }}
@@ -87,3 +88,33 @@ spec:
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
 
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+    {{- range $k, $v := $.Values.hubClusterSets  }}
+    - {{ $k }}
+    {{- end }}
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName}}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
