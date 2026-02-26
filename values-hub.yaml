@@ -13,16 +13,30 @@ clusterGroup:
       sourceNamespace: openshift-marketplace
 
   applications:
-    acm:
-      name: acm
-      namespace: open-cluster-management
-      chart: acm
-      chartVersion: 0.1.*
     autoshift:
       name: autoshift
-      namespace: openshift-gitops
+      namespace: autoshift-hub
       path: autoshift
+      overrides:
+        - name: gitopsNamespace
+          value: autoshift-hub
+        - name: gitops.argoName
+          value: hub-gitops
+        - name: gitops.argoNamespace
+          value: autoshift-hub
       extraValueFiles:
         - /autoshift/values/global.yaml
         - /autoshift/values/clustersets/hub.yaml
         - /autoshift/values/clustersets/managed.yaml
+
+  extraObjects:
+    multiclusterhub:
+      apiVersion: operator.open-cluster-management.io/v1
+      kind: MultiClusterHub
+      metadata:
+        name: multiclusterhub
+        namespace: open-cluster-management
+        annotations:
+          argocd.argoproj.io/sync-wave: "1"
+      spec:
+        availabilityConfig: High
