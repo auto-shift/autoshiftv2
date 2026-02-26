@@ -162,6 +162,96 @@ clusters:
       nmstate-nncp-myconfig: 'filename'
 
       # =======================================================================
+      # NetApp Trident - Per-Cluster Storage Configuration
+      # =======================================================================
+      # Trident can deploy backends using label-driven configuration
+      # (recommended) or legacy file-based configuration.
+      #
+      # Enable Trident policies:
+      #
+      trident: 'true'
+      #
+      # Required: Name of credentials secret in policies-autoshift namespace
+      #
+      trident-creds-secret: 'netapp-creds'
+      #
+      # --- Configuration Mode ---
+      # trident-label-config: 'true'         # Recommended
+      # trident-file-config: 'true'          # Legacy compatibility
+      #
+      trident-label-config: 'true'
+      #
+      # =======================================================================
+      # Label-Driven Backend Configuration (Recommended)
+      # =======================================================================
+      # Format:
+      # trident-backend-{N}-{field}
+      #
+      # Minimum required fields:
+      # trident-backend-{N}-svm: 'Data-SVM'
+      # trident-backend-{N}-managementlif: '192.168.1.1'
+      # trident-backend-{N}-secret: 'netapp-creds'
+      #
+      # Optional overrides:
+      # trident-backend-{N}-storagedriver: 'ontap-san'
+      # trident-backend-{N}-santype: 'nvme'          # 'nvme' or 'iscsi'
+      #
+      # --- Backend 1 Example ---
+      #
+      trident-backend-1-svm: 'Data-NFS-SVM-OpenShift'
+      trident-backend-1-managementlif: '192.168.1.1'
+      trident-backend-1-secret: 'netapp-creds'
+      trident-backend-1-santype: 'nvme'
+      #
+      # --- Backend 2 Example ---
+      #
+      # trident-backend-2-svm: 'Data-SVM-Backup'
+      # trident-backend-2-managementlif: '192.168.1.2'
+      # trident-backend-2-secret: 'netapp-creds'
+      # trident-backend-2-santype: 'iscsi'
+      #
+      # Each increment creates:
+      #   - One TridentBackendConfig
+      #   - One StorageClass
+      #
+      # Generated Naming Convention:
+      #
+      # Backend:
+      #   backend-<sanitized-svm>-<santype>
+      #
+      # StorageClass:
+      #   <sanitized-svm>-<santype>
+      #
+      # Defaults (if not specified):
+      #
+      # storageDriverName = ontap-san
+      # sanType = nvme
+      # fsType = ext4
+      # allowVolumeExpansion = true
+      #
+      # =======================================================================
+      # Legacy File-Based Configuration
+      # =======================================================================
+      # Enables applying raw YAML files from policies/trident/files/
+      #
+      # trident-file-config: 'true'
+      #
+      # Format:
+      # trident-config-{type}-{N}: 'filename.yaml'
+      #
+      # Example:
+      #
+      # trident-config-backend-1: 'backend-ontap.yaml'
+      # trident-config-storageclass-1: 'sc-gold.yaml'
+      #
+      # This method is for:
+      #   - Backward compatibility
+      #   - Highly customized backends
+      #   - Advanced ONTAP options not exposed via labels
+      #
+      # New deployments should use label-driven configuration.
+      #
+      # =======================================================================
       # Infrastructure Node Sizing
       # =======================================================================
       infra-nodes: '6'
