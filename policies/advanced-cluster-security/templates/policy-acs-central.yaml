@@ -36,7 +36,7 @@ spec:
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
+          object-templates-raw: |
             - complianceType: musthave
               objectDefinition:
                 apiVersion: platform.stackrox.io/v1alpha1
@@ -67,6 +67,37 @@ spec:
                         minReplicas: 2
                         replicas: 3
                     scannerComponent: Enabled
+                  scannerV4:
+                    scannerComponent: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-scanner-v4" | default "{{ .Values.acs.scannerV4 }}" {{ "hub}}" }}'
+                  {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/acs-monitoring" | default "{{ .Values.acs.monitoring }}") "true" {{ "hub}}" }}
+                  monitoring:
+                    openshift:
+                      enabled: true
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if (index .ManagedClusterLabels "autoshift.io/acs-network-policies") {{ "hub}}" }}
+                  network:
+                    policies: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-network-policies" {{ "hub}}" }}'
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/acs-vm-scanning" | default "") "true" {{ "hub}}" }}
+                  customize:
+                    envVars:
+                      - name: ROX_VIRTUAL_MACHINES
+                        value: "true"
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if (index .ManagedClusterLabels "autoshift.io/acs-auth-provider") {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: platform.stackrox.io/v1alpha1
+                kind: Central
+                metadata:
+                  namespace: {{ .Values.acs.namespace }}
+                  name: stackrox-central-services
+                spec:
+                  central:
+                    declarativeConfiguration:
+                      configMaps:
+                        - name: acs-declarative-configs
+            {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy

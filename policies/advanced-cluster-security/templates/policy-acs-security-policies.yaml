@@ -1,0 +1,148 @@
+# This policy deploys baseline SecurityPolicy CRDs for ACS Central.
+# SecurityPolicy CRDs (GA in 4.8, config.stackrox.io/v1alpha1) become
+# "externally managed" in the RHACS UI.
+{{- if .Values.hubClusterSets }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-acs-security-policies
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-wave: "1"
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-2 Security Assessments
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-acs-central
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-security-policies
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/acs-default-policies" | default "") "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: config.stackrox.io/v1alpha1
+                kind: SecurityPolicy
+                metadata:
+                  name: no-privilege-escalation
+                  namespace: {{ .Values.acs.namespace }}
+                spec:
+                  policyName: No Privilege Escalation
+                  severity: HIGH_SEVERITY
+                  disabled: false
+                  lifecycleStages:
+                    - DEPLOY
+                  policySections:
+                    - sectionName: Rule 1
+                      policyGroups:
+                        - fieldName: Allow Privilege Escalation
+                          values:
+                            - value: "true"
+                  enforcementActions: []
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: config.stackrox.io/v1alpha1
+                kind: SecurityPolicy
+                metadata:
+                  name: no-root-user-containers
+                  namespace: {{ .Values.acs.namespace }}
+                spec:
+                  policyName: No Root User Containers
+                  severity: HIGH_SEVERITY
+                  disabled: false
+                  lifecycleStages:
+                    - DEPLOY
+                  policySections:
+                    - sectionName: Rule 1
+                      policyGroups:
+                        - fieldName: Run As User
+                          values:
+                            - value: "0"
+                  enforcementActions: []
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: config.stackrox.io/v1alpha1
+                kind: SecurityPolicy
+                metadata:
+                  name: no-shell-spawning
+                  namespace: {{ .Values.acs.namespace }}
+                spec:
+                  policyName: No Shell Spawning at Runtime
+                  severity: HIGH_SEVERITY
+                  disabled: false
+                  lifecycleStages:
+                    - RUNTIME
+                  eventSource: DEPLOYMENT_EVENT
+                  policySections:
+                    - sectionName: Rule 1
+                      policyGroups:
+                        - fieldName: Process Name
+                          values:
+                            - value: "/bin/sh"
+                            - value: "/bin/bash"
+                            - value: "/bin/dash"
+                  enforcementActions: []
+            {{ "{{hub-" }} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: policy-acs-security-policies-placement
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acs'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: policy-acs-security-policies-placement
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+placementRef:
+  name: policy-acs-security-policies-placement
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-acs-security-policies
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end -}}

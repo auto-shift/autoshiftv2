@@ -1,0 +1,101 @@
+# This policy creates the declarative configuration ConfigMap for ACS Central
+# to configure auth providers, roles, permission sets, and access scopes.
+{{- if .Values.hubClusterSets }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-acs-declarative-config
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-wave: "1"
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-2 Security Assessments
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-acs-central
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-declarative-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} if (index .ManagedClusterLabels "autoshift.io/acs-auth-provider") {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: acs-declarative-configs
+                  namespace: {{ .Values.acs.namespace }}
+                data:
+                  auth-provider.yaml: |
+                    name: OpenShift
+                    minimumRole: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-auth-min-role" | default "{{ .Values.acs.authMinRole }}" {{ "hub}}" }}'
+                    openshift:
+                      enable: true
+                    groups:
+                      - key: groups
+                        value: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-auth-admin-group" | default "{{ .Values.acs.authAdminGroup }}" {{ "hub}}" }}'
+                        role: Admin
+            {{ "{{hub-" }} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: policy-acs-declarative-config-placement
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acs'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: policy-acs-declarative-config-placement
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+placementRef:
+  name: policy-acs-declarative-config-placement
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-acs-declarative-config
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end -}}
