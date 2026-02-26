@@ -1,7 +1,3 @@
-# This policy verifies the installation of the official & supported version of
-# the LVM Operator on the managed clusters.
-#
-# If set to "enforce" it'll install the operator.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -32,21 +28,24 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates-raw: |
+            {{- range $role := list "master" "worker" }}
             - complianceType: musthave
               objectDefinition:
                 kind: MachineConfig
                 apiVersion: machineconfiguration.openshift.io/v1
                 metadata:
-                  name: 99-master-ensure-proper-nqn
+                  name: 99-{{ $role }}-ensure-proper-nqn
                   labels:
-                    machineconfiguration.openshift.io/role: master
+                    machineconfiguration.openshift.io/role: {{ $role }}
                 spec:
                   config:
                     ignition:
                       version: 3.2.0
                     systemd:
                       units:
-                        - contents: |
+                        - name: ensure-proper-nqn.service
+                          enabled: true
+                          contents: |
                             [Unit]
                             Description=ensure proper NQN
                             Before=network.target
@@ -57,37 +56,38 @@ spec:
 
                             [Install]
                             WantedBy=multi-user.target
-                          name: ensure-proper-nqn.service
-                          enabled: true
+            {{- end }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: enable-nvme-tcp-module-master
+          name: enable-nvme-tcp-module
         spec:
           remediationAction: enforce
           severity: high
           object-templates-raw: |
+            {{- range $role := list "master" "worker" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: machineconfiguration.openshift.io/v1
                 kind: MachineConfig
                 metadata:
+                  name: 99-{{ $role }}-enable-nvme-tcp-module
                   labels:
-                    machineconfiguration.openshift.io/role: master
-                  name: 99-enable-nvme-tcp-module-master
+                    machineconfiguration.openshift.io/role: {{ $role }}
                 spec:
                   config:
                     ignition:
                       version: 3.4.0
                     storage:
                       files:
-                        - contents:
-                            compression: ""
-                            source: data:,nvme-tcp
+                        - path: /etc/modules-load.d/nvme-tcp.conf
                           mode: 420
                           overwrite: true
-                          path: /etc/modules-load.d/nvme-tcp.conf
+                          contents:
+                            compression: ""
+                            source: data:,nvme-tcp
+            {{- end }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -109,7 +109,7 @@ spec:
             - key: 'autoshift.io/trident'
               operator: In
               values:
-              - 'true'
+                - 'true'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
