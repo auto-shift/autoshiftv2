@@ -57,6 +57,11 @@ spec:
                     persistence:
                       persistentVolumeClaim:
                         claimName: stackrox-db
+                    {{ "{{hub-" }} if (index .ManagedClusterLabels "autoshift.io/acs-auth-provider") {{ "hub}}" }}
+                    declarativeConfiguration:
+                      configMaps:
+                        - name: acs-declarative-configs
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                   egress:
                     connectivityPolicy: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-egress-connectivity" | default "{{ .Values.acs.egressConnectivity }}" {{ "hub}}" }}'
                   scanner:
@@ -84,20 +89,6 @@ spec:
                       - name: ROX_VIRTUAL_MACHINES
                         value: "true"
                   {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} if (index .ManagedClusterLabels "autoshift.io/acs-auth-provider") {{ "hub}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: platform.stackrox.io/v1alpha1
-                kind: Central
-                metadata:
-                  namespace: {{ .Values.acs.namespace }}
-                  name: stackrox-central-services
-                spec:
-                  central:
-                    declarativeConfiguration:
-                      configMaps:
-                        - name: acs-declarative-configs
-            {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
