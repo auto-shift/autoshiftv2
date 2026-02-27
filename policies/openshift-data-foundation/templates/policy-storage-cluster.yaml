@@ -28,11 +28,12 @@ spec:
   policy-templates:
   # CSI plugin tolerations - controls which nodes can mount Ceph RBD/CephFS PVCs.
   # Set autoshift.io/odf-csi-all-nodes: 'true' to run CSI plugins on all nodes (masters, infra, etc.)
+  # ODF 4.20+ uses the ceph-csi-operator OperatorConfig CR instead of the rook-ceph-operator-config ConfigMap.
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: rook-ceph-operator-config
+          name: ceph-csi-operator-config-tolerations
         spec:
           remediationAction: enforce
           severity: high
@@ -42,23 +43,24 @@ spec:
           object-templates-raw: |
             - complianceType: musthave
               objectDefinition:
-                kind: ConfigMap
-                apiVersion: v1
+                apiVersion: csi.ceph.io/v1
+                kind: OperatorConfig
                 metadata:
-                  name: rook-ceph-operator-config
+                  name: ceph-csi-operator-config
                   namespace: {{ .Values.odf.namespace }}
-                data:
-                  CSI_LOG_LEVEL: '5'
-                  {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/odf-csi-all-nodes" | default "false") "true" {{ "hub}}" }}
-                  CSI_PLUGIN_TOLERATIONS: |
-                    - operator: Exists
-                  {{ "{{hub-" }} else {{ "hub}}" }}
-                  CSI_PLUGIN_TOLERATIONS: |
-                    - key: node.ocs.openshift.io/storage
-                      operator: Equal
-                      value: "true"
-                      effect: NoSchedule
-                  {{ "{{hub-" }} end {{ "hub}}" }}
+                spec:
+                  driverSpecDefaults:
+                    nodePlugin:
+                      {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/odf-csi-all-nodes" | default "false") "true" {{ "hub}}" }}
+                      tolerations:
+                        - operator: Exists
+                      {{ "{{hub-" }} else {{ "hub}}" }}
+                      tolerations:
+                        - key: node.ocs.openshift.io/storage
+                          operator: Equal
+                          value: "true"
+                          effect: NoSchedule
+                      {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
