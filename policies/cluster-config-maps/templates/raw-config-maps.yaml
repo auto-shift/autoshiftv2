@@ -1,0 +1,35 @@
+{{- range $clusterName, $cluster := $.Values.clusters }}
+{{- $clusterConfigs := index $cluster "config" }}
+  {{- if not (empty $clusterConfigs) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: 
+  name: "{{ printf "managed-cluster-config.%s" $clusterName }}"
+  namespace: "{{ $.Values.policy_namespace }}" 
+  labels:
+    autoshift.io/cluster-configs: ""
+data:
+    config: '{{ $clusterConfigs | toJson }}'
+  {{- end }}
+{{- end }}
+
+{{- $clusterSets := (dict) }}
+{{- $hubClusterSets := (index $.Values "hubClusterSets" | default dict) }}
+{{- $managedClusterSets := (index $.Values "managedClusterSets" | default dict) }}
+{{- range $clusterSetName, $clusterSet := (merge $clusterSets $hubClusterSets $managedClusterSets) }}
+{{- $clusterSetConfig := index $clusterSet "config" }}
+  {{- if not (empty $clusterSetConfig) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: 
+  name: "{{ printf "cluster-set-config.%s" $clusterSetName }}"
+  namespace: "{{ $.Values.policy_namespace }}" 
+  labels:
+    autoshift.io/cluster-set-configs: ""
+data:
+    config: '{{ $clusterSetConfig | toJson }}'
+  {{- end }}
+{{- end }}
+---
