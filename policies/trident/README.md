@@ -145,7 +145,7 @@ This method exists for:
   - Highly customized backend definitions
   - Advanced ONTAP configuration not covered by labels
 
-**To pull in multiple files, increment the number:**
+**To pull in multiple files, make sure the value is unique:**
 
   trident-config-prodsvm: filename.yaml <br>
 
