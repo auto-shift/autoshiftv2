@@ -71,9 +71,7 @@ You may also integrate with Vault Secrets if desired.
 
   trident-label-config: true
 
-**Optionally enable legacy file-based configuration:**
-
-  trident-file-config: true
+**Optional legacy file-based configuration:**
 
 **Example values.hub.yaml:**
 
@@ -127,9 +125,6 @@ using ManagedCluster labels.
 
 ## FILE-BASED CONFIGURATION (LEGACY FEATURE) ##
 
-**Enable:**
-
-  trident-file-config: true
 
 This is a legacy compatibility feature and is not the preferred method.
 
@@ -149,6 +144,10 @@ This method exists for:
   - Backward compatibility
   - Highly customized backend definitions
   - Advanced ONTAP configuration not covered by labels
+
+**To pull in multiple files, increment the number:**
+
+  trident-config-prodsvm: filename.yaml <br>
 
 *New deployments should use label-driven automation.*
 
