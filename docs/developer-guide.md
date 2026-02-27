@@ -156,15 +156,19 @@ flowchart TD
 git clone https://github.com/auto-shift/autoshiftv2.git
 cd autoshiftv2
 
-# Verify the policy generator works
+# Verify the policy generators work
 ./scripts/generate-operator-policy.sh --help
+./scripts/generate-policy.sh --help
 
-# Test policy generation
+# Test operator policy generation
 ./scripts/generate-operator-policy.sh test-operator test-operator --channel stable --namespace test-operator
 helm template policies/test-operator/
-
-# Clean up test
 rm -rf policies/test-operator/
+
+# Test configuration policy generation
+./scripts/generate-policy.sh test-config --dir policies/test-config --target both
+helm template policies/test-config/
+rm -rf policies/test-config/
 ```
 
 ### First-Time Setup Validation
@@ -232,93 +236,33 @@ policies/my-component/
 
 ### Step 4: Add Operator Configuration
 
-Most operators need additional configuration after installation:
+Most operators need additional configuration after installation. Use the configuration policy generator to scaffold the template:
 
 ```bash
 # 1. Explore installed CRDs
 oc get crds | grep my-component
 
-# 2. Create configuration policy
-cat > policies/my-component/templates/policy-my-component-config.yaml << 'EOF'
-{{- $policyName := "policy-my-component-config" }}
-{{- $placementName := "placement-policy-my-component-config" }}
+# 2. Generate a configuration policy (adds to existing policy directory)
+./scripts/generate-policy.sh my-component-config \
+  --dir policies/my-component \
+  --target both \
+  --dependency my-component-operator-install
 
-apiVersion: policy.open-cluster-management.io/v1
-kind: Policy
-metadata:
-  name: {{ $policyName }}
-  namespace: {{ .Values.policy_namespace }}
-  annotations:
-    policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CM Configuration Management
-    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
-spec:
-  disabled: false
-  policy-templates:
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: my-component-instance
-        spec:
-          remediationAction: enforce
-          severity: high
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: my-component.io/v1
-                kind: MyComponentInstance
-                metadata:
-                  name: instance
-                  namespace: {{ .Values.myComponent.namespace }}
-                spec:
-                  # Add your configuration here
-                  replicas: 3
-                  storage:
-                    size: 10Gi
----
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/my-component'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-placementRef:
-  name: {{ $placementName }}
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: {{ $policyName }}
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
-EOF
+# 3. Edit the generated template - replace the placeholder ConfigMap with your actual resource
+vi policies/my-component/templates/policy-my-component-config.yaml
 ```
+
+The generator creates a complete policy with the correct structure (Policy + ConfigurationPolicy + Placement + PlacementBinding), `evaluationInterval`, dry-run support, and cluster tolerations. You can also generate standalone configuration policies in a new directory:
+
+```bash
+# Create a new policy directory for non-operator configuration
+./scripts/generate-policy.sh my-cluster-config --dir policies/my-cluster-config --target spoke
+
+# Or use interactive mode to be guided through the options
+./scripts/generate-policy.sh
+```
+
+See [generate-policy.sh documentation](../scripts/README.md#-generate-policysh) for all options including placement targets (`hub`, `spoke`, `both`, `all`) and dependency management.
 
 ### Step 5: Test and Deploy
 
@@ -612,7 +556,7 @@ oc get policyreports -A
 
 ### Code Standards
 
-- ✅ Use policy generator for all new operator policies
+- ✅ Use policy generators for new policies (`generate-operator-policy.sh` for operators, `generate-policy.sh` for configuration)
 - ✅ Include comprehensive README.md for each policy
 - ✅ Follow existing naming conventions
 - ✅ Test with `helm template` before committing
@@ -621,7 +565,7 @@ oc get policyreports -A
 
 ### Pull Request Checklist
 
-- [ ] Policy generated using `generate-operator-policy.sh`
+- [ ] Policy generated using `generate-operator-policy.sh` or `generate-policy.sh`
 - [ ] Subscription name and channel specified
 - [ ] Configuration policies added if needed
 - [ ] README.md updated with usage instructions

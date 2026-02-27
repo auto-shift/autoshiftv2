@@ -49,7 +49,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: oci://quay.io/autoshift
+    repoURL: quay.io/autoshift
     chart: autoshift
     targetRevision: "0.0.1"
     helm:
@@ -138,7 +138,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: oci://quay.io/autoshift
+    repoURL: quay.io/autoshift
     chart: autoshift
     targetRevision: "0.0.2"
     helm:

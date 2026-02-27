@@ -31,6 +31,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
             - complianceType: musthave
@@ -65,6 +68,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
             - complianceType: musthave
@@ -145,6 +151,9 @@ spec:
                         cpu: {{ ((.Values.gitops.redis).requests).cpu | default "125m" }}
                         memory: {{ ((.Values.gitops.redis).requests).memory | default "128Mi" }}
                   controller:
+                    processors:
+                      status: {{ ((.Values.gitops.controller).statusProcessors) | default 20 }}
+                      operation: {{ ((.Values.gitops.controller).operationProcessors) | default 10 }}
                     resources:
                       limits:
                         cpu: {{ ((.Values.gitops.controller).limits).cpu | default "2000m" }}
@@ -168,6 +177,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
             - complianceType: musthave
@@ -213,7 +225,7 @@ spec:
                 kind: ManagedClusterSetBinding
                 metadata:
                   name: {{ $clusterSet }}
-                  namespace: '{{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   clusterSet: {{ $clusterSet }}
             {{- end }}

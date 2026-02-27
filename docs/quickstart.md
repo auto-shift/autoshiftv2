@@ -253,11 +253,11 @@ oc login --token=sha256~lQ...dI --server=https://api.cluster.example.com:6443
 #### Step 2: Bootstrap GitOps from OCI
 
 ```bash
-export VERSION="latest"     # Or pin to a specific version, e.g. "X.Y.Z"
 export OCI_REPO="oci://quay.io/autoshift"
+# export VERSION="X.Y.Z"   # Uncomment to pin to a specific version
 
 helm upgrade --install openshift-gitops ${OCI_REPO}/bootstrap/openshift-gitops \
-    --version ${VERSION} \
+    ${VERSION:+--version ${VERSION}} \
     --create-namespace \
     --wait \
     --timeout 10m
@@ -274,7 +274,7 @@ oc get argocd -A
 
 ```bash
 helm upgrade --install advanced-cluster-management ${OCI_REPO}/bootstrap/advanced-cluster-management \
-    --version ${VERSION} \
+    ${VERSION:+--version ${VERSION}} \
     --create-namespace \
     --wait \
     --timeout 15m
@@ -294,7 +294,8 @@ oc get mch -A -w
 Create the ArgoCD Application pointing to the OCI registry. The key difference from source mode is the OCI values (`autoshiftOciRegistry`, `autoshiftOciRepo`) which tell the ApplicationSet to pull policy charts from the registry instead of Git:
 
 ```console
-export OCI_REPO="oci://quay.io/autoshift"
+export OCI_REGISTRY="quay.io/autoshift"
+# export VERSION="X.Y.Z"   # Uncomment to pin to a specific version
 cat << EOF | oc apply -f -
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -304,8 +305,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: ${OCI_REPO}/autoshift
-    targetRevision: "${VERSION}"
+    repoURL: ${OCI_REGISTRY}
+    chart: autoshift
+    targetRevision: "${VERSION:-*}"
     helm:
       valueFiles:
         - values/global.yaml
@@ -313,7 +315,7 @@ spec:
         - values/clustersets/managed.yaml
       values: |
         autoshiftOciRegistry: true
-        autoshiftOciRepo: ${OCI_REPO}/policies
+        autoshiftOciRepo: oci://${OCI_REGISTRY}/policies
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops

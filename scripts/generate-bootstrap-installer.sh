@@ -44,6 +44,7 @@ REGISTRY="${REGISTRY}"
 REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE}"
 OCI_REPO="oci://\${REGISTRY}/\${REGISTRY_NAMESPACE}"
 OCI_BOOTSTRAP_REPO="oci://\${REGISTRY}/\${REGISTRY_NAMESPACE}/bootstrap"
+OCI_REGISTRY="\${REGISTRY}/\${REGISTRY_NAMESPACE}"
 INSTALL_VARS
 
 cat >> "$ARTIFACTS_DIR/install-bootstrap.sh" << 'INSTALL_EOF'
@@ -149,6 +150,7 @@ VERSION="${VERSION}"
 REGISTRY="${REGISTRY}"
 REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE}"
 OCI_REPO="oci://\${REGISTRY}/\${REGISTRY_NAMESPACE}"
+OCI_REGISTRY="\${REGISTRY}/\${REGISTRY_NAMESPACE}"
 AUTOSHIFT_VARS
 
 cat >> "$ARTIFACTS_DIR/install-autoshift.sh" << 'AUTOSHIFT_EOF'
@@ -276,8 +278,8 @@ metadata:
 spec:
   project: default
   source:
-    path: .
-    repoURL: ${OCI_REPO}/autoshift
+    repoURL: ${OCI_REGISTRY}
+    chart: autoshift
     targetRevision: "${VERSION}"
     helm:
       valueFiles:
@@ -473,8 +475,8 @@ spec:
 GUIDE_EOF
 
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << GUIDE_VERSION
-    path: .
-    repoURL: oci://${REGISTRY}/${REGISTRY_NAMESPACE}/autoshift
+    repoURL: ${REGISTRY}/${REGISTRY_NAMESPACE}
+    chart: autoshift
     targetRevision: "${VERSION}"
 GUIDE_VERSION
 
@@ -545,8 +547,8 @@ spec:
 GUIDE_EOF
 
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << GUIDE_VERSION
-    path: .
-    repoURL: oci://${REGISTRY}/${REGISTRY_NAMESPACE}/autoshift
+    repoURL: ${REGISTRY}/${REGISTRY_NAMESPACE}
+    chart: autoshift
     targetRevision: "${VERSION}"
 GUIDE_VERSION
 
@@ -611,8 +613,8 @@ spec:
 GUIDE_EOF
 
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << GUIDE_VERSION
-    path: .
-    repoURL: oci://${REGISTRY}/${REGISTRY_NAMESPACE}/autoshift
+    repoURL: ${REGISTRY}/${REGISTRY_NAMESPACE}
+    chart: autoshift
     targetRevision: "${VERSION}"
 GUIDE_VERSION
 
