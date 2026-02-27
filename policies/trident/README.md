@@ -57,8 +57,6 @@ oc create secret generic netapp-creds \
   --from-literal=username=vsadmin \
   --from-literal=password='password'
 
-You may also integrate with Vault Secrets if desired.
-
 
 ## VALUES CONFIGURATION
 
