@@ -1,11 +1,8 @@
 
-# This policy verifies the installation of the official & supported version of
-# the Advanced Cluster Operator on the hub cluster.
-#
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-cert-manager-install
+  name: policy-nmstate
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -15,69 +12,37 @@ spec:
 {{ if (($.Values.autoshift).dryRun) }}
   remediationAction: inform
 {{ end }}
+  dependencies:
+    - name: policy-nmstate-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
   disabled: false
   policy-templates:
     - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1beta1
-        kind: OperatorPolicy
-        metadata:
-          name: install-cert-manager-operator
-        spec:
-          remediationAction: enforce
-          severity: high
-          complianceType: musthave
-          operatorGroup:
-            # if operator group exists in namespace use that
-            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.certManager.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.certManager.namespace }}{{ "{{" }} end {{ "}}" }}'
-            namespace: {{ .Values.certManager.namespace }}
-            targetNamespaces:
-              - {{ .Values.certManager.namespace }}
-          subscription:
-            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/cert-manager-version" | default "" {{ "hub}}" }}'
-            namespace: {{ .Values.certManager.namespace }}
-            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/cert-manager-channel" | default "{{ .Values.certManager.channel }}" {{ "hub}}" }}'
-            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/cert-manager-subscription-name" | default "{{ .Values.certManager.name }}" {{ "hub}}" }}'
-            # Source Selection Logic (evaluated on hub for each managed cluster):
-            # 1. If cluster has explicit 'autoshift.io/certManager-source' label → use that value
-            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
-            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
-            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
-            # 3. Else → use standard source (e.g., redhat-operators)
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/cert-manager-source" | default (ternary (printf "%s-%s" "{{ .Values.certManager.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.certManager.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
-            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/cert-manager-source-namespace" | default "{{ .Values.certManager.sourceNamespace }}" {{ "hub}}" }}'
-          # Upgrade approval for subscription will be set based on if version is set not this flag
-          # If version is set install plan is set to manual and only the version specified will be installed
-          upgradeApproval: Automatic
-          versions:
-            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/cert-manager-version" | default "" {{ "hub}}" }}'
----
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: placement-policy-cert-manager-operator-install
-  namespace: {{ .Values.policy_namespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := .Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: placement-policy-cert-manager-operator-install
-  namespace: {{ .Values.policy_namespace }}
-placementRef:
-  name: placement-policy-cert-manager-operator-install
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: policy-cert-manager-operator-install
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
-{{- end }}
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: nmstate-operator-nmstate-test
+      spec:
+        remediationAction: inform
+        severity: high
+        object-templates-raw: |
+
+          {{ "{{hub-" }} $configs := (index (fromConfigMap "{{ $.policy_namespace }}" (printf "%s.%s" .ManagedClusterName "rendered-config" "config") | fromYaml) "cert-manager" | default dict) {{ "hub}}" }}
+          - complianceType: musthave
+            apiVersion: operator.openshift.io/v1alpha1
+            kind: CertManager
+            metadata:
+              name: cluster
+            spec:
+              logLevel: {{ "{{hub" }} index $configs "logLevel" | default "Normal" {{ "hub}}" }}
+              managementState: Managed
+              operatorLogLevel: {{ "{{hub" }} index $configs "operatorLogLevel" | default "Normal" {{ "hub}}" }}
+              unsupportedConfigOverrides:
+                controller:
+                  args:
+                    {{ "{{hub" }} range $idx, $override := (index $configs "overrides" | default (list)) {{ "hub}}" }}
+                    - {{ "{{hub" }} $arg {{ "hub}}" }}
+                    {{ "{{hub" }} end {{ "hub}}" }}
