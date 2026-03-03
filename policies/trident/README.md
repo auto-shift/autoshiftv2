@@ -48,14 +48,16 @@ Plan maintenance windows accordingly.
 ## CREDENTIALS
 
 You must create the Trident credentials secret on the ACM hub cluster
-in the policies-autoshift namespace.
+in a namespace of your choice.
 
 Example:
 
 oc create secret generic netapp-creds \
-  -n policies-autoshift \
+  -n your-namespace \
   --from-literal=username=vsadmin \
   --from-literal=password='password'
+
+**This will require a service account to be created in the policies-autoshift namespace with read permissions on secrets to your namespace.**
 
 
 ## VALUES CONFIGURATION
