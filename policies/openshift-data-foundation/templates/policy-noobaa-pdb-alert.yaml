@@ -1,59 +1,53 @@
-# This policy enables the Loki logging UI plugin for Cluster Observability on the managed clusters.
+# This policy suppresses the PodDisruptionBudgetAtLimit alert for the NooBaa
+# CNPG primary PDB, which is expected to always have 0 allowed disruptions.
 #
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-loki-cluster-observ-logging-ui
+  name: policy-noobaa-pdb-alert
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
-    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-7 Continuous Monitoring
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
-  dependencies:
-    - name: policy-loki-logging-forwarder
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-    - name: policy-cluster-observ-op-install
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
 {{ if (($.Values.autoshift).dryRun) }}
   remediationAction: inform
 {{ end }}
+  dependencies:
+    - name: policy-odf-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
   disabled: false
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: openshift-coo-uiplugin-logging
+          name: noobaa-pdb-alert-relabel
         spec:
           remediationAction: enforce
-          severity: high
-          evaluationInterval:
-            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          severity: low
           object-templates:
             - complianceType: musthave
               objectDefinition:
-                apiVersion: observability.openshift.io/v1alpha1
-                kind: UIPlugin
+                apiVersion: monitoring.openshift.io/v1
+                kind: AlertRelabelConfig
                 metadata:
-                  name: logging
+                  name: suppress-noobaa-pdb-at-limit
+                  namespace: openshift-monitoring
                 spec:
-                  logging:
-                    lokiStack:
-                      name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-lokistack-name" | default "{{ .Values.loki.lokistackName }}" {{ "hub}}" }}'
-                  type: Logging
+                  configs:
+                    - sourceLabels: [alertname, namespace, poddisruptionbudget]
+                      regex: "PodDisruptionBudgetAtLimit;openshift-storage;noobaa-db-pg-cluster-primary"
+                      action: Drop
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-loki-cluster-observ-logging-ui
+  name: placement-policy-noobaa-pdb-alert
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -67,7 +61,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/coo'
+            - key: 'autoshift.io/odf'
               operator: In
               values:
               - 'true'
@@ -80,13 +74,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-loki-cluster-observ-logging-ui
+  name: placement-policy-noobaa-pdb-alert
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-loki-cluster-observ-logging-ui
+  name: placement-policy-noobaa-pdb-alert
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-loki-cluster-observ-logging-ui
+  - name: policy-noobaa-pdb-alert
     apiGroup: policy.open-cluster-management.io
     kind: Policy

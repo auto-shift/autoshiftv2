@@ -56,6 +56,8 @@ DRY_RUN=false
 CHECK_ONLY=false
 PULL_SECRET=""
 CATALOG_VERSION=""
+VALUES_FILES=()  # User-specified values files (--values-file)
+UPDATE_ALL=false  # Update channels in all values files, not just scanned ones
 
 # Temp file for operator mappings (portable alternative to associative arrays)
 MAPPINGS_FILE=""
@@ -81,6 +83,8 @@ Required:
   --pull-secret FILE  Path to pull secret JSON file for registry.redhat.io
 
 Options:
+  --values-file FILE  Only scan this values file (can be repeated for multiple files)
+  --update-all        Update channels in all values files, not just scanned ones
   --catalog CATALOG   Operator catalog image (overrides auto-detection from openshift-version)
   --dry-run           Show what would be updated without making changes
   --check             Check for updates and exit with code 1 if updates available
@@ -93,6 +97,8 @@ to override this.
 
 Examples:
   $0 --pull-secret pull-secret.json              # Update all (auto-detects catalog version)
+  $0 --pull-secret pull-secret.json --values-file autoshift/values/clustersets/hub.yaml
+  $0 --pull-secret pull-secret.json --values-file autoshift/values/clustersets/hub.yaml --update-all
   $0 --pull-secret pull-secret.json --dry-run   # Preview changes without applying
   $0 --pull-secret pull-secret.json --check     # Check if updates are available (for CI)
   $0 --pull-secret pull-secret.json --catalog registry.redhat.io/redhat/redhat-operator-index:v4.18
@@ -123,6 +129,14 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
+        --values-file)
+            VALUES_FILES+=("$2")
+            shift 2
+            ;;
+        --update-all)
+            UPDATE_ALL=true
+            shift
+            ;;
         --no-cache)
             NO_CACHE=true
             shift
@@ -149,22 +163,65 @@ if [[ ! -f "$PULL_SECRET" ]]; then
     exit 1
 fi
 
+# Validate and resolve --values-file paths
+for i in "${!VALUES_FILES[@]}"; do
+    vf="${VALUES_FILES[$i]}"
+    # Resolve relative paths against PROJECT_ROOT
+    if [[ "$vf" != /* ]]; then
+        vf="$PROJECT_ROOT/$vf"
+    fi
+    if [[ ! -f "$vf" ]]; then
+        error "Values file not found: ${VALUES_FILES[$i]}"
+        exit 1
+    fi
+    VALUES_FILES[$i]="$vf"
+done
+
+# Helper: returns the list of values files to scan
+# Uses --values-file entries if specified, otherwise discovers all clustersets
+get_values_files() {
+    if [[ ${#VALUES_FILES[@]} -gt 0 ]]; then
+        printf '%s\n' "${VALUES_FILES[@]}"
+    else
+        for f in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
+            [[ -f "$f" ]] || continue
+            [[ "$(basename "$f")" == _* ]] && continue
+            echo "$f"
+        done
+    fi
+}
+
+# Helper: returns the list of values files to write updates to
+# With --update-all, writes to all clustersets + example files regardless of --values-file
+get_update_files() {
+    if [[ "$UPDATE_ALL" == "true" ]]; then
+        for f in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml "$PROJECT_ROOT"/autoshift/values/clusters/_example*.yaml; do
+            [[ -f "$f" ]] || continue
+            echo "$f"
+        done
+    else
+        get_values_files
+    fi
+}
+
 # Export for oc image extract
 export REGISTRY_AUTH_FILE="$PULL_SECRET"
 
 # Auto-detect catalog version from openshift-version in values files
 if [[ "$CATALOG_OVERRIDE" == "false" ]]; then
     OCP_VERSION=""
-    for values_file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
-        [[ -f "$values_file" ]] || continue
-        [[ "$(basename "$values_file")" == _* ]] && continue
+    while IFS= read -r values_file; do
         ver=$(grep -E "^[[:space:]]*openshift-version:" "$values_file" 2>/dev/null | head -1 | \
-              sed "s/.*:[[:space:]]*//" | tr -d "'" | tr -d '"' | xargs)
+              sed "s/.*:[[:space:]]*//" | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
         if [[ -n "$ver" ]]; then
-            OCP_VERSION="$ver"
-            break
+            # Use the highest version found across all files
+            if [[ -z "$OCP_VERSION" ]]; then
+                OCP_VERSION="$ver"
+            else
+                OCP_VERSION=$(printf '%s\n%s\n' "$OCP_VERSION" "$ver" | sort -V | tail -1)
+            fi
         fi
-    done
+    done < <(get_values_files)
 
     if [[ -z "$OCP_VERSION" ]]; then
         error "No openshift-version found in values files"
@@ -236,11 +293,7 @@ source_to_catalog_image() {
 build_operator_mappings() {
     MAPPINGS_FILE=$(mktemp)
 
-    for values_file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
-        [[ -f "$values_file" ]] || continue
-        # Skip example files
-        [[ "$(basename "$values_file")" == _* ]] && continue
-
+    while IFS= read -r values_file; do
         # Find all *-subscription-name: entries (skip commented lines)
         grep -v '^\s*#' "$values_file" 2>/dev/null | \
         grep -oE '[a-z][-a-z0-9]*-subscription-name:[[:space:]]*[^[:space:]]+' 2>/dev/null | \
@@ -248,14 +301,14 @@ build_operator_mappings() {
             # Extract label and package
             local label package policy_dir="" source=""
             label=$(echo "$line" | sed 's/-subscription-name:.*//')
-            package=$(echo "$line" | sed 's/.*-subscription-name:[[:space:]]*//' | tr -d "'" | tr -d '"')
+            package=$(echo "$line" | sed 's/.*-subscription-name:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r')
 
             [[ -z "$label" || -z "$package" ]] && continue
 
             # Extract source for this operator (e.g., redhat-operators)
             # Match only uncommented lines, strip inline comments and quotes
             source=$(grep -E "^[[:space:]]+${label}-source:" "$values_file" 2>/dev/null | grep -v '^\s*#' | head -1 | \
-                     sed 's/.*:[[:space:]]*//' | sed 's/#.*//' | tr -d "'" | tr -d '"' | xargs)
+                     sed 's/.*:[[:space:]]*//' | sed 's/#.*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
             # Default to redhat-operators if not specified
             [[ -z "$source" ]] && source="redhat-operators"
 
@@ -271,12 +324,31 @@ build_operator_mappings() {
             # Store mapping: label|package|policy_dir|source
             echo "${label}|${package}|${policy_dir}|${source}" >> "$MAPPINGS_FILE"
         done
-    done
+    done < <(get_values_files)
 
     # Deduplicate
     if [[ -f "$MAPPINGS_FILE" ]]; then
         sort -u "$MAPPINGS_FILE" -o "$MAPPINGS_FILE"
     fi
+
+    # Warn about operators with -channel but no -subscription-name
+    local discovered_labels_list
+    discovered_labels_list=$(cut -d'|' -f1 "$MAPPINGS_FILE" 2>/dev/null | sort -u)
+
+    while IFS= read -r values_file; do
+        # Find all *-channel: entries (skip comments, skip gitops-dev which isn't an operator)
+        grep -v '^\s*#' "$values_file" 2>/dev/null | \
+        grep -oE '[a-z][-a-z0-9]*-channel:' 2>/dev/null | \
+        sed 's/-channel://' | sort -u | \
+        while IFS= read -r label; do
+            [[ -z "$label" ]] && continue
+            # Skip known non-operator labels
+            [[ "$label" == "gitops-dev" ]] && continue
+            if ! echo "$discovered_labels_list" | grep -qx "$label"; then
+                warn "Operator '$label' has ${label}-channel but no ${label}-subscription-name in $(basename "$values_file")"
+            fi
+        done
+    done < <(get_values_files)
 }
 
 # Get all discovered operator labels
@@ -540,10 +612,10 @@ is_newer_channel() {
     local ver1="" ver2=""
 
     # Try to extract version from channel name
-    if [[ "$channel1" =~ -([0-9]+\.[0-9]+)$ ]]; then
+    if [[ "$channel1" =~ -v?([0-9]+\.[0-9]+)$ ]]; then
         ver1="${BASH_REMATCH[1]}"
     fi
-    if [[ "$channel2" =~ -([0-9]+\.[0-9]+)$ ]]; then
+    if [[ "$channel2" =~ -v?([0-9]+\.[0-9]+)$ ]]; then
         ver2="${BASH_REMATCH[1]}"
     fi
 
@@ -574,9 +646,7 @@ update_autoshift_channel() {
     local new_channel="$2"
     local updated=0
 
-    for file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml "$PROJECT_ROOT"/autoshift/values/clusters/_example*.yaml; do
-        [[ -f "$file" ]] || continue
-
+    while IFS= read -r file; do
         if grep -q "${label}-channel:" "$file" 2>/dev/null; then
             if $DRY_RUN; then
                 local current
@@ -592,7 +662,7 @@ update_autoshift_channel() {
                 updated=1
             fi
         fi
-    done
+    done < <(get_update_files)
 
     return $updated
 }
@@ -631,16 +701,14 @@ get_current_channel() {
     local current=""
 
     # Check autoshift values files first
-    for file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
-        [[ -f "$file" ]] || continue
-        [[ "$(basename "$file")" == _* ]] && continue
+    while IFS= read -r file; do
         current=$(grep -E "^[[:space:]]*${label}-channel:" "$file" 2>/dev/null | head -1 | \
                   sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
         if [[ -n "$current" ]]; then
             echo "$current"
             return 0
         fi
-    done
+    done < <(get_values_files)
 
     # Check policy values file
     local policy_file
@@ -714,7 +782,7 @@ main() {
 
         # Get channels for this package from catalog
         local channels
-        channels=$(get_channels "$catalog_dir" "$package")
+        channels=$(get_channels "$catalog_dir" "$package" || true)
         if [[ -z "$channels" ]]; then
             printf "%-35s %-20s %-20s %s\n" "$package" "-" "-" "${YELLOW}not in catalog${NC}"
             continue
