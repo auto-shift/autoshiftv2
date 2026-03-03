@@ -15,6 +15,71 @@ This policy installs the vault-secrets-operator operator using AutoShift pattern
 helm template policies/vault-secrets/
 ```
 
+## Vault Secrets Operator – AutoShift Deployment
+
+These policies will deploy VSO to a Site Hub with OIDC JWT authentication configured. The operator will install a ClusterRoleBinding required to expose the OIDC JWKS endpoint publicly, handle namespace creation for storing VSO objects, and create a ServiceAccount in the `policies-autoshift` namespace with permissions to that project.
+
+You must set the following values for a successful deployment.
+
+---
+
+### Configure VSO Policy Values
+
+Edit `policies/vault-secrets/values.yaml` and set:
+
+```yaml
+vault:
+  connectionAddress: https://vault.example.lab   # The URL of your Vault server
+  role: cluster-auth-role                        # The role used by your chosen auth method
+  serviceAccount: vault-auth-sa                  # The Kubernetes service account to use
+  secretsNamespace: vault-secrets                # The project to create and store VSO objects + secrets
+```
+
+---
+
+### Configure Hub Values
+
+Edit your Hub `values.yaml` and set:
+
+```yaml
+vault-secrets: 'true'
+vault-secrets-subscription-name: vault-secrets-operator
+vault-secrets-channel: stable
+vault-secrets-source: certified-operators
+vault-secrets-source-namespace: openshift-marketplace
+vault-secrets-version: 'vault-secrets-operator.v1.0.1'
+
+vault-secrets-oidc-api: 'api.managed.example.lab'
+vault-secrets-auth-method: 'vaults-auth-method-name'
+```
+
+1. `vault-secrets-oidc-api` must be set to the API URL of your managed cluster.  
+2. `vault-secrets-auth-method` must match the auth method configured in Vault for that cluster.
+
+---
+
+### OIDC Audience Configuration
+
+The `vault-secrets-oidc-api` value is used as the Vault Audience required by your `VaultAuth` object. Its final rendered form will look like:
+
+```yaml
+spec:
+  jwt:
+    audiences:
+      - https://api.managed.example.lab:6443/openid/v1/jwks
+      - https://kubernetes.default.svc
+```
+
+The `vault-secrets-auth-method` value is required and will be unique per clusterset.
+
+---
+
+### After Deployment
+
+Once VSO is running with OIDC enabled and connections available, you can create additional policies to generate and manage the secrets required on your Hub cluster.
+
+
+
 ### Enable on Clusters
 Edit AutoShift values files to add the operator labels:
 
@@ -28,7 +93,6 @@ hubClusterSets:
       vault-secrets-channel: 'stable'
       vault-secrets-source: 'redhat-operators'
       vault-secrets-source-namespace: 'openshift-marketplace'
-      vault-secrets-ref: 'secret-name'
       # vault-secrets-version: 'vault-secrets-operator.v1.x.x'  # Optional: pin to specific CSV version
 
 managedClusterSets:
@@ -39,7 +103,6 @@ managedClusterSets:
       vault-secrets-channel: 'stable'
       vault-secrets-source: 'redhat-operators'
       vault-secrets-source-namespace: 'openshift-marketplace'
-      vault-secrets-ref: 'secret-name'
       # vault-secrets-version: 'vault-secrets-operator.v1.x.x'  # Optional: pin to specific CSV version
 
 # For specific clusters (optional override)
@@ -219,97 +282,6 @@ Add configuration labels to `values.yaml` and use in templates:
 setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/vault-secrets-setting" | default "default-value" {{ "hub}}" }}'
 ```
 
-## Vault Sidecar Policy
-
-Overview
-
-This Autoshift policy ensures that your operator has the correct HashiCorp Vault credentials and connections configured for accessing secrets. It automates the creation and enforcement of Vault-related resources, including:
-
-Vault connections – Ensures the namespace can connect to your HashiCorp Vault server.
-
-Vault authentication via AppRole – Configures the namespace to authenticate using Vault AppRole credentials.
-
-Vault static secrets – Synchronizes secrets from HashiCorp Vault to OpenShift.
-
-AppRole secret in your namespace – Ensures the AppRole secret is available in the target namespace. ---- ⚠️ This requires the secret to already exist in the policies-autoshift namespace on the hub cluster.
-
-By enforcing these resources, the policy ensures your operator can securely access and manage storage secrets across managed clusters.
-
-
-### Making the AppRole Secret ID available on the hub
-In order to utilize your AppRole credentials, you will need to make sure your secret ID is created in the namespace your secrets will be synced to. This will require you to create this secret on the hub itself, in the policies-autoshift namespace. The vault secret policy has a step to pull that secret from the hub cluster into your namespace automatically. 
-
-When you create your secret, it must be in this format: 
-
-``` yaml
-kind: Secret
-apiVersion: v1
-metadata:
-  name: approle-creds
-  namespace: policies-autoshift
-data:
-  id: YOUR-APPROLE-SECRET-ID
-type: Opaque
-```
-
-⚠️ This will be a manual step on every hubofhub you deploy. The Role ID that accompanies it will be put in the values file below. 
-
-### Adding the Policy to Your Operator’s Templates Folder
-
-To include this policy in your operator’s deployment:
-
-Place the YAML file in the templates folder of your operator chart.
-
-Typically:
-``` yaml
-my-operator/
-├─ charts/
-├─ templates/
-│  ├─ policy-vault-user-secret.yaml
-│  └─ other-policy-files.yaml
-└─ values.yaml
-```
-
-Add the Vault configuration values to the values.yaml file of your policy:
-```yaml
-vault:
-  connectionAddress:   # URL of your Vault server (e.g., https://vault.example.com)
-  mount:               # Name of your Vault secrets engine (e.g., "kv")
-  path:                # Path to the secret in the secrets engine (e.g., "operator/config")
-  authMountName:       # Name of your Vault auth method (e.g., "approle")
-  secretName:          # Name of the secret in OpenShift to sync Vault data
-  roleID:              # Vault AppRole Role ID
-  secretRef:           # Name of the secret in the policies-autoshift namespace containing your Secret ID
-  operatorNamespace:   # Namespace where the Vault operator is installed
-```
-Edit AutoShift values files to add the operator labels. Set the vault-secret-ref value to the name of the secret containing your secret ID on the hub, located in the policies-autoshift namespace.
-``` yaml 
-vault-secrets-ref: 'example'
-``` 
-
-Create an Autoshift value to go with your operator titled "youroperator-vault-secret" with an option for either true or false. This will activate your policy to be used alongside your operators policies.
-``` yaml 
-operator-vault-secret: 'true'
-``` 
-
-Make sure this same value is mentioned in the predicates of your vault-secret-creation policy:
-``` yaml 
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/operator-vault-secret'
-              operator: In
-              values:
-              - 'true'
-``` 
-
-Edit the top few lines of the vault-secret-creation policy to match the name of your operator. The policy name should not be the same as the placement name, and they must start with policy or placement. 
-
-``` yaml
-{{- $policyName := "policy-operator-vault-secret" }}
-{{- $placementName := "placement-policy-operator-vault-secret" }}
-```
 
 
 ## Common Patterns
