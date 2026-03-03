@@ -1,0 +1,65 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-cert-issuers
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  dependencies:
+    - name: policy-cert-manager-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: cluster-issuer
+      spec:
+        remediationAction: inform
+        severity: high
+        object-templates-raw: |
+
+          {{ "{{hub-" }} $issuerConfig := (index (fromConfigMap "{{ $.Values.policy_namespace }}" (printf "%s.%s" .ManagedClusterName "rendered-config") "config" | default "{}" | fromYaml) "cluster-issuer" | default dict)  {{ "hub}}" }}
+          {{ "{{hub-" }} if not (empty $issuerConfig) {{ "hub}}" }}
+            {{ "{{hub-" }} $issuers := (index $issuerConfig "issuers" | default list)  {{ "hub}}" }}
+            {{ "{{hub-" }} if not (empty $issuers) {{ "hub}}" }}
+              {{ "{{hub-" }} range $idx, $issuer := issuers {{ "hub}}" }}
+          - complianceType: musthave
+            apiVersion: operator.openshift.io/v1alpha1
+            kind: ClusterIssuer
+            metadata:
+              name: {{ "{{hub" }} (index $issuer "name" | default (printf "%s.%s" "ClusterIssuer" $idx)) {{ "hub}}" }}
+            spec:
+            ########## VENAFI ##########
+                {{ "{{hub-" }} if eq $issuer.type "venafi" {{ "hub}}" }}
+                  {{ "{{hub-" }} if not empty (index $issuer "tpp" | default dict) {{ "hub}}" }}
+              tpp:
+                caBundleSecretRef:
+                  key: {{ "{{hub" }} $issuer.tpp.caBundleSecretRef.key {{ "{{hub" }}
+                  name: {{ "{{hub" }} $issuer.tpp.caBundleSecretRef.name {{ "{{hub" }}
+                credentialsRef:
+                  name: {{ "{{hub" }} $issuer.tpp.credentialsRef.name {{ "{{hub" }}
+                url: {{ "{{hub" }} $issuer.tpp.url {{ "{{hub" }}
+                  {{ "{{hub-" }} else if not empty (index $issuer "cloud" | default dict) {{ "hub}}" }}
+              cloud:
+                apiTokenSecretRef: 
+                  key: {{ "{{hub" }} $issuer.cloud.apiTokenSecretRef.key {{ "hub}}" }}
+                  name: {{ "{{hub" }} $issuer.cloud.apiTokenSecretRef.name {{ "hub}}" }}
+                url: {{ "{{hub" }} $issuer.cloud.url {{ "hub}}" }}
+                  {{ "{{hub-" }}  end {{ "hub}}" }}
+              zone: {{ "{{hub" }} $issuer.zone {{ "hub}}" }}
+                {{ "{{hub-" }}  end {{ "hub}}" }}
+              {{ "{{hub-" }}  end {{ "hub}}" }}
+            {{ "{{hub-" }}  end {{ "hub}}" }}
+          {{ "{{hub-" }}  end {{ "hub}}" }}
+
