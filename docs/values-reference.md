@@ -285,6 +285,15 @@ Automated node health monitoring and remediation.
 | `acs-version`                     | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `acs-source`                      | string            | `redhat-operators`        |       |
 | `acs-source-namespace`            | string            | `openshift-marketplace`   |       |
+| `acs-scanner-v4`                  | string            | `Enabled`                 | Scanner V4 component state (`Enabled` or `Disabled`) |
+| `acs-monitoring`                  | bool              | `true`                    | Enable OpenShift monitoring integration for Central and SecuredCluster |
+| `acs-vm-scanning`                 | bool              |                           | Enable VM scanning (Developer Preview, opt-in) |
+| `acs-admission-control`           | bool              |                           | Enable admission control enforcement on SecuredCluster (opt-in, can block deployments) |
+| `acs-network-policies`            | string            |                           | Network policy generation (`Enabled` or `Disabled`), only set when explicit control needed |
+| `acs-auth-provider`               | string            | `openshift`               | Auth provider type (`openshift`). Hub only. Configures declarative RBAC |
+| `acs-auth-min-role`               | string            | `None`                    | Minimum role for authenticated users. Hub only |
+| `acs-auth-admin-group`            | string            | `cluster-admins`          | Group mapped to Admin role. Hub only |
+| `acs-default-policies`            | bool              |                           | Deploy baseline SecurityPolicy CRDs (no privilege escalation, no root, no shell). Hub only |
 
 ### Developer Spaces
 

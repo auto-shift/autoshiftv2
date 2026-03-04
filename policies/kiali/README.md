@@ -234,15 +234,6 @@ For operators that need installation verification:
               phase: Succeeded
 ```
 
-### ArgoCD Sync Annotations (If Needed)
-For policies requiring special sync behavior:
-```yaml
-annotations:
-  argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
-  argocd.argoproj.io/compare-options: IgnoreExtraneous
-  argocd.argoproj.io/sync-wave: "1"
-```
-
 ## Troubleshooting
 
 ### Policy Not Applied
