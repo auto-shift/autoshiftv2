@@ -55,11 +55,11 @@ spec:
           complianceType: musthave
           operatorGroup:
             # if operator group exists in namespace use that, otherwise use namespace name as default
-            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.acs.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.acs.namespace }}{{ "{{" }} end {{ "}}" }}'
-            namespace: {{ .Values.acs.namespace }}
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.acs.operatorNamespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.acs.operatorNamespace }}{{ "{{" }} end {{ "}}" }}'
+            namespace: {{ .Values.acs.operatorNamespace }}
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-subscription-name" | default "{{ .Values.acs.name }}" {{ "hub}}" }}'
-            namespace: {{ .Values.acs.namespace }}
+            namespace: {{ .Values.acs.operatorNamespace }}
             # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
             source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/acs-source" | default "{{ .Values.acs.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-source-namespace" | default "{{ .Values.acs.sourceNamespace }}" {{ "hub}}" }}'
