@@ -1,0 +1,69 @@
+apiVersion: policy.open-cluster-management.io/v1
+metadata:
+  name: policy-cert-issuers
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  dependencies:
+    - name: policy-cert-manager-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: cluster-issuer-secrets
+      spec:
+        remediationAction: inform
+        severity: high
+        object-templates-raw: |
+
+          {{ "{{hub-" }} $configMapName := (printf "%s.%s" .ManagedClusterName "rendered-config" "config")   {{ "hub}}" }}
+          {{ "{{hub-" }} $config := (fromConfigMap "{{ $.Values.policy_namespace }}" $configMapName "config" | default "{}" | fromYaml)  {{ "hub}}" }}
+          {{ "{{hub-" }} $secretConfig := ($config).secrets | default dict {{ "hub}}" }}
+          {{ "{{hub-" }} $issuerConfig := ($config).clusterIssuer | default dict {{ "hub}}" }}
+          {{ "{{hub-" }} $secretNamespace := ($secretConfig).namespace | default {{ $.Values.policy_namespace }} {{ "hub}}" }}
+          {{ "{{hub-" }} $issuers := ($issuerConfig).issuers | default list {{ "hub}}" }}
+          {{ "{{hub-" }} if not empty $issuers {{ "hub}}" }}
+            {{ "{{hub" }} range $issuerName, $issuer := $issuers {{ "hub}}" }}
+              {{ "{{hub-" }} if eq $issuer.type "venafi" {{ "hub}}" }}
+                {{ "{{hub-" }} if not empty (($issuer).tpp | default dict) {{ "hub}}" }}
+                  {{ "{{hub-" }} if not empty ((($issuer).tpp).caBundleSecretSource | default dict) {{ "hub}}" }}
+          - complianceType: musthave
+            apiversion: v1
+            kind: Secret
+            metadata:
+              name: {{ "{{hub" }} printf "%s-%s" $issuerName "ca-bundle" {{ "hub}}" }}
+              namespace: {{ $.Values.policy_namespace }}
+            data: 
+              ca.crt: {{ "{{hub" }} fromSecret $secretNamespace $issuer.tpp.caBundleSecretSource $issuer.ttp.caBundleSecretSource.key {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if not empty ((($issuer).tpp).credentialsSource | default dict) {{ "hub}}" }}
+          - complianceType: musthave
+            apiversion: v1
+            kind: Secret
+            metadata:
+              name: {{ "{{hub" }} printf "%s-%s" $issuerName "credentials" {{ "hub}}" }}
+              namespace: {{ $.Values.policy_namespace }}
+            data: 
+              token: {{ "{{hub" }} fromSecret $secretNamespace $issuer.tpp.caBundleSecretSource $issuer.ttp.crednetialSource.name {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+          {{ "{{hub-" }} end {{ "hub}}" }}
+
+
+                  
+
+

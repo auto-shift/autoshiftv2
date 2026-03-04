@@ -1,5 +1,5 @@
-apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
+apiVersion: policy.open-cluster-management.io/v1
 metadata:
   name: policy-cert-issuers
   namespace: {{ .Values.policy_namespace }}
@@ -29,26 +29,26 @@ spec:
         severity: high
         object-templates-raw: |
 
-          {{ "{{hub-" }} $issuerConfig := (index (fromConfigMap "{{ $.Values.policy_namespace }}" (printf "%s.%s" .ManagedClusterName "rendered-config") "config" | default "{}" | fromYaml) "cluster-issuer" | default dict)  {{ "hub}}" }}
+          {{ "{{hub-" }} $issuerConfig := (index (fromConfigMap "{{ $.Values.policy_namespace }}" (printf "%s.%s" .ManagedClusterName "rendered-config") "config" | default "{}" | fromYaml) "clusterIssuer" | default dict)  {{ "hub}}" }}
           {{ "{{hub-" }} if not (empty $issuerConfig) {{ "hub}}" }}
             {{ "{{hub-" }} $issuers := (index $issuerConfig "issuers" | default list)  {{ "hub}}" }}
             {{ "{{hub-" }} if not (empty $issuers) {{ "hub}}" }}
-              {{ "{{hub-" }} range $idx, $issuer := issuers {{ "hub}}" }}
+              {{ "{{hub-" }} range $issuerName, $issuer := $issuers {{ "hub}}" }}
           - complianceType: musthave
             apiVersion: operator.openshift.io/v1alpha1
             kind: ClusterIssuer
             metadata:
-              name: {{ "{{hub" }} (index $issuer "name" | default (printf "%s.%s" "ClusterIssuer" $idx)) {{ "hub}}" }}
+              name: {{ "{{hub" }} $issuerName {{ "hub}}" }}
             spec:
             ########## VENAFI ##########
                 {{ "{{hub-" }} if eq $issuer.type "venafi" {{ "hub}}" }}
                   {{ "{{hub-" }} if not empty (index $issuer "tpp" | default dict) {{ "hub}}" }}
               tpp:
                 caBundleSecretRef:
-                  key: {{ "{{hub" }} $issuer.tpp.caBundleSecretRef.key {{ "{{hub" }}
-                  name: {{ "{{hub" }} $issuer.tpp.caBundleSecretRef.name {{ "{{hub" }}
+                  key: ca.crt
+                  name: {{ "{{hub" }} printf "%s-%s" $issuerName "ca-bundle" {{ "{{hub" }}
                 credentialsRef:
-                  name: {{ "{{hub" }} $issuer.tpp.credentialsRef.name {{ "{{hub" }}
+                  name: {{ "{{hub" }} printf "%s-%s" $issuerName "tpp-credentials"  {{ "{{hub" }}
                 url: {{ "{{hub" }} $issuer.tpp.url {{ "{{hub" }}
                   {{ "{{hub-" }} else if not empty (index $issuer "cloud" | default dict) {{ "hub}}" }}
               cloud:
@@ -62,4 +62,5 @@ spec:
               {{ "{{hub-" }}  end {{ "hub}}" }}
             {{ "{{hub-" }}  end {{ "hub}}" }}
           {{ "{{hub-" }}  end {{ "hub}}" }}
+
 
