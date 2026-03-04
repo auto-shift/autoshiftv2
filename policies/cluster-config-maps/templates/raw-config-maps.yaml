@@ -1,4 +1,4 @@
-{{- $defaultConfigs := (index $.Values "config") }}
+{{- $defaultConfigs := (index $.Values "config" | default dict) }}
 {{- range $clusterName, $cluster := $.Values.clusters }}
 {{- $clusterConfig := (dict) }}
 {{- $_ := (merge $clusterConfig (index $cluster "config" | default dict) $defaultConfigs) }}
@@ -20,15 +20,15 @@ data:
 {{- $hubClusterSets := (index $.Values "hubClusterSets" | default dict) }}
 {{- $managedClusterSets := (index $.Values "managedClusterSets" | default dict) }}
 {{- range $clusterSetName, $clusterSet := (merge $clusterSets $hubClusterSets $managedClusterSets) }}
-{{- $clusterSetConfig := index $clusterSet "config" }}
 {{- $clusterSetConfig := (dict) }}
 {{- $_ := (merge $clusterSetConfig (index $clusterSet "config" | default dict) $defaultConfigs) }}
   {{- if not (empty $clusterSetConfig) }}
 ---
 apiVersion: v1
 kind: ConfigMap
-metadata: name: "{{ printf "cluster-set-config.%s" $clusterSetName }}"
-  namespace: "{{ $.Values.policy_namespace }}" 
+metadata:
+  name: "{{ printf "cluster-set-config.%s" $clusterSetName }}"
+  namespace: "{{ $.Values.policy_namespace }}"
   labels:
     autoshift.io/cluster-set-configs: ""
 data:
