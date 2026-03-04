@@ -1,7 +1,10 @@
+{{- $policyName := "policy-metallb-operator-install" }}
+{{- $placementName := "placement-policy-metallb-operator-install" }}
+
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-metallb-operator-install
+  name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -43,59 +46,34 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            # if operator group exists in namespace use that
-            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.metallb.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.metallb.name }}{{ "{{" }} end {{ "}}" }}'
+            # if operator group exists in namespace use that, otherwise use namespace name as default
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.metallb.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.metallb.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.metallb.namespace }}
           subscription:
-            namespace: {{ .Values.metallb.namespace }}
-            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-channel" | default "{{ .Values.metallb.channel }}" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-subscription-name" | default "{{ .Values.metallb.name }}" {{ "hub}}" }}'
-            # Source Selection Logic (evaluated on hub for each managed cluster):
-            # 1. If cluster has explicit 'autoshift.io/metallb-source' label → use that value
-            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
-            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
-            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
-            # 3. Else → use standard source (e.g., redhat-operators)
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-source" | default (ternary (printf "%s-%s" "{{ .Values.metallb.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.metallb.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
+            namespace: {{ .Values.metallb.namespace }}
+            # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
+            source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/metallb-source" | default "{{ .Values.metallb.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-source-namespace" | default "{{ .Values.metallb.sourceNamespace }}" {{ "hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-channel" | default "{{ .Values.metallb.channel }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-version" | default "" {{ "hub}}" }}'
-            # Upgrade approval for subscription will be set based on if version is set not this flag
-            # If version is set install plan is set to manual and only the version specified will be installed
+          # Upgrade approval for subscription will be set based on if version is set not this flag
+          # If version is set install plan is set to manual and only the version specified will be installed
           upgradeApproval: Automatic
           versions:
             - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/metallb-version" | default "" {{ "hub}}" }}'
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: openshift-metallb-csv-check
-        spec:
-          remediationAction: inform
-          severity: high
-          evaluationInterval:
-            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: operators.coreos.com/v1alpha1
-                kind: ClusterServiceVersion
-                metadata:
-                  namespace: {{ .Values.metallb.namespace }}
-                status:
-                  phase: Succeeded
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-metallb-operator-install
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
-  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
-  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
   predicates:
@@ -115,13 +93,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-metallb-operator-install
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-metallb-operator-install
+  name: {{ $placementName }}
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-metallb-operator-install
+  - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy
