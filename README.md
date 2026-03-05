@@ -91,14 +91,13 @@ Add the `dryRun` override in your ArgoCD Application's `helm.values` field. See 
 
 ## Custom GitOps Namespace
 
-By default, AutoShift deploys into the `openshift-gitops` namespace. To use a custom namespace, set `gitopsNamespace` in your values file:
+AutoShift automatically uses the namespace where the Helm release is installed. The ApplicationSet and all downstream policy charts inherit `Release.Namespace`, so deploying to a custom namespace requires no extra configuration — just install the chart into the desired namespace:
 
-```yaml
-# In autoshift/values/global.yaml
-gitopsNamespace: openshift-infra-gitops
+```bash
+helm install autoshift ./autoshift -n openshift-infra-gitops -f autoshift/values/global.yaml -f autoshift/values/clustersets/hub.yaml
 ```
 
-This propagates the namespace to all downstream policy charts via the ApplicationSet `valuesObject`.
+Or set the namespace on the ArgoCD Application that manages AutoShift.
 
 ### Keeping the Default ArgoCD Instance
 

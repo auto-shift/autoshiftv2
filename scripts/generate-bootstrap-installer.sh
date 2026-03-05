@@ -244,8 +244,7 @@ esac
 VALUES_OVERRIDE="# Enable OCI registry mode for ApplicationSet
         autoshiftOciRegistry: true
         autoshiftOciRepo: ${OCI_REPO}/policies
-        autoshiftOciVersion: \"${VERSION}\"
-        gitopsNamespace: ${GITOPS_NAMESPACE}"
+        autoshiftOciVersion: \"${VERSION}\""
 
 if [ "$VERSIONED" = true ]; then
     VALUES_OVERRIDE="${VALUES_OVERRIDE}
