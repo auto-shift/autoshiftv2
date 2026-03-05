@@ -34,18 +34,20 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.nodeFeatureDiscovery.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
         metadata:
-          name: install-node-feature-discovery
+          name: install-operator-node-feature-discovery
         spec:
           remediationAction: enforce
           severity: high
           complianceType: musthave
           operatorGroup:
-            # if operator group exists in namespace use that
-            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.nodeFeatureDiscovery.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.nodeFeatureDiscovery.operatorGroupName }}{{ "{{" }} end {{ "}}" }}'
+            # if operator group exists in namespace use that, otherwise use namespace name as default
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.nodeFeatureDiscovery.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.nodeFeatureDiscovery.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.nodeFeatureDiscovery.namespace }}
             {{- if .Values.nodeFeatureDiscovery.targetNamespaces }}
             targetNamespaces:
@@ -56,13 +58,8 @@ spec:
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-subscription-name" | default "{{ .Values.nodeFeatureDiscovery.name }}" {{ "hub}}" }}'
             namespace: {{ .Values.nodeFeatureDiscovery.namespace }}
-            # Source Selection Logic (evaluated on hub for each managed cluster):
-            # 1. If cluster has explicit 'autoshift.io/node-feature-discovery-source' label → use that value
-            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
-            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
-            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
-            # 3. Else → use standard source (e.g., redhat-operators)
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-source" | default (ternary (printf "%s-%s" "{{ .Values.nodeFeatureDiscovery.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.nodeFeatureDiscovery.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
+            # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
+            source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/node-feature-discovery-source" | default "{{ .Values.nodeFeatureDiscovery.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-source-namespace" | default "{{ .Values.nodeFeatureDiscovery.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-channel" | default "{{ .Values.nodeFeatureDiscovery.channel }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-version" | default "" {{ "hub}}" }}'

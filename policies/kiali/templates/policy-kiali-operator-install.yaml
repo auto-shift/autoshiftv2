@@ -34,18 +34,20 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.kiali.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
         metadata:
-          name: install-kiali
+          name: install-operator-kiali
         spec:
           remediationAction: enforce
           severity: high
           complianceType: musthave
           operatorGroup:
-            # if operator group exists in namespace use that
-            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.kiali.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.kiali.operatorGroupName }}{{ "{{" }} end {{ "}}" }}'
+            # if operator group exists in namespace use that, otherwise use namespace name as default
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.kiali.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.kiali.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.kiali.namespace }}
             {{- if .Values.kiali.targetNamespaces }}
             targetNamespaces:
@@ -56,13 +58,8 @@ spec:
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/kiali-subscription-name" | default "{{ .Values.kiali.name }}" {{ "hub}}" }}'
             namespace: {{ .Values.kiali.namespace }}
-            # Source Selection Logic (evaluated on hub for each managed cluster):
-            # 1. If cluster has explicit 'autoshift.io/kiali-source' label → use that value
-            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
-            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
-            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
-            # 3. Else → use standard source (e.g., redhat-operators)
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/kiali-source" | default (ternary (printf "%s-%s" "{{ .Values.kiali.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.kiali.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
+            # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
+            source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/kiali-source" | default "{{ .Values.kiali.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/kiali-source-namespace" | default "{{ .Values.kiali.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/kiali-channel" | default "{{ .Values.kiali.channel }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/kiali-version" | default "" {{ "hub}}" }}'
