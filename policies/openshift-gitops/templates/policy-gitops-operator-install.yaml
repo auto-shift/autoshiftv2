@@ -59,11 +59,7 @@ spec:
               - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
                 value: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default "{{ .Values.gitops.disableDefaultArgoCD }}" {{ "hub}}" }}'
               - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
-                {{- if .Values.gitops.devClusterScopedNamespaces }}
-                value: '{{ "{{hub" }} ternary (printf "%s,{{ .Values.gitops.devClusterScopedNamespaces }}" (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}")) (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") (and (eq (index .ManagedClusterLabels "autoshift.io/gitops-dev") "true") (eq (index .ManagedClusterLabels "autoshift.io/gitops-dev-cluster-scoped") "true")) {{ "hub}}" }}'
-                {{- else }}
-                value: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}'
-                {{- end }}
+                value: '{{ "{{hub-" }} $ns := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") {{ "hub}}" }}{{ "{{hub-" }} $result := $ns {{ "hub}}" }}{{ "{{hub" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/gitops-dev-team-") ($label | hasSuffix "-cluster-scoped") (eq $val "true") {{ "hub}}" }}{{ "{{hub-" }} $team := replace "autoshift.io/gitops-dev-team-" "" $label {{ "hub}}" }}{{ "{{hub-" }} $team = replace "-cluster-scoped" "" $team {{ "hub}}" }}{{ "{{hub-" }} $result = printf "%s,openshift-gitops-%s" $result $team {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} $result {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-source-namespace" | default "{{ .Values.gitops.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-channel" | default "{{ .Values.gitops.channel }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-version" | default "" {{ "hub}}" }}'
