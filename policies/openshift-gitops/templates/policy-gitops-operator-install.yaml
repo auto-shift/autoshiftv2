@@ -54,6 +54,12 @@ spec:
             namespace: {{ .Values.gitops.namespace }}
             # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
             source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/gitops-source" | default "{{ .Values.gitops.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
+            config:
+              env:
+              - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
+                value: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default "{{ .Values.gitops.disableDefaultArgoCD }}" {{ "hub}}" }}'
+              - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
+                value: '{{ "{{hub-" }} $ns := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") {{ "hub}}" }}{{ "{{hub-" }} $result := $ns {{ "hub}}" }}{{ "{{hub" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/gitops-dev-team-") ($label | hasSuffix "-cluster-scoped") (eq $val "true") {{ "hub}}" }}{{ "{{hub-" }} $team := replace "autoshift.io/gitops-dev-team-" "" $label {{ "hub}}" }}{{ "{{hub-" }} $team = replace "-cluster-scoped" "" $team {{ "hub}}" }}{{ "{{hub-" }} $result = printf "%s,openshift-gitops-%s" $result $team {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} $result {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-source-namespace" | default "{{ .Values.gitops.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-channel" | default "{{ .Values.gitops.channel }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-version" | default "" {{ "hub}}" }}'
