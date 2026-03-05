@@ -1,0 +1,224 @@
+# This policy configures addon tuning for ACM governance controllers at scale.
+# - Annotations on ManagedClusterAddOn control concurrency, QPS, and burst
+# - AddOnDeploymentConfig via ClusterManagementAddOn controls resource limits
+#
+{{- if .Values.hubClusterSets }}
+{{- $policyName := "policy-acm-addon-tuning" }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-acm-mch-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # Annotate config-policy-controller ManagedClusterAddOn for tuning
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acm-addon-config-policy-controller-tuning
+        spec:
+          remediationAction: enforce
+          severity: medium
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: addon.open-cluster-management.io/v1alpha1
+                kind: ManagedClusterAddOn
+                metadata:
+                  name: config-policy-controller
+                  namespace: '{{ "{{hub" }} .ManagedClusterName {{ "hub}}" }}'
+                  annotations:
+                    policy-evaluation-concurrency: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-eval-concurrency" | default "{{ .Values.acm.addonTuning.configPolicyController.evaluationConcurrency }}" {{ "hub}}" }}'
+                    client-qps: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-client-qps" | default "{{ .Values.acm.addonTuning.configPolicyController.clientQPS }}" {{ "hub}}" }}'
+                    client-burst: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-client-burst" | default "{{ .Values.acm.addonTuning.configPolicyController.clientBurst }}" {{ "hub}}" }}'
+    # Annotate governance-policy-framework ManagedClusterAddOn for tuning
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acm-addon-governance-framework-tuning
+        spec:
+          remediationAction: enforce
+          severity: medium
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: addon.open-cluster-management.io/v1alpha1
+                kind: ManagedClusterAddOn
+                metadata:
+                  name: governance-policy-framework
+                  namespace: '{{ "{{hub" }} .ManagedClusterName {{ "hub}}" }}'
+                  annotations:
+                    policy-evaluation-concurrency: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-eval-concurrency" | default "{{ .Values.acm.addonTuning.governancePolicyFramework.evaluationConcurrency }}" {{ "hub}}" }}'
+                    client-qps: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-client-qps" | default "{{ .Values.acm.addonTuning.governancePolicyFramework.clientQPS }}" {{ "hub}}" }}'
+                    client-burst: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-client-burst" | default "{{ .Values.acm.addonTuning.governancePolicyFramework.clientBurst }}" {{ "hub}}" }}'
+    # AddOnDeploymentConfig for config-policy-controller resource limits
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acm-addon-config-policy-controller-resources
+        spec:
+          remediationAction: enforce
+          severity: medium
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: addon.open-cluster-management.io/v1alpha1
+                kind: AddOnDeploymentConfig
+                metadata:
+                  name: config-policy-controller-tuning
+                  namespace: {{ .Values.acm.namespace }}
+                spec:
+                  resourceRequirements:
+                    - containerID: 'deployments:config-policy-controller:config-policy-controller'
+                      resources:
+                        requests:
+                          memory: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-mem-request" | default "{{ .Values.acm.addonTuning.configPolicyController.resources.requests.memory }}" {{ "hub}}" }}'
+                          cpu: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-cpu-request" | default "{{ .Values.acm.addonTuning.configPolicyController.resources.requests.cpu }}" {{ "hub}}" }}'
+                        limits:
+                          memory: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-mem-limit" | default "{{ .Values.acm.addonTuning.configPolicyController.resources.limits.memory }}" {{ "hub}}" }}'
+    # AddOnDeploymentConfig for governance-policy-framework resource limits
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acm-addon-governance-framework-resources
+        spec:
+          remediationAction: enforce
+          severity: medium
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: addon.open-cluster-management.io/v1alpha1
+                kind: AddOnDeploymentConfig
+                metadata:
+                  name: governance-policy-framework-tuning
+                  namespace: {{ .Values.acm.namespace }}
+                spec:
+                  resourceRequirements:
+                    - containerID: 'deployments:governance-policy-framework:governance-policy-framework-addon'
+                      resources:
+                        requests:
+                          memory: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-mem-request" | default "{{ .Values.acm.addonTuning.governancePolicyFramework.resources.requests.memory }}" {{ "hub}}" }}'
+                          cpu: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-cpu-request" | default "{{ .Values.acm.addonTuning.governancePolicyFramework.resources.requests.cpu }}" {{ "hub}}" }}'
+                        limits:
+                          memory: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-addon-gpf-mem-limit" | default "{{ .Values.acm.addonTuning.governancePolicyFramework.resources.limits.memory }}" {{ "hub}}" }}'
+    # Patch ClusterManagementAddOn for config-policy-controller to reference resource config
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acm-addon-config-policy-controller-ref
+        spec:
+          remediationAction: enforce
+          severity: medium
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: addon.open-cluster-management.io/v1alpha1
+                kind: ClusterManagementAddOn
+                metadata:
+                  name: config-policy-controller
+                spec:
+                  supportedConfigs:
+                    - group: addon.open-cluster-management.io
+                      resource: addondeploymentconfigs
+                      defaultConfig:
+                        name: config-policy-controller-tuning
+                        namespace: {{ .Values.acm.namespace }}
+    # Patch ClusterManagementAddOn for governance-policy-framework to reference resource config
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acm-addon-governance-framework-ref
+        spec:
+          remediationAction: enforce
+          severity: medium
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: addon.open-cluster-management.io/v1alpha1
+                kind: ClusterManagementAddOn
+                metadata:
+                  name: governance-policy-framework
+                spec:
+                  supportedConfigs:
+                    - group: addon.open-cluster-management.io
+                      resource: addondeploymentconfigs
+                      defaultConfig:
+                        name: governance-policy-framework-tuning
+                        namespace: {{ .Values.acm.namespace }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-{{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acm-addon-tuning'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-{{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-{{ $policyName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

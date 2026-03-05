@@ -177,6 +177,40 @@ created for each replica of the image service. 2GiB per OSImage entry is require
 | `acm-search-storage`        | bool      | `true` or `false`         | Enable persistent storage for ACM Search (recommended for production) |
 | `acm-search-storage-class`  | string    | `ocs-storagecluster-ceph-rbd` | Storage class for Search database |
 | `acm-search-storage-size`   | string    | `100Gi`                   | Storage size for Search database. Sizing: Small (<50 clusters): 20Gi, Medium (50-200): 50Gi, Large (200-500): 100Gi, Very Large (500+): 200Gi+ |
+| `acm-addon-tuning`          | bool      | `true` or `false`         | Enable addon tuning for governance controllers. Recommended for 50+ managed clusters. See sizing guidelines below. |
+| `acm-addon-cpc-eval-concurrency` | string | `5`                  | config-policy-controller concurrent policy evaluations (default: 2) |
+| `acm-addon-cpc-client-qps`  | string    | `75`                     | config-policy-controller K8s API client QPS (default: 30) |
+| `acm-addon-cpc-client-burst` | string   | `100`                    | config-policy-controller K8s API client burst (default: 45) |
+| `acm-addon-cpc-mem-request`  | string   | `256Mi`                  | config-policy-controller memory request |
+| `acm-addon-cpc-cpu-request`  | string   | `150m`                   | config-policy-controller CPU request |
+| `acm-addon-cpc-mem-limit`    | string   | `1Gi`                    | config-policy-controller memory limit |
+| `acm-addon-gpf-eval-concurrency` | string | `5`                  | governance-policy-framework concurrent policy evaluations (default: 2) |
+| `acm-addon-gpf-client-qps`  | string    | `75`                     | governance-policy-framework K8s API client QPS (default: 30) |
+| `acm-addon-gpf-client-burst` | string   | `100`                    | governance-policy-framework K8s API client burst (default: 45) |
+| `acm-addon-gpf-mem-request`  | string   | `128Mi`                  | governance-policy-framework memory request |
+| `acm-addon-gpf-cpu-request`  | string   | `100m`                   | governance-policy-framework CPU request |
+| `acm-addon-gpf-mem-limit`    | string   | `512Mi`                  | governance-policy-framework memory limit |
+
+**ACM Default vs AutoShift Tuned Values:**
+
+| Parameter | ACM Default | AutoShift Tuned |
+|---|---|---|
+| config-policy-controller eval-concurrency | 2 | 5 |
+| config-policy-controller client-qps | 30 | 75 |
+| config-policy-controller client-burst | 45 | 100 |
+| config-policy-controller memory limit | 512Mi | 1Gi |
+| governance-policy-framework eval-concurrency | 2 | 5 |
+| governance-policy-framework client-qps | 30 | 75 |
+| governance-policy-framework client-burst | 45 | 100 |
+| governance-policy-framework memory limit | 256Mi | 512Mi |
+
+**Addon Tuning Sizing Guidelines:**
+- **Small (< 50 clusters)**: ACM defaults are sufficient, tuning not needed
+- **Medium (50-200 clusters)**: Enable tuning with AutoShift defaults
+- **Large (200-500 clusters)**: Consider `acm-addon-cpc-eval-concurrency: '10'`, `acm-addon-cpc-mem-limit: '2Gi'`
+- **Very Large (500+ clusters)**: Consider `acm-addon-cpc-eval-concurrency: '15'`, `acm-addon-cpc-client-qps: '150'`, `acm-addon-cpc-mem-limit: '4Gi'`
+
+> **Note:** Increased concurrency/QPS increases CPU and memory on the controller pods, the Kubernetes API server, and the OpenShift API server. Concurrency/QPS/burst are set via ManagedClusterAddOn annotations per ACM 2.15 docs. Resource limits are set via AddOnDeploymentConfig.
 
 ### Cluster Labels
 
