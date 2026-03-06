@@ -142,7 +142,6 @@ spec:
                   namespace: openshift-gitops-{{ $team }}
                   labels:
                     example: basic
-            # Basic mode Placement - hub clusters without the argocd-agent label
             - complianceType: musthave
               objectDefinition:
                 apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -167,10 +166,6 @@ spec:
                               operator: In
                               values:
                               - 'hub'
-                            - key: 'autoshift.io/gitops-dev-team-{{ $team }}-argocd-agent'
-                              operator: NotIn
-                              values:
-                              - 'true'
                   tolerations:
                     - key: cluster.open-cluster-management.io/unreachable
                       operator: Exists
@@ -192,7 +187,43 @@ spec:
                     apiVersion: cluster.open-cluster-management.io/v1beta1
                     name: openshift-gitops-{{ $team }}
                     namespace: openshift-gitops-{{ $team }}
-            # Agent mode Placement - hub clusters with the argocd-agent label
+            {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ $clusterSet }}
+                  namespace: openshift-gitops-{{ $team }}
+                spec:
+                  clusterSet: {{ $clusterSet }}
+            {{- end }}
+            {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ $clusterSet }}
+                  namespace: openshift-gitops-{{ $team }}
+                spec:
+                  clusterSet: {{ $clusterSet }}
+            {{ end }}
+    # ArgoCD Agent configuration - conditionally enabled via label
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-{{ $team }}-argocd-agent
+        spec:
+          remediationAction: enforce
+          severity: medium
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $agentEnabled := eq (index .ManagedClusterLabels "autoshift.io/gitops-dev-team-{{ $team }}-argocd-agent" | default "false") "true" {{ "hub}}" }}
+            {{ "{{hub-" }} if $agentEnabled {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -244,43 +275,6 @@ spec:
                     apiVersion: cluster.open-cluster-management.io/v1beta1
                     name: openshift-gitops-{{ $team }}-argocd-agent
                     namespace: openshift-gitops-{{ $team }}
-            {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: cluster.open-cluster-management.io/v1beta2
-                kind: ManagedClusterSetBinding
-                metadata:
-                  name: {{ $clusterSet }}
-                  namespace: openshift-gitops-{{ $team }}
-                spec:
-                  clusterSet: {{ $clusterSet }}
-            {{- end }}
-            {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: cluster.open-cluster-management.io/v1beta2
-                kind: ManagedClusterSetBinding
-                metadata:
-                  name: {{ $clusterSet }}
-                  namespace: openshift-gitops-{{ $team }}
-                spec:
-                  clusterSet: {{ $clusterSet }}
-            {{ end }}
-    # ArgoCD Agent configuration - conditionally enabled via label
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: gitops-{{ $team }}-argocd-agent
-        spec:
-          remediationAction: enforce
-          severity: medium
-          evaluationInterval:
-            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates-raw: |
-            {{ "{{hub-" }} $agentEnabled := eq (index .ManagedClusterLabels "autoshift.io/gitops-dev-team-{{ $team }}-argocd-agent" | default "false") "true" {{ "hub}}" }}
-            {{ "{{hub-" }} if $agentEnabled {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: argoproj.io/v1beta1
@@ -296,6 +290,15 @@ spec:
                       namespace:
                         allowedNamespaces:
                         - '*'
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: addon.open-cluster-management.io/v1alpha1
+                kind: ManagedClusterAddOn
+                metadata:
+                  name: gitops-addon
+                  namespace: {{ "{{hub" }} .ManagedClusterName {{ "hub}}" }}
+                spec:
+                  installNamespace: open-cluster-management-agent-addon
             {{ "{{hub-" }} else {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
