@@ -27,15 +27,15 @@ Your operator is now being deployed across your clusters! Check the ArgoCD dashb
 
 ## 📋 Table of Contents
 
-- [Architecture Overview](#-architecture-overview)
-- [Developer Setup](#-developer-setup)
-- [Creating Your First Policy](#-creating-your-first-policy)
-- [Policy Development Guide](#-policy-development-guide)
-- [Common Development Tasks](#-common-development-tasks)
-- [Testing and Validation](#-testing-and-validation)
-- [Contributing](#-contributing)
-- [Troubleshooting](#-troubleshooting)
-- [Additional Resources](#-additional-resources)
+- [Architecture Overview](#architecture-overview)
+- [Developer Setup](#developer-setup)
+- [Creating Your First Policy](#creating-your-first-policy)
+- [Policy Development Guide](#policy-development-guide)
+- [Common Development Tasks](#common-development-tasks)
+- [Testing and Validation](#testing-and-validation)
+- [Contributing](#contributing)
+- [Troubleshooting](#troubleshooting)
+- [Additional Resources](#additional-resources)
 
 ## 🏗️ Architecture Overview
 
@@ -262,7 +262,7 @@ The generator creates a complete policy with the correct structure (Policy + Con
 ./scripts/generate-policy.sh
 ```
 
-See [generate-policy.sh documentation](../scripts/README.md#-generate-policysh) for all options including placement targets (`hub`, `spoke`, `both`, `all`) and dependency management.
+See [generate-policy.sh documentation](../scripts/README.md#generate-policysh) for all options including placement targets (`hub`, `spoke`, `both`, `all`) and dependency management.
 
 ### Step 5: Test and Deploy
 
@@ -706,4 +706,4 @@ oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 
 ---
 
-**Ready to contribute?** Start by [creating your first policy](#-creating-your-first-policy) or explore our [existing policies](../policies/) for examples!
+**Ready to contribute?** Start by [creating your first policy](#creating-your-first-policy) or explore our [existing policies](../policies/) for examples!
