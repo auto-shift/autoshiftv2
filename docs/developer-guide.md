@@ -262,7 +262,7 @@ The generator creates a complete policy with the correct structure (Policy + Con
 ./scripts/generate-policy.sh
 ```
 
-See [generate-policy.sh documentation](https://github.com/auto-shift/autoshiftv2/blob/main/scripts/README.md#-generate-policysh) for all options including placement targets (`hub`, `spoke`, `both`, `all`) and dependency management.
+See [generate-policy.sh documentation](../scripts/README.md#generate-policysh) for all options including placement targets (`hub`, `spoke`, `both`, `all`) and dependency management.
 
 ### Step 5: Test and Deploy
 
@@ -693,7 +693,7 @@ oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 ## 📖 Additional Resources
 
 ### Documentation
-- [Policy Quick Start Documentation](https://github.com/auto-shift/autoshiftv2/blob/main/scripts/README.md)
+- [Policy Quick Start Documentation](../scripts/README.md)
 - [OpenShift GitOps Documentation](https://docs.openshift.com/container-platform/latest/cicd/gitops/understanding-openshift-gitops.html)
 - [RHACM Policy Framework](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes/)
 
