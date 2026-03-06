@@ -8,20 +8,7 @@
 
 set -e
 
-# Colors for output
-if [[ -t 1 ]] || [[ -t 2 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    NC='\033[0m'
-else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    BLUE=''
-    NC=''
-fi
+exec "$(dirname "$0")/terminal-settings.sh"
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -105,16 +92,9 @@ extract_component_info() {
     local label_prefix=""
     local filename=""
 
-    # Extract component name from OperatorPolicy name: install-operator-COMPONENT
-    component_name=$(grep -oE 'name: install-operator-[a-zA-Z0-9-]+' "$policy_file" 2>/dev/null | \
-                     head -1 | \
-                     sed 's/name: install-operator-//')
-
-    # Fallback: derive from filename
-    if [[ -z "$component_name" ]]; then
-        filename=$(basename "$policy_file" .yaml)
-        component_name=$(echo "$filename" | sed 's/^policy-//' | sed 's/-operator-install$//' | sed 's/-install-operator$//' | sed 's/-op-install$//' | sed 's/-operator$//')
-    fi
+    # Extract from filename
+    filename=$(basename "$policy_file")
+    component_name=$(echo "$filename" | sed 's/policy-//' | sed 's/-operator-install\.yaml//')
 
     # Extract camelCase from .Values.CAMEL.namespace pattern
     component_camel=$(grep -oE '\.Values\.[a-zA-Z0-9]+\.namespace' "$policy_file" 2>/dev/null | \
@@ -153,14 +133,10 @@ regenerate_policy() {
     log_verbose "component_camel: $component_camel"
     log_verbose "label_prefix: $label_prefix"
 
-    # Use awk instead of sed to avoid shell expansion of $base and other
-    # Go template variables in the template file
-    awk -v cn="$component_name" -v cc="$component_camel" -v lp="$label_prefix" '{
-        gsub(/\{\{COMPONENT_NAME\}\}/, cn)
-        gsub(/\{\{COMPONENT_CAMEL\}\}/, cc)
-        gsub(/\{\{LABEL_PREFIX\}\}/, lp)
-        print
-    }' "$TEMPLATE_FILE" > "$policy_file"
+    sed -e "s/{{COMPONENT_NAME}}/$component_name/g" \
+        -e "s/{{COMPONENT_CAMEL}}/$component_camel/g" \
+        -e "s/{{LABEL_PREFIX}}/$label_prefix/g" \
+        "$TEMPLATE_FILE" > "$policy_file"
 }
 
 # Main function
@@ -172,13 +148,8 @@ main() {
     log_info "Regenerating operator policies from template..."
     echo ""
 
-    # Find all operator install policies (matches OperatorPolicy kind in file)
-    for policy_file in "$POLICIES_DIR"/*/templates/policy-*.yaml; do
-        # Skip if glob matched nothing
-        [[ -f "$policy_file" ]] || continue
-        # Only process files that contain an OperatorPolicy (i.e., operator install policies)
-        grep -q 'kind: OperatorPolicy' "$policy_file" 2>/dev/null || continue
-
+    # Find all operator install policies
+    while IFS= read -r -d '' policy_file; do
         local operator_dir=""
         operator_dir=$(basename "$(dirname "$(dirname "$policy_file")")")
 
@@ -187,7 +158,7 @@ main() {
             continue
         fi
 
-        total=$((total + 1))
+        ((total++))
 
         local info=""
         local component_name=""
@@ -201,13 +172,13 @@ main() {
         if [[ -n "$component_name" && -n "$component_camel" && -n "$label_prefix" ]]; then
             regenerate_policy "$policy_file" "$component_name" "$component_camel" "$label_prefix"
             log_success "  $operator_dir"
-            regenerated=$((regenerated + 1))
+            ((regenerated++))
         else
             log_error "  $operator_dir - could not extract component info"
-            failed=$((failed + 1))
+            ((failed++))
         fi
 
-    done
+    done < <(find "$POLICIES_DIR" -name "policy-*-operator-install.yaml" -print0 2>/dev/null)
 
     # Summary
     echo ""
