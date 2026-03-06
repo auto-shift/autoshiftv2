@@ -142,6 +142,7 @@ spec:
                   namespace: openshift-gitops-{{ $team }}
                   labels:
                     example: basic
+            # Basic mode Placement - hub clusters without the argocd-agent label
             - complianceType: musthave
               objectDefinition:
                 apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -166,6 +167,10 @@ spec:
                               operator: In
                               values:
                               - 'hub'
+                            - key: 'autoshift.io/gitops-dev-team-{{ $team }}-argocd-agent'
+                              operator: NotIn
+                              values:
+                              - 'true'
                   tolerations:
                     - key: cluster.open-cluster-management.io/unreachable
                       operator: Exists
@@ -186,6 +191,58 @@ spec:
                     kind: Placement
                     apiVersion: cluster.open-cluster-management.io/v1beta1
                     name: openshift-gitops-{{ $team }}
+                    namespace: openshift-gitops-{{ $team }}
+            # Agent mode Placement - hub clusters with the argocd-agent label
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta1
+                kind: Placement
+                metadata:
+                  name: openshift-gitops-{{ $team }}-argocd-agent
+                  namespace: openshift-gitops-{{ $team }}
+                spec:
+                  clusterSets:
+                  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+                    - {{ $clusterSet }}
+                  {{- end }}
+                  predicates:
+                    - requiredClusterSelector:
+                        labelSelector:
+                          matchExpressions:
+                            - key: 'autoshift.io/gitops-dev'
+                              operator: In
+                              values:
+                              - 'true'
+                            - key: 'autoshift.io/gitops-dev-team-{{ $team }}'
+                              operator: In
+                              values:
+                              - 'hub'
+                            - key: 'autoshift.io/gitops-dev-team-{{ $team }}-argocd-agent'
+                              operator: In
+                              values:
+                              - 'true'
+                  tolerations:
+                    - key: cluster.open-cluster-management.io/unreachable
+                      operator: Exists
+                    - key: cluster.open-cluster-management.io/unavailable
+                      operator: Exists
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps.open-cluster-management.io/v1beta1
+                kind: GitOpsCluster
+                metadata:
+                  name: argo-acm-importer-{{ $team }}-argocd-agent
+                  namespace: openshift-gitops-{{ $team }}
+                spec:
+                  argoCDAgent:
+                    enabled: true
+                  argoServer:
+                    cluster: notused
+                    argoNamespace: openshift-gitops-{{ $team }}
+                  placementRef:
+                    kind: Placement
+                    apiVersion: cluster.open-cluster-management.io/v1beta1
+                    name: openshift-gitops-{{ $team }}-argocd-agent
                     namespace: openshift-gitops-{{ $team }}
             {{- range $clusterSet, $value := $.Values.managedClusterSets }}
             - complianceType: musthave
@@ -209,6 +266,43 @@ spec:
                 spec:
                   clusterSet: {{ $clusterSet }}
             {{ end }}
+    # ArgoCD Agent configuration - conditionally enabled via label
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-{{ $team }}-argocd-agent
+        spec:
+          remediationAction: enforce
+          severity: medium
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $agentEnabled := eq (index .ManagedClusterLabels "autoshift.io/gitops-dev-team-{{ $team }}-argocd-agent" | default "false") "true" {{ "hub}}" }}
+            {{ "{{hub-" }} if $agentEnabled {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: argoproj.io/v1beta1
+                kind: ArgoCD
+                metadata:
+                  name: argocd-dev
+                  namespace: openshift-gitops-{{ $team }}
+                spec:
+                  argoCDAgent:
+                    principal:
+                      allowedNamespaces:
+                      - '*'
+                      auth: 'mtls:CN=system:open-cluster-management:cluster:([^:]+):addon:gitops-addon:agent:gitops-addon-agent'
+                      enabled: true
+            {{ "{{hub-" }} else {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: openshift-gitops-{{ $team }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

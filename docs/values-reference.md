@@ -394,7 +394,8 @@ Automated node health monitoring and remediation.
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `gitops-dev`                          | bool              |                           | If not set Developer OpenShift Gitops intances will not be managed |
-| `gitops-dev-team-{INSERT_TEAM_NAME}`  | string        |                           | Team that can deploy onto cluster from dev team gitops. Must match a team in the `gitops-dev` helm chart values file |
+| `gitops-dev-team-{INSERT_TEAM_NAME}`  | string            |                           | Team that can deploy onto cluster from dev team gitops. Must match a team in the `gitops-dev` helm chart values file |
+| `gitops-dev-team-{INSERT_TEAM_NAME}-argocd-agent` | bool |                           | Enable ArgoCD agent pull model for this team (ACM 2.15+). Requires hub mode. Set on both hub and managed clusters |
 
 ### Loki
 
