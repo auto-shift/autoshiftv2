@@ -537,7 +537,7 @@ Identifiers (`{id}`, `{M}`) can be numbers or names (e.g., `1`, `mgmt`, `storage
 
 Each interface gets its own NNCP for fault isolation: `nmstate-bond-{id}`, `nmstate-vlan-{id}`, `nmstate-ethernet-{id}`, `nmstate-ovs-bridge-{id}`, `nmstate-network-config` (routes + DNS + OVN combined).
 
-See [policies/nmstate/README.md](../policies/nmstate/README.md) for detailed documentation and examples.
+See [policies/nmstate/README.md](https://github.com/auto-shift/autoshiftv2/blob/main/policies/nmstate/README.md) for detailed documentation and examples.
 
 #### Operator Configuration
 

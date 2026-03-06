@@ -357,4 +357,4 @@ oc get applications -n openshift-gitops -o custom-columns=NAME:.metadata.name,RE
 
 - [Quick Start Guide](quickstart.md)
 - [Gradual Rollout Guide](gradual-rollout.md)
-- [Main README](../README.md)
+- [Main README](https://github.com/auto-shift/autoshiftv2#readme)

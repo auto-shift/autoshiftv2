@@ -6,7 +6,7 @@ Complete documentation for AutoShift - Infrastructure as Code for OpenShift usin
 
 ### Getting Started
 - **[Quick Start Guide](quickstart.md)** - Full installation walkthrough (Source and OCI)
-- **[Main README](../README.md)** - Architecture and values file composition
+- **[Main README](https://github.com/auto-shift/autoshiftv2#readme)** - Architecture and values file composition
 
 ### Configuration
 - **[Values Reference](values-reference.md)** - All cluster labels and configuration options
