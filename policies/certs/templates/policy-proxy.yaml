@@ -1,0 +1,496 @@
+---
+##### CONFIGURE CLUSTER PROXY #####
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+  name: policy-proxy-ca
+  namespace: policies-autoshift
+spec:
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy
+      name: policy-ca-cert-bundle
+      namespace: "policies-autoshift"
+      compliance: Compliant
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-proxy-ca
+      spec:
+        object-templates:
+        - complianceType: musthave
+          objectDefinition:
+            apiVersion: config.openshift.io/v1
+            kind: Proxy
+            metadata:
+              name: cluster
+            spec:
+              trustedCA:
+                name: user-ca-bundle
+        remediationAction: enforce
+        severity: medium
+---
+##### CREATE USER CA BUNDLE FOR PROXY #####
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+  name: policy-ca-cert-bundle
+  namespace: policies-autoshift
+spec:
+  disabled: false
+  remediationAction: enforce
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-ca-cert-bundle
+      spec:
+        object-templates-raw: |
+          - complianceType: musthave
+            objectDefinition: 
+              apiVersion: v1
+              kind: ConfigMap
+              metadata: 
+                name: user-ca-bundle
+                namespace: openshift-config
+              data: 
+                ca-bundle.crt: |
+                  {{- $.Values.caBundle | nindent 18 }}
+---
+##### CREATE API AND APPS TLS CERTS #####
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+  name: policy-api-ingress-tls
+  namespace: policies-autoshift
+spec:
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy 
+      name: policy-venafi-issuer
+      namespace: "policies-autoshift"
+      compliance: Compliant
+  remediationAction: enforce
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-api-ingress-tls
+      spec:
+        object-templates-raw: |
+
+          {{ "{{-" }} $clusterName := "{{ "{{hub" }} .ManagedClusterName {{ "hub}}" }}" {{ "}}" }}
+          {{ "{{-" }} $dnsNames := (dict) {{ "}}" }}
+          {{ "{{-" }} $_ := set $dnsNames "api" (printf `api.%s.example.com` $clusterName) {{ "}}" }}
+          {{ "{{-" }} $_ := set $dnsNames "apps" (printf `*.apps.%s.example.com` $clusterName) {{ "}}" }}
+          {{ "{{-" }} $_ := set $dnsNames "clusterName" $clusterName {{ "}}" }}
+          {{ "{{-" }} if eq $clusterName "local-cluster" {{ "}}" }}
+            {{ "{{-" }} $infraName := (index (fromClusterClaim "infrastructure.openshift.io" | fromJson) "infraName") {{ "}}" }}
+            {{ "{{-" }} $infraNameSuffix := (print $infraName | regexFind `-[A-z0-9]+$`) {{ "}}" }}
+            {{ "{{-" }} $clusterNameDerived := (replace $infraNameSuffix "" $infraName) {{ "}}" }}
+            {{ "{{-" }} $_ := set $dnsNames "api" (printf `api.%s.example.com` $clusterNameDerived) {{ "}}" }}
+            {{ "{{-" }} $_ := set $dnsNames "apps" (printf `*.apps.%s.example.com` $clusterNameDerived) {{ "}}" }}
+             {{ "{{-" }} $_ := set $dnsNames "clusterName" $clusterNameDerived {{ "}}" }}
+          {{ "{{-" }} end {{ "}}" }}
+          - complianceType: musthave
+            objectDefinition:
+              apiVersion: cert-manager.io/v1
+              kind: Certificate
+              metadata:
+                name: api-tls
+                namespace: openshift-config
+                labels: 
+                  debug/cluster-name-derived: "{{ "{{" }} $dnsNames.clusterName {{ "}}" }}"
+              spec:
+                commonName: "{{ "{{" }} $dnsNames.api {{ "}}" }}"
+                dnsNames:
+                 - "{{ "{{" }} $dnsNames.api {{ "}}" }}"
+                issuerRef:
+                  kind: ClusterIssuer 
+                  name: venafi
+                secretName: api-tls
+          - complianceType: musthave
+            objectDefinition: 
+              apiVersion: cert-manager.io/v1
+              kind: Certificate
+              metadata:
+                name: wildcard-tls
+                namespace: openshift-ingress
+              spec:
+                commonName: "{{ "{{" }} $dnsNames.apps {{ "}}" }}"
+                dnsNames:
+                 - "{{ "{{" }} $dnsNames.apps {{ "}}" }}"
+                issuerRef:
+                  kind: ClusterIssuer 
+                  name: venafi
+                secretName: wildcard-tls
+            {{/*
+            {{ "{{-" }} $clusterNameDerived := index (index (fromClusterClaim "infrastructure.openshift.io" | fromJson) "infraName" | regexSplit `-[A-z0-9]+$`) 0 {{ "}}" }}
+            {{ "{{-" }} $clusterNameDerived := (index (fromClusterClaim "infrastructure.openshift.io" | fromJson) "infraName") {{ "}}" }}
+            */}}
+---
+##### CONFIGURE INGRESS CONTROLLER TO USE APPS CERT #####
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+  name: policy-ingress-cert
+  namespace: policies-autoshift
+spec:
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy 
+      name: policy-api-ingress-tls
+      namespace: "policies-autoshift"
+      compliance: Compliant
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-ingress-cert
+      spec:
+        object-templates-raw: |
+          - complianceType: musthave
+            objectDefinition:
+              apiVersion: operator.openshift.io/v1
+              kind: IngressController
+              metadata: 
+                name: default
+                namespace: openshift-ingress-operator
+              spec:
+                defaultCertificate:
+                  name: wildcard-tls
+---
+##### CONFIGURE APIServer TO USE API CERT #####
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+  name: policy-api-cert
+  namespace: policies-autoshift
+spec:
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy 
+      name: policy-api-ingress-tls
+      namespace: "policies-autoshift"
+      compliance: Compliant
+  remediationAction: enforce
+  disabled: false
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-api-cert
+      spec:
+        object-templates-raw: |
+
+          {{ "{{-" }} $clusterName := "{{ "{{hub" }} .ManagedClusterName {{ "hub}}" }}" {{ "}}" }}
+          {{ "{{-" }} $dnsNames := (dict) {{ "}}" }}
+          {{ "{{-" }} $_ := set $dnsNames "api" (printf `api.%s.example.com` $clusterName) {{ "}}" }}
+          {{ "{{-" }} $_ := set $dnsNames "clusterName" $clusterName {{ "}}" }}
+          {{ "{{-" }} if eq $clusterName "local-cluster" {{ "}}" }}
+            {{ "{{-" }} $infraName := (index (fromClusterClaim "infrastructure.openshift.io" | fromJson) "infraName") {{ "}}" }}
+            {{ "{{-" }} $infraNameSuffix := (print $infraName | regexFind `-[A-z0-9]+$`) {{ "}}" }}
+            {{ "{{-" }} $clusterNameDerived := (replace $infraNameSuffix "" $infraName) {{ "}}" }}
+            {{ "{{-" }} $_ := set $dnsNames "api" (printf `api.%s.example.com` $clusterNameDerived) {{ "}}" }}
+             {{ "{{-" }} $_ := set $dnsNames "clusterName" $clusterNameDerived {{ "}}" }}
+          {{ "{{-" }} end {{ "}}" }}
+          - complianceType: musthave
+            objectDefinition:
+              apiVersion: config.openshift.io/v1
+              kind: APIServer
+              metadata: 
+                name: cluster
+              spec:
+                servingCerts:
+                  namedCertificates:
+                    - names:
+                      - "{{ "{{" }} $dnsNames.api {{ "}}" }}"
+                      servingCertificate:
+                        name: api-tls
+---
+##### INSTALL CERT MANAGER #####
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+  name: policy-cert-manager-install
+  namespace: policies-autoshift
+spec:
+  disabled: false
+  remediationAction: enforce
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1beta1
+      kind: OperatorPolicy
+      metadata:
+        name: policy-cert-manager-install
+      spec:
+        operatorGroup: # optional
+          namespace: cert-manager-operator
+          name: cert-manager-operator-grp
+          targetNamespaces:
+              - cert-manager-operator
+        remediationAction: enforce
+        severity: low
+        complianceType: musthave
+        upgradeApproval: Automatic
+        subscription:
+          channel: stable-v1
+          name: openshift-cert-manager-operator
+          namespace: cert-manager-operator
+          source: redhat-operators
+          sourceNamespace: openshift-marketplace
+          startingCSV: '1.18.1'
+---
+##### CREATE CERT MANAGER #####
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+  name: policy-cert-manager-creation
+  namespace: policies-autoshift
+spec:
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy 
+      name: policy-cert-manager-install
+      namespace: "policies-autoshift"
+      compliance: Compliant
+  disabled: false
+  remediationAction: enforce
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-cert-manager-creation
+      spec:
+        object-templates-raw: |
+          - complianceType: musthave
+            objectDefinition: 
+              apiVersion: operator.openshift.io/v1alpha1
+              kind: CertManager
+              metadata:
+                name: cluster
+              spec:
+                logLevel: Normal
+                managementState: Managed
+                observedConfig: null
+                operatorLogLevel: Normal
+                unsupportedConfigOverrides: null
+---
+##### CREATE VENAFI CLUSTER ISSUER #####
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+  name: policy-venafi-issuer
+  namespace: policies-autoshift
+spec:
+  disabled: false
+  remediationAction: enforce
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy 
+      name: policy-venafi-tpp-secret
+      namespace: "policies-autoshift"
+      compliance: Compliant
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-venafi-issuer
+      spec:
+        object-templates-raw: |
+          - complianceType: musthave
+            objectDefinition: 
+              apiVersion: cert-manager.io/v1
+              kind: ClusterIssuer
+              metadata:
+                name: venafi
+              spec:
+                venafi:
+                  tpp:
+                    caBundle: '{{ $.Values.venafiCABundle }}'
+                    credentialsRef:
+                      name: tpp-secret
+                    url: '{{ "{{hub" }} index .ManagedClusterLabels `autoshift.io/venafi-url` | default `{{ $.Values.venafiURL }}` {{ "hub}}" }}'
+                  zone: '{{ "{{hub" }} index .ManagedClusterLabels `autoshift.io/venafi-zone` | default `{{ $.Values.venafiZone }}` {{ "hub}}" }}'
+              status:
+                conditions: 
+                  - type: Ready
+                    status: 'True'
+
+---
+##### COPY TPP SECRET FROM HUB #####
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+  name: policy-venafi-tpp-secret
+  namespace: policies-autoshift
+spec:
+  disabled: false
+  remediationAction: enforce
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-tpp-secret
+      spec:
+        object-templates-raw: |
+          - complianceType: musthave
+            objectDefinition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: "tpp-secret"
+                namespace: cert-manager
+              data: '{{ `{{hub` }} copySecretData `policies-autoshift` (index .ManagedClusterLabels `autoshift.io/tpp-secret` | default `tpp-secret`) | toLiteral {{ `hub}}` }}'
+
+{{/* data: '{{ "{{hub" }} copySecretData "cert-manager" "tpp-secret" | default "" | toLiteral {{ "hub}}" }}' */}}
+
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-cert-manager
+  namespace: policies-autoshift
+spec:
+  clusterSets:
+  {{- range $cluster, $clusterValue := $.Values.hubClusterSets }}
+    - {{ $cluster }}
+  {{- end }}
+  {{- range $cluster, $clusterValue := $.Values.managedClusterSets }}
+    - {{ $cluster }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cert-manager'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+##### PLACEMENT BINDING FOR CLUSTER ISSUER AND CERT MANAGER #####
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: binding-policy-cert-manager
+  namespace: policies-autoshift
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: placement-policy-cert-manager
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-cert-manager-install
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-cert-manager-creation
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-venafi-issuer
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-venafi-tpp-secret
+---
+#### PLACEMENT #####
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-cert-config
+  namespace: policies-autoshift
+spec:
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/certs'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+#### PLACEMENT BINDING #####
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: binding-policy-proxy-ca
+  namespace: policies-autoshift
+placementRef:
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+  name: placement-policy-cert-config
+subjects:
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-proxy-ca
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-ca-cert-bundle
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-api-ingress-tls
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-ingress-cert
+  - apiGroup: policy.open-cluster-management.io
+    kind: Policy
+    name: policy-api-cert
