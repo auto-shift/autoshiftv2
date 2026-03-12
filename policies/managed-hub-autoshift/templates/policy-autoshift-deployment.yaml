@@ -34,45 +34,49 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates-raw: |
-            {{ "{{" }} $appName := "{{ "{{hub" }} .ManagedClusterName {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{hub" }} $repoUrlConfigMap := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" "autoshift-repo-urls" | default (dict)) {{ "hub}}" }}
-            {{ "{{hub" }} if not (empty $repoUrlConfigMap) {{ "hub}}" }}
-            {{ "{{" }} $repoUrl := "{{ "{{hub" }} (index $repoUrlConfigMap "data" (index .ManagedClusterLabels "cluster.open-cluster-management.io/clusterset" | default "") | default "") {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{hub" }} end {{ "hub}}" }}
-            {{ "{{" }} $gitopsNamespace := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-gitops-namespace" | default "openshift-gitops" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{" }} $valuesFile := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-values-file" | default (printf "%s.%s.%s" "values" .ManagedClusterName "yaml")   {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{" }} $argoProject := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-argo-project" | default "default"  {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{" }} $targetRevision := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-target-revision" | default "main" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{" }} $autoshiftEnabled := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/autoshift-enable-install" | default "" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{" }} if and  (ne $targetRevision "") (ne $gitopsNamespace "") (ne $valuesFile "") (eq $autoshiftEnabled "true") (ne ($repoUrl | default "") "") {{ "}}" }}
+
+            {{ "{{hub" }} $appName := .ManagedClusterName {{ "hub}}" }}
+            {{ "{{hub" }} $autoshiftConfig := (index (fromConfigMap "{{ $policyNamespace }}" (print {{ "{{hub" }} .ManagedClusterName {{ "hub}}" }} ".rendered-config") "config" | default "{}") "autoshift" | default "{}" | fromYaml) {{ "hub}}" }}
+            {{ "{{hub" }} if not (empty $autoshiftConfig) {{ "hub}}" }}
+              {{ "{{hub-" }} $repoUrl := index $autoshiftConfig "repoUrl" | default "{{ $.Values.repoUrl }}" {{ "hub}}" }}
+              {{ "{{hub-" }} $gitopsNamespace := index $autoshiftConfig "gitopsNamespace" | default "openshift-gitops" {{ "hub}}" }}
+              {{ "{{hub-" }} $defaultValuesFile := (print "values." .ManagedClusterName ".yaml") | list {{ "hub}}" }}
+              {{ "{{hub-" }} $valuesFiles := index $autoshiftConfig "valuesFiles" | default $deaultValuesFile {{ "hub}}" }}
+              {{ "{{hub-" }} $argoProject := index $autoshiftConfig "argoProject" | default "default"  {{ "hub}}" }}
+              {{ "{{hub-" }} $targetRevision := index $autoshiftConfig "targetRevision" |  default "main" {{ "hub}}" }}
+              {{ "{{hub-" }} $autoshiftEnabled := index .ManagedClusterLabels "autoshift.io/autoshift-enable-install" | default "false" {{ "hub}}" }}
+              {{ "{{hub-" }} if and (ne $targetRevision "") (ne $gitopsNamespace "") (ne $valuesFile "") (eq $autoshiftEnabled "true") (ne $repoUrl "") {{ "hub}}" }}
             - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: argoproj.io/v1alpha1
                 kind: Application
                 metadata:
-                  name: {{ "{{" }} $appName {{ "}}" }}
-                  namespace: {{ "{{" }} $gitopsNamespace {{ "}}" }}
+                  name: {{ "{{hub" }} $appName {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   destination:
                     namespace: ''
                     server: https://kubernetes.default.svc
                   source:
                     path: autoshift
-                    repoURL: {{ "{{" }} $repoUrl {{ "}}" }}
-                    targetRevision: {{ "{{" }} $targetRevision {{ "}}" }}
+                    repoURL: {{ "{{hub" }} $repoUrl {{ "hub}}" }}
+                    targetRevision: {{ "{{hub" }} $targetRevision {{ "hub}}" }}
                     helm:
                       valueFiles:
-                        - {{ "{{" }} $valuesFile {{ "}}" }}
+                      {{ "{{hub-" }} range $idx, $file := $valuesFiles {{ "hub}}" }}
+                        - {{ "{{hub" }} $file {{ "hub}}" }}
+                      {{ "{{hub" }} end {{ "hub}}" }}
                       values: |-
-                        autoshiftGitRepo: {{ "{{" }} $repoUrl {{ "}}" }}
-                        autoshiftGitBranchTag: {{ "{{" }} $targetRevision {{ "}}" }}
+                        autoshiftGitRepo: {{ "{{hub" }} $repoUrl {{ "hub}}" }}
+                        autoshiftGitBranchTag: {{ "{{hub" }} $targetRevision {{ "hub}}" }}
                   sources: []
-                  project: {{ "{{" }} $argoProject {{ "}}" }}
+                  project: {{ "{{hub" }} $argoProject {{ "hub}}" }}
                   syncPolicy:
                     automated:
                       prune: false
                       selfHeal: true
-            {{ "{{" }} end {{ "}}" }}
+              {{ "{{hub" }} end {{ "hub}}" }}
+            {{ "{{hub" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -87,9 +91,19 @@ spec:
   predicates:
     - requiredClusterSelector:
         labelSelector:
-          matchLabels:
-            {{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "autoshift-enable-install" }}: "true"
-            {{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "self-managed" }}: "false"
+          matchExpressions:
+            - key: 'autoshift.io/gitops'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/autoshift-enable-install'
+              operator: In
+              values: 
+                - 'true'
+            - key: 'autoshift.io/self-managed'
+              operator: In
+              values: 
+                - 'false'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
