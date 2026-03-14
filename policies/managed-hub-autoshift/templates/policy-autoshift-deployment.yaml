@@ -36,7 +36,7 @@ spec:
           object-templates-raw: |
 
             {{ "{{hub" }} $appName := .ManagedClusterName {{ "hub}}" }}
-            {{ "{{hub" }} $autoshiftConfig := (index (fromConfigMap "{{ $policyNamespace }}" (print {{ "{{hub" }} .ManagedClusterName {{ "hub}}" }} ".rendered-config") "config" | default "{}") "autoshift" | default "{}" | fromYaml) {{ "hub}}" }}
+            {{ "{{hub" }} $autoshiftConfig := (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") "autoshift" | default "{}" | fromYaml) {{ "hub}}" }}
             {{ "{{hub" }} if not (empty $autoshiftConfig) {{ "hub}}" }}
               {{ "{{hub-" }} $repoUrl := index $autoshiftConfig "repoUrl" | default "{{ $.Values.repoUrl }}" {{ "hub}}" }}
               {{ "{{hub-" }} $gitopsNamespace := index $autoshiftConfig "gitopsNamespace" | default "openshift-gitops" {{ "hub}}" }}
@@ -100,10 +100,6 @@ spec:
               operator: In
               values: 
                 - 'true'
-            - key: 'autoshift.io/self-managed'
-              operator: In
-              values: 
-                - 'false'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
