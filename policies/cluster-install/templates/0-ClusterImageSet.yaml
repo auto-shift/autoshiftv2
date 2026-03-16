@@ -1,0 +1,18 @@
+{{- $pullSecretName := printf "pullsecret-%s" $.Values.clusterName }}
+{{- $clusterName := $.Values.clusterName | default $.Release.Name }}
+{{- $bmcCredentialSecret := printf "bmc-credentials-" $clusterName }}
+{{- $imageSet := printf "%s-%s" "openshift-image-set" $.Values.openshiftVersion }}
+{{- if eq ($.Values.clusterImageSet | default "" ) "" }}
+---
+apiVersion: hive.openshift.io/v1
+kind: ClusterImageSet
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  name: {{ $imageSet }}
+  labels:
+    visible: 'true'
+    channel: fast
+spec:
+  releaseImage: 'quay.io/openshift-release-dev/ocp-release:{{ $.Values.openshiftVersion }}-{{ $.Values.cpuArch | default "x86_64" }}'
+{{- end }}

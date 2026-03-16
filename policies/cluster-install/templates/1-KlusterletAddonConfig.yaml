@@ -1,0 +1,14 @@
+{{- $clusterName := $.Values.clusterName | default $.Release.Name }}
+apiVersion: agent.open-cluster-management.io/v1
+kind: KlusterletAddonConfig
+metadata:
+  name: {{ $clusterName }}
+  namespace: {{ $clusterName }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+{{- range $idx, $addon := $.Values.klusterletAddons | default ( list "applicationManager" "certPolicyController" "policyController") }}
+  {{ $addon }}:
+    enabled: true
+{{- end }}
+

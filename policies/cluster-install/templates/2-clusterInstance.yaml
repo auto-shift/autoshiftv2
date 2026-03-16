@@ -1,0 +1,51 @@
+{{- $clusterName := $.Values.clusterName | default $.Release.Name }}
+{{- $pullSecretName := printf "%s-pull-secret" $.Values.clusterName }}
+{{- $clusterName := $.Values.clusterName | default $.Release.Name }}
+{{- $bmcCredentialSecret := printf "bmc-credentials-" $clusterName }}
+{{- $imageSet := ($.Values.clusterImageSet | default (printf "%s-%s" "openshift-image-set" $.Values.openshiftVersion)) }}
+{{- $controlPlaneCount := $.Values.controlPlaneAgents | default 3 | int }}
+{{- $workerCount := $.Values.workerAgents | default (sub ($.Values.hosts | len )  $controlPlaneCount) }}
+{{- $imageSet := ($.Values.clusterImageSet | default (printf "%s-%s" "openshift-image-set" $.Values.openshiftVersion)) }}
+apiVersion: siteconfig.open-cluster-management.io/v1alpha1
+kind: ClusterInstance
+metadata:
+  name: {{ $clusterName }}
+  namespace: {{ $clusterName }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  baseDomain: {{ $.Values.baseDomain }}
+  clusterImageSetNameRef: {{ $imageSet }}
+  clusterName: {{ $clusterName }}
+  nodes:
+    {{- range $_, $host_key := $.Values.hosts }}
+      {{- $host := index $.Values.all_hosts $host_key }}
+      {{- if not (empty $host) }}
+        {{- $bmcEndpoint := ($host.bmcEndpoint | default $.Values.bmcEndpoint) }}
+        {{- $hostname := $host_key }}
+        {{- $bmcAddress := printf "%s://%s%s" $host.bmcPrefix $host.bmcIP $bmcEndpoint }}
+    - hostName: {{ $hostname }}
+      bmcAddress: {{ $bmcAddress }}
+      bmcCredentialsName: 
+        name: {{  $hostname }}-bmc-cred
+      bootMACAddress: {{ $host.bootMACAddress }}
+      templateRefs:
+        - name: bmh-{{ $hostname }}
+          namespace: {{ $clusterName }}
+        - name: nmstate-{{ $hostname }}
+          namespace: {{ $clusterName }}
+      {{- else }}
+        {{- fail (printf "Unknown host encountered: %s" $host_key) }}
+      {{- end }}
+    {{- end }}
+  pullSecretRef:
+    name: {{ $pullSecretName }}
+  sshPublicKey: {{ $.Values.sshPublicKey | default "" }}
+  templateRefs:
+    {{- range $_, $name := (list "agent-cluster-install" "cluster-deployment" "infra-env" "managed-cluster") }}
+    - name: {{ $name }}
+      namespace: {{ $clusterName }}
+    {{- end }}
+
+
+

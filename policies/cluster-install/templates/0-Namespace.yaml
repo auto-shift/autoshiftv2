@@ -1,0 +1,21 @@
+{{- $pullSecretName := printf "pullsecret-%s" $.Values.clusterName }}
+{{- $clusterName := $.Values.clusterName | default $.Release.Name }}
+{{- $bmcCredentialSecret := printf "bmc-credentials-" $clusterName }}
+{{- $imageSet := printf "%s-%s" "openshift-image-set-" $.Values.openshiftVersion }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $clusterName }}
+  annotations: 
+    argocd.argoproj.io/sync-wave: "-1"
+---
+{{- if eq ($.Values.createPolicyNamespace | default "true") "true" }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $.Values.policyNamespace }}
+  annotations: 
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-options: "Prune=false"
+{{- end }}
