@@ -1,0 +1,402 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-cluster-install-siteconfig" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+  disabled: false
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
+  dependencies:
+    - name: policy-cluster-install-secrets
+      namespace: {{ $policyNamespace }}
+      compliance: Compliant
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: {{ $policyName }}
+        spec:
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            {{ "{{" }} $policyNamespace := "{{ $policyNamespace }}" {{ "}}" }}
+            {{ "{{" }} $configMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
+            {{ "{{" }} range $_, $cm := ($configMaps.items | default list) {{ "}}" }}
+              {{ "{{" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
+              {{ "{{" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
+              {{ "{{" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
+              {{ "{{" }} if eq (index $ci "createCluster" | default "") "true" {{ "}}" }}
+                {{ "{{" }} $networking := (index $config "networking" | default dict) {{ "}}" }}
+                {{ "{{" }} $hosts := (index $config "hosts" | default dict) {{ "}}" }}
+                {{ "{{" }} $openshiftVersion := (index $ci "openshiftVersion" | default "") {{ "}}" }}
+                {{ "{{" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
+                {{ "{{" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
+                {{ "{{" }} $controlPlaneCount := (index $ci "controlPlaneAgents" | default 3 | toInt) {{ "}}" }}
+                {{ "{{" }} $workerAgents := (index $ci "workerAgents" | default 0 | toInt) {{ "}}" }}
+                {{ "{{" }} $workerCount := $workerAgents {{ "}}" }}
+                {{ "{{" }} if (eq $workerCount 0) {{ "}}" }}
+                  {{ "{{" }} $workerCount = (sub (len (keys $hosts)) $controlPlaneCount) {{ "}}" }}
+                {{ "{{" }} end {{ "}}" }}
+                {{ "{{" }} $baseDomain := (index $ci "baseDomain" | default "") {{ "}}" }}
+                {{ "{{" }} $managedClusterSet := (index $ci "managedClusterSet" | default "default") {{ "}}" }}
+                {{ "{{" }} $sshPublicKey := (index $ci "sshPublicKey" | default "") {{ "}}" }}
+                {{ "{{" }} $sshPublicKeyRef := (index $ci "sshPublicKeyRef" | default dict) {{ "}}" }}
+                {{ "{{" }} if not (empty $sshPublicKeyRef) {{ "}}" }}
+                  {{ "{{" }} $refNs := (index $sshPublicKeyRef "namespace" | default $policyNamespace) {{ "}}" }}
+                  {{ "{{" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $sshPublicKeyRef "name")) | default dict {{ "}}" }}
+                  {{ "{{" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
+                  {{ "{{" }} $sshPublicKey = (index $refData (index $sshPublicKeyRef "key") | default $sshPublicKey) {{ "}}" }}
+                {{ "{{" }} end {{ "}}" }}
+                {{ "{{" }} $caTrustBundle := (index $ci "caTrustBundle" | default "") {{ "}}" }}
+                {{ "{{" }} $caTrustBundleRef := (index $ci "caTrustBundleRef" | default dict) {{ "}}" }}
+                {{ "{{" }} if not (empty $caTrustBundleRef) {{ "}}" }}
+                  {{ "{{" }} $refNs := (index $caTrustBundleRef "namespace" | default $policyNamespace) {{ "}}" }}
+                  {{ "{{" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caTrustBundleRef "name")) | default dict {{ "}}" }}
+                  {{ "{{" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
+                  {{ "{{" }} $caTrustBundle = (index $refData (index $caTrustBundleRef "key") | default $caTrustBundle) {{ "}}" }}
+                {{ "{{" }} end {{ "}}" }}
+                {{ "{{" }} $bmcEndpoint := (index $ci "bmcEndpoint" | default "/redfish/v1/Systems/1") {{ "}}" }}
+                {{ "{{" }} $clusterNetwork := (index $networking "clusterNetwork" | default dict) {{ "}}" }}
+                {{ "{{" }} $machineNetwork := (index $networking "machineNetwork" | default dict) {{ "}}" }}
+                {{ "{{" }} $serviceNetwork := (index $networking "serviceNetwork" | default list) {{ "}}" }}
+            {{/* ===== AgentClusterInstall ConfigMap ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: agent-cluster-install
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  AgentClusterInstall: |
+                    apiVersion: extensions.hive.openshift.io/v1beta1
+                    kind: AgentClusterInstall
+                    metadata:
+                      name: {{ "{{" }} $clusterName {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    spec:
+                      clusterDeploymentRef:
+                        name: {{ "{{" }} $clusterName {{ "}}" }}
+                      imageSetRef:
+                        name: {{ "{{" }} $imageSet {{ "}}" }}
+                {{ "{{-" }} if (gt $controlPlaneCount 1) {{ "}}" }}
+                      platformType: BareMetal
+                      apiVIP: {{ "{{" }} index $ci "apiVip" {{ "}}" }}
+                      ingressVIP: {{ "{{" }} index $ci "ingressVip" {{ "}}" }}
+                      mastersSchedulable: {{ "{{" }} index $ci "mastersSchedulable" | default false {{ "}}" }}
+                      provisionRequirements:
+                        controlPlaneAgents: {{ "{{" }} $controlPlaneCount {{ "}}" }}
+                        workerAgents: {{ "{{" }} $workerCount {{ "}}" }}
+                {{ "{{-" }} else {{ "}}" }}
+                      provisionRequirements:
+                        controlPlaneAgents: 1
+                {{ "{{-" }} end {{ "}}" }}
+                      networking:
+                {{ "{{-" }} if (eq $controlPlaneCount 1) {{ "}}" }}
+                        userManagedNetworking: true
+                {{ "{{-" }} end {{ "}}" }}
+                        clusterNetwork:
+                        - cidr: {{ "{{" }} index $clusterNetwork "cidr" {{ "}}" }}
+                          hostPrefix: {{ "{{" }} index $clusterNetwork "hostPrefix" {{ "}}" }}
+                        machineNetwork:
+                        - cidr: {{ "{{" }} index $machineNetwork "cidr" {{ "}}" }}
+                        serviceNetwork:
+                {{ "{{-" }} range $_, $network := $serviceNetwork {{ "}}" }}
+                        - {{ "{{" }} $network {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                      sshPublicKey: {{ "{{" }} $sshPublicKey {{ "}}" }}
+            {{/* ===== ClusterDeployment ConfigMap ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: cluster-deployment
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  ClusterDeployment: |
+                    apiVersion: hive.openshift.io/v1
+                    kind: ClusterDeployment
+                    metadata:
+                      name: {{ "{{" }} $clusterName {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                      labels:
+                        cluster.open-cluster-management.io/clusterset: {{ "{{" }} $managedClusterSet {{ "}}" }}
+                        hive.openshift.io/cluster-platform: agent-baremetal
+                    spec:
+                      baseDomain: {{ "{{" }} $baseDomain {{ "}}" }}
+                      clusterInstallRef:
+                        group: extensions.hive.openshift.io
+                        kind: AgentClusterInstall
+                        name: {{ "{{" }} $clusterName {{ "}}" }}
+                        version: v1beta1
+                      clusterName: {{ "{{" }} $clusterName {{ "}}" }}
+                      controlPlaneConfig:
+                        servingCertificates: {}
+                      platform:
+                        agentBareMetal:
+                          agentSelector:
+                            matchLabels:
+                              agentBareMetal-generated-infraenv-ai-flow: {{ "{{" }} printf "%s-%s" $clusterName $clusterName {{ "}}" }}
+                      pullSecretRef:
+                        name: {{ "{{" }} printf "%s-pull-secret" $clusterName {{ "}}" }}
+            {{/* ===== InfraEnv ConfigMap ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: infra-env
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  InfraEnv: |
+                    apiVersion: agent-install.openshift.io/v1beta1
+                    kind: InfraEnv
+                    metadata:
+                      labels:
+                        networkType: dhcp
+                      name: {{ "{{" }} $clusterName {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    spec:
+                      agentLabels:
+                        agentBareMetal-generated-infraenv-ai-flow: {{ "{{" }} printf "%s-%s" $clusterName $clusterName {{ "}}" }}
+                      additionalTrustBundle: |
+                        {{ "{{" }} $caTrustBundle {{ "}}" }}
+                {{ "{{-" }} $ntpSources := (index $ci "ntpSources" | default list) {{ "}}" }}
+                {{ "{{-" }} if (gt (len $ntpSources) 0) {{ "}}" }}
+                      additionalNTPSources:
+                {{ "{{-" }} range $_, $ntp := $ntpSources {{ "}}" }}
+                        - {{ "{{" }} $ntp {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                      clusterRef:
+                        name: {{ "{{" }} $clusterName {{ "}}" }}
+                        namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                      cpuArchitecture: {{ "{{" }} $cpuArch {{ "}}" }}
+                      pullSecretRef:
+                        name: {{ "{{" }} printf "%s-pull-secret" $clusterName {{ "}}" }}
+                      sshAuthorizedKey: {{ "{{" }} $sshPublicKey {{ "}}" }}
+                      nmStateConfigLabelSelector:
+                        matchLabels:
+                          infraenvs.agent-install.openshift.io: {{ "{{" }} $clusterName {{ "}}" }}
+            {{/* ===== ManagedCluster ConfigMap ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: managed-cluster
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  ManagedCluster: |
+                    apiVersion: cluster.open-cluster-management.io/v1
+                    kind: ManagedCluster
+                    metadata:
+                      name: {{ "{{" }} $clusterName {{ "}}" }}
+                    spec:
+                      hubAcceptsClient: true
+            {{/* ===== Per-Host BareMetalHost ConfigMaps ===== */}}
+                {{ "{{-" }} range $hostname, $host := $hosts {{ "}}" }}
+                  {{ "{{" }} $hostBmcEndpoint := (index $host "bmcEndpoint" | default $bmcEndpoint) {{ "}}" }}
+                  {{ "{{" }} $bmcAddress := (printf "%s://%s%s" (index $host "bmcPrefix") (index $host "bmcIP") $hostBmcEndpoint) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: bmh-{{ "{{" }} $hostname {{ "}}" }}
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  BareMetalHost: |
+                    apiVersion: metal3.io/v1alpha1
+                    kind: BareMetalHost
+                    metadata:
+                      name: {{ "{{" }} $hostname {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                      annotations:
+                        inspect.metal3.io: disabled
+                        bmac.agent-install.openshift.io/hostname: {{ "{{" }} $hostname {{ "}}" }}
+                      labels:
+                        infraenvs.agent-install.openshift.io: {{ "{{" }} $clusterName {{ "}}" }}
+                    spec:
+                      automatedCleaningMode: disabled
+                      bmc:
+                        address: '{{ "{{" }} $bmcAddress {{ "}}" }}'
+                        credentialsName: {{ "{{" }} $hostname {{ "}}" }}-bmc-cred
+                        disableCertificateVerification: true
+                      bootMACAddress: '{{ "{{" }} index $host "bootMACAddress" {{ "}}" }}'
+                      customDeploy:
+                        method: start_assisted_install
+                      online: true
+            {{/* ===== Per-Host NMStateConfig ConfigMaps ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: nmstate-{{ "{{" }} $hostname {{ "}}" }}
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  NMStateConfig: |
+                    apiVersion: agent-install.openshift.io/v1beta1
+                    kind: NMStateConfig
+                    metadata:
+                      labels:
+                        infraenvs.agent-install.openshift.io: {{ "{{" }} $clusterName {{ "}}" }}
+                      name: {{ "{{" }} $hostname {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    spec:
+                      config:
+                        dns-resolver:
+                          config:
+                            server:
+                {{ "{{-" }} $dnsServers := (index $networking "dnsServers" | default list) {{ "}}" }}
+                {{ "{{-" }} range $_, $dns := $dnsServers {{ "}}" }}
+                              - {{ "{{" }} $dns {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                        interfaces:
+                {{ "{{-" }} $useBond := (index $ci "useBond" | default true) {{ "}}" }}
+                {{ "{{-" }} $useDHCP := (index $ci "useDHCP" | default false) {{ "}}" }}
+                {{ "{{-" }} $vlan := (index $networking "vlan" | default 0) {{ "}}" }}
+                {{ "{{-" }} if $useBond {{ "}}" }}
+                  {{ "{{-" }} $bondName := (printf "bond0.%v" $vlan) {{ "}}" }}
+                          - ipv4:
+                              dhcp: false
+                              enabled: false
+                            ipv6:
+                              enabled: false
+                            link-aggregation:
+                              mode: active-backup
+                              port:
+                  {{ "{{-" }} $interfaces := (index $host "interfaces" | default list) {{ "}}" }}
+                  {{ "{{-" }} range $idx, $iface := $interfaces {{ "}}" }}
+                    {{ "{{-" }} $disabled := (index $iface "disabled" | default false) {{ "}}" }}
+                    {{ "{{-" }} if not $disabled {{ "}}" }}
+                              - {{ "{{" }} index $iface "name" | default (printf "eno%d" (add $idx 1)) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                            mac-address: {{ "{{" }} index $host "primaryMac" | default (index (index (index $host "interfaces") 0) "macAddress") {{ "}}" }}
+                            name: bond0
+                            state: up
+                            type: bond
+                          - ipv4:
+                              address:
+                                - ip: {{ "{{" }} index $host "IP" {{ "}}" }}
+                                  prefix-length: {{ "{{" }} index $networking "machinePrefixLength" {{ "}}" }}
+                              dhcp: {{ "{{" }} $useDHCP {{ "}}" }}
+                              enabled: true
+                            ipv6:
+                              enabled: false
+                            name: {{ "{{" }} $bondName {{ "}}" }}
+                            state: up
+                            type: vlan
+                            vlan:
+                              base-iface: bond0
+                              id: {{ "{{" }} $vlan {{ "}}" }}
+                        routes:
+                          config:
+                            - destination: 0.0.0.0/0
+                              next-hop-address: {{ "{{" }} index $networking "defaultGateway" {{ "}}" }}
+                              next-hop-interface: {{ "{{" }} $bondName {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                      interfaces:
+                  {{ "{{-" }} $interfaces := (index $host "interfaces" | default list) {{ "}}" }}
+                  {{ "{{-" }} range $idx, $iface := $interfaces {{ "}}" }}
+                        - macAddress: {{ "{{" }} index $iface "macAddress" {{ "}}" }}
+                          name: {{ "{{" }} index $iface "name" | default (printf "eno%d" (add $idx 1)) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+            {{/* ===== ClusterInstance ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: siteconfig.open-cluster-management.io/v1alpha1
+                kind: ClusterInstance
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                spec:
+                  baseDomain: {{ "{{" }} $baseDomain {{ "}}" }}
+                  clusterImageSetNameRef: {{ "{{" }} $imageSet {{ "}}" }}
+                  clusterName: {{ "{{" }} $clusterName {{ "}}" }}
+                  nodes:
+                {{ "{{-" }} range $hostname, $host := $hosts {{ "}}" }}
+                  {{ "{{" }} $hostBmcEndpoint := (index $host "bmcEndpoint" | default $bmcEndpoint) {{ "}}" }}
+                  {{ "{{" }} $bmcAddress := (printf "%s://%s%s" (index $host "bmcPrefix") (index $host "bmcIP") $hostBmcEndpoint) {{ "}}" }}
+                    - hostName: {{ "{{" }} $hostname {{ "}}" }}
+                      bmcAddress: {{ "{{" }} $bmcAddress {{ "}}" }}
+                      bmcCredentialsName:
+                        name: {{ "{{" }} $hostname {{ "}}" }}-bmc-cred
+                      bootMACAddress: {{ "{{" }} index $host "bootMACAddress" {{ "}}" }}
+                      templateRefs:
+                        - name: bmh-{{ "{{" }} $hostname {{ "}}" }}
+                          namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                        - name: nmstate-{{ "{{" }} $hostname {{ "}}" }}
+                          namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                  pullSecretRef:
+                    name: {{ "{{" }} printf "%s-pull-secret" $clusterName {{ "}}" }}
+                  sshPublicKey: {{ "{{" }} $sshPublicKey {{ "}}" }}
+                  templateRefs:
+                    - name: agent-cluster-install
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    - name: cluster-deployment
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    - name: infra-env
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    - name: managed-cluster
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-install'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

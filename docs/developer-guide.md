@@ -313,6 +313,36 @@ channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-c
 name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subscription-name" | default "my-component-operator" {{ "hub}}" }}'
 ```
 
+### Hub Template Pitfalls
+
+**Blank lines in `object-templates-raw` break template parsing.** Helm comments (`{{/* */}}`) produce blank lines in rendered output. When ArgoCD re-serializes the YAML, blank lines can cause the block scalar to flip from `|` (literal) to `>` (folded), which breaks ACM's template parser. Always use trim markers on comments inside `object-templates-raw`:
+
+```yaml
+# CORRECT — trim markers prevent blank lines
+{{- /* Build cluster config map */ -}}
+{{ "{{" }} $config := dict {{ "}}" }}
+
+# WRONG — produces blank line that breaks ACM parsing
+{{/* Build cluster config map */}}
+{{ "{{" }} $config := dict {{ "}}" }}
+```
+
+**`trimPrefix` and `trimSuffix` are not available** in ACM hub templates. Use `replace` instead:
+
+```yaml
+# Use this:
+{{ "{{" }} $name := (replace "managed-cluster-config." "" $cmName) {{ "}}" }}
+# Not this (will error):
+{{ "{{" }} $name := (trimPrefix "managed-cluster-config." $cmName) {{ "}}" }}
+```
+
+**`lookup` returns a Go map, not a string.** Use `| default dict` to safely handle missing resources:
+
+```yaml
+{{ "{{" }} $cm := (lookup "v1" "ConfigMap" $ns $name) | default dict {{ "}}" }}
+{{ "{{" }} $data := (index $cm "data" | default dict) {{ "}}" }}
+```
+
 ### Label-Based Configuration
 
 Labels are configured in AutoShift values files and propagated to clusters by the cluster-labels policy:
