@@ -138,7 +138,6 @@ clusterInstall:
   #   key: 'ca-bundle.crt'
   #   namespace: 'cluster-install-secrets' # optional, defaults to policy namespace
   secretSourceNamespace: 'cluster-install-secrets'
-  managedClusterSet: 'default'
   useBond: true                      # default: true
   useDHCP: false                     # default: false
   ntpSources:                        # optional NTP servers
@@ -255,6 +254,7 @@ clusters:
               name: 'eno1'
             - macAddress: 'aa:bb:cc:dd:ee:22'
               name: 'eno2'
+      clusterSet: managed
       clusterInstall:
         createCluster: 'true'
         baseDomain: example.com
@@ -263,7 +263,6 @@ clusters:
         apiVip: '10.0.0.2'
         ingressVip: '10.0.0.3'
         sshPublicKey: 'ssh-rsa AAAAB3...'
-        managedClusterSet: 'default'
 ```
 
 ### Step 4: Add the Values File to ArgoCD

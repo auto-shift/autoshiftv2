@@ -1,0 +1,145 @@
+# ==============================================================================
+# Cluster Install Example - Provision a Baremetal Cluster via SiteConfig
+# ==============================================================================
+# Copy this file and rename it after your cluster (e.g., my-cluster.yaml).
+# Add it to the ArgoCD Application valueFiles to deploy.
+#
+# Usage in ArgoCD Application:
+#   valueFiles:
+#     - values/global.yaml
+#     - values/clustersets/hub.yaml
+#     - values/clustersets/managed.yaml
+#     - values/clusters/my-cluster.yaml    # <-- this file
+#
+# Prerequisites:
+#   - Hub clusterset must have: cluster-install: 'true', acm-enable-provisioning: 'true'
+#   - Source secrets must exist (see docs/cluster-install.md)
+#
+# Config merge order (last wins):
+#   1. Clusterset config (from clusterSet field or managedClusterSet)
+#   2. Per-cluster config (this file)
+#
+# See docs/cluster-install.md for the full guide.
+# ==============================================================================
+
+clusters:
+  my-cluster:
+    config:
+      # Required: which clusterset this cluster belongs to
+      # Used for both inheriting clusterset config defaults and setting the
+      # ManagedClusterSet label on the ClusterDeployment
+      clusterSet: managed
+
+      # =====================================================================
+      # Networking — shared with other policies (e.g., nmstate)
+      # =====================================================================
+      networking:
+        vlan: 100
+        machinePrefixLength: 25
+        defaultGateway: '10.0.0.1'
+        dnsServers:
+          - 10.0.0.53
+        clusterNetwork:
+          cidr: 10.128.0.0/14
+          hostPrefix: 23
+        machineNetwork:
+          cidr: '10.0.0.0/25'
+        serviceNetwork:
+          - 172.30.0.0/16
+
+      # =====================================================================
+      # Hosts — per-host hardware config, shared with other policies
+      # =====================================================================
+      hosts:
+        master-0:
+          bmcIP: '192.168.1.10'
+          bmcPrefix: 'redfish-virtualmedia'
+          # bmcEndpoint: '/redfish/v1/Systems/1'    # optional, overrides cluster-level
+          # bmcCredentialRef:                         # optional, overrides cluster-level
+          #   name: 'custom-cred'
+          #   namespace: 'custom-ns'
+          bootMACAddress: 'aa:bb:cc:dd:ee:01'
+          IP: '10.0.0.10'
+          primaryMac: 'aa:bb:cc:dd:ee:02'           # MAC for bond, defaults to first interface
+          interfaces:
+            - macAddress: 'aa:bb:cc:dd:ee:01'
+              name: 'eno1'
+            - macAddress: 'aa:bb:cc:dd:ee:02'
+              name: 'eno2'
+        master-1:
+          bmcIP: '192.168.1.11'
+          bmcPrefix: 'redfish-virtualmedia'
+          bootMACAddress: 'aa:bb:cc:dd:ee:11'
+          IP: '10.0.0.11'
+          primaryMac: 'aa:bb:cc:dd:ee:12'
+          interfaces:
+            - macAddress: 'aa:bb:cc:dd:ee:11'
+              name: 'eno1'
+            - macAddress: 'aa:bb:cc:dd:ee:12'
+              name: 'eno2'
+        master-2:
+          bmcIP: '192.168.1.12'
+          bmcPrefix: 'redfish-virtualmedia'
+          bootMACAddress: 'aa:bb:cc:dd:ee:21'
+          IP: '10.0.0.12'
+          primaryMac: 'aa:bb:cc:dd:ee:22'
+          interfaces:
+            - macAddress: 'aa:bb:cc:dd:ee:21'
+              name: 'eno1'
+            - macAddress: 'aa:bb:cc:dd:ee:22'
+              name: 'eno2'
+
+      # =====================================================================
+      # Cluster Install — install-specific config
+      # =====================================================================
+      clusterInstall:
+        createCluster: 'true'                       # Required — triggers provisioning
+        baseDomain: example.com
+        openshiftVersion: '4.20.12'
+        cpuArch: x86_64                             # default: x86_64
+        # openshiftChannel: stable                  # ClusterImageSet channel label (default: stable)
+        # clusterImageSet: ''                       # optional, overrides openshiftVersion+cpuArch
+
+        # --- Cluster Topology ---
+        controlPlaneAgents: 3                       # 1 = SNO, 3 = compact/standard
+        # workerAgents: 0                           # default: (len hosts) - controlPlaneAgents
+        apiVip: '10.0.0.2'                          # required for multi-node
+        ingressVip: '10.0.0.3'                      # required for multi-node
+        # mastersSchedulable: false                 # default: false
+
+        # --- SSH Key (inline or ConfigMap ref) ---
+        sshPublicKey: 'ssh-rsa AAAAB3...'
+        # sshPublicKeyRef:                          # OR reference a hub ConfigMap
+        #   name: 'cluster-ssh-keys'
+        #   key: 'ssh-public-key'
+        #   namespace: 'cluster-install-secrets'    # optional, defaults to policy namespace
+
+        # --- CA Trust Bundle (inline or ConfigMap ref) ---
+        # caTrustBundle: |
+        #   -----BEGIN CERTIFICATE-----
+        #   ...
+        # caTrustBundleRef:                         # OR reference a hub ConfigMap
+        #   name: 'cluster-ca-bundle'
+        #   key: 'ca-bundle.crt'
+        #   namespace: 'cluster-install-secrets'
+
+        # --- Secrets ---
+        pullSecretRef: 'default-pull-secret'
+        bmcCredentialRef: 'default-bmc-cred'
+        bmcEndpoint: '/redfish/v1/Systems/1'
+        secretSourceNamespace: 'cluster-install-secrets'
+
+        # --- Cluster Management ---
+        # klusterletAddons:                         # defaults: applicationManager, certPolicyController, policyController
+        #   - applicationManager
+        #   - certPolicyController
+        #   - policyController
+        #   - searchCollector
+
+        # --- Network Mode ---
+        useBond: true                               # default: true
+        useDHCP: false                              # default: false
+
+        # --- NTP ---
+        # ntpSources:
+        #   - 10.0.0.1

@@ -45,14 +45,10 @@ spec:
               {{ "{{" }} if (hasPrefix "managed-cluster-config." $cmName) {{ "}}" }}
                 {{ "{{" }} $clusterName := (replace "managed-cluster-config." "" $cmName) {{ "}}" }}
                 {{ "{{" }} $clusterConfig := ($cm.data.config | default "{}" | fromJson) {{ "}}" }}
-                {{- /* Resolve clusterset: config.clusterSet > ManagedCluster label > clusterInstall.managedClusterSet > "default" */ -}}
+                {{- /* Resolve clusterset: config.clusterSet > ManagedCluster label > "default" */ -}}
                 {{ "{{" }} $clusterSetName := (index $clusterConfig "clusterSet" | default "") {{ "}}" }}
                 {{ "{{" }} if (empty $clusterSetName) {{ "}}" }}
-                  {{ "{{" }} $clusterSetName = (index $mcClusterSets $clusterName | default "") {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{" }} if (empty $clusterSetName) {{ "}}" }}
-                  {{ "{{" }} $ci := (index $clusterConfig "clusterInstall" | default dict) {{ "}}" }}
-                  {{ "{{" }} $clusterSetName = (index $ci "managedClusterSet" | default "default") {{ "}}" }}
+                  {{ "{{" }} $clusterSetName = (index $mcClusterSets $clusterName | default "default") {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
                 {{ "{{" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" $policyNamespace (print "cluster-set-config." $clusterSetName) "autoshift.io/cluster-set-configs" | default dict) {{ "}}" }}
                 {{ "{{" }} $clusterSetConfig := ($clusterSetConfigMap.data.config | default "{}" | fromJson) {{ "}}" }}
