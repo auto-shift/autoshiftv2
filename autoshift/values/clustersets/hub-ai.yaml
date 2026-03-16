@@ -1,0 +1,85 @@
+# AI Hub Configuration for AWS
+# Standalone hub profile with AI/ML components for AWS environments.
+# Use with: -f global.yaml -f clustersets/hub-ai.yaml
+#
+# Includes: Base hub requirements (GitOps, ACM) plus Node Feature Discovery,
+#           NVIDIA GPU Operator, RHOAI, Serverless, and GPU compute nodes on AWS.
+
+hubClusterSets:
+  hub-ai:
+    labels:
+      # Required: OpenShift version for image mirroring and compatibility
+      openshift-version: '4.20.12'
+
+      # Required: Indicates this is a self-managed hub cluster
+      self-managed: 'true'
+
+      ### OpenShift GitOps (REQUIRED)
+      # GitOps is required to deploy AutoShift itself
+      gitops: 'true'
+      gitops-subscription-name: openshift-gitops-operator
+      gitops-disable-default-argocd: 'true'
+      gitops-channel: gitops-1.19
+      gitops-source: redhat-operators
+      gitops-source-namespace: openshift-marketplace
+      # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
+
+      ### Advanced Cluster Management (AUTOMATIC)
+      # ACM is automatically installed on all hub clustersets by policy
+      acm-subscription-name: advanced-cluster-management
+      acm-channel: release-2.15
+      acm-source: redhat-operators
+      acm-source-namespace: openshift-marketplace
+
+      ### Node Feature Discovery
+      node-feature-discovery: 'true'
+      node-feature-discovery-subscription-name: nfd
+      node-feature-discovery-channel: stable
+      node-feature-discovery-source: redhat-operators
+      node-feature-discovery-source-namespace: openshift-marketplace
+      # node-feature-discovery-version: 'nfd.4.18.0-202511261113'
+      ### NVIDIA GPU Operator
+      nvidia-gpu: 'true'
+      nvidia-gpu-subscription-name: gpu-operator-certified
+      nvidia-gpu-channel: stable
+      nvidia-gpu-source: certified-operators
+      nvidia-gpu-source-namespace: openshift-marketplace
+      # nvidia-gpu-version: 'gpu-operator-certified.v24.9.0'
+      nvidia-gpu-driver: 'true'
+      nvidia-gpu-driver-toolkit: 'true'
+      nvidia-gpu-toolkit: 'true'
+      nvidia-gpu-device-plugin: 'true'
+      nvidia-gpu-dcgm: 'true'
+      nvidia-gpu-mig: 'false'
+      nvidia-gpu-gfd: 'true'
+      nvidia-gpu-sandbox: 'false'
+      nvidia-gpu-vgpu-manager: 'false'
+      nvidia-gpu-vgpu-device-manager: 'false'
+      ### Red Hat OpenShift AI (RHOAI)
+      rhoai: 'true'
+      rhoai-subscription-name: rhods-operator
+      rhoai-channel: fast-3.x
+      rhoai-source: redhat-operators
+      rhoai-source-namespace: openshift-marketplace
+      # rhoai-version: 'rhods-operator.v3.0.0'
+      rhoai-dashboard: 'true'
+      rhoai-workbenches: 'true'
+      rhoai-aipipelines: 'true'
+      rhoai-kserve: 'true'
+      rhoai-modelregistry: 'true'
+      rhoai-ray: 'true'
+      rhoai-kueue: 'true'
+      rhoai-training: 'true'
+      rhoai-trustyai: 'true'
+      ### OpenShift Serverless (required by KServe)
+      serverless: 'true'
+      serverless-subscription-name: serverless-operator
+      serverless-channel: stable
+      serverless-source: redhat-operators
+      serverless-source-namespace: openshift-marketplace
+      # serverless-version: 'serverless-operator.v1.x.x'
+      ### GPU Nodes (AWS)
+      gpu-nodes: '1'
+      gpu-nodes-provider: aws
+      gpu-nodes-instance-type: p5.4xlarge
+      # gpu-nodes-zone-1: 'us-east-2a'
