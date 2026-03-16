@@ -269,9 +269,6 @@ spec:
                     enabled: true
                     argoCDAgent:
                       enabled: true
-                      propagateHubCA: true
-                      serverAddress: {{ "{{hub" }} (lookup "route.openshift.io/v1" "Route" "openshift-gitops-{{ $team }}" "argocd-dev-agent-principal").spec.host {{ "hub}}" }}
-                      serverPort: "443"
                   argoServer:
                     cluster: notused
                     argoNamespace: openshift-gitops-{{ $team }}
@@ -282,12 +279,14 @@ spec:
                     namespace: openshift-gitops-{{ $team }}
             - complianceType: musthave
               objectDefinition:
-                apiVersion: argoproj.io/v1alpha1
+                apiVersion: argoproj.io/v1beta1
                 kind: ArgoCD
                 metadata:
                   name: argocd-dev
                   namespace: openshift-gitops-{{ $team }}
                 spec:
+                  controller:
+                    enabled: false
                   argoCDAgent:
                     principal:
                       enabled: true
