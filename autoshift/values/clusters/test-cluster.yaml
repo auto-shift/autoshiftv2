@@ -4,12 +4,6 @@ clusters:
     config:
       clusterSet: managed
       networking:
-        vlan: 100
-        machinePrefixLength: 25
-        defaultGateway: '10.0.0.1'
-        dnsServers:
-          - 10.0.0.53
-          - 10.0.0.54
         clusterNetwork:
           cidr: 10.128.0.0/14
           hostPrefix: 23
@@ -17,40 +11,88 @@ clusters:
           cidr: '10.0.0.0/25'
         serviceNetwork:
           - 172.30.0.0/16
+        interfaces:
+          mgmt:
+            type: bond
+            name: bond0
+            state: up
+            mode: active-backup
+            ports:
+              - eno1
+              - eno2
+            ipv4: disabled
+            ipv6: disabled
+          mgmt-vlan:
+            type: vlan
+            name: bond0.100
+            id: 100
+            base: bond0
+            ipv4: static
+            ipv6: disabled
+        routes:
+          default:
+            destination: 0.0.0.0/0
+            gateway: '10.0.0.1'
+            interface: bond0.100
+        dns:
+          servers:
+            - 10.0.0.53
+            - 10.0.0.54
       hosts:
         master-0:
+
           bmcIP: '192.168.1.10'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:01'
-          IP: '10.0.0.10'
           primaryMac: 'aa:bb:cc:dd:ee:02'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:01'
               name: 'eno1'
             - macAddress: 'aa:bb:cc:dd:ee:02'
               name: 'eno2'
+          networking:
+            interfaces:
+              mgmt-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.10
+                      prefixLength: 25
         master-1:
+
           bmcIP: '192.168.1.11'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:11'
-          IP: '10.0.0.11'
           primaryMac: 'aa:bb:cc:dd:ee:12'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:11'
               name: 'eno1'
             - macAddress: 'aa:bb:cc:dd:ee:12'
               name: 'eno2'
+          networking:
+            interfaces:
+              mgmt-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.11
+                      prefixLength: 25
         master-2:
+
           bmcIP: '192.168.1.12'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:21'
-          IP: '10.0.0.12'
           primaryMac: 'aa:bb:cc:dd:ee:22'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:21'
               name: 'eno1'
             - macAddress: 'aa:bb:cc:dd:ee:22'
               name: 'eno2'
+          networking:
+            interfaces:
+              mgmt-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.12
+                      prefixLength: 25
       clusterInstall:
         createCluster: 'true'
         baseDomain: example.com
@@ -67,7 +109,5 @@ clusters:
         bmcCredentialRef: 'default-bmc-cred'
         bmcEndpoint: '/redfish/v1/Systems/1'
         secretSourceNamespace: 'cluster-install-secrets'
-        useBond: true
-        useDHCP: false
         ntpSources:
           - 10.0.0.1

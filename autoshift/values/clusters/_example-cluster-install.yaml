@@ -34,11 +34,7 @@ clusters:
       # Networking — shared with other policies (e.g., nmstate)
       # =====================================================================
       networking:
-        vlan: 100
-        machinePrefixLength: 25
-        defaultGateway: '10.0.0.1'
-        dnsServers:
-          - 10.0.0.53
+        # SDN-level config
         clusterNetwork:
           cidr: 10.128.0.0/14
           hostPrefix: 23
@@ -46,6 +42,89 @@ clusters:
           cidr: '10.0.0.0/25'
         serviceNetwork:
           - 172.30.0.0/16
+
+        # NMState interface topology — map keyed by user-chosen ID
+        # IDs can be any name (e.g., mgmt, data, storage). Used to reference
+        # interfaces in per-host overrides and for NNCP naming.
+        interfaces:
+          mgmt:
+            type: bond
+            name: bond0
+            state: up                    # default: up
+            mode: 802.3ad                # bond mode
+            # mac: 'aa:bb:cc:dd:ee:ff'   # optional, sets bond MAC
+            mtu: 9000
+            miimon: 100
+            ports:                       # by name, by MAC, or mixed
+              - eno1
+              - eno2
+            # OR by MAC:
+            # ports:
+            #   - mac: 'aa:bb:cc:dd:ee:01'
+            #   - mac: 'aa:bb:cc:dd:ee:02'
+            ipv4: disabled               # 'dhcp', 'static', 'disabled'
+            ipv6: disabled
+          mgmt-vlan:
+            type: vlan
+            name: bond0.100
+            id: 100
+            base: bond0
+            mtu: 1500
+            ipv4: static                 # per-host IPs in hosts section
+            ipv6: disabled
+          # nic3:
+          #   type: ethernet
+          #   name: eno3
+          #   state: up
+          #   mtu: 9000
+          #   mac: 'aa:bb:cc:dd:ee:03'  # match by MAC instead of name
+
+        # OVS bridges — map keyed by user-chosen ID
+        # ovsBridges:
+        #   br1:
+        #     name: ovs-br1
+        #     ports: [bond1]
+        #     stp: false
+        #     allowExtraPatchPorts: true
+
+        # OVN bridge mappings — map keyed by user-chosen ID
+        # ovnMappings:
+        #   net1:
+        #     localnet: localnet1
+        #     bridge: ovs-br1
+
+        # Static routes — map keyed by user-chosen ID
+        routes:
+          default:
+            destination: 0.0.0.0/0
+            gateway: '10.0.0.1'
+            interface: bond0.100
+          # dc:
+          #   destination: 10.0.0.0/8
+          #   gateway: 192.168.1.1
+          #   interface: bond0
+          #   metric: 100
+          #   tableId: 254
+
+        # DNS
+        dns:
+          servers:
+            - 10.0.0.53
+          search:
+            - example.com
+
+        # Node selector for cluster-wide NNCPs
+        # nodeSelector:
+        #   node-role.kubernetes.io/worker: ''
+
+        # --- Legacy fields (backward compat for siteconfig) ---
+        # These are deprecated in favor of interfaces/routes/dns above.
+        # Siteconfig falls back to these if networking.interfaces is not set.
+        vlan: 100
+        machinePrefixLength: 25
+        defaultGateway: '10.0.0.1'
+        dnsServers:
+          - 10.0.0.53
 
       # =====================================================================
       # Hosts — per-host hardware config, shared with other policies
@@ -59,35 +138,57 @@ clusters:
           #   name: 'custom-cred'
           #   namespace: 'custom-ns'
           bootMACAddress: 'aa:bb:cc:dd:ee:01'
-          IP: '10.0.0.10'
           primaryMac: 'aa:bb:cc:dd:ee:02'           # MAC for bond, defaults to first interface
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:01'
               name: 'eno1'
             - macAddress: 'aa:bb:cc:dd:ee:02'
               name: 'eno2'
+          # Per-host network addressing — references topology interface IDs
+          networking:
+            interfaces:
+              mgmt-vlan:                    # references topology interface ID
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.10
+                      prefixLength: 25
+          IP: '10.0.0.10'                  # deprecated, use networking.interfaces
         master-1:
           bmcIP: '192.168.1.11'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:11'
-          IP: '10.0.0.11'
           primaryMac: 'aa:bb:cc:dd:ee:12'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:11'
               name: 'eno1'
             - macAddress: 'aa:bb:cc:dd:ee:12'
               name: 'eno2'
+          networking:
+            interfaces:
+              mgmt-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.11
+                      prefixLength: 25
+          IP: '10.0.0.11'
         master-2:
           bmcIP: '192.168.1.12'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:21'
-          IP: '10.0.0.12'
           primaryMac: 'aa:bb:cc:dd:ee:22'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:21'
               name: 'eno1'
             - macAddress: 'aa:bb:cc:dd:ee:22'
               name: 'eno2'
+          networking:
+            interfaces:
+              mgmt-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.12
+                      prefixLength: 25
+          IP: '10.0.0.12'
 
       # =====================================================================
       # Cluster Install — install-specific config
@@ -136,7 +237,9 @@ clusters:
         #   - policyController
         #   - searchCollector
 
-        # --- Network Mode ---
+        # --- Network Mode (legacy, deprecated) ---
+        # These are deprecated in favor of networking.interfaces config.
+        # Siteconfig falls back to these if networking.interfaces is not set.
         useBond: true                               # default: true
         useDHCP: false                              # default: false
 

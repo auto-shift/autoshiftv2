@@ -1,6 +1,4 @@
 # Default values for nmstate.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
 policy_namespace: open-cluster-policies
 nmstate:
     name: kubernetes-nmstate-operator
@@ -9,169 +7,298 @@ nmstate:
     source: redhat-operators
     sourceNamespace: openshift-marketplace
 
-### AutoShift Labels Documentation
-# The following labels can be set at the cluster or clusterset level to configure this policy:
+# ==============================================================================
+# AutoShift NMState Configuration Reference
+# ==============================================================================
 #
-# ============================================
-# ENABLE/DISABLE
-# ============================================
-# nmstate<bool>: 'true' or 'false' - Enable Kubernetes NMState Operator (default: 'false')
+# NNCPs are generated from structured YAML under config.networking in clusterset
+# or cluster values files. This replaces the old label-based system entirely.
 #
-# ============================================
-# OPERATOR CONFIGURATION
-# ============================================
-# nmstate-channel<String>: Operator channel (default: 'stable')
-# nmstate-version<String>: Specific operator version (CSV) to install (optional)
-# nmstate-source<String>: Operator catalog source (default: 'redhat-operators')
-# nmstate-source-namespace<String>: Catalog namespace (default: 'openshift-marketplace')
+# --- How it works ---
+# 1. You define interface topology + routes + DNS under config.networking
+# 2. You define per-host overrides (IPs, ports) under config.hosts.*.networking
+# 3. The rendered-config policy merges clusterset + cluster config
+# 4. The nmstate NNCP policy reads the merged config and generates NNCPs
 #
-# ============================================
-# IDENTIFIER NAMING
-# ============================================
-# All identifiers ({id}, {M}) can be numbers or names (e.g., '1', 'mgmt', 'storage', 'nic1').
-# CONSTRAINT: Identifiers must NOT contain hyphens (-). Use alphanumeric characters,
-# underscores, and dots only (valid Kubernetes label value characters).
-# Examples: '1', 'mgmt', 'storage', 'nic1', 'primary', 'worker0'
+# --- NNCP generation rules ---
+# - Each interface in networking.interfaces gets its own NNCP
+# - Routes + DNS + OVN mappings combine into one nmstate-network-config NNCP
+# - OVS bridges each get their own NNCP
+# - If ANY host has per-host overrides for an interface, that interface gets
+#   per-host NNCPs (one per host) instead of a cluster-wide NNCP
+# - Per-host NNCPs use kubernetes.io/hostname nodeSelector (auto-constructed
+#   from mapKey + cluster domain via DNS lookup, or overridden with hostname)
 #
-# ============================================
-# ETHERNET INTERFACES
-# ============================================
-# nmstate-ethernet-{id}<String>: Interface name (e.g., 'eno1')
-# nmstate-ethernet-{id}-state<String>: 'up' or 'down' (default: 'up')
-# nmstate-ethernet-{id}-mac<String>: MAC address with dots (e.g., 'aa.bb.cc.dd.ee.ff')
-# nmstate-ethernet-{id}-mtu<String>: MTU value (e.g., '9000')
+# ==============================================================================
+# Labels (operator only)
+# ==============================================================================
+# nmstate: 'true'                     — Enable NMState operator
+# nmstate-channel: 'stable'           — Operator channel
+# nmstate-version: ''                 — Pin to specific CSV version
+# nmstate-source: 'redhat-operators'  — Catalog source
+# nmstate-source-namespace: 'openshift-marketplace'
 #
-# Generated NNCP: nmstate-ethernet-{id} (one NNCP per ethernet interface)
+# ==============================================================================
+# Config Structure
+# ==============================================================================
 #
-# ============================================
-# BOND INTERFACES
-# ============================================
-# nmstate-bond-{id}<String>: Bond interface name (e.g., 'bond0')
-# nmstate-bond-{id}-state<String>: 'up' or 'down' (default: 'up')
-# nmstate-bond-{id}-mode<String>: Bond mode - 'balance-rr', 'active-backup', 'balance-xor',
-#                                'broadcast', '802.3ad', 'balance-tlb', 'balance-alb'
-# nmstate-bond-{id}-mtu<String>: MTU value (e.g., '9000')
-# nmstate-bond-{id}-mac<String>: MAC address with dots (e.g., 'aa.bb.cc.dd.ee.ff')
-# nmstate-bond-{id}-miimon<String>: MII monitoring interval in ms (e.g., '100')
-# nmstate-bond-{id}-port-{M}<String>: Port interface name (e.g., 'eno1')
+# config:
+#   # baseDomain is optional — used for per-host FQDN construction in nmstate.
+#   # Not needed if cluster was deployed through ACM (ClusterDeployment lookup)
+#   # or if the cluster's dns.config.openshift.io is reachable (auto-detected).
+#   # baseDomain: example.com
 #
-# Bond IPv4 Configuration:
-# nmstate-bond-{id}-ipv4<String>: 'dhcp', 'static', or 'disabled'
-# nmstate-bond-{id}-ipv4-address-{M}<String>: IP address (e.g., '192.168.1.10')
-# nmstate-bond-{id}-ipv4-address-{M}-cidr<String>: CIDR prefix length (e.g., '24')
-# nmstate-bond-{id}-ipv4-gateway<String>: Default gateway (e.g., '192.168.1.1')
+#   networking:
+#     # ------------------------------------------------------------------
+#     # Interface Topology (map keyed by user-chosen ID)
+#     # ------------------------------------------------------------------
+#     # IDs are arbitrary names (mgmt, data, storage, nic1, etc.) used to:
+#     #   - Name the generated NNCP: nmstate-{type}-{id}
+#     #   - Reference interfaces in per-host overrides
+#     #   - Reference as VLAN base interfaces (by interface name, not ID)
+#     #
+#     # Supported types: bond, vlan, ethernet
+#     #
+#     interfaces:
+#       # --- Bond Example ---
+#       mgmt:
+#         type: bond
+#         name: bond0                  # nmstate interface name
+#         state: up                    # default: up
+#         mode: 802.3ad               # bond mode (802.3ad, active-backup, etc.)
+#         mtu: 9000                   # optional
+#         miimon: 100                 # MII monitoring interval (optional)
+#         mac: 'aa:bb:cc:dd:ee:ff'    # set bond MAC (optional)
+#         ports:                      # bond member interfaces
+#           - eno1
+#           - eno2
+#         ipv4: disabled              # disabled | dhcp | static
+#         ipv6: disabled              # disabled | dhcp | autoconf | static
 #
-# Bond IPv6 Configuration:
-# nmstate-bond-{id}-ipv6<String>: 'dhcp', 'autoconf', 'static', or 'disabled'
-# nmstate-bond-{id}-ipv6-address-{M}<String>: IPv6 address
-# nmstate-bond-{id}-ipv6-address-{M}-cidr<String>: CIDR prefix length
-# nmstate-bond-{id}-ipv6-gateway<String>: Default gateway
+#       # --- VLAN Example ---
+#       mgmt-vlan:
+#         type: vlan
+#         name: bond0.100             # nmstate interface name
+#         id: 100                     # VLAN ID (required for vlan type)
+#         base: bond0                 # parent interface name (required for vlan)
+#         mtu: 1500                   # optional
+#         ipv4: static               # per-host IPs go in hosts.*.networking
+#         ipv6: disabled
 #
-# Generated NNCP: nmstate-bond-{id} (one NNCP per bond interface)
+#       # --- Second VLAN on same bond ---
+#       storage-vlan:
+#         type: vlan
+#         name: bond0.200
+#         id: 200
+#         base: bond0
+#         ipv4: static
+#         ipv6: disabled
 #
-# ============================================
-# VLAN INTERFACES
-# ============================================
-# nmstate-vlan-{id}<String>: VLAN interface name (e.g., 'bond0.100')
-# nmstate-vlan-{id}-id<String>: VLAN ID (e.g., '100')
-# nmstate-vlan-{id}-base<String>: Base interface name (e.g., 'bond0')
-# nmstate-vlan-{id}-state<String>: 'up' or 'down' (default: 'up')
-# nmstate-vlan-{id}-mtu<String>: MTU value
+#       # --- Ethernet Example ---
+#       nic3:
+#         type: ethernet
+#         name: eno3                  # optional if mac is set
+#         mac: 'aa:bb:cc:dd:ee:03'   # match by MAC instead of name
+#         mtu: 9000
+#         ipv4: dhcp
+#         ipv6: disabled
 #
-# VLAN IPv4 Configuration:
-# nmstate-vlan-{id}-ipv4<String>: 'dhcp', 'static', or 'disabled'
-# nmstate-vlan-{id}-ipv4-address-{M}<String>: IP address
-# nmstate-vlan-{id}-ipv4-address-{M}-cidr<String>: CIDR prefix length
-# nmstate-vlan-{id}-ipv4-gateway<String>: Default gateway
+#     # ------------------------------------------------------------------
+#     # OVS Bridges (map keyed by user-chosen ID)
+#     # ------------------------------------------------------------------
+#     # ovsBridges:
+#     #   br1:
+#     #     name: ovs-br1             # OVS bridge name
+#     #     ports: [bond1]            # uplink ports
+#     #     stp: false                # spanning tree (default: false)
+#     #     allowExtraPatchPorts: true # OVN patch ports (default: true)
+#     #     mcastSnooping: false      # multicast snooping (optional)
 #
-# Generated NNCP: nmstate-vlan-{id} (one NNCP per VLAN interface)
+#     # ------------------------------------------------------------------
+#     # OVN Bridge Mappings (map keyed by user-chosen ID)
+#     # ------------------------------------------------------------------
+#     # ovnMappings:
+#     #   net1:
+#     #     localnet: localnet1       # OVN localnet name
+#     #     bridge: ovs-br1           # OVS bridge to map to
 #
-# ============================================
-# OVS BRIDGE (for UDN/localnet)
-# ============================================
-# nmstate-ovs-bridge-{id}<String>: OVS bridge name (e.g., 'ovs-br1')
-# nmstate-ovs-bridge-{id}-port-{M}<String>: Port interface name (e.g., 'bond1')
-# nmstate-ovs-bridge-{id}-stp<String>: Spanning tree protocol (default: 'false')
-# nmstate-ovs-bridge-{id}-allow-extra-patch-ports<String>: Allow OVN patch ports (default: 'true')
-# nmstate-ovs-bridge-{id}-mcast-snooping<String>: Multicast snooping (optional)
+#     # ------------------------------------------------------------------
+#     # Static Routes (map keyed by user-chosen ID)
+#     # ------------------------------------------------------------------
+#     # Map keys allow clusterset defaults with per-cluster additions.
+#     #
+#     # routes:
+#     #   default:
+#     #     destination: 0.0.0.0/0
+#     #     gateway: 10.0.0.1
+#     #     interface: bond0.100
+#     #   dc:
+#     #     destination: 10.0.0.0/8
+#     #     gateway: 192.168.1.1
+#     #     interface: bond0
+#     #     metric: 100               # optional
+#     #     tableId: 254              # optional
 #
-# Generated NNCP: nmstate-ovs-bridge-{id} (one NNCP per OVS bridge interface)
+#     # ------------------------------------------------------------------
+#     # DNS
+#     # ------------------------------------------------------------------
+#     # dns:
+#     #   servers:
+#     #     - 10.0.0.53
+#     #     - 10.0.0.54
+#     #   search:
+#     #     - example.com
+#     #     - corp.example.com
 #
-# ============================================
-# STATIC ROUTES
-# ============================================
-# nmstate-route-{id}-dest<String>: Destination network (e.g., '10.0.0.0')
-# nmstate-route-{id}-cidr<String>: CIDR prefix length (e.g., '8')
-# nmstate-route-{id}-gateway<String>: Next hop gateway (e.g., '192.168.1.1')
-# nmstate-route-{id}-interface<String>: Outgoing interface (e.g., 'bond0')
-# nmstate-route-{id}-metric<String>: Route metric (optional)
-# nmstate-route-{id}-table<String>: Route table ID (optional, default: '254')
+#     # ------------------------------------------------------------------
+#     # Node Selector (for cluster-wide NNCPs)
+#     # ------------------------------------------------------------------
+#     # Applied to all cluster-wide NNCPs. Plain Kubernetes label selector.
+#     #
+#     # nodeSelector:
+#     #   node-role.kubernetes.io/worker: ''
 #
-# ============================================
-# DNS CONFIGURATION
-# ============================================
-# nmstate-dns-server-{id}<String>: DNS server IP (e.g., '8.8.8.8')
-# nmstate-dns-search-{id}<String>: DNS search domain (e.g., 'example.com')
+#   # ====================================================================
+#   # Per-Host Overrides
+#   # ====================================================================
+#   # Each host can override interface properties from the topology.
+#   # Per-host overrides reference topology interface IDs.
+#   #
+#   # Per-host NNCPs use kubernetes.io/hostname as nodeSelector:
+#   #   1. If hosts.*.hostname is set → uses that value as-is
+#   #   2. Otherwise → constructs {mapKey}.{clusterDomain} where clusterDomain
+#   #      is looked up from dns.config.openshift.io/cluster on the managed cluster
+#   #
+#   hosts:
+#     master-0:
+#       # hostname: weird-node.corp.local  # Override if node has non-standard name
+#       networking:
+#         interfaces:
+#           # --- Static IPv4 addresses (references topology interface ID) ---
+#           mgmt-vlan:
+#             ipv4:
+#               addresses:
+#                 - ip: 10.0.0.10
+#                   prefixLength: 25
 #
-# ============================================
-# OVN BRIDGE MAPPING (for UDN localnet)
-# ============================================
-# nmstate-ovn-mapping-{id}-localnet<String>: Localnet network name (e.g., 'localnet1')
-# nmstate-ovn-mapping-{id}-bridge<String>: OVS bridge to map (e.g., 'ovs-br1')
+#           # --- Static IPv6 addresses ---
+#           # data-vlan:
+#           #   ipv6:
+#           #     addresses:
+#           #       - ip: 'fd00::10'
+#           #         prefixLength: 64
 #
-# Routes, DNS, and OVN mappings are combined into a single NNCP: nmstate-network-config
+#           # --- Override bond ports per-host (different NIC names) ---
+#           # mgmt:
+#           #   ports: [enp3s0f0, enp3s0f1]
 #
-# ============================================
-# NODE SELECTOR
-# ============================================
-# nmstate-nodeselector-{id}-prefix<String>: Node label prefix (e.g., 'node-role.kubernetes.io') - optional
-# nmstate-nodeselector-{id}-name<String>: Node label name (e.g., 'worker')
-# nmstate-nodeselector-{id}-value<String>: Node label value (e.g., '' for exists)
+#         # --- Per-host routes ---
+#         # routes:
+#         #   extra:
+#         #     destination: 172.16.0.0/12
+#         #     gateway: 10.100.1.1
+#         #     interface: bond0.100
 #
-# ============================================
-# EXAMPLES
-# ============================================
-# Basic bond with DHCP (using named identifiers):
-#   autoshift.io/nmstate: 'true'
-#   autoshift.io/nmstate-bond-mgmt: 'bond0'
-#   autoshift.io/nmstate-bond-mgmt-mode: '802.3ad'
-#   autoshift.io/nmstate-bond-mgmt-port-1: 'eno1'
-#   autoshift.io/nmstate-bond-mgmt-port-2: 'eno2'
-#   autoshift.io/nmstate-bond-mgmt-ipv4: 'dhcp'
-#   autoshift.io/nmstate-bond-mgmt-ipv6: 'disabled'
+#         # --- Per-host DNS ---
+#         # dns:
+#         #   servers: [10.0.0.55]
+#         #   search: [special.example.com]
 #
-# Bond with static IP (using numeric identifiers):
-#   autoshift.io/nmstate: 'true'
-#   autoshift.io/nmstate-bond-1: 'bond0'
-#   autoshift.io/nmstate-bond-1-mode: '802.3ad'
-#   autoshift.io/nmstate-bond-1-mtu: '9000'
-#   autoshift.io/nmstate-bond-1-port-1: 'eno1'
-#   autoshift.io/nmstate-bond-1-port-2: 'eno2'
-#   autoshift.io/nmstate-bond-1-ipv4: 'static'
-#   autoshift.io/nmstate-bond-1-ipv4-address-1: '192.168.1.10'
-#   autoshift.io/nmstate-bond-1-ipv4-address-1-cidr: '24'
-#   autoshift.io/nmstate-bond-1-ipv4-gateway: '192.168.1.1'
+# ==============================================================================
+# IPv4 Modes
+# ==============================================================================
+# disabled — interface has no IPv4 (enabled: false)
+# dhcp     — IPv4 via DHCP (enabled: true, dhcp: true)
+# static   — static IPv4; per-host addresses in hosts.*.networking.interfaces
 #
-# VLAN on bond:
-#   autoshift.io/nmstate-vlan-data: 'bond0.100'
-#   autoshift.io/nmstate-vlan-data-id: '100'
-#   autoshift.io/nmstate-vlan-data-base: 'bond0'
-#   autoshift.io/nmstate-vlan-data-ipv4: 'dhcp'
+# ==============================================================================
+# IPv6 Modes
+# ==============================================================================
+# disabled — interface has no IPv6 (enabled: false)
+# dhcp     — IPv6 via DHCPv6 (enabled: true, dhcp: true)
+# autoconf — IPv6 via SLAAC (enabled: true, autoconf: true)
+# static   — static IPv6; per-host addresses in hosts.*.networking.interfaces
 #
-# Static route:
-#   autoshift.io/nmstate-route-dc-dest: '10.0.0.0'
-#   autoshift.io/nmstate-route-dc-cidr: '8'
-#   autoshift.io/nmstate-route-dc-gateway: '192.168.1.1'
-#   autoshift.io/nmstate-route-dc-interface: 'bond0'
+# ==============================================================================
+# Generated NNCP Names
+# ==============================================================================
+# Config Path                          → NNCP Name
+# ------------------------------------   ----------------------------
+# networking.interfaces.{id} (bond)    → nmstate-bond-{id}
+# networking.interfaces.{id} (vlan)    → nmstate-vlan-{id}
+# networking.interfaces.{id} (ethernet)→ nmstate-ethernet-{id}
+# networking.ovsBridges.{id}           → nmstate-ovs-bridge-{id}
+# routes + dns + ovnMappings           → nmstate-network-config
+# hosts.{name}.networking              → nmstate-host-{name}
 #
-# Apply to specific nodes:
-#   autoshift.io/nmstate-nodeselector-worker-prefix: 'node-role.kubernetes.io'
-#   autoshift.io/nmstate-nodeselector-worker-name: 'worker'
-#   autoshift.io/nmstate-nodeselector-worker-value: ''
+# ==============================================================================
+# Full Example: Dual-stack bond + 2 VLANs + static routes
+# ==============================================================================
 #
-# ============================================
-# LEGACY FILE-BASED CONFIGURATION (deprecated)
-# ============================================
-# nmstate-nncp-<name><String>: Filename of NMState config in files/ directory
-#                             Can be specified multiple times for multiple configs
-#                             Must have unique suffixes (e.g., nmstate-nncp-bond1, nmstate-nncp-vlan2)
+# clusters:
+#   prod-cluster:
+#     config:
+#       networking:
+#         interfaces:
+#           mgmt:
+#             type: bond
+#             name: bond0
+#             mode: 802.3ad
+#             mtu: 9000
+#             miimon: 100
+#             ports: [eno1, eno2]
+#             ipv4: disabled
+#             ipv6: disabled
+#           mgmt-v4:
+#             type: vlan
+#             name: bond0.100
+#             id: 100
+#             base: bond0
+#             ipv4: static
+#             ipv6: disabled
+#           mgmt-v6:
+#             type: vlan
+#             name: bond0.200
+#             id: 200
+#             base: bond0
+#             ipv4: disabled
+#             ipv6: static
+#         routes:
+#           default-v4:
+#             destination: 0.0.0.0/0
+#             gateway: 10.0.0.1
+#             interface: bond0.100
+#           default-v6:
+#             destination: '::/0'
+#             gateway: 'fd00::1'
+#             interface: bond0.200
+#         dns:
+#           servers: [10.0.0.53, 'fd00::53']
+#           search: [example.com]
+#       hosts:
+#         master-0:
+#           networking:
+#             interfaces:
+#               mgmt-v4:
+#                 ipv4:
+#                   addresses:
+#                     - ip: 10.0.0.10
+#                       prefixLength: 25
+#               mgmt-v6:
+#                 ipv6:
+#                   addresses:
+#                     - ip: 'fd00::10'
+#                       prefixLength: 64
+#         master-1:
+#           networking:
+#             interfaces:
+#               mgmt-v4:
+#                 ipv4:
+#                   addresses:
+#                     - ip: 10.0.0.11
+#                       prefixLength: 25
+#               mgmt-v6:
+#                 ipv6:
+#                   addresses:
+#                     - ip: 'fd00::11'
+#                       prefixLength: 64
