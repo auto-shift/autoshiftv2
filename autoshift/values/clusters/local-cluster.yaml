@@ -1,15 +1,31 @@
-# Test networking config for local-cluster (hub) to validate nmstate NNCP generation
+# Test per-host networking overrides on local-cluster
 clusters:
   local-cluster:
     config:
       networking:
         interfaces:
-          test-bond:
-            type: bond
-            name: bond99
-            mode: active-backup
-            ports:
-              - dummy0
-              - dummy1
-            ipv4: disabled
+          test-static-vlan:
+            type: vlan
+            name: bond99.200
+            id: 200
+            base: bond99
+            ipv4: static
             ipv6: disabled
+      hosts:
+        master-0:
+          hostname: test-override.example.com
+          networking:
+            interfaces:
+              test-static-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 192.168.200.10
+                      prefixLength: 24
+        master-1:
+          networking:
+            interfaces:
+              test-static-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 192.168.200.11
+                      prefixLength: 24
