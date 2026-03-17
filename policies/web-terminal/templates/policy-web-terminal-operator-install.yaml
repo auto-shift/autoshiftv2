@@ -1,0 +1,101 @@
+{{- $policyName := "policy-web-terminal-operator-install" }}
+{{- $placementName := "placement-policy-web-terminal-operator-install" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: web-terminal-operator-ns
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.webTerminal.namespace }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1beta1
+        kind: OperatorPolicy
+        metadata:
+          name: install-web-terminal
+        spec:
+          remediationAction: enforce
+          severity: high
+          complianceType: musthave
+          operatorGroup:
+            name: {{ .Values.webTerminal.operatorGroupName }}
+            namespace: {{ .Values.webTerminal.namespace }}
+            {{- if .Values.webTerminal.targetNamespaces }}
+            targetNamespaces:
+              {{- range .Values.webTerminal.targetNamespaces }}
+              - {{ . }}
+              {{- end }}
+            {{- end }}
+          subscription:
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/web-terminal-version" | default "" {{ "hub}}" }}'
+            namespace: {{ .Values.webTerminal.namespace }}
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/web-terminal-channel" | default "{{ .Values.webTerminal.channel }}" {{ "hub}}" }}'
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/web-terminal-subscription-name" | default "{{ .Values.webTerminal.name }}" {{ "hub}}" }}'
+            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/web-terminal-source" | default "{{ .Values.webTerminal.source }}" {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/web-terminal-source-namespace" | default "{{ .Values.webTerminal.sourceNamespace }}" {{ "hub}}" }}'
+          # Upgrade approval for subscription will be set based on if version is set not this flag
+          # If version is set install plan is set to manual and only the version specified will be installed
+          upgradeApproval: Automatic
+          versions:
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/web-terminal-version" | default "" {{ "hub}}" }}'
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/web-terminal'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
