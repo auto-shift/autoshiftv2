@@ -309,37 +309,64 @@ hubClusterSets:
     config:
       networking:
         interfaces:
-          test-bond:
-            type: bond
-            name: bond99
-            mode: active-backup
-            mtu: 9000
-            miimon: 100
-            ports:
-              - dummy0
-              - dummy1
-            ipv4: disabled
-            ipv6: disabled
-          test-vlan:
-            type: vlan
-            name: bond99.100
-            id: 100
-            base: bond99
-            ipv4: dhcp
-            ipv6: disabled
-          test-ethernet:
+          mgmt-port1:
             type: ethernet
-            name: dummy2
+            name: mgmt-port1
+            mac: 'aa:bb:cc:00:00:01'
             ipv4: disabled
+            ipv6: disabled
+          mgmt-port2:
+            type: ethernet
+            name: mgmt-port2
+            mac: 'aa:bb:cc:00:00:02'
+            ipv4: disabled
+            ipv6: disabled
+          stor-port1:
+            type: ethernet
+            name: stor-port1
+            mac: 'aa:bb:cc:01:00:01'
+            ipv4: disabled
+            ipv6: disabled
+          stor-port2:
+            type: ethernet
+            name: stor-port2
+            mac: 'aa:bb:cc:01:00:02'
+            ipv4: disabled
+            ipv6: disabled
+          mgmt:
+            type: bond
+            name: bond0
+            mode: 802.3ad
+            ports: [mgmt-port1, mgmt-port2]
+            ipv4: disabled
+            ipv6: disabled
+          storage:
+            type: bond
+            name: bond1
+            mode: 802.3ad
+            mtu: 9000
+            ports: [stor-port1, stor-port2]
+            ipv4: disabled
+            ipv6: disabled
+          mgmt-vlan:
+            type: vlan
+            name: bond0.100
+            id: 100
+            base: bond0
+            ipv4: static
+            ipv6: disabled
+          storage-vlan:
+            type: vlan
+            name: bond1.120
+            id: 120
+            base: bond1
+            mtu: 9000
+            ipv4: static
             ipv6: disabled
         routes:
-          test-route:
-            destination: 172.16.0.0/12
+          default:
+            destination: 0.0.0.0/0
             gateway: 10.0.0.1
-            interface: bond99.100
+            interface: bond0.100
         dns:
-          servers:
-            - 10.0.0.53
-            - 10.0.0.54
-          search:
-            - test.example.com
+          servers: [10.0.0.53]
