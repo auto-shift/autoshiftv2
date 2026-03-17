@@ -62,15 +62,10 @@ clusters:
 
 ### networking
 
-Network configuration shared across policies. Defines cluster, machine, and service networks plus DNS and VLAN settings.
+Network configuration shared across policies (cluster-install, nmstate). Defines SDN networks, interface topology, routes, and DNS.
 
 ```yaml
 networking:
-  vlan: 100
-  machinePrefixLength: 25
-  defaultGateway: '10.0.0.1'
-  dnsServers:
-    - 10.0.0.53
   clusterNetwork:
     cidr: 10.128.0.0/14
     hostPrefix: 23
@@ -78,11 +73,36 @@ networking:
     cidr: '10.0.0.0/25'
   serviceNetwork:
     - 172.30.0.0/16
+  # NMState interface topology — used by both siteconfig (NMStateConfig) and nmstate (NNCP)
+  interfaces:
+    mgmt:
+      type: bond
+      name: bond0
+      mode: active-backup
+      ports: [eno1, eno2]
+      ipv4: disabled
+      ipv6: disabled
+    mgmt-vlan:
+      type: vlan
+      name: bond0.100
+      id: 100
+      base: bond0
+      ipv4: static               # per-host IPs in hosts section
+      ipv6: disabled
+  routes:
+    default:
+      destination: 0.0.0.0/0
+      gateway: '10.0.0.1'
+      interface: bond0.100
+  dns:
+    servers: [10.0.0.53]
 ```
+
+See [policies/nmstate/README.md](../policies/nmstate/README.md) for the full interface config reference.
 
 ### hosts
 
-Per-host hardware configuration. Each key is the hostname.
+Per-host hardware and networking configuration. Each key is the short hostname (siteconfig constructs the FQDN as `{key}.{clusterName}.{baseDomain}`).
 
 ```yaml
 hosts:
@@ -90,17 +110,20 @@ hosts:
     bmcIP: '192.168.1.10'
     bmcPrefix: 'redfish-virtualmedia'     # BMC protocol prefix
     bmcEndpoint: '/redfish/v1/Systems/1'  # optional, overrides cluster-level
-    bmcCredentialRef:                      # optional, overrides cluster-level
-      name: 'custom-cred'
-      namespace: 'custom-ns'
     bootMACAddress: '00:00:00:00:00:01'
-    IP: '10.0.0.10'
     primaryMac: '00:00:00:00:00:02'       # MAC for bond, defaults to first interface
-    interfaces:
+    interfaces:                            # hardware interfaces for NMStateConfig
       - macAddress: '00:00:00:00:00:01'
-        name: 'eno1'                      # optional, auto-generated if omitted
+        name: 'eno1'
       - macAddress: '00:00:00:00:00:02'
         name: 'eno2'
+    networking:                            # per-host network overrides
+      interfaces:
+        mgmt-vlan:                         # references topology interface ID
+          ipv4:
+            addresses:
+              - ip: 10.0.0.10
+                prefixLength: 25
 ```
 
 ### clusterInstall
@@ -138,8 +161,6 @@ clusterInstall:
   #   key: 'ca-bundle.crt'
   #   namespace: 'cluster-install-secrets' # optional, defaults to policy namespace
   secretSourceNamespace: 'cluster-install-secrets'
-  useBond: true                      # default: true
-  useDHCP: false                     # default: false
   ntpSources:                        # optional NTP servers
     - 10.0.0.1
   klusterletAddons:                  # optional override (defaults below)
@@ -207,12 +228,8 @@ Create a values file for your cluster under `autoshift/values/clusters/`:
 clusters:
   my-cluster:
     config:
+      clusterSet: managed
       networking:
-        vlan: 100
-        machinePrefixLength: 25
-        defaultGateway: '10.0.0.1'
-        dnsServers:
-          - 10.0.0.53
         clusterNetwork:
           cidr: 10.128.0.0/14
           hostPrefix: 23
@@ -220,41 +237,80 @@ clusters:
           cidr: '10.0.0.0/25'
         serviceNetwork:
           - 172.30.0.0/16
+        interfaces:
+          mgmt:
+            type: bond
+            name: bond0
+            mode: active-backup
+            ports: [eno1, eno2]
+            ipv4: disabled
+            ipv6: disabled
+          mgmt-vlan:
+            type: vlan
+            name: bond0.100
+            id: 100
+            base: bond0
+            ipv4: static
+            ipv6: disabled
+        routes:
+          default:
+            destination: 0.0.0.0/0
+            gateway: '10.0.0.1'
+            interface: bond0.100
+        dns:
+          servers: [10.0.0.53]
       hosts:
         master-0:
           bmcIP: '192.168.1.10'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:01'
-          IP: '10.0.0.10'
           primaryMac: 'aa:bb:cc:dd:ee:02'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:01'
               name: 'eno1'
             - macAddress: 'aa:bb:cc:dd:ee:02'
               name: 'eno2'
+          networking:
+            interfaces:
+              mgmt-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.10
+                      prefixLength: 25
         master-1:
           bmcIP: '192.168.1.11'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:11'
-          IP: '10.0.0.11'
           primaryMac: 'aa:bb:cc:dd:ee:12'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:11'
               name: 'eno1'
             - macAddress: 'aa:bb:cc:dd:ee:12'
               name: 'eno2'
+          networking:
+            interfaces:
+              mgmt-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.11
+                      prefixLength: 25
         master-2:
           bmcIP: '192.168.1.12'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:21'
-          IP: '10.0.0.12'
           primaryMac: 'aa:bb:cc:dd:ee:22'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:21'
               name: 'eno1'
             - macAddress: 'aa:bb:cc:dd:ee:22'
               name: 'eno2'
-      clusterSet: managed
+          networking:
+            interfaces:
+              mgmt-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.12
+                      prefixLength: 25
       clusterInstall:
         createCluster: 'true'
         baseDomain: example.com
@@ -287,7 +343,7 @@ Check the policy chain:
 
 ```bash
 # All three should be Compliant for provisioning to proceed
-oc get policies -n open-cluster-policies | grep cluster-install
+oc get policies -A | grep cluster-install
 ```
 
 Check the created resources:
@@ -333,8 +389,6 @@ hubClusterSets:
         bmcCredentialRef: 'default-bmc-cred'
         bmcEndpoint: '/redfish/v1/Systems/1'
         pullSecretRef: 'default-pull-secret'
-        useBond: true
-        useDHCP: false
 ```
 
 Per-cluster values only need to specify what differs:
@@ -422,12 +476,25 @@ For single-node clusters, set `controlPlaneAgents: 1` and define one host:
 clusters:
   my-sno:
     config:
+      networking:
+        clusterNetwork:
+          cidr: 10.128.0.0/14
+          hostPrefix: 23
+        machineNetwork:
+          cidr: '10.0.0.0/25'
+        serviceNetwork:
+          - 172.30.0.0/16
+        interfaces:
+          mgmt:
+            type: ethernet
+            name: eno1
+            ipv4: dhcp
+            ipv6: disabled
       hosts:
         master-0:
           bmcIP: '192.168.1.10'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:01'
-          IP: '10.0.0.10'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:01'
               name: 'eno1'

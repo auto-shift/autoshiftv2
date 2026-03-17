@@ -1,8 +1,8 @@
 # AutoShiftv2 - Developer Guide
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![OpenShift](https://img.shields.io/badge/OpenShift-4.18%2B-red)](https://www.openshift.com/)
-[![RHACM](https://img.shields.io/badge/RHACM-2.14%2B-purple)](https://www.redhat.com/en/technologies/management/advanced-cluster-management)
+[![OpenShift](https://img.shields.io/badge/OpenShift-4.20%2B-red)](https://www.openshift.com/)
+[![RHACM](https://img.shields.io/badge/RHACM-2.15%2B-purple)](https://www.redhat.com/en/technologies/management/advanced-cluster-management)
 
 **Build and manage OpenShift Platform Plus infrastructure as code with policy-driven automation**
 
@@ -127,16 +127,19 @@ flowchart TD
 1. **GitOps Foundation**: ArgoCD ApplicationSet monitors `policies/*` directories in Git repository
 2. **Dynamic Application Creation**: ApplicationSet creates individual ArgoCD Applications for each policy
 3. **Helm Chart Deployment**: Each Application deploys a Helm chart containing ACM Policy + Placement + PlacementBinding
-4. **Hub Template Processing**: ACM processes policy templates on hub cluster using cluster labels from ConfigMaps
+4. **Hub Template Processing**: ACM processes hub templates on the hub cluster, resolving per-cluster values before replication
 5. **Policy Propagation**: ACM Policy Framework propagates processed policies to target spoke clusters
-6. **Spoke Template Processing**: Policy agents on spoke clusters process templates again with local cluster context
+6. **Spoke Template Processing**: Policy agents on spoke clusters process any remaining regular templates with local cluster context
 7. **Resource Application**: Final Kubernetes resources are applied on spoke clusters
 
-**Label-Driven Configuration:**
-- **cluster-labels policy**: Applies `autoshift.io/*` labels to clusters from ConfigMaps
-- **Hub templates**: `{{hub index .ManagedClusterLabels "autoshift.io/key" hub}}` access cluster labels
+**Two Configuration Patterns:**
+
+- **Label-based** (operator policies): Labels defined in values files are propagated to ManagedClusters by the `cluster-labels` policy. Hub templates read labels via `{{hub index .ManagedClusterLabels "autoshift.io/key" hub}}` to configure operator subscriptions, channels, etc.
+- **Config-based** (nmstate, cluster-install): Structured YAML config defined in values files is merged by the `cluster-config-maps` policy into rendered-config ConfigMaps. Hub templates read these ConfigMaps via `lookup` + `fromYaml` to generate complex resources like NNCPs and NMStateConfigs.
+
+**Cluster Targeting:**
 - **Placement matching**: Selects target clusters using label expressions and cluster sets
-- **Dynamic behavior**: Same policy template produces different resources per cluster based on labels
+- **Dynamic behavior**: Same policy template produces different resources per cluster based on labels or config
 
 ## 🛠️ Developer Setup
 
@@ -315,32 +318,82 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 
 ### Hub Template Pitfalls
 
-**Blank lines in `object-templates-raw` break template parsing.** Helm comments (`{{/* */}}`) produce blank lines in rendered output. When ArgoCD re-serializes the YAML, blank lines can cause the block scalar to flip from `|` (literal) to `>` (folded), which breaks ACM's template parser. Always use trim markers on comments inside `object-templates-raw`:
+**Comments inside `object-templates-raw` are tricky.** There are three comment styles, each with trade-offs:
+
+- `{{- /* comment */ -}}` (trim markers) — removes the comment AND eats newlines on both sides, **merging adjacent lines**. This can create very long lines that cause Kubernetes to re-serialize the block scalar from `|` (literal) to `>` (folded), breaking ACM's template parser.
+- `{{/* comment */}}` (no trim) — removes the comment but preserves surrounding whitespace. Leaves a whitespace-only line that `{{hub-` on the next line trims naturally. **This is the recommended approach** for comments between hub template lines.
+- `# YAML comment` — survives into the rendered output as literal text. Safe on YAML content lines, but `{{hub-` on the following line will eat the newline and merge the comment text with subsequent content.
 
 ```yaml
-# CORRECT — trim markers prevent blank lines
-{{- /* Build cluster config map */ -}}
-{{ "{{" }} $config := dict {{ "}}" }}
+# RECOMMENDED — no trim markers, whitespace line gets trimmed by {{hub-
+{{/*  Build cluster config map */}}
+{{ "{{hub-" }} $config := dict {{ "hub}}" }}
 
-# WRONG — produces blank line that breaks ACM parsing
-{{/* Build cluster config map */}}
-{{ "{{" }} $config := dict {{ "}}" }}
+# DANGEROUS — trim markers merge adjacent lines
+{{- /* Build cluster config map */ -}}
+{{ "{{hub-" }} $config := dict {{ "hub}}" }}
+```
+
+**First line after `object-templates-raw: |`** must not use `{{hub-` (left trim) or `{{-` — the trim eats the block scalar newline. Use `{{hub` (no dash) on the first line:
+
+```yaml
+object-templates-raw: |
+  {{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" $ns $name) {{ "hub}}" }}
+  {{ "{{hub-" }} $config := ... {{ "hub}}" }}
+```
+
+**`fromYaml`, `fromJson`, `toYaml`, `toJson` work in hub templates.** This enables reading structured data from ConfigMaps directly:
+
+```yaml
+{{ "{{hub-" }} $cm := (lookup "v1" "ConfigMap" $ns $name) {{ "hub}}" }}
+{{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
 ```
 
 **`trimPrefix` and `trimSuffix` are not available** in ACM hub templates. Use `replace` instead:
 
 ```yaml
 # Use this:
-{{ "{{" }} $name := (replace "managed-cluster-config." "" $cmName) {{ "}}" }}
+{{ "{{hub" }} $name := (replace "managed-cluster-config." "" $cmName) {{ "hub}}" }}
 # Not this (will error):
-{{ "{{" }} $name := (trimPrefix "managed-cluster-config." $cmName) {{ "}}" }}
+{{ "{{hub" }} $name := (trimPrefix "managed-cluster-config." $cmName) {{ "hub}}" }}
 ```
 
 **`lookup` returns a Go map, not a string.** Use `| default dict` to safely handle missing resources:
 
 ```yaml
-{{ "{{" }} $cm := (lookup "v1" "ConfigMap" $ns $name) | default dict {{ "}}" }}
-{{ "{{" }} $data := (index $cm "data" | default dict) {{ "}}" }}
+{{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" $ns $name) | default dict {{ "hub}}" }}
+{{ "{{hub" }} $data := (index $cm "data" | default dict) {{ "hub}}" }}
+```
+
+**Mixing hub and regular templates** is supported. Hub templates resolve first (on the hub), producing literal text. That text is then evaluated as a regular Go template on the managed cluster. This enables hub-side config injection combined with managed-cluster-side lookups.
+
+The key pattern: a hub template can inject a value as a literal string, and a regular template on the spoke can use that string in a `lookup` or other expression. For example, the nmstate NNCP policy uses hub templates to read host config from the hub, then a regular template to look up the cluster's DNS domain on the spoke:
+
+```yaml
+object-templates-raw: |
+  {{/*  Hub resolves this — reads config from rendered-config ConfigMap on the hub */}}
+  {{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" "policies-autoshift" (printf "%s.rendered-config" .ManagedClusterName)) {{ "hub}}" }}
+  {{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
+  {{ "{{hub-" }} $hosts := (index $config "hosts" | default dict) {{ "hub}}" }}
+  {{/*  Spoke resolves this — looks up DNS config on the managed cluster */}}
+  {{ "{{" }} $clusterDomain := ((lookup "config.openshift.io/v1" "DNS" "" "cluster").spec.baseDomain | default "") {{ "}}" }}
+  {{/*  Hub injects the hostname string, spoke provides the domain */}}
+  {{ "{{hub-" }} range $hostname, $host := $hosts {{ "hub}}" }}
+      kubernetes.io/hostname: {{ "{{hub" }} $hostname {{ "hub}}" }}.{{ "{{" }} $clusterDomain {{ "}}" }}
+  {{ "{{hub-" }} end {{ "hub}}" }}
+```
+
+After hub resolution for a cluster with `master-0` in its hosts, the spoke sees:
+
+```yaml
+  {{ "{{" }} $clusterDomain := ((lookup "config.openshift.io/v1" "DNS" "" "cluster").spec.baseDomain | default "") {{ "}}" }}
+      kubernetes.io/hostname: master-0.{{ "{{" }} $clusterDomain {{ "}}" }}
+```
+
+The spoke then resolves `$clusterDomain` via its own DNS lookup, producing:
+
+```yaml
+      kubernetes.io/hostname: master-0.my-cluster.example.com
 ```
 
 ### Label-Based Configuration

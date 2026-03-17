@@ -38,6 +38,13 @@ spec:
               {{ "{{" }} $clusterSet := (index $cluster.metadata.labels "cluster.open-cluster-management.io/clusterset") | default "" {{ "}}" }}
               {{ "{{" }} $_ := set $mcClusterSets $clusterName $clusterSet {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
+            {{- /* Pre-fetch all clusterset ConfigMaps into a dict (avoids per-cluster lookups) */ -}}
+            {{ "{{" }} $allClusterSetConfigs := dict {{ "}}" }}
+            {{ "{{" }} $allClusterSetConfigMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/cluster-set-configs") | default dict {{ "}}" }}
+            {{ "{{" }} range $_, $csCm := ($allClusterSetConfigMaps.items | default list) {{ "}}" }}
+              {{ "{{" }} $csName := (replace "cluster-set-config." "" $csCm.metadata.name) {{ "}}" }}
+              {{ "{{" }} $_ := set $allClusterSetConfigs $csName ($csCm.data.config | default "{}" | fromJson) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{- /* Loop over all cluster ConfigMaps — resolve clusterset and merge */ -}}
             {{ "{{" }} $allClusterConfigMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/cluster-configs") | default dict {{ "}}" }}
             {{ "{{" }} range $_, $cm := ($allClusterConfigMaps.items | default list) {{ "}}" }}
@@ -50,8 +57,7 @@ spec:
                 {{ "{{" }} if (empty $clusterSetName) {{ "}}" }}
                   {{ "{{" }} $clusterSetName = (index $mcClusterSets $clusterName | default "default") {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
-                {{ "{{" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" $policyNamespace (print "cluster-set-config." $clusterSetName) "autoshift.io/cluster-set-configs" | default dict) {{ "}}" }}
-                {{ "{{" }} $clusterSetConfig := ($clusterSetConfigMap.data.config | default "{}" | fromJson) {{ "}}" }}
+                {{ "{{" }} $clusterSetConfig := (index $allClusterSetConfigs $clusterSetName | default dict) {{ "}}" }}
                 {{ "{{" }} $renderedConfig := (dict) {{ "}}" }}
                 {{ "{{" }} $_ := (merge $renderedConfig $clusterConfig $clusterSetConfig) {{ "}}" }}
                 {{ "{{" }} $_ := set $allRendered $clusterName $renderedConfig {{ "}}" }}
@@ -60,11 +66,7 @@ spec:
             {{- /* ManagedClusters without a cluster ConfigMap — render with clusterset defaults only */ -}}
             {{ "{{" }} range $clusterName, $clusterSet := $mcClusterSets {{ "}}" }}
               {{ "{{" }} if not (hasKey $allRendered $clusterName) {{ "}}" }}
-                {{ "{{" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" $policyNamespace (print "cluster-set-config." $clusterSet) "autoshift.io/cluster-set-configs" | default dict) {{ "}}" }}
-                {{ "{{" }} $clusterSetConfig := ($clusterSetConfigMap.data.config | default "{}" | fromJson) {{ "}}" }}
-                {{ "{{" }} $renderedConfig := (dict) {{ "}}" }}
-                {{ "{{" }} $_ := (merge $renderedConfig $clusterSetConfig) {{ "}}" }}
-                {{ "{{" }} $_ := set $allRendered $clusterName $renderedConfig {{ "}}" }}
+                {{ "{{" }} $_ := set $allRendered $clusterName (index $allClusterSetConfigs $clusterSet | default dict) {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             {{- /* Single output loop */ -}}
