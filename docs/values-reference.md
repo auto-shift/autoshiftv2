@@ -566,7 +566,7 @@ NNCPs are generated from `config.networking` in values files. Each interface get
 | `name` | string | Yes | nmstate interface name (e.g., `bond0`) |
 | `state` | string | No | `up` (default), `down` |
 | `mtu` | int | No | MTU size |
-| `mac` | string | No | MAC address |
+| `mac` | string | No | MAC address — when set, adds `identifier: mac-address` to NNCP (nmstate matches by MAC instead of name) |
 | `ipv4` | string | No | `disabled` (default), `dhcp`, `static` |
 | `ipv6` | string | No | `disabled` (default), `dhcp`, `autoconf`, `static` |
 | `mode` | string | Bond only | Bond mode (e.g., `802.3ad`, `active-backup`) |

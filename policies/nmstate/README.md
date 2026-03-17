@@ -58,7 +58,7 @@ config:
         mode: 802.3ad                # bond mode (required for bonds)
         mtu: 9000                    # optional
         miimon: 100                  # MII monitoring interval (optional)
-        mac: 'aa:bb:cc:dd:ee:ff'     # set bond MAC (optional)
+        mac: 'aa:bb:cc:dd:ee:ff'     # optional — sets MAC and adds identifier: mac-address
         ports:                       # bond member interfaces (required for bonds)
           - eno1
           - eno2
@@ -77,11 +77,37 @@ config:
       nic3:
         type: ethernet
         name: eno3
-        mac: 'aa:bb:cc:dd:ee:03'     # match by MAC instead of name
+        mac: 'aa:bb:cc:dd:ee:03'     # adds identifier: mac-address to NNCP
         mtu: 9000
         ipv4: dhcp
         ipv6: disabled
 ```
+
+### MAC-Based Interface Identification
+
+When `mac` is set on an interface, the generated NNCP includes `identifier: mac-address`. This tells nmstate to match the interface by MAC address instead of name — useful for heterogeneous hardware where NIC names vary across hosts but MACs are known.
+
+```yaml
+    interfaces:
+      # Define ethernet ports by MAC — nmstate matches by MAC, not name
+      port1:
+        type: ethernet
+        name: port1                  # logical name (used in bond ports list)
+        mac: '00:23:45:67:89:1a'    # identifier: mac-address auto-added
+      port2:
+        type: ethernet
+        name: port2
+        mac: '00:23:45:67:89:1b'
+      # Bond references the MAC-identified ports by name
+      mgmt:
+        type: bond
+        name: bond0
+        mode: 802.3ad
+        ports: [port1, port2]       # nmstate resolves via MAC on port1/port2
+        ipv4: dhcp
+```
+
+The `name` field on MAC-identified interfaces is a logical name — nmstate uses it for internal reference (e.g., bond port lists, VLAN base interface) but matches the physical NIC by MAC.
 
 ### OVS Bridges
 

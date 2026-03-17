@@ -52,7 +52,7 @@ clusters:
             name: bond0
             state: up                    # default: up
             mode: 802.3ad                # bond mode
-            # mac: 'aa:bb:cc:dd:ee:ff'   # optional, sets bond MAC
+            # mac: 'aa:bb:cc:dd:ee:ff'   # optional — adds identifier: mac-address to NNCP
             mtu: 9000
             miimon: 100
             ports:                       # by name, by MAC, or mixed
@@ -77,7 +77,7 @@ clusters:
           #   name: eno3
           #   state: up
           #   mtu: 9000
-          #   mac: 'aa:bb:cc:dd:ee:03'  # match by MAC instead of name
+          #   mac: 'aa:bb:cc:dd:ee:03'  # adds identifier: mac-address (nmstate matches by MAC, not name)
 
         # OVS bridges — map keyed by user-chosen ID
         # ovsBridges:
@@ -117,18 +117,11 @@ clusters:
         # nodeSelector:
         #   node-role.kubernetes.io/worker: ''
 
-        # --- Legacy fields (backward compat for siteconfig) ---
-        # These are deprecated in favor of interfaces/routes/dns above.
-        # Siteconfig falls back to these if networking.interfaces is not set.
-        vlan: 100
-        machinePrefixLength: 25
-        defaultGateway: '10.0.0.1'
-        dnsServers:
-          - 10.0.0.53
-
       # =====================================================================
       # Hosts — per-host hardware config, shared with other policies
       # =====================================================================
+      # Each key is the short hostname. Siteconfig constructs the FQDN as
+      # {key}.{clusterName}.{baseDomain} for the BareMetalHost and ClusterInstance.
       hosts:
         master-0:
           bmcIP: '192.168.1.10'
@@ -139,20 +132,18 @@ clusters:
           #   namespace: 'custom-ns'
           bootMACAddress: 'aa:bb:cc:dd:ee:01'
           primaryMac: 'aa:bb:cc:dd:ee:02'           # MAC for bond, defaults to first interface
-          interfaces:
+          interfaces:                                # hardware interfaces for NMStateConfig
             - macAddress: 'aa:bb:cc:dd:ee:01'
               name: 'eno1'
             - macAddress: 'aa:bb:cc:dd:ee:02'
               name: 'eno2'
-          # Per-host network addressing — references topology interface IDs
-          networking:
+          networking:                                # per-host network overrides
             interfaces:
-              mgmt-vlan:                    # references topology interface ID
+              mgmt-vlan:                             # references topology interface ID
                 ipv4:
                   addresses:
                     - ip: 10.0.0.10
                       prefixLength: 25
-          IP: '10.0.0.10'                  # deprecated, use networking.interfaces
         master-1:
           bmcIP: '192.168.1.11'
           bmcPrefix: 'redfish-virtualmedia'
@@ -170,7 +161,6 @@ clusters:
                   addresses:
                     - ip: 10.0.0.11
                       prefixLength: 25
-          IP: '10.0.0.11'
         master-2:
           bmcIP: '192.168.1.12'
           bmcPrefix: 'redfish-virtualmedia'
@@ -188,7 +178,6 @@ clusters:
                   addresses:
                     - ip: 10.0.0.12
                       prefixLength: 25
-          IP: '10.0.0.12'
 
       # =====================================================================
       # Cluster Install — install-specific config
@@ -236,12 +225,6 @@ clusters:
         #   - certPolicyController
         #   - policyController
         #   - searchCollector
-
-        # --- Network Mode (legacy, deprecated) ---
-        # These are deprecated in favor of networking.interfaces config.
-        # Siteconfig falls back to these if networking.interfaces is not set.
-        useBond: true                               # default: true
-        useDHCP: false                              # default: false
 
         # --- NTP ---
         # ntpSources:
