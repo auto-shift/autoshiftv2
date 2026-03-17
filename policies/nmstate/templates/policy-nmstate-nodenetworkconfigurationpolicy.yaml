@@ -42,6 +42,7 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "%s.rendered-config" .ManagedClusterName)) {{ "hub}}" }}
+            {{/*Read rendered-config and parse into structured data */}}
             {{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
             {{ "{{hub-" }} $networking := (index $config "networking" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $interfaces := (index $networking "interfaces" | default dict) {{ "hub}}" }}
@@ -51,7 +52,9 @@ spec:
             {{ "{{hub-" }} $dns := (index $networking "dns" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $ovsBridges := (index $networking "ovsBridges" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $ovnMappings := (index $networking "ovnMappings" | default dict) {{ "hub}}" }}
+            {{/*DNS lookup on managed cluster for per-host FQDN construction */}}
             {{ "{{" }} $clusterDomain := ((lookup "config.openshift.io/v1" "DNS" "" "cluster").spec.baseDomain | default "") {{ "}}" }}
+            {{/*Build set of interface IDs that have per-host overrides */}}
             {{ "{{hub-" }} $perHostIfaceIds := dict {{ "hub}}" }}
             {{ "{{hub-" }} range $hostname, $host := $hosts {{ "hub}}" }}
               {{ "{{hub-" }} $hostNet := (index $host "networking" | default dict) {{ "hub}}" }}
@@ -60,6 +63,7 @@ spec:
                 {{ "{{hub-" }} $_ := set $perHostIfaceIds $ifaceId "true" {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
+            {{/*Cluster-wide NNCPs per interface (skip per-host ones) */}}
             {{ "{{hub-" }} range $id, $iface := $interfaces {{ "hub}}" }}
               {{ "{{hub-" }} if not (hasKey $perHostIfaceIds $id) {{ "hub}}" }}
                 {{ "{{hub-" }} $ifaceType := (index $iface "type" | default "ethernet") {{ "hub}}" }}
@@ -146,6 +150,7 @@ spec:
                 {{ "{{hub-" }} end {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
+            {{/*OVS bridge NNCPs */}}
             {{ "{{hub-" }} range $id, $bridge := $ovsBridges {{ "hub}}" }}
               {{ "{{hub-" }} $bridgeName := (index $bridge "name" | default (printf "ovs-br-%s" $id)) {{ "hub}}" }}
               {{ "{{hub-" }} $stp := (index $bridge "stp" | default false) {{ "hub}}" }}
@@ -182,6 +187,7 @@ spec:
                   {{ "{{hub-" }} end {{ "hub}}" }}
                 {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
+            {{/*Combined nmstate-network-config NNCP (routes+dns+ovn) */}}
             {{ "{{hub-" }} $dnsServers := (index $dns "servers" | default list) {{ "hub}}" }}
             {{ "{{hub-" }} $dnsSearch := (index $dns "search" | default list) {{ "hub}}" }}
             {{ "{{hub-" }} if or (gt (len (keys $routes)) 0) (or (gt (len $dnsServers) 0) (or (gt (len $dnsSearch) 0) (gt (len (keys $ovnMappings)) 0))) {{ "hub}}" }}
@@ -240,6 +246,7 @@ spec:
                   {{ "{{hub-" }} end {{ "hub}}" }}
                 {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
+            {{/*Per-host NNCPs */}}
             {{ "{{hub-" }} range $hostname, $host := $hosts {{ "hub}}" }}
               {{ "{{hub-" }} $hostNet := (index $host "networking" | default dict) {{ "hub}}" }}
               {{ "{{hub-" }} $hostIfaces := (index $hostNet "interfaces" | default dict) {{ "hub}}" }}
