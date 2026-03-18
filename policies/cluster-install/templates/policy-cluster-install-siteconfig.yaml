@@ -62,18 +62,49 @@ spec:
                   {{ "{{" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
                   {{ "{{" }} $sshPublicKey = (index $refData (index $sshPublicKeyRef "key") | default $sshPublicKey) {{ "}}" }}
                 {{ "{{" }} end {{ "}}" }}
-                {{ "{{" }} $caTrustBundle := (index $ci "caTrustBundle" | default "") {{ "}}" }}
-                {{ "{{" }} $caTrustBundleRef := (index $ci "caTrustBundleRef" | default dict) {{ "}}" }}
-                {{ "{{" }} if not (empty $caTrustBundleRef) {{ "}}" }}
-                  {{ "{{" }} $refNs := (index $caTrustBundleRef "namespace" | default $policyNamespace) {{ "}}" }}
-                  {{ "{{" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caTrustBundleRef "name")) | default dict {{ "}}" }}
+                {{ "{{" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
+                {{ "{{" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
+                {{ "{{" }} $mirrorUrl := (index $mirrorReg "url" | default "") {{ "}}" }}
+                {{ "{{" }} $mirrorSources := (index $mirrorReg "sources" | default list) {{ "}}" }}
+                {{ "{{" }} $caTrustBundle := (index $mirrorReg "ca" | default "") {{ "}}" }}
+                {{ "{{" }} $caRef := (index $mirrorReg "caRef" | default dict) {{ "}}" }}
+                {{ "{{" }} if not (empty $caRef) {{ "}}" }}
+                  {{ "{{" }} $refNs := (index $caRef "namespace" | default $policyNamespace) {{ "}}" }}
+                  {{ "{{" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict {{ "}}" }}
                   {{ "{{" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
-                  {{ "{{" }} $caTrustBundle = (index $refData (index $caTrustBundleRef "key") | default $caTrustBundle) {{ "}}" }}
+                  {{ "{{" }} $caTrustBundle = (index $refData (index $caRef "key") | default $caTrustBundle) {{ "}}" }}
                 {{ "{{" }} end {{ "}}" }}
                 {{ "{{" }} $bmcEndpoint := (index $ci "bmcEndpoint" | default "/redfish/v1/Systems/1") {{ "}}" }}
                 {{ "{{" }} $clusterNetwork := (index $networking "clusterNetwork" | default dict) {{ "}}" }}
                 {{ "{{" }} $machineNetwork := (index $networking "machineNetwork" | default dict) {{ "}}" }}
                 {{ "{{" }} $serviceNetwork := (index $networking "serviceNetwork" | default list) {{ "}}" }}
+            {{/* ===== Mirror Registry Config ConfigMap ===== */}}
+                {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: mirror-registry-config
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                  labels:
+                    app: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  registries.conf: |
+                    unqualified-search-registries = ["registry.access.redhat.com", "docker.io"]
+                    {{ "{{-" }} range $_, $source := $mirrorSources {{ "}}" }}
+
+                    [[registry]]
+                      prefix = ""
+                      location = "{{ "{{" }} $source {{ "}}" }}"
+                      mirror-by-digest-only = true
+
+                      [[registry.mirror]]
+                        location = "{{ "{{" }} $mirrorUrl {{ "}}" }}/{{ "{{" }} $source {{ "}}" }}"
+                    {{ "{{-" }} end {{ "}}" }}
+                  ca-bundle.crt: |
+                    {{ "{{" }} $caTrustBundle {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
             {{/* ===== AgentClusterInstall ConfigMap ===== */}}
             - complianceType: musthave
               objectDefinition:
@@ -94,6 +125,10 @@ spec:
                         name: {{ "{{" }} $clusterName {{ "}}" }}
                       imageSetRef:
                         name: {{ "{{" }} $imageSet {{ "}}" }}
+                {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
+                      mirrorRegistryRef:
+                        name: mirror-registry-config
+                {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} if (gt $controlPlaneCount 1) {{ "}}" }}
                       platformType: BareMetal
                       apiVIP: {{ "{{" }} index $ci "apiVip" {{ "}}" }}
@@ -175,8 +210,10 @@ spec:
                     spec:
                       agentLabels:
                         agentBareMetal-generated-infraenv-ai-flow: {{ "{{" }} printf "%s-%s" $clusterName $clusterName {{ "}}" }}
+                {{ "{{-" }} if $caTrustBundle {{ "}}" }}
                       additionalTrustBundle: |
                         {{ "{{" }} $caTrustBundle {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} $ntpSources := (index $ci "ntpSources" | default list) {{ "}}" }}
                 {{ "{{-" }} if (gt (len $ntpSources) 0) {{ "}}" }}
                       additionalNTPSources:
@@ -241,6 +278,34 @@ spec:
                         credentialsName: {{ "{{" }} $hostname {{ "}}" }}-bmc-cred
                         disableCertificateVerification: true
                       bootMACAddress: '{{ "{{" }} index $host "bootMACAddress" {{ "}}" }}'
+                  {{ "{{-" }} $rootDeviceHints := (index $host "rootDeviceHints" | default dict) {{ "}}" }}
+                  {{ "{{-" }} if (gt (len (keys $rootDeviceHints)) 0) {{ "}}" }}
+                      rootDeviceHints:
+                    {{ "{{-" }} if (index $rootDeviceHints "deviceName") {{ "}}" }}
+                        deviceName: {{ "{{" }} index $rootDeviceHints "deviceName" {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if (index $rootDeviceHints "serialNumber") {{ "}}" }}
+                        serialNumber: {{ "{{" }} index $rootDeviceHints "serialNumber" {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if (index $rootDeviceHints "model") {{ "}}" }}
+                        model: {{ "{{" }} index $rootDeviceHints "model" {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if (index $rootDeviceHints "vendor") {{ "}}" }}
+                        vendor: {{ "{{" }} index $rootDeviceHints "vendor" {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if (index $rootDeviceHints "wwn") {{ "}}" }}
+                        wwn: {{ "{{" }} index $rootDeviceHints "wwn" {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if (index $rootDeviceHints "hctl") {{ "}}" }}
+                        hctl: {{ "{{" }} index $rootDeviceHints "hctl" {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if not (empty (index $rootDeviceHints "rotational" | default "")) {{ "}}" }}
+                        rotational: {{ "{{" }} index $rootDeviceHints "rotational" {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if (index $rootDeviceHints "minSizeGigabytes") {{ "}}" }}
+                        minSizeGigabytes: {{ "{{" }} index $rootDeviceHints "minSizeGigabytes" {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
                       customDeploy:
                         method: start_assisted_install
                       online: true
@@ -430,6 +495,7 @@ spec:
                   {{ "{{" }} $hostBmcEndpoint := (index $host "bmcEndpoint" | default $bmcEndpoint) {{ "}}" }}
                   {{ "{{" }} $bmcAddress := (printf "%s://%s%s" (index $host "bmcPrefix") (index $host "bmcIP") $hostBmcEndpoint) {{ "}}" }}
                     - hostName: {{ "{{" }} $hostFQDN {{ "}}" }}
+                      role: {{ "{{" }} index $host "role" | default "master" {{ "}}" }}
                       bmcAddress: {{ "{{" }} $bmcAddress {{ "}}" }}
                       bmcCredentialsName:
                         name: {{ "{{" }} $hostname {{ "}}" }}-bmc-cred
@@ -452,6 +518,10 @@ spec:
                       namespace: {{ "{{" }} $clusterName {{ "}}" }}
                     - name: managed-cluster
                       namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
+                    - name: mirror-registry-config
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
 ---

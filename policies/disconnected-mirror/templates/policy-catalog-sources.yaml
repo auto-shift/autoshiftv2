@@ -1,10 +1,11 @@
-{{- if .Values.disconnectedMirror.catalogs }}
 # Policy to configure CatalogSources for mirrored operator catalogs
+# Reads catalog config from rendered-config ConfigMaps via hub template lookup
+{{- $policyNamespace := $.Values.policy_namespace }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
   name: policy-disconnected-catalog-sources
-  namespace: {{ .Values.policy_namespace }}
+  namespace: {{ $policyNamespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CM Configuration Management
@@ -15,45 +16,50 @@ spec:
 {{ end }}
   disabled: false
   policy-templates:
-    {{- range .Values.disconnectedMirror.catalogs }}
-    # CatalogSource: {{ .name }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: disconnected-catalog-{{ .name }}
+          name: disconnected-catalog-sources
         spec:
           remediationAction: enforce
           severity: high
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
+          object-templates-raw: |
+            {{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub" }} $config := (index $cm "data" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $configYaml := (index $config "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $disconnected := (index $configYaml "disconnected" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $mirror := (index $disconnected "mirrorRegistry" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $url := (index $mirror "url" | default "") {{ "hub}}" }}
+            {{ "{{hub" }} $suffix := (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror") {{ "hub}}" }}
+            {{ "{{hub" }} $catalogs := (index $disconnected "catalogs" | default list) {{ "hub}}" }}
+            {{ "{{hub" }} range $_, $catalog := $catalogs {{ "hub}}" }}
+            {{ "{{hub" }} $catName := (printf "%s-%s" (index $catalog "source") $suffix) {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: operators.coreos.com/v1alpha1
                 kind: CatalogSource
                 metadata:
-                  name: {{ .name }}
+                  name: {{ "{{hub" }} $catName {{ "hub}}" }}
                   namespace: openshift-marketplace
                 spec:
                   sourceType: grpc
-                  image: '{{ "{{hub" }} (index .ManagedClusterLabels "autoshift.io/mirror-registry-host") | default "{{ $.Values.disconnectedMirror.host }}" {{ "hub}}" }}{{ "{{hub" }} ternary (printf ":%s" (index .ManagedClusterLabels "autoshift.io/mirror-registry-port" | default "{{ $.Values.disconnectedMirror.port }}")) "" (ne (index .ManagedClusterLabels "autoshift.io/mirror-registry-port" | default "{{ $.Values.disconnectedMirror.port }}") "") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "/%s" (index .ManagedClusterLabels "autoshift.io/mirror-registry-path" | default "{{ $.Values.disconnectedMirror.path }}")) "" (ne (index .ManagedClusterLabels "autoshift.io/mirror-registry-path" | default "{{ $.Values.disconnectedMirror.path }}") "") {{ "hub}}" }}/{{ .imagePath }}:{{ .tag }}'
-                  displayName: {{ .displayName | default .name }}
-                  publisher: {{ .publisher | default "AutoShift" }}
+                  image: '{{ "{{hub" }} printf "%s/%s:%s" $url (index $catalog "imagePath") (index $catalog "tag") {{ "hub}}" }}'
+                  displayName: {{ "{{hub" }} index $catalog "displayName" | default $catName {{ "hub}}" }}
+                  publisher: {{ "{{hub" }} index $catalog "publisher" | default "AutoShift" {{ "hub}}" }}
                   updateStrategy:
                     registryPoll:
-                      interval: {{ .updateInterval | default "10m" }}
-                  {{- if .priority }}
-                  priority: {{ .priority }}
-                  {{- end }}
-    {{- end }}
+                      interval: {{ "{{hub" }} index $catalog "updateInterval" | default "10m" {{ "hub}}" }}
+            {{ "{{hub" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
   name: placement-policy-disconnected-catalog-sources
-  namespace: {{ .Values.policy_namespace }}
+  namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
   {{- range $clusterSet, $value := .Values.managedClusterSets }}
@@ -80,7 +86,7 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
   name: placement-policy-disconnected-catalog-sources
-  namespace: {{ .Values.policy_namespace }}
+  namespace: {{ $policyNamespace }}
 placementRef:
   name: placement-policy-disconnected-catalog-sources
   apiGroup: cluster.open-cluster-management.io
@@ -89,4 +95,3 @@ subjects:
   - name: policy-disconnected-catalog-sources
     apiGroup: policy.open-cluster-management.io
     kind: Policy
-{{- end }}

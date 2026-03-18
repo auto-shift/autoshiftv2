@@ -16,11 +16,6 @@
 # Config structure (per-cluster):
 #   config:
 #     networking:                         # Reusable by other policies (e.g. nmstate)
-#       vlan: 100
-#       machinePrefixLength: 25
-#       defaultGateway: '10.0.0.1'
-#       dnsServers:
-#         - 10.0.0.53
 #       clusterNetwork:
 #         cidr: 10.128.0.0/14
 #         hostPrefix: 23
@@ -36,7 +31,17 @@
 #         bmcCredentialRef:                       # optional, overrides cluster-level
 #           name: 'custom-cred'
 #           namespace: 'custom-ns'
+#         role: master                            # 'master' (default) or 'worker'
 #         bootMACAddress: '00:00:00:00:00:01'
+#         rootDeviceHints:                        # optional, disk selection hints
+#           deviceName: '/dev/sda'                # by device name
+#           serialNumber: 'abc123'                # by serial number
+#           model: 'PERC H730'                    # by model
+#           vendor: 'Dell'                        # by vendor
+#           wwn: '0x50014...'                     # by WWN
+#           hctl: '1:0:0:0'                       # by SCSI address
+#           rotational: true                      # SSD (false) vs HDD (true)
+#           minSizeGigabytes: 120                 # minimum disk size
 #         IP: '10.0.0.10'
 #         primaryMac: '00:00:00:00:00:02'
 #         interfaces:
@@ -44,6 +49,27 @@
 #             name: 'eno1'
 #           - macAddress: '00:00:00:00:00:02'
 #             name: 'eno2'
+#     disconnected:                       # Shared with disconnected-mirror policy
+#       mirrorRegistry:
+#         url: 'mirror.example.com:5000/ocp'
+#         ca: |                           # inline CA bundle (used by InfraEnv + mirror-registry-config)
+#           -----BEGIN CERTIFICATE-----
+#           ...
+#         caRef:                          # OR reference a hub ConfigMap
+#           name: 'cluster-ca-bundle'
+#           key: 'ca-bundle.crt'
+#           namespace: 'cluster-install-secrets'
+#         sources:                        # registries to mirror
+#           - registry.redhat.io
+#           - quay.io
+#           - registry.access.redhat.com
+#       useIDMS: true                     # IDMS (OCP 4.13+) or ICSP (4.12-)
+#       disableDefaultCatalogs: true
+#       catalogs:                         # CatalogSource name = {source}-{mirror-catalog-suffix label}
+#         - source: redhat-operators      # creates CatalogSource "redhat-operators-mirror"
+#           imagePath: redhat/redhat-operator-index
+#           tag: v4.20
+#           publisher: Red Hat
 #     clusterInstall:                     # Install-specific config
 #       createCluster: 'true'             # Trigger provisioning
 #       baseDomain: example.com
@@ -64,18 +90,9 @@
 #         name: 'cluster-ssh-keys'
 #         key: 'ssh-public-key'
 #         namespace: 'cluster-install-secrets'  # optional, defaults to policy namespace
-#       caTrustBundleRef:                       # OR reference a ConfigMap for CA bundle
-#         name: 'cluster-ca-bundle'
-#         key: 'ca-bundle.crt'
-#         namespace: 'cluster-install-secrets'  # optional, defaults to policy namespace
 #       secretSourceNamespace: 'cluster-install-secrets'
-#       caTrustBundle: |
-#         -----BEGIN CERTIFICATE-----
-#         ...
 #       ntpSources:
 #         - 10.0.0.1
-#       useBond: true                     # default: true
-#       useDHCP: false                    # default: false
 #       klusterletAddons:
 #         - applicationManager
 #         - certPolicyController

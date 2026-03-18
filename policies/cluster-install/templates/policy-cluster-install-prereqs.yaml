@@ -38,6 +38,13 @@ spec:
                 {{ "{{" }} $openshiftVersion := (index $ci "openshiftVersion" | default "") {{ "}}" }}
                 {{ "{{" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
                 {{ "{{" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
+                {{ "{{" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
+                {{ "{{" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
+                {{ "{{" }} $mirrorUrl := (index $mirrorReg "url" | default "") {{ "}}" }}
+                {{ "{{" }} $releaseRegistry := "quay.io" {{ "}}" }}
+                {{ "{{" }} if $mirrorUrl {{ "}}" }}
+                  {{ "{{" }} $releaseRegistry = $mirrorUrl {{ "}}" }}
+                {{ "{{" }} end {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -55,7 +62,7 @@ spec:
                     visible: 'true'
                     channel: {{ "{{" }} index $ci "openshiftChannel" | default "stable" {{ "}}" }}
                 spec:
-                  releaseImage: 'quay.io/openshift-release-dev/ocp-release:{{ "{{" }} $openshiftVersion {{ "}}" }}-{{ "{{" }} $cpuArch {{ "}}" }}'
+                  releaseImage: '{{ "{{" }} $releaseRegistry {{ "}}" }}/openshift-release-dev/ocp-release:{{ "{{" }} $openshiftVersion {{ "}}" }}-{{ "{{" }} $cpuArch {{ "}}" }}'
                 {{ "{{" }} end {{ "}}" }}
             - complianceType: musthave
               objectDefinition:

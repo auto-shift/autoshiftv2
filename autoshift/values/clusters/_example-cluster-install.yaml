@@ -58,10 +58,6 @@ clusters:
             ports:                       # by name, by MAC, or mixed
               - eno1
               - eno2
-            # OR by MAC:
-            # ports:
-            #   - mac: 'aa:bb:cc:dd:ee:01'
-            #   - mac: 'aa:bb:cc:dd:ee:02'
             ipv4: disabled               # 'dhcp', 'static', 'disabled'
             ipv6: disabled
           mgmt-vlan:
@@ -72,26 +68,6 @@ clusters:
             mtu: 1500
             ipv4: static                 # per-host IPs in hosts section
             ipv6: disabled
-          # nic3:
-          #   type: ethernet
-          #   name: eno3
-          #   state: up
-          #   mtu: 9000
-          #   mac: 'aa:bb:cc:dd:ee:03'  # adds identifier: mac-address (nmstate matches by MAC, not name)
-
-        # OVS bridges — map keyed by user-chosen ID
-        # ovsBridges:
-        #   br1:
-        #     name: ovs-br1
-        #     ports: [bond1]
-        #     stp: false
-        #     allowExtraPatchPorts: true
-
-        # OVN bridge mappings — map keyed by user-chosen ID
-        # ovnMappings:
-        #   net1:
-        #     localnet: localnet1
-        #     bridge: ovs-br1
 
         # Static routes — map keyed by user-chosen ID
         routes:
@@ -99,12 +75,6 @@ clusters:
             destination: 0.0.0.0/0
             gateway: '10.0.0.1'
             interface: bond0.100
-          # dc:
-          #   destination: 10.0.0.0/8
-          #   gateway: 192.168.1.1
-          #   interface: bond0
-          #   metric: 100
-          #   tableId: 254
 
         # DNS
         dns:
@@ -112,10 +82,6 @@ clusters:
             - 10.0.0.53
           search:
             - example.com
-
-        # Node selector for cluster-wide NNCPs
-        # nodeSelector:
-        #   node-role.kubernetes.io/worker: ''
 
       # =====================================================================
       # Hosts — per-host hardware config, shared with other policies
@@ -132,6 +98,9 @@ clusters:
           #   namespace: 'custom-ns'
           bootMACAddress: 'aa:bb:cc:dd:ee:01'
           primaryMac: 'aa:bb:cc:dd:ee:02'           # MAC for bond, defaults to first interface
+          # rootDeviceHints:                         # optional, disk selection for OS install
+          #   deviceName: '/dev/sda'                 # by device name
+          #   minSizeGigabytes: 120                  # by minimum size
           interfaces:                                # hardware interfaces for NMStateConfig
             - macAddress: 'aa:bb:cc:dd:ee:01'
               name: 'eno1'
@@ -180,6 +149,50 @@ clusters:
                       prefixLength: 25
 
       # =====================================================================
+      # Disconnected — shared with disconnected-mirror policy
+      # =====================================================================
+      # This block configures both install-time mirror (mirrorRegistryRef on
+      # AgentClusterInstall, CA in InfraEnv) and post-install mirror (IDMS/ICSP,
+      # CatalogSources) from a single source of truth.
+      # disconnected:
+      #   mirrorRegistry:
+      #     url: 'mirror.example.com:5000/ocp'
+      #     ca: |                                    # used by InfraEnv + mirror-registry-config
+      #       -----BEGIN CERTIFICATE-----
+      #       ...
+      #     caRef:                                   # OR reference a hub ConfigMap
+      #       name: 'cluster-ca-bundle'
+      #       key: 'ca-bundle.crt'
+      #       namespace: 'cluster-install-secrets'
+      #     sources:                                 # registries to mirror
+      #       - registry.redhat.io
+      #       - quay.io
+      #       - registry.access.redhat.com
+      #   useIDMS: true                              # IDMS (4.13+) or ICSP (4.12-)
+      #   disableDefaultCatalogs: true
+      #   catalogs:                                    # CatalogSource name = {source}-{mirror-catalog-suffix label}
+      #     - source: redhat-operators                 # creates CatalogSource "redhat-operators-mirror"
+      #       imagePath: redhat/redhat-operator-index
+      #       tag: v4.20
+      #       publisher: Red Hat
+      #       displayName: 'Red Hat Operators (Mirrored)'
+      #     - source: certified-operators
+      #       imagePath: redhat/certified-operator-index
+      #       tag: v4.20
+      #       publisher: Red Hat
+      #       displayName: 'Certified Operators (Mirrored)'
+      #     - source: community-operators
+      #       imagePath: redhat/community-operator-index
+      #       tag: v4.20
+      #       publisher: Red Hat
+      #       displayName: 'Community Operators (Mirrored)'
+      #     - source: redhat-marketplace
+      #       imagePath: redhat/redhat-marketplace-index
+      #       tag: v4.20
+      #       publisher: Red Hat
+      #       displayName: 'Red Hat Marketplace (Mirrored)'
+
+      # =====================================================================
       # Cluster Install — install-specific config
       # =====================================================================
       clusterInstall:
@@ -203,15 +216,6 @@ clusters:
         #   name: 'cluster-ssh-keys'
         #   key: 'ssh-public-key'
         #   namespace: 'cluster-install-secrets'    # optional, defaults to policy namespace
-
-        # --- CA Trust Bundle (inline or ConfigMap ref) ---
-        # caTrustBundle: |
-        #   -----BEGIN CERTIFICATE-----
-        #   ...
-        # caTrustBundleRef:                         # OR reference a hub ConfigMap
-        #   name: 'cluster-ca-bundle'
-        #   key: 'ca-bundle.crt'
-        #   namespace: 'cluster-install-secrets'
 
         # --- Secrets ---
         pullSecretRef: 'default-pull-secret'

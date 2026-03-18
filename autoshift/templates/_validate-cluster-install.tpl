@@ -24,6 +24,14 @@ Collects all errors and reports them together.
       {{- $errors = append $errors (printf "cluster %s: clusterInstall.sshPublicKey or sshPublicKeyRef is required" $clusterName) }}
     {{- end }}
 
+    {{/* Required secret references */}}
+    {{- if not $ci.pullSecretRef }}
+      {{- $errors = append $errors (printf "cluster %s: clusterInstall.pullSecretRef is required" $clusterName) }}
+    {{- end }}
+    {{- if not $ci.bmcCredentialRef }}
+      {{- $errors = append $errors (printf "cluster %s: clusterInstall.bmcCredentialRef is required (default BMC credential secret name)" $clusterName) }}
+    {{- end }}
+
     {{/* Multi-node requires VIPs */}}
     {{- $cpCount := ($ci.controlPlaneAgents | default 3 | int) }}
     {{- if gt $cpCount 1 }}
@@ -50,11 +58,7 @@ Collects all errors and reports them together.
       {{- end }}
     {{- end }}
 
-    {{/* networking.interfaces is required for cluster-install */}}
     {{- $netInterfaces := (dig "interfaces" dict $networking) }}
-    {{- if empty $netInterfaces }}
-      {{- $errors = append $errors (printf "cluster %s: networking.interfaces is required" $clusterName) }}
-    {{- end }}
 
     {{/* Validate host count matches topology */}}
     {{- if empty $hosts }}
@@ -70,6 +74,43 @@ Collects all errors and reports them together.
       {{- end }}
       {{- if and (eq $cpCount 1) (gt $hostCount 1) }}
         {{- $errors = append $errors (printf "cluster %s: SNO (controlPlaneAgents: 1) must have exactly 1 host, got %d" $clusterName $hostCount) }}
+      {{- end }}
+    {{- end }}
+
+    {{/* Validate disconnected config */}}
+    {{- $disconnected := (dig "config" "disconnected" dict $cluster) }}
+    {{- $mirrorReg := (dig "mirrorRegistry" dict $disconnected) }}
+    {{- $mirrorSources := ($mirrorReg.sources | default list) }}
+    {{- if gt (len $mirrorSources) 0 }}
+      {{- if not $mirrorReg.url }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.url is required when sources are defined" $clusterName) }}
+      {{- end }}
+    {{- end }}
+    {{- $caRef := ($mirrorReg.caRef | default dict) }}
+    {{- if not (empty $caRef) }}
+      {{- if not (index $caRef "name") }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.caRef.name is required" $clusterName) }}
+      {{- end }}
+      {{- if not (index $caRef "key") }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.caRef.key is required" $clusterName) }}
+      {{- end }}
+    {{- end }}
+    {{- if and (gt (len $mirrorSources) 0) (not (or $mirrorReg.ca $mirrorReg.caRef)) }}
+      {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.ca or caRef is required when sources are defined" $clusterName) }}
+    {{- end }}
+    {{- $catalogs := ($disconnected.catalogs | default list) }}
+    {{- if and (gt (len $catalogs) 0) (not $mirrorReg.url) }}
+      {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.url is required when catalogs are defined" $clusterName) }}
+    {{- end }}
+    {{- range $idx, $catalog := $catalogs }}
+      {{- if not (index $catalog "source") }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.catalogs[%d].source is required" $clusterName $idx) }}
+      {{- end }}
+      {{- if not (index $catalog "imagePath") }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.catalogs[%d].imagePath is required" $clusterName $idx) }}
+      {{- end }}
+      {{- if not (index $catalog "tag") }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.catalogs[%d].tag is required" $clusterName $idx) }}
       {{- end }}
     {{- end }}
 
@@ -184,8 +225,25 @@ Collects all errors and reports them together.
       {{- if not $host.bootMACAddress }}
         {{- $errors = append $errors (printf "cluster %s host %s: bootMACAddress is required" $clusterName $hostname) }}
       {{- end }}
-      {{- if not $host.interfaces }}
-        {{- $errors = append $errors (printf "cluster %s host %s: interfaces is required (at least one)" $clusterName $hostname) }}
+      {{- range $idx, $iface := ($host.interfaces | default list) }}
+        {{- if not (index $iface "macAddress") }}
+          {{- $errors = append $errors (printf "cluster %s host %s: interfaces[%d].macAddress is required" $clusterName $hostname $idx) }}
+        {{- end }}
+      {{- end }}
+
+      {{/* Validate role */}}
+      {{- $validRoles := list "master" "worker" }}
+      {{- $role := ($host.role | default "master" | toString) }}
+      {{- if not (has $role $validRoles) }}
+        {{- $errors = append $errors (printf "cluster %s host %s: role must be 'master' or 'worker' (got: %s)" $clusterName $hostname $role) }}
+      {{- end }}
+
+      {{/* Validate rootDeviceHints keys */}}
+      {{- $validHintKeys := list "deviceName" "serialNumber" "model" "vendor" "wwn" "hctl" "rotational" "minSizeGigabytes" }}
+      {{- range $hintKey, $_ := ($host.rootDeviceHints | default dict) }}
+        {{- if not (has $hintKey $validHintKeys) }}
+          {{- $errors = append $errors (printf "cluster %s host %s: rootDeviceHints.%s is not a valid hint (valid: %s)" $clusterName $hostname $hintKey (join ", " $validHintKeys)) }}
+        {{- end }}
       {{- end }}
 
       {{/* Validate per-host networking references topology interfaces */}}
@@ -225,6 +283,21 @@ Collects all errors and reports them together.
           {{- $errors = append $errors (printf "cluster %s host %s route %s: interface is required" $clusterName $hostname $routeId) }}
         {{- end }}
       {{- end }}
+    {{- end }}
+
+    {{/* Validate role counts match topology */}}
+    {{- $masterCount := 0 }}
+    {{- $workerCount := 0 }}
+    {{- range $hostname, $host := $hosts }}
+      {{- $role := ($host.role | default "master" | toString) }}
+      {{- if eq $role "master" }}
+        {{- $masterCount = add $masterCount 1 | int }}
+      {{- else if eq $role "worker" }}
+        {{- $workerCount = add $workerCount 1 | int }}
+      {{- end }}
+    {{- end }}
+    {{- if ne $masterCount $cpCount }}
+      {{- $errors = append $errors (printf "cluster %s: %d hosts have role 'master' but controlPlaneAgents is %d" $clusterName $masterCount $cpCount) }}
     {{- end }}
 
     {{/* Fail with all collected errors */}}
