@@ -278,9 +278,12 @@ spec:
                         credentialsName: {{ "{{" }} $hostname {{ "}}" }}-bmc-cred
                         disableCertificateVerification: true
                       bootMACAddress: '{{ "{{" }} index $host "bootMACAddress" {{ "}}" }}'
-                  {{ "{{-" }} if (hasKey $host "rootDeviceHints") {{ "}}" }}
+                  {{ "{{-" }} if not (empty (index $host "rootDeviceHints" | default "")) {{ "}}" }}
+                  {{ "{{-" }} $rootDeviceHints := (index $host "rootDeviceHints") {{ "}}" }}
                       rootDeviceHints:
-                        {{ "{{" }} index $host "rootDeviceHints" | toYaml | autoindent {{ "}}" }}
+                  {{ "{{-" }} range $k, $v := $rootDeviceHints {{ "}}" }}
+                        {{ "{{" }} $k {{ "}}" }}: '{{ "{{" }} $v {{ "}}" }}'
+                  {{ "{{-" }} end {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
                       customDeploy:
                         method: start_assisted_install
