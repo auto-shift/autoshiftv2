@@ -409,52 +409,63 @@ add_labels_to_all_sections() {
     
     # Find all sections and their clustersets
     local sections_found=""
-    
+
+    # Capture ALL section names FIRST before any file modifications
+    local hub_clustersets=()
+    local managed_clustersets=()
+    local active_clusters=()
+    local commented_clusters=()
+
     # Check for hubClusterSets
     if grep -q "^hubClusterSets:" "$file_path"; then
-        local hub_clustersets
-        hub_clustersets=$(awk '/^hubClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
-        while IFS= read -r clusterset; do
-            [[ -z "$clusterset" ]] && continue
-            add_labels_to_section "$file_path" "hubClusterSets" "$clusterset" false
-            sections_found="$sections_found hubClusterSets/$clusterset"
-        done <<< "$hub_clustersets"
+        while IFS= read -r cs; do
+            [[ -z "$cs" ]] && continue
+            hub_clustersets+=("$cs")
+        done < <(awk '/^hubClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
     fi
-    
-    # Check for managedClusterSets
+
     if grep -q "^managedClusterSets:" "$file_path"; then
-        local managed_clustersets
-        managed_clustersets=$(awk '/^managedClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
-        while IFS= read -r clusterset; do
-            [[ -z "$clusterset" ]] && continue
-            add_labels_to_section "$file_path" "managedClusterSets" "$clusterset" false
-            sections_found="$sections_found managedClusterSets/$clusterset"
-        done <<< "$managed_clustersets"
+        while IFS= read -r cs; do
+            [[ -z "$cs" ]] && continue
+            managed_clustersets+=("$cs")
+        done < <(awk '/^managedClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
     fi
-    
-    # Check for clusters (commented or active)
+
     if grep -q "^clusters:" "$file_path"; then
-        # Active clusters section
-        local active_clusters
-        active_clusters=$(awk '/^clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
-        while IFS= read -r cluster; do
-            [[ -z "$cluster" ]] && continue
-            add_labels_to_section "$file_path" "clusters" "$cluster" false
-            sections_found="$sections_found clusters/$cluster"
-        done <<< "$active_clusters"
+        while IFS= read -r cl; do
+            [[ -z "$cl" ]] && continue
+            active_clusters+=("$cl")
+        done < <(awk '/^clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
     fi
-    
+
     if grep -q "^# clusters:" "$file_path"; then
-        # Commented clusters section
-        local commented_clusters
-        commented_clusters=$(awk '/^# clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^#   [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^#   /, ""); print}' "$file_path")
-        while IFS= read -r cluster; do
-            [[ -z "$cluster" ]] && continue
-            add_labels_to_section "$file_path" "clusters" "$cluster" true
-            sections_found="$sections_found clusters/$cluster(commented)"
-        done <<< "$commented_clusters"
+        while IFS= read -r cl; do
+            [[ -z "$cl" ]] && continue
+            commented_clusters+=("$cl")
+        done < <(awk '/^# clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^#   [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^#   /, ""); print}' "$file_path")
     fi
-    
+
+    # NOW apply modifications using pre-captured arrays
+    for cs in "${hub_clustersets[@]}"; do
+        add_labels_to_section "$file_path" "hubClusterSets" "$cs" false
+        sections_found="$sections_found hubClusterSets/$cs"
+    done
+
+    for cs in "${managed_clustersets[@]}"; do
+        add_labels_to_section "$file_path" "managedClusterSets" "$cs" false
+        sections_found="$sections_found managedClusterSets/$cs"
+    done
+
+    for cl in "${active_clusters[@]}"; do
+        add_labels_to_section "$file_path" "clusters" "$cl" false
+        sections_found="$sections_found clusters/$cl"
+    done
+
+    for cl in "${commented_clusters[@]}"; do
+        add_labels_to_section "$file_path" "clusters" "$cl" true
+        sections_found="$sections_found clusters/$cl(commented)"
+    done
+
     if [[ -z "$sections_found" ]]; then
         log_warning "No suitable sections found in $(basename "$file_path")"
     else
@@ -588,28 +599,34 @@ find_labels_line() {
     local is_commented="$4"
 
     if [[ "$is_commented" == "true" ]]; then
-        awk "
-            /^# $section_type:/ { found_section=1; next }
-            found_section && /^#   $clusterset:/ { found_clusterset=1; next }
+        awk -v section="$section_type" -v cs="$clusterset" '
+            $0 ~ "^# " section ":" { found_section=1; next }
+            found_section && $0 ~ "^#   " cs ":" { found_clusterset=1; next }
             found_clusterset && /^#     labels:/ { in_labels=1; last=NR; next }
             in_labels && /^#       / { last=NR; next }
             in_labels && /^#$/ { last=NR; next }
-            in_labels { print last; exit }
-            /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
-            END { if (in_labels) print last }
-        " "$file_path"
+            in_labels && !/^#       / && !/^#$/ { printed=1; print last; exit }
+            /^[a-zA-Z]/ { if (in_labels && !printed) { printed=1; print last }; exit }
+            END { if (in_labels && !printed) print last }
+        ' "$file_path"
     else
-        awk "
-            /^$section_type:/ { found_section=1; next }
-            found_section && /^  $clusterset:/ { found_clusterset=1; next }
+        awk -v section="$section_type" -v cs="$clusterset" '
+            $0 ~ "^" section ":" { found_section=1; next }
+            found_section && $0 ~ "^  " cs ":" { found_clusterset=1; next }
             found_clusterset && /^    labels:/ { in_labels=1; last=NR; next }
             in_labels && /^      / { last=NR; next }
             in_labels && /^$/ { last=NR; next }
-            in_labels { print last; exit }
-            /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
-            END { if (in_labels) print last }
-        " "$file_path"
+            in_labels && !/^      / && !/^$/ { printed=1; print last; exit }
+            /^[a-zA-Z]/ { if (in_labels && !printed) { printed=1; print last }; exit }
+            END { if (in_labels && !printed) print last }
+        ' "$file_path"
     fi
+}
+
+# Inform about schema for standard operators (no entry needed)
+add_schema_entry() {
+    log_step "Standard operator labels are auto-detected by convention — no schema entry needed"
+    log_step "If you add extra labels beyond the standard 6, add them to autoshift/templates/_schema.tpl"
 }
 
 # Main execution
@@ -637,15 +654,19 @@ main() {
             echo ""
             if add_to_autoshift_values; then
                 log_success "Policy integrated with AutoShift values files"
-                echo ""
-                echo -e "${BLUE}🚀 Integration Complete!${NC}"
-                echo "Your policy is now enabled in AutoShift. Deploy AutoShift to apply changes."
             else
                 log_warning "Failed to add labels to values files"
                 echo ""
                 echo -e "${BLUE}📋 Manual Integration Required:${NC}"
                 show_integration_instructions
             fi
+
+            # Add schema entry for the new operator
+            add_schema_entry
+
+            echo ""
+            echo -e "${BLUE}🚀 Integration Complete!${NC}"
+            echo "Your policy is now enabled in AutoShift. Deploy AutoShift to apply changes."
         fi
         
         # Show integration instructions

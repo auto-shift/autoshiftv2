@@ -62,6 +62,41 @@ jobs:
           helm template autoshift autoshift -f autoshift/values/global.yaml -f autoshift/values/clustersets/hub.yaml -f autoshift/values/clustersets/managed.yaml > /dev/null
           echo "Template rendering successful"
 
+      - name: Schema validation tests
+        run: |
+          echo "=== Testing label validation ==="
+
+          # Positive: valid config passes
+          helm template test autoshift/ -f autoshift/values/global.yaml \
+            -f autoshift/values/clustersets/_example-hub.yaml > /dev/null
+          echo "Valid config passes"
+
+          # Negative: missing required labels fails
+          if helm template test autoshift/ -f autoshift/values/global.yaml \
+            --set 'hubClusterSets.test-hub.labels.nmstate=true' 2>/dev/null; then
+            echo "::error::Expected validation failure for missing required labels"
+            exit 1
+          fi
+          echo "Missing required labels caught"
+
+          # Negative: bad allowed value fails
+          if helm template test autoshift/ -f autoshift/values/global.yaml \
+            --set 'hubClusterSets.test-hub.labels.odf=true' \
+            --set 'hubClusterSets.test-hub.labels.odf-subscription-name=odf-operator' \
+            --set 'hubClusterSets.test-hub.labels.odf-channel=stable-4.20' \
+            --set 'hubClusterSets.test-hub.labels.odf-source=redhat-operators' \
+            --set 'hubClusterSets.test-hub.labels.odf-source-namespace=openshift-marketplace' \
+            --set 'hubClusterSets.test-hub.labels.odf-resource-profile=turbo' 2>/dev/null; then
+            echo "::error::Expected validation failure for invalid allowed value"
+            exit 1
+          fi
+          echo "Invalid allowed values caught"
+
+          echo "All schema validation tests passed"
+
+      - name: Schema validation (all values files)
+        run: make validate-schema
+
       - name: Dry-run packaging
         run: |
           echo "=== Dry-run chart packaging ==="
