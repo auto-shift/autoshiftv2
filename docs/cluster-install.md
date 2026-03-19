@@ -145,6 +145,8 @@ Disconnected mirror registry configuration. This single block drives both instal
 disconnected:
   mirrorRegistry:
     url: 'mirror.example.com:5000/ocp'    # single URL for the mirror registry
+    registryHost: 'mirror.example.com:5000' # optional, host:port for CA ConfigMap key
+                                            # defaults to url if not set
     ca: |                                   # CA bundle for the mirror registry
       -----BEGIN CERTIFICATE-----
       ...
@@ -175,7 +177,11 @@ When `disconnected.mirrorRegistry` is configured:
 - **mirror-registry-config ConfigMap** is created with `registries.conf` (TOML) and `ca-bundle.crt` in the cluster namespace
 - **AgentClusterInstall** gets `mirrorRegistryRef` pointing to this ConfigMap
 - **InfraEnv** gets `additionalTrustBundle` from the CA
-- **disconnected-mirror policy** reads the same config for IDMS/ICSP and CatalogSources on managed clusters
+- **disconnected-mirror policy** reads the same config for:
+  - IDMS/ICSP — redirects image pulls from source registries to mirror
+  - CatalogSources — mirrored operator catalogs
+  - OperatorHub disable — disables default catalog sources
+  - **Registry CA trust** — creates a ConfigMap in `openshift-config` with the CA and patches `image.config.openshift.io/cluster` so the managed cluster trusts the mirror registry post-install
 
 **Labels still required** for operator catalog source switching (OperatorPolicy can only read labels):
 

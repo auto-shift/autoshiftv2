@@ -11,6 +11,54 @@ Collects all errors and reports them together.
     {{- $hosts := (dig "config" "hosts" dict $cluster) }}
     {{- $errors := list }}
 
+    {{/* ===== Valid key lists — add new fields here ===== */}}
+    {{- $validCiKeys := list "createCluster" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
+    {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" }}
+    {{- $validMirrorRegKeys := list "url" "registryHost" "ca" "caRef" "sources" }}
+    {{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
+    {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
+    {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
+    {{- $validRouteKeys := list "destination" "gateway" "interface" "metric" "tableId" }}
+    {{- $validCatalogKeys := list "source" "imagePath" "tag" "publisher" "displayName" "updateInterval" }}
+    {{- $validCaRefKeys := list "name" "key" "namespace" }}
+    {{- $validSshRefKeys := list "name" "key" "namespace" }}
+
+    {{/* ===== Validate unexpected keys (only sections this policy owns) ===== */}}
+    {{- range $key, $_ := $ci }}
+      {{- if not (has $key $validCiKeys) }}
+        {{- $errors = append $errors (printf "cluster %s: clusterInstall.%s is not a recognized field (valid: %s)" $clusterName $key (join ", " $validCiKeys)) }}
+      {{- end }}
+    {{- end }}
+    {{- range $key, $_ := (dig "config" "disconnected" dict $cluster) }}
+      {{- if not (has $key $validDisconnectedKeys) }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.%s is not a recognized field (valid: %s)" $clusterName $key (join ", " $validDisconnectedKeys)) }}
+      {{- end }}
+    {{- end }}
+    {{- range $key, $_ := (dig "mirrorRegistry" dict (dig "config" "disconnected" dict $cluster)) }}
+      {{- if not (has $key $validMirrorRegKeys) }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.%s is not a recognized field (valid: %s)" $clusterName $key (join ", " $validMirrorRegKeys)) }}
+      {{- end }}
+    {{- end }}
+    {{- range $key, $_ := $networking }}
+      {{- if not (has $key $validNetworkingKeys) }}
+        {{- $errors = append $errors (printf "cluster %s: networking.%s is not a recognized field (valid: %s)" $clusterName $key (join ", " $validNetworkingKeys)) }}
+      {{- end }}
+    {{- end }}
+    {{- range $hostname, $host := $hosts }}
+      {{- range $key, $_ := $host }}
+        {{- if not (has $key $validHostKeys) }}
+          {{- $errors = append $errors (printf "cluster %s host %s: %s is not a recognized field (valid: %s)" $clusterName $hostname $key (join ", " $validHostKeys)) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- range $idx, $catalog := (dig "config" "disconnected" "catalogs" list $cluster) }}
+      {{- range $key, $_ := $catalog }}
+        {{- if not (has $key $validCatalogKeys) }}
+          {{- $errors = append $errors (printf "cluster %s: disconnected.catalogs[%d].%s is not a recognized field (valid: %s)" $clusterName $idx $key (join ", " $validCatalogKeys)) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
     {{/* Required clusterInstall fields */}}
     {{- if not $ci.baseDomain }}
       {{- $errors = append $errors (printf "cluster %s: clusterInstall.baseDomain is required" $clusterName) }}
@@ -124,6 +172,43 @@ Collects all errors and reports them together.
     {{- range $ifaceId, $iface := $netInterfaces }}
       {{- if $iface.name }}
         {{- $_ := set $ifaceNames $iface.name $ifaceId }}
+      {{- end }}
+    {{- end }}
+
+    {{/* Validate interface keys */}}
+    {{- range $ifaceId, $iface := $netInterfaces }}
+      {{- range $key, $_ := $iface }}
+        {{- if not (has $key $validInterfaceKeys) }}
+          {{- $errors = append $errors (printf "cluster %s interface %s: %s is not a recognized field (valid: %s)" $clusterName $ifaceId $key (join ", " $validInterfaceKeys)) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{/* Validate route keys */}}
+    {{- range $routeId, $route := (dig "routes" dict $networking) }}
+      {{- range $key, $_ := $route }}
+        {{- if not (has $key $validRouteKeys) }}
+          {{- $errors = append $errors (printf "cluster %s route %s: %s is not a recognized field (valid: %s)" $clusterName $routeId $key (join ", " $validRouteKeys)) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{/* Validate sshPublicKeyRef keys */}}
+    {{- if not (empty ($ci.sshPublicKeyRef | default dict)) }}
+      {{- range $key, $_ := $ci.sshPublicKeyRef }}
+        {{- if not (has $key $validSshRefKeys) }}
+          {{- $errors = append $errors (printf "cluster %s: clusterInstall.sshPublicKeyRef.%s is not a recognized field (valid: %s)" $clusterName $key (join ", " $validSshRefKeys)) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{/* Validate caRef keys */}}
+    {{- $caRef2 := (dig "mirrorRegistry" "caRef" dict (dig "config" "disconnected" dict $cluster)) }}
+    {{- if not (empty $caRef2) }}
+      {{- range $key, $_ := $caRef2 }}
+        {{- if not (has $key $validCaRefKeys) }}
+          {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.caRef.%s is not a recognized field (valid: %s)" $clusterName $key (join ", " $validCaRefKeys)) }}
+        {{- end }}
       {{- end }}
     {{- end }}
 
