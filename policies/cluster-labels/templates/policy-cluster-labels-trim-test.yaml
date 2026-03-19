@@ -1,6 +1,5 @@
 {{ if (.Values.debug | default false) }}
 {{- $policyName := "policy-trim-marker-test" }}
-{{- $configPolicyName := "trim-marker-test" }}
 {{- $placementName := (printf "placement-%s" $policyName) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -15,12 +14,11 @@ spec:
   remediationAction: inform
   disabled: false
   policy-templates:
-    # TEST 1: object-templates-raw — Go templates with trim markers
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: {{ $configPolicyName }}-raw
+          name: trim-marker-test-raw
         spec:
           remediationAction: enforce
           severity: low
@@ -34,102 +32,120 @@ spec:
                 apiVersion: v1
                 kind: ConfigMap
                 metadata:
-                  name: trim-test-raw
+                  name: trim-test-results
                   namespace: {{ $.Values.policy_namespace }}
                 data:
-                  case1-var-assign-with-trim: |
+                  raw-results: |
+                    === CASE 1: var assign WITH trim between content ===
                     line-before: content
-                  {{ "{{-" }} $unused1 := "test" {{ "}}" }}
+                    {{ "{{-" }} $unused1 := "test" {{ "}}" }}
                     line-after: content
-                  case2-var-assign-no-trim: |
+                    === CASE 2: var assign NO trim between content ===
                     line-before: content
-                  {{ "{{" }} $unused2 := "test" {{ "}}" }}
+                    {{ "{{" }} $unused2 := "test" {{ "}}" }}
                     line-after: content
-                  case3-if-true-with-trim: |
+                    === CASE 3: if TRUE WITH trim between content ===
                     line-before: content
-                  {{ "{{-" }} if $testTrue {{ "}}" }}
+                    {{ "{{-" }} if $testTrue {{ "}}" }}
                     conditional-content: here
-                  {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     line-after: content
-                  case4-if-true-no-trim: |
+                    === CASE 4: if TRUE NO trim between content ===
                     line-before: content
-                  {{ "{{" }} if $testTrue {{ "}}" }}
+                    {{ "{{" }} if $testTrue {{ "}}" }}
                     conditional-content: here
-                  {{ "{{" }} end {{ "}}" }}
+                    {{ "{{" }} end {{ "}}" }}
                     line-after: content
-                  case5-if-false-with-trim: |
+                    === CASE 5: if FALSE WITH trim between content ===
                     line-before: content
-                  {{ "{{-" }} if $testFalse {{ "}}" }}
+                    {{ "{{-" }} if $testFalse {{ "}}" }}
                     should-not-appear: hidden
-                  {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     line-after: content
-                  case6-if-false-no-trim: |
+                    === CASE 6: if FALSE NO trim between content ===
                     line-before: content
-                  {{ "{{" }} if $testFalse {{ "}}" }}
+                    {{ "{{" }} if $testFalse {{ "}}" }}
                     should-not-appear: hidden
-                  {{ "{{" }} end {{ "}}" }}
+                    {{ "{{" }} end {{ "}}" }}
                     line-after: content
-                  case7-range-with-trim: |
+                    === CASE 7: range WITH trim between content ===
                     line-before: content
-                  {{ "{{-" }} range $_, $item := $testList {{ "}}" }}
+                    {{ "{{-" }} range $_, $item := $testList {{ "}}" }}
                     item: {{ "{{" }} $item {{ "}}" }}
-                  {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     line-after: content
-                  case8-range-no-trim: |
+                    === CASE 8: range NO trim between content ===
                     line-before: content
-                  {{ "{{" }} range $_, $item := $testList {{ "}}" }}
+                    {{ "{{" }} range $_, $item := $testList {{ "}}" }}
                     item: {{ "{{" }} $item {{ "}}" }}
-                  {{ "{{" }} end {{ "}}" }}
+                    {{ "{{" }} end {{ "}}" }}
                     line-after: content
-                  case9-first-line-with-trim: |
-                  {{ "{{-" }} if $testTrue {{ "}}" }}
+                    === CASE 9: first line after pipe WITH trim ===
+                    {{ "{{-" }} if $testTrue {{ "}}" }}
                     first-line: content
-                  {{ "{{-" }} end {{ "}}" }}
-                  case10-first-line-no-trim: |
-                  {{ "{{" }} if $testTrue {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    === CASE 10: first line after pipe NO trim ===
+                    {{ "{{" }} if $testTrue {{ "}}" }}
                     first-line: content
-                  {{ "{{" }} end {{ "}}" }}
-                  case11-nested-yaml-with-trim: |
+                    {{ "{{" }} end {{ "}}" }}
+                    === CASE 11: nested yaml WITH trim (our pattern) ===
                     apiVersion: v1
                     kind: FakeResource
                     spec:
                       fieldA: valueA
-                  {{ "{{-" }} if $testTrue {{ "}}" }}
+                    {{ "{{-" }} if $testTrue {{ "}}" }}
                       conditionalField: conditionalValue
-                  {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                       fieldB: valueB
-                  case12-nested-yaml-no-trim: |
+                    === CASE 12: nested yaml NO trim ===
                     apiVersion: v1
                     kind: FakeResource
                     spec:
                       fieldA: valueA
-                  {{ "{{" }} if $testTrue {{ "}}" }}
+                    {{ "{{" }} if $testTrue {{ "}}" }}
                       conditionalField: conditionalValue
-                  {{ "{{" }} end {{ "}}" }}
+                    {{ "{{" }} end {{ "}}" }}
                       fieldB: valueB
-                  case13-end-trim-between-content: |
-                  {{ "{{" }} if $testTrue {{ "}}" }}
+                    === CASE 13: end WITH trim between content ===
+                    {{ "{{" }} if $testTrue {{ "}}" }}
                     conditional-content: here
-                  {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     after-end: content
-                  case14-range-dict-with-trim: |
+                    === CASE 14: end NO trim between content ===
+                    {{ "{{" }} if $testTrue {{ "}}" }}
+                    conditional-content: here
+                    {{ "{{" }} end {{ "}}" }}
+                    after-end: content
+                    === CASE 15: range dict WITH trim ===
                     header: start
-                  {{ "{{-" }} range $k, $v := $testDict {{ "}}" }}
-                    {{ "{{" }} $k {{ "}}" }}: '{{ "{{" }} $v {{ "}}" }}'
-                  {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} range $k, $v := $testDict {{ "}}" }}
+                    {{ "{{" }} $k {{ "}}" }}: {{ "{{" }} $v {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     footer: end
-                  case15-range-dict-no-trim: |
+                    === CASE 16: range dict NO trim ===
                     header: start
-                  {{ "{{" }} range $k, $v := $testDict {{ "}}" }}
-                    {{ "{{" }} $k {{ "}}" }}: '{{ "{{" }} $v {{ "}}" }}'
-                  {{ "{{" }} end {{ "}}" }}
+                    {{ "{{" }} range $k, $v := $testDict {{ "}}" }}
+                    {{ "{{" }} $k {{ "}}" }}: {{ "{{" }} $v {{ "}}" }}
+                    {{ "{{" }} end {{ "}}" }}
                     footer: end
-    # TEST 2: object-templates — hub templates with trim markers
+                    === CASE 17: if TRUE trim on if only (not end) ===
+                    line-before: content
+                    {{ "{{-" }} if $testTrue {{ "}}" }}
+                    conditional-content: here
+                    {{ "{{" }} end {{ "}}" }}
+                    line-after: content
+                    === CASE 18: if TRUE trim on end only (not if) ===
+                    line-before: content
+                    {{ "{{" }} if $testTrue {{ "}}" }}
+                    conditional-content: here
+                    {{ "{{-" }} end {{ "}}" }}
+                    line-after: content
+                    === END ===
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: {{ $configPolicyName }}-hub
+          name: trim-marker-test-hub
         spec:
           remediationAction: enforce
           severity: low
@@ -139,49 +155,63 @@ spec:
                 apiVersion: v1
                 kind: ConfigMap
                 metadata:
-                  name: trim-test-hub
+                  name: trim-test-hub-results
                   namespace: {{ $.Values.policy_namespace }}
                 data:
-                  hub-case1-if-true-with-trim: |
+                  hub-results: |
+                    === HUB CASE 1: if TRUE WITH hub- trim ===
                     line-before: content
                     {{`{{hub- if eq "true" "true" hub}}`}}
                     conditional: here
                     {{`{{hub- end hub}}`}}
                     line-after: content
-                  hub-case2-if-true-no-trim: |
+                    === HUB CASE 2: if TRUE NO hub- trim ===
                     line-before: content
                     {{`{{hub if eq "true" "true" hub}}`}}
                     conditional: here
                     {{`{{hub end hub}}`}}
                     line-after: content
-                  hub-case3-if-false-with-trim: |
+                    === HUB CASE 3: if FALSE WITH hub- trim ===
                     line-before: content
                     {{`{{hub- if eq "true" "false" hub}}`}}
                     should-not-appear: hidden
                     {{`{{hub- end hub}}`}}
                     line-after: content
-                  hub-case4-if-false-no-trim: |
+                    === HUB CASE 4: if FALSE NO hub- trim ===
                     line-before: content
                     {{`{{hub if eq "true" "false" hub}}`}}
                     should-not-appear: hidden
                     {{`{{hub end hub}}`}}
                     line-after: content
-                  hub-case5-first-line-with-trim: |
+                    === HUB CASE 5: first line WITH hub- trim ===
                     {{`{{hub- if eq "true" "true" hub}}`}}
                     first-line: content
                     {{`{{hub- end hub}}`}}
-                  hub-case6-first-line-no-trim: |
+                    === HUB CASE 6: first line NO hub- trim ===
                     {{`{{hub if eq "true" "true" hub}}`}}
                     first-line: content
                     {{`{{hub end hub}}`}}
-                  hub-case7-var-assign-with-trim: |
+                    === HUB CASE 7: var assign WITH hub- trim ===
                     line-before: content
                     {{`{{hub- $x := "test" hub}}`}}
                     line-after: content
-                  hub-case8-var-assign-no-trim: |
+                    === HUB CASE 8: var assign NO hub- trim ===
                     line-before: content
                     {{`{{hub $x := "test" hub}}`}}
                     line-after: content
+                    === HUB CASE 9: if TRUE hub- on if only ===
+                    line-before: content
+                    {{`{{hub- if eq "true" "true" hub}}`}}
+                    conditional: here
+                    {{`{{hub end hub}}`}}
+                    line-after: content
+                    === HUB CASE 10: if TRUE hub- on end only ===
+                    line-before: content
+                    {{`{{hub if eq "true" "true" hub}}`}}
+                    conditional: here
+                    {{`{{hub- end hub}}`}}
+                    line-after: content
+                    === HUB END ===
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
