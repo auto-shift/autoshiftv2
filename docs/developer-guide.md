@@ -345,6 +345,18 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 
 **Best practice:** Always use `{{-` for clean output. Just ensure the `{{-` directive is indented to match the surrounding content lines in the block scalar.
 
+#### `toYaml` Requires `autoindent`
+
+**Never use `toYaml` without `autoindent`** in `object-templates-raw`. Plain `toYaml` outputs at column 0, which terminates any enclosing YAML block scalar (`|`) and corrupts the document. `autoindent` detects the surrounding indentation level and preserves it.
+
+```yaml
+# WRONG — breaks out of the block scalar
+{{ "{{" }} $myDict | toYaml {{ "}}" }}
+
+# CORRECT — maintains indentation
+{{ "{{" }} $myDict | toYaml | autoindent {{ "}}" }}
+```
+
 #### Comments in object-templates-raw
 
 - `{{/* comment */}}` (Go-style, no trim) — **recommended**. Leaves a whitespace-only line that `{{-` trims naturally.
