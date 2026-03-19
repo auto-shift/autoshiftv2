@@ -239,33 +239,127 @@ The `cluster-install` label:
 - Enables the SiteConfig component on the MultiClusterHub
 - Gates the cluster-install policy placement (policies only run on hubs with this label)
 
-### Step 2: Create Source Secrets
+### Step 2: Create Source Secrets and ConfigMaps
 
-The cluster-install policies copy secrets from a source namespace into each cluster's namespace. You must pre-create these secrets before provisioning.
+The cluster-install policies look up secrets and ConfigMaps from a source namespace on the hub cluster. These must exist before provisioning.
 
-Create the namespace:
+#### Create the source namespace
 
 ```bash
 oc create namespace cluster-install-secrets
 ```
 
-Create the BMC credential secret (username/password for IPMI/Redfish):
+#### Required: BMC credentials
+
+One secret per unique BMC credential set. The `bmcCredentialRef` in cluster config references these by name. The secrets policy copies them into each cluster's namespace.
 
 ```bash
+# Default BMC credential (referenced by clusterInstall.bmcCredentialRef)
 oc create secret generic default-bmc-cred \
   -n cluster-install-secrets \
   --from-literal=username=<bmc-username> \
   --from-literal=password=<bmc-password>
+
+# Per-host overrides (optional — referenced by hosts.<name>.bmcCredentialRef.name)
+oc create secret generic custom-bmc-cred \
+  -n cluster-install-secrets \
+  --from-literal=username=<other-username> \
+  --from-literal=password=<other-password>
 ```
 
-Create the pull secret (for pulling OpenShift images):
+#### Required: Pull secret
+
+The pull secret for pulling OpenShift images. For disconnected environments, this must include auth for the mirror registry.
 
 ```bash
+# From a file (recommended — download from console.redhat.com)
+oc create secret generic default-pull-secret \
+  -n cluster-install-secrets \
+  --from-file=.dockerconfigjson=<path-to-pull-secret.json> \
+  --type=kubernetes.io/dockerconfigjson
+
+# Or inline (connected environments)
 oc create secret docker-registry default-pull-secret \
   -n cluster-install-secrets \
   --docker-server=quay.io \
   --docker-username=<username> \
   --docker-password=<password>
+```
+
+#### Optional: SSH public key ConfigMap
+
+Instead of embedding the SSH key inline in values, reference a ConfigMap. Useful when shared across clusters.
+
+```bash
+oc create configmap cluster-ssh-keys \
+  -n cluster-install-secrets \
+  --from-file=ssh-public-key=$HOME/.ssh/id_rsa.pub
+```
+
+Then reference in cluster config:
+
+```yaml
+clusterInstall:
+  sshPublicKeyRef:
+    name: 'cluster-ssh-keys'
+    key: 'ssh-public-key'
+    namespace: 'cluster-install-secrets'
+```
+
+#### Optional: CA trust bundle ConfigMap (disconnected)
+
+For disconnected environments, the mirror registry CA bundle. Instead of embedding inline in `disconnected.mirrorRegistry.ca`, reference a ConfigMap.
+
+```bash
+oc create configmap cluster-ca-bundle \
+  -n cluster-install-secrets \
+  --from-file=ca-bundle.crt=/path/to/ca-bundle.crt
+```
+
+Then reference in cluster config:
+
+```yaml
+disconnected:
+  mirrorRegistry:
+    caRef:
+      name: 'cluster-ca-bundle'
+      key: 'ca-bundle.crt'
+      namespace: 'cluster-install-secrets'
+```
+
+#### Quick setup: all resources at once
+
+```bash
+# Create namespace
+oc create namespace cluster-install-secrets
+
+# BMC credentials
+oc create secret generic default-bmc-cred \
+  -n cluster-install-secrets \
+  --from-literal=username=admin \
+  --from-literal=password=<bmc-password>
+
+# Pull secret (from Red Hat console download)
+oc create secret generic default-pull-secret \
+  -n cluster-install-secrets \
+  --from-file=.dockerconfigjson=~/pull-secret.json \
+  --type=kubernetes.io/dockerconfigjson
+
+# SSH key
+oc create configmap cluster-ssh-keys \
+  -n cluster-install-secrets \
+  --from-file=ssh-public-key=$HOME/.ssh/id_rsa.pub
+
+# CA bundle (disconnected only)
+oc create configmap cluster-ca-bundle \
+  -n cluster-install-secrets \
+  --from-file=ca-bundle.crt=/path/to/ca-bundle.crt
+```
+
+#### Verify everything exists
+
+```bash
+oc get secret,configmap -n cluster-install-secrets
 ```
 
 > **Note:** Per-host BMC credentials can override the default by setting `bmcCredentialRef` on individual hosts. The secrets policy will copy from the specified source.
