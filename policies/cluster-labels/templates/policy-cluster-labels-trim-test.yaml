@@ -25,49 +25,15 @@ spec:
           severity: low
           object-templates-raw: |
             {{ "{{" }} $policyNamespace := "{{ $policyNamespace }}" {{ "}}" }}
-            {{ "{{" }} $configMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
-            {{ "{{" }} range $_, $cm := ($configMaps.items | default list) {{ "}}" }}
-              {{ "{{" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
-              {{ "{{" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
-              {{ "{{" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
-              {{ "{{" }} if eq (index $ci "createCluster" | default "") "true" {{ "}}" }}
-                {{ "{{" }} $networking := (index $config "networking" | default dict) {{ "}}" }}
-                {{ "{{" }} $hosts := (index $config "hosts" | default dict) {{ "}}" }}
-                {{ "{{" }} $openshiftVersion := (index $ci "openshiftVersion" | default "") {{ "}}" }}
-                {{ "{{" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
-                {{ "{{" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
-                {{ "{{" }} $controlPlaneCount := (index $ci "controlPlaneAgents" | default 3 | toInt) {{ "}}" }}
-                {{ "{{" }} $workerAgents := (index $ci "workerAgents" | default 0 | toInt) {{ "}}" }}
-                {{ "{{" }} $workerCount := $workerAgents {{ "}}" }}
-                {{ "{{" }} if (eq $workerCount 0) {{ "}}" }}
-                  {{ "{{" }} $workerCount = (sub (len (keys $hosts)) $controlPlaneCount) {{ "}}" }}
-                {{ "{{" }} end {{ "}}" }}
-                {{ "{{" }} $baseDomain := (index $ci "baseDomain" | default "") {{ "}}" }}
-                {{ "{{" }} $managedClusterSet := (index $config "clusterSet" | default "default") {{ "}}" }}
-                {{ "{{" }} $sshPublicKey := (index $ci "sshPublicKey" | default "") {{ "}}" }}
-                {{ "{{" }} $sshPublicKeyRef := (index $ci "sshPublicKeyRef" | default dict) {{ "}}" }}
-                {{ "{{" }} if not (empty $sshPublicKeyRef) {{ "}}" }}
-                  {{ "{{" }} $refNs := (index $sshPublicKeyRef "namespace" | default $policyNamespace) {{ "}}" }}
-                  {{ "{{" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $sshPublicKeyRef "name")) | default dict {{ "}}" }}
-                  {{ "{{" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
-                  {{ "{{" }} $sshPublicKey = (index $refData (index $sshPublicKeyRef "key") | default $sshPublicKey) {{ "}}" }}
-                {{ "{{" }} end {{ "}}" }}
-                {{ "{{" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
-                {{ "{{" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
-                {{ "{{" }} $mirrorUrl := (index $mirrorReg "url" | default "") {{ "}}" }}
-                {{ "{{" }} $mirrorSources := (index $mirrorReg "sources" | default list) {{ "}}" }}
-                {{ "{{" }} $caTrustBundle := (index $mirrorReg "ca" | default "") {{ "}}" }}
-                {{ "{{" }} $caRef := (index $mirrorReg "caRef" | default dict) {{ "}}" }}
-                {{ "{{" }} if not (empty $caRef) {{ "}}" }}
-                  {{ "{{" }} $refNs := (index $caRef "namespace" | default $policyNamespace) {{ "}}" }}
-                  {{ "{{" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict {{ "}}" }}
-                  {{ "{{" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
-                  {{ "{{" }} $caTrustBundle = (index $refData (index $caRef "key") | default $caTrustBundle) {{ "}}" }}
-                {{ "{{" }} end {{ "}}" }}
-                {{ "{{" }} $bmcEndpoint := (index $ci "bmcEndpoint" | default "/redfish/v1/Systems/1") {{ "}}" }}
-                {{ "{{" }} $clusterNetwork := (index $networking "clusterNetwork" | default dict) {{ "}}" }}
-                {{ "{{" }} $machineNetwork := (index $networking "machineNetwork" | default dict) {{ "}}" }}
-                {{ "{{" }} $serviceNetwork := (index $networking "serviceNetwork" | default list) {{ "}}" }}
+            {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
+            {{ "{{-" }} range $_, $cm := ($configMaps.items | default list) {{ "}}" }}
+            {{ "{{-" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
+            {{ "{{-" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
+            {{ "{{-" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
+            {{ "{{-" }} if eq (index $ci "createCluster" | default "") "true" {{ "}}" }}
+            {{ "{{-" }} $hosts := (index $config "hosts" | default dict) {{ "}}" }}
+            {{ "{{-" }} $baseDomain := (index $ci "baseDomain" | default "") {{ "}}" }}
+            {{ "{{-" }} $bmcEndpoint := (index $ci "bmcEndpoint" | default "/redfish/v1/Systems/1") {{ "}}" }}
             - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: v1
@@ -76,89 +42,7 @@ spec:
                   name: siteconfig-debug-{{ "{{" }} $clusterName {{ "}}" }}
                   namespace: {{ $policyNamespace }}
                 data:
-                  mirror-registry-config: |
-                    {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
-                    registries.conf: |
-                      unqualified-search-registries = ["registry.access.redhat.com", "docker.io"]
-                    {{ "{{-" }} range $_, $source := $mirrorSources {{ "}}" }}
-
-                      [[registry]]
-                        prefix = ""
-                        location = "{{ "{{" }} $source {{ "}}" }}"
-                        mirror-by-digest-only = true
-
-                        [[registry.mirror]]
-                          location = "{{ "{{" }} $mirrorUrl {{ "}}" }}/{{ "{{" }} $source {{ "}}" }}"
-                    {{ "{{-" }} end {{ "}}" }}
-                    ca-bundle.crt: {{ "{{" }} $caTrustBundle {{ "}}" }}
-                    {{ "{{-" }} else {{ "}}" }}
-                    (no mirror sources)
-                    {{ "{{-" }} end {{ "}}" }}
-                  agent-cluster-install: |
-                    apiVersion: extensions.hive.openshift.io/v1beta1
-                    kind: AgentClusterInstall
-                    metadata:
-                      name: {{ "{{" }} $clusterName {{ "}}" }}
-                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
-                    spec:
-                      clusterDeploymentRef:
-                        name: {{ "{{" }} $clusterName {{ "}}" }}
-                      imageSetRef:
-                        name: {{ "{{" }} $imageSet {{ "}}" }}
-                    {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
-                      mirrorRegistryRef:
-                        name: mirror-registry-config
-                    {{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} if (gt $controlPlaneCount 1) {{ "}}" }}
-                      platformType: BareMetal
-                      apiVIP: {{ "{{" }} index $ci "apiVip" {{ "}}" }}
-                      ingressVIP: {{ "{{" }} index $ci "ingressVip" {{ "}}" }}
-                      mastersSchedulable: {{ "{{" }} index $ci "mastersSchedulable" | default false {{ "}}" }}
-                      provisionRequirements:
-                        controlPlaneAgents: {{ "{{" }} $controlPlaneCount {{ "}}" }}
-                        workerAgents: {{ "{{" }} $workerCount {{ "}}" }}
-                    {{ "{{-" }} else {{ "}}" }}
-                      provisionRequirements:
-                        controlPlaneAgents: 1
-                    {{ "{{-" }} end {{ "}}" }}
-                      networking:
-                    {{ "{{-" }} if (eq $controlPlaneCount 1) {{ "}}" }}
-                        userManagedNetworking: true
-                    {{ "{{-" }} end {{ "}}" }}
-                        clusterNetwork:
-                        - cidr: {{ "{{" }} index $clusterNetwork "cidr" {{ "}}" }}
-                          hostPrefix: {{ "{{" }} index $clusterNetwork "hostPrefix" {{ "}}" }}
-                        machineNetwork:
-                        - cidr: {{ "{{" }} index $machineNetwork "cidr" {{ "}}" }}
-                        serviceNetwork:
-                    {{ "{{-" }} range $_, $network := $serviceNetwork {{ "}}" }}
-                        - {{ "{{" }} $network {{ "}}" }}
-                    {{ "{{-" }} end {{ "}}" }}
-                      sshPublicKey: {{ "{{" }} $sshPublicKey {{ "}}" }}
-                  infra-env: |
-                    apiVersion: agent-install.openshift.io/v1beta1
-                    kind: InfraEnv
-                    metadata:
-                      name: {{ "{{" }} $clusterName {{ "}}" }}
-                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
-                    spec:
-                      agentLabels:
-                        agentBareMetal-generated-infraenv-ai-flow: {{ "{{" }} printf "%s-%s" $clusterName $clusterName {{ "}}" }}
-                    {{ "{{-" }} if $caTrustBundle {{ "}}" }}
-                      additionalTrustBundle: |
-                        {{ "{{" }} $caTrustBundle {{ "}}" }}
-                    {{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} $ntpSources := (index $ci "ntpSources" | default list) {{ "}}" }}
-                    {{ "{{-" }} if (gt (len $ntpSources) 0) {{ "}}" }}
-                      additionalNTPSources:
-                    {{ "{{-" }} range $_, $ntp := $ntpSources {{ "}}" }}
-                        - {{ "{{" }} $ntp {{ "}}" }}
-                    {{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} end {{ "}}" }}
-                      clusterRef:
-                        name: {{ "{{" }} $clusterName {{ "}}" }}
-                        namespace: {{ "{{" }} $clusterName {{ "}}" }}
-                  bmh-sample: |
+                  bmh-output: |
                     {{ "{{-" }} range $hostname, $host := $hosts {{ "}}" }}
                     {{ "{{" }} $hostFQDN := (printf "%s.%s.%s" $hostname $clusterName $baseDomain) {{ "}}" }}
                     {{ "{{" }} $hostBmcEndpoint := (index $host "bmcEndpoint" | default $bmcEndpoint) {{ "}}" }}
@@ -182,7 +66,7 @@ spec:
                       customDeploy:
                         method: start_assisted_install
                     {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
