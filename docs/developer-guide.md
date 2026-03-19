@@ -318,29 +318,40 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 
 ### Hub Template Pitfalls
 
-**Comments inside `object-templates-raw` are tricky.** There are three comment styles, each with trade-offs:
+#### Trim Markers (`{{-` / `{{hub-`) — The Indentation Rule
 
-- `{{- /* comment */ -}}` (trim markers) — removes the comment AND eats newlines on both sides, **merging adjacent lines**. This can create very long lines that cause Kubernetes to re-serialize the block scalar from `|` (literal) to `>` (folded), breaking ACM's template parser.
-- `{{/* comment */}}` (no trim) — removes the comment but preserves surrounding whitespace. Leaves a whitespace-only line that `{{hub-` on the next line trims naturally. **This is the recommended approach** for comments between hub template lines.
-- `# YAML comment` — survives into the rendered output as literal text. Safe on YAML content lines, but `{{hub-` on the following line will eat the newline and merge the comment text with subsequent content.
+**How `{{-` works:** It trims ALL whitespace (spaces, tabs, newlines) to the LEFT of the template tag until it hits non-whitespace content.
 
-```yaml
-# RECOMMENDED — no trim markers, whitespace line gets trimmed by {{hub-
-{{/*  Build cluster config map */}}
-{{ "{{hub-" }} $config := dict {{ "hub}}" }}
-
-# DANGEROUS — trim markers merge adjacent lines
-{{- /* Build cluster config map */ -}}
-{{ "{{hub-" }} $config := dict {{ "hub}}" }}
-```
-
-**First line after `object-templates-raw: |`** must not use `{{hub-` (left trim) or `{{-` — the trim eats the block scalar newline. Use `{{hub` (no dash) on the first line:
+**The critical rule:** Inside YAML block scalars (`|`), `{{-` template directives MUST be at the **same indentation level** as the content lines around them. If a `{{-` directive is at a shallower indent than the content above, the left-trim eats past the newline into the previous content line, merging two lines into one and producing invalid YAML.
 
 ```yaml
-object-templates-raw: |
-  {{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" $ns $name) {{ "hub}}" }}
-  {{ "{{hub-" }} $config := ... {{ "hub}}" }}
+# WRONG — directive at 16 spaces, content at 20 spaces
+# The {{- eats 4 extra spaces into the previous content line, merging the lines
+                    spec:
+                      imageSetRef:
+                        name: {{ "{{" }} $imageSet {{ "}}" }}
+                {{ "{{-" }} if $condition {{ "}}" }}
+                      mirrorRegistryRef: ...
+# Resolves to: "name: value      mirrorRegistryRef:" — broken YAML!
+
+# CORRECT — directive aligned with content at 20 spaces
+                    spec:
+                      imageSetRef:
+                        name: {{ "{{" }} $imageSet {{ "}}" }}
+                    {{ "{{-" }} if $condition {{ "}}" }}
+                      mirrorRegistryRef: ...
+# Resolves to clean, separate lines
 ```
+
+**Best practice:** Always use `{{-` for clean output. Just ensure the `{{-` directive is indented to match the surrounding content lines in the block scalar.
+
+#### Comments in object-templates-raw
+
+- `{{/* comment */}}` (no trim) — **recommended**. Leaves a whitespace-only line that `{{hub-` trims naturally.
+- `{{- /* */ -}}` (trim markers) — **dangerous**. Merges adjacent lines.
+- `# YAML comment` — survives into output. Can merge with subsequent hub template lines.
+
+#### Other Gotchas
 
 **`fromYaml`, `fromJson`, `toYaml`, `toJson` work in hub templates.** This enables reading structured data from ConfigMaps directly:
 
@@ -500,10 +511,58 @@ oc get applications -n openshift-gitops my-component -o yaml
 
 ### Working with Disconnected Environments
 
+Disconnected mirror configuration is centralized in `config.disconnected` within cluster or clusterset values files. This single block drives both install-time (mirrorRegistryRef, ClusterImageSet, InfraEnv CA) and post-install (IDMS/ICSP, CatalogSources) mirror config.
+
+```yaml
+# In autoshift/values/clusters/my-cluster.yaml or clustersets/managed.yaml
+config:
+  disconnected:
+    mirrorRegistry:
+      url: 'mirror.example.com:5000/ocp'        # single URL
+      ca: |                                       # CA for mirror registry
+        -----BEGIN CERTIFICATE-----
+        ...
+      sources:                                    # registries to mirror
+        - registry.redhat.io
+        - quay.io
+        - registry.access.redhat.com
+    disableDefaultCatalogs: true                  # disable default OperatorHub
+    catalogs:                                     # name = {source}-{mirror-catalog-suffix label}
+      - source: redhat-operators
+        imagePath: redhat/redhat-operator-index
+        tag: v4.20
+        publisher: Red Hat
+```
+
+**Labels still required** for operator source switching (OperatorPolicy can only read labels):
+```yaml
+labels:
+  disconnected-mirror: 'true'
+  mirror-catalog-suffix: 'mirror'
+```
+
+**What it configures:**
+- **cluster-install**: mirrorRegistryRef ConfigMap (registries.conf + CA), AgentClusterInstall, InfraEnv additionalTrustBundle, ClusterImageSet releaseImage pointing to mirror
+- **disconnected-mirror**: IDMS/ICSP, CatalogSources (name = `{source}-{suffix}`), OperatorHub disable
+- **Operator policies**: source ternary reads `disconnected-mirror` + `mirror-catalog-suffix` labels
+
+**ClusterImageSet note:** The Assisted Installer does NOT use IDMS — the ClusterImageSet `releaseImage` must point directly to the mirror registry. AutoShift handles this automatically when `disconnected.mirrorRegistry.url` is set.
+
 ```bash
 # Generate ImageSet for disconnected environments
 bash scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml,autoshift/values/clustersets/sbx.yaml \
   --output imageset-multi-env.yaml
+```
+
+#### Testing Trim Markers
+
+The cluster-labels policy includes a debug mode (`debug: true`) that deploys a trim-marker test policy. It creates ConfigMaps with resolved template output as plain strings, letting you see exactly how ACM renders different `{{-` vs `{{` patterns without YAML validation interfering. Use this to test new template patterns before putting them in real policies.
+
+```bash
+# Enable debug mode on the cluster-labels ArgoCD app
+# Then read the results:
+oc get configmap trim-test-results -n <policy-namespace> -o jsonpath='{.data.raw-results}'
+oc get configmap trim-test-hub-results -n <policy-namespace> -o jsonpath='{.data.hub-results}'
 ```
 
 ### AutoShift Scripts and Label Requirements

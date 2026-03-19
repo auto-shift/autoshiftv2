@@ -92,7 +92,8 @@ spec:
                 data:
                   registries.conf: |
                     unqualified-search-registries = ["registry.access.redhat.com", "docker.io"]
-                    {{ "{{" }} range $_, $source := $mirrorSources {{ "}}" }}
+                    {{ "{{-" }} range $_, $source := $mirrorSources {{ "}}" }}
+
                     [[registry]]
                       prefix = ""
                       location = "{{ "{{" }} $source {{ "}}" }}"
@@ -100,7 +101,7 @@ spec:
 
                       [[registry.mirror]]
                         location = "{{ "{{" }} $mirrorUrl {{ "}}" }}/{{ "{{" }} $source {{ "}}" }}"
-                    {{ "{{" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                   ca-bundle.crt: |
                     {{ "{{" }} $caTrustBundle {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
@@ -124,11 +125,11 @@ spec:
                         name: {{ "{{" }} $clusterName {{ "}}" }}
                       imageSetRef:
                         name: {{ "{{" }} $imageSet {{ "}}" }}
-                {{ "{{" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
+                    {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
                       mirrorRegistryRef:
                         name: mirror-registry-config
-                {{ "{{" }} end {{ "}}" }}
-                {{ "{{-" }} if (gt $controlPlaneCount 1) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if (gt $controlPlaneCount 1) {{ "}}" }}
                       platformType: BareMetal
                       apiVIP: {{ "{{" }} index $ci "apiVip" {{ "}}" }}
                       ingressVIP: {{ "{{" }} index $ci "ingressVip" {{ "}}" }}
@@ -136,23 +137,23 @@ spec:
                       provisionRequirements:
                         controlPlaneAgents: {{ "{{" }} $controlPlaneCount {{ "}}" }}
                         workerAgents: {{ "{{" }} $workerCount {{ "}}" }}
-                {{ "{{-" }} else {{ "}}" }}
+                    {{ "{{-" }} else {{ "}}" }}
                       provisionRequirements:
                         controlPlaneAgents: 1
-                {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                       networking:
-                {{ "{{-" }} if (eq $controlPlaneCount 1) {{ "}}" }}
+                    {{ "{{-" }} if (eq $controlPlaneCount 1) {{ "}}" }}
                         userManagedNetworking: true
-                {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                         clusterNetwork:
                         - cidr: {{ "{{" }} index $clusterNetwork "cidr" {{ "}}" }}
                           hostPrefix: {{ "{{" }} index $clusterNetwork "hostPrefix" {{ "}}" }}
                         machineNetwork:
                         - cidr: {{ "{{" }} index $machineNetwork "cidr" {{ "}}" }}
                         serviceNetwork:
-                {{ "{{-" }} range $_, $network := $serviceNetwork {{ "}}" }}
+                    {{ "{{-" }} range $_, $network := $serviceNetwork {{ "}}" }}
                         - {{ "{{" }} $network {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                       sshPublicKey: {{ "{{" }} $sshPublicKey {{ "}}" }}
             {{/* ===== ClusterDeployment ConfigMap ===== */}}
             - complianceType: musthave
@@ -209,17 +210,17 @@ spec:
                     spec:
                       agentLabels:
                         agentBareMetal-generated-infraenv-ai-flow: {{ "{{" }} printf "%s-%s" $clusterName $clusterName {{ "}}" }}
-                {{ "{{-" }} if $caTrustBundle {{ "}}" }}
+                    {{ "{{-" }} if $caTrustBundle {{ "}}" }}
                       additionalTrustBundle: |
                         {{ "{{" }} $caTrustBundle {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $ntpSources := (index $ci "ntpSources" | default list) {{ "}}" }}
-                {{ "{{-" }} if (gt (len $ntpSources) 0) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $ntpSources := (index $ci "ntpSources" | default list) {{ "}}" }}
+                    {{ "{{-" }} if (gt (len $ntpSources) 0) {{ "}}" }}
                       additionalNTPSources:
-                {{ "{{-" }} range $_, $ntp := $ntpSources {{ "}}" }}
+                    {{ "{{-" }} range $_, $ntp := $ntpSources {{ "}}" }}
                         - {{ "{{" }} $ntp {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                       clusterRef:
                         name: {{ "{{" }} $clusterName {{ "}}" }}
                         namespace: {{ "{{" }} $clusterName {{ "}}" }}
