@@ -347,9 +347,10 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 
 #### Comments in object-templates-raw
 
-- `{{/* comment */}}` (no trim) — **recommended**. Leaves a whitespace-only line that `{{hub-` trims naturally.
+- `{{/* comment */}}` (Go-style, no trim) — **recommended**. Leaves a whitespace-only line that `{{-` trims naturally.
 - `{{- /* */ -}}` (trim markers) — **dangerous**. Merges adjacent lines.
-- `# YAML comment` — survives into output. Can merge with subsequent hub template lines.
+- `# YAML comment` — survives into output. Can merge with subsequent template lines.
+- **Hub templates do NOT support comments.** `{{hub /* comment */ hub}}` is invalid and will cause a parse error. Only use Go-style comments (`{{/* */}}`) outside of `{{hub ... hub}}` delimiters.
 
 #### Other Gotchas
 
