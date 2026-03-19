@@ -1,0 +1,215 @@
+{{ if (.Values.debug | default false) }}
+{{- $policyName := "policy-trim-marker-test" }}
+{{- $configPolicyName := "trim-marker-test" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $.Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+  remediationAction: inform
+  disabled: false
+  policy-templates:
+    # TEST 1: object-templates-raw — Go templates with trim markers
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: {{ $configPolicyName }}-raw
+        spec:
+          remediationAction: enforce
+          severity: low
+          object-templates-raw: |
+            {{ "{{" }} $testTrue := true {{ "}}" }}
+            {{ "{{" }} $testFalse := false {{ "}}" }}
+            {{ "{{" }} $testDict := dict "key1" "val1" "key2" "val2" {{ "}}" }}
+            {{ "{{" }} $testList := list "a" "b" "c" {{ "}}" }}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: trim-test-raw
+                  namespace: {{ $.Values.policy_namespace }}
+                data:
+                  case1-var-assign-with-trim: |
+                    line-before: content
+                  {{ "{{-" }} $unused1 := "test" {{ "}}" }}
+                    line-after: content
+                  case2-var-assign-no-trim: |
+                    line-before: content
+                  {{ "{{" }} $unused2 := "test" {{ "}}" }}
+                    line-after: content
+                  case3-if-true-with-trim: |
+                    line-before: content
+                  {{ "{{-" }} if $testTrue {{ "}}" }}
+                    conditional-content: here
+                  {{ "{{-" }} end {{ "}}" }}
+                    line-after: content
+                  case4-if-true-no-trim: |
+                    line-before: content
+                  {{ "{{" }} if $testTrue {{ "}}" }}
+                    conditional-content: here
+                  {{ "{{" }} end {{ "}}" }}
+                    line-after: content
+                  case5-if-false-with-trim: |
+                    line-before: content
+                  {{ "{{-" }} if $testFalse {{ "}}" }}
+                    should-not-appear: hidden
+                  {{ "{{-" }} end {{ "}}" }}
+                    line-after: content
+                  case6-if-false-no-trim: |
+                    line-before: content
+                  {{ "{{" }} if $testFalse {{ "}}" }}
+                    should-not-appear: hidden
+                  {{ "{{" }} end {{ "}}" }}
+                    line-after: content
+                  case7-range-with-trim: |
+                    line-before: content
+                  {{ "{{-" }} range $_, $item := $testList {{ "}}" }}
+                    item: {{ "{{" }} $item {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                    line-after: content
+                  case8-range-no-trim: |
+                    line-before: content
+                  {{ "{{" }} range $_, $item := $testList {{ "}}" }}
+                    item: {{ "{{" }} $item {{ "}}" }}
+                  {{ "{{" }} end {{ "}}" }}
+                    line-after: content
+                  case9-first-line-with-trim: |
+                  {{ "{{-" }} if $testTrue {{ "}}" }}
+                    first-line: content
+                  {{ "{{-" }} end {{ "}}" }}
+                  case10-first-line-no-trim: |
+                  {{ "{{" }} if $testTrue {{ "}}" }}
+                    first-line: content
+                  {{ "{{" }} end {{ "}}" }}
+                  case11-nested-yaml-with-trim: |
+                    apiVersion: v1
+                    kind: FakeResource
+                    spec:
+                      fieldA: valueA
+                  {{ "{{-" }} if $testTrue {{ "}}" }}
+                      conditionalField: conditionalValue
+                  {{ "{{-" }} end {{ "}}" }}
+                      fieldB: valueB
+                  case12-nested-yaml-no-trim: |
+                    apiVersion: v1
+                    kind: FakeResource
+                    spec:
+                      fieldA: valueA
+                  {{ "{{" }} if $testTrue {{ "}}" }}
+                      conditionalField: conditionalValue
+                  {{ "{{" }} end {{ "}}" }}
+                      fieldB: valueB
+                  case13-end-trim-between-content: |
+                  {{ "{{" }} if $testTrue {{ "}}" }}
+                    conditional-content: here
+                  {{ "{{-" }} end {{ "}}" }}
+                    after-end: content
+                  case14-range-dict-with-trim: |
+                    header: start
+                  {{ "{{-" }} range $k, $v := $testDict {{ "}}" }}
+                    {{ "{{" }} $k {{ "}}" }}: '{{ "{{" }} $v {{ "}}" }}'
+                  {{ "{{-" }} end {{ "}}" }}
+                    footer: end
+                  case15-range-dict-no-trim: |
+                    header: start
+                  {{ "{{" }} range $k, $v := $testDict {{ "}}" }}
+                    {{ "{{" }} $k {{ "}}" }}: '{{ "{{" }} $v {{ "}}" }}'
+                  {{ "{{" }} end {{ "}}" }}
+                    footer: end
+    # TEST 2: object-templates — hub templates with trim markers
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: {{ $configPolicyName }}-hub
+        spec:
+          remediationAction: enforce
+          severity: low
+          object-templates:
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: trim-test-hub
+                  namespace: {{ $.Values.policy_namespace }}
+                data:
+                  hub-case1-if-true-with-trim: |
+                    line-before: content
+                    {{`{{hub- if eq "true" "true" hub}}`}}
+                    conditional: here
+                    {{`{{hub- end hub}}`}}
+                    line-after: content
+                  hub-case2-if-true-no-trim: |
+                    line-before: content
+                    {{`{{hub if eq "true" "true" hub}}`}}
+                    conditional: here
+                    {{`{{hub end hub}}`}}
+                    line-after: content
+                  hub-case3-if-false-with-trim: |
+                    line-before: content
+                    {{`{{hub- if eq "true" "false" hub}}`}}
+                    should-not-appear: hidden
+                    {{`{{hub- end hub}}`}}
+                    line-after: content
+                  hub-case4-if-false-no-trim: |
+                    line-before: content
+                    {{`{{hub if eq "true" "false" hub}}`}}
+                    should-not-appear: hidden
+                    {{`{{hub end hub}}`}}
+                    line-after: content
+                  hub-case5-first-line-with-trim: |
+                    {{`{{hub- if eq "true" "true" hub}}`}}
+                    first-line: content
+                    {{`{{hub- end hub}}`}}
+                  hub-case6-first-line-no-trim: |
+                    {{`{{hub if eq "true" "true" hub}}`}}
+                    first-line: content
+                    {{`{{hub end hub}}`}}
+                  hub-case7-var-assign-with-trim: |
+                    line-before: content
+                    {{`{{hub- $x := "test" hub}}`}}
+                    line-after: content
+                  hub-case8-var-assign-no-trim: |
+                    line-before: content
+                    {{`{{hub $x := "test" hub}}`}}
+                    line-after: content
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $.Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{ range $cluster, $value := $.Values.hubClusterSets }}
+    - {{ $cluster }}
+  {{ end }}
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $.Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{ end }}
