@@ -37,48 +37,48 @@ spec:
             {{ "{{" }} $policyNamespace := "{{ $policyNamespace }}" {{ "}}" }}
             {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
             {{ "{{-" }} range $_, $cm := ($configMaps.items | default list) {{ "}}" }}
-            {{ "{{-" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
-            {{ "{{-" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
-            {{ "{{-" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
-            {{ "{{-" }} if eq (index $ci "createCluster" | default "") "true" {{ "}}" }}
-              {{ "{{-" }} $networking := (index $config "networking" | default dict) {{ "}}" }}
-              {{ "{{-" }} $hosts := (index $config "hosts" | default dict) {{ "}}" }}
-              {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion" | default "") {{ "}}" }}
-              {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
-              {{ "{{-" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
-              {{ "{{-" }} $controlPlaneCount := (index $ci "controlPlaneAgents" | default 3 | toInt) {{ "}}" }}
-              {{ "{{-" }} $workerAgents := (index $ci "workerAgents" | default 0 | toInt) {{ "}}" }}
-              {{ "{{-" }} $workerCount := $workerAgents {{ "}}" }}
-              {{ "{{-" }} if (eq $workerCount 0) {{ "}}" }}
-                {{ "{{-" }} $workerCount = (sub (len (keys $hosts)) $controlPlaneCount) {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} $baseDomain := (index $ci "baseDomain" | default "") {{ "}}" }}
-              {{ "{{-" }} $managedClusterSet := (index $config "clusterSet" | default "default") {{ "}}" }}
-              {{ "{{-" }} $sshPublicKey := (index $ci "sshPublicKey" | default "") {{ "}}" }}
-              {{ "{{-" }} $sshPublicKeyRef := (index $ci "sshPublicKeyRef" | default dict) {{ "}}" }}
-              {{ "{{-" }} if not (empty $sshPublicKeyRef) {{ "}}" }}
-                {{ "{{-" }} $refNs := (index $sshPublicKeyRef "namespace" | default $policyNamespace) {{ "}}" }}
-                {{ "{{-" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $sshPublicKeyRef "name")) | default dict {{ "}}" }}
-                {{ "{{-" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
-                {{ "{{-" }} $sshPublicKey = (index $refData (index $sshPublicKeyRef "key") | default $sshPublicKey) {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
-              {{ "{{-" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
-              {{ "{{-" }} $mirrorUrl := (index $mirrorReg "url" | default "") {{ "}}" }}
-              {{ "{{-" }} $mirrorSources := (index $mirrorReg "sources" | default list) {{ "}}" }}
-              {{ "{{-" }} $caTrustBundle := (index $mirrorReg "ca" | default "") {{ "}}" }}
-              {{ "{{-" }} $caRef := (index $mirrorReg "caRef" | default dict) {{ "}}" }}
-              {{ "{{-" }} if not (empty $caRef) {{ "}}" }}
-                {{ "{{-" }} $refNs := (index $caRef "namespace" | default $policyNamespace) {{ "}}" }}
-                {{ "{{-" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict {{ "}}" }}
-                {{ "{{-" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
-                {{ "{{-" }} $caTrustBundle = (index $refData (index $caRef "key") | default $caTrustBundle) {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} $bmcEndpoint := (index $ci "bmcEndpoint" | default "/redfish/v1/Systems/1") {{ "}}" }}
-              {{ "{{-" }} $clusterNetwork := (index $networking "clusterNetwork" | default dict) {{ "}}" }}
-              {{ "{{-" }} $machineNetwork := (index $networking "machineNetwork" | default dict) {{ "}}" }}
-              {{ "{{-" }} $serviceNetwork := (index $networking "serviceNetwork" | default list) {{ "}}" }}
-              {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
+              {{ "{{-" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
+              {{ "{{-" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
+              {{ "{{-" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
+              {{ "{{-" }} if eq (index $ci "createCluster" | default "") "true" {{ "}}" }}
+                {{ "{{-" }} $networking := (index $config "networking" | default dict) {{ "}}" }}
+                {{ "{{-" }} $hosts := (index $config "hosts" | default dict) {{ "}}" }}
+                {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion" | default "") {{ "}}" }}
+                {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
+                {{ "{{-" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
+                {{ "{{-" }} $controlPlaneCount := (index $ci "controlPlaneAgents" | default 3 | toInt) {{ "}}" }}
+                {{ "{{-" }} $workerAgents := (index $ci "workerAgents" | default 0 | toInt) {{ "}}" }}
+                {{ "{{-" }} $workerCount := $workerAgents {{ "}}" }}
+                {{ "{{-" }} if (eq $workerCount 0) {{ "}}" }}
+                  {{ "{{-" }} $workerCount = (sub (len (keys $hosts)) $controlPlaneCount) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $baseDomain := (index $ci "baseDomain" | default "") {{ "}}" }}
+                {{ "{{-" }} $managedClusterSet := (index $config "clusterSet" | default "default") {{ "}}" }}
+                {{ "{{-" }} $sshPublicKey := (index $ci "sshPublicKey" | default "") {{ "}}" }}
+                {{ "{{-" }} $sshPublicKeyRef := (index $ci "sshPublicKeyRef" | default dict) {{ "}}" }}
+                {{ "{{-" }} if not (empty $sshPublicKeyRef) {{ "}}" }}
+                  {{ "{{-" }} $refNs := (index $sshPublicKeyRef "namespace" | default $policyNamespace) {{ "}}" }}
+                  {{ "{{-" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $sshPublicKeyRef "name")) | default dict {{ "}}" }}
+                  {{ "{{-" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
+                  {{ "{{-" }} $sshPublicKey = (index $refData (index $sshPublicKeyRef "key") | default $sshPublicKey) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
+                {{ "{{-" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
+                {{ "{{-" }} $mirrorUrl := (index $mirrorReg "url" | default "") {{ "}}" }}
+                {{ "{{-" }} $mirrorSources := (index $mirrorReg "sources" | default list) {{ "}}" }}
+                {{ "{{-" }} $caTrustBundle := (index $mirrorReg "ca" | default "") {{ "}}" }}
+                {{ "{{-" }} $caRef := (index $mirrorReg "caRef" | default dict) {{ "}}" }}
+                {{ "{{-" }} if not (empty $caRef) {{ "}}" }}
+                  {{ "{{-" }} $refNs := (index $caRef "namespace" | default $policyNamespace) {{ "}}" }}
+                  {{ "{{-" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict {{ "}}" }}
+                  {{ "{{-" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
+                  {{ "{{-" }} $caTrustBundle = (index $refData (index $caRef "key") | default $caTrustBundle) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $bmcEndpoint := (index $ci "bmcEndpoint" | default "/redfish/v1/Systems/1") {{ "}}" }}
+                {{ "{{-" }} $clusterNetwork := (index $networking "clusterNetwork" | default dict) {{ "}}" }}
+                {{ "{{-" }} $machineNetwork := (index $networking "machineNetwork" | default dict) {{ "}}" }}
+                {{ "{{-" }} $serviceNetwork := (index $networking "serviceNetwork" | default list) {{ "}}" }}
+                {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -92,12 +92,10 @@ spec:
                   registries.conf: |
                     unqualified-search-registries = ["registry.access.redhat.com", "docker.io"]
                     {{ "{{-" }} range $_, $source := $mirrorSources {{ "}}" }}
-
                     [[registry]]
                       prefix = ""
                       location = "{{ "{{" }} $source {{ "}}" }}"
                       mirror-by-digest-only = true
-
                       [[registry.mirror]]
                         location = "{{ "{{" }} $mirrorUrl {{ "}}" }}/{{ "{{" }} $source {{ "}}" }}"
                     {{ "{{-" }} end {{ "}}" }}
