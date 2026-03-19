@@ -37,6 +37,13 @@ spec:
             {{ "{{hub" }} $mirror := (index $disconnected "mirrorRegistry" | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $url := (index $mirror "url" | default "") {{ "hub}}" }}
             {{ "{{hub" }} $ca := (index $mirror "ca" | default "") {{ "hub}}" }}
+            {{ "{{hub" }} $caRef := (index $mirror "caRef" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} if not (empty $caRef) {{ "hub}}" }}
+            {{ "{{hub" }} $refNs := (index $caRef "namespace" | default "{{ $policyNamespace }}") {{ "hub}}" }}
+            {{ "{{hub" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict {{ "hub}}" }}
+            {{ "{{hub" }} $refData := (index $refCM "data" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $ca = (index $refData (index $caRef "key") | default $ca) {{ "hub}}" }}
+            {{ "{{hub" }} end {{ "hub}}" }}
             {{ "{{hub" }} if and (gt (len $url) 0) (gt (len $ca) 0) {{ "hub}}" }}
             {{ "{{hub" }} $registryHost := (index $mirror "registryHost" | default $url) {{ "hub}}" }}
             - complianceType: musthave

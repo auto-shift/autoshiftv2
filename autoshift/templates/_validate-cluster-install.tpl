@@ -13,8 +13,9 @@ Collects all errors and reports them together.
 
     {{/* ===== Valid key lists — add new fields here ===== */}}
     {{- $validCiKeys := list "createCluster" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
-    {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" }}
+    {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" "osImages" }}
     {{- $validMirrorRegKeys := list "url" "registryHost" "ca" "caRef" "sources" }}
+    {{- $validOsImageKeys := list "openshiftVersion" "cpuArchitecture" "url" "rootFSUrl" }}
     {{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
     {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
     {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
@@ -56,6 +57,22 @@ Collects all errors and reports them together.
         {{- if not (has $key $validCatalogKeys) }}
           {{- $errors = append $errors (printf "cluster %s: disconnected.catalogs[%d].%s is not a recognized field (valid: %s)" $clusterName $idx $key (join ", " $validCatalogKeys)) }}
         {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- range $idx, $img := (dig "config" "disconnected" "osImages" list $cluster) }}
+      {{- range $key, $_ := $img }}
+        {{- if not (has $key $validOsImageKeys) }}
+          {{- $errors = append $errors (printf "cluster %s: disconnected.osImages[%d].%s is not a recognized field (valid: %s)" $clusterName $idx $key (join ", " $validOsImageKeys)) }}
+        {{- end }}
+      {{- end }}
+      {{- if not (index $img "openshiftVersion") }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.osImages[%d].openshiftVersion is required" $clusterName $idx) }}
+      {{- end }}
+      {{- if not (index $img "url") }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.osImages[%d].url is required" $clusterName $idx) }}
+      {{- end }}
+      {{- if not (index $img "rootFSUrl") }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.osImages[%d].rootFSUrl is required" $clusterName $idx) }}
       {{- end }}
     {{- end }}
 

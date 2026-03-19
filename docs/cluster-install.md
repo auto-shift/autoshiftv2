@@ -169,6 +169,11 @@ disconnected:
       imagePath: redhat/certified-operator-index
       tag: v4.20
       publisher: Red Hat
+  osImages:                                 # custom live ISO for hub AgentServiceConfig
+    - openshiftVersion: '4.20'
+      cpuArchitecture: x86_64
+      url: 'https://mirror.example.com/rhcos-4.20-live.iso'
+      rootFSUrl: 'https://mirror.example.com/rhcos-4.20-rootfs.img'
 ```
 
 When `disconnected.mirrorRegistry` is configured:
@@ -182,6 +187,9 @@ When `disconnected.mirrorRegistry` is configured:
   - CatalogSources — mirrored operator catalogs
   - OperatorHub disable — disables default catalog sources
   - **Registry CA trust** — creates a ConfigMap in `openshift-config` with the CA and patches `image.config.openshift.io/cluster` so the managed cluster trusts the mirror registry post-install
+- **ACM provisioning policy** reads the hub's disconnected config for:
+  - `mirrorRegistryRef` on AgentServiceConfig — so the Assisted Installer trusts the mirror
+  - `osImages` — custom live ISO and rootfs URLs for disconnected boot
 
 **Labels still required** for operator catalog source switching (OperatorPolicy can only read labels):
 
@@ -697,6 +705,7 @@ AutoShift validates cluster-install configuration at Helm render time via `_vali
 - **SNO**: Exactly 1 host when `controlPlaneAgents: 1`
 - **Disconnected**: `url` required when `sources` defined, `ca` or `caRef` required when `sources` defined, `url` required when `catalogs` defined
 - **Catalog entries**: `source`, `imagePath`, `tag` required for each catalog
+- **OS images**: `openshiftVersion`, `url`, `rootFSUrl` required for each osImage entry
 - **rootDeviceHints**: Only valid hint keys accepted
 - **Networking**: Interface types, modes, VLAN base references, static IP addresses validated
 
