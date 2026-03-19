@@ -30,9 +30,10 @@ raw ConfigMaps ----merge----> rendered-config ConfigMaps
                                               ClusterInstance
                                                       |
                                                       v
-                                        AgentClusterInstall, ClusterDeployment,
-                                        InfraEnv, ManagedCluster, BareMetalHosts,
-                                        NMStateConfigs
+                                        AgentClusterInstall (+ mirrorRegistryRef),
+                                        ClusterDeployment, InfraEnv (+ CA),
+                                        ManagedCluster, BareMetalHosts (+ rootDeviceHints),
+                                        NMStateConfigs, mirror-registry-config
 ```
 
 Cluster configuration is defined in values files and stored as ConfigMaps on the hub. ACM policies read these ConfigMaps at runtime via hub templates, merge clusterset defaults with per-cluster overrides, and generate all provisioning resources. This means adding a new cluster only requires adding a values file - no Helm re-rendering or ArgoCD sync needed.
@@ -46,7 +47,7 @@ Cluster configuration is defined in values files and stored as ConfigMaps on the
 
 ## Configuration Structure
 
-Cluster provisioning config lives under the `config` key in cluster or clusterset values files. The config is split into three sections:
+Cluster provisioning config lives under the `config` key in cluster or clusterset values files. The config is split into four sections:
 
 ```yaml
 clusters:
@@ -55,6 +56,8 @@ clusters:
       networking:        # Reusable by other policies (e.g., nmstate)
         ...
       hosts:             # Reusable by other policies (e.g., nmstate)
+        ...
+      disconnected:      # Shared with disconnected-mirror policy
         ...
       clusterInstall:    # Install-specific settings
         ...
@@ -107,23 +110,79 @@ Per-host hardware and networking configuration. Each key is the short hostname (
 ```yaml
 hosts:
   master-0:
+    role: master                           # 'master' (default) or 'worker'
     bmcIP: '192.168.1.10'
-    bmcPrefix: 'redfish-virtualmedia'     # BMC protocol prefix
-    bmcEndpoint: '/redfish/v1/Systems/1'  # optional, overrides cluster-level
+    bmcPrefix: 'redfish-virtualmedia'      # BMC protocol prefix
+    bmcEndpoint: '/redfish/v1/Systems/1'   # optional, overrides cluster-level
     bootMACAddress: '00:00:00:00:00:01'
-    primaryMac: '00:00:00:00:00:02'       # MAC for bond, defaults to first interface
-    interfaces:                            # hardware interfaces for NMStateConfig
+    primaryMac: '00:00:00:00:00:02'        # MAC for bond, defaults to first interface
+    rootDeviceHints:                        # optional, disk selection for OS install
+      deviceName: '/dev/sda'
+    interfaces:                             # hardware interfaces for NMStateConfig
       - macAddress: '00:00:00:00:00:01'
         name: 'eno1'
       - macAddress: '00:00:00:00:00:02'
         name: 'eno2'
-    networking:                            # per-host network overrides
+    networking:                             # per-host network overrides
       interfaces:
-        mgmt-vlan:                         # references topology interface ID
+        mgmt-vlan:                          # references topology interface ID
           ipv4:
             addresses:
               - ip: 10.0.0.10
                 prefixLength: 25
+```
+
+**role** — Required for the SiteConfig ClusterInstance. Defaults to `master`. Set to `worker` for dedicated worker nodes. The number of hosts with `role: master` must match `controlPlaneAgents`.
+
+**rootDeviceHints** — Optional hints for the Metal3 BareMetalHost to select the installation disk. Supported hints: `deviceName`, `serialNumber`, `model`, `vendor`, `wwn`, `hctl`, `rotational`, `minSizeGigabytes`.
+
+
+### disconnected
+
+Disconnected mirror registry configuration. This single block drives both install-time config (mirrorRegistryRef on AgentClusterInstall, CA in InfraEnv, ClusterImageSet releaseImage) and post-install config (IDMS/ICSP, CatalogSources via the disconnected-mirror policy).
+
+```yaml
+disconnected:
+  mirrorRegistry:
+    url: 'mirror.example.com:5000/ocp'    # single URL for the mirror registry
+    ca: |                                   # CA bundle for the mirror registry
+      -----BEGIN CERTIFICATE-----
+      ...
+    # caRef:                               # OR reference a hub ConfigMap
+    #   name: 'cluster-ca-bundle'
+    #   key: 'ca-bundle.crt'
+    #   namespace: 'cluster-install-secrets'
+    sources:                                # registries to mirror
+      - registry.redhat.io
+      - quay.io
+      - registry.access.redhat.com
+  useIDMS: true                             # IDMS (OCP 4.13+) or ICSP (4.12-)
+  disableDefaultCatalogs: true              # disable default OperatorHub catalogs
+  catalogs:                                 # CatalogSource name = {source}-{mirror-catalog-suffix label}
+    - source: redhat-operators
+      imagePath: redhat/redhat-operator-index
+      tag: v4.20
+      publisher: Red Hat
+    - source: certified-operators
+      imagePath: redhat/certified-operator-index
+      tag: v4.20
+      publisher: Red Hat
+```
+
+When `disconnected.mirrorRegistry` is configured:
+
+- **ClusterImageSet** `releaseImage` points to the mirror registry instead of `quay.io` (the Assisted Installer does NOT use IDMS for pulling the release image)
+- **mirror-registry-config ConfigMap** is created with `registries.conf` (TOML) and `ca-bundle.crt` in the cluster namespace
+- **AgentClusterInstall** gets `mirrorRegistryRef` pointing to this ConfigMap
+- **InfraEnv** gets `additionalTrustBundle` from the CA
+- **disconnected-mirror policy** reads the same config for IDMS/ICSP and CatalogSources on managed clusters
+
+**Labels still required** for operator catalog source switching (OperatorPolicy can only read labels):
+
+```yaml
+labels:
+  disconnected-mirror: 'true'        # placement + operator source ternary
+  mirror-catalog-suffix: 'mirror'    # CatalogSource naming: {source}-{suffix}
 ```
 
 ### clusterInstall
@@ -146,21 +205,13 @@ clusterInstall:
   pullSecretRef: 'default-pull-secret'
   bmcCredentialRef: 'default-bmc-cred'
   bmcEndpoint: '/redfish/v1/Systems/1'
+  secretSourceNamespace: 'cluster-install-secrets'
   # SSH Public Key — provide inline OR reference a ConfigMap (not both)
   sshPublicKey: 'ssh-rsa ...'              # option 1: inline value
   # sshPublicKeyRef:                       # option 2: reference a hub ConfigMap
   #   name: 'cluster-ssh-keys'
   #   key: 'ssh-public-key'
   #   namespace: 'cluster-install-secrets' # optional, defaults to policy namespace
-  # CA Trust Bundle — provide inline OR reference a ConfigMap (not both)
-  caTrustBundle: |                         # option 1: inline value
-    -----BEGIN CERTIFICATE-----
-    ...
-  # caTrustBundleRef:                      # option 2: reference a hub ConfigMap
-  #   name: 'cluster-ca-bundle'
-  #   key: 'ca-bundle.crt'
-  #   namespace: 'cluster-install-secrets' # optional, defaults to policy namespace
-  secretSourceNamespace: 'cluster-install-secrets'
   ntpSources:                        # optional NTP servers
     - 10.0.0.1
   klusterletAddons:                  # optional override (defaults below)
@@ -261,10 +312,13 @@ clusters:
           servers: [10.0.0.53]
       hosts:
         master-0:
+          role: master
           bmcIP: '192.168.1.10'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:01'
           primaryMac: 'aa:bb:cc:dd:ee:02'
+          rootDeviceHints:
+            deviceName: '/dev/sda'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:01'
               name: 'eno1'
@@ -278,10 +332,13 @@ clusters:
                     - ip: 10.0.0.10
                       prefixLength: 25
         master-1:
+          role: master
           bmcIP: '192.168.1.11'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:11'
           primaryMac: 'aa:bb:cc:dd:ee:12'
+          rootDeviceHints:
+            deviceName: '/dev/sda'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:11'
               name: 'eno1'
@@ -295,10 +352,13 @@ clusters:
                     - ip: 10.0.0.11
                       prefixLength: 25
         master-2:
+          role: master
           bmcIP: '192.168.1.12'
           bmcPrefix: 'redfish-virtualmedia'
           bootMACAddress: 'aa:bb:cc:dd:ee:21'
           primaryMac: 'aa:bb:cc:dd:ee:22'
+          rootDeviceHints:
+            deviceName: '/dev/sda'
           interfaces:
             - macAddress: 'aa:bb:cc:dd:ee:21'
               name: 'eno1'
@@ -319,6 +379,9 @@ clusters:
         apiVip: '10.0.0.2'
         ingressVip: '10.0.0.3'
         sshPublicKey: 'ssh-rsa AAAAB3...'
+        pullSecretRef: 'default-pull-secret'
+        bmcCredentialRef: 'default-bmc-cred'
+        secretSourceNamespace: 'cluster-install-secrets'
 ```
 
 ### Step 4: Add the Values File to ArgoCD
@@ -408,7 +471,7 @@ clusters:
 
 Instead of embedding SSH public keys and CA trust bundles inline in values files, you can reference a ConfigMap on the hub cluster. This is useful when the same key or bundle is shared across clusters or managed by a different team.
 
-Create the ConfigMap:
+Create the ConfigMaps:
 
 ```bash
 oc create configmap cluster-ssh-keys \
@@ -420,7 +483,7 @@ oc create configmap cluster-ca-bundle \
   --from-file=ca-bundle.crt=/path/to/ca-bundle.crt
 ```
 
-Reference it in your cluster config:
+Reference them in your cluster config:
 
 ```yaml
 clusterInstall:
@@ -428,15 +491,18 @@ clusterInstall:
     name: 'cluster-ssh-keys'
     key: 'ssh-public-key'
     namespace: 'cluster-install-secrets'   # optional, defaults to policy namespace
-  caTrustBundleRef:
-    name: 'cluster-ca-bundle'
-    key: 'ca-bundle.crt'
-    namespace: 'cluster-install-secrets'   # optional, defaults to policy namespace
+
+disconnected:
+  mirrorRegistry:
+    caRef:
+      name: 'cluster-ca-bundle'
+      key: 'ca-bundle.crt'
+      namespace: 'cluster-install-secrets' # optional, defaults to policy namespace
 ```
 
-The ref is resolved at runtime by the ACM policy via a hub template `lookup`. If the referenced ConfigMap does not exist, the policy falls back to the inline `sshPublicKey` or `caTrustBundle` value. If neither is set, the field is empty.
+The refs are resolved at runtime by ACM policies via hub template `lookup`. If the referenced ConfigMap does not exist, the policy falls back to the inline value. If neither is set, the field is empty.
 
-This is a good candidate for clusterset defaults — define the ref once and all clusters inherit it:
+This is a good candidate for clusterset defaults — define the refs once and all clusters inherit them:
 
 ```yaml
 hubClusterSets:
@@ -519,6 +585,26 @@ prereqs (Compliant) --> secrets (Compliant) --> siteconfig
 - If source secrets don't exist, the secrets policy stays **NonCompliant** and siteconfig never runs
 - If the rendered-config ConfigMap doesn't exist yet (new cluster, no ManagedCluster object), the cluster-config-maps policy handles this via its second loop that checks for `createCluster: 'true'`
 - Setting `createCluster` to anything other than `'true'` (or removing it) stops provisioning for that cluster
+
+## Validation
+
+AutoShift validates cluster-install configuration at Helm render time via `_validate-cluster-install.tpl`. This catches config errors before they reach ACM. Validated fields include:
+
+- **Required fields**: `baseDomain`, `openshiftVersion` (or `clusterImageSet`), `sshPublicKey` (or ref), `pullSecretRef`, `bmcCredentialRef`
+- **Multi-node**: `apiVip` and `ingressVip` required when `controlPlaneAgents > 1`
+- **Host counts**: Number of hosts must match `controlPlaneAgents` + `workerAgents`
+- **Role counts**: Number of hosts with `role: master` must match `controlPlaneAgents`
+- **SNO**: Exactly 1 host when `controlPlaneAgents: 1`
+- **Disconnected**: `url` required when `sources` defined, `ca` or `caRef` required when `sources` defined, `url` required when `catalogs` defined
+- **Catalog entries**: `source`, `imagePath`, `tag` required for each catalog
+- **rootDeviceHints**: Only valid hint keys accepted
+- **Networking**: Interface types, modes, VLAN base references, static IP addresses validated
+
+Test your config locally before deploying:
+
+```bash
+helm template autoshift/ -f autoshift/values/clusters/my-cluster.yaml
+```
 
 ## Troubleshooting
 
