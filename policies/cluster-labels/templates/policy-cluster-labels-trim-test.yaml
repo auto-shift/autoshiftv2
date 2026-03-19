@@ -1,11 +1,12 @@
 {{ if (.Values.debug | default false) }}
 {{- $policyName := "policy-trim-marker-test" }}
+{{- $policyNamespace := $.Values.policy_namespace }}
 {{- $placementName := (printf "placement-%s" $policyName) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
   name: {{ $policyName }}
-  namespace: {{ $.Values.policy_namespace }}
+  namespace: {{ $policyNamespace }}
   annotations:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
@@ -18,259 +19,177 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: trim-marker-test-raw
+          name: siteconfig-debug-dump
         spec:
           remediationAction: enforce
           severity: low
           object-templates-raw: |
-            {{ "{{" }} $testTrue := true {{ "}}" }}
-            {{ "{{" }} $testFalse := false {{ "}}" }}
-            {{ "{{" }} $testDict := dict "key1" "val1" "key2" "val2" {{ "}}" }}
-            {{ "{{" }} $testList := list "a" "b" "c" {{ "}}" }}
+            {{ "{{" }} $policyNamespace := "{{ $policyNamespace }}" {{ "}}" }}
+            {{ "{{" }} $configMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
+            {{ "{{" }} range $_, $cm := ($configMaps.items | default list) {{ "}}" }}
+              {{ "{{" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
+              {{ "{{" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
+              {{ "{{" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
+              {{ "{{" }} if eq (index $ci "createCluster" | default "") "true" {{ "}}" }}
+                {{ "{{" }} $networking := (index $config "networking" | default dict) {{ "}}" }}
+                {{ "{{" }} $hosts := (index $config "hosts" | default dict) {{ "}}" }}
+                {{ "{{" }} $openshiftVersion := (index $ci "openshiftVersion" | default "") {{ "}}" }}
+                {{ "{{" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
+                {{ "{{" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
+                {{ "{{" }} $controlPlaneCount := (index $ci "controlPlaneAgents" | default 3 | toInt) {{ "}}" }}
+                {{ "{{" }} $workerAgents := (index $ci "workerAgents" | default 0 | toInt) {{ "}}" }}
+                {{ "{{" }} $workerCount := $workerAgents {{ "}}" }}
+                {{ "{{" }} if (eq $workerCount 0) {{ "}}" }}
+                  {{ "{{" }} $workerCount = (sub (len (keys $hosts)) $controlPlaneCount) {{ "}}" }}
+                {{ "{{" }} end {{ "}}" }}
+                {{ "{{" }} $baseDomain := (index $ci "baseDomain" | default "") {{ "}}" }}
+                {{ "{{" }} $managedClusterSet := (index $config "clusterSet" | default "default") {{ "}}" }}
+                {{ "{{" }} $sshPublicKey := (index $ci "sshPublicKey" | default "") {{ "}}" }}
+                {{ "{{" }} $sshPublicKeyRef := (index $ci "sshPublicKeyRef" | default dict) {{ "}}" }}
+                {{ "{{" }} if not (empty $sshPublicKeyRef) {{ "}}" }}
+                  {{ "{{" }} $refNs := (index $sshPublicKeyRef "namespace" | default $policyNamespace) {{ "}}" }}
+                  {{ "{{" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $sshPublicKeyRef "name")) | default dict {{ "}}" }}
+                  {{ "{{" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
+                  {{ "{{" }} $sshPublicKey = (index $refData (index $sshPublicKeyRef "key") | default $sshPublicKey) {{ "}}" }}
+                {{ "{{" }} end {{ "}}" }}
+                {{ "{{" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
+                {{ "{{" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
+                {{ "{{" }} $mirrorUrl := (index $mirrorReg "url" | default "") {{ "}}" }}
+                {{ "{{" }} $mirrorSources := (index $mirrorReg "sources" | default list) {{ "}}" }}
+                {{ "{{" }} $caTrustBundle := (index $mirrorReg "ca" | default "") {{ "}}" }}
+                {{ "{{" }} $caRef := (index $mirrorReg "caRef" | default dict) {{ "}}" }}
+                {{ "{{" }} if not (empty $caRef) {{ "}}" }}
+                  {{ "{{" }} $refNs := (index $caRef "namespace" | default $policyNamespace) {{ "}}" }}
+                  {{ "{{" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict {{ "}}" }}
+                  {{ "{{" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
+                  {{ "{{" }} $caTrustBundle = (index $refData (index $caRef "key") | default $caTrustBundle) {{ "}}" }}
+                {{ "{{" }} end {{ "}}" }}
+                {{ "{{" }} $bmcEndpoint := (index $ci "bmcEndpoint" | default "/redfish/v1/Systems/1") {{ "}}" }}
+                {{ "{{" }} $clusterNetwork := (index $networking "clusterNetwork" | default dict) {{ "}}" }}
+                {{ "{{" }} $machineNetwork := (index $networking "machineNetwork" | default dict) {{ "}}" }}
+                {{ "{{" }} $serviceNetwork := (index $networking "serviceNetwork" | default list) {{ "}}" }}
             - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: v1
                 kind: ConfigMap
                 metadata:
-                  name: trim-test-results
-                  namespace: {{ $.Values.policy_namespace }}
+                  name: siteconfig-debug-{{ "{{" }} $clusterName {{ "}}" }}
+                  namespace: {{ $policyNamespace }}
                 data:
-                  raw-results: |
-                    === CASE 1: var assign WITH trim between content ===
-                    line-before: content
-                    {{ "{{-" }} $unused1 := "test" {{ "}}" }}
-                    line-after: content
-                    === CASE 2: var assign NO trim between content ===
-                    line-before: content
-                    {{ "{{" }} $unused2 := "test" {{ "}}" }}
-                    line-after: content
-                    === CASE 3: if TRUE WITH trim between content ===
-                    line-before: content
-                    {{ "{{-" }} if $testTrue {{ "}}" }}
-                    conditional-content: here
+                  mirror-registry-config: |
+                    {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
+                    registries.conf: |
+                      unqualified-search-registries = ["registry.access.redhat.com", "docker.io"]
+                    {{ "{{-" }} range $_, $source := $mirrorSources {{ "}}" }}
+
+                      [[registry]]
+                        prefix = ""
+                        location = "{{ "{{" }} $source {{ "}}" }}"
+                        mirror-by-digest-only = true
+
+                        [[registry.mirror]]
+                          location = "{{ "{{" }} $mirrorUrl {{ "}}" }}/{{ "{{" }} $source {{ "}}" }}"
                     {{ "{{-" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 4: if TRUE NO trim between content ===
-                    line-before: content
-                    {{ "{{" }} if $testTrue {{ "}}" }}
-                    conditional-content: here
-                    {{ "{{" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 5: if FALSE WITH trim between content ===
-                    line-before: content
-                    {{ "{{-" }} if $testFalse {{ "}}" }}
-                    should-not-appear: hidden
-                    {{ "{{-" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 6: if FALSE NO trim between content ===
-                    line-before: content
-                    {{ "{{" }} if $testFalse {{ "}}" }}
-                    should-not-appear: hidden
-                    {{ "{{" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 7: range WITH trim between content ===
-                    line-before: content
-                    {{ "{{-" }} range $_, $item := $testList {{ "}}" }}
-                    item: {{ "{{" }} $item {{ "}}" }}
-                    {{ "{{-" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 8: range NO trim between content ===
-                    line-before: content
-                    {{ "{{" }} range $_, $item := $testList {{ "}}" }}
-                    item: {{ "{{" }} $item {{ "}}" }}
-                    {{ "{{" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 9: first line after pipe WITH trim ===
-                    {{ "{{-" }} if $testTrue {{ "}}" }}
-                    first-line: content
-                    {{ "{{-" }} end {{ "}}" }}
-                    === CASE 10: first line after pipe NO trim ===
-                    {{ "{{" }} if $testTrue {{ "}}" }}
-                    first-line: content
-                    {{ "{{" }} end {{ "}}" }}
-                    === CASE 11: nested yaml WITH trim (our pattern) ===
-                    apiVersion: v1
-                    kind: FakeResource
-                    spec:
-                      fieldA: valueA
-                    {{ "{{-" }} if $testTrue {{ "}}" }}
-                      conditionalField: conditionalValue
-                    {{ "{{-" }} end {{ "}}" }}
-                      fieldB: valueB
-                    === CASE 12: nested yaml NO trim ===
-                    apiVersion: v1
-                    kind: FakeResource
-                    spec:
-                      fieldA: valueA
-                    {{ "{{" }} if $testTrue {{ "}}" }}
-                      conditionalField: conditionalValue
-                    {{ "{{" }} end {{ "}}" }}
-                      fieldB: valueB
-                    === CASE 13: end WITH trim between content ===
-                    {{ "{{" }} if $testTrue {{ "}}" }}
-                    conditional-content: here
-                    {{ "{{-" }} end {{ "}}" }}
-                    after-end: content
-                    === CASE 14: end NO trim between content ===
-                    {{ "{{" }} if $testTrue {{ "}}" }}
-                    conditional-content: here
-                    {{ "{{" }} end {{ "}}" }}
-                    after-end: content
-                    === CASE 15: range dict WITH trim ===
-                    header: start
-                    {{ "{{-" }} range $k, $v := $testDict {{ "}}" }}
-                    {{ "{{" }} $k {{ "}}" }}: {{ "{{" }} $v {{ "}}" }}
-                    {{ "{{-" }} end {{ "}}" }}
-                    footer: end
-                    === CASE 16: range dict NO trim ===
-                    header: start
-                    {{ "{{" }} range $k, $v := $testDict {{ "}}" }}
-                    {{ "{{" }} $k {{ "}}" }}: {{ "{{" }} $v {{ "}}" }}
-                    {{ "{{" }} end {{ "}}" }}
-                    footer: end
-                    === CASE 17: if TRUE trim on if only (not end) ===
-                    line-before: content
-                    {{ "{{-" }} if $testTrue {{ "}}" }}
-                    conditional-content: here
-                    {{ "{{" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 18: if TRUE trim on end only (not if) ===
-                    line-before: content
-                    {{ "{{" }} if $testTrue {{ "}}" }}
-                    conditional-content: here
-                    {{ "{{-" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 19: if-else TRUE with trim ===
-                    line-before: content
-                    {{ "{{-" }} if $testTrue {{ "}}" }}
-                    true-branch: here
+                    ca-bundle.crt: {{ "{{" }} $caTrustBundle {{ "}}" }}
                     {{ "{{-" }} else {{ "}}" }}
-                    false-branch: here
+                    (no mirror sources)
                     {{ "{{-" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 20: if-else FALSE with trim ===
-                    line-before: content
-                    {{ "{{-" }} if $testFalse {{ "}}" }}
-                    true-branch: here
+                  agent-cluster-install: |
+                    apiVersion: extensions.hive.openshift.io/v1beta1
+                    kind: AgentClusterInstall
+                    metadata:
+                      name: {{ "{{" }} $clusterName {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    spec:
+                      clusterDeploymentRef:
+                        name: {{ "{{" }} $clusterName {{ "}}" }}
+                      imageSetRef:
+                        name: {{ "{{" }} $imageSet {{ "}}" }}
+                    {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
+                      mirrorRegistryRef:
+                        name: mirror-registry-config
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if (gt $controlPlaneCount 1) {{ "}}" }}
+                      platformType: BareMetal
+                      apiVIP: {{ "{{" }} index $ci "apiVip" {{ "}}" }}
+                      ingressVIP: {{ "{{" }} index $ci "ingressVip" {{ "}}" }}
+                      mastersSchedulable: {{ "{{" }} index $ci "mastersSchedulable" | default false {{ "}}" }}
+                      provisionRequirements:
+                        controlPlaneAgents: {{ "{{" }} $controlPlaneCount {{ "}}" }}
+                        workerAgents: {{ "{{" }} $workerCount {{ "}}" }}
                     {{ "{{-" }} else {{ "}}" }}
-                    false-branch: here
+                      provisionRequirements:
+                        controlPlaneAgents: 1
                     {{ "{{-" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 21: nested if with trim ===
-                    line-before: content
-                    {{ "{{-" }} if $testTrue {{ "}}" }}
-                    outer-true: yes
-                    {{ "{{-" }} if $testFalse {{ "}}" }}
-                    inner-false: should-not-appear
+                      networking:
+                    {{ "{{-" }} if (eq $controlPlaneCount 1) {{ "}}" }}
+                        userManagedNetworking: true
                     {{ "{{-" }} end {{ "}}" }}
-                    after-inner: content
+                        clusterNetwork:
+                        - cidr: {{ "{{" }} index $clusterNetwork "cidr" {{ "}}" }}
+                          hostPrefix: {{ "{{" }} index $clusterNetwork "hostPrefix" {{ "}}" }}
+                        machineNetwork:
+                        - cidr: {{ "{{" }} index $machineNetwork "cidr" {{ "}}" }}
+                        serviceNetwork:
+                    {{ "{{-" }} range $_, $network := $serviceNetwork {{ "}}" }}
+                        - {{ "{{" }} $network {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 22: empty range (no items) with trim ===
-                    line-before: content
-                    {{ "{{-" }} $emptyList := list {{ "}}" }}
-                    {{ "{{-" }} range $_, $item := $emptyList {{ "}}" }}
-                    item: {{ "{{" }} $item {{ "}}" }}
+                      sshPublicKey: {{ "{{" }} $sshPublicKey {{ "}}" }}
+                  infra-env: |
+                    apiVersion: agent-install.openshift.io/v1beta1
+                    kind: InfraEnv
+                    metadata:
+                      name: {{ "{{" }} $clusterName {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    spec:
+                      agentLabels:
+                        agentBareMetal-generated-infraenv-ai-flow: {{ "{{" }} printf "%s-%s" $clusterName $clusterName {{ "}}" }}
+                    {{ "{{-" }} if $caTrustBundle {{ "}}" }}
+                      additionalTrustBundle: |
+                        {{ "{{" }} $caTrustBundle {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
-                    line-after: content
-                    === CASE 23: toYaml with autoindent ===
-                    line-before: content
-                    {{ "{{" }} $testDict | toYaml | autoindent {{ "}}" }}
-                    line-after: content
-                    === END ===
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: trim-marker-test-hub
-        spec:
-          remediationAction: enforce
-          severity: low
-          object-templates:
-            - complianceType: mustonlyhave
-              objectDefinition:
-                apiVersion: v1
-                kind: ConfigMap
-                metadata:
-                  name: trim-test-hub-results
-                  namespace: {{ $.Values.policy_namespace }}
-                data:
-                  hub-results: |
-                    === HUB CASE 1: if TRUE WITH hub- trim ===
-                    line-before: content
-                    {{`{{hub- if eq "true" "true" hub}}`}}
-                    conditional: here
-                    {{`{{hub- end hub}}`}}
-                    line-after: content
-                    === HUB CASE 2: if TRUE NO hub- trim ===
-                    line-before: content
-                    {{`{{hub if eq "true" "true" hub}}`}}
-                    conditional: here
-                    {{`{{hub end hub}}`}}
-                    line-after: content
-                    === HUB CASE 3: if FALSE WITH hub- trim ===
-                    line-before: content
-                    {{`{{hub- if eq "true" "false" hub}}`}}
-                    should-not-appear: hidden
-                    {{`{{hub- end hub}}`}}
-                    line-after: content
-                    === HUB CASE 4: if FALSE NO hub- trim ===
-                    line-before: content
-                    {{`{{hub if eq "true" "false" hub}}`}}
-                    should-not-appear: hidden
-                    {{`{{hub end hub}}`}}
-                    line-after: content
-                    === HUB CASE 5: first line WITH hub- trim ===
-                    {{`{{hub- if eq "true" "true" hub}}`}}
-                    first-line: content
-                    {{`{{hub- end hub}}`}}
-                    === HUB CASE 6: first line NO hub- trim ===
-                    {{`{{hub if eq "true" "true" hub}}`}}
-                    first-line: content
-                    {{`{{hub end hub}}`}}
-                    === HUB CASE 7: var assign WITH hub- trim ===
-                    line-before: content
-                    {{`{{hub- $x := "test" hub}}`}}
-                    line-after: content
-                    === HUB CASE 8: var assign NO hub- trim ===
-                    line-before: content
-                    {{`{{hub $x := "test" hub}}`}}
-                    line-after: content
-                    === HUB CASE 9: if TRUE hub- on if only ===
-                    line-before: content
-                    {{`{{hub- if eq "true" "true" hub}}`}}
-                    conditional: here
-                    {{`{{hub end hub}}`}}
-                    line-after: content
-                    === HUB CASE 10: if TRUE hub- on end only ===
-                    line-before: content
-                    {{`{{hub if eq "true" "true" hub}}`}}
-                    conditional: here
-                    {{`{{hub- end hub}}`}}
-                    line-after: content
-                    === HUB CASE 11: if-else TRUE with trim ===
-                    line-before: content
-                    {{`{{hub- if eq "true" "true" hub}}`}}
-                    true-branch: here
-                    {{`{{hub- else hub}}`}}
-                    false-branch: here
-                    {{`{{hub- end hub}}`}}
-                    line-after: content
-                    === HUB CASE 12: if-else FALSE with trim ===
-                    line-before: content
-                    {{`{{hub- if eq "true" "false" hub}}`}}
-                    true-branch: here
-                    {{`{{hub- else hub}}`}}
-                    false-branch: here
-                    {{`{{hub- end hub}}`}}
-                    line-after: content
-                    === HUB END ===
+                    {{ "{{-" }} $ntpSources := (index $ci "ntpSources" | default list) {{ "}}" }}
+                    {{ "{{-" }} if (gt (len $ntpSources) 0) {{ "}}" }}
+                      additionalNTPSources:
+                    {{ "{{-" }} range $_, $ntp := $ntpSources {{ "}}" }}
+                        - {{ "{{" }} $ntp {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                      clusterRef:
+                        name: {{ "{{" }} $clusterName {{ "}}" }}
+                        namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                  bmh-sample: |
+                    {{ "{{-" }} range $hostname, $host := $hosts {{ "}}" }}
+                    {{ "{{" }} $hostFQDN := (printf "%s.%s.%s" $hostname $clusterName $baseDomain) {{ "}}" }}
+                    {{ "{{" }} $hostBmcEndpoint := (index $host "bmcEndpoint" | default $bmcEndpoint) {{ "}}" }}
+                    {{ "{{" }} $bmcAddress := (printf "%s://%s%s" (index $host "bmcPrefix") (index $host "bmcIP") $hostBmcEndpoint) {{ "}}" }}
+                    --- {{ "{{" }} $hostname {{ "}}" }} ---
+                    apiVersion: metal3.io/v1alpha1
+                    kind: BareMetalHost
+                    metadata:
+                      name: {{ "{{" }} $hostname {{ "}}" }}
+                      annotations:
+                        bmac.agent-install.openshift.io/hostname: {{ "{{" }} $hostFQDN {{ "}}" }}
+                    spec:
+                      bmc:
+                        address: '{{ "{{" }} $bmcAddress {{ "}}" }}'
+                        credentialsName: {{ "{{" }} $hostname {{ "}}" }}-bmc-cred
+                      bootMACAddress: '{{ "{{" }} index $host "bootMACAddress" {{ "}}" }}'
+                    {{ "{{-" }} if not (empty (index $host "rootDeviceHints" | default "")) {{ "}}" }}
+                      rootDeviceHints:
+                        {{ "{{" }} index $host "rootDeviceHints" | toYaml | autoindent {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                      customDeploy:
+                        method: start_assisted_install
+                    {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
   name: {{ $placementName }}
-  namespace: {{ $.Values.policy_namespace }}
+  namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
   {{ range $cluster, $value := $.Values.hubClusterSets }}
@@ -286,7 +205,7 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
   name: {{ $placementName }}
-  namespace: {{ $.Values.policy_namespace }}
+  namespace: {{ $policyNamespace }}
 placementRef:
   name: {{ $placementName }}
   apiGroup: cluster.open-cluster-management.io
