@@ -35,19 +35,21 @@ spec:
               {{ "{{" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
               {{ "{{" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
               {{ "{{" }} if eq (index $ci "createCluster" | default "") "true" {{ "}}" }}
-                {{ "{{" }} $openshiftVersion := (index $ci "openshiftVersion" | default "") {{ "}}" }}
+                {{ "{{" }} $openshiftVersion := (index $ci "openshiftVersion") {{ "}}" }}
                 {{ "{{" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
                 {{ "{{" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
                 {{ "{{" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
                 {{ "{{" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
                 {{ "{{" }} $mirrorHost := (index $mirrorReg "host" | default "") {{ "}}" }}
                 {{ "{{" }} $mirrorPath := (index $mirrorReg "path" | default "") {{ "}}" }}
+                {{ "{{" }} $releaseImagePath := "openshift-release-dev/ocp-release" {{ "}}" }}
                 {{ "{{" }} $releaseRegistry := "quay.io" {{ "}}" }}
                 {{ "{{" }} if $mirrorHost {{ "}}" }}
                   {{ "{{" }} $releaseRegistry = $mirrorHost {{ "}}" }}
                   {{ "{{" }} if $mirrorPath {{ "}}" }}
                     {{ "{{" }} $releaseRegistry = (printf "%s/%s" $mirrorHost $mirrorPath) {{ "}}" }}
                   {{ "{{" }} end {{ "}}" }}
+                  {{ "{{" }} $releaseImagePath = (index $mirrorReg "releaseImage" | default $releaseImagePath) {{ "}}" }}
                 {{ "{{" }} end {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
@@ -66,7 +68,7 @@ spec:
                     visible: 'true'
                     channel: {{ "{{" }} index $ci "openshiftChannel" | default "stable" {{ "}}" }}
                 spec:
-                  releaseImage: '{{ "{{" }} $releaseRegistry {{ "}}" }}/openshift-release-dev/ocp-release:{{ "{{" }} $openshiftVersion {{ "}}" }}-{{ "{{" }} $cpuArch {{ "}}" }}'
+                  releaseImage: '{{ "{{" }} $releaseRegistry {{ "}}" }}/{{ "{{" }} $releaseImagePath {{ "}}" }}:{{ "{{" }} $openshiftVersion {{ "}}" }}-{{ "{{" }} $cpuArch {{ "}}" }}'
                 {{ "{{" }} end {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
