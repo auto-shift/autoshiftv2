@@ -8,7 +8,8 @@ Collects all errors and reports them together.
 {{/* ===== Valid key lists — add new fields here ===== */}}
 {{- $validCiKeys := list "createCluster" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
 {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" "osImages" }}
-{{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "sources" "releaseImage" }}
+{{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "mirrors" "releaseImage" }}
+{{- $validMirrorEntryKeys := list "source" "mirror" }}
 {{- $validOsImageKeys := list "openshiftVersion" "version" "cpuArchitecture" "url" "rootFSUrl" }}
 {{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
 {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
@@ -146,10 +147,20 @@ Collects all errors and reports them together.
     {{/* Validate disconnected config */}}
     {{- $disconnected := (dig "config" "disconnected" dict $cluster) }}
     {{- $mirrorReg := (dig "mirrorRegistry" dict $disconnected) }}
-    {{- $mirrorSources := ($mirrorReg.sources | default list) }}
-    {{- if gt (len $mirrorSources) 0 }}
+    {{- $mirrorEntries := ($mirrorReg.mirrors | default list) }}
+    {{- if gt (len $mirrorEntries) 0 }}
       {{- if not $mirrorReg.host }}
-        {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.host is required when sources are defined" $clusterName) }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.host is required when mirrors are defined" $clusterName) }}
+      {{- end }}
+      {{- range $idx, $entry := $mirrorEntries }}
+        {{- range $key, $_ := $entry }}
+          {{- if not (has $key $validMirrorEntryKeys) }}
+            {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.mirrors[%d].%s is not a recognized field (valid: %s)" $clusterName $idx $key (join ", " $validMirrorEntryKeys)) }}
+          {{- end }}
+        {{- end }}
+        {{- if not (index $entry "source") }}
+          {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.mirrors[%d].source is required" $clusterName $idx) }}
+        {{- end }}
       {{- end }}
     {{- end }}
     {{- $caRef := ($mirrorReg.caRef | default dict) }}
@@ -161,7 +172,7 @@ Collects all errors and reports them together.
         {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.caRef.key is required" $clusterName) }}
       {{- end }}
     {{- end }}
-    {{- if and (gt (len $mirrorSources) 0) (not (or $mirrorReg.ca $mirrorReg.caRef)) }}
+    {{- if and (gt (len $mirrorEntries) 0) (not (or $mirrorReg.ca $mirrorReg.caRef)) }}
       {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.ca or caRef is required when sources are defined" $clusterName) }}
     {{- end }}
     {{- $catalogs := ($disconnected.catalogs | default list) }}
@@ -436,8 +447,8 @@ Collects all errors and reports them together.
           {{- $errors = append $errors (printf "%s: disconnected.mirrorRegistry.%s is not a recognized field (valid: %s)" $csPath $key (join ", " $validMirrorRegKeys)) }}
         {{- end }}
       {{- end }}
-      {{- $csMirrorSources := ($csMirrorReg.sources | default list) }}
-      {{- if gt (len $csMirrorSources) 0 }}
+      {{- $csMirrorEntries := ($csMirrorReg.mirrors | default list) }}
+      {{- if gt (len $csMirrorEntries) 0 }}
         {{- if not $csMirrorReg.host }}
           {{- $errors = append $errors (printf "%s: disconnected.mirrorRegistry.host is required when sources are defined" $csPath) }}
         {{- end }}

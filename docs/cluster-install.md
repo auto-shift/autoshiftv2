@@ -78,6 +78,18 @@ networking:
     - 172.30.0.0/16
   # NMState interface topology — used by both siteconfig (NMStateConfig) and nmstate (NNCP)
   interfaces:
+    eno1:
+      type: ethernet
+      name: eno1
+      state: up
+      ipv4: disabled
+      ipv6: disabled
+    eno2:
+      type: ethernet
+      name: eno2
+      state: up
+      ipv4: disabled
+      ipv6: disabled
     mgmt:
       type: bond
       name: bond0
@@ -155,10 +167,14 @@ disconnected:
     #   name: 'cluster-ca-bundle'
     #   key: 'ca-bundle.crt'
     #   namespace: 'cluster-install-secrets'
-    sources:                                # registries to mirror
-      - registry.redhat.io
-      - quay.io
-      - registry.access.redhat.com
+    mirrors:                                # source → mirror path mappings
+      - source: quay.io/openshift-release-dev/ocp-release
+        mirror: openshift/release-images  # path in mirror registry (host/mirror)
+      - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+        mirror: openshift/release
+      - source: registry.redhat.io          # no mirror = host/path/source
+      - source: quay.io
+      - source: registry.access.redhat.com
   useIDMS: true                             # IDMS (OCP 4.13+) or ICSP (4.12-)
   disableDefaultCatalogs: true              # disable default OperatorHub catalogs
   catalogs:                                 # CatalogSource name = {source}-{mirror-catalog-suffix label}
@@ -411,6 +427,18 @@ clusters:
         serviceNetwork:
           - 172.30.0.0/16
         interfaces:
+          eno1:
+            type: ethernet
+            name: eno1
+            state: up
+            ipv4: disabled
+            ipv6: disabled
+          eno2:
+            type: ethernet
+            name: eno2
+            state: up
+            ipv4: disabled
+            ipv6: disabled
           mgmt:
             type: bond
             name: bond0

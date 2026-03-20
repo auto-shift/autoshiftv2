@@ -67,7 +67,7 @@ spec:
             {{ "{{hub-" }} if $mirrorPath {{ "hub}}" }}
             {{ "{{hub-" }} $mirrorUrl = (printf "%s/%s" $mirrorHost $mirrorPath) {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} $mirrorSources := (index $mirror "sources" | default list) {{ "hub}}" }}
+            {{ "{{hub-" }} $mirrors := (index $mirror "mirrors" | default list) {{ "hub}}" }}
             {{ "{{hub-" }} $mirrorCa := (index $mirror "ca" | default "") {{ "hub}}" }}
             {{ "{{hub-" }} $caRef := (index $mirror "caRef" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} if not (empty $caRef) {{ "hub}}" }}
@@ -76,7 +76,7 @@ spec:
             {{ "{{hub-" }} $refData := (index $refCM "data" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $mirrorCa = (index $refData (index $caRef "key") | default $mirrorCa) {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} if (gt (len $mirrorSources) 0) {{ "hub}}" }}
+            {{ "{{hub-" }} if (gt (len $mirrors) 0) {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -87,13 +87,20 @@ spec:
                 data:
                   registries.conf: |
                     unqualified-search-registries = ["registry.access.redhat.com", "docker.io"]
-                    {{ "{{hub-" }} range $_, $source := $mirrorSources {{ "hub}}" }}
+                    {{ "{{hub-" }} range $_, $entry := $mirrors {{ "hub}}" }}
+                    {{ "{{hub-" }} $source := (index $entry "source") {{ "hub}}" }}
+                    {{ "{{hub-" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "hub}}" }}
+                    {{ "{{hub-" }} if not $mirrorLoc {{ "hub}}" }}
+                    {{ "{{hub-" }} $mirrorLoc = (printf "%s/%s" $mirrorUrl $source) {{ "hub}}" }}
+                    {{ "{{hub-" }} else {{ "hub}}" }}
+                    {{ "{{hub-" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                     [[registry]]
                       prefix = ""
                       location = "{{ "{{hub" }} $source {{ "hub}}" }}"
                       mirror-by-digest-only = true
                       [[registry.mirror]]
-                        location = "{{ "{{hub" }} printf "%s/%s" $mirrorUrl $source {{ "hub}}" }}"
+                        location = "{{ "{{hub" }} $mirrorLoc {{ "hub}}" }}"
                     {{ "{{hub-" }} end {{ "hub}}" }}
                   ca-bundle.crt: |
                     {{ "{{hub" }} $mirrorCa | autoindent {{ "hub}}" }}
@@ -105,7 +112,7 @@ spec:
                 metadata:
                   name: agent
                 spec:
-                  {{ "{{hub-" }} if (gt (len $mirrorSources) 0) {{ "hub}}" }}
+                  {{ "{{hub-" }} if (gt (len $mirrors) 0) {{ "hub}}" }}
                   mirrorRegistryRef:
                     name: mirror-registry-config
                   {{ "{{hub-" }} end {{ "hub}}" }}

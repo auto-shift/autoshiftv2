@@ -41,9 +41,9 @@ spec:
             {{ "{{hub" }} if $mirrorPath {{ "hub}}" }}
             {{ "{{hub" }} $url = (printf "%s/%s" $mirrorHost $mirrorPath) {{ "hub}}" }}
             {{ "{{hub" }} end {{ "hub}}" }}
-            {{ "{{hub" }} $sources := (index $mirror "sources") {{ "hub}}" }}
+            {{ "{{hub" }} $mirrors := (index $mirror "mirrors") {{ "hub}}" }}
             {{ "{{hub" }} $useIDMS := (index $disconnected "useIDMS" | default true) {{ "hub}}" }}
-            {{ "{{hub" }} if (gt (len $sources) 0) {{ "hub}}" }}
+            {{ "{{hub" }} if (gt (len $mirrors) 0) {{ "hub}}" }}
             {{ "{{hub" }} if $useIDMS {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
@@ -53,10 +53,17 @@ spec:
                   name: autoshift-disconnected-mirrors
                 spec:
                   imageDigestMirrors:
-                  {{ "{{hub" }} range $_, $source := $sources {{ "hub}}" }}
+                  {{ "{{hub" }} range $_, $entry := $mirrors {{ "hub}}" }}
+                  {{ "{{hub" }} $source := (index $entry "source") {{ "hub}}" }}
+                  {{ "{{hub" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "hub}}" }}
+                  {{ "{{hub" }} if not $mirrorLoc {{ "hub}}" }}
+                  {{ "{{hub" }} $mirrorLoc = (printf "%s/%s" $url $source) {{ "hub}}" }}
+                  {{ "{{hub" }} else {{ "hub}}" }}
+                  {{ "{{hub" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "hub}}" }}
+                  {{ "{{hub" }} end {{ "hub}}" }}
                     - source: {{ "{{hub" }} $source {{ "hub}}" }}
                       mirrors:
-                        - '{{ "{{hub" }} printf "%s/%s" $url $source {{ "hub}}" }}'
+                        - '{{ "{{hub" }} $mirrorLoc {{ "hub}}" }}'
                   {{ "{{hub" }} end {{ "hub}}" }}
             {{ "{{hub" }} else {{ "hub}}" }}
             - complianceType: musthave
@@ -67,10 +74,17 @@ spec:
                   name: autoshift-disconnected-mirrors
                 spec:
                   repositoryDigestMirrors:
-                  {{ "{{hub" }} range $_, $source := $sources {{ "hub}}" }}
+                  {{ "{{hub" }} range $_, $entry := $mirrors {{ "hub}}" }}
+                  {{ "{{hub" }} $source := (index $entry "source") {{ "hub}}" }}
+                  {{ "{{hub" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "hub}}" }}
+                  {{ "{{hub" }} if not $mirrorLoc {{ "hub}}" }}
+                  {{ "{{hub" }} $mirrorLoc = (printf "%s/%s" $url $source) {{ "hub}}" }}
+                  {{ "{{hub" }} else {{ "hub}}" }}
+                  {{ "{{hub" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "hub}}" }}
+                  {{ "{{hub" }} end {{ "hub}}" }}
                     - source: {{ "{{hub" }} $source {{ "hub}}" }}
                       mirrors:
-                        - '{{ "{{hub" }} printf "%s/%s" $url $source {{ "hub}}" }}'
+                        - '{{ "{{hub" }} $mirrorLoc {{ "hub}}" }}'
                   {{ "{{hub" }} end {{ "hub}}" }}
             {{ "{{hub" }} end {{ "hub}}" }}
             {{ "{{hub" }} end {{ "hub}}" }}

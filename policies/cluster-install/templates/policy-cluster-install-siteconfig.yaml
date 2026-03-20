@@ -70,7 +70,7 @@ spec:
                 {{ "{{-" }} if $mirrorPath {{ "}}" }}
                 {{ "{{-" }} $mirrorUrl = (printf "%s/%s" $mirrorHost $mirrorPath) {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $mirrorSources := (index $mirrorReg "sources" | default list) {{ "}}" }}
+                {{ "{{-" }} $mirrors := (index $mirrorReg "mirrors" | default list) {{ "}}" }}
                 {{ "{{-" }} $caTrustBundle := (index $mirrorReg "ca" | default "") {{ "}}" }}
                 {{ "{{-" }} $caRef := (index $mirrorReg "caRef" | default dict) {{ "}}" }}
                 {{ "{{-" }} if not (empty $caRef) {{ "}}" }}
@@ -83,7 +83,7 @@ spec:
                 {{ "{{-" }} $clusterNetwork := (index $networking "clusterNetwork") {{ "}}" }}
                 {{ "{{-" }} $machineNetwork := (index $networking "machineNetwork") {{ "}}" }}
                 {{ "{{-" }} $serviceNetwork := (index $networking "serviceNetwork") {{ "}}" }}
-                {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
+                {{ "{{-" }} if (gt (len $mirrors) 0) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -96,13 +96,20 @@ spec:
                 data:
                   registries.conf: |
                     unqualified-search-registries = ["registry.access.redhat.com", "docker.io"]
-                    {{ "{{-" }} range $_, $source := $mirrorSources {{ "}}" }}
+                    {{ "{{-" }} range $_, $entry := $mirrors {{ "}}" }}
+                    {{ "{{-" }} $source := (index $entry "source") {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "}}" }}
+                    {{ "{{-" }} if not $mirrorLoc {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorUrl $source) {{ "}}" }}
+                    {{ "{{-" }} else {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     [[registry]]
                       prefix = ""
                       location = "{{ "{{" }} $source {{ "}}" }}"
                       mirror-by-digest-only = true
                       [[registry.mirror]]
-                        location = "{{ "{{" }} $mirrorUrl {{ "}}" }}/{{ "{{" }} $source {{ "}}" }}"
+                        location = "{{ "{{" }} $mirrorLoc {{ "}}" }}"
                     {{ "{{-" }} end {{ "}}" }}
                   ca-bundle.crt: |
                     {{ "{{" }} $caTrustBundle | autoindent {{ "}}" }}
@@ -127,7 +134,7 @@ spec:
                         name: {{ "{{" }} $clusterName {{ "}}" }}
                       imageSetRef:
                         name: {{ "{{" }} $imageSet {{ "}}" }}
-                    {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
+                    {{ "{{-" }} if (gt (len $mirrors) 0) {{ "}}" }}
                       mirrorRegistryRef:
                         name: mirror-registry-config
                         namespace: {{ "{{" }} $clusterName {{ "}}" }}
@@ -213,7 +220,7 @@ spec:
                     spec:
                       agentLabels:
                         agentBareMetal-generated-infraenv-ai-flow: {{ "{{" }} printf "%s-%s" $clusterName $clusterName {{ "}}" }}
-                    {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
+                    {{ "{{-" }} if (gt (len $mirrors) 0) {{ "}}" }}
                       mirrorRegistryRef:
                         name: mirror-registry-config
                         namespace: {{ "{{" }} $clusterName {{ "}}" }}
