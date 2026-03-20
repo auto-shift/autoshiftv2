@@ -146,6 +146,8 @@ disconnected:
   mirrorRegistry:
     host: 'mirror.example.com:5000'        # registry host:port
     path: 'ocp'                             # optional, image path prefix
+    releaseImage: 'openshift/ocp-release'   # optional, defaults to openshift-release-dev/ocp-release
+                                            # path depends on how oc-mirror stored the content
     ca: |                                   # CA bundle for the mirror registry
       -----BEGIN CERTIFICATE-----
       ...
