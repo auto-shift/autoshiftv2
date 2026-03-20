@@ -4,25 +4,26 @@ Runs at Helm render time to catch config errors before they reach ACM.
 Collects all errors and reports them together.
 */}}
 {{- define "autoshift.validate-cluster-install" -}}
+
+{{/* ===== Valid key lists — add new fields here ===== */}}
+{{- $validCiKeys := list "createCluster" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
+{{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" "osImages" }}
+{{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "sources" }}
+{{- $validOsImageKeys := list "openshiftVersion" "version" "cpuArchitecture" "url" "rootFSUrl" }}
+{{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
+{{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
+{{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
+{{- $validRouteKeys := list "destination" "gateway" "interface" "metric" "tableId" }}
+{{- $validCatalogKeys := list "source" "imagePath" "tag" "publisher" "displayName" "updateInterval" }}
+{{- $validCaRefKeys := list "name" "key" "namespace" }}
+{{- $validSshRefKeys := list "name" "key" "namespace" }}
+
 {{- range $clusterName, $cluster := ($.Values.clusters | default dict) }}
   {{- $ci := (dig "config" "clusterInstall" dict $cluster) }}
   {{- if eq (toString ($ci.createCluster | default "")) "true" }}
     {{- $networking := (dig "config" "networking" dict $cluster) }}
     {{- $hosts := (dig "config" "hosts" dict $cluster) }}
     {{- $errors := list }}
-
-    {{/* ===== Valid key lists — add new fields here ===== */}}
-    {{- $validCiKeys := list "createCluster" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
-    {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" "osImages" }}
-    {{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "sources" }}
-    {{- $validOsImageKeys := list "openshiftVersion" "version" "cpuArchitecture" "url" "rootFSUrl" }}
-    {{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
-    {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
-    {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
-    {{- $validRouteKeys := list "destination" "gateway" "interface" "metric" "tableId" }}
-    {{- $validCatalogKeys := list "source" "imagePath" "tag" "publisher" "displayName" "updateInterval" }}
-    {{- $validCaRefKeys := list "name" "key" "namespace" }}
-    {{- $validSshRefKeys := list "name" "key" "namespace" }}
 
     {{/* ===== Validate unexpected keys (only sections this policy owns) ===== */}}
     {{- range $key, $_ := $ci }}
@@ -407,6 +408,87 @@ Collects all errors and reports them together.
       {{- fail (printf "\n\nCluster-install validation failed for '%s' (%d errors):\n  - %s\n" $clusterName (len $errors) (join "\n  - " $errors)) }}
     {{- end }}
 
+  {{- end }}
+{{- end }}
+
+{{/* ===== Validate clusterset configs (disconnected, networking, etc.) ===== */}}
+{{- $allClusterSets := dict }}
+{{- range $name, $cs := ($.Values.hubClusterSets | default dict) }}
+  {{- $_ := set $allClusterSets (printf "hubClusterSets.%s" $name) $cs }}
+{{- end }}
+{{- range $name, $cs := ($.Values.managedClusterSets | default dict) }}
+  {{- $_ := set $allClusterSets (printf "managedClusterSets.%s" $name) $cs }}
+{{- end }}
+{{- range $csPath, $cs := $allClusterSets }}
+  {{- $csConfig := ($cs.config | default dict) }}
+  {{- if not (empty $csConfig) }}
+    {{- $errors := list }}
+    {{- $csDisconnected := ($csConfig.disconnected | default dict) }}
+    {{- if not (empty $csDisconnected) }}
+      {{- range $key, $_ := $csDisconnected }}
+        {{- if not (has $key $validDisconnectedKeys) }}
+          {{- $errors = append $errors (printf "%s: disconnected.%s is not a recognized field (valid: %s)" $csPath $key (join ", " $validDisconnectedKeys)) }}
+        {{- end }}
+      {{- end }}
+      {{- $csMirrorReg := ($csDisconnected.mirrorRegistry | default dict) }}
+      {{- range $key, $_ := $csMirrorReg }}
+        {{- if not (has $key $validMirrorRegKeys) }}
+          {{- $errors = append $errors (printf "%s: disconnected.mirrorRegistry.%s is not a recognized field (valid: %s)" $csPath $key (join ", " $validMirrorRegKeys)) }}
+        {{- end }}
+      {{- end }}
+      {{- $csMirrorSources := ($csMirrorReg.sources | default list) }}
+      {{- if gt (len $csMirrorSources) 0 }}
+        {{- if not $csMirrorReg.host }}
+          {{- $errors = append $errors (printf "%s: disconnected.mirrorRegistry.host is required when sources are defined" $csPath) }}
+        {{- end }}
+        {{- if not (or $csMirrorReg.ca $csMirrorReg.caRef) }}
+          {{- $errors = append $errors (printf "%s: disconnected.mirrorRegistry.ca or caRef is required when sources are defined" $csPath) }}
+        {{- end }}
+      {{- end }}
+      {{- $csCaRef := ($csMirrorReg.caRef | default dict) }}
+      {{- if not (empty $csCaRef) }}
+        {{- range $key, $_ := $csCaRef }}
+          {{- if not (has $key $validCaRefKeys) }}
+            {{- $errors = append $errors (printf "%s: disconnected.mirrorRegistry.caRef.%s is not a recognized field (valid: %s)" $csPath $key (join ", " $validCaRefKeys)) }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      {{- range $idx, $catalog := ($csDisconnected.catalogs | default list) }}
+        {{- range $key, $_ := $catalog }}
+          {{- if not (has $key $validCatalogKeys) }}
+            {{- $errors = append $errors (printf "%s: disconnected.catalogs[%d].%s is not a recognized field (valid: %s)" $csPath $idx $key (join ", " $validCatalogKeys)) }}
+          {{- end }}
+        {{- end }}
+        {{- if not (index $catalog "source") }}
+          {{- $errors = append $errors (printf "%s: disconnected.catalogs[%d].source is required" $csPath $idx) }}
+        {{- end }}
+        {{- if not (index $catalog "imagePath") }}
+          {{- $errors = append $errors (printf "%s: disconnected.catalogs[%d].imagePath is required" $csPath $idx) }}
+        {{- end }}
+        {{- if not (index $catalog "tag") }}
+          {{- $errors = append $errors (printf "%s: disconnected.catalogs[%d].tag is required" $csPath $idx) }}
+        {{- end }}
+      {{- end }}
+      {{- range $idx, $img := ($csDisconnected.osImages | default list) }}
+        {{- range $key, $_ := $img }}
+          {{- if not (has $key $validOsImageKeys) }}
+            {{- $errors = append $errors (printf "%s: disconnected.osImages[%d].%s is not a recognized field (valid: %s)" $csPath $idx $key (join ", " $validOsImageKeys)) }}
+          {{- end }}
+        {{- end }}
+        {{- if not (index $img "openshiftVersion") }}
+          {{- $errors = append $errors (printf "%s: disconnected.osImages[%d].openshiftVersion is required" $csPath $idx) }}
+        {{- end }}
+        {{- if not (index $img "version") }}
+          {{- $errors = append $errors (printf "%s: disconnected.osImages[%d].version is required" $csPath $idx) }}
+        {{- end }}
+        {{- if not (index $img "url") }}
+          {{- $errors = append $errors (printf "%s: disconnected.osImages[%d].url is required" $csPath $idx) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- if gt (len $errors) 0 }}
+      {{- fail (printf "\n\nClusterset config validation failed for '%s' (%d errors):\n  - %s\n" $csPath (len $errors) (join "\n  - " $errors)) }}
+    {{- end }}
   {{- end }}
 {{- end }}
 {{- end -}}
