@@ -64,7 +64,12 @@ spec:
                 {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
                 {{ "{{-" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
-                {{ "{{-" }} $mirrorUrl := (index $mirrorReg "url" | default "") {{ "}}" }}
+                {{ "{{-" }} $mirrorHost := (index $mirrorReg "host" | default "") {{ "}}" }}
+                {{ "{{-" }} $mirrorPath := (index $mirrorReg "path" | default "") {{ "}}" }}
+                {{ "{{-" }} $mirrorUrl := $mirrorHost {{ "}}" }}
+                {{ "{{-" }} if $mirrorPath {{ "}}" }}
+                {{ "{{-" }} $mirrorUrl = (printf "%s/%s" $mirrorHost $mirrorPath) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} $mirrorSources := (index $mirrorReg "sources" | default list) {{ "}}" }}
                 {{ "{{-" }} $caTrustBundle := (index $mirrorReg "ca" | default "") {{ "}}" }}
                 {{ "{{-" }} $caRef := (index $mirrorReg "caRef" | default dict) {{ "}}" }}
@@ -125,6 +130,7 @@ spec:
                     {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
                       mirrorRegistryRef:
                         name: mirror-registry-config
+                        namespace: {{ "{{" }} $clusterName {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} if (gt $controlPlaneCount 1) {{ "}}" }}
                       platformType: BareMetal
@@ -207,6 +213,11 @@ spec:
                     spec:
                       agentLabels:
                         agentBareMetal-generated-infraenv-ai-flow: {{ "{{" }} printf "%s-%s" $clusterName $clusterName {{ "}}" }}
+                    {{ "{{-" }} if (gt (len $mirrorSources) 0) {{ "}}" }}
+                      mirrorRegistryRef:
+                        name: mirror-registry-config
+                        namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} if $caTrustBundle {{ "}}" }}
                       additionalTrustBundle: |
                         {{ "{{" }} $caTrustBundle | autoindent {{ "}}" }}

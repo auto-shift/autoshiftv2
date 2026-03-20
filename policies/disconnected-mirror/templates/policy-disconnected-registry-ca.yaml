@@ -35,7 +35,7 @@ spec:
             {{ "{{hub" }} $configYaml := (index $config "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $disconnected := (index $configYaml "disconnected" | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $mirror := (index $disconnected "mirrorRegistry" | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} $url := (index $mirror "url" | default "") {{ "hub}}" }}
+            {{ "{{hub" }} $mirrorHost := (index $mirror "host" | default "") {{ "hub}}" }}
             {{ "{{hub" }} $ca := (index $mirror "ca" | default "") {{ "hub}}" }}
             {{ "{{hub" }} $caRef := (index $mirror "caRef" | default dict) {{ "hub}}" }}
             {{ "{{hub" }} if not (empty $caRef) {{ "hub}}" }}
@@ -44,8 +44,7 @@ spec:
             {{ "{{hub" }} $refData := (index $refCM "data" | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $ca = (index $refData (index $caRef "key") | default $ca) {{ "hub}}" }}
             {{ "{{hub" }} end {{ "hub}}" }}
-            {{ "{{hub" }} if and (gt (len $url) 0) (gt (len $ca) 0) {{ "hub}}" }}
-            {{ "{{hub" }} $registryHost := (index $mirror "registryHost" | default $url) {{ "hub}}" }}
+            {{ "{{hub" }} if and (gt (len $mirrorHost) 0) (gt (len $ca) 0) {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -54,7 +53,7 @@ spec:
                   name: autoshift-registry-ca
                   namespace: openshift-config
                 data:
-                  {{ "{{hub" }} $registryHost {{ "hub}}" }}: |
+                  {{ "{{hub" }} $mirrorHost {{ "hub}}" }}: |
                     {{ "{{hub" }} $ca | autoindent {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:

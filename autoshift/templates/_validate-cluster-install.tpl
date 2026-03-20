@@ -14,8 +14,8 @@ Collects all errors and reports them together.
     {{/* ===== Valid key lists — add new fields here ===== */}}
     {{- $validCiKeys := list "createCluster" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
     {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" "osImages" }}
-    {{- $validMirrorRegKeys := list "url" "registryHost" "ca" "caRef" "sources" }}
-    {{- $validOsImageKeys := list "openshiftVersion" "cpuArchitecture" "url" "rootFSUrl" }}
+    {{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "sources" }}
+    {{- $validOsImageKeys := list "openshiftVersion" "version" "cpuArchitecture" "url" "rootFSUrl" }}
     {{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
     {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
     {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
@@ -68,11 +68,11 @@ Collects all errors and reports them together.
       {{- if not (index $img "openshiftVersion") }}
         {{- $errors = append $errors (printf "cluster %s: disconnected.osImages[%d].openshiftVersion is required" $clusterName $idx) }}
       {{- end }}
-      {{- if not (index $img "url") }}
-        {{- $errors = append $errors (printf "cluster %s: disconnected.osImages[%d].url is required" $clusterName $idx) }}
+      {{- if not (index $img "version") }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.osImages[%d].version is required (RHCOS version string)" $clusterName $idx) }}
       {{- end }}
-      {{- if not (index $img "rootFSUrl") }}
-        {{- $errors = append $errors (printf "cluster %s: disconnected.osImages[%d].rootFSUrl is required" $clusterName $idx) }}
+      {{- if not (index $img "url") }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.osImages[%d].url is required (path to RHCOS live ISO)" $clusterName $idx) }}
       {{- end }}
     {{- end }}
 
@@ -147,8 +147,8 @@ Collects all errors and reports them together.
     {{- $mirrorReg := (dig "mirrorRegistry" dict $disconnected) }}
     {{- $mirrorSources := ($mirrorReg.sources | default list) }}
     {{- if gt (len $mirrorSources) 0 }}
-      {{- if not $mirrorReg.url }}
-        {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.url is required when sources are defined" $clusterName) }}
+      {{- if not $mirrorReg.host }}
+        {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.host is required when sources are defined" $clusterName) }}
       {{- end }}
     {{- end }}
     {{- $caRef := ($mirrorReg.caRef | default dict) }}
@@ -164,8 +164,8 @@ Collects all errors and reports them together.
       {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.ca or caRef is required when sources are defined" $clusterName) }}
     {{- end }}
     {{- $catalogs := ($disconnected.catalogs | default list) }}
-    {{- if and (gt (len $catalogs) 0) (not $mirrorReg.url) }}
-      {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.url is required when catalogs are defined" $clusterName) }}
+    {{- if and (gt (len $catalogs) 0) (not $mirrorReg.host) }}
+      {{- $errors = append $errors (printf "cluster %s: disconnected.mirrorRegistry.host is required when catalogs are defined" $clusterName) }}
     {{- end }}
     {{- range $idx, $catalog := $catalogs }}
       {{- if not (index $catalog "source") }}
@@ -341,7 +341,7 @@ Collects all errors and reports them together.
       {{- end }}
 
       {{/* Validate rootDeviceHints keys */}}
-      {{- $validHintKeys := list "deviceName" "serialNumber" "model" "vendor" "wwn" "hctl" "rotational" "minSizeGigabytes" }}
+      {{- $validHintKeys := list "deviceName" "serialNumber" "model" "vendor" "wwn" "wwnWithExtension" "wwnVendorExtension" "hctl" "rotational" "minSizeGigabytes" }}
       {{- range $hintKey, $_ := ($host.rootDeviceHints | default dict) }}
         {{- if not (has $hintKey $validHintKeys) }}
           {{- $errors = append $errors (printf "cluster %s host %s: rootDeviceHints.%s is not a valid hint (valid: %s)" $clusterName $hostname $hintKey (join ", " $validHintKeys)) }}

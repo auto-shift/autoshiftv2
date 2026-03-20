@@ -54,22 +54,27 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub" }} $policyNs := "{{ .Values.policy_namespace }}" {{ "hub}}" }}
-            {{ "{{hub" }} $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
-            {{ "{{hub" }} $rcData := (index $rcm "data" | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} $rcConfig := (index $rcData "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} $disconnected := (index $rcConfig "disconnected" | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} $mirror := (index $disconnected "mirrorRegistry" | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} $mirrorUrl := (index $mirror "url" | default "") {{ "hub}}" }}
-            {{ "{{hub" }} $mirrorSources := (index $mirror "sources" | default list) {{ "hub}}" }}
-            {{ "{{hub" }} $mirrorCa := (index $mirror "ca" | default "") {{ "hub}}" }}
-            {{ "{{hub" }} $caRef := (index $mirror "caRef" | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} if not (empty $caRef) {{ "hub}}" }}
-            {{ "{{hub" }} $refNs := (index $caRef "namespace" | default $policyNs) {{ "hub}}" }}
-            {{ "{{hub" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict {{ "hub}}" }}
-            {{ "{{hub" }} $refData := (index $refCM "data" | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} $mirrorCa = (index $refData (index $caRef "key") | default $mirrorCa) {{ "hub}}" }}
-            {{ "{{hub" }} end {{ "hub}}" }}
-            {{ "{{hub" }} if (gt (len $mirrorSources) 0) {{ "hub}}" }}
+            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $rcData := (index $rcm "data" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $rcConfig := (index $rcData "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $disconnected := (index $rcConfig "disconnected" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $mirror := (index $disconnected "mirrorRegistry" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $mirrorHost := (index $mirror "host" | default "") {{ "hub}}" }}
+            {{ "{{hub-" }} $mirrorPath := (index $mirror "path" | default "") {{ "hub}}" }}
+            {{ "{{hub-" }} $mirrorUrl := $mirrorHost {{ "hub}}" }}
+            {{ "{{hub-" }} if $mirrorPath {{ "hub}}" }}
+            {{ "{{hub-" }} $mirrorUrl = (printf "%s/%s" $mirrorHost $mirrorPath) {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $mirrorSources := (index $mirror "sources" | default list) {{ "hub}}" }}
+            {{ "{{hub-" }} $mirrorCa := (index $mirror "ca" | default "") {{ "hub}}" }}
+            {{ "{{hub-" }} $caRef := (index $mirror "caRef" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} if not (empty $caRef) {{ "hub}}" }}
+            {{ "{{hub-" }} $refNs := (index $caRef "namespace" | default $policyNs) {{ "hub}}" }}
+            {{ "{{hub-" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $refData := (index $refCM "data" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $mirrorCa = (index $refData (index $caRef "key") | default $mirrorCa) {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if (gt (len $mirrorSources) 0) {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -80,17 +85,17 @@ spec:
                 data:
                   registries.conf: |
                     unqualified-search-registries = ["registry.access.redhat.com", "docker.io"]
-                  {{ "{{hub" }} range $_, $source := $mirrorSources {{ "hub}}" }}
+                    {{ "{{hub-" }} range $_, $source := $mirrorSources {{ "hub}}" }}
                     [[registry]]
                       prefix = ""
                       location = "{{ "{{hub" }} $source {{ "hub}}" }}"
                       mirror-by-digest-only = true
                       [[registry.mirror]]
                         location = "{{ "{{hub" }} printf "%s/%s" $mirrorUrl $source {{ "hub}}" }}"
-                  {{ "{{hub" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                   ca-bundle.crt: |
                     {{ "{{hub" }} $mirrorCa | autoindent {{ "hub}}" }}
-            {{ "{{hub" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: agent-install.openshift.io/v1beta1
@@ -98,10 +103,10 @@ spec:
                 metadata:
                   name: agent
                 spec:
-                  {{ "{{hub" }} if (gt (len $mirrorSources) 0) {{ "hub}}" }}
+                  {{ "{{hub-" }} if (gt (len $mirrorSources) 0) {{ "hub}}" }}
                   mirrorRegistryRef:
                     name: mirror-registry-config
-                  {{ "{{hub" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
                   databaseStorage:
                     {{ "{{hub-" }} if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") {{ "hub}}" }}
                     storageClassName: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" {{ "hub}}" }}
@@ -129,16 +134,16 @@ spec:
                     resources:
                       requests:
                         storage: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-provisioning-image-storage-size" | default "{{ .Values.acm.provisioning.image_storage_size }}" {{ "hub}}" }}
-                  {{ "{{hub" }} $osImages := (index $disconnected "osImages" | default list) {{ "hub}}" }}
-                  {{ "{{hub" }} if (gt (len $osImages) 0) {{ "hub}}" }}
+                  {{ "{{hub-" }} $osImages := (index $disconnected "osImages" | default list) {{ "hub}}" }}
+                  {{ "{{hub-" }} if (gt (len $osImages) 0) {{ "hub}}" }}
                   osImages:
-                  {{ "{{hub" }} range $_, $img := $osImages {{ "hub}}" }}
+                  {{ "{{hub-" }} range $_, $img := $osImages {{ "hub}}" }}
                     - openshiftVersion: '{{ "{{hub" }} index $img "openshiftVersion" {{ "hub}}" }}'
+                      version: '{{ "{{hub" }} index $img "version" {{ "hub}}" }}'
                       cpuArchitecture: '{{ "{{hub" }} index $img "cpuArchitecture" | default "x86_64" {{ "hub}}" }}'
                       url: '{{ "{{hub" }} index $img "url" {{ "hub}}" }}'
-                      rootFSUrl: '{{ "{{hub" }} index $img "rootFSUrl" {{ "hub}}" }}'
-                  {{ "{{hub" }} end {{ "hub}}" }}
-                  {{ "{{hub" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy

@@ -144,9 +144,8 @@ Disconnected mirror registry configuration. This single block drives both instal
 ```yaml
 disconnected:
   mirrorRegistry:
-    url: 'mirror.example.com:5000/ocp'    # single URL for the mirror registry
-    registryHost: 'mirror.example.com:5000' # optional, host:port for CA ConfigMap key
-                                            # defaults to url if not set
+    host: 'mirror.example.com:5000'        # registry host:port
+    path: 'ocp'                             # optional, image path prefix
     ca: |                                   # CA bundle for the mirror registry
       -----BEGIN CERTIFICATE-----
       ...
@@ -169,11 +168,11 @@ disconnected:
       imagePath: redhat/certified-operator-index
       tag: v4.20
       publisher: Red Hat
-  osImages:                                 # custom live ISO for hub AgentServiceConfig
-    - openshiftVersion: '4.20'
+  osImages:                                 # RHCOS images for hub AgentServiceConfig (disconnected only)
+    - openshiftVersion: '4.20'              # Major.Minor
+      version: '420.86.202301311551-0'      # RHCOS version string
       cpuArchitecture: x86_64
-      url: 'https://mirror.example.com/rhcos-4.20-live.iso'
-      rootFSUrl: 'https://mirror.example.com/rhcos-4.20-rootfs.img'
+      url: 'https://mirror.example.com/rhcos/rhcos-live.x86_64.iso'
 ```
 
 When `disconnected.mirrorRegistry` is configured:
@@ -190,6 +189,19 @@ When `disconnected.mirrorRegistry` is configured:
 - **ACM provisioning policy** reads the hub's disconnected config for:
   - `mirrorRegistryRef` on AgentServiceConfig — so the Assisted Installer trusts the mirror
   - `osImages` — custom live ISO and rootfs URLs for disconnected boot
+
+**`osImages`** — For disconnected environments, the Assisted Installer can't download RHCOS images from `mirror.openshift.com`. Download them and host on a local HTTP server:
+
+```bash
+# Download RHCOS images for your OCP version
+curl -O https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.20/latest/rhcos-live.x86_64.iso
+curl -O https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.20/latest/rhcos-live-rootfs.x86_64.img
+
+# Host on a local HTTP server accessible from the hub
+cp rhcos-live.x86_64.iso /var/www/html/rhcos/
+```
+
+The RHCOS version string (for the `version` field) can be found in the ISO filename or via `openshift-install coreos print-stream-json`.
 
 **Labels still required** for operator catalog source switching (OperatorPolicy can only read labels):
 

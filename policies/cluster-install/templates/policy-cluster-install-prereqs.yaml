@@ -40,10 +40,14 @@ spec:
                 {{ "{{" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
                 {{ "{{" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
                 {{ "{{" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
-                {{ "{{" }} $mirrorUrl := (index $mirrorReg "url" | default "") {{ "}}" }}
+                {{ "{{" }} $mirrorHost := (index $mirrorReg "host" | default "") {{ "}}" }}
+                {{ "{{" }} $mirrorPath := (index $mirrorReg "path" | default "") {{ "}}" }}
                 {{ "{{" }} $releaseRegistry := "quay.io" {{ "}}" }}
-                {{ "{{" }} if $mirrorUrl {{ "}}" }}
-                  {{ "{{" }} $releaseRegistry = $mirrorUrl {{ "}}" }}
+                {{ "{{" }} if $mirrorHost {{ "}}" }}
+                  {{ "{{" }} $releaseRegistry = $mirrorHost {{ "}}" }}
+                  {{ "{{" }} if $mirrorPath {{ "}}" }}
+                    {{ "{{" }} $releaseRegistry = (printf "%s/%s" $mirrorHost $mirrorPath) {{ "}}" }}
+                  {{ "{{" }} end {{ "}}" }}
                 {{ "{{" }} end {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
