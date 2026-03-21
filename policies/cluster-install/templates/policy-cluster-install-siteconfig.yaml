@@ -113,6 +113,34 @@ spec:
                     {{ "{{-" }} end {{ "}}" }}
                   ca-bundle.crt: |
                     {{ "{{" }} $caTrustBundle | autoindent {{ "}}" }}
+            {{/* ===== IDMS Extra Manifest ConfigMap ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: autoshift-idms-config
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  autoshift-idms.yaml: |
+                    apiVersion: config.openshift.io/v1
+                    kind: ImageDigestMirrorSet
+                    metadata:
+                      name: autoshift-disconnected-mirrors
+                    spec:
+                      imageDigestMirrors:
+                    {{ "{{-" }} range $_, $entry := $mirrors {{ "}}" }}
+                    {{ "{{-" }} $source := (index $entry "source") {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "}}" }}
+                    {{ "{{-" }} if not $mirrorLoc {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorUrl $source) {{ "}}" }}
+                    {{ "{{-" }} else {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                      - source: {{ "{{" }} $source {{ "}}" }}
+                        mirrors:
+                          - {{ "{{" }} $mirrorLoc {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
             {{/* ===== AgentClusterInstall ConfigMap ===== */}}
             - complianceType: musthave
@@ -221,6 +249,7 @@ spec:
                       agentLabels:
                         agentBareMetal-generated-infraenv-ai-flow: {{ "{{" }} printf "%s-%s" $clusterName $clusterName {{ "}}" }}
                     {{ "{{-" }} if (gt (len $mirrors) 0) {{ "}}" }}
+                      imageType: full-iso
                       mirrorRegistryRef:
                         name: mirror-registry-config
                         namespace: {{ "{{" }} $clusterName {{ "}}" }}
@@ -500,6 +529,10 @@ spec:
                   pullSecretRef:
                     name: {{ "{{" }} printf "%s-pull-secret" $clusterName {{ "}}" }}
                   sshPublicKey: {{ "{{" }} $sshPublicKey {{ "}}" }}
+                {{ "{{-" }} if (gt (len $mirrors) 0) {{ "}}" }}
+                  extraManifestsRefs:
+                    - name: autoshift-idms-config
+                {{ "{{-" }} end {{ "}}" }}
                   templateRefs:
                     - name: agent-cluster-install
                       namespace: {{ "{{" }} $clusterName {{ "}}" }}
