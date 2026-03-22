@@ -242,6 +242,20 @@ package-only: validate clean generate-policy-list package-charts ## Package char
 	@printf "$(GREEN)Packaging complete!$(NC)\n"
 	@echo "Charts are ready in: $(CHARTS_DIR)/"
 
+.PHONY: validate-schema
+validate-schema: ## Validate all values files against label schema
+	@printf "$(BLUE)[INFO]$(NC) Validating all values files against schema...\n"
+	@failed=0; \
+	for f in autoshift/values/clustersets/*.yaml; do \
+		name=$$(basename "$$f"); \
+		if ! helm template test autoshift/ -f autoshift/values/global.yaml -f "$$f" > /dev/null 2>&1; then \
+			printf "$(RED)✗$(NC) $$name\n"; \
+			helm template test autoshift/ -f autoshift/values/global.yaml -f "$$f" 2>&1 | grep -E "unknown label|is enabled but|invalid value|must be" | head -5; \
+			failed=1; \
+		fi; \
+	done; \
+	if [ $$failed -eq 0 ]; then printf "$(GREEN)✓$(NC) All values files pass schema validation\n"; else exit 1; fi
+
 # All values files for complete operator coverage
 VALUES_FILES := $(shell find autoshift/values/clustersets -name '*.yaml' -not -name '_*' 2>/dev/null | sort | tr '\n' ',' | sed 's/,$$//')
 

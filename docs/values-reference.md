@@ -1,5 +1,7 @@
 # AutoShift Values Reference
 
+> **Canonical label reference:** The schema file [`autoshift/templates/_schema.tpl`](../autoshift/templates/_schema.tpl) is the single source of truth for all valid operator and feature labels, including required fields, optional fields, allowed values, and boolean constraints. The values reference below documents the structure; `_schema.tpl` defines what's valid.
+
 ## Values File Architecture
 
 AutoShift uses a **composable values file** pattern. Instead of a single monolithic values file, configuration is split into focused files under `autoshift/values/` that you combine in your ArgoCD Application:

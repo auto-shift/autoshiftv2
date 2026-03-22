@@ -480,6 +480,62 @@ gitops: 'true'
 gitops-channel: gitops-1.18
 ```
 
+## Label Schema & Validation
+
+AutoShift validates labels at Helm render time using convention-based operator detection and a schema file for everything else.
+
+### How It Works
+
+When you run `helm template` (or ArgoCD syncs the autoshift chart), the validator:
+
+1. **Auto-detects operators** by scanning for `{name}-subscription-name` labels — no schema entry needed for standard operators
+2. Validates required operator labels (`channel`, `source`, `source-namespace`) when an operator is enabled
+3. Checks non-standard labels against `autoshift/templates/_schema.tpl` (operator extras, features, globals)
+4. **Rejects unknown labels** — any label not recognized by convention or schema causes a hard failure
+5. Validates `allowedValues`, `boolLabels`, and feature-specific rules
+6. Collects **all** errors and reports them together
+
+### When You Need to Edit the Schema
+
+- **Standard operator** (enable + subscription-name + channel + source + source-namespace + version): **Nothing to do.** Convention handles it.
+- **Operator with extra labels** (e.g., allowedValues, boolLabels, dynamicPrefixes): Add an entry under "Operator extras" — no `enable` field.
+- **Feature** (non-operator, no subscription-name): Add an entry under "Features" with an `enable` field.
+- **Standalone label** (not tied to anything): Add it to `_global.optional`.
+
+### Schema Entry Format
+
+```yaml
+# Operator extras (no "enable" field — auto-detected by convention):
+my-operator:
+  optional:          [extra-label-1, extra-label-2]
+  boolLabels:        [some-toggle]
+  allowedValues:
+    some-enum: [value1, value2]
+  dynamicPrefixes:   [pool-, node-]
+
+# Feature (needs "enable" field):
+my-feature:
+  enable: my-feature
+  enableCheck: nonempty    # Optional: for count-based features
+  required:  [required-label]
+  optional:  [optional-label]
+  boolLabels: [some-toggle]
+  allowedValues:
+    some-enum: [value1, value2]
+  dynamicPrefixes: [prefix-]
+```
+
+### Running Validation Locally
+
+```bash
+# Validate a single values file
+helm template test autoshift/ -f autoshift/values/global.yaml \
+  -f autoshift/values/clustersets/hub.yaml
+
+# Validate all values files
+make validate-schema
+```
+
 ## 🧪 Testing and Validation
 
 ### Local Validation

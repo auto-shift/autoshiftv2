@@ -11,7 +11,6 @@ This directory contains utility scripts for AutoShiftv2 policy generation and ma
 | `update-operator-policies.sh` | Regenerate existing policies from template |
 | `generate-imageset-config.sh` | Generate ImageSetConfiguration for oc-mirror (auto-resolves dependencies) |
 | `update-operator-channels.sh` | Update operator channels from catalog |
-| `dev-checks.sh` | Run development quality checks (shellcheck, kubeconform) |
 | `sync-bootstrap-values.sh` | Sync bootstrap chart values from policies |
 | `create-quay-repos.sh` | Create Quay.io repositories for charts |
 | `deploy-oci.sh` | Deploy AutoShift from OCI registry |
@@ -416,30 +415,6 @@ Update operator channels to latest versions from the Red Hat operator catalog.
 - `oc` CLI installed
 - `jq` installed
 - Pull secret with access to registry.redhat.io
-
----
-
-## 🧪 dev-checks.sh
-
-Run development quality checks. Gracefully skips tools that aren't installed.
-
-### Usage
-
-```bash
-./scripts/dev-checks.sh
-```
-
-### Checks Performed
-
-- **shellcheck**: Lint shell scripts
-- **kubeconform**: Validate Kubernetes manifests
-- **helm lint**: Validate Helm charts
-
-### Requirements (Optional)
-
-```bash
-brew install shellcheck kubeconform
-```
 
 ---
 
