@@ -53,7 +53,7 @@ spec:
                   {{ "{{-" }} $workerCount = (sub (len (keys $hosts)) $controlPlaneCount) {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} $baseDomain := (index $ci "baseDomain") {{ "}}" }}
-                {{ "{{-" }} $managedClusterSet := (index $config "clusterSet" | default "default") {{ "}}" }}
+                {{ "{{-" }} $managedClusterSet := (printf "%s{{ $.Values.clusterSetSuffix | default "" }}" (index $config "clusterSet" | default "default")) {{ "}}" }}
                 {{ "{{-" }} $sshPublicKey := (index $ci "sshPublicKey" | default "") {{ "}}" }}
                 {{ "{{-" }} $sshPublicKeyRef := (index $ci "sshPublicKeyRef" | default dict) {{ "}}" }}
                 {{ "{{-" }} if not (empty $sshPublicKeyRef) {{ "}}" }}
@@ -266,14 +266,9 @@ spec:
                         - {{ "{{" }} $ntp {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} $osImageVersion := (index $ci "osImageVersion" | default "") {{ "}}" }}
-                    {{ "{{-" }} if $osImageVersion {{ "}}" }}
-                      osImageVersion: '{{ "{{" }} $osImageVersion {{ "}}" }}'
-                    {{ "{{-" }} else {{ "}}" }}
                       clusterRef:
                         name: {{ "{{" }} $clusterName {{ "}}" }}
                         namespace: {{ "{{" }} $clusterName {{ "}}" }}
-                    {{ "{{-" }} end {{ "}}" }}
                       cpuArchitecture: {{ "{{" }} $cpuArch {{ "}}" }}
                       pullSecretRef:
                         name: {{ "{{" }} printf "%s-pull-secret" $clusterName {{ "}}" }}
