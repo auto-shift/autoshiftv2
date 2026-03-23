@@ -6,7 +6,7 @@ Collects all errors and reports them together.
 {{- define "autoshift.validate-cluster-install" -}}
 
 {{/* ===== Valid key lists — add new fields here ===== */}}
-{{- $validCiKeys := list "createCluster" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
+{{- $validCiKeys := list "createCluster" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" "osImageVersion" }}
 {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" "osImages" }}
 {{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "mirrors" "releaseImage" }}
 {{- $validMirrorEntryKeys := list "source" "mirror" }}

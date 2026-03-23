@@ -99,10 +99,10 @@ spec:
                     {{ "{{-" }} range $_, $entry := $mirrors {{ "}}" }}
                     {{ "{{-" }} $source := (index $entry "source") {{ "}}" }}
                     {{ "{{-" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "}}" }}
-                    {{ "{{-" }} if not $mirrorLoc {{ "}}" }}
-                    {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorUrl $source) {{ "}}" }}
-                    {{ "{{-" }} else {{ "}}" }}
+                    {{ "{{-" }} if $mirrorLoc {{ "}}" }}
                     {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "}}" }}
+                    {{ "{{-" }} else {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc = $mirrorUrl {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
                     [[registry]]
                       prefix = ""
@@ -132,10 +132,10 @@ spec:
                     {{ "{{-" }} range $_, $entry := $mirrors {{ "}}" }}
                     {{ "{{-" }} $source := (index $entry "source") {{ "}}" }}
                     {{ "{{-" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "}}" }}
-                    {{ "{{-" }} if not $mirrorLoc {{ "}}" }}
-                    {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorUrl $source) {{ "}}" }}
-                    {{ "{{-" }} else {{ "}}" }}
+                    {{ "{{-" }} if $mirrorLoc {{ "}}" }}
                     {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "}}" }}
+                    {{ "{{-" }} else {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc = $mirrorUrl {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
                       - source: {{ "{{" }} $source {{ "}}" }}
                         mirrors:
@@ -253,6 +253,7 @@ spec:
                       mirrorRegistryRef:
                         name: mirror-registry-config
                         namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                      ignitionConfigOverride: '{"ignition":{"version":"3.1.0"},"storage":{"files":[{"path":"/etc/containers/policy.json","mode":420,"overwrite":true,"contents":{"source":"data:text/plain;base64,ewogICJkZWZhdWx0IjogW3sidHlwZSI6ICJpbnNlY3VyZUFjY2VwdEFueXRoaW5nIn1dCn0K"}}]}}'
                     {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} if $caTrustBundle {{ "}}" }}
                       additionalTrustBundle: |
@@ -265,9 +266,14 @@ spec:
                         - {{ "{{" }} $ntp {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $osImageVersion := (index $ci "osImageVersion" | default "") {{ "}}" }}
+                    {{ "{{-" }} if $osImageVersion {{ "}}" }}
+                      osImageVersion: '{{ "{{" }} $osImageVersion {{ "}}" }}'
+                    {{ "{{-" }} else {{ "}}" }}
                       clusterRef:
                         name: {{ "{{" }} $clusterName {{ "}}" }}
                         namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                       cpuArchitecture: {{ "{{" }} $cpuArch {{ "}}" }}
                       pullSecretRef:
                         name: {{ "{{" }} printf "%s-pull-secret" $clusterName {{ "}}" }}

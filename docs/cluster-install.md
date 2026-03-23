@@ -241,6 +241,7 @@ clusterInstall:
   cpuArch: x86_64                    # default: x86_64
   openshiftChannel: stable           # ClusterImageSet channel label (default: stable)
   clusterImageSet: ''                # optional, overrides openshiftVersion+cpuArch
+  osImageVersion: '4.20'             # required when hub is OCP < 4.19
   controlPlaneAgents: 3              # 1 = SNO
   workerAgents: 0                    # default: (len hosts) - controlPlaneAgents
   apiVip: '10.0.0.1'                # required for multi-node
