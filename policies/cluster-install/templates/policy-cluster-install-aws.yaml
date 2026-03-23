@@ -47,7 +47,13 @@ spec:
             {{ "{{-" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
             {{ "{{-" }} $platform := (index $ci "platform" | default "baremetal") {{ "}}" }}
             {{ "{{-" }} if and (eq (index $ci "createCluster" | default "") "true") (eq $platform "aws") {{ "}}" }}
-
+            {{ "{{-" }} $baseDomain := (index $ci "baseDomain") {{ "}}" }}
+            {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion") {{ "}}" }}
+            {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
+            {{ "{{-" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
+            {{ "{{-" }} $secretSourceNs := (index $ci "secretSourceNamespace" | default "cluster-install-secrets") {{ "}}" }}
+            {{ "{{-" }} $pullSecretRef := (index $ci "pullSecretRef") {{ "}}" }}
+            {{ "{{-" }} $managedClusterSet := (printf "%s{{ $.Values.clusterSetSuffix | default "" }}" (index $config "clusterSet" | default "default")) {{ "}}" }}
             {{ "{{-" }} $aws := (index $config "aws") {{ "}}" }}
             {{ "{{-" }} $region := (index $aws "region") {{ "}}" }}
             {{ "{{-" }} $credentialRef := (index $aws "credentialRef") {{ "}}" }}
@@ -62,14 +68,12 @@ spec:
             {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} $fips := (index $aws "fips" | default false) {{ "}}" }}
             {{ "{{-" }} $networkType := (index $aws "networkType" | default "OVNKubernetes") {{ "}}" }}
-
             {{ "{{-" }} $controlPlane := (index $aws "controlPlane" | default dict) {{ "}}" }}
             {{ "{{-" }} $cpInstanceType := (index $controlPlane "instanceType" | default "m5.xlarge") {{ "}}" }}
             {{ "{{-" }} $cpRootVolume := (index $controlPlane "rootVolume" | default dict) {{ "}}" }}
             {{ "{{-" }} $cpIops := (index $cpRootVolume "iops" | default 4000 | toInt) {{ "}}" }}
             {{ "{{-" }} $cpSize := (index $cpRootVolume "size" | default 100 | toInt) {{ "}}" }}
             {{ "{{-" }} $cpVolType := (index $cpRootVolume "type" | default "gp3") {{ "}}" }}
-
             {{ "{{-" }} $workers := (index $aws "workers" | default dict) {{ "}}" }}
             {{ "{{-" }} $workerReplicas := (index $workers "replicas" | default 3 | toInt) {{ "}}" }}
             {{ "{{-" }} $wkInstanceType := (index $workers "instanceType" | default "m5.xlarge") {{ "}}" }}
@@ -77,20 +81,10 @@ spec:
             {{ "{{-" }} $wkIops := (index $wkRootVolume "iops" | default 2000 | toInt) {{ "}}" }}
             {{ "{{-" }} $wkSize := (index $wkRootVolume "size" | default 100 | toInt) {{ "}}" }}
             {{ "{{-" }} $wkVolType := (index $wkRootVolume "type" | default "gp3") {{ "}}" }}
-
-            {{ "{{-" }} $baseDomain := (index $ci "baseDomain") {{ "}}" }}
-            {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion") {{ "}}" }}
-            {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
-            {{ "{{-" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
-            {{ "{{-" }} $secretSourceNs := (index $ci "secretSourceNamespace" | default "cluster-install-secrets") {{ "}}" }}
-            {{ "{{-" }} $pullSecretRef := (index $ci "pullSecretRef") {{ "}}" }}
-            {{ "{{-" }} $managedClusterSet := (printf "%s{{ $.Values.clusterSetSuffix | default "" }}" (index $config "clusterSet" | default "default")) {{ "}}" }}
-
             {{ "{{-" }} $networking := (index $config "networking") {{ "}}" }}
             {{ "{{-" }} $clusterNetwork := (index $networking "clusterNetwork") {{ "}}" }}
             {{ "{{-" }} $machineNetwork := (index $networking "machineNetwork") {{ "}}" }}
             {{ "{{-" }} $serviceNetwork := (index $networking "serviceNetwork") {{ "}}" }}
-
             {{ "{{-" }} $installConfig := (dict
                 "apiVersion" "v1"
                 "metadata" (dict "name" $clusterName)
