@@ -6,7 +6,7 @@ Collects all errors and reports them together.
 {{- define "autoshift.validate-cluster-install" -}}
 
 {{/* ===== Valid key lists — add new fields here ===== */}}
-{{- $validCiKeys := list "createCluster" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
+{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
 {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" "osImages" }}
 {{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "mirrors" "releaseImage" }}
 {{- $validMirrorEntryKeys := list "source" "mirror" }}
@@ -18,6 +18,10 @@ Collects all errors and reports them together.
 {{- $validCatalogKeys := list "source" "imagePath" "tag" "publisher" "displayName" "updateInterval" }}
 {{- $validCaRefKeys := list "name" "key" "namespace" }}
 {{- $validSshRefKeys := list "name" "key" "namespace" }}
+{{- $validAwsKeys := list "region" "credentialRef" "sshPrivateKeyRef" "sshPublicKey" "sshKeyRef" "fips" "networkType" "controlPlane" "workers" }}
+{{- $validAwsCpKeys := list "instanceType" "rootVolume" }}
+{{- $validAwsWorkerKeys := list "replicas" "instanceType" "rootVolume" }}
+{{- $validAwsVolumeKeys := list "iops" "size" "type" }}
 
 {{- range $clusterName, $cluster := ($.Values.clusters | default dict) }}
   {{- $ci := (dig "config" "clusterInstall" dict $cluster) }}
@@ -25,6 +29,13 @@ Collects all errors and reports them together.
     {{- $networking := (dig "config" "networking" dict $cluster) }}
     {{- $hosts := (dig "config" "hosts" dict $cluster) }}
     {{- $errors := list }}
+
+    {{/* Validate platform */}}
+    {{- $validPlatforms := list "baremetal" "aws" }}
+    {{- $platform := ($ci.platform | default "baremetal" | toString) }}
+    {{- if not (has $platform $validPlatforms) }}
+      {{- $errors = append $errors (printf "cluster %s: clusterInstall.platform must be one of: %s (got: %s)" $clusterName (join ", " $validPlatforms) $platform) }}
+    {{- end }}
 
     {{/* ===== Validate unexpected keys (only sections this policy owns) ===== */}}
     {{- range $key, $_ := $ci }}
@@ -87,7 +98,7 @@ Collects all errors and reports them together.
         {{- $errors = append $errors (printf "cluster %s: clusterInstall.openshiftVersion or clusterImageSet is required" $clusterName) }}
       {{- end }}
     {{- end }}
-    {{- if not (or $ci.sshPublicKey $ci.sshPublicKeyRef) }}
+    {{- if and (eq $platform "baremetal") (not (or $ci.sshPublicKey $ci.sshPublicKeyRef)) }}
       {{- $errors = append $errors (printf "cluster %s: clusterInstall.sshPublicKey or sshPublicKeyRef is required" $clusterName) }}
     {{- end }}
 
@@ -95,6 +106,32 @@ Collects all errors and reports them together.
     {{- if not $ci.pullSecretRef }}
       {{- $errors = append $errors (printf "cluster %s: clusterInstall.pullSecretRef is required" $clusterName) }}
     {{- end }}
+
+    {{/* ===== AWS-specific validations ===== */}}
+    {{- if eq $platform "aws" }}
+    {{- $aws := (dig "config" "aws" dict $cluster) }}
+    {{- if empty $aws }}
+      {{- $errors = append $errors (printf "cluster %s: config.aws is required for platform 'aws'" $clusterName) }}
+    {{- else }}
+      {{- if not $aws.region }}
+        {{- $errors = append $errors (printf "cluster %s: aws.region is required" $clusterName) }}
+      {{- end }}
+      {{- if not $aws.credentialRef }}
+        {{- $errors = append $errors (printf "cluster %s: aws.credentialRef is required" $clusterName) }}
+      {{- end }}
+      {{- if not $aws.sshPrivateKeyRef }}
+        {{- $errors = append $errors (printf "cluster %s: aws.sshPrivateKeyRef is required" $clusterName) }}
+      {{- end }}
+      {{- range $key, $_ := $aws }}
+        {{- if not (has $key $validAwsKeys) }}
+          {{- $errors = append $errors (printf "cluster %s: aws.%s is not a recognized field (valid: %s)" $clusterName $key (join ", " $validAwsKeys)) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- end }}
+
+    {{/* ===== Baremetal-specific validations ===== */}}
+    {{- if eq $platform "baremetal" }}
     {{- if not $ci.bmcCredentialRef }}
       {{- $errors = append $errors (printf "cluster %s: clusterInstall.bmcCredentialRef is required (default BMC credential secret name)" $clusterName) }}
     {{- end }}
@@ -413,6 +450,8 @@ Collects all errors and reports them together.
     {{- if ne $masterCount $cpCount }}
       {{- $errors = append $errors (printf "cluster %s: %d hosts have role 'master' but controlPlaneAgents is %d" $clusterName $masterCount $cpCount) }}
     {{- end }}
+
+    {{- end }}{{/* end baremetal-specific validations */}}
 
     {{/* Fail with all collected errors */}}
     {{- if gt (len $errors) 0 }}
