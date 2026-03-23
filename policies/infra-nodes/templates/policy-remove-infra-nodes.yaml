@@ -12,8 +12,10 @@ metadata:
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
     policy.open-cluster-management.io/standards: NIST SP 800-53
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
-  remediationAction: enforce
   dependencies: 
   {{- range .Values.infraNodes.dependencies.remove }}
   - apiVersion: policy.open-cluster-management.io/v1
@@ -50,6 +52,9 @@ spec:
           pruneObjectBehavior: {{ .Values.infraNodes.pruneObjectBehavior | default "DeleteAll" }}
           remediationAction: {{ .Values.infraNodes.remediationAction | default "enforce" }}
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -68,7 +73,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: {{ printf "%s-%s" $labelPrefix "infra-nodes" }}
+            - key: {{ printf "%s%s" $labelPrefix "infra-nodes" }}
               operator: In
               values:
                 - "0"

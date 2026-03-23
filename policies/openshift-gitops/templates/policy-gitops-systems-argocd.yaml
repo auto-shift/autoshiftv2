@@ -1,7 +1,6 @@
 # This policy verifies the installation of the official & supported version of
 # the GitOps Operator.
 #
-# Note that OpenShift 4.18 is required.
 {{- if .Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -13,6 +12,9 @@ metadata:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   dependencies:
     - name: policy-gitops-operator-install
@@ -29,19 +31,19 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
-          object-templates:
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
-                apiVersion: operators.coreos.com/v1alpha1
-                kind: Subscription
+                apiVersion: v1
+                kind: Namespace
                 metadata:
-                  name: {{ .Values.gitops.name }}
-                  namespace: {{ .Values.gitops.namespace }}
-                spec:
-                  config:
-                    env:
-                    - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
-                      value:  {{ .Values.gitops.disableDefaultArgoCD | quote }}
+                  name: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
@@ -57,17 +59,27 @@ spec:
                 subjects:
                 - kind: ServiceAccount
                   name: {{ .Values.gitops.argoName }}-argocd-application-controller
-                  namespace: {{ .Values.gitops.argoNamespace }}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-systems-argocd-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: argoproj.io/v1beta1
                 kind: ArgoCD
                 metadata:
                   name: {{ .Values.gitops.argoName }}
-                  namespace: {{ .Values.gitops.argoNamespace }}
-                  annotations:
-                    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-                    argocd.argoproj.io/sync-wave: "2"
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   server:
                     resources:
@@ -95,7 +107,7 @@ spec:
                   rbac:
                     defaultPolicy: ''
                     policy: |
-                      g, system:cluster-admins, role:admin
+                      g, cluster-admins, role:admin
                     {{- range .Values.gitops.rbac_policies}}
                       {{ . }}
                     {{- end }}
@@ -108,7 +120,7 @@ spec:
                       requests:
                         cpu: {{ ((.Values.gitops.repo).requests).cpu | default "250m" }}
                         memory: {{ ((.Values.gitops.repo).requests).memory | default "256Mi" }}
-                    {{- if .Values.gitops.repo.cluster_ca_bundle }}
+                    {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default "{{ .Values.gitops.repo.cluster_ca_bundle }}") "true" {{ "hub}}" }}
                     volumeMounts:
                       - name: user-ca-bundle
                         mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
@@ -117,7 +129,7 @@ spec:
                       - name: user-ca-bundle
                         configMap:
                           name: user-ca-bundle
-                    {{- end }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                   ha:
                     resources:
                       limits:
@@ -136,6 +148,9 @@ spec:
                         cpu: {{ ((.Values.gitops.redis).requests).cpu | default "125m" }}
                         memory: {{ ((.Values.gitops.redis).requests).memory | default "128Mi" }}
                   controller:
+                    processors:
+                      status: {{ ((.Values.gitops.controller).statusProcessors) | default 20 }}
+                      operation: {{ ((.Values.gitops.controller).operationProcessors) | default 10 }}
                     resources:
                       limits:
                         cpu: {{ ((.Values.gitops.controller).limits).cpu | default "2000m" }}
@@ -151,13 +166,50 @@ spec:
                       requests:
                         cpu: {{ ((.Values.gitops.applicationSet).requests).cpu | default "250m" }}
                         memory: {{ ((.Values.gitops.applicationSet).requests).memory | default "512Mi" }}
+                  resourceHealthChecks:
+                    - group: policy.open-cluster-management.io
+                      kind: Policy
+                      check: |
+                        hs = {}
+                        if obj.metadata.labels ~= nil and obj.metadata.labels["policy.open-cluster-management.io/root-policy"] ~= nil then
+                          hs.status = "Healthy"
+                          hs.message = "Replicated policy managed by ACM"
+                          return hs
+                        end
+                        if obj.status == nil or obj.status.compliant == nil then
+                          hs.status = "Healthy"
+                          hs.message = "No clusters matched by placement"
+                          return hs
+                        end
+                        if obj.status.compliant == "Compliant" then
+                          hs.status = "Healthy"
+                        elseif obj.status.compliant == "Pending" then
+                          hs.status = "Progressing"
+                        else
+                          hs.status = "Degraded"
+                        end
+                        hs.message = obj.status.compliant
+                        return hs
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-systems-argocd-cluster-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: cluster.open-cluster-management.io/v1beta1
                 kind: Placement
                 metadata:
                   name: systems-argocd-cluster-placement
-                  namespace: {{ .Values.gitops.argoNamespace | default "openshift-gitops"}}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   clusterSets:
                   {{- range $clusterSet, $value := .Values.hubClusterSets }}
@@ -177,16 +229,16 @@ spec:
                 kind: GitOpsCluster
                 metadata:
                   name: argo-acm-importer
-                  namespace: {{ .Values.gitops.argoNamespace | default "openshift-gitops"}}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   argoServer:
                     cluster: notused
-                    argoNamespace: {{ .Values.gitops.argoNamespace | default "openshift-gitops"}}
+                    argoNamespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                   placementRef:
                     kind: Placement
                     apiVersion: cluster.open-cluster-management.io/v1beta1
                     name: systems-argocd-cluster-placement
-                    namespace: {{ .Values.gitops.argoNamespace | default "openshift-gitops"}}
+                    namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
             {{- range $clusterSet, $value := .Values.managedClusterSets }}
             - complianceType: musthave
               objectDefinition:
@@ -194,7 +246,7 @@ spec:
                 kind: ManagedClusterSetBinding
                 metadata:
                   name: {{ $clusterSet }}
-                  namespace: {{ $.Values.gitops.argoNamespace | default "openshift-gitops"}}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   clusterSet: {{ $clusterSet }}
             {{- end }}
@@ -205,7 +257,7 @@ spec:
                 kind: ManagedClusterSetBinding
                 metadata:
                   name: {{ $clusterSet }}
-                  namespace: {{ $.Values.gitops.argoNamespace | default "openshift-gitops"}}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   clusterSet: {{ $clusterSet }}
             {{- end }}

@@ -1,7 +1,6 @@
 # This policy verifies the installation of the official & supported version of
 # the Advanced Cluster Operator on the hub cluster.
 #
-# Note that OpenShift 4.18 is required.
 {{- if .Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -13,6 +12,9 @@ metadata:
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   dependencies:
     - name: policy-acm-mch-install
@@ -34,6 +36,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates:
             - complianceType: musthave
               objectDefinition:
@@ -41,6 +46,8 @@ spec:
                 kind: Namespace
                 metadata:
                   name: open-cluster-management-observability
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -49,6 +56,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates:
             - complianceType: musthave
               objectDefinition:
@@ -68,6 +78,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates:
             - complianceType: musthave
               objectDefinition:
@@ -92,10 +105,13 @@ spec:
                     type: s3
                     config:
                       bucket: {{`{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_NAME" }}`}}
-                      endpoint: '{{`{{ (lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3").spec.host }}`}}:443'
+                      endpoint: '{{`{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_HOST" }}`}}:{{`{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_PORT" }}`}}'
                       insecure: false
                       access_key: {{`{{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_ACCESS_KEY_ID" | base64dec }}`}}
                       secret_key: {{`{{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_SECRET_ACCESS_KEY" | base64dec }}`}}
+                      http_config:
+                        tls_config:
+                          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
             - complianceType: musthave
               objectDefinition:
                 apiVersion: observability.open-cluster-management.io/v1beta2

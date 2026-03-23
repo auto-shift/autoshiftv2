@@ -1,0 +1,74 @@
+# Gitleaks configuration for AutoShift
+# Run: gitleaks detect --source . --verbose
+# Scan full history: gitleaks detect --source . --verbose --log-opts="--all"
+
+title = "AutoShift Gitleaks Config"
+
+# Use the default built-in rules for secrets (API keys, tokens, passwords, etc.)
+# Plus custom rules below for PII/customer data
+
+[[rules]]
+id = "email-addresses"
+description = "Email addresses (potential PII)"
+regex = '''[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'''
+tags = ["pii", "email"]
+[rules.allowlist]
+regexes = [
+    '''@users\.noreply\.github\.com''',
+    '''@example\.com''',
+    '''@redhat\.com''',
+    '''@anthropic\.com''',
+    '''@openshift\.com''',
+    '''@localhost''',
+    '''@myorg\.com''',
+    '''@scitec\.com''',
+    '''@hashicorp\.com''',
+]
+
+[[rules]]
+id = "ip-addresses"
+description = "IP addresses (potential infrastructure data)"
+regex = '''\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'''
+tags = ["pii", "infrastructure"]
+# Exclude common non-sensitive IPs (private ranges, documentation, well-known)
+[rules.allowlist]
+regexes = [
+    '''0\.0\.0\.0''',
+    '''127\.0\.0\.\d+''',
+    '''10\.\d+\.\d+\.\d+''',
+    '''192\.168\.\d+\.\d+''',
+    '''172\.(?:1[6-9]|2[0-9]|3[01])\.\d+\.\d+''',
+    '''169\.254\.\d+\.\d+''',
+    '''255\.255\.\d+\.\d+''',
+    '''8\.8\.8\.8''',
+    '''8\.8\.4\.4''',
+    '''1\.1\.1\.1''',
+]
+
+[[rules]]
+id = "kubeconfig-tokens"
+description = "Kubernetes tokens or kubeconfig data"
+regex = '''(?i)(token|kubeconfig|bearer)\s*[:=]\s*["\']?[a-zA-Z0-9\-_.]{20,}'''
+tags = ["secret", "kubernetes"]
+
+[[rules]]
+id = "pull-secrets"
+description = "OpenShift pull secrets"
+regex = '''(?i)pull[-_]?secret\s*[:=]\s*["\']?\{.*auth'''
+tags = ["secret", "openshift"]
+
+# Files to exclude from scanning
+[allowlist]
+paths = [
+    '''\.gitleaks\.toml$''',
+    '''\.mailmap$''',
+    '''go\.sum$''',
+    '''go\.mod$''',
+    '''package-lock\.json$''',
+    '''\.png$''',
+    '''\.jpg$''',
+    '''\.gif$''',
+    '''images/''',
+    '''vendor/''',
+    '''extracted-chart-example/''',
+]

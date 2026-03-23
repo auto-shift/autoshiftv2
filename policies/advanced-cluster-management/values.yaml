@@ -1,22 +1,73 @@
-# Default values for rh-acm.
+# Default values for advanced-cluster-management.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 policy_namespace: open-cluster-policies
 acm: 
   namespace: open-cluster-management
-  channel: release-2.14
+  channel: release-2.15
   sourceNamespace: openshift-marketplace
   source: redhat-operators
   name: advanced-cluster-management
   disable_hub_self_management: false
   availabilityConfig: High
   enable_backup: false
-  gitops_namespace: openshift-gitops
   provisioning:
   # storage_class:
     database_size: 10Gi
     filesystem_storage_size: 100Gi
     image_storage_size: 50Gi
+  # Addon tuning for governance controllers at scale
+  # Activated by label: acm-addon-tuning: 'true'
+  #
+  # ACM Default vs AutoShift Tuned Values:
+  #
+  # config-policy-controller:
+  #   Parameter                  ACM Default    AutoShift Tuned
+  #   evaluation-concurrency     2              5
+  #   client-qps                 30             75
+  #   client-burst               45             100
+  #   memory request             (unset)        256Mi
+  #   cpu request                (unset)        150m
+  #   memory limit               512Mi          1Gi
+  #
+  # governance-policy-framework:
+  #   Parameter                  ACM Default    AutoShift Tuned
+  #   evaluation-concurrency     2              5
+  #   client-qps                 30             75
+  #   client-burst               45             100
+  #   memory request             (unset)        128Mi
+  #   cpu request                (unset)        100m
+  #   memory limit               256Mi          512Mi
+  #
+  # Sizing Guidelines:
+  #   - Small (< 50 clusters): ACM defaults are sufficient, tuning not needed
+  #   - Medium (50-200 clusters): Enable tuning with AutoShift defaults
+  #   - Large (200-500 clusters): Consider eval-concurrency=10, mem-limit=2Gi for cpc
+  #   - Very Large (500+ clusters): eval-concurrency=15, client-qps=150, mem-limit=4Gi for cpc
+  #
+  # Note: Increased concurrency/QPS increases CPU and memory on the controller pods,
+  # the Kubernetes API server, and the OpenShift API server.
+  addonTuning:
+    configPolicyController:
+      evaluationConcurrency: '5'
+      clientQPS: '75'
+      clientBurst: '100'
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: 150m
+        limits:
+          memory: 1Gi
+    governancePolicyFramework:
+      evaluationConcurrency: '5'
+      clientQPS: '75'
+      clientBurst: '100'
+      resources:
+        requests:
+          memory: 128Mi
+          cpu: 100m
+        limits:
+          memory: 512Mi
 # hubClusterSets:
 #   hub:
 #     labels:
@@ -39,7 +90,7 @@ acm:
 # acm-provisioning-database-size: 10Gi default
 # acm-provisioning-filesystem-storage-size: 100Gi default
 # acm-provisioning-image-storage-size: 50Gi default
-# acm-channel<String>: ACM operator channel (default: 'release-2.14')
+# acm-channel<String>: ACM operator channel (default: 'release-2.15')
 # acm-version<String>: Specific operator version (CSV) to install (optional)
 # acm-source<String>: Operator catalog source (default: 'redhat-operators')
 # acm-source-namespace<String>: Catalog namespace (default: 'openshift-marketplace')
@@ -48,9 +99,47 @@ acm:
 # Observability:
 # acm-observability<bool>: 'true' or 'false' - Enable ACM observability (requires ODF)
 #
+# Search Persistent Storage:
+# acm-search-storage<bool>: 'true' or 'false' - Enable persistent storage for ACM Search (recommended for production)
+# acm-search-storage-class<String>: Storage class for Search database (default: 'ocs-storagecluster-ceph-rbd')
+# acm-search-storage-size<String>: Storage size for Search database (default: '100Gi')
+#
+# Search Storage Sizing Guidelines:
+#   - Small (< 50 managed clusters, < 5000 resources): 20Gi
+#   - Medium (50-200 clusters, 5000-50000 resources): 50Gi
+#   - Large (200-500 clusters, 50000-200000 resources): 100Gi (default)
+#   - Very Large (500+ clusters, 200000+ resources): 200Gi+
+#
+# Note: Each node contributes ~50-100 resources to the search index. A cluster with
+# 100 nodes may have 10000+ indexed resources. Plan storage accordingly.
+#
+# Addon Tuning (for scale):
+# acm-addon-tuning<bool>: 'true' - Enable addon tuning for governance controllers
+# Concurrency/QPS/burst are set via ManagedClusterAddOn annotations (per ACM 2.15 docs)
+# Resource limits are set via AddOnDeploymentConfig + ClusterManagementAddOn
+# config-policy-controller (annotations):
+# acm-addon-cpc-eval-concurrency<String>: Concurrent policy evaluations (default: '5')
+# acm-addon-cpc-client-qps<String>: K8s API client QPS (default: '75')
+# acm-addon-cpc-client-burst<String>: K8s API client burst (default: '100')
+# config-policy-controller (resource limits):
+# acm-addon-cpc-mem-request<String>: Memory request (default: '256Mi')
+# acm-addon-cpc-cpu-request<String>: CPU request (default: '150m')
+# acm-addon-cpc-mem-limit<String>: Memory limit (default: '1Gi')
+# governance-policy-framework (annotations):
+# acm-addon-gpf-eval-concurrency<String>: Concurrent policy evaluations (default: '5')
+# acm-addon-gpf-client-qps<String>: K8s API client QPS (default: '75')
+# acm-addon-gpf-client-burst<String>: K8s API client burst (default: '100')
+# governance-policy-framework (resource limits):
+# acm-addon-gpf-mem-request<String>: Memory request (default: '128Mi')
+# acm-addon-gpf-cpu-request<String>: CPU request (default: '100m')
+# acm-addon-gpf-mem-limit<String>: Memory limit (default: '512Mi')
+#
 # Examples:
 # autoshift.io/self-managed: 'true'
-# autoshift.io/acm-channel: 'release-2.14'
+# autoshift.io/acm-channel: 'release-2.15'
 # autoshift.io/acm-version: 'advanced-cluster-management.v2.14.x'
 # autoshift.io/acm-availability-config: 'High'
 # autoshift.io/acm-observability: 'true'
+# autoshift.io/acm-search-storage: 'true'
+# autoshift.io/acm-search-storage-class: 'ocs-storagecluster-ceph-rbd'
+# autoshift.io/acm-search-storage-size: '10Gi'

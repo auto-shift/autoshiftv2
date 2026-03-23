@@ -12,8 +12,10 @@ metadata:
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
     policy.open-cluster-management.io/standards: NIST SP 800-53
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: {{ not .Values.infraNodes.ingress.migrate }}
-  remediationAction: {{ .Values.infraNodes.ingress.remediationAction | default "enforce" }}
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -21,15 +23,16 @@ spec:
         metadata:
           name: {{ $configPolicyName }}
         spec:
+          remediationAction: enforce
           object-templates-raw: | 
             [
-            {{ "{{-" }} $IngressController := lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default"  {{ "}}" }}
-              {{ "{{-" }} if  not (empty $IngressController)  {{ "}}" }}
-                {{ "{{-" }} $spec := $IngressController.spec {{ "}}" }} 
-                {{ "{{-" }} $nodePlacement := dict "nodeSelector" (dict) "tolerations" (list) {{ "}}" }}
-                {{ "{{-" }} $newSpec := set $spec "nodePlacement" $nodePlacement {{ "}}" }}
-                {{ "{{-" }} $IngressControllerNoStatus := unset $IngressController "status"  {{ "}}" }}
-                {{ "{{-" }} $objectDefinition := set $IngressControllerNoStatus "spec" $newSpec {{ "}}" }}
+            {{ "{{-" }} $IngressController := lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default"  {{ "-}}" }}
+              {{ "{{-" }} if  not (empty $IngressController)  {{ "-}}" }}
+                {{ "{{-" }} $spec := $IngressController.spec {{ "-}}" }} 
+                {{ "{{-" }} $nodePlacement := dict "nodeSelector" (dict) "tolerations" (list) {{ "-}}" }}
+                {{ "{{-" }} $newSpec := set $spec "nodePlacement" $nodePlacement {{ "-}}" }}
+                {{ "{{-" }} $IngressControllerNoStatus := unset $IngressController "status"  {{ "-}}" }}
+                {{ "{{-" }} $objectDefinition := set $IngressControllerNoStatus "spec" $newSpec {{ "-}}" }}
                   {
                     "complianceType": "mustonlyhave",
                     "pruneObjectBehavior": "{{ .Values.infraNodes.imageRegistry.pruneObjectBehavior | default "None" }}",
@@ -37,7 +40,7 @@ spec:
                     "severity": "high",
                     "objectDefinition": {{ "{{" }} $objectDefinition | toRawJson {{ "}}" }} 
                   }
-              {{ "{{-" }} end {{ "}}" }} 
+              {{ "{{-" }} end {{ "-}}" }} 
             ]
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -57,7 +60,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: {{ printf "%s-%s" $labelPrefix "infra-nodes" }}
+            - key: {{ printf "%s%s" $labelPrefix "infra-nodes" }}
               operator: In
               values:
                 - "0"

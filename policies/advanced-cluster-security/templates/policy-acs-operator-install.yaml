@@ -1,27 +1,32 @@
+{{- $policyName := "policy-acs-operator-install" }}
+{{- $placementName := "placement-policy-acs-operator-install" }}
+
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-acs-operator-install
+  name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/compare-options: IgnoreExtraneous
-    argocd.argoproj.io/sync-wave: "1"
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-2 Security Assessments
 spec:
-  remediationAction: enforce
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: managed-cluster-security-ns
+          name: acs-operator-ns
         spec:
-          remediationAction: inform
+          remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates:
             - complianceType: musthave
               objectDefinition:
@@ -29,12 +34,16 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.acs.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
                   name: {{ .Values.acs.operatorNamespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
@@ -45,23 +54,19 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.acs.operatorNamespace }}
+            # if operator group exists in namespace use that, otherwise use namespace name as default
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.acs.operatorNamespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.acs.operatorNamespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.acs.operatorNamespace }}
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-subscription-name" | default "{{ .Values.acs.name }}" {{ "hub}}" }}'
             namespace: {{ .Values.acs.operatorNamespace }}
-            # Source Selection Logic (evaluated on hub for each managed cluster):
-            # 1. If cluster has explicit 'autoshift.io/acs-source' label → use that value
-            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
-            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
-            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
-            # 3. Else → use standard source (e.g., redhat-operators)
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-source" | default (ternary (printf "%s-%s" "{{ .Values.acs.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.acs.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
+            # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
+            source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/acs-source" | default "{{ .Values.acs.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-source-namespace" | default "{{ .Values.acs.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-channel" | default "{{ .Values.acs.channel }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-version" | default "" {{ "hub}}" }}'
-            # Upgrade approval for subscription will be set based on if version is set not this flag
-            # If version is set install plan is set to manual and only the version specified will be installed
+          # Upgrade approval for subscription will be set based on if version is set not this flag
+          # If version is set install plan is set to manual and only the version specified will be installed
           upgradeApproval: Automatic
           versions:
             - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acs-version" | default "" {{ "hub}}" }}'
@@ -69,16 +74,14 @@ spec:
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: policy-acs-operator-install-placement
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
-  annotations:
-    argocd.argoproj.io/sync-wave: "1"
 spec:
   clusterSets:
-  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
-  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
   predicates:
@@ -98,15 +101,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: policy-acs-operator-install-placement
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
-  annotations:
-    argocd.argoproj.io/sync-wave: "1"
 placementRef:
-  name: policy-acs-operator-install-placement
+  name: {{ $placementName }}
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-acs-operator-install
+  - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy

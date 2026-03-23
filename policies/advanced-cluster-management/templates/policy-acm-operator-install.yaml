@@ -1,20 +1,20 @@
-# This policy verifies the installation of the official & supported version of
-# the Advanced Cluster Operator on the hub cluster.
-#
-# Note that OpenShift 4.18 is required.
+{{- $policyName := "policy-acm-operator-install" }}
+{{- $placementName := "placement-policy-acm-operator-install" }}
+
 {{- if .Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-acm-operator-install
+  name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "7"
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -25,6 +25,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates:
             - complianceType: musthave
               objectDefinition:
@@ -32,39 +35,39 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.acm.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
                   name: {{ .Values.policy_namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
         metadata:
-          name: install-acm-operator
+          name: install-operator-acm
         spec:
           remediationAction: enforce
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.acm.namespace }}
+            # if operator group exists in namespace use that, otherwise use namespace name as default
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.acm.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.acm.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.acm.namespace }}
             targetNamespaces:
               - {{ .Values.acm.namespace }}
           subscription:
-            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-version" | default "" {{ "hub}}" }}'
-            namespace: {{ .Values.acm.namespace }}
-            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-channel" | default "{{ .Values.acm.channel }}" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-subscription-name" | default "{{ .Values.acm.name }}" {{ "hub}}" }}'
-            # Source Selection Logic (evaluated on hub for each managed cluster):
-            # 1. If cluster has explicit 'autoshift.io/acm-source' label → use that value
-            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
-            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
-            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
-            # 3. Else → use standard source (e.g., redhat-operators)
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-source" | default (ternary (printf "%s-%s" "{{ .Values.acm.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.acm.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
+            namespace: {{ .Values.acm.namespace }}
+            # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
+            source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/acm-source" | default "{{ .Values.acm.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-source-namespace" | default "{{ .Values.acm.sourceNamespace }}" {{ "hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-channel" | default "{{ .Values.acm.channel }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-version" | default "" {{ "hub}}" }}'
           # Upgrade approval for subscription will be set based on if version is set not this flag
           # If version is set install plan is set to manual and only the version specified will be installed
           upgradeApproval: Automatic
@@ -74,14 +77,11 @@ spec:
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-acm-operator-install
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
-  annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "7"
 spec:
   clusterSets:
-  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
   tolerations:
@@ -93,17 +93,14 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-acm-operator-install
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
-  annotations:
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/sync-wave: "7"
 placementRef:
-  name: placement-policy-acm-operator-install
+  name: {{ $placementName }}
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-acm-operator-install
+  - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy
 {{- end }}

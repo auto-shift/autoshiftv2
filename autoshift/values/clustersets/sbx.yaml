@@ -1,16 +1,9 @@
-# Default values for the autoshift
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
-
-autoshiftGitRepo: https://github.com/auto-shift/autoshiftv2.git
-autoshiftGitBranchTag: main
-
-selfManagedHubSet: hub
-
-# Spoke Cluster Sets with Feature Flags. Blank will remove
+# Sandbox Spoke Cluster Sets with Feature Flags. Blank will remove
 managedClusterSets:
   sbx:
     labels:
+      # OpenShift version for cluster deployment and image mirroring
+      openshift-version: '4.20.12'
       ### infra-nodes
       infra-nodes: ''
       infra-nodes-numcpu: ''
@@ -29,6 +22,46 @@ managedClusterSets:
       storage-nodes-memory-mib: ''
       storage-nodes-numcores-per-socket: ''
       storage-nodes-zones: ''
+      ### Machine Health Checks
+      machine-health-checks: 'false'
+      machine-health-checks-worker: 'false'
+      machine-health-checks-infra: 'false'
+      machine-health-checks-storage: 'false'
+      ### MetalLB
+      metallb: 'false'
+      metallb-subscription-name: metallb-operator
+      # metallb-version: 'metallb-operator.v4.18.0-202509240837'
+      metallb-source: redhat-operators
+      metallb-source-namespace: openshift-marketplace
+      metallb-channel: stable
+      metallb-quota: 'false'
+      # Set your quota if metallb-quota is enabled
+      metallb-quota-cpu: ''
+      metallb-quota-memory:
+      # Specify the names of your IPPool files here
+      metallb-ippool-1: ''
+      #Specify your L2 Advertisement files here
+      metallb-l2-1: ''
+      # Specify the names of your BGP Advertisement files here
+      metallb-bgp-1: ''
+      # Specify the names of your Peer files here
+      metallb-peer-1: ''
+      ### Ansible Automation Platform
+      aap: 'false'
+      aap-subscription-name: ansible-automation-platform-operator
+      aap-channel: stable-2.6
+      aap-install-plan-approval: Automatic
+      aap-source: redhat-operators
+      aap-source-namespace: openshift-marketplace
+      aap-hub-disabled: 'false'
+      ### select either file storage OR s3 storage.
+      aap-file-storage: 'true'
+      aap-file_storage_storage_class: ocs-storagecluster-cephfs
+      aap-file_storage_size: 10G
+      ### s3 storage set as true will automatically create a NooBa bucket in the AAP namespace and attach it to AAP.
+      aap-s3-storage: 'false'
+      aap-eda-disabled: 'false'
+      aap-lightspeed-disabled: 'true'
       ### OpenShift Data Foundation
       odf: 'true'
       odf-subscription-name: odf-operator
@@ -41,7 +74,7 @@ managedClusterSets:
       odf-ocs-storage-count: ''
       odf-ocs-storage-replicas: ''
       odf-resource-profile: balanced
-      odf-channel: stable-4.18
+      odf-channel: stable-4.20
       odf-source: redhat-operators
       odf-source-namespace: openshift-marketplace
       ### OpenShift Internal Registry
@@ -69,6 +102,10 @@ managedClusterSets:
       acs-channel: stable
       acs-source: redhat-operators
       acs-source-namespace: openshift-marketplace
+      acs-monitoring: 'true'
+      # acs-vm-scanning: 'true'
+      # acs-admission-control: 'true'
+      # acs-network-policies: Enabled
       ### Developer Spaces
       dev-spaces: 'false'
       dev-spaces-subscription-name: devspaces
@@ -84,7 +121,7 @@ managedClusterSets:
       ### OpenShift Pipelines
       pipelines: 'false'
       pipelines-subscription-name: openshift-pipelines-operator-rh
-      pipelines-channel: pipelines-1.20
+      pipelines-channel: pipelines-1.21
       pipelines-source: '' #redhat-operators
       pipelines-source-namespace: '' #openshift-marketplace
       ### Trusted Artifact Signer
@@ -96,14 +133,14 @@ managedClusterSets:
       ### Quay
       quay: 'false'
       quay-subscription-name: quay-operator
-      quay-channel: '' # stable-3.13
+      quay-channel: stable-3.16
       quay-source: '' # redhat-operators
       quay-source-namespace: '' # openshift-marketplace
       ### Developer OpenShift Gitops
       gitops-dev: 'true'
       gitops-dev-team-dev: 'true'
       ### Loki
-      loki: 'true' 
+      loki: 'true'
       loki-subscription-name: loki-operator
       loki-channel: stable-6.4
       loki-source: redhat-operators
@@ -161,7 +198,7 @@ managedClusterSets:
       # metallb-peer-1: ''
       ### LVM Operator
       # lvm: 'false'
-      # lvm-channel: stable-4.18
+      # lvm-channel: stable-4.20
       # lvm-source: redhat-operators
       # lvm-source-namespace: openshift-marketplace
       # lvm-default: 'true'
@@ -173,15 +210,10 @@ managedClusterSets:
       # local-storage-channel: stable
       # local-storage-source: redhat-operators
       # local-storage-source-namespace: openshift-marketplace
-# Cluster override Feature Flags. Blank will remove
-# clusters:
-#   nonprod:
-#     labels:
-#       infra-nodes-numcpu: '8'
-#       infra-nodes-memory-mib:  '24576'
-#       infra-nodes-numcores-per-socket:  '4'
-#       infra-nodes:  '6'
-#       worker-nodes-numcpu:  '8'
-#       worker-nodes-memory-mib:  '32768'
-#       worker-nodes-numcores-per-socket:  '4'
-#       worker-nodes:  '3'
+      ### node-maintenance
+      node-maintenance: 'true'
+      node-maintenance-subscription-name: node-maintenance-operator
+      node-maintenance-channel: stable
+      node-maintenance-source: redhat-operators
+      node-maintenance-source-namespace: openshift-marketplace
+      node-maintenance-version: 'node-maintenance-operator.v5.5.0'

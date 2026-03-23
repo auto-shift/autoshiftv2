@@ -1,0 +1,92 @@
+# This policy configures persistent storage for RHACM Search.
+# Search uses PostgreSQL for indexing and by default uses ephemeral storage.
+# This policy ensures Search uses persistent storage for production environments.
+#
+# Configure via labels:
+#   autoshift.io/acm-search-storage-class: 'storage-class-name' (default: ocs-storagecluster-ceph-rbd)
+#   autoshift.io/acm-search-storage-size: '10Gi' (default: 10Gi)
+{{- if .Values.hubClusterSets }}
+{{- $policyName := "policy-acm-search-storage" }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  dependencies:
+    - name: policy-acm-mch-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acm-search-storage
+        spec:
+          remediationAction: enforce
+          severity: medium
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: search.open-cluster-management.io/v1alpha1
+                kind: Search
+                metadata:
+                  name: search-v2-operator
+                  namespace: {{ .Values.acm.namespace }}
+                spec:
+                  dbStorage:
+                    storageClassName: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-search-storage-class" | default "ocs-storagecluster-ceph-rbd" {{ "hub}}" }}'
+                    size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/acm-search-storage-size" | default "100Gi" {{ "hub}}" }}'
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-{{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acm-search-storage'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-{{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-{{ $policyName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

@@ -7,6 +7,20 @@ on:
     branches: [main]
 
 jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
   lint-and-test:
     runs-on: ubuntu-latest
     container:
@@ -36,7 +50,8 @@ jobs:
       - name: Validate YAML syntax
         run: |
           echo "=== Validating values files ==="
-          for f in autoshift/values*.yaml; do
+          for f in autoshift/values/global.yaml autoshift/values/clustersets/*.yaml autoshift/values/clusters/*.yaml; do
+            [ -f "$f" ] || continue
             echo "Checking $f..."
             yq eval '.' "$f" > /dev/null
           done
@@ -44,7 +59,7 @@ jobs:
       - name: Template rendering test
         run: |
           echo "=== Testing template rendering ==="
-          helm template autoshift autoshift -f autoshift/values.hub.yaml > /dev/null
+          helm template autoshift autoshift -f autoshift/values/global.yaml -f autoshift/values/clustersets/hub.yaml -f autoshift/values/clustersets/managed.yaml > /dev/null
           echo "Template rendering successful"
 
       - name: Dry-run packaging

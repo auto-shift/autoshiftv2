@@ -4,14 +4,13 @@ metadata:
   name: policy-acs-console-link
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
-    argocd.argoproj.io/compare-options: IgnoreExtraneous
-    argocd.argoproj.io/sync-wave: "3"
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-2 Security Assessments
 spec:
-  remediationAction: enforce
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
   disabled: false
   hubTemplateOptions:
     serviceAccountName: autoshift-policy-service-account
@@ -24,6 +23,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             - complianceType: musthave
               objectDefinition:
@@ -43,8 +45,6 @@ kind: Placement
 metadata:
   name: policy-acs-console-link-placement
   namespace: {{ .Values.policy_namespace }}
-  annotations:
-    argocd.argoproj.io/sync-wave: "3"
 spec:
   clusterSets:
   {{- range $clusterSet, $value := .Values.managedClusterSets }}
@@ -72,8 +72,6 @@ kind: PlacementBinding
 metadata:
   name: policy-acs-console-link-placement
   namespace: {{ .Values.policy_namespace }}
-  annotations:
-    argocd.argoproj.io/sync-wave: "3"
 placementRef:
   name: policy-acs-console-link-placement
   apiGroup: cluster.open-cluster-management.io

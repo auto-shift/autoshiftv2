@@ -2,20 +2,64 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 policy_namespace: open-cluster-policies
-machinehealthchecks:
-  zones:
-    - us-east-2c
 
 ### AutoShift Labels Documentation
 # The following labels can be set at the cluster or clusterset level to configure this policy:
 #
-# Enable/Disable:
-# machine-health-checks<bool>: 'true' or 'false' - Enable machine health checks for worker nodes (default: 'false')
+# ============================================
+# ENABLE/DISABLE
+# ============================================
+# machine-health-checks<bool>: 'true' or 'false' - Enable the MachineHealthCheck policy (default: 'false')
 #
-# Note: Machine health checks automatically replace unhealthy worker nodes
-# Monitors node conditions and replaces nodes that fail health checks
-# Default configuration checks for Ready status with 300s timeout
-# Maximum 40% of nodes can be unhealthy before stopping replacements
+# ============================================
+# WORKER NODE HEALTH CHECKS
+# ============================================
+# machine-health-checks-worker<bool>: 'true' - Enable MHC for all worker MachineSets
 #
-# Examples:
-# autoshift.io/machine-health-checks: 'true'
+# Settings: timeout=300s, maxUnhealthy=40%, nodeStartupTimeout=10m
+# Automatically discovers all MachineSets with role=worker
+#
+# ============================================
+# INFRA NODE HEALTH CHECKS
+# ============================================
+# machine-health-checks-infra<bool>: 'true' - Enable MHC for all infra MachineSets (excluding storage)
+#
+# Settings: timeout=300s, maxUnhealthy=40%, nodeStartupTimeout=10m
+# Automatically discovers all MachineSets with role=infra (excludes storage)
+#
+# ============================================
+# STORAGE NODE HEALTH CHECKS
+# ============================================
+# machine-health-checks-storage<bool>: 'true' - Enable MHC for all storage MachineSets
+#
+# Settings: timeout=600s, maxUnhealthy=1, nodeStartupTimeout=15m
+# Longer timeouts to allow for Ceph/ODF recovery
+# maxUnhealthy=1 prevents cascading failures during storage degradation
+# Automatically discovers all MachineSets with "storage" in the name
+#
+# ============================================
+# EXAMPLES
+# ============================================
+# Enable MHC for all workers:
+#   autoshift.io/machine-health-checks: 'true'
+#   autoshift.io/machine-health-checks-worker: 'true'
+#
+# Enable MHC for workers and infra:
+#   autoshift.io/machine-health-checks: 'true'
+#   autoshift.io/machine-health-checks-worker: 'true'
+#   autoshift.io/machine-health-checks-infra: 'true'
+#
+# Enable MHC for all node types:
+#   autoshift.io/machine-health-checks: 'true'
+#   autoshift.io/machine-health-checks-worker: 'true'
+#   autoshift.io/machine-health-checks-infra: 'true'
+#   autoshift.io/machine-health-checks-storage: 'true'
+#
+# ============================================
+# NOTES
+# ============================================
+# - Never create MachineHealthChecks for control plane nodes
+# - MachineSets are automatically discovered - no need to specify zones
+# - Storage nodes use conservative settings to allow Ceph rebalancing
+# - MHCs are named after the MachineSet they protect
+# - pruneObjectBehavior: DeleteIfCreated removes MHCs when labels are removed
