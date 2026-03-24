@@ -170,20 +170,22 @@ clusters:
       #   mirrorRegistry:
       #     host: 'mirror.example.com:5000'
       #     path: 'ocp'                             # optional, image path prefix
-      #     releaseImage: 'openshift/ocp-release'   # optional, defaults to openshift-release-dev/ocp-release
-      #     ca: |                                    # used by InfraEnv + mirror-registry-config
-      #       -----BEGIN CERTIFICATE-----
-      #       ...
-      #     caRef:                                   # OR reference a hub ConfigMap
+      #     releaseImage: 'openshift/release-images' # optional, path for ClusterImageSet releaseImage
+      #                                              # defaults to openshift-release-dev/ocp-release
+      #                                              # should match the mirror entry for ocp-release
+      #     caRef:                                   # reference a hub ConfigMap with the CA
       #       name: 'cluster-ca-bundle'
       #       key: 'ca-bundle.crt'
       #       namespace: 'cluster-install-secrets'
+      #     # ca: |                                  # OR inline CA
+      #     #   -----BEGIN CERTIFICATE-----
+      #     #   ...
       #     mirrors:                                 # source → mirror mappings
       #       - source: quay.io/openshift-release-dev/ocp-release
       #         mirror: openshift/release-images
       #       - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
       #         mirror: openshift/release
-      #       - source: registry.redhat.io           # no mirror = host/path/source
+      #       - source: registry.redhat.io           # no mirror = host/path
       #       - source: quay.io
       #       - source: registry.access.redhat.com
       #   useIDMS: true                              # IDMS (4.13+) or ICSP (4.12-)
@@ -220,6 +222,7 @@ clusters:
       # =====================================================================
       clusterInstall:
         createCluster: 'true'                       # Required — triggers provisioning
+        platform: baremetal                          # 'baremetal' (default) or 'aws'
         baseDomain: example.com
         openshiftVersion: '4.20.12'
         cpuArch: x86_64                             # default: x86_64

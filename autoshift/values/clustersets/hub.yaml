@@ -1,6 +1,7 @@
 # Hub Cluster Sets with Feature Flags. Blank will remove
 hubClusterSets:
   hub:
+    config: {}
     labels:
       # OpenShift version for cluster deployment and image mirroring
       openshift-version: '4.20.12'
@@ -176,7 +177,7 @@ hubClusterSets:
       odf-default-storageclass: ocs-storagecluster-ceph-rbd
       odf-csi-all-nodes: 'true'            # 'true' to run CSI plugins on all nodes (masters, infra, storage)
       ### OpenShift Internal Registry
-      imageregistry: 'true'
+      imageregistry: 'false'
       imageregistry-management-state: Managed
       imageregistry-replicas: '3'
       imageregistry-storage-type: s3 # pvc
@@ -187,7 +188,7 @@ hubClusterSets:
       imageregistry-pvc-volume-mode: Block
       imageregistry-rollout-strategy: RollingUpdate
       ### Kubernetes NMState Operator
-      nmstate: 'true'
+      nmstate: 'false'
       nmstate-subscription-name: kubernetes-nmstate-operator
       # nmstate-version: 'kubernetes-nmstate-operator.v4.18.0-202410091522'
       # See _example-hub.yaml for full nmstate label reference
@@ -306,67 +307,3 @@ hubClusterSets:
       node-feature-discovery-source: redhat-operators
       node-feature-discovery-source-namespace: openshift-marketplace
       # node-feature-discovery-version: 'nfd.4.18.0-202511261113'
-    config:
-      networking:
-        interfaces:
-          mgmt-port1:
-            type: ethernet
-            name: mgmt-port1
-            mac: 'aa:bb:cc:00:00:01'
-            ipv4: disabled
-            ipv6: disabled
-          mgmt-port2:
-            type: ethernet
-            name: mgmt-port2
-            mac: 'aa:bb:cc:00:00:02'
-            ipv4: disabled
-            ipv6: disabled
-          stor-port1:
-            type: ethernet
-            name: stor-port1
-            mac: 'aa:bb:cc:01:00:01'
-            ipv4: disabled
-            ipv6: disabled
-          stor-port2:
-            type: ethernet
-            name: stor-port2
-            mac: 'aa:bb:cc:01:00:02'
-            ipv4: disabled
-            ipv6: disabled
-          mgmt:
-            type: bond
-            name: bond0
-            mode: 802.3ad
-            ports: [mgmt-port1, mgmt-port2]
-            ipv4: disabled
-            ipv6: disabled
-          storage:
-            type: bond
-            name: bond1
-            mode: 802.3ad
-            mtu: 9000
-            ports: [stor-port1, stor-port2]
-            ipv4: disabled
-            ipv6: disabled
-          mgmt-vlan:
-            type: vlan
-            name: bond0.100
-            id: 100
-            base: bond0
-            ipv4: static
-            ipv6: disabled
-          storage-vlan:
-            type: vlan
-            name: bond1.120
-            id: 120
-            base: bond1
-            mtu: 9000
-            ipv4: static
-            ipv6: disabled
-        routes:
-          default:
-            destination: 0.0.0.0/0
-            gateway: 10.0.0.1
-            interface: bond0.100
-        dns:
-          servers: [10.0.0.53]

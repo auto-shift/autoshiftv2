@@ -1,16 +1,25 @@
-# Provisioning Baremetal Clusters with AutoShift
+# Provisioning Clusters with AutoShift
 
-This guide covers provisioning baremetal OpenShift clusters using AutoShift's cluster-install policies, ACM Assisted Installer, and the SiteConfig operator.
+This guide covers provisioning OpenShift clusters using AutoShift's cluster-install policies. AutoShift supports multiple platforms:
+
+- **Baremetal** — ACM Assisted Installer + SiteConfig operator
+- **AWS** — Hive ClusterDeployment + IPI installer
 
 ## Overview
 
-AutoShift provisions baremetal clusters through three ACM policies that chain together:
+AutoShift provisions clusters through ACM policies that chain together. The `platform` field in `clusterInstall` determines which policies process the cluster:
 
+**Shared policies (all platforms):**
 1. **policy-cluster-install-prereqs** - Creates the cluster namespace, ClusterImageSet, and KlusterletAddonConfig
-2. **policy-cluster-install-secrets** - Copies BMC credentials and pull secrets into the cluster namespace
-3. **policy-cluster-install-siteconfig** - Creates all SiteConfig resources (ConfigMaps + ClusterInstance) that drive the Assisted Installer
+2. **policy-cluster-install-secrets** - Copies pull secrets (and BMC credentials for baremetal) into the cluster namespace
 
-Each policy depends on the previous one being Compliant before it runs. If source secrets don't exist, the secrets policy stays NonCompliant and no cluster is deployed.
+**Baremetal (`platform: baremetal`, default):**
+3. **policy-cluster-install-siteconfig** - Creates SiteConfig resources (ConfigMaps + ClusterInstance) that drive the Assisted Installer
+
+**AWS (`platform: aws`):**
+3. **policy-cluster-install-aws** - Creates Secrets, ClusterDeployment, MachinePool, and ManagedCluster for Hive IPI install
+
+Each policy depends on the previous one being Compliant before it runs.
 
 ## Architecture
 
@@ -172,7 +181,7 @@ disconnected:
         mirror: openshift/release-images  # path in mirror registry (host/mirror)
       - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
         mirror: openshift/release
-      - source: registry.redhat.io          # no mirror = host/path/source
+      - source: registry.redhat.io          # no mirror = host/path
       - source: quay.io
       - source: registry.access.redhat.com
   useIDMS: true                             # IDMS (OCP 4.13+) or ICSP (4.12-)
@@ -198,7 +207,8 @@ When `disconnected.mirrorRegistry` is configured:
 - **ClusterImageSet** `releaseImage` points to the mirror registry instead of `quay.io` (the Assisted Installer does NOT use IDMS for pulling the release image)
 - **mirror-registry-config ConfigMap** is created with `registries.conf` (TOML) and `ca-bundle.crt` in the cluster namespace
 - **AgentClusterInstall** gets `mirrorRegistryRef` pointing to this ConfigMap
-- **InfraEnv** gets `additionalTrustBundle` from the CA
+- **ClusterInstance** gets `extraManifestsRefs` with an IDMS ConfigMap injected as an extra manifest
+- **InfraEnv** gets `mirrorRegistryRef`, `additionalTrustBundle`, `imageType: full-iso`, and `ignitionConfigOverride` (permissive `policy.json` for unsigned mirrored images)
 - **disconnected-mirror policy** reads the same config for:
   - IDMS/ICSP — redirects image pulls from source registries to mirror
   - CatalogSources — mirrored operator catalogs
@@ -211,13 +221,14 @@ When `disconnected.mirrorRegistry` is configured:
 **`osImages`** — For disconnected environments, the Assisted Installer can't download RHCOS images from `mirror.openshift.com`. Download them and host on a local HTTP server:
 
 ```bash
-# Download RHCOS images for your OCP version
+# Download the RHCOS live ISO for your OCP version
 curl -O https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.20/latest/rhcos-live.x86_64.iso
-curl -O https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.20/latest/rhcos-live-rootfs.x86_64.img
 
-# Host on a local HTTP server accessible from the hub
+# Host on a local HTTP server or Artifactory accessible from the hub
 cp rhcos-live.x86_64.iso /var/www/html/rhcos/
 ```
+
+> **Note:** With `full-iso` (automatically set for disconnected), the rootfs is embedded in the ISO. You do not need to mirror the rootfs separately.
 
 The RHCOS version string (for the `version` field) can be found in the ISO filename or via `openshift-install coreos print-stream-json`.
 
@@ -236,6 +247,7 @@ Install-specific configuration. The `createCluster: 'true'` flag triggers provis
 ```yaml
 clusterInstall:
   createCluster: 'true'              # Required - triggers provisioning
+  platform: baremetal                 # 'baremetal' (default) or 'aws'
   baseDomain: example.com
   openshiftVersion: '4.20.12'
   cpuArch: x86_64                    # default: x86_64
@@ -786,3 +798,241 @@ oc describe configurationpolicy policy-cluster-install-siteconfig -n local-clust
 ### BareMetalHosts stuck in registering
 
 The BMC is unreachable. Verify BMC IP, credentials, and network connectivity from the hub cluster.
+
+---
+
+## AWS Cluster Provisioning
+
+AutoShift provisions AWS clusters through Hive ClusterDeployment using the IPI (Installer-Provisioned Infrastructure) method. The cluster-install policies create all required resources from the rendered-config.
+
+### Architecture
+
+```
+values files → cluster-config-maps policy → rendered-config ConfigMaps
+                                                    |
+                                                    v
+                                      cluster-install-aws policy
+                                                    |
+                                                    v
+                                      Secrets (AWS creds, SSH key, pull secret, install-config)
+                                      ClusterDeployment
+                                      MachinePool
+                                      ManagedCluster
+```
+
+### AWS Configuration Structure
+
+```yaml
+clusters:
+  my-aws-cluster:
+    config:
+      clusterSet: managed
+      networking:
+        clusterNetwork:
+          cidr: 10.128.0.0/14
+          hostPrefix: 23
+        machineNetwork:
+          cidr: 10.0.0.0/16
+        serviceNetwork:
+          - 172.30.0.0/16
+      clusterInstall:
+        createCluster: 'true'
+        platform: aws
+        baseDomain: example.com
+        openshiftVersion: '4.20.16'
+        pullSecretRef:
+          name: 'aws-creds'
+          key: 'pullSecret'
+          namespace: 'cluster-install-secrets'
+        secretSourceNamespace: 'cluster-install-secrets'
+      aws:
+        region: us-east-1
+        credentialRef: 'aws-creds'
+        sshPrivateKeyRef: 'aws-creds'
+        sshKeyRef:
+          name: 'aws-creds'
+          key: 'ssh-publickey'
+          namespace: 'cluster-install-secrets'
+        fips: true
+        networkType: OVNKubernetes
+        controlPlane:
+          instanceType: m5.xlarge
+          rootVolume:
+            iops: 4000
+            size: 100
+            type: io1
+        workers:
+          replicas: 3
+          instanceType: m5.xlarge
+          rootVolume:
+            iops: 2000
+            size: 100
+            type: io1
+```
+
+### AWS-Specific Fields
+
+#### aws
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `region` | Yes | - | AWS region (e.g., `us-east-1`) |
+| `credentialRef` | Yes | - | Secret name with `aws_access_key_id` and `aws_secret_access_key` keys |
+| `sshPrivateKeyRef` | Yes | - | Secret name with `ssh-privatekey` key |
+| `sshPublicKey` | No | - | Inline SSH public key for install-config |
+| `sshKeyRef` | No | - | Secret ref (`name`, `key`, `namespace`) for SSH public key |
+| `fips` | No | `false` | Enable FIPS mode (requires RSA or ECDSA SSH keys, not ed25519) |
+| `networkType` | No | `OVNKubernetes` | SDN type |
+| `controlPlane.instanceType` | No | `m5.xlarge` | Control plane EC2 instance type |
+| `controlPlane.rootVolume` | No | `{iops: 4000, size: 100, type: gp3}` | Control plane root volume config |
+| `workers.replicas` | No | `3` | Number of worker nodes |
+| `workers.instanceType` | No | `m5.xlarge` | Worker EC2 instance type |
+| `workers.rootVolume` | No | `{iops: 2000, size: 100, type: gp3}` | Worker root volume config |
+
+#### pullSecretRef (AWS)
+
+For AWS, `pullSecretRef` supports an object format to specify which key in the secret contains the pull secret:
+
+```yaml
+pullSecretRef:
+  name: 'aws-creds'                # secret name
+  key: 'pullSecret'                 # key in secret (default: .dockerconfigjson)
+  namespace: 'cluster-install-secrets'  # optional
+```
+
+### AWS Prerequisites
+
+#### AWS Credentials
+
+The AWS account needs sufficient IAM permissions to create VPCs, EC2 instances, ELBs, Route53 records, S3 buckets, and IAM roles. See the [OpenShift AWS IAM requirements](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_aws/installing-aws-account) for the full list of required permissions.
+
+You can use either:
+- **Long-lived credentials** — IAM user with access key and secret key
+- **STS (temporary credentials)** — See [Installing with STS](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_aws/installing-aws-customizations#installing-aws-with-short-term-creds_installing-aws-customizations)
+
+#### Generate SSH Keys
+
+The installer needs an SSH key pair — the private key goes into the ClusterDeployment for Hive, and the public key goes into the install-config for node access.
+
+```bash
+# ECDSA (required if FIPS is enabled)
+ssh-keygen -t ecdsa -b 521 -N '' -f ~/.ssh/ocp-cluster
+# Or RSA
+ssh-keygen -t rsa -b 4096 -N '' -f ~/.ssh/ocp-cluster
+```
+
+> **Warning:** Ed25519 keys are NOT supported when `fips: true`. Use ECDSA or RSA.
+
+#### Route53 Base Domain
+
+The `baseDomain` must be a Route53 hosted zone in the same AWS account. The installer creates DNS records for the API and ingress endpoints. Verify your hosted zone exists:
+
+```bash
+aws route53 list-hosted-zones --query 'HostedZones[*].Name'
+```
+
+### AWS Secrets
+
+All secrets can be in a single secret (matching the ACM GUI pattern) or separate secrets.
+
+#### Single Secret Pattern
+
+```bash
+oc create secret generic aws-creds \
+  -n cluster-install-secrets \
+  --from-literal=aws_access_key_id=<key> \
+  --from-literal=aws_secret_access_key=<secret> \
+  --from-file=ssh-privatekey=$HOME/.ssh/ocp-cluster \
+  --from-file=ssh-publickey=$HOME/.ssh/ocp-cluster.pub \
+  --from-file=pullSecret=~/pull-secret.json \
+  --from-literal=baseDomain=example.com
+```
+
+Then reference the same secret for all fields:
+```yaml
+aws:
+  credentialRef: 'aws-creds'
+  sshPrivateKeyRef: 'aws-creds'
+  sshKeyRef:
+    name: 'aws-creds'
+    key: 'ssh-publickey'
+pullSecretRef:
+  name: 'aws-creds'
+  key: 'pullSecret'
+```
+
+#### Separate Secrets Pattern
+
+```bash
+# AWS credentials
+oc create secret generic aws-creds \
+  -n cluster-install-secrets \
+  --from-literal=aws_access_key_id=<key> \
+  --from-literal=aws_secret_access_key=<secret>
+
+# SSH key
+oc create secret generic ssh-private-key \
+  -n cluster-install-secrets \
+  --from-file=ssh-privatekey=$HOME/.ssh/ocp-cluster
+
+# Pull secret
+oc create secret generic default-pull-secret \
+  -n cluster-install-secrets \
+  --from-file=.dockerconfigjson=~/pull-secret.json \
+  --type=kubernetes.io/dockerconfigjson
+```
+
+> **Note:** When FIPS is enabled (`fips: true`), SSH keys must be RSA or ECDSA. Ed25519 keys are not supported in FIPS mode.
+
+### AWS Disconnected Installation
+
+For disconnected AWS installs, add the `disconnected` config block. The install-config automatically includes `imageDigestSources` and `additionalTrustBundle` when mirrors are configured:
+
+```yaml
+config:
+  disconnected:
+    mirrorRegistry:
+      host: 'mirror.example.com:5000'
+      path: 'ocp'
+      ca: |
+        -----BEGIN CERTIFICATE-----
+        ...
+      mirrors:
+        - source: quay.io/openshift-release-dev/ocp-release
+          mirror: openshift/release-images
+        - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+          mirror: openshift/release
+        - source: registry.redhat.io
+        - source: quay.io
+```
+
+This produces an install-config with:
+- `imageDigestSources` — mirror mappings (creates IDMS on the installed cluster)
+- `additionalTrustBundle` — CA cert for the mirror registry
+
+### Monitoring AWS Installation
+
+```bash
+# Check policy status
+oc get policies -A | grep cluster-install
+
+# Check ClusterDeployment
+oc get clusterdeployment -n my-aws-cluster -o yaml
+
+# Check provision pod logs
+oc get pods -n my-aws-cluster | grep provision
+oc logs -n my-aws-cluster <provision-pod> -c hive
+
+# Check ManagedCluster
+oc get managedcluster my-aws-cluster
+```
+
+### AWS Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| SSH key type not supported with FIPS | Use RSA or ECDSA keys, not ed25519 |
+| AWS credentials invalid | Verify `aws_access_key_id` and `aws_secret_access_key` in source secret |
+| ClusterDeployment stuck | Check provision pod logs: `oc logs -n <cluster> <provision-pod> -c hive` |
+| Install-config validation error | Check the install-config secret: `oc get secret <cluster>-install-config -n <cluster> -o jsonpath='{.data.install-config\.yaml}' \| base64 -d` |
+| Release image not found | Verify ClusterImageSet exists: `oc get clusterimageset` |

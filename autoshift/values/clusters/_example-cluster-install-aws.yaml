@@ -13,24 +13,25 @@
 #
 # Prerequisites:
 #   - Hub clusterset must have: cluster-install: 'true'
-#   - Source secrets must exist (see below)
+#   - Source secret must exist (see below)
+#   - Route53 hosted zone for baseDomain
+#   - AWS IAM user with required permissions
+#     (see https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_aws/installing-aws-account)
 #
-# Required secrets in cluster-install-secrets namespace:
-#   - AWS credentials: oc create secret generic aws-creds \
-#       -n cluster-install-secrets \
-#       --from-literal=aws_access_key_id=<key> \
-#       --from-literal=aws_secret_access_key=<secret>
-#   - SSH private key: oc create secret generic ssh-private-key \
-#       -n cluster-install-secrets \
-#       --from-file=ssh-privatekey=$HOME/.ssh/ocp-cluster
-#   - Pull secret: oc create secret generic default-pull-secret \
-#       -n cluster-install-secrets \
-#       --from-file=.dockerconfigjson=~/pull-secret.json \
-#       --type=kubernetes.io/dockerconfigjson
+# Generate SSH keys (ECDSA or RSA required for FIPS, NOT ed25519):
+#   ssh-keygen -t ecdsa -b 521 -N '' -f ~/.ssh/ocp-cluster
 #
-# Config merge order (last wins):
-#   1. Clusterset config (from clusterSet field)
-#   2. Per-cluster config (this file)
+# Create the source secret (single secret pattern, matches ACM GUI):
+#   oc create namespace cluster-install-secrets
+#   oc create secret generic aws-creds \
+#     -n cluster-install-secrets \
+#     --from-literal=aws_access_key_id=<key> \
+#     --from-literal=aws_secret_access_key=<secret> \
+#     --from-file=ssh-privatekey=$HOME/.ssh/ocp-cluster \
+#     --from-file=ssh-publickey=$HOME/.ssh/ocp-cluster.pub \
+#     --from-file=pullSecret=~/pull-secret.json
+#
+# See docs/cluster-install.md for the full guide.
 # ==============================================================================
 
 clusters:
@@ -63,12 +64,10 @@ clusters:
         # clusterImageSet: ''                        # optional, overrides openshiftVersion
 
         # --- Secrets ---
-        # Pull secret — string name OR object with name/key/namespace
-        pullSecretRef: 'default-pull-secret'          # simple: secret name (uses .dockerconfigjson key)
-        # pullSecretRef:                               # detailed: specify secret, key, namespace
-        #   name: 'aws-creds'
-        #   key: 'pullSecret'
-        #   namespace: 'cluster-install-secrets'
+        pullSecretRef:                               # reference to pull secret
+          name: 'aws-creds'                          # secret name
+          key: 'pullSecret'                          # key in secret (default: .dockerconfigjson)
+          namespace: 'cluster-install-secrets'
         secretSourceNamespace: 'cluster-install-secrets'
 
         # --- Cluster Management ---
@@ -83,15 +82,14 @@ clusters:
       # =====================================================================
       aws:
         region: us-east-1
-        credentialRef: 'aws-creds'                   # secret in secretSourceNamespace
-        sshPrivateKeyRef: 'ssh-private-key'          # secret in secretSourceNamespace
-        # SSH public key — inline OR reference a Secret (not both)
-        sshPublicKey: 'ssh-ed25519 AAAAC3...'        # option 1: inline
-        # sshKeyRef:                                  # option 2: reference a Secret
-        #   name: 'ssh-private-key'                   # secret name (can be same as private key secret)
-        #   key: 'ssh-publickey'                      # key in the secret (default: ssh-publickey)
-        #   namespace: 'cluster-install-secrets'      # optional, defaults to secretSourceNamespace
-        fips: true                                    # default: false
+        credentialRef: 'aws-creds'                   # secret with aws_access_key_id + aws_secret_access_key
+        sshPrivateKeyRef: 'aws-creds'                # secret with ssh-privatekey key
+        sshKeyRef:                                   # reads ssh-publickey from secret for install-config
+          name: 'aws-creds'
+          key: 'ssh-publickey'
+          namespace: 'cluster-install-secrets'
+        # sshPublicKey: 'ssh-ecdsa AAAAE2...'        # OR inline public key instead of sshKeyRef
+        fips: true                                    # default: false (requires ECDSA or RSA keys)
         networkType: OVNKubernetes                    # default: OVNKubernetes
 
         # --- Control Plane ---
@@ -114,15 +112,24 @@ clusters:
       # =====================================================================
       # Disconnected — optional, same as baremetal
       # =====================================================================
+      # For disconnected AWS installs, the install-config automatically includes
+      # imageDigestSources and additionalTrustBundle from this config.
       # disconnected:
       #   mirrorRegistry:
       #     host: 'mirror.example.com:5000'
       #     path: 'ocp'
-      #     releaseImage: 'openshift/release-images'
-      #     ca: |
-      #       -----BEGIN CERTIFICATE-----
-      #       ...
+      #     caRef:                                   # reference a ConfigMap with the CA
+      #       name: 'cluster-ca-bundle'
+      #       key: 'ca-bundle.crt'
+      #       namespace: 'cluster-install-secrets'
+      #     # ca: |                                  # OR inline CA
+      #     #   -----BEGIN CERTIFICATE-----
+      #     #   ...
       #     mirrors:
       #       - source: quay.io/openshift-release-dev/ocp-release
       #         mirror: openshift/release-images
-      #       - source: registry.redhat.io
+      #       - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+      #         mirror: openshift/release
+      #       - source: registry.redhat.io           # no mirror = host/path
+      #       - source: quay.io
+      #       - source: registry.access.redhat.com
