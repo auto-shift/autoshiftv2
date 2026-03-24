@@ -33,16 +33,24 @@ cluster-config-maps policy    cluster-install policies
 raw ConfigMaps ----merge----> rendered-config ConfigMaps
                                       |
                                       v
-                              prereqs -> secrets -> siteconfig
-                                                      |
-                                                      v
-                                              ClusterInstance
-                                                      |
-                                                      v
-                                        AgentClusterInstall (+ mirrorRegistryRef),
-                                        ClusterDeployment, InfraEnv (+ CA),
-                                        ManagedCluster, BareMetalHosts (+ rootDeviceHints),
-                                        NMStateConfigs, mirror-registry-config
+                              prereqs -> secrets -> platform?
+                                                   /       \
+                                          baremetal         aws
+                                              |               |
+                                              v               v
+                                          siteconfig      cluster-install-aws
+                                              |               |
+                                              v               v
+                                      ClusterInstance    ClusterDeployment,
+                                              |          MachinePool,
+                                              v          ManagedCluster,
+                                AgentClusterInstall,     Secrets (AWS creds,
+                                ClusterDeployment,       SSH key, pull secret,
+                                InfraEnv (+ CA),         install-config)
+                                ManagedCluster,
+                                BareMetalHosts,
+                                NMStateConfigs,
+                                mirror-registry-config
 ```
 
 Cluster configuration is defined in values files and stored as ConfigMaps on the hub. ACM policies read these ConfigMaps at runtime via hub templates, merge clusterset defaults with per-cluster overrides, and generate all provisioning resources. This means adding a new cluster only requires adding a values file - no Helm re-rendering or ArgoCD sync needed.
@@ -52,7 +60,7 @@ Cluster configuration is defined in values files and stored as ConfigMaps on the
 - A hub cluster running AutoShift with ACM
 - The `cluster-install: 'true'` label on the hub clusterset (enables SiteConfig component on MCH)
 - The `acm-enable-provisioning: 'true'` label on the hub clusterset (enables provisioning infrastructure)
-- Source secrets pre-created (see [Create Source Secrets](#step-2-create-source-secrets))
+- Source secrets pre-created (see [Create Source Secrets and ConfigMaps](#step-2-create-source-secrets-and-configmaps))
 
 ## Configuration Structure
 
@@ -169,13 +177,13 @@ disconnected:
     path: 'ocp'                             # optional, image path prefix
     releaseImage: 'openshift/ocp-release'   # optional, defaults to openshift-release-dev/ocp-release
                                             # path depends on how oc-mirror stored the content
-    ca: |                                   # CA bundle for the mirror registry
-      -----BEGIN CERTIFICATE-----
-      ...
-    # caRef:                               # OR reference a hub ConfigMap
-    #   name: 'cluster-ca-bundle'
-    #   key: 'ca-bundle.crt'
-    #   namespace: 'cluster-install-secrets'
+    caRef:                                  # reference a hub ConfigMap for CA bundle
+      name: 'cluster-ca-bundle'
+      key: 'ca-bundle.crt'
+      namespace: 'cluster-install-secrets'
+    # ca: |                                 # OR inline CA bundle
+    #   -----BEGIN CERTIFICATE-----
+    #   ...
     mirrors:                                # source → mirror path mappings
       - source: quay.io/openshift-release-dev/ocp-release
         mirror: openshift/release-images  # path in mirror registry (host/mirror)
@@ -216,7 +224,7 @@ When `disconnected.mirrorRegistry` is configured:
   - **Registry CA trust** — creates a ConfigMap in `openshift-config` with the CA and patches `image.config.openshift.io/cluster` so the managed cluster trusts the mirror registry post-install
 - **ACM provisioning policy** reads the hub's disconnected config for:
   - `mirrorRegistryRef` on AgentServiceConfig — so the Assisted Installer trusts the mirror
-  - `osImages` — custom live ISO and rootfs URLs for disconnected boot
+  - `osImages` — custom live ISO URL for disconnected boot
 
 **`osImages`** — For disconnected environments, the Assisted Installer can't download RHCOS images from `mirror.openshift.com`. Download them and host on a local HTTP server:
 
@@ -422,7 +430,12 @@ oc get secret,configmap -n cluster-install-secrets
 
 ### Step 3: Define the Cluster
 
-Create a values file for your cluster under `autoshift/values/clusters/`:
+Copy the appropriate example file and rename it after your cluster:
+
+- **Baremetal**: `cp autoshift/values/clusters/_example-cluster-install.yaml autoshift/values/clusters/my-cluster.yaml`
+- **AWS**: `cp autoshift/values/clusters/_example-cluster-install-aws.yaml autoshift/values/clusters/my-aws-cluster.yaml`
+
+The example files are fully commented with all available options. Edit the copy to match your environment — at minimum you need:
 
 ```yaml
 # autoshift/values/clusters/my-cluster.yaml
@@ -431,120 +444,24 @@ clusters:
     config:
       clusterSet: managed
       networking:
-        clusterNetwork:
-          cidr: 10.128.0.0/14
-          hostPrefix: 23
-        machineNetwork:
-          cidr: '10.0.0.0/25'
-        serviceNetwork:
-          - 172.30.0.0/16
-        interfaces:
-          eno1:
-            type: ethernet
-            name: eno1
-            state: up
-            ipv4: disabled
-            ipv6: disabled
-          eno2:
-            type: ethernet
-            name: eno2
-            state: up
-            ipv4: disabled
-            ipv6: disabled
-          mgmt:
-            type: bond
-            name: bond0
-            mode: active-backup
-            ports: [eno1, eno2]
-            ipv4: disabled
-            ipv6: disabled
-          mgmt-vlan:
-            type: vlan
-            name: bond0.100
-            id: 100
-            base: bond0
-            ipv4: static
-            ipv6: disabled
-        routes:
-          default:
-            destination: 0.0.0.0/0
-            gateway: '10.0.0.1'
-            interface: bond0.100
-        dns:
-          servers: [10.0.0.53]
+        # ... SDN networks, interfaces, routes, DNS (see example file)
       hosts:
-        master-0:
-          role: master
-          bmcIP: '192.168.1.10'
-          bmcPrefix: 'redfish-virtualmedia'
-          bootMACAddress: 'aa:bb:cc:dd:ee:01'
-          primaryMac: 'aa:bb:cc:dd:ee:02'
-          rootDeviceHints:
-            deviceName: '/dev/sda'
-          interfaces:
-            - macAddress: 'aa:bb:cc:dd:ee:01'
-              name: 'eno1'
-            - macAddress: 'aa:bb:cc:dd:ee:02'
-              name: 'eno2'
-          networking:
-            interfaces:
-              mgmt-vlan:
-                ipv4:
-                  addresses:
-                    - ip: 10.0.0.10
-                      prefixLength: 25
-        master-1:
-          role: master
-          bmcIP: '192.168.1.11'
-          bmcPrefix: 'redfish-virtualmedia'
-          bootMACAddress: 'aa:bb:cc:dd:ee:11'
-          primaryMac: 'aa:bb:cc:dd:ee:12'
-          rootDeviceHints:
-            deviceName: '/dev/sda'
-          interfaces:
-            - macAddress: 'aa:bb:cc:dd:ee:11'
-              name: 'eno1'
-            - macAddress: 'aa:bb:cc:dd:ee:12'
-              name: 'eno2'
-          networking:
-            interfaces:
-              mgmt-vlan:
-                ipv4:
-                  addresses:
-                    - ip: 10.0.0.11
-                      prefixLength: 25
-        master-2:
-          role: master
-          bmcIP: '192.168.1.12'
-          bmcPrefix: 'redfish-virtualmedia'
-          bootMACAddress: 'aa:bb:cc:dd:ee:21'
-          primaryMac: 'aa:bb:cc:dd:ee:22'
-          rootDeviceHints:
-            deviceName: '/dev/sda'
-          interfaces:
-            - macAddress: 'aa:bb:cc:dd:ee:21'
-              name: 'eno1'
-            - macAddress: 'aa:bb:cc:dd:ee:22'
-              name: 'eno2'
-          networking:
-            interfaces:
-              mgmt-vlan:
-                ipv4:
-                  addresses:
-                    - ip: 10.0.0.12
-                      prefixLength: 25
+        # ... per-host BMC, MAC, interfaces (see example file)
       clusterInstall:
         createCluster: 'true'
+        platform: baremetal              # or 'aws'
         baseDomain: example.com
         openshiftVersion: '4.20.12'
-        controlPlaneAgents: 3
-        apiVip: '10.0.0.2'
-        ingressVip: '10.0.0.3'
-        sshPublicKey: 'ssh-rsa AAAAB3...'
+        controlPlaneAgents: 3            # 1 = SNO
+        apiVip: '10.0.0.2'              # required for multi-node
+        ingressVip: '10.0.0.3'          # required for multi-node
+        sshPublicKey: 'ssh-rsa ...'     # or sshPublicKeyRef
         pullSecretRef: 'default-pull-secret'
         bmcCredentialRef: 'default-bmc-cred'
         secretSourceNamespace: 'cluster-install-secrets'
 ```
+
+See the [Configuration Structure](#configuration-structure) sections above for field details.
 
 ### Step 4: Add the Values File to ArgoCD
 
@@ -662,7 +579,7 @@ disconnected:
       namespace: 'cluster-install-secrets' # optional, defaults to policy namespace
 ```
 
-The refs are resolved at runtime by ACM policies via hub template `lookup`. If the referenced ConfigMap does not exist, the policy falls back to the inline value. If neither is set, the field is empty.
+The refs are resolved at runtime by ACM policies via hub template `lookup`. If the referenced ConfigMap does not exist, the policy will error. Ensure the ConfigMap is created before provisioning.
 
 This is a good candidate for clusterset defaults — define the refs once and all clusters inherit them:
 
@@ -741,7 +658,9 @@ SNO clusters automatically get `userManagedNetworking: true` and do not require 
 The policy dependency chain prevents partial deployments:
 
 ```
-prereqs (Compliant) --> secrets (Compliant) --> siteconfig
+                                                 /--> siteconfig (baremetal)
+prereqs (Compliant) --> secrets (Compliant) --<
+                                                 \--> cluster-install-aws (aws)
 ```
 
 - If source secrets don't exist, the secrets policy stays **NonCompliant** and siteconfig never runs
@@ -752,14 +671,14 @@ prereqs (Compliant) --> secrets (Compliant) --> siteconfig
 
 AutoShift validates cluster-install configuration at Helm render time via `_validate-cluster-install.tpl`. This catches config errors before they reach ACM. Validated fields include:
 
-- **Required fields**: `baseDomain`, `openshiftVersion` (or `clusterImageSet`), `sshPublicKey` (or ref), `pullSecretRef`, `bmcCredentialRef`
+- **Required fields**: `baseDomain`, `openshiftVersion` (or `clusterImageSet`), `pullSecretRef`, `bmcCredentialRef` (baremetal), `sshPublicKey` or ref (baremetal only)
 - **Multi-node**: `apiVip` and `ingressVip` required when `controlPlaneAgents > 1`
 - **Host counts**: Number of hosts must match `controlPlaneAgents` + `workerAgents`
 - **Role counts**: Number of hosts with `role: master` must match `controlPlaneAgents`
 - **SNO**: Exactly 1 host when `controlPlaneAgents: 1`
-- **Disconnected**: `url` required when `sources` defined, `ca` or `caRef` required when `sources` defined, `url` required when `catalogs` defined
+- **Disconnected**: `host` required when `mirrors` defined, `ca` or `caRef` required when `mirrors` defined, `host` required when `catalogs` defined
 - **Catalog entries**: `source`, `imagePath`, `tag` required for each catalog
-- **OS images**: `openshiftVersion`, `url`, `rootFSUrl` required for each osImage entry
+- **OS images**: `openshiftVersion`, `version`, `url` required for each osImage entry
 - **rootDeviceHints**: Only valid hint keys accepted
 - **Networking**: Interface types, modes, VLAN base references, static IP addresses validated
 
@@ -822,53 +741,7 @@ values files → cluster-config-maps policy → rendered-config ConfigMaps
 
 ### AWS Configuration Structure
 
-```yaml
-clusters:
-  my-aws-cluster:
-    config:
-      clusterSet: managed
-      networking:
-        clusterNetwork:
-          cidr: 10.128.0.0/14
-          hostPrefix: 23
-        machineNetwork:
-          cidr: 10.0.0.0/16
-        serviceNetwork:
-          - 172.30.0.0/16
-      clusterInstall:
-        createCluster: 'true'
-        platform: aws
-        baseDomain: example.com
-        openshiftVersion: '4.20.16'
-        pullSecretRef:
-          name: 'aws-creds'
-          key: 'pullSecret'
-          namespace: 'cluster-install-secrets'
-        secretSourceNamespace: 'cluster-install-secrets'
-      aws:
-        region: us-east-1
-        credentialRef: 'aws-creds'
-        sshPrivateKeyRef: 'aws-creds'
-        sshKeyRef:
-          name: 'aws-creds'
-          key: 'ssh-publickey'
-          namespace: 'cluster-install-secrets'
-        fips: true
-        networkType: OVNKubernetes
-        controlPlane:
-          instanceType: m5.xlarge
-          rootVolume:
-            iops: 4000
-            size: 100
-            type: io1
-        workers:
-          replicas: 3
-          instanceType: m5.xlarge
-          rootVolume:
-            iops: 2000
-            size: 100
-            type: io1
-```
+For a complete working example, see [`autoshift/values/clusters/_example-cluster-install-aws.yaml`](../autoshift/values/clusters/_example-cluster-install-aws.yaml). The example file includes all available fields with comments explaining each option.
 
 ### AWS-Specific Fields
 
@@ -986,29 +859,9 @@ oc create secret generic default-pull-secret \
 
 ### AWS Disconnected Installation
 
-For disconnected AWS installs, add the `disconnected` config block. The install-config automatically includes `imageDigestSources` and `additionalTrustBundle` when mirrors are configured:
+For disconnected AWS installs, add the `disconnected` config block. The disconnected config structure is the same as baremetal — see the [disconnected](#disconnected) section above for all fields. Both example files ([baremetal](../autoshift/values/clusters/_example-cluster-install.yaml), [AWS](../autoshift/values/clusters/_example-cluster-install-aws.yaml)) include a commented-out disconnected block ready to uncomment.
 
-```yaml
-config:
-  disconnected:
-    mirrorRegistry:
-      host: 'mirror.example.com:5000'
-      path: 'ocp'
-      ca: |
-        -----BEGIN CERTIFICATE-----
-        ...
-      mirrors:
-        - source: quay.io/openshift-release-dev/ocp-release
-          mirror: openshift/release-images
-        - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
-          mirror: openshift/release
-        - source: registry.redhat.io
-        - source: quay.io
-```
-
-This produces an install-config with:
-- `imageDigestSources` — mirror mappings (creates IDMS on the installed cluster)
-- `additionalTrustBundle` — CA cert for the mirror registry
+The install-config automatically includes `imageDigestSources` and `additionalTrustBundle` when mirrors are configured.
 
 ### Monitoring AWS Installation
 

@@ -531,14 +531,20 @@ Disconnected mirror configuration is centralized in `config.disconnected` within
 config:
   disconnected:
     mirrorRegistry:
-      url: 'mirror.example.com:5000/ocp'        # single URL
-      ca: |                                       # CA for mirror registry
-        -----BEGIN CERTIFICATE-----
-        ...
-      sources:                                    # registries to mirror
-        - registry.redhat.io
-        - quay.io
-        - registry.access.redhat.com
+      host: 'mirror.example.com:5000'            # registry host:port
+      path: 'ocp'                                 # optional, image path prefix
+      caRef:                                      # reference a hub ConfigMap for CA
+        name: 'cluster-ca-bundle'
+        key: 'ca-bundle.crt'
+        namespace: 'cluster-install-secrets'
+      mirrors:                                    # source → mirror path mappings
+        - source: quay.io/openshift-release-dev/ocp-release
+          mirror: openshift/release-images
+        - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+          mirror: openshift/release
+        - source: registry.redhat.io
+        - source: quay.io
+        - source: registry.access.redhat.com
     disableDefaultCatalogs: true                  # disable default OperatorHub
     catalogs:                                     # name = {source}-{mirror-catalog-suffix label}
       - source: redhat-operators
@@ -565,17 +571,6 @@ labels:
 # Generate ImageSet for disconnected environments
 bash scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml,autoshift/values/clustersets/sbx.yaml \
   --output imageset-multi-env.yaml
-```
-
-#### Testing Trim Markers
-
-The cluster-labels policy includes a debug mode (`debug: true`) that deploys a trim-marker test policy. It creates ConfigMaps with resolved template output as plain strings, letting you see exactly how ACM renders different `{{-` vs `{{` patterns without YAML validation interfering. Use this to test new template patterns before putting them in real policies.
-
-```bash
-# Enable debug mode on the cluster-labels ArgoCD app
-# Then read the results:
-oc get configmap trim-test-results -n <policy-namespace> -o jsonpath='{.data.raw-results}'
-oc get configmap trim-test-hub-results -n <policy-namespace> -o jsonpath='{.data.hub-results}'
 ```
 
 ### AutoShift Scripts and Label Requirements
