@@ -10,6 +10,7 @@ Complete documentation for AutoShift - Infrastructure as Code for OpenShift usin
 
 ### Configuration
 - **[Values Reference](values-reference.md)** - All cluster labels and configuration options
+- **[Workload Partitioning](workload-partitioning.md)** - CPU isolation, PerformanceProfile sizing, NUMA topology
 
 ### Release & Operations
 - **[Release & OCI Guide](releases.md)** - Release process, OCI mode, private registries, disconnected environments, version management

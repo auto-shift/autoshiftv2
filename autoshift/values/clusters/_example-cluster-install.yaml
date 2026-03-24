@@ -218,6 +218,26 @@ clusters:
       #       url: 'https://mirror.example.com/rhcos/rhcos-live.x86_64.iso'
 
       # =====================================================================
+      # Workload Partitioning — CPU isolation via PerformanceProfile
+      # =====================================================================
+      # Requires autoshift.io/workload-partitioning: 'true' label on the cluster.
+      # For full platform pod pinning, also set cpuPartitioning: 'AllNodes'
+      # in clusterInstall (install-time only).
+      # workloadPartitioning:
+      #   reservedCpus: '0-3'              # CPUs for control plane / OS / platform
+      #   isolatedCpus: '4-31'            # CPUs available for user workloads
+      #   nodeSelector:                    # Optional: which nodes (default: masters)
+      #     node-role.kubernetes.io/master: ''
+      #   numaTopology: 'single-numa-node' # Optional: 'single-numa-node', 'best-effort', 'restricted'
+      #   realTimeKernel: false            # Optional: enable real-time kernel
+      #   hugepages:                       # Optional: huge pages config
+      #     defaultSize: '1G'
+      #     pages:
+      #       - size: '1G'
+      #         count: 4
+      #         node: 0                    # Optional: NUMA node
+
+      # =====================================================================
       # Cluster Install — install-specific config
       # =====================================================================
       clusterInstall:
@@ -235,6 +255,7 @@ clusters:
         apiVip: '10.0.0.2'                          # required for multi-node
         ingressVip: '10.0.0.3'                      # required for multi-node
         # mastersSchedulable: false                 # default: false
+        # cpuPartitioning: 'AllNodes'               # 'None' (default) or 'AllNodes' — install-time only
 
         # --- SSH Key (inline or ConfigMap ref) ---
         sshPublicKey: 'ssh-rsa AAAAB3...'

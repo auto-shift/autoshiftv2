@@ -256,6 +256,29 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `master-nodes`                    | bool              | `false`                   |       |
 | `master-max-pods`                 | int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
 
+### Workload Partitioning
+
+CPU isolation via PerformanceProfile. Dedicates CPUs to the control plane (reserved) and makes the rest available for user workloads (isolated). See [workload-partitioning.md](workload-partitioning.md) for sizing guidelines, NUMA topology, and examples.
+
+**Label:**
+
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `workload-partitioning`           | bool              | `false`                   | Enable the workload partitioning policy |
+
+**Config block** (`config.workloadPartitioning`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `reservedCpus` | string | **(required)** | CPU set for control plane / OS / platform (e.g., `0-11,60-71`) |
+| `isolatedCpus` | string | **(required)** | CPU set for user workloads (e.g., `12-59,72-119`) |
+| `nodeSelector` | map | `node-role.kubernetes.io/master: ''` | Which nodes the PerformanceProfile targets |
+| `numaTopology` | string | | `single-numa-node`, `best-effort`, or `restricted` |
+| `realTimeKernel` | bool | `false` | Enable the real-time kernel |
+| `globallyDisableIrqLoadBalancing` | bool | `false` | Disable IRQ load balancing on isolated CPUs |
+| `hugepages.defaultSize` | string | | Default huge page size (`1G`, `2M`) |
+| `hugepages.pages` | list | | List of `{size, count, node}` allocations |
+
 ### Machine Health Checks
 
 Automated node health monitoring and remediation.

@@ -266,6 +266,7 @@ clusterInstall:
   apiVip: '10.0.0.1'                # required for multi-node
   ingressVip: '10.0.0.2'            # required for multi-node
   mastersSchedulable: false          # default: false
+  cpuPartitioning: 'None'            # 'None' (default) or 'AllNodes' — install-time only, see docs/workload-partitioning.md
   pullSecretRef: 'default-pull-secret'
   bmcCredentialRef: 'default-bmc-cred'
   bmcEndpoint: '/redfish/v1/Systems/1'

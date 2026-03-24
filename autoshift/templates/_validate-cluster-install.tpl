@@ -6,7 +6,11 @@ Collects all errors and reports them together.
 {{- define "autoshift.validate-cluster-install" -}}
 
 {{/* ===== Valid key lists — add new fields here ===== */}}
-{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
+{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
+{{- $validWpKeys := list "reservedCpus" "isolatedCpus" "nodeSelector" "numaTopology" "realTimeKernel" "globallyDisableIrqLoadBalancing" "hugepages" }}
+{{- $validWpHugepagesKeys := list "defaultSize" "pages" }}
+{{- $validWpPageKeys := list "size" "count" "node" }}
+{{- $validNumaTopologies := list "single-numa-node" "best-effort" "restricted" }}
 {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" "osImages" }}
 {{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "mirrors" "releaseImage" }}
 {{- $validMirrorEntryKeys := list "source" "mirror" }}
@@ -459,6 +463,52 @@ Collects all errors and reports them together.
     {{- end }}
 
   {{- end }}
+
+  {{/* ===== Validate workloadPartitioning config (applies to all clusters) ===== */}}
+  {{- $wp := (dig "config" "workloadPartitioning" dict $cluster) }}
+  {{- if not (empty $wp) }}
+    {{- $wpErrors := list }}
+    {{- range $key, $_ := $wp }}
+      {{- if not (has $key $validWpKeys) }}
+        {{- $wpErrors = append $wpErrors (printf "cluster %s: workloadPartitioning.%s is not a recognized field (valid: %s)" $clusterName $key (join ", " $validWpKeys)) }}
+      {{- end }}
+    {{- end }}
+    {{- if and (index $wp "reservedCpus") (not (index $wp "isolatedCpus")) }}
+      {{- $wpErrors = append $wpErrors (printf "cluster %s: workloadPartitioning.isolatedCpus is required when reservedCpus is set" $clusterName) }}
+    {{- end }}
+    {{- if and (index $wp "isolatedCpus") (not (index $wp "reservedCpus")) }}
+      {{- $wpErrors = append $wpErrors (printf "cluster %s: workloadPartitioning.reservedCpus is required when isolatedCpus is set" $clusterName) }}
+    {{- end }}
+    {{- $wpNuma := (index $wp "numaTopology" | default "") }}
+    {{- if and (not (empty $wpNuma)) (not (has (toString $wpNuma) $validNumaTopologies)) }}
+      {{- $wpErrors = append $wpErrors (printf "cluster %s: workloadPartitioning.numaTopology must be one of: %s (got: %s)" $clusterName (join ", " $validNumaTopologies) $wpNuma) }}
+    {{- end }}
+    {{- $wpHugepages := (index $wp "hugepages" | default dict) }}
+    {{- if not (empty $wpHugepages) }}
+      {{- range $key, $_ := $wpHugepages }}
+        {{- if not (has $key $validWpHugepagesKeys) }}
+          {{- $wpErrors = append $wpErrors (printf "cluster %s: workloadPartitioning.hugepages.%s is not a recognized field (valid: %s)" $clusterName $key (join ", " $validWpHugepagesKeys)) }}
+        {{- end }}
+      {{- end }}
+      {{- range $idx, $page := ($wpHugepages.pages | default list) }}
+        {{- range $key, $_ := $page }}
+          {{- if not (has $key $validWpPageKeys) }}
+            {{- $wpErrors = append $wpErrors (printf "cluster %s: workloadPartitioning.hugepages.pages[%d].%s is not a recognized field (valid: %s)" $clusterName $idx $key (join ", " $validWpPageKeys)) }}
+          {{- end }}
+        {{- end }}
+        {{- if not (index $page "size") }}
+          {{- $wpErrors = append $wpErrors (printf "cluster %s: workloadPartitioning.hugepages.pages[%d].size is required" $clusterName $idx) }}
+        {{- end }}
+        {{- if not (index $page "count") }}
+          {{- $wpErrors = append $wpErrors (printf "cluster %s: workloadPartitioning.hugepages.pages[%d].count is required" $clusterName $idx) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- if gt (len $wpErrors) 0 }}
+      {{- fail (printf "\n\nWorkload partitioning validation failed for '%s' (%d errors):\n  - %s\n" $clusterName (len $wpErrors) (join "\n  - " $wpErrors)) }}
+    {{- end }}
+  {{- end }}
+
 {{- end }}
 
 {{/* ===== Validate clusterset configs (disconnected, networking, etc.) ===== */}}
@@ -536,6 +586,48 @@ Collects all errors and reports them together.
         {{- end }}
       {{- end }}
     {{- end }}
+
+    {{/* Validate workloadPartitioning config on clustersets */}}
+    {{- $csWp := ($csConfig.workloadPartitioning | default dict) }}
+    {{- if not (empty $csWp) }}
+      {{- range $key, $_ := $csWp }}
+        {{- if not (has $key $validWpKeys) }}
+          {{- $errors = append $errors (printf "%s: workloadPartitioning.%s is not a recognized field (valid: %s)" $csPath $key (join ", " $validWpKeys)) }}
+        {{- end }}
+      {{- end }}
+      {{- if and (index $csWp "reservedCpus") (not (index $csWp "isolatedCpus")) }}
+        {{- $errors = append $errors (printf "%s: workloadPartitioning.isolatedCpus is required when reservedCpus is set" $csPath) }}
+      {{- end }}
+      {{- if and (index $csWp "isolatedCpus") (not (index $csWp "reservedCpus")) }}
+        {{- $errors = append $errors (printf "%s: workloadPartitioning.reservedCpus is required when isolatedCpus is set" $csPath) }}
+      {{- end }}
+      {{- $csWpNuma := (index $csWp "numaTopology" | default "") }}
+      {{- if and (not (empty $csWpNuma)) (not (has (toString $csWpNuma) $validNumaTopologies)) }}
+        {{- $errors = append $errors (printf "%s: workloadPartitioning.numaTopology must be one of: %s (got: %s)" $csPath (join ", " $validNumaTopologies) $csWpNuma) }}
+      {{- end }}
+      {{- $csWpHugepages := (index $csWp "hugepages" | default dict) }}
+      {{- if not (empty $csWpHugepages) }}
+        {{- range $key, $_ := $csWpHugepages }}
+          {{- if not (has $key $validWpHugepagesKeys) }}
+            {{- $errors = append $errors (printf "%s: workloadPartitioning.hugepages.%s is not a recognized field (valid: %s)" $csPath $key (join ", " $validWpHugepagesKeys)) }}
+          {{- end }}
+        {{- end }}
+        {{- range $idx, $page := ($csWpHugepages.pages | default list) }}
+          {{- range $key, $_ := $page }}
+            {{- if not (has $key $validWpPageKeys) }}
+              {{- $errors = append $errors (printf "%s: workloadPartitioning.hugepages.pages[%d].%s is not a recognized field (valid: %s)" $csPath $idx $key (join ", " $validWpPageKeys)) }}
+            {{- end }}
+          {{- end }}
+          {{- if not (index $page "size") }}
+            {{- $errors = append $errors (printf "%s: workloadPartitioning.hugepages.pages[%d].size is required" $csPath $idx) }}
+          {{- end }}
+          {{- if not (index $page "count") }}
+            {{- $errors = append $errors (printf "%s: workloadPartitioning.hugepages.pages[%d].count is required" $csPath $idx) }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
     {{- if gt (len $errors) 0 }}
       {{- fail (printf "\n\nClusterset config validation failed for '%s' (%d errors):\n  - %s\n" $csPath (len $errors) (join "\n  - " $errors)) }}
     {{- end }}
