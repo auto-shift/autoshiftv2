@@ -85,6 +85,23 @@ spec:
             {{ "{{-" }} $clusterNetwork := (index $networking "clusterNetwork") {{ "}}" }}
             {{ "{{-" }} $machineNetwork := (index $networking "machineNetwork") {{ "}}" }}
             {{ "{{-" }} $serviceNetwork := (index $networking "serviceNetwork") {{ "}}" }}
+            {{ "{{-" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
+            {{ "{{-" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
+            {{ "{{-" }} $mirrorHost := (index $mirrorReg "host" | default "") {{ "}}" }}
+            {{ "{{-" }} $mirrorPath := (index $mirrorReg "path" | default "") {{ "}}" }}
+            {{ "{{-" }} $mirrorUrl := $mirrorHost {{ "}}" }}
+            {{ "{{-" }} if $mirrorPath {{ "}}" }}
+            {{ "{{-" }} $mirrorUrl = (printf "%s/%s" $mirrorHost $mirrorPath) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $mirrors := (index $mirrorReg "mirrors" | default list) {{ "}}" }}
+            {{ "{{-" }} $caTrustBundle := (index $mirrorReg "ca" | default "") {{ "}}" }}
+            {{ "{{-" }} $caRef := (index $mirrorReg "caRef" | default dict) {{ "}}" }}
+            {{ "{{-" }} if not (empty $caRef) {{ "}}" }}
+            {{ "{{-" }} $caRefNs := (index $caRef "namespace" | default $secretSourceNs) {{ "}}" }}
+            {{ "{{-" }} $caRefCM := (lookup "v1" "ConfigMap" $caRefNs (index $caRef "name")) | default dict {{ "}}" }}
+            {{ "{{-" }} $caRefData := (index $caRefCM "data" | default dict) {{ "}}" }}
+            {{ "{{-" }} $caTrustBundle = (index $caRefData (index $caRef "key") | default $caTrustBundle) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} $installConfig := (dict
                 "apiVersion" "v1"
                 "metadata" (dict "name" $clusterName)
@@ -116,6 +133,23 @@ spec:
                 "pullSecret" ""
                 "sshKey" $sshPublicKey
             ) {{ "}}" }}
+            {{ "{{-" }} if (gt (len $mirrors) 0) {{ "}}" }}
+            {{ "{{-" }} $imageSources := list {{ "}}" }}
+            {{ "{{-" }} range $_, $entry := $mirrors {{ "}}" }}
+            {{ "{{-" }} $source := (index $entry "source") {{ "}}" }}
+            {{ "{{-" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "}}" }}
+            {{ "{{-" }} if $mirrorLoc {{ "}}" }}
+            {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "}}" }}
+            {{ "{{-" }} else {{ "}}" }}
+            {{ "{{-" }} $mirrorLoc = $mirrorUrl {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $imageSources = append $imageSources (dict "source" $source "mirrors" (list $mirrorLoc)) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $_ := set $installConfig "imageDigestSources" $imageSources {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if $caTrustBundle {{ "}}" }}
+            {{ "{{-" }} $_ := set $installConfig "additionalTrustBundle" $caTrustBundle {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{/* ===== AWS Credentials Secret ===== */}}
             - complianceType: musthave
               objectDefinition:
