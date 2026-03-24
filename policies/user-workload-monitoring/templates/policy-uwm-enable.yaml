@@ -1,6 +1,10 @@
 # This policy enables and configures User Workload Monitoring on managed clusters.
 # Reads UWM config from rendered-config ConfigMaps via hub template lookup.
 #
+# Required config fields (under config.uwm):
+#   prometheus.storage    - Prometheus PVC size (e.g., '50Gi')
+#   thanosRuler.storage   - Thanos Ruler PVC size (e.g., '10Gi')
+#
 {{- $policyNamespace := $.Values.policy_namespace }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -39,10 +43,7 @@ spec:
                 data:
                   config.yaml: |
                     enableUserWorkload: true
-    - extraDependencies:
-        - name: uwm-enable
-          compliance: Compliant
-      objectDefinition:
+    - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
@@ -83,7 +84,7 @@ spec:
                     {{ "{{hub-" }} end {{ "hub}}" }}
                           resources:
                             requests:
-                              storage: {{ "{{hub" }} index $prom "storage" | default "50Gi" {{ "hub}}" }}
+                              storage: {{ "{{hub" }} index $prom "storage" {{ "hub}}" }}
                     {{ "{{hub-" }} $promResources := (index $prom "resources" | default dict) {{ "hub}}" }}
                     {{ "{{hub-" }} if not (empty $promResources) {{ "hub}}" }}
                       resources:
@@ -102,7 +103,7 @@ spec:
                     {{ "{{hub-" }} end {{ "hub}}" }}
                           resources:
                             requests:
-                              storage: {{ "{{hub" }} index $thanos "storage" | default "10Gi" {{ "hub}}" }}
+                              storage: {{ "{{hub" }} index $thanos "storage" {{ "hub}}" }}
                     {{ "{{hub-" }} $thanosResources := (index $thanos "resources" | default dict) {{ "hub}}" }}
                     {{ "{{hub-" }} if not (empty $thanosResources) {{ "hub}}" }}
                       resources:
