@@ -20,7 +20,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: create-aap-namespace
+          name: aap-operator-ns
         spec:
           remediationAction: enforce
           severity: high
@@ -34,6 +34,8 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.aap.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
@@ -44,20 +46,16 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            name: {{ .Values.aap.name }}
+            # if operator group exists in namespace use that, otherwise use namespace name as default
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.aap.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.aap.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.aap.namespace }}
             targetNamespaces:
               - {{ .Values.aap.namespace }}
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-subscription-name" | default "{{ .Values.aap.name }}" {{ "hub}}" }}'
             namespace: {{ .Values.aap.namespace }}
-            # Source Selection Logic (evaluated on hub for each managed cluster):
-            # 1. If cluster has explicit 'autoshift.io/aap-source' label → use that value
-            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
-            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
-            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
-            # 3. Else → use standard source (e.g., redhat-operators)
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-source" | default (ternary (printf "%s-%s" "{{ .Values.aap.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.aap.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
+            # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
+            source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/aap-source" | default "{{ .Values.aap.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-source-namespace" | default "{{ .Values.aap.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-channel" | default "{{ .Values.aap.channel }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-version" | default "" {{ "hub}}" }}'
@@ -66,26 +64,6 @@ spec:
           upgradeApproval: Automatic
           versions:
             - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/aap-version" | default "" {{ "hub}}" }}'
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: openshift-aap-csv-check
-        spec:
-          remediationAction: inform
-          severity: high
-          evaluationInterval:
-            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: operators.coreos.com/v1alpha1
-                kind: ClusterServiceVersion
-                metadata:
-                  namespace: {{ .Values.aap.namespace }}
-                status:
-                  phase: Succeeded
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

@@ -1,9 +1,10 @@
-# This policy verifies the installation of the official & supported version of
-# the NMState Operator on the managed clusters.
+{{- $policyName := "policy-nmstate-operator-install" }}
+{{- $placementName := "placement-policy-nmstate-operator-install" }}
+
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-nmstate-operator-install
+  name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -21,7 +22,7 @@ spec:
         metadata:
           name: nmstate-operator-ns
         spec:
-          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          remediationAction: enforce
           severity: high
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
@@ -45,7 +46,7 @@ spec:
           severity: high
           complianceType: musthave
           operatorGroup:
-            # if operator group exists in namespace use that
+            # if operator group exists in namespace use that, otherwise use namespace name as default
             name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.nmstate.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.nmstate.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.nmstate.namespace }}
             targetNamespaces:
@@ -53,55 +54,28 @@ spec:
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nmstate-subscription-name" | default "{{ .Values.nmstate.name }}" {{ "hub}}" }}'
             namespace: {{ .Values.nmstate.namespace }}
-            # Source Selection Logic (evaluated on hub for each managed cluster):
-            # 1. If cluster has explicit 'autoshift.io/nmstate-source' label → use that value
-            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
-            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
-            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
-            # 3. Else → use standard source (e.g., redhat-operators)
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nmstate-source" | default (ternary (printf "%s-%s" "{{ .Values.nmstate.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.nmstate.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
+            # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
+            source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/nmstate-source" | default "{{ .Values.nmstate.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nmstate-source-namespace" | default "{{ .Values.nmstate.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nmstate-channel" | default "{{ .Values.nmstate.channel }}" {{ "hub}}" }}'
             startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nmstate-version" | default "" {{ "hub}}" }}'
-            # Upgrade approval for subscription will be set based on if version is set not this flag
-            # If version is set install plan is set to manual and only the version specified will be installed
+          # Upgrade approval for subscription will be set based on if version is set not this flag
+          # If version is set install plan is set to manual and only the version specified will be installed
           upgradeApproval: Automatic
           versions:
             - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/nmstate-version" | default "" {{ "hub}}" }}'
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: openshift-nmstate-status
-        spec:
-          remediationAction: inform # will be overridden by remediationAction in parent policy
-          severity: high
-          evaluationInterval:
-            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: operators.coreos.com/v1alpha1
-                kind: ClusterServiceVersion
-                metadata:
-                  namespace: {{ .Values.nmstate.namespace }}
-                spec:
-                  displayName: Kubernetes NMState Operator
-                status:
-                  phase: Succeeded # check the csv status to determine if operator is running or not
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-nmstate-operator-install
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
     - {{ $clusterSet }}
   {{- end }}
   predicates:
@@ -121,13 +95,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-nmstate-operator-install
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-nmstate-operator-install
+  name: {{ $placementName }}
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-nmstate-operator-install
+  - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy

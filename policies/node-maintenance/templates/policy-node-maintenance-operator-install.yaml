@@ -1,5 +1,5 @@
-{{- $policyName := "policy-nfd-operator-install" }}
-{{- $placementName := "placement-policy-nfd-operator-install" }}
+{{- $policyName := "policy-node-maintenance-operator-install" }}
+{{- $placementName := "placement-policy-node-maintenance-operator-install" }}
 
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -20,7 +20,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: node-feature-discovery-operator-ns
+          name: node-maintenance-operator-ns
         spec:
           remediationAction: enforce
           severity: high
@@ -33,44 +33,41 @@ spec:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
-                  name: {{ .Values.nodeFeatureDiscovery.namespace }}
+                  name: {{ .Values.nodeMaintenance.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
         metadata:
-          name: install-node-feature-discovery
+          name: install-operator-node-maintenance
         spec:
           remediationAction: enforce
           severity: high
           complianceType: musthave
           operatorGroup:
-            # if operator group exists in namespace use that
-            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.nodeFeatureDiscovery.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.nodeFeatureDiscovery.operatorGroupName }}{{ "{{" }} end {{ "}}" }}'
-            namespace: {{ .Values.nodeFeatureDiscovery.namespace }}
-            {{- if .Values.nodeFeatureDiscovery.targetNamespaces }}
+            # if operator group exists in namespace use that, otherwise use namespace name as default
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.nodeMaintenance.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.nodeMaintenance.namespace }}{{ "{{" }} end {{ "}}" }}'
+            namespace: {{ .Values.nodeMaintenance.namespace }}
+            {{- if .Values.nodeMaintenance.targetNamespaces }}
             targetNamespaces:
-              {{- range .Values.nodeFeatureDiscovery.targetNamespaces }}
+              {{- range .Values.nodeMaintenance.targetNamespaces }}
               - {{ . }}
               {{- end }}
             {{- end }}
           subscription:
-            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-subscription-name" | default "{{ .Values.nodeFeatureDiscovery.name }}" {{ "hub}}" }}'
-            namespace: {{ .Values.nodeFeatureDiscovery.namespace }}
-            # Source Selection Logic (evaluated on hub for each managed cluster):
-            # 1. If cluster has explicit 'autoshift.io/node-feature-discovery-source' label → use that value
-            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
-            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
-            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
-            # 3. Else → use standard source (e.g., redhat-operators)
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-source" | default (ternary (printf "%s-%s" "{{ .Values.nodeFeatureDiscovery.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.nodeFeatureDiscovery.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
-            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-source-namespace" | default "{{ .Values.nodeFeatureDiscovery.sourceNamespace }}" {{ "hub}}" }}'
-            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-channel" | default "{{ .Values.nodeFeatureDiscovery.channel }}" {{ "hub}}" }}'
-            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-version" | default "" {{ "hub}}" }}'
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-maintenance-subscription-name" | default "{{ .Values.nodeMaintenance.name }}" {{ "hub}}" }}'
+            namespace: {{ .Values.nodeMaintenance.namespace }}
+            # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
+            source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/node-maintenance-source" | default "{{ .Values.nodeMaintenance.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-maintenance-source-namespace" | default "{{ .Values.nodeMaintenance.sourceNamespace }}" {{ "hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-maintenance-channel" | default "{{ .Values.nodeMaintenance.channel }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-maintenance-version" | default "" {{ "hub}}" }}'
           # Upgrade approval for subscription will be set based on if version is set not this flag
           # If version is set install plan is set to manual and only the version specified will be installed
           upgradeApproval: Automatic
           versions:
-            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-version" | default "" {{ "hub}}" }}'
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-maintenance-version" | default "" {{ "hub}}" }}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -89,7 +86,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/node-feature-discovery'
+            - key: 'autoshift.io/node-maintenance'
               operator: In
               values:
               - 'true'

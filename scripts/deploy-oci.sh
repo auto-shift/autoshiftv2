@@ -216,6 +216,9 @@ if [ "$METHOD" = "argocd" ]; then
         autoshiftOciRepo: ${POLICIES_REGISTRY}
         autoshiftOciVersion: \"${VERSION}\"
         gitopsNamespace: ${NAMESPACE}"
+    else
+        OCI_VALUES="      values: |
+        gitopsNamespace: ${NAMESPACE}"
     fi
 
     # Build valueFiles YAML entries

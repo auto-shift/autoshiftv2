@@ -16,6 +16,58 @@ acm:
     database_size: 10Gi
     filesystem_storage_size: 100Gi
     image_storage_size: 50Gi
+  # Addon tuning for governance controllers at scale
+  # Activated by label: acm-addon-tuning: 'true'
+  #
+  # ACM Default vs AutoShift Tuned Values:
+  #
+  # config-policy-controller:
+  #   Parameter                  ACM Default    AutoShift Tuned
+  #   evaluation-concurrency     2              5
+  #   client-qps                 30             75
+  #   client-burst               45             100
+  #   memory request             (unset)        256Mi
+  #   cpu request                (unset)        150m
+  #   memory limit               512Mi          1Gi
+  #
+  # governance-policy-framework:
+  #   Parameter                  ACM Default    AutoShift Tuned
+  #   evaluation-concurrency     2              5
+  #   client-qps                 30             75
+  #   client-burst               45             100
+  #   memory request             (unset)        128Mi
+  #   cpu request                (unset)        100m
+  #   memory limit               256Mi          512Mi
+  #
+  # Sizing Guidelines:
+  #   - Small (< 50 clusters): ACM defaults are sufficient, tuning not needed
+  #   - Medium (50-200 clusters): Enable tuning with AutoShift defaults
+  #   - Large (200-500 clusters): Consider eval-concurrency=10, mem-limit=2Gi for cpc
+  #   - Very Large (500+ clusters): eval-concurrency=15, client-qps=150, mem-limit=4Gi for cpc
+  #
+  # Note: Increased concurrency/QPS increases CPU and memory on the controller pods,
+  # the Kubernetes API server, and the OpenShift API server.
+  addonTuning:
+    configPolicyController:
+      evaluationConcurrency: '5'
+      clientQPS: '75'
+      clientBurst: '100'
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: 150m
+        limits:
+          memory: 1Gi
+    governancePolicyFramework:
+      evaluationConcurrency: '5'
+      clientQPS: '75'
+      clientBurst: '100'
+      resources:
+        requests:
+          memory: 128Mi
+          cpu: 100m
+        limits:
+          memory: 512Mi
 # hubClusterSets:
 #   hub:
 #     labels:
@@ -60,6 +112,27 @@ acm:
 #
 # Note: Each node contributes ~50-100 resources to the search index. A cluster with
 # 100 nodes may have 10000+ indexed resources. Plan storage accordingly.
+#
+# Addon Tuning (for scale):
+# acm-addon-tuning<bool>: 'true' - Enable addon tuning for governance controllers
+# Concurrency/QPS/burst are set via ManagedClusterAddOn annotations (per ACM 2.15 docs)
+# Resource limits are set via AddOnDeploymentConfig + ClusterManagementAddOn
+# config-policy-controller (annotations):
+# acm-addon-cpc-eval-concurrency<String>: Concurrent policy evaluations (default: '5')
+# acm-addon-cpc-client-qps<String>: K8s API client QPS (default: '75')
+# acm-addon-cpc-client-burst<String>: K8s API client burst (default: '100')
+# config-policy-controller (resource limits):
+# acm-addon-cpc-mem-request<String>: Memory request (default: '256Mi')
+# acm-addon-cpc-cpu-request<String>: CPU request (default: '150m')
+# acm-addon-cpc-mem-limit<String>: Memory limit (default: '1Gi')
+# governance-policy-framework (annotations):
+# acm-addon-gpf-eval-concurrency<String>: Concurrent policy evaluations (default: '5')
+# acm-addon-gpf-client-qps<String>: K8s API client QPS (default: '75')
+# acm-addon-gpf-client-burst<String>: K8s API client burst (default: '100')
+# governance-policy-framework (resource limits):
+# acm-addon-gpf-mem-request<String>: Memory request (default: '128Mi')
+# acm-addon-gpf-cpu-request<String>: CPU request (default: '100m')
+# acm-addon-gpf-mem-limit<String>: Memory limit (default: '512Mi')
 #
 # Examples:
 # autoshift.io/self-managed: 'true'
