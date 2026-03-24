@@ -1,0 +1,119 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-trident-storage-config-labels
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+spec:
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
+  dependencies:
+    - name: policy-trident-machineconfigs
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: trident-storage-label-configs
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            {{ "{{hub-" }} $labels := .ManagedClusterLabels {{ "hub}}" }}
+            {{ "{{hub-" }} $idRange := list "1" "2" "3" "4" "5" "6" "7" "8" "9" "10" {{ "hub}}" }}
+            {{ "{{hub-" }} range $backendId := $idRange {{ "hub}}" }}
+              {{ "{{hub-" }} $svm := index $labels (printf "autoshift.io/trident-backend-%s-svm" $backendId) {{ "hub}}" }}
+              {{ "{{hub-" }} if $svm {{ "hub}}" }}
+                {{ "{{hub-" }} $managementLIF := index $labels (printf "autoshift.io/trident-backend-%s-managementlif" $backendId) {{ "hub}}" }}
+                {{ "{{hub-" }} $secret := index $labels (printf "autoshift.io/trident-backend-%s-secret" $backendId) {{ "hub}}" }}
+                {{ "{{hub-" }} $storageDriver := index $labels (printf "autoshift.io/trident-backend-%s-storagedriver" $backendId) | default "ontap-san" {{ "hub}}" }}
+                {{ "{{hub-" }} $sanType := index $labels (printf "autoshift.io/trident-backend-%s-santype" $backendId) | default "nvme" {{ "hub}}" }}
+                {{ "{{hub-" }} $sanitizedSvm := $svm | lower | replace "_" "-" | replace "." "-" | replace " " "-" {{ "hub}}" }}
+                {{ "{{hub-" }} $backendName := printf "backend-%s-%s" $sanitizedSvm $sanType {{ "hub}}" }}
+                {{ "{{hub-" }} $storageClassName := printf "%s-%s" $sanitizedSvm $sanType {{ "hub}}" }}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: trident.netapp.io/v1
+                kind: TridentBackendConfig
+                metadata:
+                  name: {{ "{{hub" }} $backendName {{ "hub}}" }}
+                  namespace: trident
+                spec:
+                  version: 1
+                  backendName: {{ "{{hub" }} $backendName {{ "hub}}" }}
+                  storageDriverName: {{ "{{hub" }} $storageDriver {{ "hub}}" }}
+                  managementLIF: {{ "{{hub" }} $managementLIF {{ "hub}}" }}
+                  svm: {{ "{{hub" }} $svm {{ "hub}}" }}
+                  sanType: {{ "{{hub" }} $sanType {{ "hub}}" }}
+                  credentials:
+                    name: {{ "{{hub" }} $secret {{ "hub}}" }}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: storage.k8s.io/v1
+                kind: StorageClass
+                metadata:
+                  name: {{ "{{hub" }} $storageClassName {{ "hub}}" }}
+                provisioner: csi.trident.netapp.io
+                parameters:
+                  backendType: "{{ "{{hub" }} $storageDriver {{ "hub}}" }}"
+                  storagePools: "{{ "{{hub" }} $backendName {{ "hub}}" }}:.*"
+                  fsType: ext4
+                mountOptions:
+                  - discard
+                allowVolumeExpansion: true
+                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-trident-storage-config-labels
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/trident'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/trident-label-config'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-trident-storage-config-labels
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-trident-storage-config-labels
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-trident-storage-config-labels
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
