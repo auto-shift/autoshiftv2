@@ -1,0 +1,50 @@
+{{- if not .Values.skipAutoshiftApplication }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: autoshift
+  namespace: {{ include "bootstrap.gitops.argoNamespace" . }}
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "50"
+spec:
+  destination:
+    namespace: {{ include "bootstrap.gitops.argoNamespace" . }}
+    server: https://kubernetes.default.svc
+  source:
+    {{- if .Values.autoshiftOciRegistry }}
+    repoURL: {{ .Values.autoshiftOciRegistry }}
+    chart: autoshift
+    targetRevision: {{ .Values.autoshiftOciVersion | default "*" | quote }}
+    {{- else }}
+    path: autoshift
+    repoURL: {{ .Values.autoshiftGitRepo | default "https://github.com/auto-shift/autoshiftv2.git" }}
+    targetRevision: {{ .Values.autoshiftGitBranchTag | default "main" }}
+    {{- end }}
+    helm:
+      valueFiles:
+        {{- range .Values.valueFiles }}
+        - {{ . }}
+        {{- end }}
+      values: |-
+        {{- if .Values.autoshiftOciRegistry }}
+        autoshiftOciRegistry: {{ .Values.autoshiftOciRegistry }}
+        autoshiftOciRepo: {{ .Values.autoshiftOciRepo | default (printf "oci://%s/policies" .Values.autoshiftOciRegistry) }}
+        {{- if .Values.autoshiftOciVersion }}
+        autoshiftOciVersion: {{ .Values.autoshiftOciVersion | quote }}
+        {{- end }}
+        {{- else }}
+        autoshiftGitRepo: {{ .Values.autoshiftGitRepo | default "https://github.com/auto-shift/autoshiftv2.git" }}
+        autoshiftGitBranchTag: {{ .Values.autoshiftGitBranchTag | default "main" }}
+        {{- end }}
+  sources: []
+  project: default
+  syncPolicy:
+    automated:
+      prune: {{ if .Values.autoshiftOciRegistry }}true{{ else }}false{{ end }}
+      selfHeal: true
+    {{- if .Values.autoshiftOciRegistry }}
+    syncOptions:
+      - CreateNamespace=true
+    {{- end }}
+{{- end }}

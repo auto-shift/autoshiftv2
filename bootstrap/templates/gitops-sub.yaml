@@ -1,0 +1,23 @@
+{{- $labels := (include "bootstrap.hubLabels" .) | fromYaml }}
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: {{ index $labels "gitops-subscription-name" | default "openshift-gitops-operator" }}
+  namespace: {{ include "bootstrap.gitops.namespace" . }}
+  annotations:
+    helm.sh/hook-weight: "2"
+spec:
+  channel: {{ index $labels "gitops-channel" | default "gitops-1.19" }}
+  installPlanApproval: {{ index $labels "gitops-install-plan-approval" | default "Automatic" }}
+  name: {{ index $labels "gitops-subscription-name" | default "openshift-gitops-operator" }}
+  source: {{ index $labels "gitops-source" | default "redhat-operators" }}
+  sourceNamespace: {{ index $labels "gitops-source-namespace" | default "openshift-marketplace" }}
+  {{- if index $labels "gitops-version" }}
+  startingCSV: {{ index $labels "gitops-version" }}
+  {{- end }}
+  config:
+    env:
+    - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
+      value: {{ index $labels "gitops-disable-default-argocd" | default "true" | quote }}
+    - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
+      value: {{ include "bootstrap.gitops.argoNamespace" . | quote }}

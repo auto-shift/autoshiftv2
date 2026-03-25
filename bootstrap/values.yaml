@@ -1,0 +1,65 @@
+# Bootstrap chart values
+# This chart reads from the same values files as AutoShift.
+# Pass your global + clusterset values files via -f flags:
+#
+#   helm upgrade --install autoshift bootstrap \
+#     -f autoshift/values/global.yaml \
+#     -f autoshift/values/clustersets/hub.yaml \
+#     -f autoshift/values/clustersets/managed.yaml
+#
+# The chart will:
+# 1. Install OpenShift GitOps (operator + ArgoCD instance)
+# 2. Install Advanced Cluster Management (operator + MultiClusterHub)
+# 3. Create the AutoShift ArgoCD Application pointing back to this repo
+#
+# Operator versions, channels, and sources are read from the hub clusterset labels
+# identified by selfManagedHubSet (defined in global.yaml).
+
+# Image used by CRD wait pods (requires `oc` CLI).
+# Default uses the Red Hat registry. For disconnected environments, override with
+# your mirror registry or the internal registry:
+#   --set image=<mirror-registry>/openshift4/ose-cli:latest
+#   --set image=image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+#
+# Note: The internal registry requires ODF/storage to be available at bootstrap time.
+# If ODF is not yet deployed, use an external or mirrored image instead.
+image: registry.redhat.io/openshift4/ose-cli:latest
+
+# Git repository secrets for ArgoCD (optional)
+secrets: []
+# EXAMPLE:
+# secrets:
+#   - name: git-auth
+#     username: 'user'
+#     password: 'pass1234'
+#     sshPrivateKey: ''
+
+# Set to true to skip the AutoShift ArgoCD Application creation
+# (useful if you only want to bootstrap the operators)
+skipAutoshiftApplication: false
+
+# Values files for the AutoShift ArgoCD Application (paths relative to autoshift/ chart).
+# These are the files ArgoCD will use when syncing the autoshift chart from git.
+# All files listed here are passed directly to the ArgoCD Application's helm valueFiles.
+#
+# Examples:
+#   Hub + managed (default):
+#     valueFiles:
+#       - values/global.yaml
+#       - values/clustersets/hub.yaml
+#       - values/clustersets/managed.yaml
+#
+#   Minimal hub:
+#     valueFiles:
+#       - values/global.yaml
+#       - values/clustersets/hub-minimal.yaml
+#
+#   Datacenter with custom global:
+#     valueFiles:
+#       - values/datacenters/dc-east/global.yaml
+#       - values/datacenters/dc-east/hub.yaml
+#       - values/datacenters/dc-east/managed.yaml
+valueFiles:
+  - values/global.yaml
+  - values/clustersets/hub.yaml
+  - values/clustersets/managed.yaml

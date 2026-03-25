@@ -1,0 +1,90 @@
+{{- $labels := (include "bootstrap.hubLabels" .) | fromYaml }}
+---
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: infra-gitops
+  namespace: {{ include "bootstrap.gitops.argoNamespace" . }}
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "25"
+spec:
+  server:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 125m
+        memory: 128Mi
+    route:
+      enabled: true
+  monitoring:
+    enabled: false
+  sso:
+    dex:
+      resources:
+        limits:
+          cpu: 500m
+          memory: 256Mi
+        requests:
+          cpu: 125m
+          memory: 128Mi
+      openShiftOAuth: true
+    provider: dex
+  rbac:
+    defaultPolicy: ''
+    policy: |
+      g, system:cluster-admins, role:admin
+    scopes: '[groups]'
+  repo:
+    {{- if eq (index $labels "gitops-cluster-ca-bundle" | default "false") "true" }}
+    volumeMounts:
+      - name: user-ca-bundle
+        mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+        subPath: ca-bundle.crt
+    volumes:
+      - name: user-ca-bundle
+        configMap:
+          name: user-ca-bundle
+    {{- end }}
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1024Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+  ha:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 125m
+        memory: 128Mi
+    enabled: false
+  redis:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 125m
+        memory: 128Mi
+  controller:
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 2048Mi
+      requests:
+        cpu: 250m
+        memory: 1024Mi
+  applicationSet:
+    resources:
+      limits:
+        cpu: "2"
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi

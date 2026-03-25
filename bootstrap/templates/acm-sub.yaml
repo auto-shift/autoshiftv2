@@ -1,0 +1,17 @@
+{{- $labels := (include "bootstrap.hubLabels" .) | fromYaml }}
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: {{ index $labels "acm-subscription-name" | default "advanced-cluster-management" }}
+  namespace: {{ include "bootstrap.acm.namespace" . }}
+  annotations:
+    helm.sh/hook-weight: "2"
+spec:
+  channel: {{ index $labels "acm-channel" | default "release-2.15" }}
+  sourceNamespace: {{ index $labels "acm-source-namespace" | default "openshift-marketplace" }}
+  source: {{ index $labels "acm-source" | default "redhat-operators" }}
+  installPlanApproval: Automatic
+  name: {{ index $labels "acm-subscription-name" | default "advanced-cluster-management" }}
+  {{- if index $labels "acm-version" }}
+  startingCSV: {{ index $labels "acm-version" }}
+  {{- end }}
