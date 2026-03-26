@@ -28,7 +28,12 @@ spec:
               {{ "{{-" }} $machineset_role := "infra" {{ "}}" }}
               {{ "{{-" }} $zones_from_labels := list {{ "{{hub" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub" }} if $label | hasPrefix "autoshift.io/infra-nodes-zone" {{ "hub}}" }}"{{ "{{hub" }} $labelvalue {{ "hub}}" }}"{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }} {{ "}}" }}
               {{ "{{-" }} $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName {{ "}}" }}
-              {{ "{{-" }} $worker_ms := (index (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items 0) {{ "}}" }}
+              {{ "{{-" }} $worker_ms := dict {{ "}}" }}
+              {{ "{{-" }} range (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items {{ "}}" }}
+                {{ "{{-" }} if hasPrefix (printf "%s-worker" $infrastructure_id) .metadata.name {{ "}}" }}
+                  {{ "{{-" }} $worker_ms = . {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} /* Generate the MachineSet for each zone as specified or default to worker az */ {{ "-}}" }}
               {{ "{{-" }} range $zone := ternary (list $worker_ms.spec.template.spec.providerSpec.value.placement.availabilityZone ) $zones_from_labels (eq 0 (len $zones_from_labels)) {{ "}}" }}
               - complianceType: musthave
