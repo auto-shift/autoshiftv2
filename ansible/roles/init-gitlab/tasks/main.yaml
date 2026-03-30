@@ -1,0 +1,129 @@
+---
+# Initializes the site-config repo in on-cluster GitLab.
+# Creates the group, project, and pushes base values files via GitLab API.
+# No git CLI needed — pure REST via ansible.builtin.uri.
+
+- name: Get cluster ingress domain
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Ingress
+    name: cluster
+  register: _ingress
+
+- name: Set GitLab URL
+  ansible.builtin.set_fact:
+    _gitlab_url: "https://gitlab.{{ _ingress.resources[0].spec.domain }}"
+
+- name: Get GitLab root password
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: gitlab-gitlab-initial-root-password
+    namespace: "{{ gitlab_namespace }}"
+  register: _gitlab_secret
+
+- name: Set GitLab password
+  ansible.builtin.set_fact:
+    _gitlab_pass: "{{ _gitlab_secret.resources[0].data.password | b64decode }}"
+  no_log: true
+
+- name: Get GitLab OAuth token
+  ansible.builtin.uri:
+    url: "{{ _gitlab_url }}/oauth/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      grant_type: password
+      username: root
+      password: "{{ _gitlab_pass }}"
+    validate_certs: false
+    status_code: 200
+  register: _oauth
+  no_log: true
+
+- name: Set GitLab token
+  ansible.builtin.set_fact:
+    _token: "{{ _oauth.json.access_token }}"
+  no_log: true
+
+# --- Create group ---
+- name: Check if group exists
+  ansible.builtin.uri:
+    url: "{{ _gitlab_url }}/api/v4/groups/{{ gitlab_group }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _token }}"
+    validate_certs: false
+    status_code: [200, 404]
+  register: _group_check
+
+- name: Create group
+  ansible.builtin.uri:
+    url: "{{ _gitlab_url }}/api/v4/groups"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ _token }}"
+    body_format: json
+    body:
+      name: "{{ gitlab_group }}"
+      path: "{{ gitlab_group }}"
+      visibility: "{{ gitlab_visibility }}"
+    validate_certs: false
+    status_code: [200, 201]
+  register: _group_created
+  when: _group_check.status == 404
+
+- name: Set group ID
+  ansible.builtin.set_fact:
+    _group_id: >-
+      {{ (_group_created.json.id | default(_group_check.json.id)) }}
+
+# --- Create project ---
+- name: Check if project exists
+  ansible.builtin.uri:
+    url: "{{ _gitlab_url }}/api/v4/projects/{{ gitlab_group }}%2F{{ gitlab_project }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ _token }}"
+    validate_certs: false
+    status_code: [200, 404]
+  register: _project_check
+
+- name: Create project
+  ansible.builtin.uri:
+    url: "{{ _gitlab_url }}/api/v4/projects"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ _token }}"
+    body_format: json
+    body:
+      name: "{{ gitlab_project }}"
+      namespace_id: "{{ _group_id }}"
+      visibility: "{{ gitlab_visibility }}"
+      initialize_with_readme: true
+    validate_certs: false
+    status_code: [200, 201]
+  register: _project_created
+  when: _project_check.status == 404
+
+- name: Set project ID
+  ansible.builtin.set_fact:
+    _project_id: >-
+      {{ (_project_created.json.id | default(_project_check.json.id)) }}
+
+# --- Unprotect main branch for push ---
+- name: Unprotect main branch
+  ansible.builtin.uri:
+    url: "{{ _gitlab_url }}/api/v4/projects/{{ _project_id }}/protected_branches/main"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ _token }}"
+    validate_certs: false
+    status_code: [200, 204, 404]
+  when: _project_check.status == 404
+
+- name: GitLab site-config initialized
+  ansible.builtin.debug:
+    msg: >-
+      Site config repo ready at
+      {{ _gitlab_url }}/{{ gitlab_group }}/{{ gitlab_project }}

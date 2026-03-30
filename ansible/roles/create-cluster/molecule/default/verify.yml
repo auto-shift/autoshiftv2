@@ -177,35 +177,52 @@
         that:
           - cfg.clusterInstall.ntpSources[0] == '10.10.0.1'
 
-    # --- Validate with helm template ---
-    - name: Set repo root path
-      ansible.builtin.set_fact:
-        _repo_root: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') }}/../../.."
+    # --- Validate YAML structure ---
+    - name: Values file is valid YAML
+      ansible.builtin.assert:
+        that:
+          - values is mapping
+          - "'clusters' in values"
+          - "values.clusters | length == 1"
 
-    - name: Copy values to autoshift chart for helm validation
-      ansible.builtin.copy:
-        src: "{{ values_file }}"
-        dest: "{{ _repo_root }}/autoshift/values/clusters/test-cluster.yaml"
-        mode: '0644'
+    - name: Top-level structure is correct
+      ansible.builtin.assert:
+        that:
+          - cfg.clusterSet is defined
+          - cfg.networking is defined
+          - cfg.hosts is defined
+          - cfg.clusterInstall is defined
 
-    - name: Helm template autoshift chart with generated values  # noqa: command-instead-of-module
-      ansible.builtin.command:
-        cmd: >-
-          helm template autoshift/
-          -f autoshift/values/global.yaml
-          -f autoshift/values/clustersets/hub.yaml
-          -f autoshift/values/clustersets/managed.yaml
-          -f autoshift/values/clusters/test-cluster.yaml
-        chdir: "{{ _repo_root }}"
-      register: _helm
-      changed_when: false
-      failed_when: _helm.rc != 0
+    - name: ClusterInstall has required fields
+      ansible.builtin.assert:
+        that:
+          - cfg.clusterInstall.createCluster == 'true'
+          - cfg.clusterInstall.platform == 'baremetal'
+          - cfg.clusterInstall.baseDomain is string
+          - cfg.clusterInstall.openshiftVersion is string
+          - cfg.clusterInstall.controlPlaneAgents | int > 0
+          - cfg.clusterInstall.sshPublicKey is string
+          - cfg.clusterInstall.pullSecretRef is string
+          - cfg.clusterInstall.bmcCredentialRef is string
+          - cfg.clusterInstall.secretSourceNamespace is string
 
-    - name: Helm template rendered successfully
-      ansible.builtin.debug:
-        msg: "Helm template passed — {{ _helm.stdout_lines | length }} lines rendered"
+    - name: Networking has required fields
+      ansible.builtin.assert:
+        that:
+          - cfg.networking.clusterNetwork.cidr is string
+          - cfg.networking.clusterNetwork.hostPrefix | int > 0
+          - cfg.networking.machineNetwork.cidr is string
+          - cfg.networking.serviceNetwork | length > 0
+          - cfg.networking.interfaces | length > 0
 
-    - name: Clean up test values file from autoshift chart
-      ansible.builtin.file:
-        path: "{{ _repo_root }}/autoshift/values/clusters/test-cluster.yaml"
-        state: absent
+    - name: Each host has required fields
+      ansible.builtin.assert:
+        that:
+          - item.value.bmcIP is string
+          - item.value.bmcPrefix is string
+          - item.value.bootMACAddress is string
+          - item.value.primaryMac is string
+          - item.value.interfaces | length > 0
+      loop: "{{ cfg.hosts | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"

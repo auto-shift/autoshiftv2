@@ -52,35 +52,21 @@
         that:
           - cfg.networking.interfaces['cluster-bond'].mode == 'active-backup'
 
-    # --- Helm validation ---
-    - name: Set repo root path
-      ansible.builtin.set_fact:
-        _repo_root: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') }}/../../.."
+    # --- Validate YAML structure ---
+    - name: Values file is valid YAML
+      ansible.builtin.assert:
+        that:
+          - cfg is mapping
+          - cfg.clusterInstall.platform == 'baremetal'
+          - cfg.networking.interfaces | length > 0
+          - cfg.hosts | length == 3
 
-    - name: Copy values for helm validation
-      ansible.builtin.copy:
-        src: "{{ values_file }}"
-        dest: "{{ _repo_root }}/autoshift/values/clusters/dhcp-cluster.yaml"
-        mode: '0644'
-
-    - name: Helm template validates  # noqa: command-instead-of-module
-      ansible.builtin.command:
-        cmd: >-
-          helm template autoshift/
-          -f autoshift/values/global.yaml
-          -f autoshift/values/clustersets/hub.yaml
-          -f autoshift/values/clustersets/managed.yaml
-          -f autoshift/values/clusters/dhcp-cluster.yaml
-        chdir: "{{ _repo_root }}"
-      register: _helm
-      changed_when: false
-      failed_when: _helm.rc != 0
-
-    - name: Helm passed
-      ansible.builtin.debug:
-        msg: "Helm template passed — {{ _helm.stdout_lines | length }} lines"
-
-    - name: Clean up
-      ansible.builtin.file:
-        path: "{{ _repo_root }}/autoshift/values/clusters/dhcp-cluster.yaml"
-        state: absent
+    - name: Each host has required fields
+      ansible.builtin.assert:
+        that:
+          - item.value.bmcIP is string
+          - item.value.bootMACAddress is string
+          - item.value.interfaces | length > 0
+      loop: "{{ cfg.hosts | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"

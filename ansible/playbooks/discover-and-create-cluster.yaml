@@ -6,9 +6,9 @@
 # select NICs and roles, then generates the cluster values file.
 #
 # Setup:
-#   cp ansible/inventory/vault.yaml.example ansible/inventory/vault.yaml
-#   ansible-vault encrypt ansible/inventory/vault.yaml
-#   ansible-vault edit ansible/inventory/vault.yaml   # set idrac_user/idrac_pass
+#   cp ansible/vault.yaml.example ansible/vault.yaml
+#   ansible-vault encrypt ansible/vault.yaml
+#   ansible-vault edit ansible/vault.yaml   # set idrac_user/idrac_pass
 #
 # Interactive:
 #   ansible-playbook ansible/playbooks/discover-and-create-cluster.yaml \
@@ -32,7 +32,8 @@
   gather_facts: false
 
   vars_files:
-    - "{{ playbook_dir }}/../inventory/vault.yaml"
+    - "{{ playbook_dir }}/../vars/shared.yaml"
+    - "{{ playbook_dir }}/../vault.yaml"
 
   vars:
     idrac_hosts: []
@@ -81,6 +82,13 @@
         name: create-cluster
         tasks_from: prompts
       when: cluster_name is not defined or cluster_name == ''
+
+    # ==================================================================
+    # Ensure install secrets exist (reuses iDRAC creds from vault)
+    # ==================================================================
+    - name: Initialize cluster install secrets
+      ansible.builtin.include_role:
+        name: init-secrets
 
     # ==================================================================
     # Generate values file, push, patch ArgoCD

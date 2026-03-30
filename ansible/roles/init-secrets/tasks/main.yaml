@@ -1,0 +1,263 @@
+---
+# Creates the cluster-install-secrets namespace and required secrets.
+# Optionally generates a new SSH keypair.
+# Credentials come from ansible-vault or interactive prompts.
+
+# ==================================================================
+# Prompts for missing credentials
+# ==================================================================
+- name: Prompt for BMC username
+  ansible.builtin.pause:
+    prompt: "BMC username (default: admin)"
+  register: _bmc_user_prompt
+  when: init_secrets_bmc_username == ''
+
+- name: Set BMC username
+  ansible.builtin.set_fact:
+    init_secrets_bmc_username: >-
+      {{ _bmc_user_prompt.user_input | default('admin', true) }}
+  when: _bmc_user_prompt is not skipped
+
+- name: Prompt for BMC password
+  ansible.builtin.pause:
+    prompt: "BMC password"
+  register: _bmc_pass_prompt
+  when: init_secrets_bmc_password == ''
+  no_log: true
+
+- name: Set BMC password
+  ansible.builtin.set_fact:
+    init_secrets_bmc_password: "{{ _bmc_pass_prompt.user_input }}"
+  when: _bmc_pass_prompt is not skipped
+  no_log: true
+
+- name: Prompt for registry URL
+  ansible.builtin.pause:
+    prompt: "Container registry URL (e.g., registry.redhat.io)"
+  register: _registry_prompt
+  when: init_secrets_registry == ''
+
+- name: Set registry URL
+  ansible.builtin.set_fact:
+    init_secrets_registry: "{{ _registry_prompt.user_input }}"
+  when: _registry_prompt is not skipped
+
+- name: Prompt for registry username
+  ansible.builtin.pause:
+    prompt: "Registry username"
+  register: _registry_user_prompt
+  when: init_secrets_registry_user == ''
+
+- name: Set registry username
+  ansible.builtin.set_fact:
+    init_secrets_registry_user: "{{ _registry_user_prompt.user_input }}"
+  when: _registry_user_prompt is not skipped
+
+- name: Prompt for registry password
+  ansible.builtin.pause:
+    prompt: "Registry password/token"
+  register: _registry_pass_prompt
+  when: init_secrets_registry_pass == ''
+  no_log: true
+
+- name: Set registry password
+  ansible.builtin.set_fact:
+    init_secrets_registry_pass: "{{ _registry_pass_prompt.user_input }}"
+  when: _registry_pass_prompt is not skipped
+  no_log: true
+
+- name: Prompt to generate SSH keypair
+  ansible.builtin.pause:
+    prompt: >-
+      Generate a new SSH keypair? [yes/no]
+      (default: yes — generates ECDSA-521 for FIPS compliance)
+  register: _ssh_generate_prompt
+  when: init_secrets_ssh_private_key == '' and init_secrets_ssh_generate | bool
+
+- name: Set SSH generate flag
+  ansible.builtin.set_fact:
+    init_secrets_ssh_generate: >-
+      {{ _ssh_generate_prompt.user_input | default('yes', true) | bool }}
+  when: _ssh_generate_prompt is not skipped
+
+# ==================================================================
+# Create namespace
+# ==================================================================
+- name: Create secrets namespace
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Namespace
+    name: "{{ init_secrets_namespace }}"
+    state: present
+
+# ==================================================================
+# SSH keypair — check existing, reuse or generate
+# ==================================================================
+- name: Set SSH ConfigMap name
+  ansible.builtin.set_fact:
+    init_secrets_ssh_cm_name: >-
+      {{ 'cluster-ssh-keys-' ~ cluster_name if (init_secrets_ssh_per_cluster | bool and cluster_name is defined) else 'cluster-ssh-keys' }}
+
+- name: Check for existing SSH public key ConfigMap
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: "{{ init_secrets_ssh_cm_name }}"
+    namespace: "{{ init_secrets_namespace }}"
+  register: _existing_ssh
+
+- name: Reuse existing SSH public key
+  ansible.builtin.set_fact:
+    init_secrets_ssh_public_key: "{{ _existing_ssh.resources[0].data['ssh-publickey'] }}"
+  when:
+    - _existing_ssh.resources | length > 0
+    - init_secrets_ssh_public_key == ''
+
+- name: Existing SSH public key found
+  ansible.builtin.debug:
+    msg: >-
+      Reusing existing SSH public key from ConfigMap {{ init_secrets_ssh_cm_name }}.
+      Private key should be in your ansible vault.
+  when: _existing_ssh.resources | length > 0
+
+- name: Generate SSH keypair
+  when:
+    - init_secrets_ssh_generate | bool
+    - init_secrets_ssh_private_key == ''
+    - _existing_ssh.resources | length == 0
+  block:
+    - name: Create temp directory for keys
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: ssh-
+      register: _ssh_tmpdir
+
+    - name: Generate keypair
+      ansible.builtin.command:
+        cmd: >-
+          ssh-keygen
+          -t {{ init_secrets_ssh_key_type }}
+          -b {{ init_secrets_ssh_key_bits }}
+          -N ''
+          -f {{ _ssh_tmpdir.path }}/id_{{ init_secrets_ssh_key_type }}
+          -C cluster-install
+      changed_when: true
+
+    - name: Read private key
+      ansible.builtin.slurp:
+        src: "{{ _ssh_tmpdir.path }}/id_{{ init_secrets_ssh_key_type }}"
+      register: _ssh_priv
+      no_log: true
+
+    - name: Read public key
+      ansible.builtin.slurp:
+        src: "{{ _ssh_tmpdir.path }}/id_{{ init_secrets_ssh_key_type }}.pub"
+      register: _ssh_pub
+
+    - name: Set SSH key facts
+      ansible.builtin.set_fact:
+        init_secrets_ssh_private_key: "{{ _ssh_priv.content | b64decode }}"
+        init_secrets_ssh_public_key: "{{ _ssh_pub.content | b64decode | trim }}"
+      no_log: true
+
+    - name: Set key file name
+      ansible.builtin.set_fact:
+        _key_file: >-
+          {{ init_secrets_ssh_cm_name }}-key
+
+    - name: Save private key locally
+      ansible.builtin.copy:
+        content: "{{ init_secrets_ssh_private_key }}"
+        dest: "{{ playbook_dir }}/../{{ _key_file }}"
+        mode: '0600'
+      no_log: true
+
+    - name: Clean up temp keys
+      ansible.builtin.file:
+        path: "{{ _ssh_tmpdir.path }}"
+        state: absent
+
+    - name: SSH keypair generated
+      ansible.builtin.debug:
+        msg: |
+          SSH keypair generated.
+          Private key saved to: ansible/{{ _key_file }}
+          Add it to your vault and delete the file:
+            ansible-vault edit ansible/vault.yaml
+            rm ansible/{{ _key_file }}
+
+# ==================================================================
+# BMC credential secret
+# ==================================================================
+- name: Create BMC credential secret
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Secret
+    name: "{{ init_secrets_bmc_secret_name }}"
+    namespace: "{{ init_secrets_namespace }}"
+    state: present
+    definition:
+      type: Opaque
+      stringData:
+        username: "{{ init_secrets_bmc_username }}"
+        password: "{{ init_secrets_bmc_password }}"
+  no_log: true
+
+# ==================================================================
+# Pull secret — built from registry credentials
+# ==================================================================
+- name: Build dockerconfigjson from registry credentials
+  ansible.builtin.set_fact:
+    _docker_config:
+      auths: >-
+        {{ {init_secrets_registry: {
+            'username': init_secrets_registry_user,
+            'password': init_secrets_registry_pass,
+            'auth': (init_secrets_registry_user ~ ':' ~ init_secrets_registry_pass) | b64encode
+        }} }}
+  no_log: true
+
+- name: Create pull secret
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Secret
+    name: "{{ init_secrets_pull_secret_name }}"
+    namespace: "{{ init_secrets_namespace }}"
+    state: present
+    definition:
+      type: kubernetes.io/dockerconfigjson
+      stringData:
+        .dockerconfigjson: "{{ _docker_config | to_json }}"
+  no_log: true
+
+# ==================================================================
+# SSH public key ConfigMap (only the public key goes to the cluster)
+# ==================================================================
+- name: Create SSH public key ConfigMap
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: ConfigMap
+    name: "{{ init_secrets_ssh_cm_name }}"
+    namespace: "{{ init_secrets_namespace }}"
+    state: present
+    definition:
+      data:
+        ssh-publickey: "{{ init_secrets_ssh_public_key }}"
+  when: init_secrets_ssh_public_key != ''
+
+# ==================================================================
+# Summary
+# ==================================================================
+- name: Secrets initialized
+  ansible.builtin.debug:
+    msg: |
+      Created in {{ init_secrets_namespace }}:
+        - {{ init_secrets_bmc_secret_name }} (Secret — BMC credentials)
+        - {{ init_secrets_pull_secret_name }} (Secret — pull secret)
+        - {{ init_secrets_ssh_cm_name }} (ConfigMap — SSH public key)
+      {% if init_secrets_ssh_generate | bool %}
+
+      IMPORTANT: Save the private key securely — it is NOT stored on the cluster.
+      Add it to your ansible vault:
+        ansible-vault edit ansible/vault.yaml
+      {% endif %}

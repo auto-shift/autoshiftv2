@@ -68,13 +68,13 @@
   block:
     - name: Configure git user  # noqa: command-instead-of-module
       ansible.builtin.command:
-        cmd: "git config user.email '{{ git_email | default('autoshift@localhost') }}'"
+        cmd: "git config user.email '{{ git_email | default('automation@localhost') }}'"
         chdir: "{{ site_config_dir }}"
       changed_when: true
 
     - name: Configure git user name  # noqa: command-instead-of-module
       ansible.builtin.command:
-        cmd: "git config user.name '{{ git_user | default('AutoShift') }}'"
+        cmd: "git config user.name '{{ git_user | default('Automation') }}'"
         chdir: "{{ site_config_dir }}"
       changed_when: true
 
@@ -102,71 +102,8 @@
 
 # ==================================================================
 # Update ArgoCD Application to include new cluster values file
+# Handles single-source → multi-source conversion on first cluster
 # ==================================================================
 - name: Update ArgoCD Application
+  ansible.builtin.include_tasks: update-argocd.yaml
   when: update_argocd | default(true) | bool
-  block:
-    - name: Get current ArgoCD Application
-      kubernetes.core.k8s_info:
-        api_version: argoproj.io/v1alpha1
-        kind: Application
-        name: "{{ argocd_app_name }}"
-        namespace: "{{ argocd_namespace }}"
-      register: _argocd_app
-
-    - name: Extract current valueFiles
-      ansible.builtin.set_fact:
-        _current_value_files: >-
-          {{ _argocd_app.resources[0].spec.sources
-             | selectattr('chart', 'defined')
-             | map(attribute='helm')
-             | map(attribute='valueFiles')
-             | first
-             | default([]) }}
-      when: _argocd_app.resources | length > 0
-
-    - name: Check if cluster already in valueFiles
-      ansible.builtin.set_fact:
-        _cluster_file_ref: "$siteValues/clusters/{{ cluster_name }}.yaml"
-        _already_added: "{{ ('$siteValues/clusters/' ~ cluster_name ~ '.yaml') in (_current_value_files | default([])) }}"
-
-    - name: Add cluster to ArgoCD Application valueFiles
-      when: not _already_added | bool
-      block:
-        - name: Build updated valueFiles
-          ansible.builtin.set_fact:
-            _updated_value_files: "{{ _current_value_files + [_cluster_file_ref] }}"
-
-        - name: Find helm source index
-          ansible.builtin.set_fact:
-            _helm_source_index: "{{ idx }}"
-          loop: "{{ _argocd_app.resources[0].spec.sources }}"
-          loop_control:
-            index_var: idx
-          when: item.chart is defined
-
-        - name: Patch ArgoCD Application
-          kubernetes.core.k8s:
-            api_version: argoproj.io/v1alpha1
-            kind: Application
-            name: "{{ argocd_app_name }}"
-            namespace: "{{ argocd_namespace }}"
-            state: present
-            definition:
-              spec:
-                sources: "{{ _patched_sources }}"
-          vars:
-            _patched_sources: >-
-              {{ _argocd_app.resources[0].spec.sources[:(_helm_source_index | int)]
-                 + [_argocd_app.resources[0].spec.sources[_helm_source_index | int]
-                    | combine({'helm': {'valueFiles': _updated_value_files}}, recursive=True)]
-                 + _argocd_app.resources[0].spec.sources[(_helm_source_index | int) + 1:] }}
-
-        - name: Cluster added to ArgoCD
-          ansible.builtin.debug:
-            msg: "Added $siteValues/clusters/{{ cluster_name }}.yaml to ArgoCD Application valueFiles"
-
-    - name: Cluster already in ArgoCD
-      ansible.builtin.debug:
-        msg: "clusters/{{ cluster_name }}.yaml already in ArgoCD Application valueFiles"
-      when: _already_added | bool

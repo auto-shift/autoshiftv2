@@ -1,0 +1,137 @@
+---
+# Updates the ArgoCD Application to include the new cluster values file.
+# Handles both single-source (first cluster) and multi-source (subsequent clusters).
+
+- name: Get current ArgoCD Application
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    name: "{{ argocd_app_name }}"
+    namespace: "{{ argocd_namespace }}"
+  register: _argocd_app
+
+- name: Fail if Application not found
+  ansible.builtin.assert:
+    that:
+      - _argocd_app.resources | length > 0
+    fail_msg: "ArgoCD Application '{{ argocd_app_name }}' not found in {{ argocd_namespace }}"
+
+- name: Detect current source mode
+  ansible.builtin.set_fact:
+    _is_multi_source: "{{ _argocd_app.resources[0].spec.sources is defined and _argocd_app.resources[0].spec.sources | length > 0 }}"
+    _app_spec: "{{ _argocd_app.resources[0].spec }}"
+
+- name: Set cluster file reference
+  ansible.builtin.set_fact:
+    _cluster_file_ref: "$siteValues/clusters/{{ cluster_name }}.yaml"
+
+# ==================================================================
+# First cluster — convert single-source to multi-source
+# ==================================================================
+- name: Convert to multi-source
+  when: not _is_multi_source | bool
+  block:
+    - name: Build site-config repo URL
+      kubernetes.core.k8s_info:
+        api_version: config.openshift.io/v1
+        kind: Ingress
+        name: cluster
+      register: _ingress_lookup
+
+    - name: Set site-config URL
+      ansible.builtin.set_fact:
+        _site_repo: >-
+          https://gitlab.{{ _ingress_lookup.resources[0].spec.domain }}/{{ gitlab_group }}/{{ gitlab_project }}.git
+
+    - name: Build multi-source spec from existing single-source
+      ansible.builtin.set_fact:
+        _new_sources:
+          - repoURL: "{{ _site_repo }}"
+            targetRevision: "{{ site_config_branch }}"
+            ref: siteValues
+          - repoURL: "{{ _app_spec.source.repoURL }}"
+            chart: "{{ _app_spec.source.chart | default(omit) }}"
+            path: "{{ _app_spec.source.path | default(omit) }}"
+            targetRevision: "{{ _app_spec.source.targetRevision }}"
+            helm:
+              valueFiles: "{{ (_app_spec.source.helm.valueFiles | default([])) + [_cluster_file_ref] }}"
+              values: "{{ _app_spec.source.helm.values | default('') }}"
+
+    - name: Patch Application to multi-source
+      kubernetes.core.k8s:
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        name: "{{ argocd_app_name }}"
+        namespace: "{{ argocd_namespace }}"
+        state: present
+        definition:
+          spec:
+            source: null
+            sources: "{{ _new_sources }}"
+
+    - name: Converted to multi-source
+      ansible.builtin.debug:
+        msg: >-
+          Converted '{{ argocd_app_name }}' to multi-source.
+          Added site-config repo ({{ _site_repo }}) and cluster file {{ _cluster_file_ref }}.
+
+# ==================================================================
+# Subsequent clusters — append to existing multi-source
+# ==================================================================
+- name: Append to multi-source
+  when: _is_multi_source | bool
+  block:
+    - name: Extract current valueFiles
+      ansible.builtin.set_fact:
+        _current_value_files: >-
+          {{ _app_spec.sources
+             | selectattr('helm', 'defined')
+             | map(attribute='helm')
+             | map(attribute='valueFiles')
+             | first
+             | default([]) }}
+
+    - name: Check if cluster already added
+      ansible.builtin.set_fact:
+        _already_added: "{{ _cluster_file_ref in _current_value_files }}"
+
+    - name: Add cluster valueFile
+      when: not _already_added | bool
+      block:
+        - name: Build updated valueFiles
+          ansible.builtin.set_fact:
+            _updated_value_files: "{{ _current_value_files + [_cluster_file_ref] }}"
+
+        - name: Find helm source index
+          ansible.builtin.set_fact:
+            _helm_source_index: "{{ idx }}"
+          loop: "{{ _app_spec.sources }}"
+          loop_control:
+            index_var: idx
+          when: item.helm is defined
+
+        - name: Patch ArgoCD Application
+          kubernetes.core.k8s:
+            api_version: argoproj.io/v1alpha1
+            kind: Application
+            name: "{{ argocd_app_name }}"
+            namespace: "{{ argocd_namespace }}"
+            state: present
+            definition:
+              spec:
+                sources: "{{ _patched_sources }}"
+          vars:
+            _patched_sources: >-
+              {{ _app_spec.sources[:(_helm_source_index | int)]
+                 + [_app_spec.sources[_helm_source_index | int]
+                    | combine({'helm': {'valueFiles': _updated_value_files}}, recursive=True)]
+                 + _app_spec.sources[(_helm_source_index | int) + 1:] }}
+
+        - name: Cluster added
+          ansible.builtin.debug:
+            msg: "Added {{ _cluster_file_ref }} to ArgoCD Application valueFiles"
+
+    - name: Cluster already present
+      ansible.builtin.debug:
+        msg: "{{ _cluster_file_ref }} already in ArgoCD Application"
+      when: _already_added | bool
