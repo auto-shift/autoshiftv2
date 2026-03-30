@@ -1,0 +1,194 @@
+---
+# Discover a single iDRAC host via Redfish API.
+# Input: idrac_ip (loop var from main.yaml)
+# Appends to: discovered_hosts list
+
+- name: Initialize discovered_hosts if needed
+  ansible.builtin.set_fact:
+    discovered_hosts: "{{ discovered_hosts | default([]) }}"
+
+# --- System info ---
+- name: Get system info from {{ idrac_ip }}
+  ansible.builtin.uri:
+    url: "https://{{ idrac_ip }}/redfish/v1/Systems/System.Embedded.1"
+    method: GET
+    user: "{{ idrac_user }}"
+    password: "{{ idrac_pass }}"
+    force_basic_auth: true
+    validate_certs: "{{ redfish_verify_ssl }}"
+    timeout: "{{ redfish_timeout }}"
+    return_content: true
+  register: _system
+  no_log: true
+
+- name: Parse system info
+  ansible.builtin.set_fact:
+    _sys: "{{ _system.json }}"
+
+# --- Ethernet interfaces ---
+- name: Get ethernet interfaces from {{ idrac_ip }}
+  ansible.builtin.uri:
+    url: "https://{{ idrac_ip }}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces"
+    method: GET
+    user: "{{ idrac_user }}"
+    password: "{{ idrac_pass }}"
+    force_basic_auth: true
+    validate_certs: "{{ redfish_verify_ssl }}"
+    timeout: "{{ redfish_timeout }}"
+    return_content: true
+  register: _nic_collection
+  no_log: true
+
+- name: Get each NIC detail from {{ idrac_ip }}
+  ansible.builtin.uri:
+    url: "https://{{ idrac_ip }}{{ item['@odata.id'] }}"
+    method: GET
+    user: "{{ idrac_user }}"
+    password: "{{ idrac_pass }}"
+    force_basic_auth: true
+    validate_certs: "{{ redfish_verify_ssl }}"
+    timeout: "{{ redfish_timeout }}"
+    return_content: true
+  loop: "{{ _nic_collection.json.Members }}"
+  register: _nic_details
+  no_log: true
+
+- name: Build NIC list
+  ansible.builtin.set_fact:
+    _nics: >-
+      {{ _nic_details.results
+         | map(attribute='json')
+         | rejectattr('Id', 'search', skip_nic_patterns | join('|'))
+         | map('dict2items')
+         | map('items2dict')
+         | list }}
+
+- name: Parse NIC info
+  ansible.builtin.set_fact:
+    _parsed_nics: >-
+      {{ _parsed_nics | default([]) + [{
+        'name': item.Id | default(item.Name),
+        'mac': item.MACAddress | default(''),
+        'speed': item.SpeedMbps | default('unknown'),
+        'link_status': item.LinkStatus | default('unknown'),
+        'odata_id': item['@odata.id'] | default('')
+      }] }}
+  loop: "{{ _nics }}"
+  when: item.MACAddress is defined and item.MACAddress != ''
+
+# --- Storage / disk discovery ---
+- name: Get storage controllers from {{ idrac_ip }}
+  ansible.builtin.uri:
+    url: "https://{{ idrac_ip }}/redfish/v1/Systems/System.Embedded.1/Storage"
+    method: GET
+    user: "{{ idrac_user }}"
+    password: "{{ idrac_pass }}"
+    force_basic_auth: true
+    validate_certs: "{{ redfish_verify_ssl }}"
+    timeout: "{{ redfish_timeout }}"
+    return_content: true
+  register: _storage
+  no_log: true
+  failed_when: false
+
+- name: Get drives from each storage controller on {{ idrac_ip }}
+  ansible.builtin.uri:
+    url: "https://{{ idrac_ip }}{{ item['@odata.id'] }}"
+    method: GET
+    user: "{{ idrac_user }}"
+    password: "{{ idrac_pass }}"
+    force_basic_auth: true
+    validate_certs: "{{ redfish_verify_ssl }}"
+    timeout: "{{ redfish_timeout }}"
+    return_content: true
+  loop: "{{ (_storage.json.Members | default([])) }}"
+  register: _controllers
+  no_log: true
+  failed_when: false
+
+- name: Collect drive references from controllers
+  ansible.builtin.set_fact:
+    _drive_refs: >-
+      {{ _controllers.results
+         | map(attribute='json')
+         | map(attribute='Drives', default=[])
+         | flatten
+         | list }}
+
+- name: Get drive details from {{ idrac_ip }}
+  ansible.builtin.uri:
+    url: "https://{{ idrac_ip }}{{ item['@odata.id'] }}"
+    method: GET
+    user: "{{ idrac_user }}"
+    password: "{{ idrac_pass }}"
+    force_basic_auth: true
+    validate_certs: "{{ redfish_verify_ssl }}"
+    timeout: "{{ redfish_timeout }}"
+    return_content: true
+  loop: "{{ _drive_refs }}"
+  register: _drive_details
+  no_log: true
+  failed_when: false
+  when: _drive_refs | length > 0
+
+- name: Parse drive info
+  ansible.builtin.set_fact:
+    _parsed_disks: >-
+      {{ (_drive_details.results | default([]))
+         | selectattr('json', 'defined')
+         | map(attribute='json')
+         | map('combine', {})
+         | list }}
+
+- name: Build disk list
+  ansible.builtin.set_fact:
+    _disks: "{{ _disks | default([]) + [_disk_entry] }}"
+  loop: "{{ _parsed_disks }}"
+  vars:
+    _disk_entry:
+      name: "{{ item.Name | default(item.Id | default('unknown')) }}"
+      device_name: "{{ item.Id | default('') }}"
+      serial: "{{ item.SerialNumber | default('') }}"
+      model: "{{ item.Model | default('') }}"
+      media_type: "{{ item.MediaType | default('unknown') }}"
+      size_gb: "{{ ((item.CapacityBytes | default(0)) / 1073741824) | round(0) | int }}"
+      protocol: "{{ item.Protocol | default('unknown') }}"
+
+# --- Determine boot NIC (first NIC with link up, or first NIC) ---
+- name: Select boot NIC
+  ansible.builtin.set_fact:
+    _boot_nic: >-
+      {{ (_parsed_nics | selectattr('link_status', 'equalto', 'LinkUp') | first)
+         | default(_parsed_nics[0]) }}
+
+# --- Build host entry ---
+- name: Generate hostname
+  ansible.builtin.set_fact:
+    _hostname: "host-{{ discovered_hosts | length }}"
+
+- name: Append discovered host
+  ansible.builtin.set_fact:
+    discovered_hosts: >-
+      {{ discovered_hosts + [{
+        'hostname': _hostname,
+        'bmc_ip': idrac_ip,
+        'bmc_prefix': default_bmc_prefix,
+        'bmc_endpoint': default_bmc_endpoint,
+        'model': _sys.Model | default('Unknown'),
+        'manufacturer': _sys.Manufacturer | default('Dell'),
+        'cpu_count': _sys.ProcessorSummary.Count | default(0)
+                     * (_sys.ProcessorSummary.CoreCount | default(0)),
+        'memory_gb': (_sys.MemorySummary.TotalSystemMemoryGiB | default(0)),
+        'serial': _sys.SerialNumber | default(''),
+        'boot_mac': _boot_nic.mac,
+        'nic1_mac': _boot_nic.mac,
+        'nic1_name': _boot_nic.name,
+        'nics': _parsed_nics,
+        'disks': _disks | default([])
+      }] }}
+
+# Reset per-host state for next iteration
+- name: Reset per-host state
+  ansible.builtin.set_fact:
+    _parsed_nics: []
+    _disks: []

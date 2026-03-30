@@ -1,0 +1,90 @@
+---
+# ==============================================================================
+# Discover Hardware and Create Cluster
+# ==============================================================================
+# Connects to Dell iDRACs via Redfish, discovers hardware, lets the engineer
+# select NICs and roles, then generates the cluster values file.
+#
+# Setup:
+#   cp ansible/inventory/vault.yaml.example ansible/inventory/vault.yaml
+#   ansible-vault encrypt ansible/inventory/vault.yaml
+#   ansible-vault edit ansible/inventory/vault.yaml   # set idrac_user/idrac_pass
+#
+# Interactive:
+#   ansible-playbook ansible/playbooks/discover-and-create-cluster.yaml \
+#     -e '{"idrac_hosts": ["192.168.1.10", "192.168.1.11", "192.168.1.12"]}' \
+#     --ask-vault-pass
+#
+# From inventory (no prompts):
+#   ansible-playbook ansible/playbooks/discover-and-create-cluster.yaml \
+#     -i ansible/inventory/my-site.yaml \
+#     --vault-password-file .vault-pass
+#
+# From AAP:
+#   - Vault password configured as AAP credential type
+#   - vars_files loads the vault automatically
+#   - Survey fills in idrac_hosts, cluster_name, base_domain, VLAN config
+# ==============================================================================
+
+- name: Discover hardware and create cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - "{{ playbook_dir }}/../inventory/vault.yaml"
+
+  vars:
+    idrac_hosts: []
+
+  tasks:
+    # ==================================================================
+    # Prompt for iDRAC hosts if not provided
+    # ==================================================================
+    - name: Prompt for iDRAC IPs
+      ansible.builtin.pause:
+        prompt: "iDRAC IP addresses (comma-separated)"
+      register: _idrac_prompt
+      when: idrac_hosts | length == 0
+
+    - name: Set idrac_hosts from prompt
+      ansible.builtin.set_fact:
+        idrac_hosts: "{{ _idrac_prompt.user_input | split(',') | map('trim') | list }}"
+      when: _idrac_prompt is not skipped
+
+    # ==================================================================
+    # Discover hardware
+    # ==================================================================
+    - name: Discover hardware from iDRACs
+      ansible.builtin.include_role:
+        name: discover-hardware
+
+    - name: Validate discovery found hosts
+      ansible.builtin.assert:
+        that:
+          - discovered_hosts | length > 0
+        fail_msg: "No hosts discovered. Check iDRAC IPs and credentials."
+
+    # ==================================================================
+    # Interactive NIC selection and role assignment
+    # ==================================================================
+    - name: Select NICs and assign roles
+      ansible.builtin.include_role:
+        name: discover-hardware
+        tasks_from: select-nics
+
+    # ==================================================================
+    # Prompt for remaining cluster config
+    # ==================================================================
+    - name: Prompt for cluster identity and networking
+      ansible.builtin.include_role:
+        name: create-cluster
+        tasks_from: prompts
+      when: cluster_name is not defined or cluster_name == ''
+
+    # ==================================================================
+    # Generate values file, push, patch ArgoCD
+    # ==================================================================
+    - name: Create cluster
+      ansible.builtin.include_role:
+        name: create-cluster

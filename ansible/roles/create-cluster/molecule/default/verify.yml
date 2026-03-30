@@ -1,0 +1,211 @@
+---
+- name: Verify create-cluster output
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    site_config_dir: "{{ molecule_ephemeral_directory }}/site-config"
+    values_file: "{{ site_config_dir }}/clusters/test-cluster.yaml"
+
+  tasks:
+    - name: Values file exists
+      ansible.builtin.stat:
+        path: "{{ values_file }}"
+      register: _file
+      failed_when: not _file.stat.exists
+
+    - name: Load generated values
+      ansible.builtin.slurp:
+        src: "{{ values_file }}"
+      register: _raw
+
+    - name: Parse YAML
+      ansible.builtin.set_fact:
+        values: "{{ _raw.content | b64decode | from_yaml }}"
+
+    - name: Cluster name is correct
+      ansible.builtin.assert:
+        that:
+          - "'test-cluster' in values.clusters"
+        fail_msg: "Cluster name not found in values file"
+
+    - name: Set cluster config shorthand
+      ansible.builtin.set_fact:
+        cfg: "{{ values.clusters['test-cluster'].config }}"
+
+    # --- Cluster identity ---
+    - name: Cluster set is managed
+      ansible.builtin.assert:
+        that: cfg.clusterSet == 'managed'
+
+    - name: Base domain is correct
+      ansible.builtin.assert:
+        that: cfg.clusterInstall.baseDomain == 'lab.example.com'
+
+    - name: OpenShift version is correct
+      ansible.builtin.assert:
+        that: cfg.clusterInstall.openshiftVersion == '4.20.16'
+
+    - name: Control plane agents is 3
+      ansible.builtin.assert:
+        that: cfg.clusterInstall.controlPlaneAgents == 3
+
+    - name: Worker agents is 2
+      ansible.builtin.assert:
+        that: cfg.clusterInstall.workerAgents == 2
+
+    # --- Networking ---
+    - name: API VIP is set
+      ansible.builtin.assert:
+        that: cfg.clusterInstall.apiVip == '10.10.0.5'
+
+    - name: Ingress VIP is set
+      ansible.builtin.assert:
+        that: cfg.clusterInstall.ingressVip == '10.10.0.6'
+
+    - name: Machine network CIDR is set
+      ansible.builtin.assert:
+        that: cfg.networking.machineNetwork.cidr == '10.10.0.0/24'
+
+    - name: Default route exists
+      ansible.builtin.assert:
+        that:
+          - cfg.networking.routes.default.gateway == '10.10.0.1'
+          - cfg.networking.routes.default.interface == 'bond0.100'
+
+    # --- Interface topology ---
+    - name: Cluster bond exists
+      ansible.builtin.assert:
+        that:
+          - "'cluster-bond' in cfg.networking.interfaces"
+          - cfg.networking.interfaces['cluster-bond'].type == 'bond'
+          - cfg.networking.interfaces['cluster-bond'].mode == '802.3ad'
+
+    - name: Cluster VLAN exists
+      ansible.builtin.assert:
+        that:
+          - "'cluster-vlan' in cfg.networking.interfaces"
+          - cfg.networking.interfaces['cluster-vlan'].id == 100
+          - cfg.networking.interfaces['cluster-vlan'].base == 'bond0'
+
+    - name: Storage VLAN exists on shared bond
+      ansible.builtin.assert:
+        that:
+          - "'storage-vlan' in cfg.networking.interfaces"
+          - cfg.networking.interfaces['storage-vlan'].id == 200
+          - cfg.networking.interfaces['storage-vlan'].base == 'bond0'
+          - cfg.networking.interfaces['storage-vlan'].mtu == 9000
+
+    # --- Hosts ---
+    - name: All 5 hosts are present
+      ansible.builtin.assert:
+        that:
+          - cfg.hosts | length == 5
+          - "'master-0' in cfg.hosts"
+          - "'master-1' in cfg.hosts"
+          - "'master-2' in cfg.hosts"
+          - "'worker-0' in cfg.hosts"
+          - "'worker-1' in cfg.hosts"
+
+    - name: Workers have role set
+      ansible.builtin.assert:
+        that:
+          - cfg.hosts['worker-0'].role == 'worker'
+          - cfg.hosts['worker-1'].role == 'worker'
+
+    - name: Masters do not have role set
+      ansible.builtin.assert:
+        that:
+          - cfg.hosts['master-0'].role is not defined
+
+    - name: Host has correct cluster IP
+      ansible.builtin.assert:
+        that:
+          - cfg.hosts['master-0'].networking.interfaces['cluster-vlan'].ipv4.addresses[0].ip == '10.10.0.10'
+          - cfg.hosts['worker-1'].networking.interfaces['cluster-vlan'].ipv4.addresses[0].ip == '10.10.0.21'
+
+    - name: Host has correct storage IP
+      ansible.builtin.assert:
+        that:
+          - cfg.hosts['master-0'].networking.interfaces['storage-vlan'].ipv4.addresses[0].ip == '10.10.1.10'
+          - cfg.hosts['worker-1'].networking.interfaces['storage-vlan'].ipv4.addresses[0].ip == '10.10.1.21'
+
+    - name: Host has 2 NICs in interfaces list
+      ansible.builtin.assert:
+        that:
+          - cfg.hosts['master-0'].interfaces | length == 2
+          - cfg.hosts['master-0'].interfaces[0].name == 'eno1'
+          - cfg.hosts['master-0'].interfaces[1].name == 'eno2'
+
+    - name: BMC config is correct
+      ansible.builtin.assert:
+        that:
+          - cfg.hosts['master-0'].bmcIP == '192.168.100.10'
+          - cfg.hosts['master-0'].bmcPrefix == 'redfish-virtualmedia'
+          - cfg.hosts['master-0'].bootMACAddress == 'aa:bb:cc:00:00:01'
+
+    # --- Disconnected ---
+    - name: Disconnected config is present
+      ansible.builtin.assert:
+        that:
+          - cfg.disconnected is defined
+          - cfg.disconnected.mirrorRegistry.host == 'mirror.lab.example.com:5000'
+          - cfg.disconnected.mirrorRegistry.caRef.name == 'lab-ca-bundle'
+          - cfg.disconnected.useIDMS == true
+          - cfg.disconnected.disableDefaultCatalogs == true
+
+    - name: Mirror entries are present
+      ansible.builtin.assert:
+        that:
+          - cfg.disconnected.mirrorRegistry.mirrors | length >= 5
+
+    - name: Catalog entries are present
+      ansible.builtin.assert:
+        that:
+          - cfg.disconnected.catalogs | length >= 2
+
+    # --- DNS / NTP ---
+    - name: DNS is configured
+      ansible.builtin.assert:
+        that:
+          - cfg.networking.dns.servers[0] == '10.10.0.53'
+          - cfg.networking.dns.search[0] == 'lab.example.com'
+
+    - name: NTP is configured
+      ansible.builtin.assert:
+        that:
+          - cfg.clusterInstall.ntpSources[0] == '10.10.0.1'
+
+    # --- Validate with helm template ---
+    - name: Set repo root path
+      ansible.builtin.set_fact:
+        _repo_root: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') }}/../../.."
+
+    - name: Copy values to autoshift chart for helm validation
+      ansible.builtin.copy:
+        src: "{{ values_file }}"
+        dest: "{{ _repo_root }}/autoshift/values/clusters/test-cluster.yaml"
+        mode: '0644'
+
+    - name: Helm template autoshift chart with generated values  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: >-
+          helm template autoshift/
+          -f autoshift/values/global.yaml
+          -f autoshift/values/clustersets/hub.yaml
+          -f autoshift/values/clustersets/managed.yaml
+          -f autoshift/values/clusters/test-cluster.yaml
+        chdir: "{{ _repo_root }}"
+      register: _helm
+      changed_when: false
+      failed_when: _helm.rc != 0
+
+    - name: Helm template rendered successfully
+      ansible.builtin.debug:
+        msg: "Helm template passed — {{ _helm.stdout_lines | length }} lines rendered"
+
+    - name: Clean up test values file from autoshift chart
+      ansible.builtin.file:
+        path: "{{ _repo_root }}/autoshift/values/clusters/test-cluster.yaml"
+        state: absent

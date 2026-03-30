@@ -1,0 +1,191 @@
+---
+# Present discovered NICs to the engineer and let them select which
+# NICs to use for cluster and storage bonds.
+# Input: discovered_hosts (from discover-host.yaml)
+# Output: cluster_hosts (ready for create-cluster role)
+
+- name: Show available NICs and disks on first host
+  ansible.builtin.debug:
+    msg: |
+      Hardware: {{ discovered_hosts[0].model }} — {{ discovered_hosts[0].cpu_count }} cores, {{ discovered_hosts[0].memory_gb }}GB RAM
+
+      Available NICs on {{ discovered_hosts[0].hostname }}:
+      {% for nic in discovered_hosts[0].nics %}
+        {{ loop.index }}. {{ nic.name }} — {{ nic.mac }} ({{ nic.speed }}Mbps, {{ nic.link_status }})
+      {% endfor %}
+
+      Available disks on {{ discovered_hosts[0].hostname }}:
+      {% for disk in discovered_hosts[0].disks %}
+        {{ loop.index }}. {{ disk.name }} — {{ disk.size_gb }}GB {{ disk.media_type }} {{ disk.protocol }} (serial: {{ disk.serial }})
+      {% endfor %}
+      {% if discovered_hosts[0].disks | length == 0 %}
+        (none discovered — rootDeviceHints will not be set)
+      {% endif %}
+
+- name: Select root device
+  ansible.builtin.pause:
+    prompt: >-
+      Select root disk by number (for OS install),
+      or press enter to skip (installer auto-selects)
+  register: _root_disk_idx
+
+- name: Set root device hint
+  ansible.builtin.set_fact:
+    _root_device_hint: >-
+      {{ {'deviceName': '/dev/disk/by-path/' ~ discovered_hosts[0].disks[(_root_disk_idx.user_input | int) - 1].device_name,
+          'serialNumber': discovered_hosts[0].disks[(_root_disk_idx.user_input | int) - 1].serial,
+          'minSizeGigabytes': discovered_hosts[0].disks[(_root_disk_idx.user_input | int) - 1].size_gb | int}
+         if _root_disk_idx.user_input | default('') != '' and discovered_hosts[0].disks | length > 0
+         else {} }}
+
+- name: Select cluster NIC 1
+  ansible.builtin.pause:
+    prompt: >-
+      Select cluster NIC 1 by number
+      (this NIC layout is assumed identical across all hosts)
+  register: _nic1_idx
+
+- name: Set cluster NIC 1 reference
+  ansible.builtin.set_fact:
+    _cluster_nic1_idx: "{{ (_nic1_idx.user_input | int) - 1 }}"
+
+- name: Select cluster NIC 2
+  ansible.builtin.pause:
+    prompt: "Select cluster NIC 2 by number (for bonding, or press enter to skip)"
+  register: _nic2_idx
+
+- name: Set cluster NIC 2 reference
+  ansible.builtin.set_fact:
+    _cluster_nic2_idx: "{{ ((_nic2_idx.user_input | int) - 1) if _nic2_idx.user_input | default('') != '' else -1 }}"
+    cluster_nic_count: "{{ 2 if _nic2_idx.user_input | default('') != '' else 1 }}"
+
+- name: Select storage NICs
+  when: storage_vlan | default(false) | bool and not (storage_shared_nics | default(true) | bool)
+  block:
+    - name: Select storage NIC 1
+      ansible.builtin.pause:
+        prompt: "Select storage NIC 1 by number"
+      register: _nic3_idx
+
+    - name: Set storage NIC 1 reference
+      ansible.builtin.set_fact:
+        _storage_nic1_idx: "{{ (_nic3_idx.user_input | int) - 1 }}"
+
+    - name: Select storage NIC 2
+      ansible.builtin.pause:
+        prompt: "Select storage NIC 2 by number (or press enter to skip)"
+      register: _nic4_idx
+
+    - name: Set storage NIC 2 reference
+      ansible.builtin.set_fact:
+        _storage_nic2_idx: "{{ ((_nic4_idx.user_input | int) - 1) if _nic4_idx.user_input | default('') != '' else -1 }}"
+        storage_nic_count: "{{ 2 if _nic4_idx.user_input | default('') != '' else 1 }}"
+
+- name: Select host roles
+  ansible.builtin.pause:
+    prompt: >-
+      How many of the {{ discovered_hosts | length }} hosts are masters?
+      [1=SNO, 3=standard] (default: {{ [discovered_hosts | length, 3] | min }})
+  register: _master_count
+
+- name: Set role counts
+  ansible.builtin.set_fact:
+    control_plane_agents: "{{ _master_count.user_input | default([discovered_hosts | length, 3] | min, true) | int }}"
+
+- name: Initialize cluster_hosts from discovery
+  ansible.builtin.set_fact:
+    cluster_hosts: []
+
+- name: Build cluster_hosts from discovered hardware
+  ansible.builtin.set_fact:
+    cluster_hosts: "{{ cluster_hosts + [_host_entry] }}"
+  loop: "{{ discovered_hosts }}"
+  loop_control:
+    index_var: _idx
+    loop_var: _dhost
+  vars:
+    _role: "{{ 'master' if _idx < (control_plane_agents | int) else 'worker' }}"
+    _role_idx: "{{ _idx if _idx < (control_plane_agents | int) else _idx - (control_plane_agents | int) }}"
+    _nic1: "{{ _dhost.nics[_cluster_nic1_idx | int] }}"
+    _nic2: "{{ _dhost.nics[_cluster_nic2_idx | int] if (_cluster_nic2_idx | int) >= 0 else {} }}"
+    _nic3: "{{ _dhost.nics[_storage_nic1_idx | default(0) | int] if _storage_nic1_idx is defined else {} }}"
+    _nic4: "{{ _dhost.nics[_storage_nic2_idx | default(-1) | int] if _storage_nic2_idx is defined and (_storage_nic2_idx | int) >= 0 else {} }}"
+    _host_entry:
+      hostname: "{{ _role }}-{{ _role_idx }}"
+      role: "{{ _role }}"
+      bmc_ip: "{{ _dhost.bmc_ip }}"
+      bmc_prefix: "{{ _dhost.bmc_prefix }}"
+      boot_mac: "{{ _dhost.boot_mac }}"
+      nic1_mac: "{{ _nic1.mac }}"
+      nic1_name: "{{ _nic1.name }}"
+      nic2_mac: "{{ _nic2.mac | default('') }}"
+      nic2_name: "{{ _nic2.name | default('') }}"
+      nic3_mac: "{{ _nic3.mac | default('') }}"
+      nic3_name: "{{ _nic3.name | default('') }}"
+      nic4_mac: "{{ _nic4.mac | default('') }}"
+      nic4_name: "{{ _nic4.name | default('') }}"
+      cluster_ip: ''
+      cluster_prefix: 25
+      storage_ip: ''
+      storage_prefix: 24
+      root_device_hint: "{{ _root_device_hint | default({}) }}"
+      disks: "{{ _dhost.disks }}"
+
+- name: Prompt for static IPs
+  when: (cluster_vlan_ipv4 | default('static')) == 'static'
+  block:
+    - name: Prompt for each host IP — host {{ item.hostname }}
+      ansible.builtin.pause:
+        prompt: "[{{ item.hostname }}] Cluster VLAN IP"
+      register: _ip_prompts
+      loop: "{{ cluster_hosts }}"
+
+    - name: Apply static IPs to cluster_hosts
+      ansible.builtin.set_fact:
+        cluster_hosts: >-
+          {{ cluster_hosts[:idx] +
+             [cluster_hosts[idx] | combine({'cluster_ip': item.user_input})] +
+             cluster_hosts[idx + 1:] }}
+      loop: "{{ _ip_prompts.results }}"
+      loop_control:
+        index_var: idx
+
+- name: Prompt for storage IPs
+  when: >-
+    (storage_vlan | default(false) | bool) and
+    (storage_vlan_ipv4 | default('static')) == 'static'
+  block:
+    - name: Prompt for each host storage IP — host {{ item.hostname }}
+      ansible.builtin.pause:
+        prompt: "[{{ item.hostname }}] Storage VLAN IP"
+      register: _storage_ip_prompts
+      loop: "{{ cluster_hosts }}"
+
+    - name: Apply storage IPs to cluster_hosts
+      ansible.builtin.set_fact:
+        cluster_hosts: >-
+          {{ cluster_hosts[:idx] +
+             [cluster_hosts[idx] | combine({'storage_ip': item.user_input})] +
+             cluster_hosts[idx + 1:] }}
+      loop: "{{ _storage_ip_prompts.results }}"
+      loop_control:
+        index_var: idx
+
+- name: Summary of hosts to provision
+  ansible.builtin.debug:
+    msg: |
+      Cluster hosts configured:
+      {% for host in cluster_hosts %}
+        {{ host.hostname }} ({{ host.role | default('master') }}):
+          BMC: {{ host.bmc_ip }}
+          NIC1: {{ host.nic1_name }} ({{ host.nic1_mac }})
+      {% if host.nic2_mac | default('') != '' %}
+          NIC2: {{ host.nic2_name }} ({{ host.nic2_mac }})
+      {% endif %}
+      {% if host.cluster_ip | default('') != '' %}
+          Cluster IP: {{ host.cluster_ip }}
+      {% endif %}
+      {% if host.storage_ip | default('') != '' %}
+          Storage IP: {{ host.storage_ip }}
+      {% endif %}
+      {% endfor %}

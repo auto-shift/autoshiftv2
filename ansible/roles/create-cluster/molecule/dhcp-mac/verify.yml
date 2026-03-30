@@ -1,0 +1,86 @@
+---
+- name: Verify DHCP + MAC output
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    site_config_dir: "{{ molecule_ephemeral_directory }}/site-config"
+    values_file: "{{ site_config_dir }}/clusters/dhcp-cluster.yaml"
+
+  tasks:
+    - name: Load generated values
+      ansible.builtin.slurp:
+        src: "{{ values_file }}"
+      register: _raw
+
+    - name: Parse YAML
+      ansible.builtin.set_fact:
+        cfg: "{{ (_raw.content | b64decode | from_yaml).clusters['dhcp-cluster'].config }}"
+
+    # --- DHCP mode ---
+    - name: Cluster VLAN is DHCP
+      ansible.builtin.assert:
+        that:
+          - cfg.networking.interfaces['cluster-vlan'].ipv4 == 'dhcp'
+
+    - name: Storage VLAN is DHCP
+      ansible.builtin.assert:
+        that:
+          - cfg.networking.interfaces['storage-vlan'].ipv4 == 'dhcp'
+
+    - name: No per-host networking block when DHCP
+      ansible.builtin.assert:
+        that:
+          - cfg.hosts['master-0'].networking is not defined
+        fail_msg: "Hosts should not have networking.interfaces when both VLANs are DHCP"
+
+    # --- MAC-based port selection ---
+    - name: NIC 1 has MAC set
+      ansible.builtin.assert:
+        that:
+          - cfg.networking.interfaces.nic1.mac == 'aa:bb:cc:00:00:01'
+
+    - name: NIC 2 has MAC set
+      ansible.builtin.assert:
+        that:
+          - cfg.networking.interfaces.nic2.mac == 'aa:bb:cc:00:00:02'
+
+    # --- Bond mode ---
+    - name: Bond mode is active-backup
+      ansible.builtin.assert:
+        that:
+          - cfg.networking.interfaces['cluster-bond'].mode == 'active-backup'
+
+    # --- Helm validation ---
+    - name: Set repo root path
+      ansible.builtin.set_fact:
+        _repo_root: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') }}/../../.."
+
+    - name: Copy values for helm validation
+      ansible.builtin.copy:
+        src: "{{ values_file }}"
+        dest: "{{ _repo_root }}/autoshift/values/clusters/dhcp-cluster.yaml"
+        mode: '0644'
+
+    - name: Helm template validates  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: >-
+          helm template autoshift/
+          -f autoshift/values/global.yaml
+          -f autoshift/values/clustersets/hub.yaml
+          -f autoshift/values/clustersets/managed.yaml
+          -f autoshift/values/clusters/dhcp-cluster.yaml
+        chdir: "{{ _repo_root }}"
+      register: _helm
+      changed_when: false
+      failed_when: _helm.rc != 0
+
+    - name: Helm passed
+      ansible.builtin.debug:
+        msg: "Helm template passed — {{ _helm.stdout_lines | length }} lines"
+
+    - name: Clean up
+      ansible.builtin.file:
+        path: "{{ _repo_root }}/autoshift/values/clusters/dhcp-cluster.yaml"
+        state: absent

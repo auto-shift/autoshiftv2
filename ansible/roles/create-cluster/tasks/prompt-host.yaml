@@ -1,0 +1,210 @@
+---
+# Prompts for a single host. Uses first host's answers as defaults for subsequent hosts.
+
+- name: Set defaults from previous host
+  ansible.builtin.set_fact:
+    _prev: "{{ cluster_hosts[-1] | default({}) }}"
+
+- name: Prompt for hostname — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: >-
+      [Host {{ host_index + 1 }}/{{ host_count }}] Hostname
+      (default: {{ _default_hostname }})
+  register: _hostname
+  vars:
+    _default_hostname: >-
+      {{ 'master' if host_index < (control_plane_agents | int) else 'worker' }}-{{
+      host_index if host_index < (control_plane_agents | int)
+      else host_index - (control_plane_agents | int) }}
+
+- name: Set hostname and role
+  ansible.builtin.set_fact:
+    _cur_hostname: >-
+      {{ _hostname.user_input | default(_default_hn, true) }}
+    _cur_role: >-
+      {{ 'master' if host_index < (control_plane_agents | int) else 'worker' }}
+  vars:
+    _default_hn: >-
+      {{ 'master' if host_index < (control_plane_agents | int) else 'worker' }}-{{
+      host_index if host_index < (control_plane_agents | int)
+      else host_index - (control_plane_agents | int) }}
+
+- name: Prompt for BMC IP — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: "[{{ _cur_hostname }}] BMC IP address"
+  register: _bmc_ip
+
+- name: Prompt for BMC prefix — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: >-
+      [{{ _cur_hostname }}] BMC prefix
+      (default: {{ _prev.bmc_prefix | default('redfish-virtualmedia') }})
+  register: _bmc_prefix
+
+- name: Prompt for boot MAC — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: "[{{ _cur_hostname }}] Boot MAC address (PXE NIC)"
+  register: _boot_mac
+
+- name: Prompt for NIC 1 name — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: >-
+      [{{ _cur_hostname }}] NIC 1 name
+      (default: {{ _prev.nic1_name | default('eno1') }})
+  register: _nic1_name
+
+- name: Prompt for NIC 1 MAC — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: "[{{ _cur_hostname }}] NIC 1 MAC (default: same as boot MAC)"
+  register: _nic1_mac
+
+- name: Prompt for NIC 2 name — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: >-
+      [{{ _cur_hostname }}] NIC 2 name
+      (default: {{ _prev.nic2_name | default('eno2') }})
+  register: _nic2_name
+  when: (cluster_nic_count | default(2) | int) > 1
+
+- name: Prompt for NIC 2 MAC — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: "[{{ _cur_hostname }}] NIC 2 MAC"
+  register: _nic2_mac
+  when: (cluster_nic_count | default(2) | int) > 1
+
+# Dedicated storage NICs (only if storage_vlan + not shared)
+- name: Prompt for storage NIC 1 name — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: >-
+      [{{ _cur_hostname }}] Storage NIC 1 name
+      (default: {{ _prev.nic3_name | default('ens1f0') }})
+  register: _nic3_name
+  when: >-
+    (storage_vlan | default(false) | bool) and
+    not (storage_shared_nics | default(true) | bool)
+
+- name: Prompt for storage NIC 1 MAC — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: "[{{ _cur_hostname }}] Storage NIC 1 MAC"
+  register: _nic3_mac
+  when: >-
+    (storage_vlan | default(false) | bool) and
+    not (storage_shared_nics | default(true) | bool)
+
+- name: Prompt for storage NIC 2 name — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: >-
+      [{{ _cur_hostname }}] Storage NIC 2 name
+      (default: {{ _prev.nic4_name | default('ens1f1') }})
+  register: _nic4_name
+  when: >-
+    (storage_vlan | default(false) | bool) and
+    not (storage_shared_nics | default(true) | bool) and
+    (storage_nic_count | default(2) | int) > 1
+
+- name: Prompt for storage NIC 2 MAC — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: "[{{ _cur_hostname }}] Storage NIC 2 MAC"
+  register: _nic4_mac
+  when: >-
+    (storage_vlan | default(false) | bool) and
+    not (storage_shared_nics | default(true) | bool) and
+    (storage_nic_count | default(2) | int) > 1
+
+- name: Prompt for cluster IP — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: "[{{ _cur_hostname }}] Cluster VLAN IP"
+  register: _cluster_ip
+  when: (cluster_vlan_ipv4 | default('static')) == 'static'
+
+- name: Prompt for cluster prefix — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: >-
+      [{{ _cur_hostname }}] Cluster IP prefix length
+      (default: {{ _prev.cluster_prefix | default(25) }})
+  register: _cluster_prefix
+  when: (cluster_vlan_ipv4 | default('static')) == 'static'
+
+- name: Prompt for storage IP — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: "[{{ _cur_hostname }}] Storage VLAN IP"
+  register: _storage_ip
+  when: >-
+    (storage_vlan | default(false) | bool) and
+    (storage_vlan_ipv4 | default('static')) == 'static'
+
+- name: Prompt for storage prefix — host {{ host_index }}
+  ansible.builtin.pause:
+    prompt: >-
+      [{{ _cur_hostname }}] Storage IP prefix length
+      (default: {{ _prev.storage_prefix | default(24) }})
+  register: _storage_prefix
+  when: >-
+    (storage_vlan | default(false) | bool) and
+    (storage_vlan_ipv4 | default('static')) == 'static'
+
+- name: Append host to cluster_hosts list
+  ansible.builtin.set_fact:
+    cluster_hosts: "{{ cluster_hosts + [_new_host] }}"
+  vars:
+    _nic2_mac_val: >-
+      {{ (_nic2_mac.user_input | default(''))
+         if _nic2_mac is defined and _nic2_mac is not skipped
+         else '' }}
+    _nic2_name_val: >-
+      {{ (_nic2_name.user_input
+          | default(_prev.nic2_name | default('eno2'), true))
+         if _nic2_name is defined and _nic2_name is not skipped
+         else _prev.nic2_name | default('eno2') }}
+    _nic3_mac_val: >-
+      {{ (_nic3_mac.user_input | default(''))
+         if _nic3_mac is defined and _nic3_mac is not skipped
+         else '' }}
+    _nic3_name_val: >-
+      {{ (_nic3_name.user_input
+          | default(_prev.nic3_name | default('ens1f0'), true))
+         if _nic3_name is defined and _nic3_name is not skipped
+         else _prev.nic3_name | default('ens1f0') }}
+    _nic4_mac_val: >-
+      {{ (_nic4_mac.user_input | default(''))
+         if _nic4_mac is defined and _nic4_mac is not skipped
+         else '' }}
+    _nic4_name_val: >-
+      {{ (_nic4_name.user_input
+          | default(_prev.nic4_name | default('ens1f1'), true))
+         if _nic4_name is defined and _nic4_name is not skipped
+         else _prev.nic4_name | default('ens1f1') }}
+    _storage_ip_val: >-
+      {{ (_storage_ip.user_input | default(''))
+         if _storage_ip is defined and _storage_ip is not skipped
+         else '' }}
+    _storage_prefix_val: >-
+      {{ (_storage_prefix.user_input
+          | default(_prev.storage_prefix | default(24), true) | int)
+         if _storage_prefix is defined and _storage_prefix is not skipped
+         else _prev.storage_prefix | default(24) | int }}
+    _new_host:
+      hostname: "{{ _cur_hostname }}"
+      role: "{{ _cur_role }}"
+      bmc_ip: "{{ _bmc_ip.user_input }}"
+      bmc_prefix: >-
+        {{ _bmc_prefix.user_input
+           | default(_prev.bmc_prefix | default('redfish-virtualmedia'), true) }}
+      boot_mac: "{{ _boot_mac.user_input }}"
+      nic1_mac: >-
+        {{ _nic1_mac.user_input | default(_boot_mac.user_input, true) }}
+      nic1_name: >-
+        {{ _nic1_name.user_input
+           | default(_prev.nic1_name | default('eno1'), true) }}
+      nic2_mac: "{{ _nic2_mac_val }}"
+      nic2_name: "{{ _nic2_name_val }}"
+      nic3_mac: "{{ _nic3_mac_val }}"
+      nic3_name: "{{ _nic3_name_val }}"
+      nic4_mac: "{{ _nic4_mac_val }}"
+      nic4_name: "{{ _nic4_name_val }}"
+      cluster_ip: "{{ _cluster_ip.user_input }}"
+      cluster_prefix: >-
+        {{ _cluster_prefix.user_input
+           | default(_prev.cluster_prefix | default(25), true) | int }}
+      storage_ip: "{{ _storage_ip_val }}"
+      storage_prefix: "{{ _storage_prefix_val }}"

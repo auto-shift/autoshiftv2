@@ -1,0 +1,142 @@
+---
+# ==============================================================================
+# Example inventory for creating a baremetal cluster via AAP or CLI
+# ==============================================================================
+# CLI:
+#   ansible-playbook ansible/playbooks/create-cluster.yaml -i ansible/inventory/example-baremetal.yaml
+#
+# AAP:
+#   Map these variables to a Job Template survey.
+# ==============================================================================
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+
+      # --- Site Config ---
+      site_config_dir: /path/to/site-config    # local checkout of the site config repo
+      git_push: true                            # push to git after generating
+      update_argocd: true                       # patch the ArgoCD Application
+      argocd_app_name: autoshift
+      argocd_namespace: openshift-gitops
+
+      # --- Cluster Identity ---
+      cluster_name: my-cluster
+      cluster_set: managed
+      base_domain: example.com
+      openshift_version: '4.20.16'
+      cpu_arch: x86_64
+      control_plane_agents: 3
+      worker_agents: 0
+      masters_schedulable: false
+
+      # --- SDN Networking ---
+      cluster_network_cidr: '10.128.0.0/14'
+      cluster_network_prefix: 23
+      machine_network_cidr: '10.0.0.0/25'
+      service_network_cidr: '172.30.0.0/16'
+      api_vip: '10.0.0.2'
+      ingress_vip: '10.0.0.3'
+      default_gateway: '10.0.0.1'
+
+      # --- Port selection ---
+      port_selection: mac                 # 'name' or 'mac' — mac uses identifier: mac-address in NNCPs
+
+      # --- Cluster VLAN ---
+      cluster_vlan_id: 100
+      cluster_vlan_mtu: 1500
+      cluster_vlan_ipv4: static           # 'static' or 'dhcp'
+      cluster_nic_count: 2
+      cluster_bond_mode: '802.3ad'
+      cluster_bond_miimon: 100
+
+      # --- Storage VLAN ---
+      storage_vlan: true
+      storage_vlan_id: 200
+      storage_vlan_mtu: 9000
+      storage_vlan_ipv4: dhcp             # 'static' or 'dhcp'
+      storage_shared_nics: true
+
+      # --- DNS / NTP ---
+      dns_servers:
+        - '10.0.0.53'
+      dns_search:
+        - example.com
+      ntp_sources:
+        - '10.0.0.1'
+
+      # --- Secrets ---
+      pull_secret_ref: default-pull-secret
+      bmc_credential_ref: default-bmc-cred
+      bmc_endpoint: '/redfish/v1/Systems/1'
+      secret_source_namespace: cluster-install-secrets
+      ssh_public_key: 'ssh-rsa AAAAB3...'
+
+      # --- Disconnected ---
+      disconnected: true
+      mirror_registry_host: 'mirror.example.com:5000'
+      mirror_registry_path: 'ocp'
+      mirror_ca_ref_name: 'cluster-ca-bundle'
+      mirror_ca_ref_key: 'ca-bundle.crt'
+      mirror_ca_ref_namespace: 'cluster-install-secrets'
+      disable_default_catalogs: true
+
+      mirror_entries:
+        - source: 'quay.io/openshift-release-dev/ocp-release'
+          mirror: 'openshift/release-images'
+        - source: 'quay.io/openshift-release-dev/ocp-v4.0-art-dev'
+          mirror: 'openshift/release'
+        - source: 'registry.redhat.io'
+        - source: 'quay.io'
+        - source: 'registry.access.redhat.com'
+
+      catalog_entries:
+        - source: redhat-operators
+          image_path: 'redhat/redhat-operator-index'
+          tag: 'v4.20'
+          publisher: 'Red Hat'
+          display_name: 'Red Hat Operators (Mirrored)'
+        - source: certified-operators
+          image_path: 'redhat/certified-operator-index'
+          tag: 'v4.20'
+          publisher: 'Red Hat'
+          display_name: 'Certified Operators (Mirrored)'
+
+      # --- Hosts ---
+      cluster_hosts:
+        - hostname: master-0
+          bmc_ip: '192.168.1.10'
+          bmc_prefix: redfish-virtualmedia
+          boot_mac: 'aa:bb:cc:dd:ee:01'
+          nic1_mac: 'aa:bb:cc:dd:ee:01'
+          nic1_name: eno1
+          nic2_mac: 'aa:bb:cc:dd:ee:02'
+          nic2_name: eno2
+          cluster_ip: '10.0.0.10'
+          cluster_prefix: 25
+          # storage_ip: '10.0.1.10'
+          storage_prefix: 24
+        - hostname: master-1
+          bmc_ip: '192.168.1.11'
+          bmc_prefix: redfish-virtualmedia
+          boot_mac: 'aa:bb:cc:dd:ee:11'
+          nic1_mac: 'aa:bb:cc:dd:ee:11'
+          nic1_name: eno1
+          nic2_mac: 'aa:bb:cc:dd:ee:12'
+          nic2_name: eno2
+          cluster_ip: '10.0.0.11'
+          cluster_prefix: 25
+          # storage_ip: '10.0.1.11'
+          storage_prefix: 24
+        - hostname: master-2
+          bmc_ip: '192.168.1.12'
+          bmc_prefix: redfish-virtualmedia
+          boot_mac: 'aa:bb:cc:dd:ee:21'
+          nic1_mac: 'aa:bb:cc:dd:ee:21'
+          nic1_name: eno1
+          nic2_mac: 'aa:bb:cc:dd:ee:22'
+          nic2_name: eno2
+          cluster_ip: '10.0.0.12'
+          cluster_prefix: 25
+          # storage_ip: '10.0.1.12'
+          storage_prefix: 24

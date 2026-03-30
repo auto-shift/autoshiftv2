@@ -1,0 +1,172 @@
+---
+# Create a new cluster — generates values file, pushes to git, updates ArgoCD Application.
+
+# ==================================================================
+# Interactive prompts — skipped when variables are set via inventory/survey
+# ==================================================================
+- name: Interactive prompts
+  ansible.builtin.include_tasks: prompts.yaml
+  when: _interactive | default(cluster_name is not defined or cluster_name == '') | bool
+
+# ==================================================================
+# Validation
+# ==================================================================
+- name: Validate required fields
+  ansible.builtin.assert:
+    that:
+      - cluster_name | default('') != ''
+      - base_domain | default('') != ''
+      - machine_network_cidr | default('') != ''
+    fail_msg: "cluster_name, base_domain, and machine_network_cidr are required"
+
+- name: Validate multi-node requires VIPs
+  ansible.builtin.assert:
+    that:
+      - api_vip | default('') != ''
+      - ingress_vip | default('') != ''
+    fail_msg: "api_vip and ingress_vip are required for multi-node clusters"
+  when: control_plane_agents | int > 1
+
+- name: Validate hosts defined
+  ansible.builtin.assert:
+    that:
+      - cluster_hosts | length > 0
+    fail_msg: "At least one host must be defined (cluster_hosts)"
+
+- name: Validate disconnected requires mirror host
+  ansible.builtin.assert:
+    that:
+      - mirror_registry_host | default('') != ''
+      - mirror_ca_ref_name | default('') != ''
+    fail_msg: "mirror_registry_host and mirror_ca_ref_name are required for disconnected"
+  when: disconnected | bool
+
+# ==================================================================
+# Generate values file
+# ==================================================================
+- name: Ensure clusters directory exists
+  ansible.builtin.file:
+    path: "{{ site_config_dir }}/clusters"
+    state: directory
+    mode: '0755'
+
+- name: Generate cluster values file
+  ansible.builtin.template:
+    src: cluster-values.yaml.j2
+    dest: "{{ site_config_dir }}/clusters/{{ cluster_name }}.yaml"
+    mode: '0644'
+
+- name: Display generated file
+  ansible.builtin.debug:
+    msg: "Generated: {{ site_config_dir }}/clusters/{{ cluster_name }}.yaml"
+
+# ==================================================================
+# Push to git
+# ==================================================================
+- name: Push to git
+  when: git_push | default(true) | bool
+  block:
+    - name: Configure git user  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: "git config user.email '{{ git_email | default('autoshift@localhost') }}'"
+        chdir: "{{ site_config_dir }}"
+      changed_when: true
+
+    - name: Configure git user name  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: "git config user.name '{{ git_user | default('AutoShift') }}'"
+        chdir: "{{ site_config_dir }}"
+      changed_when: true
+
+    - name: Git add cluster values  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: "git add clusters/{{ cluster_name }}.yaml"
+        chdir: "{{ site_config_dir }}"
+      changed_when: true
+
+    - name: Git commit  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: "git commit -m 'Add cluster {{ cluster_name }}'"
+        chdir: "{{ site_config_dir }}"
+      register: _git_commit
+      changed_when: _git_commit.rc == 0
+      failed_when: _git_commit.rc != 0 and 'nothing to commit' not in _git_commit.stdout
+
+    - name: Git push  # noqa: command-instead-of-module no-handler
+      ansible.builtin.command:
+        cmd: "git push origin {{ site_config_branch | default('main') }}"
+        chdir: "{{ site_config_dir }}"
+      register: _git_push
+      changed_when: _git_push.rc == 0
+      when: _git_commit is changed
+
+# ==================================================================
+# Update ArgoCD Application to include new cluster values file
+# ==================================================================
+- name: Update ArgoCD Application
+  when: update_argocd | default(true) | bool
+  block:
+    - name: Get current ArgoCD Application
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1alpha1
+        kind: Application
+        name: "{{ argocd_app_name }}"
+        namespace: "{{ argocd_namespace }}"
+      register: _argocd_app
+
+    - name: Extract current valueFiles
+      ansible.builtin.set_fact:
+        _current_value_files: >-
+          {{ _argocd_app.resources[0].spec.sources
+             | selectattr('chart', 'defined')
+             | map(attribute='helm')
+             | map(attribute='valueFiles')
+             | first
+             | default([]) }}
+      when: _argocd_app.resources | length > 0
+
+    - name: Check if cluster already in valueFiles
+      ansible.builtin.set_fact:
+        _cluster_file_ref: "$siteValues/clusters/{{ cluster_name }}.yaml"
+        _already_added: "{{ ('$siteValues/clusters/' ~ cluster_name ~ '.yaml') in (_current_value_files | default([])) }}"
+
+    - name: Add cluster to ArgoCD Application valueFiles
+      when: not _already_added | bool
+      block:
+        - name: Build updated valueFiles
+          ansible.builtin.set_fact:
+            _updated_value_files: "{{ _current_value_files + [_cluster_file_ref] }}"
+
+        - name: Find helm source index
+          ansible.builtin.set_fact:
+            _helm_source_index: "{{ idx }}"
+          loop: "{{ _argocd_app.resources[0].spec.sources }}"
+          loop_control:
+            index_var: idx
+          when: item.chart is defined
+
+        - name: Patch ArgoCD Application
+          kubernetes.core.k8s:
+            api_version: argoproj.io/v1alpha1
+            kind: Application
+            name: "{{ argocd_app_name }}"
+            namespace: "{{ argocd_namespace }}"
+            state: present
+            definition:
+              spec:
+                sources: "{{ _patched_sources }}"
+          vars:
+            _patched_sources: >-
+              {{ _argocd_app.resources[0].spec.sources[:(_helm_source_index | int)]
+                 + [_argocd_app.resources[0].spec.sources[_helm_source_index | int]
+                    | combine({'helm': {'valueFiles': _updated_value_files}}, recursive=True)]
+                 + _argocd_app.resources[0].spec.sources[(_helm_source_index | int) + 1:] }}
+
+        - name: Cluster added to ArgoCD
+          ansible.builtin.debug:
+            msg: "Added $siteValues/clusters/{{ cluster_name }}.yaml to ArgoCD Application valueFiles"
+
+    - name: Cluster already in ArgoCD
+      ansible.builtin.debug:
+        msg: "clusters/{{ cluster_name }}.yaml already in ArgoCD Application valueFiles"
+      when: _already_added | bool

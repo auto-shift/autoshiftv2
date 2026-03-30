@@ -78,7 +78,7 @@ spec:
                               region: {{ "{{" }} $worker_ms.spec.template.spec.providerSpec.value.placement.region {{ "}}" }}
                             credentialsSecret:
                               name: {{ "{{" }} $worker_ms.spec.template.spec.providerSpec.value.credentialsSecret.name {{ "}}" }}
-                            instanceType: {{ "{{" }} $worker_ms.spec.template.spec.providerSpec.value.instanceType {{ "}}" }}
+                            instanceType: {{ "{{" }} "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/infra-nodes-instance-type" {{ "hub}}" }}" | default $worker_ms.spec.template.spec.providerSpec.value.instanceType {{ "}}" }}
                             {{ "{{-" }} $ebs := (index ($worker_ms.spec.template.spec.providerSpec.value.blockDevices) 0).ebs {{ "}}" }}
                             blockDevices:
                               - ebs:
@@ -88,7 +88,7 @@ spec:
                                   kmsKey:
                                     arn: {{ "{{" }} $ebs.kmsKey.arn {{ "}}" }}
                                   {{ "{{-" }} end {{ "}}" }}
-                                  volumeSize: {{ "{{" }} $ebs.volumeSize {{ "}}" }}
+                                  volumeSize: {{ "{{" }} "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/infra-nodes-volume-size" {{ "hub}}" }}" | default $ebs.volumeSize {{ "}}" }}
                                   volumeType: {{ "{{" }} $ebs.volumeType {{ "}}" }}
                             securityGroups:
                               - filters:

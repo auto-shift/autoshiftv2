@@ -1,0 +1,212 @@
+---
+# Interactive prompts — only run when variables are not pre-set.
+
+# --- Cluster identity ---
+- name: Cluster name
+  ansible.builtin.pause:
+    prompt: "Cluster name"
+  register: _p
+- name: Set cluster_name
+  ansible.builtin.set_fact: { cluster_name: "{{ _p.user_input }}" }
+
+- name: Cluster set
+  ansible.builtin.pause:
+    prompt: "Cluster set (default: managed)"
+  register: _p
+- name: Set cluster_set
+  ansible.builtin.set_fact: { cluster_set: "{{ _p.user_input | default('managed', true) }}" }
+
+- name: Base domain
+  ansible.builtin.pause:
+    prompt: "Base domain (e.g., example.com)"
+  register: _p
+- name: Set base_domain
+  ansible.builtin.set_fact: { base_domain: "{{ _p.user_input }}" }
+
+- name: OpenShift version
+  ansible.builtin.pause:
+    prompt: "OpenShift version (default: 4.20.16)"
+  register: _p
+- name: Set openshift_version
+  ansible.builtin.set_fact: { openshift_version: "{{ _p.user_input | default('4.20.16', true) }}" }
+
+- name: Control plane agents
+  ansible.builtin.pause:
+    prompt: "Control plane agents [1=SNO, 3=standard] (default: 3)"
+  register: _p
+- name: Set control_plane_agents
+  ansible.builtin.set_fact: { control_plane_agents: "{{ _p.user_input | default(3, true) | int }}" }
+
+# --- Networking ---
+- name: Machine network CIDR
+  ansible.builtin.pause:
+    prompt: "Machine network CIDR (e.g., 10.0.0.0/24)"
+  register: _p
+- name: Set machine_network_cidr
+  ansible.builtin.set_fact: { machine_network_cidr: "{{ _p.user_input }}" }
+
+- name: Default gateway
+  ansible.builtin.pause:
+    prompt: "Default gateway"
+  register: _p
+- name: Set default_gateway
+  ansible.builtin.set_fact: { default_gateway: "{{ _p.user_input }}" }
+
+- name: API VIP
+  ansible.builtin.pause:
+    prompt: "API VIP"
+  register: _p
+  when: (control_plane_agents | default(3) | int) > 1
+- name: Set api_vip
+  ansible.builtin.set_fact: { api_vip: "{{ _p.user_input }}" }
+  when: _p is not skipped
+
+- name: Ingress VIP
+  ansible.builtin.pause:
+    prompt: "Ingress VIP"
+  register: _p
+  when: (control_plane_agents | default(3) | int) > 1
+- name: Set ingress_vip
+  ansible.builtin.set_fact: { ingress_vip: "{{ _p.user_input }}" }
+  when: _p is not skipped
+
+# --- Port selection ---
+- name: Port selection mode
+  ansible.builtin.pause:
+    prompt: "Select bond ports by [name/mac] (default: name)"
+  register: _p
+- name: Set port_selection
+  ansible.builtin.set_fact: { port_selection: "{{ _p.user_input | default('name', true) }}" }
+
+# --- Cluster VLAN ---
+- name: Cluster VLAN ID
+  ansible.builtin.pause:
+    prompt: "Cluster VLAN ID (e.g., 100)"
+  register: _p
+- name: Set cluster_vlan_id
+  ansible.builtin.set_fact: { cluster_vlan_id: "{{ _p.user_input | int }}" }
+
+- name: Cluster VLAN MTU
+  ansible.builtin.pause:
+    prompt: "Cluster VLAN MTU (default: 1500)"
+  register: _p
+- name: Set cluster_vlan_mtu
+  ansible.builtin.set_fact: { cluster_vlan_mtu: "{{ _p.user_input | default(1500, true) | int }}" }
+
+- name: Cluster VLAN IPv4 mode
+  ansible.builtin.pause:
+    prompt: "Cluster VLAN IPv4 [static/dhcp] (default: static)"
+  register: _p
+- name: Set cluster_vlan_ipv4
+  ansible.builtin.set_fact: { cluster_vlan_ipv4: "{{ _p.user_input | default('static', true) }}" }
+
+- name: Cluster NIC count
+  ansible.builtin.pause:
+    prompt: "Cluster NIC count [1=single, 2=bonded] (default: 2)"
+  register: _p
+- name: Set cluster_nic_count
+  ansible.builtin.set_fact: { cluster_nic_count: "{{ _p.user_input | default(2, true) | int }}" }
+
+- name: Cluster bond mode
+  ansible.builtin.pause:
+    prompt: "Cluster bond mode [802.3ad/active-backup] (default: 802.3ad)"
+  register: _p
+  when: (cluster_nic_count | default(2) | int) > 1
+- name: Set cluster_bond_mode
+  ansible.builtin.set_fact: { cluster_bond_mode: "{{ _p.user_input | default('802.3ad', true) }}" }
+  when: _p is not skipped
+
+# --- Storage VLAN ---
+- name: Storage VLAN
+  ansible.builtin.pause:
+    prompt: "Configure a storage VLAN? [yes/no] (default: no)"
+  register: _p
+- name: Set storage_vlan
+  ansible.builtin.set_fact: { storage_vlan: "{{ _p.user_input | default('no', true) | bool }}" }
+
+- name: Storage VLAN ID
+  ansible.builtin.pause:
+    prompt: "Storage VLAN ID (e.g., 200)"
+  register: _p
+  when: storage_vlan | default(false) | bool
+- name: Set storage_vlan_id
+  ansible.builtin.set_fact: { storage_vlan_id: "{{ _p.user_input | int }}" }
+  when: _p is defined and _p is not skipped
+
+- name: Storage VLAN IPv4 mode
+  ansible.builtin.pause:
+    prompt: "Storage VLAN IPv4 [static/dhcp] (default: static)"
+  register: _p
+  when: storage_vlan | default(false) | bool
+- name: Set storage_vlan_ipv4
+  ansible.builtin.set_fact: { storage_vlan_ipv4: "{{ _p.user_input | default('static', true) }}" }
+  when: _p is defined and _p is not skipped
+
+- name: Storage VLAN MTU
+  ansible.builtin.pause:
+    prompt: "Storage VLAN MTU (default: 9000)"
+  register: _p
+  when: storage_vlan | default(false) | bool
+- name: Set storage_vlan_mtu
+  ansible.builtin.set_fact: { storage_vlan_mtu: "{{ _p.user_input | default(9000, true) | int }}" }
+  when: _p is defined and _p is not skipped
+
+- name: Storage shared NICs
+  ansible.builtin.pause:
+    prompt: "Storage uses same NICs as cluster? [yes/no] (default: yes)"
+  register: _p
+  when: storage_vlan | default(false) | bool
+- name: Set storage_shared_nics
+  ansible.builtin.set_fact: { storage_shared_nics: "{{ _p.user_input | default('yes', true) | bool }}" }
+  when: _p is defined and _p is not skipped
+
+# --- SSH / Secrets ---
+- name: SSH public key
+  ansible.builtin.pause:
+    prompt: "SSH public key (paste full key)"
+  register: _p
+- name: Set ssh_public_key
+  ansible.builtin.set_fact: { ssh_public_key: "{{ _p.user_input }}" }
+
+# --- Disconnected ---
+- name: Disconnected
+  ansible.builtin.pause:
+    prompt: "Disconnected environment? [yes/no] (default: no)"
+  register: _p
+- name: Set disconnected
+  ansible.builtin.set_fact: { disconnected: "{{ _p.user_input | default('no', true) | bool }}" }
+
+- name: Mirror registry host
+  ansible.builtin.pause:
+    prompt: "Mirror registry host:port (e.g., mirror.example.com:5000)"
+  register: _p
+  when: disconnected | default(false) | bool
+- name: Set mirror_registry_host
+  ansible.builtin.set_fact: { mirror_registry_host: "{{ _p.user_input }}" }
+  when: _p is defined and _p is not skipped
+
+- name: Mirror CA ConfigMap name
+  ansible.builtin.pause:
+    prompt: "Mirror registry CA ConfigMap name (on hub)"
+  register: _p
+  when: disconnected | default(false) | bool
+- name: Set mirror_ca_ref_name
+  ansible.builtin.set_fact: { mirror_ca_ref_name: "{{ _p.user_input }}" }
+  when: _p is defined and _p is not skipped
+
+# --- Hosts ---
+- name: Number of hosts
+  ansible.builtin.pause:
+    prompt: "Total number of hosts (masters + workers)"
+  register: _host_count
+
+- name: Initialize cluster_hosts
+  ansible.builtin.set_fact:
+    cluster_hosts: []
+    host_count: "{{ _host_count.user_input | int }}"
+
+- name: Prompt for each host
+  ansible.builtin.include_tasks: prompt-host.yaml
+  loop: "{{ range(0, host_count | int) | list }}"
+  loop_control:
+    loop_var: host_index

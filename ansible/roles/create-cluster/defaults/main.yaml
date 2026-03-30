@@ -1,0 +1,102 @@
+---
+# Role defaults — lowest precedence, overridden by inventory/extra-vars.
+
+cluster_set: managed
+openshift_version: '4.20.16'
+cpu_arch: x86_64
+control_plane_agents: 3
+worker_agents: 0
+masters_schedulable: false
+cpu_partitioning: 'None'
+
+# SDN networking
+cluster_network_cidr: '10.128.0.0/14'
+cluster_network_prefix: 23
+service_network_cidr: '172.30.0.0/16'
+api_vip: ''
+ingress_vip: ''
+default_gateway: ''
+
+# Cluster VLAN
+cluster_vlan_id: 100
+cluster_vlan_mtu: 1500
+cluster_vlan_ipv4: static          # 'static' or 'dhcp'
+cluster_nic_count: 2
+cluster_bond_mode: '802.3ad'
+cluster_bond_miimon: 100
+
+# Storage VLAN
+storage_vlan: false
+storage_vlan_id: 200
+storage_vlan_mtu: 9000
+storage_vlan_ipv4: static          # 'static' or 'dhcp'
+storage_nic_count: 2
+storage_bond_mode: '802.3ad'
+storage_bond_miimon: 100
+storage_shared_nics: true
+
+# Port selection — 'name' or 'mac'
+# When 'mac', bond ports reference NICs by MAC address (identifier: mac-address)
+# Useful for heterogeneous hardware where NIC names vary across hosts
+port_selection: name
+
+# Secrets
+pull_secret_ref: default-pull-secret
+bmc_credential_ref: default-bmc-cred
+bmc_endpoint: '/redfish/v1/Systems/1'
+secret_source_namespace: cluster-install-secrets
+ssh_public_key: ''
+
+# Disconnected
+disconnected: false
+mirror_registry_host: ''
+mirror_registry_path: ocp
+mirror_ca_ref_name: ''
+mirror_ca_ref_key: ca-bundle.crt
+mirror_ca_ref_namespace: cluster-install-secrets
+disable_default_catalogs: true
+
+# DNS / NTP
+dns_servers: []
+dns_search: []
+ntp_sources: []
+
+# Hosts
+cluster_hosts: []
+
+# Disconnected mirror entries
+mirror_entries:
+  - source: quay.io/openshift-release-dev/ocp-release
+    mirror: openshift/release-images
+  - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+    mirror: openshift/release
+  - source: registry.redhat.io
+  - source: quay.io
+  - source: registry.access.redhat.com
+
+# Disconnected catalog entries
+catalog_entries:
+  - source: redhat-operators
+    image_path: redhat/redhat-operator-index
+    tag: v4.20
+    publisher: Red Hat
+    display_name: 'Red Hat Operators (Mirrored)'
+  - source: certified-operators
+    image_path: redhat/certified-operator-index
+    tag: v4.20
+    publisher: Red Hat
+    display_name: 'Certified Operators (Mirrored)'
+
+# Site config
+site_config_dir: "{{ playbook_dir }}/../site-config"
+
+# Git
+git_push: true
+git_email: autoshift@localhost
+git_user: AutoShift
+site_config_branch: main
+
+# ArgoCD
+update_argocd: true
+argocd_app_name: autoshift
+argocd_namespace: openshift-gitops

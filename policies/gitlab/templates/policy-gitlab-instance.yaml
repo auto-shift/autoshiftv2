@@ -1,0 +1,134 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-gitlab-instance" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-gitlab-operator-install
+      namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-cert-manager-operator-install
+      namespace: '{{ $policyNamespace }}'
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
+            {{ "{{-" }} $chartVersion := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-chart-version" | default "{{ .Values.gitlab.chartVersion | default "9.10.1" }}" {{ "hub}}" }}" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps.gitlab.com/v1beta1
+                kind: GitLab
+                metadata:
+                  name: gitlab
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  chart:
+                    version: {{ "{{" }} $chartVersion {{ "}}" }}
+                    values:
+                      global:
+                        hosts:
+                          domain: {{ "{{" }} $ingressDomain {{ "}}" }}
+                        ingress:
+                          annotations:
+                            route.openshift.io/termination: edge
+                          class: none
+                      nginx-ingress:
+                        enabled: false
+                      installCertmanager: false
+                      gitlab:
+                        gitlab-shell:
+                          minReplicas: 1
+                          maxReplicas: 2
+                        webservice:
+                          minReplicas: 1
+                          maxReplicas: 2
+                          resources:
+                            requests:
+                              cpu: 500m
+                              memory: 1500M
+                        sidekiq:
+                          minReplicas: 1
+                          maxReplicas: 2
+                          resources:
+                            requests:
+                              cpu: 500m
+                              memory: 1000M
+                      postgresql:
+                        primary:
+                          extendedConfiguration: max_connections = 200
+                      redis:
+                        resources:
+                          requests:
+                            cpu: 100m
+                      minio:
+                        resources:
+                          requests:
+                            cpu: 100m
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitlab'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

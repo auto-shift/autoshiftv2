@@ -1,0 +1,74 @@
+---
+- name: Test create-cluster role — DHCP + MAC port selection
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    git_push: false
+    update_argocd: false
+    site_config_dir: "{{ molecule_ephemeral_directory }}/site-config"
+
+    cluster_name: dhcp-cluster
+    cluster_set: managed
+    base_domain: lab.example.com
+    openshift_version: '4.20.16'
+    control_plane_agents: 3
+
+    cluster_network_cidr: '10.128.0.0/14'
+    cluster_network_prefix: 23
+    machine_network_cidr: '10.10.0.0/24'
+    service_network_cidr: '172.30.0.0/16'
+    api_vip: '10.10.0.5'
+    ingress_vip: '10.10.0.6'
+    default_gateway: '10.10.0.1'
+
+    # DHCP on both VLANs
+    cluster_vlan_id: 100
+    cluster_vlan_mtu: 1500
+    cluster_vlan_ipv4: dhcp
+    cluster_nic_count: 2
+    cluster_bond_mode: active-backup
+
+    storage_vlan: true
+    storage_vlan_id: 200
+    storage_vlan_mtu: 9000
+    storage_vlan_ipv4: dhcp
+    storage_shared_nics: true
+
+    # MAC-based port selection
+    port_selection: mac
+
+    ssh_public_key: 'ssh-rsa AAAAB3test...'
+    disconnected: false
+
+    cluster_hosts:
+      - hostname: master-0
+        bmc_ip: '192.168.100.10'
+        bmc_prefix: redfish-virtualmedia
+        boot_mac: 'aa:bb:cc:00:00:01'
+        nic1_mac: 'aa:bb:cc:00:00:01'
+        nic1_name: eno1
+        nic2_mac: 'aa:bb:cc:00:00:02'
+        nic2_name: eno2
+      - hostname: master-1
+        bmc_ip: '192.168.100.11'
+        bmc_prefix: redfish-virtualmedia
+        boot_mac: 'aa:bb:cc:00:01:01'
+        nic1_mac: 'aa:bb:cc:00:01:01'
+        nic1_name: eno1
+        nic2_mac: 'aa:bb:cc:00:01:02'
+        nic2_name: eno2
+      - hostname: master-2
+        bmc_ip: '192.168.100.12'
+        bmc_prefix: redfish-virtualmedia
+        boot_mac: 'aa:bb:cc:00:02:01'
+        nic1_mac: 'aa:bb:cc:00:02:01'
+        nic1_name: eno1
+        nic2_mac: 'aa:bb:cc:00:02:02'
+        nic2_name: eno2
+
+  tasks:
+    - name: Run create-cluster role
+      ansible.builtin.include_role:
+        name: create-cluster

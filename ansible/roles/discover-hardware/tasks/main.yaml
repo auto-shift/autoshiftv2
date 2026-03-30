@@ -1,0 +1,43 @@
+---
+# Discover hardware from Dell iDRACs via Redfish API.
+# Outputs: discovered_hosts (list of host dicts with hardware info)
+#
+# Credentials come from ansible-vault encrypted vars:
+#   ansible-playbook playbook.yaml --ask-vault-pass
+#   ansible-playbook playbook.yaml --vault-password-file .vault-pass
+
+- name: Validate iDRAC credentials are set
+  ansible.builtin.assert:
+    that:
+      - idrac_user | default('') != ''
+      - idrac_pass | default('') != ''
+    fail_msg: >-
+      idrac_user and idrac_pass are required.
+      Create an ansible-vault encrypted file with these values.
+
+- name: Discover each iDRAC host
+  ansible.builtin.include_tasks: discover-host.yaml
+  loop: "{{ idrac_hosts }}"
+  loop_control:
+    loop_var: idrac_ip
+
+- name: Display discovered hosts
+  ansible.builtin.debug:
+    msg: |
+      Discovered {{ discovered_hosts | length }} host(s):
+      {% for host in discovered_hosts %}
+      {{ host.hostname }}:
+        Model: {{ host.model }}
+        CPU: {{ host.cpu_count }} cores
+        Memory: {{ host.memory_gb }} GB
+        BMC IP: {{ host.bmc_ip }}
+        Boot MAC: {{ host.boot_mac }}
+        NICs:
+      {% for nic in host.nics %}
+          - {{ nic.name }}: {{ nic.mac }} ({{ nic.speed }}Mbps, {{ nic.link_status }})
+      {% endfor %}
+        Disks:
+      {% for disk in host.disks %}
+          - {{ disk.name }}: {{ disk.size_gb }}GB {{ disk.media_type }} ({{ disk.protocol }}, serial: {{ disk.serial }})
+      {% endfor %}
+      {% endfor %}

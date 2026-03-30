@@ -1,0 +1,119 @@
+---
+- name: Test create-cluster role
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Disable git push and ArgoCD patching — we only test values generation
+    git_push: false
+    update_argocd: false
+    site_config_dir: "{{ molecule_ephemeral_directory }}/site-config"
+
+    # --- Test: 3 master + 2 worker, dual VLAN, disconnected ---
+    cluster_name: test-cluster
+    cluster_set: managed
+    base_domain: lab.example.com
+    openshift_version: '4.20.16'
+    control_plane_agents: 3
+    worker_agents: 2
+
+    cluster_network_cidr: '10.128.0.0/14'
+    cluster_network_prefix: 23
+    machine_network_cidr: '10.10.0.0/24'
+    service_network_cidr: '172.30.0.0/16'
+    api_vip: '10.10.0.5'
+    ingress_vip: '10.10.0.6'
+    default_gateway: '10.10.0.1'
+
+    cluster_vlan_id: 100
+    cluster_vlan_mtu: 1500
+    cluster_nic_count: 2
+    cluster_bond_mode: '802.3ad'
+    cluster_bond_miimon: 100
+
+    storage_vlan: true
+    storage_vlan_id: 200
+    storage_vlan_mtu: 9000
+    storage_shared_nics: true
+
+    dns_servers: ['10.10.0.53']
+    dns_search: ['lab.example.com']
+    ntp_sources: ['10.10.0.1']
+
+    ssh_public_key: 'ssh-rsa AAAAB3test...'
+    pull_secret_ref: default-pull-secret
+    bmc_credential_ref: default-bmc-cred
+
+    disconnected: true
+    mirror_registry_host: 'mirror.lab.example.com:5000'
+    mirror_ca_ref_name: 'lab-ca-bundle'
+
+    cluster_hosts:
+      - hostname: master-0
+        bmc_ip: '192.168.100.10'
+        bmc_prefix: redfish-virtualmedia
+        boot_mac: 'aa:bb:cc:00:00:01'
+        nic1_mac: 'aa:bb:cc:00:00:01'
+        nic1_name: eno1
+        nic2_mac: 'aa:bb:cc:00:00:02'
+        nic2_name: eno2
+        cluster_ip: '10.10.0.10'
+        cluster_prefix: 24
+        storage_ip: '10.10.1.10'
+        storage_prefix: 24
+      - hostname: master-1
+        bmc_ip: '192.168.100.11'
+        bmc_prefix: redfish-virtualmedia
+        boot_mac: 'aa:bb:cc:00:01:01'
+        nic1_mac: 'aa:bb:cc:00:01:01'
+        nic1_name: eno1
+        nic2_mac: 'aa:bb:cc:00:01:02'
+        nic2_name: eno2
+        cluster_ip: '10.10.0.11'
+        cluster_prefix: 24
+        storage_ip: '10.10.1.11'
+        storage_prefix: 24
+      - hostname: master-2
+        bmc_ip: '192.168.100.12'
+        bmc_prefix: redfish-virtualmedia
+        boot_mac: 'aa:bb:cc:00:02:01'
+        nic1_mac: 'aa:bb:cc:00:02:01'
+        nic1_name: eno1
+        nic2_mac: 'aa:bb:cc:00:02:02'
+        nic2_name: eno2
+        cluster_ip: '10.10.0.12'
+        cluster_prefix: 24
+        storage_ip: '10.10.1.12'
+        storage_prefix: 24
+      - hostname: worker-0
+        role: worker
+        bmc_ip: '192.168.100.20'
+        bmc_prefix: redfish-virtualmedia
+        boot_mac: 'aa:bb:cc:00:10:01'
+        nic1_mac: 'aa:bb:cc:00:10:01'
+        nic1_name: eno1
+        nic2_mac: 'aa:bb:cc:00:10:02'
+        nic2_name: eno2
+        cluster_ip: '10.10.0.20'
+        cluster_prefix: 24
+        storage_ip: '10.10.1.20'
+        storage_prefix: 24
+      - hostname: worker-1
+        role: worker
+        bmc_ip: '192.168.100.21'
+        bmc_prefix: redfish-virtualmedia
+        boot_mac: 'aa:bb:cc:00:11:01'
+        nic1_mac: 'aa:bb:cc:00:11:01'
+        nic1_name: eno1
+        nic2_mac: 'aa:bb:cc:00:11:02'
+        nic2_name: eno2
+        cluster_ip: '10.10.0.21'
+        cluster_prefix: 24
+        storage_ip: '10.10.1.21'
+        storage_prefix: 24
+
+  tasks:
+    - name: Run create-cluster role
+      ansible.builtin.include_role:
+        name: create-cluster
