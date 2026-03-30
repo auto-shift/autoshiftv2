@@ -1,0 +1,125 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-jfrog-instance" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-jfrog-operator-install
+      namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-crunchy-postgres-artifactory
+      namespace: '{{ $policyNamespace }}'
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: jfrog-artifactory-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
+            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" "jfrog-system" "artifactory-db-pguser-artifactory") | default dict {{ "}}" }}
+            {{ "{{-" }} $dbData := ($dbSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $dbHost := (index $dbData "host" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbPort := (index $dbData "port" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbName := (index $dbData "dbname" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbUser := (index $dbData "user" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbPass := (index $dbData "password" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} if and (not (empty $dbHost)) (not (empty $dbPass)) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: charts.helm.k8s.io/v1
+                kind: OpenshiftArtifactoryHa
+                metadata:
+                  name: artifactory-ha
+                  namespace: {{ .Values.jfrog.namespace }}
+                spec:
+                  artifactory:
+                    node:
+                      replicaCount: 1
+                    database:
+                      type: postgresql
+                      driver: org.postgresql.Driver
+                      url: jdbc:postgresql://{{ "{{" }} $dbHost {{ "}}" }}:{{ "{{" }} $dbPort {{ "}}" }}/{{ "{{" }} $dbName {{ "}}" }}
+                      user: {{ "{{" }} $dbUser {{ "}}" }}
+                      password: {{ "{{" }} $dbPass {{ "}}" }}
+                    persistence:
+                      enabled: true
+                      size: 100Gi
+                  postgresql:
+                    enabled: false
+                  nginx:
+                    enabled: false
+                  ingress:
+                    enabled: true
+                    defaultBackend:
+                      enabled: false
+                    hosts:
+                      - artifactory.{{ "{{" }} $ingressDomain {{ "}}" }}
+                    routerPath: /
+                    annotations:
+                      route.openshift.io/termination: edge
+            {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/jfrog'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
