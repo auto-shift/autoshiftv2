@@ -29,6 +29,11 @@ spec:
     - apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
+      name: policy-cnpg-artifactory-pooler
+      namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
       name: policy-jfrog-keys
       namespace: '{{ $policyNamespace }}'
   policy-templates:
@@ -68,7 +73,7 @@ spec:
             {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
             {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-db-app") | default dict {{ "}}" }}
             {{ "{{-" }} $dbData := ($dbSecret.data | default dict) {{ "}}" }}
-            {{ "{{-" }} $dbHost := (index $dbData "host" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbHost := "artifactory-db-pooler-rw.{{ .Values.jfrog.namespace }}.svc" {{ "}}" }}
             {{ "{{-" }} $dbPort := (index $dbData "port" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbName := (index $dbData "dbname" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbUser := (index $dbData "username" | default "" | base64dec) {{ "}}" }}
