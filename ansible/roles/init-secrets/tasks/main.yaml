@@ -257,22 +257,38 @@
   register: _existing_jfrog_keys
   when: init_secrets_jfrog_keys | default(false) | bool
 
-- name: Generate JFrog Artifactory keys
+- name: Create JFrog Artifactory keys
   when:
     - init_secrets_jfrog_keys | default(false) | bool
     - _existing_jfrog_keys.resources | default([]) | length == 0
   block:
-    - name: Generate masterKey and joinKey  # noqa: command-instead-of-module
+    - name: Generate masterKey  # noqa: command-instead-of-module
       ansible.builtin.command:
         cmd: openssl rand -hex 32
-      register: _master_key
+      register: _generated_master
       changed_when: true
+      when: init_secrets_jfrog_master_key == ''
+
+    - name: Set masterKey
+      ansible.builtin.set_fact:
+        _jfrog_master_key: >-
+          {{ init_secrets_jfrog_master_key if init_secrets_jfrog_master_key != ''
+             else _generated_master.stdout }}
+      no_log: true
 
     - name: Generate joinKey  # noqa: command-instead-of-module
       ansible.builtin.command:
         cmd: openssl rand -hex 32
-      register: _join_key
+      register: _generated_join
       changed_when: true
+      when: init_secrets_jfrog_join_key == ''
+
+    - name: Set joinKey
+      ansible.builtin.set_fact:
+        _jfrog_join_key: >-
+          {{ init_secrets_jfrog_join_key if init_secrets_jfrog_join_key != ''
+             else _generated_join.stdout }}
+      no_log: true
 
     - name: Create JFrog namespace
       kubernetes.core.k8s:
@@ -291,9 +307,16 @@
         definition:
           type: Opaque
           stringData:
-            master-key: "{{ _master_key.stdout }}"
-            join-key: "{{ _join_key.stdout }}"
+            master-key: "{{ _jfrog_master_key }}"
+            join-key: "{{ _jfrog_join_key }}"
       no_log: true
+
+    - name: Keys created
+      ansible.builtin.debug:
+        msg: >-
+          artifactory-keys secret created in {{ init_secrets_jfrog_namespace }}.
+          {{ 'Using provided masterKey from vault.' if init_secrets_jfrog_master_key != ''
+             else 'Generated new masterKey — save it to vault for disaster recovery.' }}
 
 - name: JFrog keys already exist
   ansible.builtin.debug:

@@ -36,10 +36,32 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
+          name: jfrog-scc
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: security.openshift.io/v1
+                kind: SecurityContextConstraints
+                metadata:
+                  name: anyuid
+                users:
+                  - system:serviceaccount:openshift-operators:artifactory-ha-operator
+                  - system:serviceaccount:{{ .Values.jfrog.namespace }}:openshiftartifactoryha-artifactory-ha
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
           name: jfrog-artifactory-instance
         spec:
           remediationAction: enforce
           severity: high
+          recordDiff: None
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
@@ -52,46 +74,77 @@ spec:
             {{ "{{-" }} $dbName := (index $dbData "dbname" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbUser := (index $dbData "user" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbPass := (index $dbData "password" | default "" | base64dec) {{ "}}" }}
-            {{- /* Read or generate masterKey/joinKey from a secret */ -}}
             {{ "{{-" }} $keysSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-keys") | default dict {{ "}}" }}
             {{ "{{-" }} $keysData := ($keysSecret.data | default dict) {{ "}}" }}
             {{ "{{-" }} $masterKey := (index $keysData "master-key" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $joinKey := (index $keysData "join-key" | default "" | base64dec) {{ "}}" }}
-            {{ "{{-" }} if and (not (empty $dbHost)) (not (empty $dbPass)) {{ "}}" }}
+            {{ "{{-" }} if and (not (empty $dbHost)) (not (empty $dbPass)) (not (empty $masterKey)) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: charts.helm.k8s.io/v1
                 kind: OpenshiftArtifactoryHa
                 metadata:
-                  name: artifactory-ha
+                  name: openshiftartifactoryha
                   namespace: {{ .Values.jfrog.namespace }}
                 spec:
                   artifactory-ha:
                     artifactory:
                       masterKey: {{ "{{" }} $masterKey {{ "}}" }}
                       joinKey: {{ "{{" }} $joinKey {{ "}}" }}
-                      primary:
-                        replicaCount: 1
+                      uid: '1000721030'
                       node:
-                        replicaCount: 0
+                        replicaCount: 1
                         waitForPrimaryStartup:
                           enabled: false
-                      database:
-                        type: postgresql
-                        driver: org.postgresql.Driver
-                        url: jdbc:postgresql://{{ "{{" }} $dbHost {{ "}}" }}:{{ "{{" }} $dbPort {{ "}}" }}/{{ "{{" }} $dbName {{ "}}" }}
-                        user: {{ "{{" }} $dbUser {{ "}}" }}
-                        password: {{ "{{" }} $dbPass {{ "}}" }}
                       persistence:
                         enabled: true
                         size: 200Gi
                     databaseUpgradeReady: true
+                    database:
+                      type: postgresql
+                      driver: org.postgresql.Driver
+                      url: jdbc:postgresql://{{ "{{" }} $dbHost {{ "}}" }}:{{ "{{" }} $dbPort {{ "}}" }}/{{ "{{" }} $dbName {{ "}}" }}
+                      user: {{ "{{" }} $dbUser {{ "}}" }}
+                      password: {{ "{{" }} $dbPass {{ "}}" }}
                     postgresql:
                       enabled: false
                     nginx:
                       enabled: false
+                      uid: '1000720104'
+                      gid: '1000720107'
                     waitForDatabase: true
             {{ "{{-" }} end {{ "}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: jfrog-artifactory-route
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: route.openshift.io/v1
+                kind: Route
+                metadata:
+                  name: artifactory
+                  namespace: {{ .Values.jfrog.namespace }}
+                spec:
+                  host: artifactory.{{ "{{" }} $ingressDomain {{ "}}" }}
+                  to:
+                    kind: Service
+                    name: openshiftartifactoryha-artifactory-ha
+                    weight: 100
+                  port:
+                    targetPort: 8082
+                  tls:
+                    termination: edge
+                    insecureEdgeTerminationPolicy: Redirect
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
