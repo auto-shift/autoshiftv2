@@ -24,7 +24,7 @@ spec:
     - apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
-      name: policy-crunchy-postgres-artifactory
+      name: policy-cnpg-artifactory
       namespace: '{{ $policyNamespace }}'
     - apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -66,12 +66,12 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
-            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-db-pguser-artifactory") | default dict {{ "}}" }}
+            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-db-app") | default dict {{ "}}" }}
             {{ "{{-" }} $dbData := ($dbSecret.data | default dict) {{ "}}" }}
             {{ "{{-" }} $dbHost := (index $dbData "host" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbPort := (index $dbData "port" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbName := (index $dbData "dbname" | default "" | base64dec) {{ "}}" }}
-            {{ "{{-" }} $dbUser := (index $dbData "user" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbUser := (index $dbData "username" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbPass := (index $dbData "password" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $keysSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-keys") | default dict {{ "}}" }}
             {{ "{{-" }} $keysData := ($keysSecret.data | default dict) {{ "}}" }}
