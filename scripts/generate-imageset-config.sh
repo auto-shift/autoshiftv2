@@ -864,11 +864,12 @@ generate_imageset_config() {
     
     log_step "Generating ImageSetConfiguration from ${#values_files_array[@]} file(s): ${values_files_label}..."
 
-    # Start YAML file - v2 format doesn't use apiVersion or metadata
+    # Start YAML file
     cat > "$output_file" << EOF
 # AutoShift Generated ImageSetConfiguration
 # Values files: $values_files_label
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+apiVersion: mirror.openshift.io/v2alpha1
 kind: ImageSetConfiguration
 archiveSize: 4
 mirror:
@@ -1010,10 +1011,18 @@ EOF
                         dep_channel=$(get_default_channel "$dep" "$catalog_ver")
                         [[ -z "$dep_channel" ]] && dep_channel="stable"
 
-                        redhat_operators+="$dep|$dep_channel "
+                        # Check if this dependency is already in certified or community operators
+                        # to avoid adding it to the wrong catalog
+                        if [[ "$certified_operators" =~ "$dep|" ]]; then
+                            log_step "Skipped dependency $dep — already in certified catalog"
+                        elif [[ "$community_operators" =~ "$dep|" ]]; then
+                            log_step "Skipped dependency $dep — already in community catalog"
+                        else
+                            redhat_operators+="$dep|$dep_channel "
+                            log_step "Added dependency: $dep (required by $required_by, channel: $dep_channel)"
+                        fi
                         existing_operators+=" $dep "
                         added_deps=$((added_deps + 1))
-                        log_step "Added dependency: $dep (required by $required_by, channel: $dep_channel)"
                     fi
                 done
 
@@ -1032,26 +1041,20 @@ EOF
                     [[ -z "$package_info" ]] && continue
                     IFS='|' read -r name channels <<< "$package_info"
                     echo "    - name: $name" >> "$output_file"
-                    echo "      channels:" >> "$output_file"
 
-                    # Get default channel from catalog cache
-                    local default_channel=$(get_default_channel "$name" "$catalog_ver")
-
-                    # Handle multiple channels (comma-separated) and add default if different
+                    # Set defaultChannel to the first specified channel
                     IFS=',' read -ra channels_array <<< "$channels"
-                    local seen_channels=" "
+                    local first_channel=$(echo "${channels_array[0]}" | xargs)
+                    if [[ -n "$first_channel" ]]; then
+                        echo "      defaultChannel: $first_channel" >> "$output_file"
+                    fi
+
+                    echo "      channels:" >> "$output_file"
                     for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)  # Strip whitespace
+                        channel=$(echo "$channel" | xargs)
                         [[ -z "$channel" ]] && continue
                         echo "      - name: $channel" >> "$output_file"
-                        seen_channels+="$channel "
                     done
-
-                    # Add default channel if not already included
-                    if [[ -n "$default_channel" && "$seen_channels" != *" $default_channel "* ]]; then
-                        echo "      - name: $default_channel" >> "$output_file"
-                        log_step "Added default channel '$default_channel' for $name"
-                    fi
                 done
                 log_step "Added catalog: redhat-operator-index"
             fi
@@ -1066,26 +1069,20 @@ EOF
                     [[ -z "$package_info" ]] && continue
                     IFS='|' read -r name channels <<< "$package_info"
                     echo "    - name: $name" >> "$output_file"
-                    echo "      channels:" >> "$output_file"
 
-                    # Get default channel from catalog cache (community catalog)
-                    local default_channel=$(get_default_channel "$name" "$catalog_ver")
-
-                    # Handle multiple channels (comma-separated) and add default if different
+                    # Set defaultChannel to the first specified channel
                     IFS=',' read -ra channels_array <<< "$channels"
-                    local seen_channels=" "
+                    local first_channel=$(echo "${channels_array[0]}" | xargs)
+                    if [[ -n "$first_channel" ]]; then
+                        echo "      defaultChannel: $first_channel" >> "$output_file"
+                    fi
+
+                    echo "      channels:" >> "$output_file"
                     for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)  # Strip whitespace
+                        channel=$(echo "$channel" | xargs)
                         [[ -z "$channel" ]] && continue
                         echo "      - name: $channel" >> "$output_file"
-                        seen_channels+="$channel "
                     done
-
-                    # Add default channel if not already included
-                    if [[ -n "$default_channel" && "$seen_channels" != *" $default_channel "* ]]; then
-                        echo "      - name: $default_channel" >> "$output_file"
-                        log_step "Added default channel '$default_channel' for $name"
-                    fi
                 done
                 log_step "Added catalog: community-operator-index"
             fi
@@ -1100,26 +1097,20 @@ EOF
                     [[ -z "$package_info" ]] && continue
                     IFS='|' read -r name channels <<< "$package_info"
                     echo "    - name: $name" >> "$output_file"
-                    echo "      channels:" >> "$output_file"
 
-                    # Get default channel from catalog cache (certified catalog)
-                    local default_channel=$(get_default_channel "$name" "$catalog_ver")
-
-                    # Handle multiple channels (comma-separated) and add default if different
+                    # Set defaultChannel to the first specified channel
                     IFS=',' read -ra channels_array <<< "$channels"
-                    local seen_channels=" "
+                    local first_channel=$(echo "${channels_array[0]}" | xargs)
+                    if [[ -n "$first_channel" ]]; then
+                        echo "      defaultChannel: $first_channel" >> "$output_file"
+                    fi
+
+                    echo "      channels:" >> "$output_file"
                     for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)  # Strip whitespace
+                        channel=$(echo "$channel" | xargs)
                         [[ -z "$channel" ]] && continue
                         echo "      - name: $channel" >> "$output_file"
-                        seen_channels+="$channel "
                     done
-
-                    # Add default channel if not already included
-                    if [[ -n "$default_channel" && "$seen_channels" != *" $default_channel "* ]]; then
-                        echo "      - name: $default_channel" >> "$output_file"
-                        log_step "Added default channel '$default_channel' for $name"
-                    fi
                 done
                 log_step "Added catalog: certified-operator-index"
             fi
