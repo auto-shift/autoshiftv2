@@ -26,6 +26,11 @@ spec:
       kind: Policy
       name: policy-crunchy-postgres-artifactory
       namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-jfrog-keys
+      namespace: '{{ $policyNamespace }}'
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -40,13 +45,18 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
-            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" "jfrog-system" "artifactory-db-pguser-artifactory") | default dict {{ "}}" }}
+            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-db-pguser-artifactory") | default dict {{ "}}" }}
             {{ "{{-" }} $dbData := ($dbSecret.data | default dict) {{ "}}" }}
             {{ "{{-" }} $dbHost := (index $dbData "host" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbPort := (index $dbData "port" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbName := (index $dbData "dbname" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbUser := (index $dbData "user" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbPass := (index $dbData "password" | default "" | base64dec) {{ "}}" }}
+            {{- /* Read or generate masterKey/joinKey from a secret */ -}}
+            {{ "{{-" }} $keysSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-keys") | default dict {{ "}}" }}
+            {{ "{{-" }} $keysData := ($keysSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $masterKey := (index $keysData "master-key" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $joinKey := (index $keysData "join-key" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} if and (not (empty $dbHost)) (not (empty $dbPass)) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
@@ -56,31 +66,31 @@ spec:
                   name: artifactory-ha
                   namespace: {{ .Values.jfrog.namespace }}
                 spec:
-                  artifactory:
-                    node:
-                      replicaCount: 1
-                    database:
-                      type: postgresql
-                      driver: org.postgresql.Driver
-                      url: jdbc:postgresql://{{ "{{" }} $dbHost {{ "}}" }}:{{ "{{" }} $dbPort {{ "}}" }}/{{ "{{" }} $dbName {{ "}}" }}
-                      user: {{ "{{" }} $dbUser {{ "}}" }}
-                      password: {{ "{{" }} $dbPass {{ "}}" }}
-                    persistence:
-                      enabled: true
-                      size: 100Gi
-                  postgresql:
-                    enabled: false
-                  nginx:
-                    enabled: false
-                  ingress:
-                    enabled: true
-                    defaultBackend:
+                  artifactory-ha:
+                    artifactory:
+                      masterKey: {{ "{{" }} $masterKey {{ "}}" }}
+                      joinKey: {{ "{{" }} $joinKey {{ "}}" }}
+                      primary:
+                        replicaCount: 1
+                      node:
+                        replicaCount: 0
+                        waitForPrimaryStartup:
+                          enabled: false
+                      database:
+                        type: postgresql
+                        driver: org.postgresql.Driver
+                        url: jdbc:postgresql://{{ "{{" }} $dbHost {{ "}}" }}:{{ "{{" }} $dbPort {{ "}}" }}/{{ "{{" }} $dbName {{ "}}" }}
+                        user: {{ "{{" }} $dbUser {{ "}}" }}
+                        password: {{ "{{" }} $dbPass {{ "}}" }}
+                      persistence:
+                        enabled: true
+                        size: 200Gi
+                    databaseUpgradeReady: true
+                    postgresql:
                       enabled: false
-                    hosts:
-                      - artifactory.{{ "{{" }} $ingressDomain {{ "}}" }}
-                    routerPath: /
-                    annotations:
-                      route.openshift.io/termination: edge
+                    nginx:
+                      enabled: false
+                    waitForDatabase: true
             {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1

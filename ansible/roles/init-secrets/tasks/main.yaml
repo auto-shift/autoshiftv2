@@ -246,6 +246,63 @@
   when: init_secrets_ssh_public_key != ''
 
 # ==================================================================
+# JFrog Artifactory keys (masterKey + joinKey)
+# ==================================================================
+- name: Check for existing artifactory-keys secret
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: artifactory-keys
+    namespace: "{{ init_secrets_jfrog_namespace }}"
+  register: _existing_jfrog_keys
+  when: init_secrets_jfrog_keys | default(false) | bool
+
+- name: Generate JFrog Artifactory keys
+  when:
+    - init_secrets_jfrog_keys | default(false) | bool
+    - _existing_jfrog_keys.resources | default([]) | length == 0
+  block:
+    - name: Generate masterKey and joinKey  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: openssl rand -hex 32
+      register: _master_key
+      changed_when: true
+
+    - name: Generate joinKey  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: openssl rand -hex 32
+      register: _join_key
+      changed_when: true
+
+    - name: Create JFrog namespace
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ init_secrets_jfrog_namespace }}"
+        state: present
+
+    - name: Create artifactory-keys secret
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Secret
+        name: artifactory-keys
+        namespace: "{{ init_secrets_jfrog_namespace }}"
+        state: present
+        definition:
+          type: Opaque
+          stringData:
+            master-key: "{{ _master_key.stdout }}"
+            join-key: "{{ _join_key.stdout }}"
+      no_log: true
+
+- name: JFrog keys already exist
+  ansible.builtin.debug:
+    msg: "Reusing existing artifactory-keys secret"
+  when:
+    - init_secrets_jfrog_keys | default(false) | bool
+    - _existing_jfrog_keys.resources | default([]) | length > 0
+
+# ==================================================================
 # Summary
 # ==================================================================
 - name: Secrets initialized
@@ -255,6 +312,9 @@
         - {{ init_secrets_bmc_secret_name }} (Secret — BMC credentials)
         - {{ init_secrets_pull_secret_name }} (Secret — pull secret)
         - {{ init_secrets_ssh_cm_name }} (ConfigMap — SSH public key)
+      {% if init_secrets_jfrog_keys | default(false) | bool %}
+        - artifactory-keys in {{ init_secrets_jfrog_namespace }} (Secret — masterKey + joinKey)
+      {% endif %}
       {% if init_secrets_ssh_generate | bool %}
 
       IMPORTANT: Save the private key securely — it is NOT stored on the cluster.
