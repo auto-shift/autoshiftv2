@@ -432,12 +432,17 @@ ensure_catalog() {
     mkdir -p "$catalog_dir"
 
     local extract_output
-    # MSYS_NO_PATHCONV prevents Git Bash from converting /: path syntax to Windows paths
-    extract_output=$(MSYS_NO_PATHCONV=1 oc image extract "$catalog_image" --path /:"$catalog_dir" --confirm --filter-by-os=linux/amd64 2>&1)
+    # Convert path for Windows compatibility (Git Bash uses /c/... but oc.exe needs C:\...)
+    local extract_dest="$catalog_dir"
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        extract_dest=$(cygpath -w "$catalog_dir")
+    fi
+    # MSYS_NO_PATHCONV prevents Git Bash from converting /: path syntax
+    extract_output=$(MSYS_NO_PATHCONV=1 oc image extract "$catalog_image" --path "/":"$extract_dest" --confirm --filter-by-os=linux/amd64 2>&1)
     local extract_rc=$?
 
     if [[ $extract_rc -ne 0 ]]; then
-        extract_output=$(MSYS_NO_PATHCONV=1 oc image extract "$catalog_image" --path /:"$catalog_dir" --confirm 2>&1)
+        extract_output=$(MSYS_NO_PATHCONV=1 oc image extract "$catalog_image" --path "/":"$extract_dest" --confirm 2>&1)
         extract_rc=$?
     fi
 
