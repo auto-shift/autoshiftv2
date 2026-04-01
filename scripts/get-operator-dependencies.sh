@@ -207,12 +207,12 @@ if [[ ! -d "$CATALOG_DIR/configs" ]]; then
     # Note: extracting /configs directly doesn't work reliably, so we extract root
     # Use --filter-by-os to handle multi-arch manifests (catalog images are linux/amd64 only)
     # Convert path for Windows compatibility (Git Bash uses /c/... but oc.exe needs C:\...)
-    local extract_dest="$CATALOG_DIR"
+    extract_dest="$CATALOG_DIR"
     if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
         extract_dest=$(cygpath -w "$CATALOG_DIR")
     fi
     # MSYS_NO_PATHCONV prevents Git Bash from converting /: path syntax
-    if ! MSYS_NO_PATHCONV=1 oc image extract "$CATALOG" --path "/":"$extract_dest" --confirm --filter-by-os=linux/amd64 2>/dev/null; then
+    if ! MSYS_NO_PATHCONV=1 oc image extract "$CATALOG" --path "/":"$extract_dest" --confirm --filter-by-os=linux/amd64; then
         error "Failed to extract catalog. Check:"
         error "  - Pull secret is configured (~/.docker/config.json or REGISTRY_AUTH_FILE)"
         error "  - Registry access to $CATALOG"
