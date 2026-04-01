@@ -82,6 +82,8 @@ spec:
             {{ "{{-" }} $keysData := ($keysSecret.data | default dict) {{ "}}" }}
             {{ "{{-" }} $masterKey := (index $keysData "master-key" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $joinKey := (index $keysData "join-key" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $licenseSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-license") {{ "}}" }}
+            {{ "{{-" }} $adminSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-admin") {{ "}}" }}
             {{ "{{-" }} if and (not (empty $dbHost)) (not (empty $dbPass)) (not (empty $masterKey)) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
@@ -95,6 +97,16 @@ spec:
                     artifactory:
                       masterKey: {{ "{{" }} $masterKey {{ "}}" }}
                       joinKey: {{ "{{" }} $joinKey {{ "}}" }}
+            {{ "{{-" }} if $licenseSecret {{ "}}" }}
+                      license:
+                        secret: artifactory-license
+                        dataKey: license-key
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if $adminSecret {{ "}}" }}
+                      admin:
+                        secret: artifactory-admin
+                        dataKey: password
+            {{ "{{-" }} end {{ "}}" }}
                       node:
                         replicaCount: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/jfrog-node-replicas" | default "1" {{ "hub}}" }}
                         waitForPrimaryStartup:

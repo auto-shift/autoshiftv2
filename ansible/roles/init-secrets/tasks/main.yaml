@@ -326,6 +326,44 @@
     - _existing_jfrog_keys.resources | default([]) | length > 0
 
 # ==================================================================
+# JFrog Artifactory license
+# ==================================================================
+- name: Create artifactory-license secret
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Secret
+    name: artifactory-license
+    namespace: "{{ init_secrets_jfrog_namespace }}"
+    state: present
+    definition:
+      type: Opaque
+      stringData:
+        license-key: "{{ init_secrets_jfrog_license }}"
+  no_log: true
+  when:
+    - init_secrets_jfrog_keys | default(false) | bool
+    - init_secrets_jfrog_license != ''
+
+# ==================================================================
+# JFrog Artifactory admin password
+# ==================================================================
+- name: Create artifactory-admin secret
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Secret
+    name: artifactory-admin
+    namespace: "{{ init_secrets_jfrog_namespace }}"
+    state: present
+    definition:
+      type: Opaque
+      stringData:
+        password: "{{ init_secrets_jfrog_admin_password }}"
+  no_log: true
+  when:
+    - init_secrets_jfrog_keys | default(false) | bool
+    - init_secrets_jfrog_admin_password != ''
+
+# ==================================================================
 # Summary
 # ==================================================================
 - name: Secrets initialized
@@ -337,6 +375,12 @@
         - {{ init_secrets_ssh_cm_name }} (ConfigMap — SSH public key)
       {% if init_secrets_jfrog_keys | default(false) | bool %}
         - artifactory-keys in {{ init_secrets_jfrog_namespace }} (Secret — masterKey + joinKey)
+      {% if init_secrets_jfrog_license != '' %}
+        - artifactory-license in {{ init_secrets_jfrog_namespace }} (Secret — license)
+      {% endif %}
+      {% if init_secrets_jfrog_admin_password != '' %}
+        - artifactory-admin in {{ init_secrets_jfrog_namespace }} (Secret — admin password)
+      {% endif %}
       {% endif %}
       {% if init_secrets_ssh_generate | bool %}
 
