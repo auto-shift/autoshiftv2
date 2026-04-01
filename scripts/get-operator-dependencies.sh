@@ -290,8 +290,10 @@ get_deps() {
 }
 
 # Collect results using temp file (avoid associative arrays for bash 3.x compatibility)
-RESULTS_FILE=$(mktemp)
-VISITED_FILE=$(mktemp)
+LOCAL_TMP="$PROJECT_ROOT/.tmp"
+mkdir -p "$LOCAL_TMP"
+RESULTS_FILE="$LOCAL_TMP/dep-results.$$"
+VISITED_FILE="$LOCAL_TMP/dep-visited.$$"
 trap "rm -f $RESULTS_FILE $VISITED_FILE" EXIT
 
 # Function to recursively resolve dependencies

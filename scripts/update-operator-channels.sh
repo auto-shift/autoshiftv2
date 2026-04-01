@@ -291,7 +291,9 @@ source_to_catalog_image() {
 
 # Build operator mappings dynamically from values files
 build_operator_mappings() {
-    MAPPINGS_FILE=$(mktemp)
+    LOCAL_TMP="$PROJECT_ROOT/.tmp"
+    mkdir -p "$LOCAL_TMP"
+    MAPPINGS_FILE="$LOCAL_TMP/update-mappings.$$"
 
     while IFS= read -r values_file; do
         # Find all *-subscription-name: entries (skip commented lines)
@@ -461,7 +463,7 @@ ensure_catalog() {
 # Ensure all needed catalogs are extracted based on operator sources
 # Populates CATALOG_DIRS_FILE with source|catalog_dir mappings
 ensure_all_catalogs() {
-    CATALOG_DIRS_FILE=$(mktemp)
+    CATALOG_DIRS_FILE="$LOCAL_TMP/catalog-dirs.$$"
 
     if [[ "$CATALOG_OVERRIDE" == "true" ]]; then
         # User specified a single catalog - use it for everything

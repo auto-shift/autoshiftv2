@@ -61,13 +61,17 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CATALOG_CACHE_DIR="$PROJECT_ROOT/.cache/catalog-cache"
 GET_DEPS_SCRIPT="$SCRIPT_DIR/get-operator-dependencies.sh"
 
+# Local temp directory (avoids /tmp issues on Windows/Git Bash)
+LOCAL_TMP="$PROJECT_ROOT/.tmp"
+mkdir -p "$LOCAL_TMP"
+
 # Temp file for operator mappings (portable alternative to associative arrays)
 MAPPINGS_FILE=""
 
 cleanup_temp_files() {
     [[ -n "$MAPPINGS_FILE" ]] && rm -f "$MAPPINGS_FILE" || true
     # Only cleanup DEPENDENCIES_FILE if it was auto-generated (not passed via --dependencies-file)
-    [[ -n "$DEPENDENCIES_FILE" && "$DEPENDENCIES_FILE" == /tmp/* ]] && rm -f "$DEPENDENCIES_FILE" || true
+    [[ -n "$DEPENDENCIES_FILE" && "$DEPENDENCIES_FILE" == "$LOCAL_TMP"/* ]] && rm -f "$DEPENDENCIES_FILE" || true
 }
 trap cleanup_temp_files EXIT
 
@@ -80,7 +84,7 @@ trap cleanup_temp_files EXIT
 
 # Build operator mappings dynamically from values files
 build_operator_mappings() {
-    MAPPINGS_FILE=$(mktemp)
+    MAPPINGS_FILE="$LOCAL_TMP/operator-mappings.$$"
 
     for values_file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
         [[ -f "$values_file" ]] || continue
@@ -135,7 +139,7 @@ resolve_all_dependencies() {
     log_step "Resolving operator dependencies..."
 
     # Create temp file for dependencies
-    DEPENDENCIES_FILE=$(mktemp)
+    DEPENDENCIES_FILE="$LOCAL_TMP/dependencies.$$.json"
 
     # Call get-operator-dependencies.sh with all operators
     local catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${catalog_version}"
