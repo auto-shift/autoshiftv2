@@ -432,11 +432,12 @@ ensure_catalog() {
     mkdir -p "$catalog_dir"
 
     local extract_output
-    extract_output=$(oc image extract "$catalog_image" --path /:"$catalog_dir" --confirm --filter-by-os=linux/amd64 2>&1)
+    # MSYS_NO_PATHCONV prevents Git Bash from converting /: path syntax to Windows paths
+    extract_output=$(MSYS_NO_PATHCONV=1 oc image extract "$catalog_image" --path /:"$catalog_dir" --confirm --filter-by-os=linux/amd64 2>&1)
     local extract_rc=$?
 
     if [[ $extract_rc -ne 0 ]]; then
-        extract_output=$(oc image extract "$catalog_image" --path /:"$catalog_dir" --confirm 2>&1)
+        extract_output=$(MSYS_NO_PATHCONV=1 oc image extract "$catalog_image" --path /:"$catalog_dir" --confirm 2>&1)
         extract_rc=$?
     fi
 
