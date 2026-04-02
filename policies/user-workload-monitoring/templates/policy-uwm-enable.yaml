@@ -1,0 +1,203 @@
+# This policy enables and configures User Workload Monitoring on managed clusters.
+# Reads UWM config from rendered-config ConfigMaps via hub template lookup.
+#
+# Required config fields (under config.uwm):
+#   prometheus.storage    - Prometheus PVC size (e.g., '50Gi')
+#   thanosRuler.storage   - Thanos Ruler PVC size (e.g., '10Gi')
+#
+{{- $policyNamespace := $.Values.policy_namespace }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-uwm-enable
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: uwm-enable
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: cluster-monitoring-config
+                  namespace: openshift-monitoring
+                data:
+                  config.yaml: |
+                    enableUserWorkload: true
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: uwm-ready
+        spec:
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{`{{`}} $prom := (lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "prometheus-user-workload") | default dict {{`}}`}}
+            {{`{{`}} $promReplicas := (index $prom "spec" "replicas" | default 1 | toInt) {{`}}`}}
+            {{`{{`}} $thanos := (lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "thanos-ruler-user-workload") | default dict {{`}}`}}
+            {{`{{`}} $thanosReplicas := (index $thanos "spec" "replicas" | default 1 | toInt) {{`}}`}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps/v1
+                kind: StatefulSet
+                metadata:
+                  name: prometheus-user-workload
+                  namespace: openshift-user-workload-monitoring
+                status:
+                  readyReplicas: {{`{{`}} $promReplicas {{`}}`}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps/v1
+                kind: StatefulSet
+                metadata:
+                  name: thanos-ruler-user-workload
+                  namespace: openshift-user-workload-monitoring
+                status:
+                  readyReplicas: {{`{{`}} $thanosReplicas {{`}}`}}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: uwm-config
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub" }} $config := (index $cm "data" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $configYaml := (index $config "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $uwm := (index $configYaml "uwm" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $prom := (index $uwm "prometheus" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $thanos := (index $uwm "thanosRuler" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $am := (index $uwm "alertmanager" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $storageClass := (index $uwm "storageClass" | default "") {{ "hub}}" }}
+            {{ "{{hub" }} $promSC := (index $prom "storageClass" | default $storageClass) {{ "hub}}" }}
+            {{ "{{hub" }} $thanosSC := (index $thanos "storageClass" | default $storageClass) {{ "hub}}" }}
+            {{ "{{hub" }} $amSC := (index $am "storageClass" | default $storageClass) {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: user-workload-monitoring-config
+                  namespace: openshift-user-workload-monitoring
+                data:
+                  config.yaml: |
+                    prometheus:
+                      retention: {{ "{{hub" }} index $prom "retention" | default "24h" {{ "hub}}" }}
+                      volumeClaimTemplate:
+                        spec:
+                    {{ "{{hub-" }} if $promSC {{ "hub}}" }}
+                          storageClassName: {{ "{{hub" }} $promSC {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                          resources:
+                            requests:
+                              storage: {{ "{{hub" }} index $prom "storage" {{ "hub}}" }}
+                    {{ "{{hub-" }} $promResources := (index $prom "resources" | default dict) {{ "hub}}" }}
+                    {{ "{{hub-" }} if not (empty $promResources) {{ "hub}}" }}
+                      resources:
+                        {{ "{{hub" }} $promResources | toYaml | autoindent {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if eq (index $prom "dedicatedServiceMonitors" | default false) true {{ "hub}}" }}
+                      dedicatedServiceMonitors:
+                        enabled: true
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    thanosRuler:
+                      retention: {{ "{{hub" }} index $thanos "retention" | default "24h" {{ "hub}}" }}
+                      volumeClaimTemplate:
+                        spec:
+                    {{ "{{hub-" }} if $thanosSC {{ "hub}}" }}
+                          storageClassName: {{ "{{hub" }} $thanosSC {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                          resources:
+                            requests:
+                              storage: {{ "{{hub" }} index $thanos "storage" {{ "hub}}" }}
+                    {{ "{{hub-" }} $thanosResources := (index $thanos "resources" | default dict) {{ "hub}}" }}
+                    {{ "{{hub-" }} if not (empty $thanosResources) {{ "hub}}" }}
+                      resources:
+                        {{ "{{hub" }} $thanosResources | toYaml | autoindent {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if eq (index $am "enabled" | default false) true {{ "hub}}" }}
+                    alertmanager:
+                      enabled: true
+                      volumeClaimTemplate:
+                        spec:
+                    {{ "{{hub-" }} if $amSC {{ "hub}}" }}
+                          storageClassName: {{ "{{hub" }} $amSC {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                          resources:
+                            requests:
+                              storage: {{ "{{hub" }} index $am "storage" | default "10Gi" {{ "hub}}" }}
+                    {{ "{{hub-" }} $amResources := (index $am "resources" | default dict) {{ "hub}}" }}
+                    {{ "{{hub-" }} if not (empty $amResources) {{ "hub}}" }}
+                      resources:
+                        {{ "{{hub" }} $amResources | toYaml | autoindent {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-uwm-enable
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/uwm'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-uwm-enable
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: placement-policy-uwm-enable
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-uwm-enable
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
