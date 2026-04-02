@@ -27,6 +27,29 @@
 # Spoke Cluster Sets with Feature Flags. Blank will remove
 managedClusterSets:
   managed:    # <-- Change this name for your clusterset (e.g., sbx, prod, dev)
+    config:
+      # =======================================================================
+      # User Workload Monitoring (config section - read via rendered-config)
+      # =======================================================================
+      # uwm:
+      #   storageClass: 'gp3-csi'              # Default storage class for all UWM components
+      #   prometheus:
+      #     retention: '24h'
+      #     storage: '50Gi'
+      #     dedicatedServiceMonitors: true      # OCP 4.14+
+      #     resources:
+      #       requests:
+      #         cpu: '200m'
+      #         memory: '1Gi'
+      #       limits:
+      #         cpu: '1'
+      #         memory: '4Gi'
+      #   thanosRuler:
+      #     retention: '24h'
+      #     storage: '10Gi'
+      #   alertmanager:
+      #     enabled: true
+      #     storage: '10Gi'
     labels:
       # =======================================================================
       # Core Configuration
@@ -38,7 +61,7 @@ managedClusterSets:
       # =======================================================================
       gitops: 'true'
       gitops-subscription-name: openshift-gitops-operator
-      gitops-channel: gitops-1.20
+      gitops-channel: gitops-1.19
       gitops-version: 'openshift-gitops-operator.v1.19.1'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
@@ -69,7 +92,7 @@ managedClusterSets:
       # =======================================================================
       servicemesh3: 'false'
       servicemesh3-subscription-name: servicemeshoperator3
-      servicemesh3-channel: stable-3.3
+      servicemesh3-channel: stable-3.2
       servicemesh3-source: redhat-operators
       servicemesh3-source-namespace: openshift-marketplace
       servicemesh3-version: 'servicemeshoperator3.v3.2.1'
@@ -116,20 +139,10 @@ managedClusterSets:
       aap-cabundle-name: 'user-ca-bundle'    # Secret name for CA Bundle
 
       # =======================================================================
-      # Master Node Kubelet Configuration (SNO / Compact clusters)
+      # Master Nodes (SNO / Compact clusters)
       # =======================================================================
       master-nodes: 'false'
       master-max-pods: '250'                 # Max pods per master node (up to 2500)
-      master-system-reserved-memory: '3Gi'   # Memory reserved for OS/system processes including etcd
-      master-system-reserved-cpu: '500m'     # CPU reserved for OS/system processes
-      master-kube-reserved-memory: '1536Mi'  # Memory reserved for kubelet/CRI-O
-      master-kube-reserved-cpu: '500m'       # CPU reserved for kubelet/CRI-O
-      master-eviction-memory: '500Mi'        # Hard eviction threshold for memory.available
-
-      # =======================================================================
-      # Workload Partitioning (CPU isolation via PerformanceProfile)
-      # =======================================================================
-      workload-partitioning: 'false'         # Enable CPU workload partitioning
 
       # =======================================================================
       # Machine Health Checks
@@ -159,16 +172,6 @@ managedClusterSets:
       infra-nodes-memory-mib: ''
       infra-nodes-numcores-per-socket: ''
       infra-nodes-zone-1: ''                 # Add -zone-2, -zone-3 for multiple zones
-      # --- Infra MachineConfigPool ---
-      infra-machineconfigpool: 'false'       # Create dedicated infra MCP (separates from worker pool)
-      # --- Infra Node Kubelet Configuration ---
-      infra-node-config: 'false'             # Enable infra node kubelet tuning (requires infra-machineconfigpool)
-      infra-max-pods: '250'                  # Max pods per infra node
-      infra-system-reserved-memory: '2Gi'    # Memory reserved for OS/system processes
-      infra-system-reserved-cpu: '500m'      # CPU reserved for OS/system processes
-      infra-kube-reserved-memory: '1Gi'      # Memory reserved for kubelet/CRI-O
-      infra-kube-reserved-cpu: '500m'        # CPU reserved for kubelet/CRI-O
-      infra-eviction-memory: '500Mi'         # Hard eviction threshold for memory.available
 
       # =======================================================================
       # Worker Nodes
@@ -178,14 +181,6 @@ managedClusterSets:
       worker-nodes-memory-mib: ''
       worker-nodes-numcores-per-socket: ''
       worker-nodes-zone-1: ''                # Add -zone-2, -zone-3 for multiple zones
-      # --- Worker Node Kubelet Configuration ---
-      worker-node-config: 'false'            # Enable worker node kubelet tuning
-      worker-max-pods: '250'                 # Max pods per worker node (up to 2500)
-      worker-system-reserved-memory: '1Gi'   # Memory reserved for OS/system processes
-      worker-system-reserved-cpu: '250m'     # CPU reserved for OS/system processes
-      worker-kube-reserved-memory: '512Mi'   # Memory reserved for kubelet/CRI-O
-      worker-kube-reserved-cpu: '250m'       # CPU reserved for kubelet/CRI-O
-      worker-eviction-memory: '500Mi'        # Hard eviction threshold for memory.available
 
       # =======================================================================
       # Storage Nodes
@@ -435,7 +430,7 @@ managedClusterSets:
       dev-hub: 'false'
       dev-hub-subscription-name: rhdh
       dev-hub-version: 'rhdh-operator.v1.8.3'
-      dev-hub-channel: fast-1.9
+      dev-hub-channel: fast-1.8
       dev-hub-source: redhat-operators
       dev-hub-source-namespace: openshift-marketplace
 
@@ -465,7 +460,7 @@ managedClusterSets:
       quay: 'false'
       quay-subscription-name: quay-operator
       quay-version: 'quay-operator.v3.8.15'
-      quay-channel: stable-3.17
+      quay-channel: stable-3.16
       quay-source: redhat-operators
       quay-source-namespace: openshift-marketplace
 
@@ -507,6 +502,11 @@ managedClusterSets:
       coo-channel: stable
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # User Workload Monitoring (settings in config section above)
+      # =======================================================================
+      # uwm: 'false'                              # Enable UWM (placement label only)
 
       # =======================================================================
       # Compliance Operator STIG Apply
@@ -566,41 +566,11 @@ managedClusterSets:
       mirror-catalog-suffix: 'mirror'        # redhat-operators + -mirror = redhat-operators-mirror
 
       # =======================================================================
-      # Gitlab
+      # Node Maintenance
       # =======================================================================
-      gitlab: 'false'
-      gitlab-subscription-name: gitlab-operator-kubernetes
-      gitlab-channel: stable
-      gitlab-source: certified-operators
-      gitlab-source-namespace: openshift-marketplace
-
-      # =======================================================================
-      # Cert Manager
-      # =======================================================================
-      cert-manager: 'false'
-      cert-manager-subscription-name: openshift-cert-manager-operator
-      cert-manager-channel: stable-v1
-      cert-manager-source: redhat-operators
-      cert-manager-source-namespace: openshift-marketplace
-
-      # =======================================================================
-      # Jfrog
-      # =======================================================================
-      jfrog: 'false'
-      jfrog-subscription-name: openshiftartifactoryha-operator
-      jfrog-channel: stable
-      jfrog-source: certified-operators
-      jfrog-source-namespace: openshift-marketplace
-
-      # =======================================================================
-      # Crunchy Postgres
-      # =======================================================================
-
-      # =======================================================================
-      # Cloudnative Pg
-      # =======================================================================
-      cloudnative-pg: 'false'
-      cloudnative-pg-subscription-name: cloudnative-pg
-      cloudnative-pg-channel: stable-v1
-      cloudnative-pg-source: certified-operators
-      cloudnative-pg-source-namespace: openshift-marketplace
+      node-maintenance: 'false'
+      node-maintenance-subscription-name: node-maintenance-operator
+      node-maintenance-channel: stable
+      node-maintenance-source: redhat-operators
+      node-maintenance-source-namespace: openshift-marketplace
+      node-maintenance-version: 'node-maintenance-operator.v5.5.0'
