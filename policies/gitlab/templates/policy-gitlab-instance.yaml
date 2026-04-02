@@ -26,6 +26,11 @@ spec:
       kind: Policy
       name: policy-cert-manager-operator-install
       namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-cnpg-gitlab-pooler
+      namespace: '{{ $policyNamespace }}'
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -41,6 +46,24 @@ spec:
           object-templates-raw: |
             {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
             {{ "{{-" }} $chartVersion := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-chart-version" | default "{{ .Values.gitlab.chartVersion | default "9.10.1" }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" "gitlab-system" "gitlab-db-app") | default dict {{ "}}" }}
+            {{ "{{-" }} $dbData := ($dbSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $dbHost := "gitlab-db-pooler-rw.gitlab-system.svc" {{ "}}" }}
+            {{ "{{-" }} $dbPort := (index $dbData "port" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbUser := (index $dbData "username" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbPass := (index $dbData "password" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} if and (not (empty $dbHost)) (not (empty $dbPass)) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: gitlab-postgresql-password
+                  namespace: gitlab-system
+                type: Opaque
+                stringData:
+                  postgresql-password: {{ "{{" }} $dbPass {{ "}}" }}
+                  postgresql-postgres-password: {{ "{{" }} $dbPass {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: apps.gitlab.com/v1beta1
@@ -59,6 +82,16 @@ spec:
                           annotations:
                             route.openshift.io/termination: edge
                           class: none
+                        psql:
+                          host: {{ "{{" }} $dbHost {{ "}}" }}
+                          port: {{ "{{" }} $dbPort {{ "}}" }}
+                          username: {{ "{{" }} $dbUser {{ "}}" }}
+                          database: gitlabhq_production
+                          password:
+                            secret: gitlab-postgresql-password
+                            key: postgresql-password
+                      postgresql:
+                        install: false
                       nginx-ingress:
                         enabled: false
                       installCertmanager: false
@@ -80,9 +113,6 @@ spec:
                             requests:
                               cpu: 500m
                               memory: 1000M
-                      postgresql:
-                        primary:
-                          extendedConfiguration: max_connections = 200
                       redis:
                         resources:
                           requests:
@@ -91,6 +121,7 @@ spec:
                         resources:
                           requests:
                             cpu: 100m
+            {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
