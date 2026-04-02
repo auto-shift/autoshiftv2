@@ -1,5 +1,5 @@
 {{- $policyNamespace := $.Values.policy_namespace }}
-{{- $policyName := "policy-gitlab-object-storage" }}
+{{- $policyName := "policy-cnpg-gitlab-backup" }}
 {{- $placementName := (printf "placement-%s" $policyName) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -19,19 +19,14 @@ spec:
     - apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
-      name: policy-gitlab-operator-install
-      namespace: '{{ $policyNamespace }}'
-    - apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-      name: policy-odf-operator-install
+      name: policy-cnpg-gitlab
       namespace: '{{ $policyNamespace }}'
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: gitlab-object-storage
+          name: cnpg-gitlab-backup-bucket
         spec:
           remediationAction: enforce
           severity: high
@@ -44,16 +39,16 @@ spec:
                 apiVersion: objectbucket.io/v1alpha1
                 kind: ObjectBucketClaim
                 metadata:
-                  name: gitlab-objectstorage
+                  name: gitlab-db-backup
                   namespace: {{ .Values.gitlab.namespace }}
                 spec:
-                  generateBucketName: gitlab
+                  generateBucketName: gitlab-db-backup
                   storageClassName: openshift-storage.noobaa.io
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: gitlab-object-storage-secret
+          name: cnpg-gitlab-backup-config
         spec:
           remediationAction: enforce
           severity: high
@@ -61,56 +56,72 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            # Read the auto-generated OBC credentials and bucket info
-            {{ "{{-" }} $obcSecret := (lookup "v1" "Secret" "{{ .Values.gitlab.namespace }}" "gitlab-objectstorage") | default dict {{ "}}" }}
+            # Read OBC credentials for the backup bucket
+            {{ "{{-" }} $obcSecret := (lookup "v1" "Secret" "{{ .Values.gitlab.namespace }}" "gitlab-db-backup") | default dict {{ "}}" }}
             {{ "{{-" }} $obcData := ($obcSecret.data | default dict) {{ "}}" }}
-            {{ "{{-" }} $accessKey := (index $obcData "AWS_ACCESS_KEY_ID" | default "" | base64dec) {{ "}}" }}
-            {{ "{{-" }} $secretKey := (index $obcData "AWS_SECRET_ACCESS_KEY" | default "" | base64dec) {{ "}}" }}
-            {{ "{{-" }} $obcCM := (lookup "v1" "ConfigMap" "{{ .Values.gitlab.namespace }}" "gitlab-objectstorage") | default dict {{ "}}" }}
+            {{ "{{-" }} $accessKey := (index $obcData "AWS_ACCESS_KEY_ID" | default "") {{ "}}" }}
+            {{ "{{-" }} $secretKey := (index $obcData "AWS_SECRET_ACCESS_KEY" | default "") {{ "}}" }}
+            {{ "{{-" }} $obcCM := (lookup "v1" "ConfigMap" "{{ .Values.gitlab.namespace }}" "gitlab-db-backup") | default dict {{ "}}" }}
             {{ "{{-" }} $obcCMData := ($obcCM.data | default dict) {{ "}}" }}
             {{ "{{-" }} $bucketName := (index $obcCMData "BUCKET_NAME" | default "") {{ "}}" }}
             {{ "{{-" }} $bucketHost := (index $obcCMData "BUCKET_HOST" | default "") {{ "}}" }}
             {{ "{{-" }} $bucketPort := (index $obcCMData "BUCKET_PORT" | default "443") {{ "}}" }}
+            {{ "{{-" }} $retention := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-backup-retention" | default "30d" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $schedule := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-backup-schedule" | default "0 2 * * *" {{ "hub}}" }}" {{ "}}" }}
             {{ "{{-" }} if and (not (empty $accessKey)) (not (empty $bucketName)) {{ "}}" }}
-            # Create the GitLab object storage connection secret
-            # GitLab expects this format for S3-compatible storage
+            # Create S3 credentials secret for barman
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: Secret
                 metadata:
-                  name: gitlab-object-storage-connection
+                  name: gitlab-db-backup-s3-creds
                   namespace: {{ .Values.gitlab.namespace }}
                 type: Opaque
-                stringData:
-                  connection: |
-                    provider: AWS
-                    region: us-east-1
-                    aws_access_key_id: {{ "{{" }} $accessKey {{ "}}" }}
-                    aws_secret_access_key: {{ "{{" }} $secretKey {{ "}}" }}
-                    aws_signature_version: 4
-                    host: {{ "{{" }} $bucketHost {{ "}}" }}
-                    endpoint: https://{{ "{{" }} $bucketHost {{ "}}" }}:{{ "{{" }} $bucketPort {{ "}}" }}
-                    path_style: true
-            # Registry uses a separate config format
+                data:
+                  ACCESS_KEY_ID: {{ "{{" }} $accessKey {{ "}}" }}
+                  ACCESS_SECRET_KEY: {{ "{{" }} $secretKey {{ "}}" }}
+            # Patch the CNPG Cluster with backup configuration
             - complianceType: musthave
               objectDefinition:
-                apiVersion: v1
-                kind: Secret
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Cluster
                 metadata:
-                  name: gitlab-registry-storage
+                  name: gitlab-db
                   namespace: {{ .Values.gitlab.namespace }}
-                type: Opaque
-                stringData:
-                  config: |
-                    s3:
-                      v4auth: true
-                      regionendpoint: https://{{ "{{" }} $bucketHost {{ "}}" }}:{{ "{{" }} $bucketPort {{ "}}" }}
-                      pathstyle: true
-                      region: us-east-1
-                      bucket: {{ "{{" }} $bucketName {{ "}}" }}
-                      accesskey: {{ "{{" }} $accessKey {{ "}}" }}
-                      secretkey: {{ "{{" }} $secretKey {{ "}}" }}
+                spec:
+                  backup:
+                    retentionPolicy: {{ "{{" }} $retention {{ "}}" }}
+                    barmanObjectStore:
+                      destinationPath: s3://{{ "{{" }} $bucketName {{ "}}" }}/
+                      endpointURL: https://{{ "{{" }} $bucketHost {{ "}}" }}:{{ "{{" }} $bucketPort {{ "}}" }}
+                      s3Credentials:
+                        accessKeyId:
+                          name: gitlab-db-backup-s3-creds
+                          key: ACCESS_KEY_ID
+                        secretAccessKey:
+                          name: gitlab-db-backup-s3-creds
+                          key: ACCESS_SECRET_KEY
+                      wal:
+                        compression: gzip
+                      data:
+                        compression: gzip
+            # Scheduled base backup
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: ScheduledBackup
+                metadata:
+                  name: gitlab-db-scheduled-backup
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  schedule: {{ "{{" }} $schedule {{ "}}" }}
+                  backupOwnerReference: cluster
+                  cluster:
+                    name: gitlab-db
+                  method: barmanObjectStore
+                  target: prefer-standby
+                  immediate: true
             {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -134,11 +145,15 @@ spec:
               operator: In
               values:
               - 'true'
-            - key: 'autoshift.io/odf'
+            - key: 'autoshift.io/gitlab-external-db'
               operator: In
               values:
               - 'true'
-            - key: 'autoshift.io/gitlab-external-object-storage'
+            - key: 'autoshift.io/gitlab-db-backups'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/odf'
               operator: In
               values:
               - 'true'

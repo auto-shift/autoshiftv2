@@ -26,21 +26,6 @@ spec:
       kind: Policy
       name: policy-cert-manager-operator-install
       namespace: '{{ $policyNamespace }}'
-    - apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-      name: policy-cnpg-gitlab-pooler
-      namespace: '{{ $policyNamespace }}'
-    - apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-      name: policy-gitlab-redis
-      namespace: '{{ $policyNamespace }}'
-    - apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-      name: policy-gitlab-object-storage
-      namespace: '{{ $policyNamespace }}'
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -56,26 +41,64 @@ spec:
           object-templates-raw: |
             {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
             {{ "{{-" }} $chartVersion := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-chart-version" | default "{{ .Values.gitlab.chartVersion | default "9.10.1" }}" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{-" }} $obcCM := (lookup "v1" "ConfigMap" "{{ .Values.gitlab.namespace }}" "gitlab-objectstorage") | default dict {{ "}}" }}
-            {{ "{{-" }} $bucketName := (index ($obcCM.data | default dict) "BUCKET_NAME" | default "") {{ "}}" }}
-            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" "{{ .Values.gitlab.namespace }}" "gitlab-db-app") | default dict {{ "}}" }}
+            {{ "{{-" }} $ns := "{{ .Values.gitlab.namespace }}" {{ "}}" }}
+
+            # Feature flags from cluster labels
+            {{ "{{-" }} $externalDB := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-external-db" | default "false" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $externalRedis := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-external-redis" | default "false" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $externalObjStore := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-external-object-storage" | default "false" {{ "hub}}" }}" {{ "}}" }}
+
+            # External DB: read CNPG pooler credentials if enabled
+            {{ "{{-" }} $dbReady := true {{ "}}" }}
+            {{ "{{-" }} $dbHost := "" {{ "}}" }}
+            {{ "{{-" }} $dbPort := "" {{ "}}" }}
+            {{ "{{-" }} $dbUser := "" {{ "}}" }}
+            {{ "{{-" }} $dbPass := "" {{ "}}" }}
+            {{ "{{-" }} if eq $externalDB "true" {{ "}}" }}
+            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" $ns "gitlab-db-app") | default dict {{ "}}" }}
             {{ "{{-" }} $dbData := ($dbSecret.data | default dict) {{ "}}" }}
-            {{ "{{-" }} $dbHost := "gitlab-db-pooler-rw.{{ .Values.gitlab.namespace }}.svc" {{ "}}" }}
-            {{ "{{-" }} $dbPort := (index $dbData "port" | default "" | base64dec) {{ "}}" }}
-            {{ "{{-" }} $dbUser := (index $dbData "username" | default "" | base64dec) {{ "}}" }}
-            {{ "{{-" }} $dbPass := (index $dbData "password" | default "" | base64dec) {{ "}}" }}
-            {{ "{{-" }} if and (not (empty $dbHost)) (not (empty $dbPass)) (not (empty $bucketName)) {{ "}}" }}
+            {{ "{{-" }} $dbHost = (printf "gitlab-db-pooler-rw.%s.svc" $ns) {{ "}}" }}
+            {{ "{{-" }} $dbPort = (index $dbData "port" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbUser = (index $dbData "username" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbPass = (index $dbData "password" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} if (empty $dbPass) {{ "}}" }}{{ "{{-" }} $dbReady = false {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+
+            # External Redis: check sentinel password exists if enabled
+            {{ "{{-" }} $redisReady := true {{ "}}" }}
+            {{ "{{-" }} if eq $externalRedis "true" {{ "}}" }}
+            {{ "{{-" }} $redisSecret := (lookup "v1" "Secret" $ns "gitlab-redis-password") | default dict {{ "}}" }}
+            {{ "{{-" }} $redisData := ($redisSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} if (empty (index $redisData "redis-password" | default "")) {{ "}}" }}{{ "{{-" }} $redisReady = false {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+
+            # External Object Storage: check OBC bucket exists if enabled
+            {{ "{{-" }} $objStoreReady := true {{ "}}" }}
+            {{ "{{-" }} $bucketName := "" {{ "}}" }}
+            {{ "{{-" }} if eq $externalObjStore "true" {{ "}}" }}
+            {{ "{{-" }} $obcCM := (lookup "v1" "ConfigMap" $ns "gitlab-objectstorage") | default dict {{ "}}" }}
+            {{ "{{-" }} $bucketName = (index ($obcCM.data | default dict) "BUCKET_NAME" | default "") {{ "}}" }}
+            {{ "{{-" }} if (empty $bucketName) {{ "}}" }}{{ "{{-" }} $objStoreReady = false {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+
+            # Only deploy when all enabled external services are ready
+            {{ "{{-" }} if and $dbReady $redisReady $objStoreReady {{ "}}" }}
+
+            # Create PostgreSQL password secret for external DB
+            {{ "{{-" }} if eq $externalDB "true" {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: Secret
                 metadata:
                   name: gitlab-postgresql-password
-                  namespace: {{ .Values.gitlab.namespace }}
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
                 type: Opaque
                 stringData:
                   postgresql-password: {{ "{{" }} $dbPass {{ "}}" }}
                   postgresql-postgres-password: {{ "{{" }} $dbPass {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+
             - complianceType: musthave
               objectDefinition:
                 apiVersion: apps.gitlab.com/v1beta1
@@ -94,6 +117,9 @@ spec:
                           annotations:
                             route.openshift.io/termination: edge
                           class: none
+
+            {{/* External PostgreSQL config */}}
+            {{ "{{-" }} if eq $externalDB "true" {{ "}}" }}
                         psql:
                           host: {{ "{{" }} $dbHost {{ "}}" }}
                           port: {{ "{{" }} $dbPort {{ "}}" }}
@@ -102,20 +128,28 @@ spec:
                           password:
                             secret: gitlab-postgresql-password
                             key: postgresql-password
+            {{ "{{-" }} end {{ "}}" }}
+
+            {{/* External Redis Sentinel config */}}
+            {{ "{{-" }} if eq $externalRedis "true" {{ "}}" }}
                         redis:
-                          host: gitlab-redis-0.gitlab-redis-headless.{{ .Values.gitlab.namespace }}.svc
+                          host: gitlab-redis-0.gitlab-redis-headless.{{ "{{" }} $ns {{ "}}" }}.svc
                           port: 6379
                           sentinels:
-                            - host: gitlab-redis-sentinel-0.gitlab-redis-sentinel-headless.{{ .Values.gitlab.namespace }}.svc
+                            - host: gitlab-redis-sentinel-0.gitlab-redis-sentinel-headless.{{ "{{" }} $ns {{ "}}" }}.svc
                               port: 26379
-                            - host: gitlab-redis-sentinel-1.gitlab-redis-sentinel-headless.{{ .Values.gitlab.namespace }}.svc
+                            - host: gitlab-redis-sentinel-1.gitlab-redis-sentinel-headless.{{ "{{" }} $ns {{ "}}" }}.svc
                               port: 26379
-                            - host: gitlab-redis-sentinel-2.gitlab-redis-sentinel-headless.{{ .Values.gitlab.namespace }}.svc
+                            - host: gitlab-redis-sentinel-2.gitlab-redis-sentinel-headless.{{ "{{" }} $ns {{ "}}" }}.svc
                               port: 26379
                           password:
                             enabled: true
                             secret: gitlab-redis-password
                             key: redis-password
+            {{ "{{-" }} end {{ "}}" }}
+
+            {{/* External Object Storage (NooBaa) config */}}
+            {{ "{{-" }} if eq $externalObjStore "true" {{ "}}" }}
                         appConfig:
                           object_store:
                             enabled: true
@@ -144,12 +178,25 @@ spec:
                         storage:
                           secret: gitlab-registry-storage
                           key: config
+            {{ "{{-" }} end {{ "}}" }}
+
+            {{/* Disable bundled services when external is enabled */}}
                       postgresql:
-                        install: false
+                        install: {{ "{{" }} not (eq $externalDB "true") {{ "}}" }}
                       redis:
-                        install: false
+                        install: {{ "{{" }} not (eq $externalRedis "true") {{ "}}" }}
+            {{ "{{-" }} if not (eq $externalRedis "true") {{ "}}" }}
+                        resources:
+                          requests:
+                            cpu: 100m
+            {{ "{{-" }} end {{ "}}" }}
                       minio:
-                        install: false
+                        install: {{ "{{" }} not (eq $externalObjStore "true") {{ "}}" }}
+            {{ "{{-" }} if not (eq $externalObjStore "true") {{ "}}" }}
+                        resources:
+                          requests:
+                            cpu: 100m
+            {{ "{{-" }} end {{ "}}" }}
                       nginx-ingress:
                         enabled: false
                       installCertmanager: false
