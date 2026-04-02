@@ -157,7 +157,7 @@ metadata:
   namespace: $GITOPS_NAMESPACE
 spec:
   destination:
-    namespace: ''
+    namespace: $GITOPS_NAMESPACE
     server: https://kubernetes.default.svc
   source:
     path: autoshift

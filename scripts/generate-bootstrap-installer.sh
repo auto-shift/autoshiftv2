@@ -62,9 +62,13 @@ command -v helm >/dev/null 2>&1 || error "helm is required"
 # Check cluster connection
 oc whoami >/dev/null 2>&1 || error "Not logged in to OpenShift. Run: oc login"
 
+GITOPS_NAMESPACE="${GITOPS_NAMESPACE:-openshift-gitops}"
+
 log "Installing OpenShift GitOps..."
 helm upgrade --install openshift-gitops ${OCI_BOOTSTRAP_REPO}/openshift-gitops \
     --version ${VERSION} \
+    --set gitops.argoNamespace="${GITOPS_NAMESPACE}" \
+    -n "${GITOPS_NAMESPACE}-operator" \
     --create-namespace \
     --wait \
     --timeout 10m

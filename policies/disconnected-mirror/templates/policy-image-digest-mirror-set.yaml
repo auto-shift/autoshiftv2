@@ -39,7 +39,7 @@ spec:
                     {{- range .Values.disconnectedMirror.mirrors }}
                     - source: {{ .source }}
                       mirrors:
-                        - '{{ "{{hub" }} (index .ManagedClusterLabels "autoshift.io/mirror-registry-host") | default "{{ $.Values.disconnectedMirror.host }}" {{ "hub}}" }}:{{ "{{hub" }} (index .ManagedClusterLabels "autoshift.io/mirror-registry-port") | default "{{ $.Values.disconnectedMirror.port }}" {{ "hub}}" }}{{ "{{hub" }} $path := (index .ManagedClusterLabels "autoshift.io/mirror-registry-path") | default "{{ $.Values.disconnectedMirror.path }}" }}{{ "{{" }} if $path {{ "}}" }}/{{ "{{" }} $path {{ "}}" }}{{ "{{" }} end {{ "hub}}" }}'
+                        - '{{ "{{hub" }} (index .ManagedClusterLabels "autoshift.io/mirror-registry-host") | default "{{ $.Values.disconnectedMirror.host }}" {{ "hub}}" }}{{ "{{hub" }} ternary (printf ":%s" (index .ManagedClusterLabels "autoshift.io/mirror-registry-port" | default "{{ $.Values.disconnectedMirror.port }}")) "" (ne (index .ManagedClusterLabels "autoshift.io/mirror-registry-port" | default "{{ $.Values.disconnectedMirror.port }}") "") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "/%s" (index .ManagedClusterLabels "autoshift.io/mirror-registry-path" | default "{{ $.Values.disconnectedMirror.path }}")) "" (ne (index .ManagedClusterLabels "autoshift.io/mirror-registry-path" | default "{{ $.Values.disconnectedMirror.path }}") "") {{ "hub}}" }}'
                     {{- end }}
     {{- else }}
     # Legacy ImageContentSourcePolicy (OCP 4.12 and earlier)
@@ -66,7 +66,7 @@ spec:
                     {{- range .Values.disconnectedMirror.mirrors }}
                     - source: {{ .source }}
                       mirrors:
-                        - '{{ "{{hub" }} (index .ManagedClusterLabels "autoshift.io/mirror-registry-host") | default "{{ $.Values.disconnectedMirror.host }}" {{ "hub}}" }}:{{ "{{hub" }} (index .ManagedClusterLabels "autoshift.io/mirror-registry-port") | default "{{ $.Values.disconnectedMirror.port }}" {{ "hub}}" }}{{ "{{hub" }} $path := (index .ManagedClusterLabels "autoshift.io/mirror-registry-path") | default "{{ $.Values.disconnectedMirror.path }}" }}{{ "{{" }} if $path {{ "}}" }}/{{ "{{" }} $path {{ "}}" }}{{ "{{" }} end {{ "hub}}" }}'
+                        - '{{ "{{hub" }} (index .ManagedClusterLabels "autoshift.io/mirror-registry-host") | default "{{ $.Values.disconnectedMirror.host }}" {{ "hub}}" }}{{ "{{hub" }} ternary (printf ":%s" (index .ManagedClusterLabels "autoshift.io/mirror-registry-port" | default "{{ $.Values.disconnectedMirror.port }}")) "" (ne (index .ManagedClusterLabels "autoshift.io/mirror-registry-port" | default "{{ $.Values.disconnectedMirror.port }}") "") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "/%s" (index .ManagedClusterLabels "autoshift.io/mirror-registry-path" | default "{{ $.Values.disconnectedMirror.path }}")) "" (ne (index .ManagedClusterLabels "autoshift.io/mirror-registry-path" | default "{{ $.Values.disconnectedMirror.path }}") "") {{ "hub}}" }}'
                     {{- end }}
     {{- end }}
 ---

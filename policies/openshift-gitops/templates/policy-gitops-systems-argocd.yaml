@@ -80,9 +80,6 @@ spec:
                 metadata:
                   name: {{ .Values.gitops.argoName }}
                   namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
-                  annotations:
-                    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-                    argocd.argoproj.io/sync-wave: "2"
                 spec:
                   server:
                     resources:
@@ -110,7 +107,7 @@ spec:
                   rbac:
                     defaultPolicy: ''
                     policy: |
-                      g, system:cluster-admins, role:admin
+                      g, cluster-admins, role:admin
                     {{- range .Values.gitops.rbac_policies}}
                       {{ . }}
                     {{- end }}
@@ -169,6 +166,30 @@ spec:
                       requests:
                         cpu: {{ ((.Values.gitops.applicationSet).requests).cpu | default "250m" }}
                         memory: {{ ((.Values.gitops.applicationSet).requests).memory | default "512Mi" }}
+                  resourceHealthChecks:
+                    - group: policy.open-cluster-management.io
+                      kind: Policy
+                      check: |
+                        hs = {}
+                        if obj.metadata.labels ~= nil and obj.metadata.labels["policy.open-cluster-management.io/root-policy"] ~= nil then
+                          hs.status = "Healthy"
+                          hs.message = "Replicated policy managed by ACM"
+                          return hs
+                        end
+                        if obj.status == nil or obj.status.compliant == nil then
+                          hs.status = "Healthy"
+                          hs.message = "No clusters matched by placement"
+                          return hs
+                        end
+                        if obj.status.compliant == "Compliant" then
+                          hs.status = "Healthy"
+                        elseif obj.status.compliant == "Pending" then
+                          hs.status = "Progressing"
+                        else
+                          hs.status = "Degraded"
+                        end
+                        hs.message = obj.status.compliant
+                        return hs
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy

@@ -1,10 +1,10 @@
-# This policy verifies the installation of the official & supported version of
-# the GitOps Operator.
-#
+{{- $policyName := "policy-gitops-operator-install" }}
+{{- $placementName := "placement-policy-gitops-operator-install" }}
+
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-gitops-operator-install
+  name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -40,35 +40,30 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1beta1
         kind: OperatorPolicy
         metadata:
-          name: install-gitops-operator
+          name: install-operator-gitops
         spec:
           remediationAction: enforce
           severity: high
           complianceType: musthave
           operatorGroup:
-            # if operator group exists in namespace use that
+            # if operator group exists in namespace use that, otherwise use namespace name as default
             name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.gitops.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.gitops.namespace }}{{ "{{" }} end {{ "}}" }}'
             namespace: {{ .Values.gitops.namespace }}
           subscription:
-            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-version" | default "" {{ "hub}}" }}'
-            namespace: {{ .Values.gitops.namespace }}
-            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-channel" | default "{{ .Values.gitops.channel }}" {{ "hub}}" }}'
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-subscription-name" | default "{{ .Values.gitops.name }}" {{ "hub}}" }}'
+            namespace: {{ .Values.gitops.namespace }}
+            # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
+            source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/gitops-source" | default "{{ .Values.gitops.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             config:
               env:
               - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
                 value: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default "{{ .Values.gitops.disableDefaultArgoCD }}" {{ "hub}}" }}'
               - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
-                value: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}'
-            # Source Selection Logic (evaluated on hub for each managed cluster):
-            # 1. If cluster has explicit 'autoshift.io/gitops-source' label → use that value
-            # 2. Else if cluster has 'autoshift.io/disconnected-mirror: true':
-            #    → use {source}{suffix} (e.g., redhat-operators-mirror)
-            #    → suffix from 'autoshift.io/mirror-catalog-suffix' label, or default '-mirror'
-            # 3. Else → use standard source (e.g., redhat-operators)
-            source: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-source" | default (ternary (printf "%s-%s" "{{ .Values.gitops.source }}" (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) "{{ .Values.gitops.source }}" (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror") "true")) {{ "hub}}" }}'
+                value: '{{ "{{hub-" }} $ns := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") {{ "hub}}" }}{{ "{{hub-" }} $result := $ns {{ "hub}}" }}{{ "{{hub" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/gitops-dev-team-") ($label | hasSuffix "-cluster-scoped") (eq $val "true") {{ "hub}}" }}{{ "{{hub-" }} $team := replace "autoshift.io/gitops-dev-team-" "" $label {{ "hub}}" }}{{ "{{hub-" }} $team = replace "-cluster-scoped" "" $team {{ "hub}}" }}{{ "{{hub-" }} $result = printf "%s,openshift-gitops-%s" $result $team {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} $result {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-source-namespace" | default "{{ .Values.gitops.sourceNamespace }}" {{ "hub}}" }}'
-          # Upgrade apporval for subsciption will be set based on if version is set not this flag
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-channel" | default "{{ .Values.gitops.channel }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-version" | default "" {{ "hub}}" }}'
+          # Upgrade approval for subscription will be set based on if version is set not this flag
           # If version is set install plan is set to manual and only the version specified will be installed
           upgradeApproval: Automatic
           versions:
@@ -77,7 +72,7 @@ spec:
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-gitops-operator-install
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -104,13 +99,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-gitops-operator-install
+  name: {{ $placementName }}
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-gitops-operator-install
+  name: {{ $placementName }}
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-gitops-operator-install
+  - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy

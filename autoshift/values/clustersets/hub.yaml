@@ -4,27 +4,6 @@ hubClusterSets:
     labels:
       # OpenShift version for cluster deployment and image mirroring
       openshift-version: '4.20.12'
-      ### tempo
-      tempo: 'true'
-      tempo-subscription-name: tempo-product
-      tempo-channel: stable
-      tempo-source: redhat-operators
-      tempo-source-namespace: openshift-marketplace
-      # tempo-version: 'tempo-operator.v0.19.0-1'
-      ### kiali
-      kiali: 'true'
-      kiali-subscription-name: kiali-ossm
-      kiali-channel: stable
-      kiali-source: redhat-operators
-      kiali-source-namespace: openshift-marketplace
-      # kiali-version: 'kiali-operator.v2.17.2'
-      ### servicemesh3
-      servicemesh3: 'true'
-      servicemesh3-subscription-name: servicemeshoperator3
-      servicemesh3-channel: stable-3.2
-      servicemesh3-source: redhat-operators
-      servicemesh3-source-namespace: openshift-marketplace
-      # servicemesh3-version: 'servicemeshoperator3.v3.2.1'
       self-managed: 'true'
       ### OpenShift Gitops
       gitops: 'true' # is expected to be installed on all hub clusters
@@ -51,6 +30,44 @@ hubClusterSets:
       # acm-provisioning-database-size: 10Gi
       # acm-provisioning-filesystem-storage-size: 100Gi
       # acm-provisioning-image-storage-size: 50Gi
+      acm-addon-tuning: 'true'
+      # config-policy-controller tuning (annotations on ManagedClusterAddOn)
+      acm-addon-cpc-eval-concurrency: '5'    # Concurrent policy evaluations (default: 2)
+      acm-addon-cpc-client-qps: '75'         # K8s API client QPS (default: 30)
+      acm-addon-cpc-client-burst: '100'      # K8s API client burst (default: 45)
+      # config-policy-controller resource limits (via AddOnDeploymentConfig)
+      acm-addon-cpc-mem-request: '256Mi'
+      acm-addon-cpc-cpu-request: '150m'
+      acm-addon-cpc-mem-limit: '1Gi'
+      # governance-policy-framework tuning (annotations on ManagedClusterAddOn)
+      acm-addon-gpf-eval-concurrency: '5'    # Concurrent policy evaluations (default: 2)
+      acm-addon-gpf-client-qps: '75'         # K8s API client QPS (default: 30)
+      acm-addon-gpf-client-burst: '100'      # K8s API client burst (default: 45)
+      # governance-policy-framework resource limits (via AddOnDeploymentConfig)
+      acm-addon-gpf-mem-request: '128Mi'
+      acm-addon-gpf-cpu-request: '100m'
+      acm-addon-gpf-mem-limit: '512Mi'
+      ### Tempo
+      tempo: 'true'
+      tempo-subscription-name: tempo-product
+      tempo-channel: stable
+      tempo-source: redhat-operators
+      tempo-source-namespace: openshift-marketplace
+      # tempo-version: 'tempo-operator.v0.19.0-1'
+      ### Kiali
+      kiali: 'true'
+      kiali-subscription-name: kiali-ossm
+      kiali-channel: stable
+      kiali-source: redhat-operators
+      kiali-source-namespace: openshift-marketplace
+      # kiali-version: 'kiali-operator.v2.17.2'
+      ### Servicemesh3
+      servicemesh3: 'true'
+      servicemesh3-subscription-name: servicemeshoperator3
+      servicemesh3-channel: stable-3.2
+      servicemesh3-source: redhat-operators
+      servicemesh3-source-namespace: openshift-marketplace
+      # servicemesh3-version: 'servicemeshoperator3.v3.2.1'
       ### MetalLB
       metallb: 'false'
       metallb-subscription-name: metallb-operator
@@ -156,6 +173,7 @@ hubClusterSets:
       odf-source: redhat-operators
       odf-source-namespace: openshift-marketplace
       odf-default-storageclass: ocs-storagecluster-ceph-rbd
+      odf-csi-all-nodes: 'true'            # 'true' to run CSI plugins on all nodes (masters, infra, storage)
       ### OpenShift Internal Registry
       imageregistry: 'false'
       imageregistry-management-state: Managed
@@ -171,10 +189,7 @@ hubClusterSets:
       nmstate: 'false'
       nmstate-subscription-name: kubernetes-nmstate-operator
       # nmstate-version: 'kubernetes-nmstate-operator.v4.18.0-202410091522'
-      # Example nmstate-nncp labels. Label must start with nmstate-nncp
-      # also the value must be the name of the config file you want to apply
-      # nmstate-nncp-example-bond1: example-bond
-      # nmstate-nncp-example-vlan10: example-vlan10
+      # See _example-hub.yaml for full nmstate label reference
       ### Advanced Cluster Security
       acs: 'true'
       acs-subscription-name: rhacs-operator
@@ -183,6 +198,15 @@ hubClusterSets:
       acs-channel: stable
       acs-source: redhat-operators
       acs-source-namespace: openshift-marketplace
+      acs-scanner-v4: Enabled
+      acs-monitoring: 'true'
+      acs-auth-provider: openshift
+      acs-auth-min-role: None
+      acs-auth-admin-group: cluster-admins
+      acs-vm-scanning: 'true'
+      acs-admission-control: 'true'
+      acs-network-policies: Enabled
+      acs-default-policies: 'true'
       ### Developer Spaces
       dev-spaces: 'true'
       dev-spaces-subscription-name: devspaces
@@ -220,6 +244,7 @@ hubClusterSets:
       quay-source-namespace: openshift-marketplace
       ### Developer OpenShift Gitops
       gitops-dev: 'true'
+      gitops-dev-team-test-cluster-scoped: 'true'
       gitops-dev-team-test: 'hub' #hub or standalone
       # gitops-dev-team-{INSERT_TEAM_NAME}
       ### Loki
@@ -260,8 +285,9 @@ hubClusterSets:
       virt-source: redhat-operators
       virt-source-namespace: openshift-marketplace
       ### Disconnected Mirror Settings
-      # Enable disconnected mirroring (uses mirror catalog sources instead of default)
-      # disconnected-mirror: 'true'
+      ### Disconnected Mirror Settings (testing - points to real registry)
+      disconnected-mirror: 'false'
+      #mirror-registry-host: 'registry.redhat.io'
       # Suffix appended to catalog source names for mirrored catalogs
       # Example: redhat-operators + -mirror = redhat-operators-mirror
       mirror-catalog-suffix: 'mirror'
@@ -279,12 +305,10 @@ hubClusterSets:
       node-feature-discovery-source: redhat-operators
       node-feature-discovery-source-namespace: openshift-marketplace
       # node-feature-discovery-version: 'nfd.4.18.0-202511261113'
-      ### vault-secrets
-      vault-secrets: 'false'
-      vault-secrets-subscription-name: vault-secrets-operator
-      vault-secrets-channel: stable
-      vault-secrets-source: certified-operators
-      vault-secrets-source-namespace: openshift-marketplace
-      vault-secrets-oidc-api: ''
-      vault-secrets-auth-mount: ''
-      # vault-secrets-version: 'vault-secrets-operator.v1.0.1'
+      ### node-maintenance
+      node-maintenance: 'true'
+      node-maintenance-subscription-name: node-maintenance-operator
+      node-maintenance-channel: stable
+      node-maintenance-source: redhat-operators
+      node-maintenance-source-namespace: openshift-marketplace
+      node-maintenance-version: 'node-maintenance-operator.v5.5.0'
