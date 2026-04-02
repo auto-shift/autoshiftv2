@@ -1137,6 +1137,21 @@ EOF
         log_step "Skipped operators (openshift-only mode)"
     fi
 
+    # Collect known additional images for enabled operators
+    local KNOWN_IMAGES_FILE="$SCRIPT_DIR/known-additional-images.json"
+    local known_images=()
+    if [[ -f "$KNOWN_IMAGES_FILE" ]]; then
+        for op in "${operators[@]}"; do
+            local op_name="${op%%|*}"
+            local imgs
+            imgs=$(jq -r --arg pkg "$op_name" '.[$pkg] // [] | .[]' "$KNOWN_IMAGES_FILE" 2>/dev/null)
+            while IFS= read -r img; do
+                [[ -z "$img" ]] && continue
+                known_images+=("$img")
+            done <<< "$imgs"
+        done
+    fi
+
     # Add AutoShift OCI Helm charts to additionalImages if requested
     # OCI Helm charts are stored as OCI artifacts, so they must be mirrored via additionalImages, not helm section
     if [[ "$INCLUDE_AUTOSHIFT_CHARTS" == "true" ]]; then
@@ -1154,7 +1169,11 @@ EOF
 
         if [[ -z "$AUTOSHIFT_VERSION" ]]; then
             log_warning "AutoShift version not specified and could not be determined from Chart.yaml"
-            echo "  additionalImages: []" >> "$output_file"
+            if [[ ${#known_images[@]} -gt 0 ]]; then
+                echo "  additionalImages:" >> "$output_file"
+            else
+                echo "  additionalImages: []" >> "$output_file"
+            fi
         else
             log_step "Adding AutoShift OCI Helm charts from $AUTOSHIFT_REGISTRY (version: $AUTOSHIFT_VERSION)"
 
@@ -1184,7 +1203,20 @@ EOF
             log_success "Added ${#policy_charts[@]} policy charts + 3 core charts to additionalImages"
         fi
     else
-        echo "  additionalImages: []" >> "$output_file"
+        if [[ ${#known_images[@]} -gt 0 ]]; then
+            echo "  additionalImages:" >> "$output_file"
+        else
+            echo "  additionalImages: []" >> "$output_file"
+        fi
+    fi
+
+    # Append known additional images for enabled operators
+    if [[ ${#known_images[@]} -gt 0 ]]; then
+        echo "    # Operator runtime images not declared in catalog relatedImages" >> "$output_file"
+        for img in "${known_images[@]}"; do
+            echo "    - name: $img" >> "$output_file"
+        done
+        log_success "Added ${#known_images[@]} known additional images"
     fi
 
     # helm section not used - OCI charts go in additionalImages

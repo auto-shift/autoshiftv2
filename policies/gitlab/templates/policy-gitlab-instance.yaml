@@ -31,6 +31,11 @@ spec:
       kind: Policy
       name: policy-cnpg-gitlab-pooler
       namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-gitlab-redis
+      namespace: '{{ $policyNamespace }}'
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -90,7 +95,16 @@ spec:
                           password:
                             secret: gitlab-postgresql-password
                             key: postgresql-password
+                        redis:
+                          host: gitlab-redis.gitlab-system.svc
+                          port: 6379
+                          password:
+                            enabled: true
+                            secret: gitlab-redis-password
+                            key: redis-password
                       postgresql:
+                        install: false
+                      redis:
                         install: false
                       nginx-ingress:
                         enabled: false
@@ -113,10 +127,6 @@ spec:
                             requests:
                               cpu: 500m
                               memory: 1000M
-                      redis:
-                        resources:
-                          requests:
-                            cpu: 100m
                       minio:
                         resources:
                           requests:
