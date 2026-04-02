@@ -425,7 +425,9 @@ add_label_to_section() {
     fi
 
     local temp_file
-    temp_file=$(mktemp)
+    local _project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+    mkdir -p "$_project_root/.tmp"
+    temp_file="$_project_root/.tmp/policy-gen.$$.tmp"
     head -n "$labels_line" "$file_path" > "$temp_file"
     echo "$label_content" >> "$temp_file"
     tail -n +$((labels_line + 1)) "$file_path" >> "$temp_file"
@@ -604,7 +606,9 @@ else
 fi
 
 # Write substitution blocks to temp files for reliable multi-line replacement
-TMPDIR_SUB=$(mktemp -d)
+_project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+TMPDIR_SUB="$_project_root/.tmp/policy-sub-$$"
+mkdir -p "$TMPDIR_SUB"
 build_clustersets > "$TMPDIR_SUB/clustersets"
 build_predicates > "$TMPDIR_SUB/predicates"
 build_dependency_block > "$TMPDIR_SUB/dependency"

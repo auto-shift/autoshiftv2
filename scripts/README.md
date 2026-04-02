@@ -338,8 +338,9 @@ Generate ImageSetConfiguration YAML for oc-mirror disconnected mirroring.
 This script automatically:
 - Discovers all enabled operators from your values files
 - Resolves operator dependencies recursively (e.g., `odf-operator` → `odf-dependencies` → sub-operators)
-- Adds default channels for each operator (required by oc-mirror)
-- Generates a complete ImageSetConfiguration ready for mirroring
+- Adds `defaultChannel` for each operator package (required by oc-mirror)
+- Deduplicates cross-catalog dependencies (e.g., certified operators won't be added to the redhat catalog)
+- Generates a complete `ImageSetConfiguration` with `apiVersion: mirror.openshift.io/v2alpha1`
 
 ### Usage
 
@@ -361,21 +362,28 @@ This script automatically:
 
 # Custom output file
 ./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --output my-imageset.yaml
+
+# Use pre-generated dependencies (for Windows or offline use)
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --dependencies-file scripts/operator-dependencies.json
 ```
 
 ### Features
 
 - **Automatic Dependency Resolution**: Recursively discovers operator dependencies from the Red Hat operator catalog. For example, `odf-operator` automatically includes `odf-dependencies`, which in turn includes `ocs-operator`, `mcg-operator`, etc.
 
-- **Default Channel Inclusion**: oc-mirror requires the default channel for each operator. The script automatically looks up and includes default channels from the catalog cache.
+- **Default Channel Inclusion**: oc-mirror requires the default channel for each operator package. The script automatically looks up and includes `defaultChannel` from the catalog cache, supporting `catalog.json`, `channel.json`, and `catalog.yaml` formats.
+
+- **Cross-Catalog Deduplication**: Dependencies that belong to a different catalog (e.g., certified-operators) are not duplicated into the redhat-operators section.
 
 - **Channel Merging**: When using multiple values files with different channels for the same operator, all channels are included.
+
+- **Pull Secret Auto-Detection**: Automatically finds `pull-secret.json` or `pull-secret.txt` in the repo root. Can also be set via the `REGISTRY_AUTH_FILE` environment variable.
 
 ### Requirements
 
 - `oc` CLI installed (for catalog extraction)
 - `jq` installed (for JSON parsing)
-- Pull secret configured for registry.redhat.io
+- Pull secret in the repo root (`pull-secret.json` or `pull-secret.txt`) or `REGISTRY_AUTH_FILE` env var
 - Operators must have `{operator}-subscription-name` labels in values files
 
 See [Developer Guide](../docs/developer-guide.md#autoshift-scripts-and-label-requirements).
@@ -389,33 +397,37 @@ Update operator channels to latest versions from the Red Hat operator catalog.
 ### Usage
 
 ```bash
-./scripts/update-operator-channels.sh --pull-secret <file> [options]
+./scripts/update-operator-channels.sh [options]
 ```
 
 ### Examples
 
 ```bash
-# Dry run (show what would change)
-./scripts/update-operator-channels.sh --pull-secret ~/.docker/config.json --dry-run
+# Dry run — pull secret auto-detected from repo root
+./scripts/update-operator-channels.sh --dry-run
+
+# Explicit pull secret
+./scripts/update-operator-channels.sh --pull-secret pull-secret.json --dry-run
 
 # Apply updates
-./scripts/update-operator-channels.sh --pull-secret ~/.docker/config.json
+./scripts/update-operator-channels.sh
 
 # Check only (exit 1 if updates available, for CI)
-./scripts/update-operator-channels.sh --pull-secret ~/.docker/config.json --check
+./scripts/update-operator-channels.sh --check
 ```
 
 ### Features
 
-- **Version-aware comparisons**: Only suggests upgrades, never downgrades. If your values file has a newer channel than the catalog, it shows "up to date (catalog has older)".
+- **Version-aware comparisons**: Only suggests upgrades, never downgrades. If your values file has a newer channel than the catalog, it shows "keeping current channel".
 - **Auto-discovery**: Finds all operators from `{operator}-subscription-name` labels in values files.
-- **Multi-format catalog support**: Reads channels from `catalog.json`, standalone channel files (`stable-3.16.json`), and `channels/` subdirectories.
+- **Multi-format catalog support**: Reads channels from `catalog.json`, `catalog.yaml`, standalone channel files (`stable-3.16.json`, `channel.json`), and `channels/` subdirectories.
+- **Pull secret auto-detection**: Finds `pull-secret.json` or `pull-secret.txt` in the repo root automatically.
 
 ### Requirements
 
 - `oc` CLI installed
 - `jq` installed
-- Pull secret with access to registry.redhat.io
+- Pull secret in the repo root (`pull-secret.json` or `pull-secret.txt`), `--pull-secret PATH`, or `REGISTRY_AUTH_FILE` env var
 
 ---
 
@@ -524,10 +536,11 @@ Extract operator dependencies from the Red Hat operator catalog. This script is 
 
 ### How It Works
 
-1. Extracts the operator catalog index image to a local cache
+1. Extracts the operator catalog index image to a local cache (`.cache/catalog-cache/`)
 2. Parses bundle metadata to find `olm.package.required` dependencies
 3. Recursively resolves transitive dependencies
 4. Merges in "known dependencies" from `known-dependencies.json` for operators that don't declare dependencies in the catalog (e.g., `odf-operator` → `odf-dependencies`)
+5. Auto-detects catalog version from `openshift-version` in your values files
 
 ### Usage
 
@@ -537,17 +550,18 @@ Extract operator dependencies from the Red Hat operator catalog. This script is 
 
 ### Options
 
-- `--catalog CATALOG`: Catalog image (default: registry.redhat.io/redhat/redhat-operator-index:v4.18)
+- `--catalog CATALOG`: Catalog image (overrides auto-detection from `openshift-version`)
 - `--operators PKG1,PKG2`: Comma-separated list of operators to check
 - `--all`: Show all operators with dependencies
 - `--no-recursive`: Disable recursive resolution (recursive is default)
 - `--json`: Output in JSON format
 - `--cache-dir DIR`: Directory to cache extracted catalog
+- `--pull-secret FILE`: Path to pull secret file (default: auto-detect from repo root)
 
 ### Examples
 
 ```bash
-# Check specific operators with recursive resolution
+# Check specific operators (pull secret auto-detected, catalog version auto-detected)
 ./scripts/get-operator-dependencies.sh --operators odf-operator --json
 
 # Check multiple operators
@@ -556,8 +570,8 @@ Extract operator dependencies from the Red Hat operator catalog. This script is 
 # Show all operators with dependencies
 ./scripts/get-operator-dependencies.sh --all --json
 
-# Use specific catalog version
-./scripts/get-operator-dependencies.sh --catalog registry.redhat.io/redhat/redhat-operator-index:v4.17 --operators odf-operator
+# Use specific catalog version with explicit pull secret
+./scripts/get-operator-dependencies.sh --catalog registry.redhat.io/redhat/redhat-operator-index:v4.17 --operators odf-operator --pull-secret pull-secret.json
 ```
 
 ### Known Dependencies
@@ -571,6 +585,41 @@ The file `scripts/known-dependencies.json` contains manual dependencies for oper
 ```
 
 The script will recursively resolve `odf-dependencies` from the catalog to get the full dependency tree.
+
+---
+
+## 🖥️ Platform Compatibility
+
+### Self-Contained — No External Dependencies
+
+All scripts keep temporary files inside the repo under `.tmp/` (gitignored). No script writes to `/tmp/` or any directory outside the repository.
+
+### Pull Secret Handling
+
+Scripts that access the Red Hat registry (`generate-imageset-config.sh`, `get-operator-dependencies.sh`, `update-operator-channels.sh`) share a common pull secret resolution order:
+
+1. `--pull-secret <path>` flag (explicit)
+2. `pull-secret.json` or `pull-secret.txt` in the repo root (auto-detected)
+3. `REGISTRY_AUTH_FILE` environment variable
+
+Place your pull secret in the repo root as `pull-secret.json` and all scripts will find it automatically. The file is gitignored.
+
+### Windows (Git Bash)
+
+Scripts that use `oc image extract` (catalog extraction) require symlink support, which Windows restricts by default. These scripts detect Git Bash and test for symlink capability before running:
+
+- If **Developer Mode** is enabled (Settings > System > For developers), symlinks work and scripts run normally.
+- If symlinks are not available, the script exits with instructions to either enable Developer Mode or run on Mac/Linux/WSL2.
+
+For `generate-imageset-config.sh` on Windows without symlink support, use the `--dependencies-file` flag with the pre-generated `scripts/operator-dependencies.json`:
+
+```bash
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --dependencies-file scripts/operator-dependencies.json
+```
+
+### Catalog Version Auto-Detection
+
+Scripts that extract the operator catalog auto-detect the catalog version from the `openshift-version` label in your clusterset values files (e.g., `openshift-version: '4.20.12'` resolves to `v4.20`). Use `--catalog` to override.
 
 ---
 

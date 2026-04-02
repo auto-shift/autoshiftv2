@@ -136,6 +136,14 @@ resolve_all_dependencies() {
         return
     fi
 
+    # Detect Windows/Git Bash — dependency resolution won't work
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        log_warning "Windows/Git Bash detected — cannot resolve dependencies (requires oc image extract with symlinks)"
+        log_warning "Use --dependencies-file scripts/operator-dependencies.json instead"
+        log_warning "Generate the file on Mac/Linux/WSL2: ./scripts/get-operator-dependencies.sh --json > scripts/operator-dependencies.json"
+        return
+    fi
+
     log_step "Resolving operator dependencies..."
 
     # Create temp file for dependencies
@@ -185,6 +193,9 @@ get_default_channel() {
     # Check for catalog.json (combined structure)
     elif [[ -f "$pkg_dir/catalog.json" ]]; then
         default_channel=$(jq -r 'select(.schema == "olm.package") | .defaultChannel // empty' "$pkg_dir/catalog.json" 2>/dev/null)
+    # Check for catalog.yaml (newer catalog format)
+    elif [[ -f "$pkg_dir/catalog.yaml" ]]; then
+        default_channel=$(grep '^defaultChannel:' "$pkg_dir/catalog.yaml" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' || true)
     fi
 
     echo "$default_channel"

@@ -542,7 +542,8 @@ $version_line"
     if [[ -n "$labels_line" ]]; then
         # Insert the labels after the labels: line
         local temp_file
-        temp_file=$(mktemp)
+        mkdir -p "$PROJECT_ROOT/.tmp"
+        temp_file="$PROJECT_ROOT/.tmp/policy-gen.$$.tmp"
         
         # Copy everything up to the labels line
         head -n "$labels_line" "$file_path" > "$temp_file"

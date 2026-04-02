@@ -23,6 +23,21 @@
 
 set -e
 
+# Detect Windows/Git Bash and test symlink capability
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+    _test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.tmp/symlink-test-$$"
+    mkdir -p "$_test_dir"
+    if ! ln -s "$_test_dir" "$_test_dir/test-link" 2>/dev/null; then
+        rm -rf "$_test_dir"
+        echo -e "\033[0;31m[ERROR]\033[0m This script requires 'oc image extract' which creates Linux symlinks." >&2
+        echo -e "\033[0;31m[ERROR]\033[0m Windows requires Developer Mode or admin privileges for symlinks." >&2
+        echo -e "\033[0;31m[ERROR]\033[0m Either enable Developer Mode (Settings > System > For developers) or" >&2
+        echo -e "\033[0;31m[ERROR]\033[0m run this on Mac/Linux/WSL2 instead." >&2
+        exit 1
+    fi
+    rm -rf "$_test_dir"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -151,9 +166,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate required pull-secret
+# Auto-detect pull secret from repo root if not specified
 if [[ -z "$PULL_SECRET" ]]; then
-    error "Missing required --pull-secret option"
+    for ps_file in "$PROJECT_ROOT/pull-secret.json" "$PROJECT_ROOT/pull-secret.txt"; do
+        if [[ -f "$ps_file" ]]; then
+            PULL_SECRET="$ps_file"
+            break
+        fi
+    done
+fi
+
+if [[ -z "$PULL_SECRET" ]]; then
+    error "No pull secret found. Place pull-secret.json in the repo root or use --pull-secret PATH"
     echo "" >&2
     usage
 fi
@@ -528,9 +552,16 @@ get_channels() {
 
     local channels=""
 
-    # Method 1: catalog.json with olm.channel entries
+    # Method 1a: catalog.json with olm.channel entries
     if [[ -f "$package_dir/catalog.json" ]]; then
         channels=$(jq -r 'select(.schema == "olm.channel") | .name' "$package_dir/catalog.json" 2>/dev/null)
+    fi
+
+    # Method 1b: catalog.yaml with olm.channel entries (newer catalog format)
+    # Multi-document YAML: name appears before schema in each --- delimited doc
+    if [[ -f "$package_dir/catalog.yaml" && -z "$channels" ]]; then
+        channels=$(awk '/^---$/{name=""} /^name:/{name=$2} /^schema: olm.channel/{if(name) print name}' \
+            "$package_dir/catalog.yaml" 2>/dev/null | tr -d '"' || true)
     fi
 
     # Method 2: Standalone channel JSON files (stable-3.16.json, etc.)
@@ -542,10 +573,16 @@ get_channels() {
         channels=$(printf '%s\n%s' "$channels" "$standalone_channels")
     fi
 
-    # Method 3: channels.json file
-    if [[ -f "$package_dir/channels.json" ]]; then
+    # Method 3: channel.json or channels.json file (concatenated JSON objects)
+    local channel_file=""
+    if [[ -f "$package_dir/channel.json" ]]; then
+        channel_file="$package_dir/channel.json"
+    elif [[ -f "$package_dir/channels.json" ]]; then
+        channel_file="$package_dir/channels.json"
+    fi
+    if [[ -n "$channel_file" ]]; then
         local json_channels
-        json_channels=$(sed 's/}{/}\n{/g' "$package_dir/channels.json" | jq -r '.name' 2>/dev/null)
+        json_channels=$(sed 's/}{/}\n{/g' "$channel_file" | jq -r '.name' 2>/dev/null)
         channels=$(printf '%s\n%s' "$channels" "$json_channels")
     fi
 
@@ -827,8 +864,8 @@ main() {
                 fi
             fi
         else
-            # best_channel is older or can't compare - current is newer or same, don't downgrade
-            printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${GREEN}up to date${NC} (catalog has older)"
+            # best_channel differs but is not newer - current channel is preferred, don't downgrade
+            printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${GREEN}up to date${NC} (keeping current channel)"
         fi
     done
 
