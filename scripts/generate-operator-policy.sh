@@ -165,6 +165,7 @@ fi
 NAMESPACE="$TARGET_NAMESPACE"  # Use required TARGET_NAMESPACE
 POLICY_DIR="policies/${COMPONENT_NAME}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATE_DIR="$SCRIPT_DIR/templates"
 
 # Convert kebab-case to camelCase for values.yaml

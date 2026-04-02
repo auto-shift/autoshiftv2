@@ -371,6 +371,87 @@ spec:
                           configMap:
                             name: gitlab-redis-sentinel-config
                             defaultMode: 0644
+            {{/* PodDisruptionBudgets */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: policy/v1
+                kind: PodDisruptionBudget
+                metadata:
+                  name: gitlab-redis
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  minAvailable: 1
+                  selector:
+                    matchLabels:
+                      app: gitlab-redis
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: policy/v1
+                kind: PodDisruptionBudget
+                metadata:
+                  name: gitlab-redis-sentinel
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  minAvailable: 2
+                  selector:
+                    matchLabels:
+                      app: gitlab-redis-sentinel
+            {{/* ServiceMonitor for Redis metrics */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: monitoring.coreos.com/v1
+                kind: ServiceMonitor
+                metadata:
+                  name: gitlab-redis
+                  namespace: {{ .Values.gitlab.namespace }}
+                  labels:
+                    app: gitlab-redis
+                spec:
+                  selector:
+                    matchLabels:
+                      app: gitlab-redis
+                  endpoints:
+                    - port: redis
+                      interval: 30s
+            {{/* NetworkPolicy — allow GitLab pods and Sentinel to reach Redis */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: networking.k8s.io/v1
+                kind: NetworkPolicy
+                metadata:
+                  name: gitlab-redis-allow
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  podSelector:
+                    matchLabels:
+                      app: gitlab-redis
+                  ingress:
+                    - from:
+                        - namespaceSelector:
+                            matchLabels:
+                              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+                      ports:
+                        - port: 6379
+                          protocol: TCP
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: networking.k8s.io/v1
+                kind: NetworkPolicy
+                metadata:
+                  name: gitlab-redis-sentinel-allow
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  podSelector:
+                    matchLabels:
+                      app: gitlab-redis-sentinel
+                  ingress:
+                    - from:
+                        - namespaceSelector:
+                            matchLabels:
+                              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+                      ports:
+                        - port: 26379
+                          protocol: TCP
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

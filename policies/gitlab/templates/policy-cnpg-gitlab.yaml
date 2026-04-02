@@ -88,6 +88,41 @@ spec:
                   affinity:
                     enablePodAntiAffinity: true
                     topologyKey: kubernetes.io/hostname
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: monitoring.coreos.com/v1
+                kind: ServiceMonitor
+                metadata:
+                  name: gitlab-db
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  selector:
+                    matchLabels:
+                      cnpg.io/cluster: gitlab-db
+                  endpoints:
+                    - port: metrics
+                      interval: 30s
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: networking.k8s.io/v1
+                kind: NetworkPolicy
+                metadata:
+                  name: gitlab-db-allow
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  podSelector:
+                    matchLabels:
+                      cnpg.io/cluster: gitlab-db
+                  ingress:
+                    - from:
+                        - namespaceSelector:
+                            matchLabels:
+                              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+                      ports:
+                        - port: 5432
+                          protocol: TCP
+                        - port: 9187
+                          protocol: TCP
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

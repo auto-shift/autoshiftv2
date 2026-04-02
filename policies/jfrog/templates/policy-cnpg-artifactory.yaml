@@ -88,6 +88,41 @@ spec:
                   affinity:
                     enablePodAntiAffinity: true
                     topologyKey: kubernetes.io/hostname
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: monitoring.coreos.com/v1
+                kind: ServiceMonitor
+                metadata:
+                  name: artifactory-db
+                  namespace: {{ .Values.jfrog.namespace }}
+                spec:
+                  selector:
+                    matchLabels:
+                      cnpg.io/cluster: artifactory-db
+                  endpoints:
+                    - port: metrics
+                      interval: 30s
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: networking.k8s.io/v1
+                kind: NetworkPolicy
+                metadata:
+                  name: artifactory-db-allow
+                  namespace: {{ .Values.jfrog.namespace }}
+                spec:
+                  podSelector:
+                    matchLabels:
+                      cnpg.io/cluster: artifactory-db
+                  ingress:
+                    - from:
+                        - namespaceSelector:
+                            matchLabels:
+                              kubernetes.io/metadata.name: {{ .Values.jfrog.namespace }}
+                      ports:
+                        - port: 5432
+                          protocol: TCP
+                        - port: 9187
+                          protocol: TCP
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
