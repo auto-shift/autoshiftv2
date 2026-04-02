@@ -1,0 +1,159 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-gitlab-object-storage" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-gitlab-operator-install
+      namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-odf-operator-install
+      namespace: '{{ $policyNamespace }}'
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-object-storage
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: objectbucket.io/v1alpha1
+                kind: ObjectBucketClaim
+                metadata:
+                  name: gitlab-objectstorage
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  generateBucketName: gitlab
+                  storageClassName: openshift-storage.noobaa.io
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-object-storage-secret
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            # Read the auto-generated OBC credentials and bucket info
+            {{ "{{-" }} $obcSecret := (lookup "v1" "Secret" "{{ .Values.gitlab.namespace }}" "gitlab-objectstorage") | default dict {{ "}}" }}
+            {{ "{{-" }} $obcData := ($obcSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $accessKey := (index $obcData "AWS_ACCESS_KEY_ID" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $secretKey := (index $obcData "AWS_SECRET_ACCESS_KEY" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $obcCM := (lookup "v1" "ConfigMap" "{{ .Values.gitlab.namespace }}" "gitlab-objectstorage") | default dict {{ "}}" }}
+            {{ "{{-" }} $obcCMData := ($obcCM.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $bucketName := (index $obcCMData "BUCKET_NAME" | default "") {{ "}}" }}
+            {{ "{{-" }} $bucketHost := (index $obcCMData "BUCKET_HOST" | default "") {{ "}}" }}
+            {{ "{{-" }} $bucketPort := (index $obcCMData "BUCKET_PORT" | default "443") {{ "}}" }}
+            {{ "{{-" }} if and (not (empty $accessKey)) (not (empty $bucketName)) {{ "}}" }}
+            # Create the GitLab object storage connection secret
+            # GitLab expects this format for S3-compatible storage
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: gitlab-object-storage-connection
+                  namespace: {{ .Values.gitlab.namespace }}
+                type: Opaque
+                stringData:
+                  connection: |
+                    provider: AWS
+                    region: us-east-1
+                    aws_access_key_id: {{ "{{" }} $accessKey {{ "}}" }}
+                    aws_secret_access_key: {{ "{{" }} $secretKey {{ "}}" }}
+                    aws_signature_version: 4
+                    host: {{ "{{" }} $bucketHost {{ "}}" }}
+                    endpoint: https://{{ "{{" }} $bucketHost {{ "}}" }}:{{ "{{" }} $bucketPort {{ "}}" }}
+                    path_style: true
+            # Registry uses a separate config format
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: gitlab-registry-storage
+                  namespace: {{ .Values.gitlab.namespace }}
+                type: Opaque
+                stringData:
+                  config: |
+                    s3:
+                      v4auth: true
+                      regionendpoint: https://{{ "{{" }} $bucketHost {{ "}}" }}:{{ "{{" }} $bucketPort {{ "}}" }}
+                      pathstyle: true
+                      region: us-east-1
+                      bucket: {{ "{{" }} $bucketName {{ "}}" }}
+                      accesskey: {{ "{{" }} $accessKey {{ "}}" }}
+                      secretkey: {{ "{{" }} $secretKey {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitlab'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/odf'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
