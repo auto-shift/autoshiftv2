@@ -51,9 +51,9 @@ spec:
           object-templates-raw: |
             {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
             {{ "{{-" }} $chartVersion := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-chart-version" | default "{{ .Values.gitlab.chartVersion | default "9.10.1" }}" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" "gitlab-system" "gitlab-db-app") | default dict {{ "}}" }}
+            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" "{{ .Values.gitlab.namespace }}" "gitlab-db-app") | default dict {{ "}}" }}
             {{ "{{-" }} $dbData := ($dbSecret.data | default dict) {{ "}}" }}
-            {{ "{{-" }} $dbHost := "gitlab-db-pooler-rw.gitlab-system.svc" {{ "}}" }}
+            {{ "{{-" }} $dbHost := "gitlab-db-pooler-rw.{{ .Values.gitlab.namespace }}.svc" {{ "}}" }}
             {{ "{{-" }} $dbPort := (index $dbData "port" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbUser := (index $dbData "username" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbPass := (index $dbData "password" | default "" | base64dec) {{ "}}" }}
@@ -64,7 +64,7 @@ spec:
                 kind: Secret
                 metadata:
                   name: gitlab-postgresql-password
-                  namespace: gitlab-system
+                  namespace: {{ .Values.gitlab.namespace }}
                 type: Opaque
                 stringData:
                   postgresql-password: {{ "{{" }} $dbPass {{ "}}" }}
@@ -96,8 +96,15 @@ spec:
                             secret: gitlab-postgresql-password
                             key: postgresql-password
                         redis:
-                          host: gitlab-redis.gitlab-system.svc
+                          host: gitlab-redis-0.gitlab-redis-headless.{{ .Values.gitlab.namespace }}.svc
                           port: 6379
+                          sentinels:
+                            - host: gitlab-redis-sentinel-0.gitlab-redis-sentinel-headless.{{ .Values.gitlab.namespace }}.svc
+                              port: 26379
+                            - host: gitlab-redis-sentinel-1.gitlab-redis-sentinel-headless.{{ .Values.gitlab.namespace }}.svc
+                              port: 26379
+                            - host: gitlab-redis-sentinel-2.gitlab-redis-sentinel-headless.{{ .Values.gitlab.namespace }}.svc
+                              port: 26379
                           password:
                             enabled: true
                             secret: gitlab-redis-password
