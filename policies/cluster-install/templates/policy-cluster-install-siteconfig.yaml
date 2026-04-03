@@ -1,0 +1,591 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-cluster-install-siteconfig" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+  disabled: false
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
+  dependencies:
+    - name: policy-cluster-install-secrets
+      namespace: {{ $policyNamespace }}
+      compliance: Compliant
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: {{ $policyName }}
+        spec:
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            {{ "{{" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
+            {{ "{{-" }} range $_, $cm := ($configMaps.items | default list) {{ "}}" }}
+              {{ "{{-" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
+              {{ "{{-" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
+              {{ "{{-" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
+              {{ "{{-" }} $platform := (index $ci "platform" | default "baremetal") {{ "}}" }}
+              {{ "{{-" }} if and (eq (index $ci "createCluster" | default "") "true") (eq $platform "baremetal") {{ "}}" }}
+                {{ "{{-" }} $networking := (index $config "networking") {{ "}}" }}
+                {{ "{{-" }} $hosts := (index $config "hosts") {{ "}}" }}
+                {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion") {{ "}}" }}
+                {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
+                {{ "{{-" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
+                {{ "{{-" }} $controlPlaneCount := (index $ci "controlPlaneAgents" | default 3 | toInt) {{ "}}" }}
+                {{ "{{-" }} $workerAgents := (index $ci "workerAgents" | default 0 | toInt) {{ "}}" }}
+                {{ "{{-" }} $workerCount := $workerAgents {{ "}}" }}
+                {{ "{{-" }} if (eq $workerCount 0) {{ "}}" }}
+                  {{ "{{-" }} $workerCount = (sub (len (keys $hosts)) $controlPlaneCount) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $baseDomain := (index $ci "baseDomain") {{ "}}" }}
+                {{ "{{-" }} $managedClusterSet := (printf "%s{{ $.Values.clusterSetSuffix | default "" }}" (index $config "clusterSet" | default "default")) {{ "}}" }}
+                {{ "{{-" }} $sshPublicKey := (index $ci "sshPublicKey" | default "") {{ "}}" }}
+                {{ "{{-" }} $sshPublicKeyRef := (index $ci "sshPublicKeyRef" | default dict) {{ "}}" }}
+                {{ "{{-" }} if not (empty $sshPublicKeyRef) {{ "}}" }}
+                  {{ "{{-" }} $refNs := (index $sshPublicKeyRef "namespace" | default $policyNamespace) {{ "}}" }}
+                  {{ "{{-" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $sshPublicKeyRef "name")) | default dict {{ "}}" }}
+                  {{ "{{-" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
+                  {{ "{{-" }} $sshPublicKey = (index $refData (index $sshPublicKeyRef "key") | default $sshPublicKey) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
+                {{ "{{-" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
+                {{ "{{-" }} $mirrorHost := (index $mirrorReg "host" | default "") {{ "}}" }}
+                {{ "{{-" }} $mirrorPath := (index $mirrorReg "path" | default "") {{ "}}" }}
+                {{ "{{-" }} $mirrorUrl := $mirrorHost {{ "}}" }}
+                {{ "{{-" }} if $mirrorPath {{ "}}" }}
+                {{ "{{-" }} $mirrorUrl = (printf "%s/%s" $mirrorHost $mirrorPath) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $mirrors := (index $mirrorReg "mirrors" | default list) {{ "}}" }}
+                {{ "{{-" }} $caTrustBundle := (index $mirrorReg "ca" | default "") {{ "}}" }}
+                {{ "{{-" }} $caRef := (index $mirrorReg "caRef" | default dict) {{ "}}" }}
+                {{ "{{-" }} if not (empty $caRef) {{ "}}" }}
+                  {{ "{{-" }} $refNs := (index $caRef "namespace" | default $policyNamespace) {{ "}}" }}
+                  {{ "{{-" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict {{ "}}" }}
+                  {{ "{{-" }} $refData := (index $refCM "data" | default dict) {{ "}}" }}
+                  {{ "{{-" }} $caTrustBundle = (index $refData (index $caRef "key") | default $caTrustBundle) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $bmcEndpoint := (index $ci "bmcEndpoint" | default "/redfish/v1/Systems/1") {{ "}}" }}
+                {{ "{{-" }} $clusterNetwork := (index $networking "clusterNetwork") {{ "}}" }}
+                {{ "{{-" }} $machineNetwork := (index $networking "machineNetwork") {{ "}}" }}
+                {{ "{{-" }} $serviceNetwork := (index $networking "serviceNetwork") {{ "}}" }}
+                {{ "{{-" }} if (gt (len $mirrors) 0) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: mirror-registry-config
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                  labels:
+                    app: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  registries.conf: |
+                    unqualified-search-registries = ["registry.access.redhat.com", "docker.io"]
+                    {{ "{{-" }} range $_, $entry := $mirrors {{ "}}" }}
+                    {{ "{{-" }} $source := (index $entry "source") {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "}}" }}
+                    {{ "{{-" }} if $mirrorLoc {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "}}" }}
+                    {{ "{{-" }} else {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc = $mirrorUrl {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    [[registry]]
+                      prefix = ""
+                      location = "{{ "{{" }} $source {{ "}}" }}"
+                      mirror-by-digest-only = true
+                      [[registry.mirror]]
+                        location = "{{ "{{" }} $mirrorLoc {{ "}}" }}"
+                    {{ "{{-" }} end {{ "}}" }}
+                  ca-bundle.crt: |
+                    {{ "{{" }} $caTrustBundle | autoindent {{ "}}" }}
+            {{/* ===== IDMS Extra Manifest ConfigMap ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: autoshift-idms-config
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  autoshift-idms.yaml: |
+                    apiVersion: config.openshift.io/v1
+                    kind: ImageDigestMirrorSet
+                    metadata:
+                      name: autoshift-disconnected-mirrors
+                    spec:
+                      imageDigestMirrors:
+                    {{ "{{-" }} range $_, $entry := $mirrors {{ "}}" }}
+                    {{ "{{-" }} $source := (index $entry "source") {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "}}" }}
+                    {{ "{{-" }} if $mirrorLoc {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "}}" }}
+                    {{ "{{-" }} else {{ "}}" }}
+                    {{ "{{-" }} $mirrorLoc = $mirrorUrl {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                      - source: {{ "{{" }} $source {{ "}}" }}
+                        mirrors:
+                          - {{ "{{" }} $mirrorLoc {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+            {{/* ===== AgentClusterInstall ConfigMap ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: agent-cluster-install
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  AgentClusterInstall: |
+                    apiVersion: extensions.hive.openshift.io/v1beta1
+                    kind: AgentClusterInstall
+                    metadata:
+                      name: {{ "{{" }} $clusterName {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    spec:
+                      clusterDeploymentRef:
+                        name: {{ "{{" }} $clusterName {{ "}}" }}
+                      imageSetRef:
+                        name: {{ "{{" }} $imageSet {{ "}}" }}
+                    {{ "{{-" }} if (gt (len $mirrors) 0) {{ "}}" }}
+                      mirrorRegistryRef:
+                        name: mirror-registry-config
+                        namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if (gt $controlPlaneCount 1) {{ "}}" }}
+                      platformType: BareMetal
+                      apiVIP: {{ "{{" }} index $ci "apiVip" {{ "}}" }}
+                      ingressVIP: {{ "{{" }} index $ci "ingressVip" {{ "}}" }}
+                      mastersSchedulable: {{ "{{" }} index $ci "mastersSchedulable" | default false {{ "}}" }}
+                      provisionRequirements:
+                        controlPlaneAgents: {{ "{{" }} $controlPlaneCount {{ "}}" }}
+                        workerAgents: {{ "{{" }} $workerCount {{ "}}" }}
+                    {{ "{{-" }} else {{ "}}" }}
+                      provisionRequirements:
+                        controlPlaneAgents: 1
+                    {{ "{{-" }} end {{ "}}" }}
+                      networking:
+                    {{ "{{-" }} if (eq $controlPlaneCount 1) {{ "}}" }}
+                        userManagedNetworking: true
+                    {{ "{{-" }} end {{ "}}" }}
+                        clusterNetwork:
+                        - cidr: {{ "{{" }} index $clusterNetwork "cidr" {{ "}}" }}
+                          hostPrefix: {{ "{{" }} index $clusterNetwork "hostPrefix" {{ "}}" }}
+                        machineNetwork:
+                        - cidr: {{ "{{" }} index $machineNetwork "cidr" {{ "}}" }}
+                        serviceNetwork:
+                    {{ "{{-" }} range $_, $network := $serviceNetwork {{ "}}" }}
+                        - {{ "{{" }} $network {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                      sshPublicKey: {{ "{{" }} $sshPublicKey {{ "}}" }}
+            {{/* ===== ClusterDeployment ConfigMap ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: cluster-deployment
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  ClusterDeployment: |
+                    apiVersion: hive.openshift.io/v1
+                    kind: ClusterDeployment
+                    metadata:
+                      name: {{ "{{" }} $clusterName {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                      labels:
+                        cluster.open-cluster-management.io/clusterset: {{ "{{" }} $managedClusterSet {{ "}}" }}
+                        hive.openshift.io/cluster-platform: agent-baremetal
+                    spec:
+                      baseDomain: {{ "{{" }} $baseDomain {{ "}}" }}
+                      clusterInstallRef:
+                        group: extensions.hive.openshift.io
+                        kind: AgentClusterInstall
+                        name: {{ "{{" }} $clusterName {{ "}}" }}
+                        version: v1beta1
+                      clusterName: {{ "{{" }} $clusterName {{ "}}" }}
+                      controlPlaneConfig:
+                        servingCertificates: {}
+                      platform:
+                        agentBareMetal:
+                          agentSelector:
+                            matchLabels:
+                              agentBareMetal-generated-infraenv-ai-flow: {{ "{{" }} printf "%s-%s" $clusterName $clusterName {{ "}}" }}
+                      pullSecretRef:
+                        name: {{ "{{" }} printf "%s-pull-secret" $clusterName {{ "}}" }}
+            {{/* ===== InfraEnv ConfigMap ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: infra-env
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  InfraEnv: |
+                    apiVersion: agent-install.openshift.io/v1beta1
+                    kind: InfraEnv
+                    metadata:
+                      labels:
+                        networkType: dhcp
+                      name: {{ "{{" }} $clusterName {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    spec:
+                      agentLabels:
+                        agentBareMetal-generated-infraenv-ai-flow: {{ "{{" }} printf "%s-%s" $clusterName $clusterName {{ "}}" }}
+                    {{ "{{-" }} if (gt (len $mirrors) 0) {{ "}}" }}
+                      imageType: full-iso
+                      mirrorRegistryRef:
+                        name: mirror-registry-config
+                        namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                      ignitionConfigOverride: '{"ignition":{"version":"3.1.0"},"storage":{"files":[{"path":"/etc/containers/policy.json","mode":420,"overwrite":true,"contents":{"source":"data:text/plain;base64,ewogICJkZWZhdWx0IjogW3sidHlwZSI6ICJpbnNlY3VyZUFjY2VwdEFueXRoaW5nIn1dCn0K"}}]}}'
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if $caTrustBundle {{ "}}" }}
+                      additionalTrustBundle: |
+                        {{ "{{" }} $caTrustBundle | autoindent {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $ntpSources := (index $ci "ntpSources" | default list) {{ "}}" }}
+                    {{ "{{-" }} if (gt (len $ntpSources) 0) {{ "}}" }}
+                      additionalNTPSources:
+                    {{ "{{-" }} range $_, $ntp := $ntpSources {{ "}}" }}
+                        - {{ "{{" }} $ntp {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                      clusterRef:
+                        name: {{ "{{" }} $clusterName {{ "}}" }}
+                        namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                      cpuArchitecture: {{ "{{" }} $cpuArch {{ "}}" }}
+                      pullSecretRef:
+                        name: {{ "{{" }} printf "%s-pull-secret" $clusterName {{ "}}" }}
+                      sshAuthorizedKey: {{ "{{" }} $sshPublicKey {{ "}}" }}
+                      nmStateConfigLabelSelector:
+                        matchLabels:
+                          infraenvs.agent-install.openshift.io: {{ "{{" }} $clusterName {{ "}}" }}
+            {{/* ===== ManagedCluster ConfigMap ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: managed-cluster
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  ManagedCluster: |
+                    apiVersion: cluster.open-cluster-management.io/v1
+                    kind: ManagedCluster
+                    metadata:
+                      name: {{ "{{" }} $clusterName {{ "}}" }}
+                      labels:
+                        cluster.open-cluster-management.io/clusterset: {{ "{{" }} $managedClusterSet {{ "}}" }}
+                    spec:
+                      hubAcceptsClient: true
+            {{/* ===== Per-Host BareMetalHost ConfigMaps ===== */}}
+                {{ "{{-" }} range $hostname, $host := $hosts {{ "}}" }}
+                  {{ "{{" }} $hostFQDN := (printf "%s.%s.%s" $hostname $clusterName $baseDomain) {{ "}}" }}
+                  {{ "{{" }} $hostBmcEndpoint := (index $host "bmcEndpoint" | default $bmcEndpoint) {{ "}}" }}
+                  {{ "{{" }} $bmcAddress := (printf "%s://%s%s" (index $host "bmcPrefix") (index $host "bmcIP") $hostBmcEndpoint) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: bmh-{{ "{{" }} $hostname {{ "}}" }}
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  BareMetalHost: |
+                    apiVersion: metal3.io/v1alpha1
+                    kind: BareMetalHost
+                    metadata:
+                      name: {{ "{{" }} $hostname {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                      annotations:
+                        inspect.metal3.io: disabled
+                        bmac.agent-install.openshift.io/hostname: {{ "{{" }} $hostFQDN {{ "}}" }}
+                      labels:
+                        infraenvs.agent-install.openshift.io: {{ "{{" }} $clusterName {{ "}}" }}
+                    spec:
+                      automatedCleaningMode: disabled
+                      bmc:
+                        address: '{{ "{{" }} $bmcAddress {{ "}}" }}'
+                        credentialsName: {{ "{{" }} $hostname {{ "}}" }}-bmc-cred
+                        disableCertificateVerification: true
+                      bootMACAddress: '{{ "{{" }} index $host "bootMACAddress" {{ "}}" }}'
+                    {{ "{{-" }} if not (empty (index $host "rootDeviceHints" | default "")) {{ "}}" }}
+                      rootDeviceHints:
+                        {{ "{{" }} index $host "rootDeviceHints" | toYaml | autoindent {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                      customDeploy:
+                        method: start_assisted_install
+                      online: true
+            {{/* ===== Per-Host NMStateConfig ConfigMaps ===== */}}
+                {{ "{{-" }} $netInterfaces := (index $networking "interfaces" | default dict) {{ "}}" }}
+                {{ "{{-" }} $hostNet := (index $host "networking" | default dict) {{ "}}" }}
+                {{ "{{-" }} $hostNetIfaces := (index $hostNet "interfaces" | default dict) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: nmstate-{{ "{{" }} $hostname {{ "}}" }}
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  NMStateConfig: |
+                    apiVersion: agent-install.openshift.io/v1beta1
+                    kind: NMStateConfig
+                    metadata:
+                      labels:
+                        infraenvs.agent-install.openshift.io: {{ "{{" }} $clusterName {{ "}}" }}
+                      name: {{ "{{" }} $hostname {{ "}}" }}
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    spec:
+                      config:
+                {{ "{{-" }} $netDns := (index $networking "dns" | default dict) {{ "}}" }}
+                {{ "{{-" }} $dnsServers := (index $netDns "servers" | default list) {{ "}}" }}
+                {{ "{{-" }} if (gt (len $dnsServers) 0) {{ "}}" }}
+                        dns-resolver:
+                          config:
+                            server:
+                {{ "{{-" }} range $_, $dns := $dnsServers {{ "}}" }}
+                              - {{ "{{" }} $dns {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                        interfaces:
+                {{ "{{-" }} range $ifaceId, $topoIface := $netInterfaces {{ "}}" }}
+                  {{ "{{-" }} $ifaceType := (index $topoIface "type" | default "ethernet") {{ "}}" }}
+                  {{ "{{-" }} $ifaceName := (index $topoIface "name" | default "") {{ "}}" }}
+                  {{ "{{-" }} $ifaceState := (index $topoIface "state" | default "up") {{ "}}" }}
+                  {{ "{{-" }} $ifaceMtu := (index $topoIface "mtu" | default "") {{ "}}" }}
+                  {{ "{{-" }} $ifaceMac := (index $topoIface "mac" | default "") {{ "}}" }}
+                  {{ "{{-" }} $topoIpv4 := (index $topoIface "ipv4" | default "disabled") {{ "}}" }}
+                  {{ "{{-" }} $topoIpv6 := (index $topoIface "ipv6" | default "disabled") {{ "}}" }}
+                  {{- /* Per-host overrides for this interface */ -}}
+                  {{ "{{-" }} $hostOverride := (index $hostNetIfaces $ifaceId | default dict) {{ "}}" }}
+                  {{ "{{-" }} $hostIpv4 := (index $hostOverride "ipv4" | default dict) {{ "}}" }}
+                  {{ "{{-" }} $hostAddrs := (index $hostIpv4 "addresses" | default list) {{ "}}" }}
+                  {{ "{{-" }} $hostIpv6 := (index $hostOverride "ipv6" | default dict) {{ "}}" }}
+                  {{ "{{-" }} $hostIpv6Addrs := (index $hostIpv6 "addresses" | default list) {{ "}}" }}
+                  {{ "{{-" }} $hostPorts := (index $hostOverride "ports" | default list) {{ "}}" }}
+                          - name: {{ "{{" }} $ifaceName {{ "}}" }}
+                            type: {{ "{{" }} $ifaceType {{ "}}" }}
+                            state: {{ "{{" }} $ifaceState {{ "}}" }}
+                  {{ "{{-" }} if $ifaceMac {{ "}}" }}
+                            identifier: mac-address
+                            mac-address: {{ "{{" }} $ifaceMac {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if $ifaceMtu {{ "}}" }}
+                            mtu: {{ "{{" }} $ifaceMtu {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{- /* IPv4 */ -}}
+                  {{ "{{-" }} if eq $topoIpv4 "disabled" {{ "}}" }}
+                            ipv4:
+                              enabled: false
+                              dhcp: false
+                  {{ "{{-" }} else if eq $topoIpv4 "dhcp" {{ "}}" }}
+                            ipv4:
+                              enabled: true
+                              dhcp: true
+                  {{ "{{-" }} else if eq $topoIpv4 "static" {{ "}}" }}
+                            ipv4:
+                    {{ "{{-" }} if (gt (len $hostAddrs) 0) {{ "}}" }}
+                              address:
+                      {{ "{{-" }} range $_, $addr := $hostAddrs {{ "}}" }}
+                                - ip: {{ "{{" }} index $addr "ip" {{ "}}" }}
+                                  prefix-length: {{ "{{" }} index $addr "prefixLength" {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                              dhcp: false
+                              enabled: true
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{- /* IPv6 */ -}}
+                  {{ "{{-" }} if eq $topoIpv6 "disabled" {{ "}}" }}
+                            ipv6:
+                              enabled: false
+                  {{ "{{-" }} else if eq $topoIpv6 "dhcp" {{ "}}" }}
+                            ipv6:
+                              enabled: true
+                              dhcp: true
+                  {{ "{{-" }} else if eq $topoIpv6 "autoconf" {{ "}}" }}
+                            ipv6:
+                              enabled: true
+                              autoconf: true
+                  {{ "{{-" }} else if eq $topoIpv6 "static" {{ "}}" }}
+                            ipv6:
+                    {{ "{{-" }} if (gt (len $hostIpv6Addrs) 0) {{ "}}" }}
+                              address:
+                      {{ "{{-" }} range $_, $addr := $hostIpv6Addrs {{ "}}" }}
+                                - ip: {{ "{{" }} index $addr "ip" {{ "}}" }}
+                                  prefix-length: {{ "{{" }} index $addr "prefixLength" {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                              dhcp: false
+                              autoconf: false
+                              enabled: true
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{- /* Bond-specific */ -}}
+                  {{ "{{-" }} if eq $ifaceType "bond" {{ "}}" }}
+                    {{ "{{-" }} $bondMode := (index $topoIface "mode" | default "802.3ad") {{ "}}" }}
+                    {{ "{{-" }} $bondMiimon := (index $topoIface "miimon" | default "") {{ "}}" }}
+                    {{ "{{-" }} $ports := $hostPorts {{ "}}" }}
+                    {{ "{{-" }} if (eq (len $ports) 0) {{ "}}" }}
+                      {{ "{{-" }} $ports = (index $topoIface "ports" | default list) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                            link-aggregation:
+                              mode: {{ "{{" }} $bondMode {{ "}}" }}
+                    {{ "{{-" }} if $bondMiimon {{ "}}" }}
+                              options:
+                                miimon: {{ "{{" }} $bondMiimon {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if (gt (len $ports) 0) {{ "}}" }}
+                              port:
+                      {{ "{{-" }} range $_, $port := $ports {{ "}}" }}
+                                - {{ "{{" }} $port {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $primaryMac := (index $host "primaryMac" | default "") {{ "}}" }}
+                    {{ "{{-" }} if not $primaryMac {{ "}}" }}
+                      {{ "{{-" }} $hwIfaces := (index $host "interfaces" | default list) {{ "}}" }}
+                      {{ "{{-" }} if (gt (len $hwIfaces) 0) {{ "}}" }}
+                        {{ "{{-" }} $primaryMac = (index (index $hwIfaces 0) "macAddress" | default "") {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if $primaryMac {{ "}}" }}
+                            mac-address: {{ "{{" }} $primaryMac {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{- /* VLAN-specific */ -}}
+                  {{ "{{-" }} if eq $ifaceType "vlan" {{ "}}" }}
+                    {{ "{{-" }} $vlanId := (index $topoIface "id" | default 0) {{ "}}" }}
+                    {{ "{{-" }} $vlanBase := (index $topoIface "base" | default "") {{ "}}" }}
+                            vlan:
+                              base-iface: {{ "{{" }} $vlanBase {{ "}}" }}
+                              id: {{ "{{" }} $vlanId {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{- /* Routes */ -}}
+                {{ "{{-" }} $netRoutes := (index $networking "routes" | default dict) {{ "}}" }}
+                {{ "{{-" }} $hostRoutes := (index $hostNet "routes" | default dict) {{ "}}" }}
+                {{ "{{-" }} if or (gt (len (keys $netRoutes)) 0) (gt (len (keys $hostRoutes)) 0) {{ "}}" }}
+                        routes:
+                          config:
+                  {{ "{{-" }} range $_, $route := $netRoutes {{ "}}" }}
+                            - destination: {{ "{{" }} index $route "destination" {{ "}}" }}
+                              next-hop-address: {{ "{{" }} index $route "gateway" {{ "}}" }}
+                              next-hop-interface: {{ "{{" }} index $route "interface" {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} range $_, $route := $hostRoutes {{ "}}" }}
+                            - destination: {{ "{{" }} index $route "destination" {{ "}}" }}
+                              next-hop-address: {{ "{{" }} index $route "gateway" {{ "}}" }}
+                              next-hop-interface: {{ "{{" }} index $route "interface" {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                      interfaces:
+                  {{ "{{-" }} $hwInterfaces := (index $host "interfaces" | default list) {{ "}}" }}
+                  {{ "{{-" }} range $idx, $iface := $hwInterfaces {{ "}}" }}
+                        - macAddress: {{ "{{" }} index $iface "macAddress" {{ "}}" }}
+                          name: {{ "{{" }} index $iface "name" | default (printf "eno%d" (add $idx 1)) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+            {{/* ===== ClusterInstance ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: siteconfig.open-cluster-management.io/v1alpha1
+                kind: ClusterInstance
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                spec:
+                  baseDomain: {{ "{{" }} $baseDomain {{ "}}" }}
+                  clusterImageSetNameRef: {{ "{{" }} $imageSet {{ "}}" }}
+                  clusterName: {{ "{{" }} $clusterName {{ "}}" }}
+                {{ "{{-" }} if (eq (index $ci "cpuPartitioning" | default "None") "AllNodes") {{ "}}" }}
+                  cpuPartitioningMode: AllNodes
+                {{ "{{-" }} end {{ "}}" }}
+                  nodes:
+                {{ "{{-" }} range $hostname, $host := $hosts {{ "}}" }}
+                  {{ "{{" }} $hostFQDN := (printf "%s.%s.%s" $hostname $clusterName $baseDomain) {{ "}}" }}
+                  {{ "{{" }} $hostBmcEndpoint := (index $host "bmcEndpoint" | default $bmcEndpoint) {{ "}}" }}
+                  {{ "{{" }} $bmcAddress := (printf "%s://%s%s" (index $host "bmcPrefix") (index $host "bmcIP") $hostBmcEndpoint) {{ "}}" }}
+                    - hostName: {{ "{{" }} $hostFQDN {{ "}}" }}
+                      role: {{ "{{" }} index $host "role" | default "master" {{ "}}" }}
+                      bmcAddress: {{ "{{" }} $bmcAddress {{ "}}" }}
+                      bmcCredentialsName:
+                        name: {{ "{{" }} $hostname {{ "}}" }}-bmc-cred
+                      bootMACAddress: {{ "{{" }} index $host "bootMACAddress" {{ "}}" }}
+                      templateRefs:
+                        - name: bmh-{{ "{{" }} $hostname {{ "}}" }}
+                          namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                        - name: nmstate-{{ "{{" }} $hostname {{ "}}" }}
+                          namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                  pullSecretRef:
+                    name: {{ "{{" }} printf "%s-pull-secret" $clusterName {{ "}}" }}
+                  sshPublicKey: {{ "{{" }} $sshPublicKey {{ "}}" }}
+                {{ "{{-" }} if (gt (len $mirrors) 0) {{ "}}" }}
+                  extraManifestsRefs:
+                    - name: autoshift-idms-config
+                {{ "{{-" }} end {{ "}}" }}
+                  templateRefs:
+                    - name: agent-cluster-install
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    - name: cluster-deployment
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    - name: infra-env
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    - name: managed-cluster
+                      namespace: {{ "{{" }} $clusterName {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-install'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

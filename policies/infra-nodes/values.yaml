@@ -22,18 +22,26 @@ infraNodes:
     kind: GitopsService
     metadata:
       name: cluster
-  dependencies: 
-    install: 
+  dependencies:
+    install:
       - "policy-infra-nodes-test"
-    remove: 
-      - policy-remove-infra-gitops 
+    remove:
+      - policy-remove-infra-gitops
       - policy-remove-infra-image-registry
       - policy-remove-infra-ingress
-      - policy-remove-infra-monitoring 
+      - policy-remove-infra-monitoring
+  nodeConfig:
+    maxPods: 250
+    systemReservedMemory: 2Gi
+    systemReservedCpu: 500m
+    kubeReservedMemory: 1Gi
+    kubeReservedCpu: 500m
+    evictionMemory: 500Mi
 
 ### AutoShift Labels Documentation
 # The following labels can be set at the cluster or clusterset level to configure this policy:
 #
+# ---- Infra Node Provisioning ----
 # Enable/Disable:
 # infra-nodes<Int>: Number of infrastructure nodes (if not set, infra nodes are not managed; if 0, infra nodes will be deleted)
 #
@@ -50,12 +58,33 @@ infraNodes:
 # infra-nodes-numcores-per-socket<Int>: Number of CPU cores per socket
 # infra-nodes-zone-[number]<String>: Availability zone
 #
+# ---- Infra MachineConfigPool ----
+# infra-machineconfigpool<bool>: 'true' or 'false' - Create a dedicated infra MCP (default: 'false')
+#   Separates infra nodes from the worker MCP. Required for infra-specific kubelet tuning.
+#   Nodes with node-role.kubernetes.io/infra will be moved out of the worker pool.
+#
+# ---- Infra Node Kubelet Configuration ----
+# Enable/Disable:
+# infra-node-config<bool>: 'true' or 'false' - Enable infra node kubelet tuning (default: 'false')
+#   Depends on infra-machineconfigpool being enabled.
+#
+# Configuration:
+# infra-max-pods<Int>: Maximum pods per infra node (default: 250)
+# infra-system-reserved-memory<String>: Memory reserved for OS/system processes (default: '2Gi')
+# infra-system-reserved-cpu<String>: CPU reserved for OS/system processes (default: '500m')
+# infra-kube-reserved-memory<String>: Memory reserved for kubelet/CRI-O (default: '1Gi')
+# infra-kube-reserved-cpu<String>: CPU reserved for kubelet/CRI-O (default: '500m')
+# infra-eviction-memory<String>: Hard eviction threshold for memory.available (default: '500Mi')
+#
 # Note: Infrastructure nodes are dedicated nodes that run platform services including:
 # - OpenShift GitOps
 # - Image Registry
 # - Ingress Controllers
 # - Monitoring stack
-# This separates platform workloads from user application workloads
+# This separates platform workloads from user application workloads.
+# Infra reservations are higher than worker to protect monitoring, logging, and router.
+# The infra MCP is created by the infra-machineconfigpool policy.
+# Allocatable = Capacity - systemReserved - kubeReserved - evictionHard
 #
 # Examples:
 # autoshift.io/infra-nodes: '3'
@@ -64,3 +93,8 @@ infraNodes:
 # autoshift.io/infra-nodes-zone-1: 'us-east-2a'
 # autoshift.io/infra-nodes-zone-2: 'us-east-2b'
 # autoshift.io/infra-nodes-zone-3: 'us-east-2c'
+#
+# autoshift.io/infra-machineconfigpool: 'true'
+#
+# autoshift.io/infra-node-config: 'true'
+# autoshift.io/infra-system-reserved-memory: '2Gi'

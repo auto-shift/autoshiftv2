@@ -7,10 +7,18 @@ workerNodes:
     - managed
   zones:
     - us-east-2c
+  nodeConfig:
+    maxPods: 250
+    systemReservedMemory: 1Gi
+    systemReservedCpu: 250m
+    kubeReservedMemory: 512Mi
+    kubeReservedCpu: 250m
+    evictionMemory: 500Mi
 
 ### AutoShift Labels Documentation
 # The following labels can be set at the cluster or clusterset level to configure this policy:
 #
+# ---- Worker Node Provisioning ----
 # Enable/Disable:
 # worker-nodes<Int>: Number of worker nodes (if not set, worker nodes are not managed)
 #
@@ -27,6 +35,21 @@ workerNodes:
 # worker-nodes-numcores-per-socket<Int>: Number of CPU cores per socket
 # worker-nodes-zone-[number]<String>: Availability zone
 #
+# ---- Worker Node Kubelet Configuration ----
+# Enable/Disable:
+# worker-node-config<bool>: 'true' or 'false' - Enable worker node kubelet tuning (default: 'false')
+#
+# Configuration:
+# worker-max-pods<Int>: Maximum pods per worker node (default: 250, supported up to 2500)
+# worker-system-reserved-memory<String>: Memory reserved for OS/system processes (default: '1Gi')
+# worker-system-reserved-cpu<String>: CPU reserved for OS/system processes (default: '250m')
+# worker-kube-reserved-memory<String>: Memory reserved for kubelet/CRI-O (default: '512Mi')
+# worker-kube-reserved-cpu<String>: CPU reserved for kubelet/CRI-O (default: '250m')
+# worker-eviction-memory<String>: Hard eviction threshold for memory.available (default: '500Mi')
+#
+# Note: Allocatable = Capacity - systemReserved - kubeReserved - evictionHard
+# Worker core count lookup excludes master and infra nodes to get accurate sizing.
+#
 # Examples:
 # autoshift.io/worker-nodes: '3'
 # autoshift.io/worker-nodes-provider: 'aws'
@@ -34,3 +57,7 @@ workerNodes:
 # autoshift.io/worker-nodes-zone-1: 'us-east-2a'
 # autoshift.io/worker-nodes-zone-2: 'us-east-2b'
 # autoshift.io/worker-nodes-zone-3: 'us-east-2c'
+#
+# autoshift.io/worker-node-config: 'true'
+# autoshift.io/worker-max-pods: '500'
+# autoshift.io/worker-system-reserved-memory: '1Gi'

@@ -1,0 +1,106 @@
+# This policy configures worker node kubelet settings including
+# pod limits, resource reservations, and eviction thresholds.
+#
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-worker-node-config
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: worker-node-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $cores := 0 {{ "}}" }}
+            {{ "{{-" }} range (lookup "v1" "Node" "" "").items {{ "}}" }}
+              {{ "{{-" }} if and (hasKey .metadata.labels "node-role.kubernetes.io/worker") (not (hasKey .metadata.labels "node-role.kubernetes.io/master")) (not (hasKey .metadata.labels "node-role.kubernetes.io/infra")) {{ "}}" }}
+                {{ "{{-" }} if eq $cores 0 {{ "}}" }}
+                  {{ "{{-" }} $cores = (.status.capacity.cpu | toInt) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $maxPods := ("{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/worker-max-pods" | default {{ .Values.workerNodes.nodeConfig.maxPods | default 250 }} {{ "hub}}" }}" | toInt) {{ "}}" }}
+            {{ "{{-" }} $systemReservedMemory := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/worker-system-reserved-memory" | default "{{ .Values.workerNodes.nodeConfig.systemReservedMemory | default "1Gi" }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $systemReservedCpu := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/worker-system-reserved-cpu" | default "{{ .Values.workerNodes.nodeConfig.systemReservedCpu | default "250m" }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $kubeReservedMemory := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/worker-kube-reserved-memory" | default "{{ .Values.workerNodes.nodeConfig.kubeReservedMemory | default "512Mi" }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $kubeReservedCpu := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/worker-kube-reserved-cpu" | default "{{ .Values.workerNodes.nodeConfig.kubeReservedCpu | default "250m" }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $evictionMemory := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/worker-eviction-memory" | default "{{ .Values.workerNodes.nodeConfig.evictionMemory | default "500Mi" }}" {{ "hub}}" }}" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: machineconfiguration.openshift.io/v1
+                kind: KubeletConfig
+                metadata:
+                  name: worker-node-config
+                spec:
+                  machineConfigPoolSelector:
+                    matchLabels:
+                      pools.operator.machineconfiguration.openshift.io/worker: ""
+                  kubeletConfig:
+                    podsPerCore: {{ "{{" }} add 1 (div $maxPods $cores) {{ "}}" }}
+                    maxPods: {{ "{{" }} $maxPods {{ "}}" }}
+                    systemReserved:
+                      memory: {{ "{{" }} $systemReservedMemory {{ "}}" }}
+                      cpu: {{ "{{" }} $systemReservedCpu {{ "}}" }}
+                    kubeReserved:
+                      memory: {{ "{{" }} $kubeReservedMemory {{ "}}" }}
+                      cpu: {{ "{{" }} $kubeReservedCpu {{ "}}" }}
+                    evictionHard:
+                      memory.available: {{ "{{" }} $evictionMemory {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-worker-node-config
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/worker-node-config'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-worker-node-config
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-worker-node-config
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-worker-node-config
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

@@ -256,6 +256,29 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `master-nodes`                    | bool              | `false`                   |       |
 | `master-max-pods`                 | int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
 
+### Workload Partitioning
+
+CPU isolation via PerformanceProfile. Dedicates CPUs to the control plane (reserved) and makes the rest available for user workloads (isolated). See [workload-partitioning.md](workload-partitioning.md) for sizing guidelines, NUMA topology, and examples.
+
+**Label:**
+
+| Variable                          | Type              | Default Value             | Notes |
+|-----------------------------------|-------------------|---------------------------|-------|
+| `workload-partitioning`           | bool              | `false`                   | Enable the workload partitioning policy |
+
+**Config block** (`config.workloadPartitioning`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `reservedCpus` | string | **(required)** | CPU set for control plane / OS / platform (e.g., `0-11,60-71`) |
+| `isolatedCpus` | string | **(required)** | CPU set for user workloads (e.g., `12-59,72-119`) |
+| `nodeSelector` | map | `node-role.kubernetes.io/master: ''` | Which nodes the PerformanceProfile targets |
+| `numaTopology` | string | | `single-numa-node`, `best-effort`, or `restricted` |
+| `realTimeKernel` | bool | `false` | Enable the real-time kernel |
+| `globallyDisableIrqLoadBalancing` | bool | `false` | Disable IRQ load balancing on isolated CPUs |
+| `hugepages.defaultSize` | string | | Default huge page size (`1G`, `2M`) |
+| `hugepages.pages` | list | | List of `{size, count, node}` allocations |
+
 ### Machine Health Checks
 
 Automated node health monitoring and remediation.
@@ -531,17 +554,13 @@ Automated node health monitoring and remediation.
 
 ### Kubernetes NMState Operator
 
-The Kubernetes NMState Operator declaratively configures Red Hat CoreOS network settings including bonds, VLANs, static routes, and DNS. Network configuration can be defined entirely through labels without requiring configuration files.
-
-Identifiers (`{id}`, `{M}`) can be numbers or names (e.g., `1`, `mgmt`, `storage`, `nic1`). Identifiers must **not** contain hyphens (`-`).
-
-Each interface gets its own NNCP for fault isolation: `nmstate-bond-{id}`, `nmstate-vlan-{id}`, `nmstate-ethernet-{id}`, `nmstate-ovs-bridge-{id}`, `nmstate-network-config` (routes + DNS + OVN combined).
+The Kubernetes NMState Operator declaratively configures Red Hat CoreOS network settings including bonds, VLANs, static routes, and DNS. Network configuration is defined through structured YAML under `config.networking` in clusterset or cluster values files.
 
 See [policies/nmstate/README.md](../policies/nmstate/README.md) for detailed documentation and examples.
 
-#### Operator Configuration
+#### Operator Labels
 
-| Variable                        | Type           | Default Value         | Notes                                                                             |
+| Label                           | Type           | Default Value         | Notes                                                                             |
 | ------------------------------- | -------------- | --------------------- | --------------------------------------------------------------------------------- |
 | `nmstate`                       | bool           | `false`               | Enable/disable the NMState Operator                                               |
 | `nmstate-channel`               | string         | `stable`              | Operator channel                                                                  |
@@ -549,154 +568,72 @@ See [policies/nmstate/README.md](../policies/nmstate/README.md) for detailed doc
 | `nmstate-source`                | string         | `redhat-operators`    | Operator catalog source                                                           |
 | `nmstate-source-namespace`      | string         | `openshift-marketplace` | Catalog namespace                                                               |
 
-#### Bond Interface Configuration (NNCP: `nmstate-bond-{id}`)
+#### NNCP Configuration
 
-| Variable                                  | Type     | Default Value  | Notes                                                      |
-| ----------------------------------------- | -------- | -------------- | ---------------------------------------------------------- |
-| `nmstate-bond-{id}`                       | string   |                | Bond interface name (e.g., `bond0`)                        |
-| `nmstate-bond-{id}-mode`                  | string   |                | `802.3ad`, `active-backup`, `balance-rr`, etc.             |
-| `nmstate-bond-{id}-port-{M}`              | string   |                | Port interface name (e.g., `eno1`)                         |
-| `nmstate-bond-{id}-mtu`                   | string   |                | MTU size (e.g., `9000`)                                    |
-| `nmstate-bond-{id}-mac`                   | string   |                | MAC address with dots (e.g., `aa.bb.cc.dd.ee.ff`)          |
-| `nmstate-bond-{id}-miimon`                | string   |                | MII monitoring interval in ms                              |
-| `nmstate-bond-{id}-ipv4`                  | string   |                | `dhcp`, `static`, or `disabled`                            |
-| `nmstate-bond-{id}-ipv4-address-{M}`      | string   |                | Static IP address (e.g., `192.168.1.10`)                   |
-| `nmstate-bond-{id}-ipv4-address-{M}-cidr` | string   |                | CIDR prefix length (e.g., `24`)                            |
-| `nmstate-bond-{id}-ipv6`                  | string   |                | `dhcp`, `autoconf`, `static`, or `disabled`                |
+NNCPs are generated from `config.networking` in values files. Each interface gets its own NNCP for fault isolation.
 
-#### VLAN Interface Configuration (NNCP: `nmstate-vlan-{id}`)
+| Config Path | Generated NNCP | Notes |
+|---|---|---|
+| `networking.interfaces.{id}` (bond) | `nmstate-bond-{id}` | One per bond |
+| `networking.interfaces.{id}` (vlan) | `nmstate-vlan-{id}` | One per VLAN |
+| `networking.interfaces.{id}` (ethernet) | `nmstate-ethernet-{id}` | One per ethernet |
+| `networking.ovsBridges.{id}` | `nmstate-ovs-bridge-{id}` | One per OVS bridge |
+| routes + dns + ovnMappings | `nmstate-network-config` | Combined |
+| `hosts.{name}.networking` | `nmstate-host-{name}` | Per-host nodeSelector |
 
-| Variable                                  | Type     | Default Value  | Notes                                                      |
-| ----------------------------------------- | -------- | -------------- | ---------------------------------------------------------- |
-| `nmstate-vlan-{id}`                       | string   |                | VLAN interface name (e.g., `bond0.100`)                    |
-| `nmstate-vlan-{id}-id`                    | string   |                | VLAN ID (e.g., `100`)                                      |
-| `nmstate-vlan-{id}-base`                  | string   |                | Base interface (e.g., `bond0`)                             |
-| `nmstate-vlan-{id}-mtu`                   | string   |                | MTU size                                                   |
-| `nmstate-vlan-{id}-ipv4`                  | string   |                | `dhcp`, `static`, or `disabled`                            |
-| `nmstate-vlan-{id}-ipv4-address-{M}`      | string   |                | Static IP address                                          |
-| `nmstate-vlan-{id}-ipv4-address-{M}-cidr` | string   |                | CIDR prefix length                                         |
+#### Interface Properties
 
-#### Ethernet Interface Configuration (NNCP: `nmstate-ethernet-{id}`)
+| Property | Type | Required | Notes |
+|----------|------|----------|-------|
+| `type` | string | Yes | `bond`, `vlan`, or `ethernet` |
+| `name` | string | Yes | nmstate interface name (e.g., `bond0`) |
+| `state` | string | No | `up` (default), `down` |
+| `mtu` | int | No | MTU size |
+| `mac` | string | No | MAC address — when set, adds `identifier: mac-address` to NNCP (nmstate matches by MAC instead of name) |
+| `ipv4` | string | No | `disabled` (default), `dhcp`, `static` |
+| `ipv6` | string | No | `disabled` (default), `dhcp`, `autoconf`, `static` |
+| `mode` | string | Bond only | Bond mode (e.g., `802.3ad`, `active-backup`) |
+| `ports` | list | Bond only | Member interfaces |
+| `miimon` | int | No | MII monitoring interval (bond only) |
+| `id` | int | VLAN only | VLAN ID |
+| `base` | string | VLAN only | Parent interface name |
 
-| Variable                                  | Type     | Default Value  | Notes                                                      |
-| ----------------------------------------- | -------- | -------------- | ---------------------------------------------------------- |
-| `nmstate-ethernet-{id}`                   | string   |                | Interface name (e.g., `eno1`)                              |
-| `nmstate-ethernet-{id}-mac`               | string   |                | MAC address with dots                                      |
-| `nmstate-ethernet-{id}-mtu`               | string   |                | MTU size                                                   |
-| `nmstate-ethernet-{id}-state`             | string   | `up`           | `up` or `down`                                             |
-
-#### Static Route Configuration (NNCP: `nmstate-network-config`)
-
-| Variable                                  | Type     | Default Value  | Notes                                                      |
-| ----------------------------------------- | -------- | -------------- | ---------------------------------------------------------- |
-| `nmstate-route-{id}-dest`                 | string   |                | Destination network (e.g., `10.0.0.0`)                     |
-| `nmstate-route-{id}-cidr`                 | string   |                | CIDR prefix length (e.g., `8`)                             |
-| `nmstate-route-{id}-gateway`              | string   |                | Next hop address (e.g., `192.168.1.1`)                     |
-| `nmstate-route-{id}-interface`            | string   |                | Outgoing interface (e.g., `bond0`)                         |
-| `nmstate-route-{id}-metric`               | string   |                | Route metric (optional)                                    |
-
-#### DNS Configuration (NNCP: `nmstate-network-config`)
-
-| Variable                                  | Type     | Default Value  | Notes                                                      |
-| ----------------------------------------- | -------- | -------------- | ---------------------------------------------------------- |
-| `nmstate-dns-server-{id}`                 | string   |                | DNS server IP (e.g., `8.8.8.8`)                            |
-| `nmstate-dns-search-{id}`                 | string   |                | Search domain (e.g., `example.com`)                        |
-
-#### Node Selector Configuration
-
-| Variable                                  | Type     | Default Value  | Notes                                                      |
-| ----------------------------------------- | -------- | -------------- | ---------------------------------------------------------- |
-| `nmstate-nodeselector-{id}-prefix`        | string   |                | Node label prefix (e.g., `node-role.kubernetes.io`) - optional |
-| `nmstate-nodeselector-{id}-name`          | string   |                | Node label name (e.g., `worker`)                           |
-| `nmstate-nodeselector-{id}-value`         | string   |                | Node label value (empty string for exists)                 |
-
-#### OVS Bridge Configuration (NNCP: `nmstate-ovs-bridge-{id}`)
-
-| Variable                                       | Type     | Default Value  | Notes                                                      |
-| ---------------------------------------------- | -------- | -------------- | ---------------------------------------------------------- |
-| `nmstate-ovs-bridge-{id}`                      | string   |                | OVS bridge name (e.g., `ovs-br1`)                          |
-| `nmstate-ovs-bridge-{id}-port-{M}`             | string   |                | Port interface (e.g., `eth1`, `bond0`)                     |
-| `nmstate-ovs-bridge-{id}-stp`                  | string   | `false`        | Spanning tree protocol                                     |
-| `nmstate-ovs-bridge-{id}-allow-extra-patch-ports` | string | `true`         | Allow OVN patch ports                                      |
-| `nmstate-ovs-bridge-{id}-mcast-snooping`       | string   |                | Multicast snooping (optional)                              |
-
-#### OVN Bridge Mapping Configuration (NNCP: `nmstate-network-config`)
-
-| Variable                                  | Type     | Default Value  | Notes                                                      |
-| ----------------------------------------- | -------- | -------------- | ---------------------------------------------------------- |
-| `nmstate-ovn-mapping-{id}-localnet`       | string   |                | Localnet network name for UDN (e.g., `localnet1`)          |
-| `nmstate-ovn-mapping-{id}-bridge`         | string   |                | OVS bridge to map (e.g., `ovs-br1`)                        |
-
-#### Host-Specific Configuration (NNCP: `nmstate-host-{id}`)
-
-For per-node configurations (different IPs per host), use the `nmstate-host-{id}` prefix. Each host gets its own NNCP.
-
-| Variable                                       | Type     | Default Value  | Notes                                                      |
-| ---------------------------------------------- | -------- | -------------- | ---------------------------------------------------------- |
-| `nmstate-host-{id}-hostname`                   | string   |                | Target node hostname (e.g., `worker-0.ocp.example.com`)    |
-| `nmstate-host-{id}-bond-{id}`                  | string   |                | Bond interface name                                        |
-| `nmstate-host-{id}-bond-{id}-ipv4-address-{M}` | string   |                | Static IP for this host                                    |
-
-All interface types support host-specific prefixes: `nmstate-host-{id}-bond-*`, `nmstate-host-{id}-vlan-*`, `nmstate-host-{id}-ovs-bridge-*`, etc.
-
-#### Legacy File-Based Configuration (Deprecated)
-
-| Variable                        | Type           | Default Value         | Notes                                                                             |
-| ------------------------------- | -------------- | --------------------- | --------------------------------------------------------------------------------- |
-| `nmstate-nncp-{name}`           | string         |                       | Filename of NMState config in `policies/nmstate/files/`                           |
-
-#### NMState Example: Bond with DHCP
+#### NMState Example: Bond + VLAN with Static IPs
 
 ```yaml
-nmstate: 'true'
-nmstate-bond-mgmt: 'bond0'
-nmstate-bond-mgmt-mode: '802.3ad'
-nmstate-bond-mgmt-port-1: 'eno1'
-nmstate-bond-mgmt-port-2: 'eno2'
-nmstate-bond-mgmt-ipv4: 'dhcp'
-nmstate-bond-mgmt-ipv6: 'disabled'
-```
-
-#### NMState Example: OVS Bridge with OVN Mapping for UDN
-
-```yaml
-nmstate: 'true'
-# Create bond for physical NICs
-nmstate-bond-udn: 'bond1'
-nmstate-bond-udn-mode: '802.3ad'
-nmstate-bond-udn-port-1: 'eno3'
-nmstate-bond-udn-port-2: 'eno4'
-nmstate-bond-udn-ipv4: 'disabled'
-# Create OVS bridge with bond as port
-nmstate-ovs-bridge-br1: 'ovs-br1'
-nmstate-ovs-bridge-br1-port-1: 'bond1'
-# Map OVS bridge to OVN localnet for UDN
-nmstate-ovn-mapping-net1-localnet: 'localnet1'
-nmstate-ovn-mapping-net1-bridge: 'ovs-br1'
-```
-
-#### NMState Example: Per-Host Static IPs
-
-```yaml
-nmstate: 'true'
-# Host worker0 - 192.168.1.10
-nmstate-host-worker0-hostname: 'worker-0.ocp.example.com'
-nmstate-host-worker0-bond-mgmt: 'bond0'
-nmstate-host-worker0-bond-mgmt-mode: '802.3ad'
-nmstate-host-worker0-bond-mgmt-port-1: 'eno1'
-nmstate-host-worker0-bond-mgmt-port-2: 'eno2'
-nmstate-host-worker0-bond-mgmt-ipv4: 'static'
-nmstate-host-worker0-bond-mgmt-ipv4-address-1: '192.168.1.10'
-nmstate-host-worker0-bond-mgmt-ipv4-address-1-cidr: '24'
-# Host worker1 - 192.168.1.11
-nmstate-host-worker1-hostname: 'worker-1.ocp.example.com'
-nmstate-host-worker1-bond-mgmt: 'bond0'
-nmstate-host-worker1-bond-mgmt-mode: '802.3ad'
-nmstate-host-worker1-bond-mgmt-port-1: 'eno1'
-nmstate-host-worker1-bond-mgmt-port-2: 'eno2'
-nmstate-host-worker1-bond-mgmt-ipv4: 'static'
-nmstate-host-worker1-bond-mgmt-ipv4-address-1: '192.168.1.11'
-nmstate-host-worker1-bond-mgmt-ipv4-address-1-cidr: '24'
+config:
+  networking:
+    interfaces:
+      mgmt:
+        type: bond
+        name: bond0
+        mode: 802.3ad
+        ports: [eno1, eno2]
+        ipv4: disabled
+        ipv6: disabled
+      mgmt-vlan:
+        type: vlan
+        name: bond0.100
+        id: 100
+        base: bond0
+        ipv4: static
+        ipv6: disabled
+    routes:
+      default:
+        destination: 0.0.0.0/0
+        gateway: 10.0.0.1
+        interface: bond0.100
+    dns:
+      servers: [10.0.0.53]
+  hosts:
+    master-0:
+      networking:
+        interfaces:
+          mgmt-vlan:
+            ipv4:
+              addresses:
+                - ip: 10.0.0.10
+                  prefixLength: 25
 ```
 
 ### Manual Remediations

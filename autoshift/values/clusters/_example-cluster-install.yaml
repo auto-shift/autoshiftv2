@@ -1,0 +1,282 @@
+# ==============================================================================
+# Cluster Install Example - Provision a Baremetal Cluster via SiteConfig
+# ==============================================================================
+# Copy this file and rename it after your cluster (e.g., my-cluster.yaml).
+# Add it to the ArgoCD Application valueFiles to deploy.
+#
+# Usage in ArgoCD Application:
+#   valueFiles:
+#     - values/global.yaml
+#     - values/clustersets/hub.yaml
+#     - values/clustersets/managed.yaml
+#     - values/clusters/my-cluster.yaml    # <-- this file
+#
+# Prerequisites:
+#   - Hub clusterset must have: cluster-install: 'true', acm-enable-provisioning: 'true'
+#   - Source secrets must exist (see docs/cluster-install.md)
+#
+# Config merge order (last wins):
+#   1. Clusterset config (from clusterSet field or managedClusterSet)
+#   2. Per-cluster config (this file)
+#
+# See docs/cluster-install.md for the full guide.
+# ==============================================================================
+
+clusters:
+  my-cluster:
+    config:
+      # Required: which clusterset this cluster belongs to
+      # Used for both inheriting clusterset config defaults and setting the
+      # ManagedClusterSet label on the ClusterDeployment
+      clusterSet: managed
+
+      # =====================================================================
+      # Networking — shared with other policies (e.g., nmstate)
+      # =====================================================================
+      networking:
+        # SDN-level config
+        clusterNetwork:
+          cidr: 10.128.0.0/14
+          hostPrefix: 23
+        machineNetwork:
+          cidr: '10.0.0.0/25'
+        serviceNetwork:
+          - 172.30.0.0/16
+
+        # NMState interface topology — map keyed by user-chosen ID
+        # IDs can be any name (e.g., mgmt, data, storage). Used to reference
+        # interfaces in per-host overrides and for NNCP naming.
+        interfaces:
+          eno1:
+            type: ethernet
+            name: eno1
+            state: up
+            ipv4: disabled
+            ipv6: disabled
+          eno2:
+            type: ethernet
+            name: eno2
+            state: up
+            ipv4: disabled
+            ipv6: disabled
+          mgmt:
+            type: bond
+            name: bond0
+            state: up                    # default: up
+            mode: 802.3ad                # bond mode
+            # mac: 'aa:bb:cc:dd:ee:ff'   # optional — adds identifier: mac-address to NNCP
+            mtu: 9000
+            miimon: 100
+            ports:                       # by name, by MAC, or mixed
+              - eno1
+              - eno2
+            ipv4: disabled               # 'dhcp', 'static', 'disabled'
+            ipv6: disabled
+          mgmt-vlan:
+            type: vlan
+            name: bond0.100
+            id: 100
+            base: bond0
+            mtu: 1500
+            ipv4: static                 # per-host IPs in hosts section
+            ipv6: disabled
+
+        # Static routes — map keyed by user-chosen ID
+        routes:
+          default:
+            destination: 0.0.0.0/0
+            gateway: '10.0.0.1'
+            interface: bond0.100
+
+        # DNS
+        dns:
+          servers:
+            - 10.0.0.53
+          search:
+            - example.com
+
+      # =====================================================================
+      # Hosts — per-host hardware config, shared with other policies
+      # =====================================================================
+      # Each key is the short hostname. Siteconfig constructs the FQDN as
+      # {key}.{clusterName}.{baseDomain} for the BareMetalHost and ClusterInstance.
+      hosts:
+        master-0:
+          bmcIP: '192.168.1.10'
+          bmcPrefix: 'redfish-virtualmedia'
+          # bmcEndpoint: '/redfish/v1/Systems/1'    # optional, overrides cluster-level
+          # bmcCredentialRef:                         # optional, overrides cluster-level
+          #   name: 'custom-cred'
+          #   namespace: 'custom-ns'
+          bootMACAddress: 'aa:bb:cc:dd:ee:01'
+          primaryMac: 'aa:bb:cc:dd:ee:02'           # MAC for bond, defaults to first interface
+          # rootDeviceHints:                         # optional, disk selection for OS install
+          #   deviceName: '/dev/sda'                 # by device name
+          #   minSizeGigabytes: 120                  # by minimum size
+          interfaces:                                # hardware interfaces for NMStateConfig
+            - macAddress: 'aa:bb:cc:dd:ee:01'
+              name: 'eno1'
+            - macAddress: 'aa:bb:cc:dd:ee:02'
+              name: 'eno2'
+          networking:                                # per-host network overrides
+            interfaces:
+              mgmt-vlan:                             # references topology interface ID
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.10
+                      prefixLength: 25
+        master-1:
+          bmcIP: '192.168.1.11'
+          bmcPrefix: 'redfish-virtualmedia'
+          bootMACAddress: 'aa:bb:cc:dd:ee:11'
+          primaryMac: 'aa:bb:cc:dd:ee:12'
+          interfaces:
+            - macAddress: 'aa:bb:cc:dd:ee:11'
+              name: 'eno1'
+            - macAddress: 'aa:bb:cc:dd:ee:12'
+              name: 'eno2'
+          networking:
+            interfaces:
+              mgmt-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.11
+                      prefixLength: 25
+        master-2:
+          bmcIP: '192.168.1.12'
+          bmcPrefix: 'redfish-virtualmedia'
+          bootMACAddress: 'aa:bb:cc:dd:ee:21'
+          primaryMac: 'aa:bb:cc:dd:ee:22'
+          interfaces:
+            - macAddress: 'aa:bb:cc:dd:ee:21'
+              name: 'eno1'
+            - macAddress: 'aa:bb:cc:dd:ee:22'
+              name: 'eno2'
+          networking:
+            interfaces:
+              mgmt-vlan:
+                ipv4:
+                  addresses:
+                    - ip: 10.0.0.12
+                      prefixLength: 25
+
+      # =====================================================================
+      # Disconnected — shared with disconnected-mirror policy
+      # =====================================================================
+      # This block configures both install-time mirror (mirrorRegistryRef on
+      # AgentClusterInstall, CA in InfraEnv) and post-install mirror (IDMS/ICSP,
+      # CatalogSources) from a single source of truth.
+      # disconnected:
+      #   mirrorRegistry:
+      #     host: 'mirror.example.com:5000'
+      #     path: 'ocp'                             # optional, image path prefix
+      #     releaseImage: 'openshift/release-images' # optional, path for ClusterImageSet releaseImage
+      #                                              # defaults to openshift-release-dev/ocp-release
+      #                                              # should match the mirror entry for ocp-release
+      #     caRef:                                   # reference a hub ConfigMap with the CA
+      #       name: 'cluster-ca-bundle'
+      #       key: 'ca-bundle.crt'
+      #       namespace: 'cluster-install-secrets'
+      #     # ca: |                                  # OR inline CA
+      #     #   -----BEGIN CERTIFICATE-----
+      #     #   ...
+      #     mirrors:                                 # source → mirror mappings
+      #       - source: quay.io/openshift-release-dev/ocp-release
+      #         mirror: openshift/release-images
+      #       - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+      #         mirror: openshift/release
+      #       - source: registry.redhat.io           # no mirror = host/path
+      #       - source: quay.io
+      #       - source: registry.access.redhat.com
+      #   useIDMS: true                              # IDMS (4.13+) or ICSP (4.12-)
+      #   disableDefaultCatalogs: true
+      #   catalogs:                                    # CatalogSource name = {source}-{mirror-catalog-suffix label}
+      #     - source: redhat-operators                 # creates CatalogSource "redhat-operators-mirror"
+      #       imagePath: redhat/redhat-operator-index
+      #       tag: v4.20
+      #       publisher: Red Hat
+      #       displayName: 'Red Hat Operators (Mirrored)'
+      #     - source: certified-operators
+      #       imagePath: redhat/certified-operator-index
+      #       tag: v4.20
+      #       publisher: Red Hat
+      #       displayName: 'Certified Operators (Mirrored)'
+      #     - source: community-operators
+      #       imagePath: redhat/community-operator-index
+      #       tag: v4.20
+      #       publisher: Red Hat
+      #       displayName: 'Community Operators (Mirrored)'
+      #     - source: redhat-marketplace
+      #       imagePath: redhat/redhat-marketplace-index
+      #       tag: v4.20
+      #       publisher: Red Hat
+      #       displayName: 'Red Hat Marketplace (Mirrored)'
+      #   osImages:                                  # RHCOS images for hub AgentServiceConfig
+      #     - openshiftVersion: '4.20'               # Major.Minor
+      #       version: '420.86.202301311551-0'        # RHCOS version string
+      #       cpuArchitecture: x86_64
+      #       url: 'https://mirror.example.com/rhcos/rhcos-live.x86_64.iso'
+
+      # =====================================================================
+      # Workload Partitioning — CPU isolation via PerformanceProfile
+      # =====================================================================
+      # Requires autoshift.io/workload-partitioning: 'true' label on the cluster.
+      # For full platform pod pinning, also set cpuPartitioning: 'AllNodes'
+      # in clusterInstall (install-time only).
+      # workloadPartitioning:
+      #   reservedCpus: '0-3'              # CPUs for control plane / OS / platform
+      #   isolatedCpus: '4-31'            # CPUs available for user workloads
+      #   nodeSelector:                    # Optional: which nodes (default: masters)
+      #     node-role.kubernetes.io/master: ''
+      #   numaTopology: 'single-numa-node' # Optional: 'single-numa-node', 'best-effort', 'restricted'
+      #   realTimeKernel: false            # Optional: enable real-time kernel
+      #   hugepages:                       # Optional: huge pages config
+      #     defaultSize: '1G'
+      #     pages:
+      #       - size: '1G'
+      #         count: 4
+      #         node: 0                    # Optional: NUMA node
+
+      # =====================================================================
+      # Cluster Install — install-specific config
+      # =====================================================================
+      clusterInstall:
+        createCluster: 'true'                       # Required — triggers provisioning
+        platform: baremetal                          # 'baremetal' (default) or 'aws'
+        baseDomain: example.com
+        openshiftVersion: '4.20.12'
+        cpuArch: x86_64                             # default: x86_64
+        # openshiftChannel: stable                  # ClusterImageSet channel label (default: stable)
+        # clusterImageSet: ''                       # optional, overrides openshiftVersion+cpuArch
+
+        # --- Cluster Topology ---
+        controlPlaneAgents: 3                       # 1 = SNO, 3 = compact/standard
+        # workerAgents: 0                           # default: (len hosts) - controlPlaneAgents
+        apiVip: '10.0.0.2'                          # required for multi-node
+        ingressVip: '10.0.0.3'                      # required for multi-node
+        # mastersSchedulable: false                 # default: false
+        # cpuPartitioning: 'AllNodes'               # 'None' (default) or 'AllNodes' — install-time only
+
+        # --- SSH Key (inline or ConfigMap ref) ---
+        sshPublicKey: 'ssh-rsa AAAAB3...'
+        # sshPublicKeyRef:                          # OR reference a hub ConfigMap
+        #   name: 'cluster-ssh-keys'
+        #   key: 'ssh-public-key'
+        #   namespace: 'cluster-install-secrets'    # optional, defaults to policy namespace
+
+        # --- Secrets ---
+        pullSecretRef: 'default-pull-secret'
+        bmcCredentialRef: 'default-bmc-cred'
+        bmcEndpoint: '/redfish/v1/Systems/1'
+        secretSourceNamespace: 'cluster-install-secrets'
+
+        # --- Cluster Management ---
+        # klusterletAddons:                         # defaults: applicationManager, certPolicyController, policyController
+        #   - applicationManager
+        #   - certPolicyController
+        #   - policyController
+        #   - searchCollector
+
+        # --- NTP ---
+        # ntpSources:
+        #   - 10.0.0.1

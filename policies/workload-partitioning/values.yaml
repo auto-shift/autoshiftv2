@@ -1,0 +1,38 @@
+# =============================================================================
+# Workload Partitioning Policy - CPU isolation via PerformanceProfile
+# =============================================================================
+#
+# Deploys a PerformanceProfile to dedicate CPUs for the control plane (reserved)
+# and make the remaining CPUs available for user workloads (isolated).
+#
+# This is commonly used on SNO and compact clusters where control plane nodes
+# also run user workloads. The Node Tuning Operator (built into OpenShift)
+# consumes the PerformanceProfile CR.
+#
+# For full workload partitioning (pinning OCP platform pods to reserved CPUs),
+# cpuPartitioning must also be set at install time in the cluster-install config.
+# Without it, the PerformanceProfile still provides CPU isolation but platform
+# pods are not strictly pinned.
+#
+# Labels:
+#   autoshift.io/workload-partitioning: 'true'  - Enable this policy
+#
+# Configuration (in config block, not labels — CPU sets are too complex for labels):
+#   config:
+#     workloadPartitioning:
+#       reservedCpus: '0-3'            # CPUs reserved for control plane / OS / platform
+#       isolatedCpus: '4-31'           # CPUs available for user workloads
+#       nodeSelector:                  # Which nodes to target (default: master)
+#         node-role.kubernetes.io/master: ''
+#       numaTopology: ''               # Optional: 'single-numa-node', 'best-effort', 'restricted'
+#       hugepages:                     # Optional: huge pages configuration
+#         defaultSize: '1G'
+#         pages:
+#           - size: '1G'
+#             count: 4
+#             node: 0                  # Optional: NUMA node
+#       realTimeKernel: false          # Optional: enable real-time kernel (default: false)
+#       globallyDisableIrqLoadBalancing: false  # Optional (default: false)
+
+# Standard autoshift values (injected by ApplicationSet)
+policy_namespace: open-cluster-policies

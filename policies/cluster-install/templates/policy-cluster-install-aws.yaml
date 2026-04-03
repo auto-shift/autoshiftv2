@@ -1,0 +1,308 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-cluster-install-aws" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+  disabled: false
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
+  dependencies:
+    - name: policy-cluster-install-prereqs
+      namespace: {{ $policyNamespace }}
+      compliance: Compliant
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy
+    - name: policy-cluster-install-secrets
+      namespace: {{ $policyNamespace }}
+      compliance: Compliant
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: {{ $policyName }}
+        spec:
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            {{ "{{" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
+            {{ "{{-" }} range $_, $cm := ($configMaps.items | default list) {{ "}}" }}
+            {{ "{{-" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
+            {{ "{{-" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
+            {{ "{{-" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
+            {{ "{{-" }} $platform := (index $ci "platform" | default "baremetal") {{ "}}" }}
+            {{ "{{-" }} if and (eq (index $ci "createCluster" | default "") "true") (eq $platform "aws") {{ "}}" }}
+            {{ "{{-" }} $baseDomain := (index $ci "baseDomain") {{ "}}" }}
+            {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion") {{ "}}" }}
+            {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
+            {{ "{{-" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
+            {{ "{{-" }} $secretSourceNs := (index $ci "secretSourceNamespace" | default "cluster-install-secrets") {{ "}}" }}
+            {{ "{{-" }} $pullSecretRef := (index $ci "pullSecretRef") {{ "}}" }}
+            {{ "{{-" }} $managedClusterSet := (printf "%s{{ $.Values.clusterSetSuffix | default "" }}" (index $config "clusterSet" | default "default")) {{ "}}" }}
+            {{ "{{-" }} $aws := (index $config "aws") {{ "}}" }}
+            {{ "{{-" }} $region := (index $aws "region") {{ "}}" }}
+            {{ "{{-" }} $credentialRef := (index $aws "credentialRef") {{ "}}" }}
+            {{ "{{-" }} $sshPrivateKeyRef := (index $aws "sshPrivateKeyRef") {{ "}}" }}
+            {{ "{{-" }} $sshPublicKey := (index $aws "sshPublicKey" | default "") {{ "}}" }}
+            {{ "{{-" }} $sshKeyRef := (index $aws "sshKeyRef" | default dict) {{ "}}" }}
+            {{ "{{-" }} if not (empty $sshKeyRef) {{ "}}" }}
+            {{ "{{-" }} $refName := (index $sshKeyRef "name") {{ "}}" }}
+            {{ "{{-" }} $refKey := (index $sshKeyRef "key" | default "ssh-publickey") {{ "}}" }}
+            {{ "{{-" }} $refNs := (index $sshKeyRef "namespace" | default $secretSourceNs) {{ "}}" }}
+            {{ "{{-" }} $sshPublicKey = (fromSecret $refNs $refName $refKey | base64dec) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $fips := (index $aws "fips" | default false) {{ "}}" }}
+            {{ "{{-" }} $networkType := (index $aws "networkType" | default "OVNKubernetes") {{ "}}" }}
+            {{ "{{-" }} $controlPlane := (index $aws "controlPlane" | default dict) {{ "}}" }}
+            {{ "{{-" }} $cpInstanceType := (index $controlPlane "instanceType" | default "m5.xlarge") {{ "}}" }}
+            {{ "{{-" }} $cpRootVolume := (index $controlPlane "rootVolume" | default dict) {{ "}}" }}
+            {{ "{{-" }} $cpIops := (index $cpRootVolume "iops" | default 4000 | toInt) {{ "}}" }}
+            {{ "{{-" }} $cpSize := (index $cpRootVolume "size" | default 100 | toInt) {{ "}}" }}
+            {{ "{{-" }} $cpVolType := (index $cpRootVolume "type" | default "gp3") {{ "}}" }}
+            {{ "{{-" }} $workers := (index $aws "workers" | default dict) {{ "}}" }}
+            {{ "{{-" }} $workerReplicas := (index $workers "replicas" | default 3 | toInt) {{ "}}" }}
+            {{ "{{-" }} $wkInstanceType := (index $workers "instanceType" | default "m5.xlarge") {{ "}}" }}
+            {{ "{{-" }} $wkRootVolume := (index $workers "rootVolume" | default dict) {{ "}}" }}
+            {{ "{{-" }} $wkIops := (index $wkRootVolume "iops" | default 2000 | toInt) {{ "}}" }}
+            {{ "{{-" }} $wkSize := (index $wkRootVolume "size" | default 100 | toInt) {{ "}}" }}
+            {{ "{{-" }} $wkVolType := (index $wkRootVolume "type" | default "gp3") {{ "}}" }}
+            {{ "{{-" }} $networking := (index $config "networking") {{ "}}" }}
+            {{ "{{-" }} $clusterNetwork := (index $networking "clusterNetwork") {{ "}}" }}
+            {{ "{{-" }} $machineNetwork := (index $networking "machineNetwork") {{ "}}" }}
+            {{ "{{-" }} $serviceNetwork := (index $networking "serviceNetwork") {{ "}}" }}
+            {{ "{{-" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
+            {{ "{{-" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
+            {{ "{{-" }} $mirrorHost := (index $mirrorReg "host" | default "") {{ "}}" }}
+            {{ "{{-" }} $mirrorPath := (index $mirrorReg "path" | default "") {{ "}}" }}
+            {{ "{{-" }} $mirrorUrl := $mirrorHost {{ "}}" }}
+            {{ "{{-" }} if $mirrorPath {{ "}}" }}
+            {{ "{{-" }} $mirrorUrl = (printf "%s/%s" $mirrorHost $mirrorPath) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $mirrors := (index $mirrorReg "mirrors" | default list) {{ "}}" }}
+            {{ "{{-" }} $caTrustBundle := (index $mirrorReg "ca" | default "") {{ "}}" }}
+            {{ "{{-" }} $caRef := (index $mirrorReg "caRef" | default dict) {{ "}}" }}
+            {{ "{{-" }} if not (empty $caRef) {{ "}}" }}
+            {{ "{{-" }} $caRefNs := (index $caRef "namespace" | default $secretSourceNs) {{ "}}" }}
+            {{ "{{-" }} $caRefCM := (lookup "v1" "ConfigMap" $caRefNs (index $caRef "name")) | default dict {{ "}}" }}
+            {{ "{{-" }} $caRefData := (index $caRefCM "data" | default dict) {{ "}}" }}
+            {{ "{{-" }} $caTrustBundle = (index $caRefData (index $caRef "key") | default $caTrustBundle) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $installConfig := (dict
+                "apiVersion" "v1"
+                "metadata" (dict "name" $clusterName)
+                "baseDomain" $baseDomain
+                "fips" $fips
+                "networking" (dict
+                    "networkType" $networkType
+                    "clusterNetwork" (list (dict "cidr" (index $clusterNetwork "cidr") "hostPrefix" (index $clusterNetwork "hostPrefix" | toInt)))
+                    "machineNetwork" (list (dict "cidr" (index $machineNetwork "cidr")))
+                    "serviceNetwork" $serviceNetwork
+                )
+                "controlPlane" (dict
+                    "name" "master"
+                    "replicas" 3
+                    "platform" (dict "aws" (dict
+                        "type" $cpInstanceType
+                        "rootVolume" (dict "iops" $cpIops "size" $cpSize "type" $cpVolType)
+                    ))
+                )
+                "compute" (list (dict
+                    "name" "worker"
+                    "replicas" $workerReplicas
+                    "platform" (dict "aws" (dict
+                        "type" $wkInstanceType
+                        "rootVolume" (dict "iops" $wkIops "size" $wkSize "type" $wkVolType)
+                    ))
+                ))
+                "platform" (dict "aws" (dict "region" $region))
+                "pullSecret" ""
+                "sshKey" $sshPublicKey
+            ) {{ "}}" }}
+            {{ "{{-" }} if (gt (len $mirrors) 0) {{ "}}" }}
+            {{ "{{-" }} $imageSources := list {{ "}}" }}
+            {{ "{{-" }} range $_, $entry := $mirrors {{ "}}" }}
+            {{ "{{-" }} $source := (index $entry "source") {{ "}}" }}
+            {{ "{{-" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "}}" }}
+            {{ "{{-" }} if $mirrorLoc {{ "}}" }}
+            {{ "{{-" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "}}" }}
+            {{ "{{-" }} else {{ "}}" }}
+            {{ "{{-" }} $mirrorLoc = $mirrorUrl {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $imageSources = append $imageSources (dict "source" $source "mirrors" (list $mirrorLoc)) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $_ := set $installConfig "imageDigestSources" $imageSources {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if $caTrustBundle {{ "}}" }}
+            {{ "{{-" }} $_ := set $installConfig "additionalTrustBundle" $caTrustBundle {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{/* ===== AWS Credentials Secret ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                type: Opaque
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}-aws-creds
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  aws_access_key_id: {{ "{{" }} fromSecret $secretSourceNs $credentialRef "aws_access_key_id" {{ "}}" }}
+                  aws_secret_access_key: {{ "{{" }} fromSecret $secretSourceNs $credentialRef "aws_secret_access_key" {{ "}}" }}
+            {{/* ===== SSH Private Key Secret ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                type: Opaque
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}-ssh-private-key
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  ssh-privatekey: {{ "{{" }} fromSecret $secretSourceNs $sshPrivateKeyRef "ssh-privatekey" {{ "}}" }}
+            {{/* ===== Pull Secret ===== */}}
+            {{ "{{-" }} $psName := (index $pullSecretRef "name" | default "") {{ "}}" }}
+            {{ "{{-" }} $psKey := (index $pullSecretRef "key" | default ".dockerconfigjson") {{ "}}" }}
+            {{ "{{-" }} $psNs := (index $pullSecretRef "namespace" | default $secretSourceNs) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                type: kubernetes.io/dockerconfigjson
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}-pull-secret
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  .dockerconfigjson: {{ "{{" }} fromSecret $psNs $psName $psKey {{ "}}" }}
+            {{/* ===== install-config Secret ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                type: Opaque
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}-install-config
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                data:
+                  install-config.yaml: '{{ "{{" }} $installConfig | toYaml | base64enc {{ "}}" }}'
+            {{/* ===== ClusterDeployment ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: hive.openshift.io/v1
+                kind: ClusterDeployment
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                  labels:
+                    cloud: AWS
+                    region: {{ "{{" }} $region {{ "}}" }}
+                    vendor: OpenShift
+                    cluster.open-cluster-management.io/clusterset: {{ "{{" }} $managedClusterSet {{ "}}" }}
+                spec:
+                  baseDomain: {{ "{{" }} $baseDomain {{ "}}" }}
+                  clusterName: {{ "{{" }} $clusterName {{ "}}" }}
+                  controlPlaneConfig:
+                    servingCertificates: {}
+                  installAttemptsLimit: 1
+                  installed: false
+                  platform:
+                    aws:
+                      credentialsSecretRef:
+                        name: {{ "{{" }} $clusterName {{ "}}" }}-aws-creds
+                      region: {{ "{{" }} $region {{ "}}" }}
+                  provisioning:
+                    installConfigSecretRef:
+                      name: {{ "{{" }} $clusterName {{ "}}" }}-install-config
+                    sshPrivateKeySecretRef:
+                      name: {{ "{{" }} $clusterName {{ "}}" }}-ssh-private-key
+                    imageSetRef:
+                      name: {{ "{{" }} $imageSet {{ "}}" }}
+                  pullSecretRef:
+                    name: {{ "{{" }} $clusterName {{ "}}" }}-pull-secret
+            {{/* ===== MachinePool ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: hive.openshift.io/v1
+                kind: MachinePool
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}-worker
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                spec:
+                  clusterDeploymentRef:
+                    name: {{ "{{" }} $clusterName {{ "}}" }}
+                  name: worker
+                  replicas: {{ "{{" }} $workerReplicas {{ "}}" }}
+                  platform:
+                    aws:
+                      rootVolume:
+                        iops: {{ "{{" }} $wkIops {{ "}}" }}
+                        size: {{ "{{" }} $wkSize {{ "}}" }}
+                        type: {{ "{{" }} $wkVolType {{ "}}" }}
+                      type: {{ "{{" }} $wkInstanceType {{ "}}" }}
+            {{/* ===== ManagedCluster ===== */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1
+                kind: ManagedCluster
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}
+                  labels:
+                    cloud: Amazon
+                    region: {{ "{{" }} $region {{ "}}" }}
+                    vendor: OpenShift
+                    cluster.open-cluster-management.io/clusterset: {{ "{{" }} $managedClusterSet {{ "}}" }}
+                spec:
+                  hubAcceptsClient: true
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-install'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

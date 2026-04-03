@@ -1,5 +1,8 @@
-# This policy creates NodeNetworkConfigurationPolicy resources from labels
-# Supports both label-based configuration and legacy file-based configuration
+{{- /* ================================================================== */}}
+{{- /* Generates NNCPs from the rendered-config ConfigMap.                 */}}
+{{- /* Hub templates read config via fromYaml; a regular template looks    */}}
+{{- /* up dns.config.openshift.io on the managed cluster for FQDN.       */}}
+{{- /* ================================================================== */}}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -33,444 +36,157 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{hub-" }} $labels := .ManagedClusterLabels {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* Discover nodeSelector IDs dynamically from labels             */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} $nodeSelectorIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if hasPrefix "autoshift.io/nmstate-nodeselector-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} $rest := replace "autoshift.io/nmstate-nodeselector-" "" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if hasSuffix "-name" $rest {{ "hub}}" }}
-                  {{ "{{hub-" }} $nsId := replace "-name" "" $rest {{ "hub}}" }}
-                  {{ "{{hub-" }} if not (has $nsId $nodeSelectorIds) {{ "hub}}" }}
-                    {{ "{{hub-" }} $nodeSelectorIds = append $nodeSelectorIds $nsId {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "%s.rendered-config" .ManagedClusterName)) {{ "hub}}" }}
+            {{/*Read rendered-config and parse into structured data */}}
+            {{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
+            {{ "{{hub-" }} $networking := (index $config "networking" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $interfaces := (index $networking "interfaces" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $hosts := (index $config "hosts" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $nodeSelector := (index $networking "nodeSelector" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $routes := (index $networking "routes" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $dns := (index $networking "dns" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $ovsBridges := (index $networking "ovsBridges" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $ovnMappings := (index $networking "ovnMappings" | default dict) {{ "hub}}" }}
+            {{/*DNS lookup on managed cluster for per-host FQDN construction */}}
+            {{ "{{" }} $clusterDomain := ((lookup "config.openshift.io/v1" "DNS" "" "cluster").spec.baseDomain | default "") {{ "}}" }}
+            {{/*Build set of interface IDs that have per-host overrides */}}
+            {{ "{{hub-" }} $perHostIfaceIds := dict {{ "hub}}" }}
+            {{ "{{hub-" }} range $hostname, $host := $hosts {{ "hub}}" }}
+              {{ "{{hub-" }} $hostNet := (index $host "networking" | default dict) {{ "hub}}" }}
+              {{ "{{hub-" }} $hostIfaces := (index $hostNet "interfaces" | default dict) {{ "hub}}" }}
+              {{ "{{hub-" }} range $ifaceId, $_ := $hostIfaces {{ "hub}}" }}
+                {{ "{{hub-" }} $_ := set $perHostIfaceIds $ifaceId "true" {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* Discover bond IDs dynamically from labels                    */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} $bondIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if hasPrefix "autoshift.io/nmstate-bond-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} $rest := replace "autoshift.io/nmstate-bond-" "" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (contains "-" $rest) {{ "hub}}" }}
-                  {{ "{{hub-" }} if not (has $rest $bondIds) {{ "hub}}" }}
-                    {{ "{{hub-" }} $bondIds = append $bondIds $rest {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* Discover VLAN IDs dynamically from labels                    */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} $vlanIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if hasPrefix "autoshift.io/nmstate-vlan-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} $rest := replace "autoshift.io/nmstate-vlan-" "" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (contains "-" $rest) {{ "hub}}" }}
-                  {{ "{{hub-" }} if not (has $rest $vlanIds) {{ "hub}}" }}
-                    {{ "{{hub-" }} $vlanIds = append $vlanIds $rest {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* Discover ethernet IDs dynamically from labels                */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} $ethernetIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if hasPrefix "autoshift.io/nmstate-ethernet-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} $rest := replace "autoshift.io/nmstate-ethernet-" "" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (contains "-" $rest) {{ "hub}}" }}
-                  {{ "{{hub-" }} if not (has $rest $ethernetIds) {{ "hub}}" }}
-                    {{ "{{hub-" }} $ethernetIds = append $ethernetIds $rest {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* Discover OVS bridge IDs dynamically from labels              */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} $ovsBridgeIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if hasPrefix "autoshift.io/nmstate-ovs-bridge-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} $rest := replace "autoshift.io/nmstate-ovs-bridge-" "" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (contains "-" $rest) {{ "hub}}" }}
-                  {{ "{{hub-" }} if not (has $rest $ovsBridgeIds) {{ "hub}}" }}
-                    {{ "{{hub-" }} $ovsBridgeIds = append $ovsBridgeIds $rest {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* Discover route IDs dynamically from labels (anchor: -dest)   */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} $routeIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if hasPrefix "autoshift.io/nmstate-route-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if hasSuffix "-dest" $label {{ "hub}}" }}
-                  {{ "{{hub-" }} $rest := replace "autoshift.io/nmstate-route-" "" $label {{ "hub}}" }}
-                  {{ "{{hub-" }} $routeId := replace "-dest" "" $rest {{ "hub}}" }}
-                  {{ "{{hub-" }} if not (has $routeId $routeIds) {{ "hub}}" }}
-                    {{ "{{hub-" }} $routeIds = append $routeIds $routeId {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* Discover OVN mapping IDs dynamically (anchor: -localnet)     */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} $ovnMappingIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if hasPrefix "autoshift.io/nmstate-ovn-mapping-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if hasSuffix "-localnet" $label {{ "hub}}" }}
-                  {{ "{{hub-" }} $rest := replace "autoshift.io/nmstate-ovn-mapping-" "" $label {{ "hub}}" }}
-                  {{ "{{hub-" }} $mappingId := replace "-localnet" "" $rest {{ "hub}}" }}
-                  {{ "{{hub-" }} if not (has $mappingId $ovnMappingIds) {{ "hub}}" }}
-                    {{ "{{hub-" }} $ovnMappingIds = append $ovnMappingIds $mappingId {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* Discover DNS server IDs dynamically from labels              */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} $dnsServerIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if hasPrefix "autoshift.io/nmstate-dns-server-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} $rest := replace "autoshift.io/nmstate-dns-server-" "" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (contains "-" $rest) {{ "hub}}" }}
-                  {{ "{{hub-" }} if not (has $rest $dnsServerIds) {{ "hub}}" }}
-                    {{ "{{hub-" }} $dnsServerIds = append $dnsServerIds $rest {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* Discover DNS search IDs dynamically from labels              */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} $dnsSearchIds := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if hasPrefix "autoshift.io/nmstate-dns-search-" $label {{ "hub}}" }}
-                {{ "{{hub-" }} $rest := replace "autoshift.io/nmstate-dns-search-" "" $label {{ "hub}}" }}
-                {{ "{{hub-" }} if not (contains "-" $rest) {{ "hub}}" }}
-                  {{ "{{hub-" }} if not (has $rest $dnsSearchIds) {{ "hub}}" }}
-                    {{ "{{hub-" }} $dnsSearchIds = append $dnsSearchIds $rest {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* NNCP per bond: nmstate-bond-{id}                             */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} range $bondId := $bondIds {{ "hub}}" }}
-            {{ "{{hub-" }} $bondName := index $labels (printf "autoshift.io/nmstate-bond-%s" $bondId) {{ "hub}}" }}
-            {{ "{{hub-" }} $bondState := index $labels (printf "autoshift.io/nmstate-bond-%s-state" $bondId) | default "up" {{ "hub}}" }}
-            {{ "{{hub-" }} $bondMode := index $labels (printf "autoshift.io/nmstate-bond-%s-mode" $bondId) | default "802.3ad" {{ "hub}}" }}
-            {{ "{{hub-" }} $bondMtu := index $labels (printf "autoshift.io/nmstate-bond-%s-mtu" $bondId) | default "" {{ "hub}}" }}
-            {{ "{{hub-" }} $bondMac := index $labels (printf "autoshift.io/nmstate-bond-%s-mac" $bondId) | default "" {{ "hub}}" }}
-            {{ "{{hub-" }} $bondMiimon := index $labels (printf "autoshift.io/nmstate-bond-%s-miimon" $bondId) | default "" {{ "hub}}" }}
-            {{ "{{hub-" }} $bondIpv4 := index $labels (printf "autoshift.io/nmstate-bond-%s-ipv4" $bondId) | default "disabled" {{ "hub}}" }}
-            {{ "{{hub-" }} $bondIpv6 := index $labels (printf "autoshift.io/nmstate-bond-%s-ipv6" $bondId) | default "disabled" {{ "hub}}" }}
-
-            {{ "{{hub-" }} $bondPorts := list {{ "hub}}" }}
-            {{ "{{hub-" }} $portPrefix := printf "autoshift.io/nmstate-bond-%s-port-" $bondId {{ "hub}}" }}
-            {{ "{{hub-" }} range $plabel, $pval := $.ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if hasPrefix $portPrefix $plabel {{ "hub}}" }}
-                {{ "{{hub-" }} $bondPorts = append $bondPorts $pval {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{ "{{hub-" }} $bondIpv4Addrs := list {{ "hub}}" }}
-            {{ "{{hub-" }} $addrPrefix := printf "autoshift.io/nmstate-bond-%s-ipv4-address-" $bondId {{ "hub}}" }}
-            {{ "{{hub-" }} range $alabel, $aval := $.ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if and (hasPrefix $addrPrefix $alabel) (not (hasSuffix "-cidr" $alabel)) {{ "hub}}" }}
-                {{ "{{hub-" }} $addrId := replace $addrPrefix "" $alabel {{ "hub}}" }}
-                {{ "{{hub-" }} $cidr := index $labels (printf "autoshift.io/nmstate-bond-%s-ipv4-address-%s-cidr" $bondId $addrId) | default "24" {{ "hub}}" }}
-                {{ "{{hub-" }} $bondIpv4Addrs = append $bondIpv4Addrs (dict "ip" $aval "prefix" $cidr) {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{ "{{hub-" }} $bondIpv6Addrs := list {{ "hub}}" }}
-            {{ "{{hub-" }} $addr6Prefix := printf "autoshift.io/nmstate-bond-%s-ipv6-address-" $bondId {{ "hub}}" }}
-            {{ "{{hub-" }} range $alabel, $aval := $.ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if and (hasPrefix $addr6Prefix $alabel) (not (hasSuffix "-cidr" $alabel)) {{ "hub}}" }}
-                {{ "{{hub-" }} $addrId := replace $addr6Prefix "" $alabel {{ "hub}}" }}
-                {{ "{{hub-" }} $cidr := index $labels (printf "autoshift.io/nmstate-bond-%s-ipv6-address-%s-cidr" $bondId $addrId) | default "64" {{ "hub}}" }}
-                {{ "{{hub-" }} $bondIpv6Addrs = append $bondIpv6Addrs (dict "ip" $aval "prefix" $cidr) {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
+            {{/*Cluster-wide NNCPs per interface (skip per-host ones) */}}
+            {{ "{{hub-" }} range $id, $iface := $interfaces {{ "hub}}" }}
+              {{ "{{hub-" }} if not (hasKey $perHostIfaceIds $id) {{ "hub}}" }}
+                {{ "{{hub-" }} $ifaceType := (index $iface "type" | default "ethernet") {{ "hub}}" }}
+                {{ "{{hub-" }} $ifaceName := (index $iface "name" | default "") {{ "hub}}" }}
+                {{ "{{hub-" }} $ifaceState := (index $iface "state" | default "up") {{ "hub}}" }}
+                {{ "{{hub-" }} $ifaceMtu := (index $iface "mtu" | default "") {{ "hub}}" }}
+                {{ "{{hub-" }} $ifaceMac := (index $iface "mac" | default "") {{ "hub}}" }}
+                {{ "{{hub-" }} $ifaceIpv4 := (index $iface "ipv4" | default "disabled") {{ "hub}}" }}
+                {{ "{{hub-" }} $ifaceIpv6 := (index $iface "ipv6" | default "disabled") {{ "hub}}" }}
             - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: nmstate.io/v1
                 kind: NodeNetworkConfigurationPolicy
                 metadata:
-                  name: nmstate-bond-{{ "{{hub" }} $bondId {{ "hub}}" }}
+                  name: nmstate-{{ "{{hub" }} $ifaceType {{ "hub}}" }}-{{ "{{hub" }} $id {{ "hub}}" }}
                 spec:
-                  {{ "{{hub-" }} if gt (len $nodeSelectorIds) 0 {{ "hub}}" }}
+                {{ "{{hub-" }} if (gt (len (keys $nodeSelector)) 0) {{ "hub}}" }}
                   nodeSelector:
-                    {{ "{{hub-" }} range $nsId := $nodeSelectorIds {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsPrefix := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-prefix" $nsId) | default "" {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsName := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-name" $nsId) {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsValue := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-value" $nsId) | default "" {{ "hub}}" }}
-                    {{ "{{hub-" }} if $nsPrefix {{ "hub}}" }}
-                    {{ "{{hub" }} $nsPrefix {{ "hub}}" }}/{{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
-                    {{ "{{hub-" }} else {{ "hub}}" }}
-                    {{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
-                    {{ "{{hub-" }} end {{ "hub}}" }}
-                    {{ "{{hub-" }} end {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub" }} $nodeSelector | toYaml | autoindent {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
                   desiredState:
                     interfaces:
-                      - name: {{ "{{hub" }} $bondName {{ "hub}}" }}
-                        type: bond
-                        state: {{ "{{hub" }} $bondState {{ "hub}}" }}
-                        {{ "{{hub-" }} if $bondMac {{ "hub}}" }}
-                        mac-address: '{{ "{{hub" }} replace "." ":" $bondMac {{ "hub}}" }}'
-                        {{ "{{hub-" }} end {{ "hub}}" }}
-                        {{ "{{hub-" }} if $bondMtu {{ "hub}}" }}
-                        mtu: {{ "{{hub" }} $bondMtu {{ "hub}}" }}
-                        {{ "{{hub-" }} end {{ "hub}}" }}
+                      - name: {{ "{{hub" }} $ifaceName {{ "hub}}" }}
+                        type: {{ "{{hub" }} $ifaceType {{ "hub}}" }}
+                        state: {{ "{{hub" }} $ifaceState {{ "hub}}" }}
+                {{ "{{hub-" }} if $ifaceMac {{ "hub}}" }}
+                        identifier: mac-address
+                        mac-address: '{{ "{{hub" }} $ifaceMac {{ "hub}}" }}'
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if $ifaceMtu {{ "hub}}" }}
+                        mtu: {{ "{{hub" }} $ifaceMtu {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if eq $ifaceIpv4 "disabled" {{ "hub}}" }}
                         ipv4:
-                          {{ "{{hub-" }} if eq $bondIpv4 "disabled" {{ "hub}}" }}
                           enabled: false
-                          {{ "{{hub-" }} else if eq $bondIpv4 "dhcp" {{ "hub}}" }}
+                {{ "{{hub-" }} else if eq $ifaceIpv4 "dhcp" {{ "hub}}" }}
+                        ipv4:
                           enabled: true
                           dhcp: true
-                          {{ "{{hub-" }} else if eq $bondIpv4 "static" {{ "hub}}" }}
+                {{ "{{hub-" }} else if eq $ifaceIpv4 "static" {{ "hub}}" }}
+                        ipv4:
                           enabled: true
                           dhcp: false
-                          {{ "{{hub-" }} if gt (len $bondIpv4Addrs) 0 {{ "hub}}" }}
-                          address:
-                            {{ "{{hub-" }} range $addr := $bondIpv4Addrs {{ "hub}}" }}
-                            - ip: {{ "{{hub" }} $addr.ip {{ "hub}}" }}
-                              prefix-length: {{ "{{hub" }} $addr.prefix {{ "hub}}" }}
-                            {{ "{{hub-" }} end {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if eq $ifaceIpv6 "disabled" {{ "hub}}" }}
                         ipv6:
-                          {{ "{{hub-" }} if eq $bondIpv6 "disabled" {{ "hub}}" }}
                           enabled: false
-                          {{ "{{hub-" }} else if eq $bondIpv6 "dhcp" {{ "hub}}" }}
+                {{ "{{hub-" }} else if eq $ifaceIpv6 "dhcp" {{ "hub}}" }}
+                        ipv6:
                           enabled: true
                           dhcp: true
-                          {{ "{{hub-" }} else if eq $bondIpv6 "autoconf" {{ "hub}}" }}
+                {{ "{{hub-" }} else if eq $ifaceIpv6 "autoconf" {{ "hub}}" }}
+                        ipv6:
                           enabled: true
                           autoconf: true
-                          {{ "{{hub-" }} else if eq $bondIpv6 "static" {{ "hub}}" }}
+                {{ "{{hub-" }} else if eq $ifaceIpv6 "static" {{ "hub}}" }}
+                        ipv6:
                           enabled: true
                           dhcp: false
                           autoconf: false
-                          {{ "{{hub-" }} if gt (len $bondIpv6Addrs) 0 {{ "hub}}" }}
-                          address:
-                            {{ "{{hub-" }} range $addr := $bondIpv6Addrs {{ "hub}}" }}
-                            - ip: {{ "{{hub" }} $addr.ip {{ "hub}}" }}
-                              prefix-length: {{ "{{hub" }} $addr.prefix {{ "hub}}" }}
-                            {{ "{{hub-" }} end {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if eq $ifaceType "bond" {{ "hub}}" }}
+                  {{ "{{hub-" }} $bondMode := (index $iface "mode" | default "802.3ad") {{ "hub}}" }}
+                  {{ "{{hub-" }} $bondMiimon := (index $iface "miimon" | default "") {{ "hub}}" }}
+                  {{ "{{hub-" }} $bondPorts := (index $iface "ports" | default list) {{ "hub}}" }}
                         link-aggregation:
                           mode: {{ "{{hub" }} $bondMode {{ "hub}}" }}
-                          {{ "{{hub-" }} if $bondMiimon {{ "hub}}" }}
+                  {{ "{{hub-" }} if $bondMiimon {{ "hub}}" }}
                           options:
                             miimon: {{ "{{hub" }} $bondMiimon {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
-                          {{ "{{hub-" }} if gt (len $bondPorts) 0 {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if (gt (len $bondPorts) 0) {{ "hub}}" }}
                           port:
-                            {{ "{{hub-" }} range $port := $bondPorts {{ "hub}}" }}
+                    {{ "{{hub-" }} range $_, $port := $bondPorts {{ "hub}}" }}
                             - {{ "{{hub" }} $port {{ "hub}}" }}
-                            {{ "{{hub-" }} end {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* NNCP per vlan: nmstate-vlan-{id}                             */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} range $vlanId := $vlanIds {{ "hub}}" }}
-            {{ "{{hub-" }} $vlanName := index $labels (printf "autoshift.io/nmstate-vlan-%s" $vlanId) {{ "hub}}" }}
-            {{ "{{hub-" }} $vlanVid := index $labels (printf "autoshift.io/nmstate-vlan-%s-id" $vlanId) {{ "hub}}" }}
-            {{ "{{hub-" }} $vlanBase := index $labels (printf "autoshift.io/nmstate-vlan-%s-base" $vlanId) {{ "hub}}" }}
-            {{ "{{hub-" }} $vlanState := index $labels (printf "autoshift.io/nmstate-vlan-%s-state" $vlanId) | default "up" {{ "hub}}" }}
-            {{ "{{hub-" }} $vlanMtu := index $labels (printf "autoshift.io/nmstate-vlan-%s-mtu" $vlanId) | default "" {{ "hub}}" }}
-            {{ "{{hub-" }} $vlanIpv4 := index $labels (printf "autoshift.io/nmstate-vlan-%s-ipv4" $vlanId) | default "disabled" {{ "hub}}" }}
-
-            {{ "{{hub-" }} $vlanIpv4Addrs := list {{ "hub}}" }}
-            {{ "{{hub-" }} $addrPrefix := printf "autoshift.io/nmstate-vlan-%s-ipv4-address-" $vlanId {{ "hub}}" }}
-            {{ "{{hub-" }} range $alabel, $aval := $.ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if and (hasPrefix $addrPrefix $alabel) (not (hasSuffix "-cidr" $alabel)) {{ "hub}}" }}
-                {{ "{{hub-" }} $addrId := replace $addrPrefix "" $alabel {{ "hub}}" }}
-                {{ "{{hub-" }} $cidr := index $labels (printf "autoshift.io/nmstate-vlan-%s-ipv4-address-%s-cidr" $vlanId $addrId) | default "24" {{ "hub}}" }}
-                {{ "{{hub-" }} $vlanIpv4Addrs = append $vlanIpv4Addrs (dict "ip" $aval "prefix" $cidr) {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            - complianceType: mustonlyhave
-              objectDefinition:
-                apiVersion: nmstate.io/v1
-                kind: NodeNetworkConfigurationPolicy
-                metadata:
-                  name: nmstate-vlan-{{ "{{hub" }} $vlanId {{ "hub}}" }}
-                spec:
-                  {{ "{{hub-" }} if gt (len $nodeSelectorIds) 0 {{ "hub}}" }}
-                  nodeSelector:
-                    {{ "{{hub-" }} range $nsId := $nodeSelectorIds {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsPrefix := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-prefix" $nsId) | default "" {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsName := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-name" $nsId) {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsValue := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-value" $nsId) | default "" {{ "hub}}" }}
-                    {{ "{{hub-" }} if $nsPrefix {{ "hub}}" }}
-                    {{ "{{hub" }} $nsPrefix {{ "hub}}" }}/{{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
-                    {{ "{{hub-" }} else {{ "hub}}" }}
-                    {{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
-                    {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
-                  desiredState:
-                    interfaces:
-                      - name: {{ "{{hub" }} $vlanName {{ "hub}}" }}
-                        type: vlan
-                        state: {{ "{{hub" }} $vlanState {{ "hub}}" }}
-                        {{ "{{hub-" }} if $vlanMtu {{ "hub}}" }}
-                        mtu: {{ "{{hub" }} $vlanMtu {{ "hub}}" }}
-                        {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if eq $ifaceType "vlan" {{ "hub}}" }}
+                  {{ "{{hub-" }} $vlanId := (index $iface "id" | default 0) {{ "hub}}" }}
+                  {{ "{{hub-" }} $vlanBase := (index $iface "base" | default "") {{ "hub}}" }}
                         vlan:
                           base-iface: {{ "{{hub" }} $vlanBase {{ "hub}}" }}
-                          id: {{ "{{hub" }} $vlanVid {{ "hub}}" }}
-                        ipv4:
-                          {{ "{{hub-" }} if eq $vlanIpv4 "disabled" {{ "hub}}" }}
-                          enabled: false
-                          {{ "{{hub-" }} else if eq $vlanIpv4 "dhcp" {{ "hub}}" }}
-                          enabled: true
-                          dhcp: true
-                          {{ "{{hub-" }} else if eq $vlanIpv4 "static" {{ "hub}}" }}
-                          enabled: true
-                          dhcp: false
-                          {{ "{{hub-" }} if gt (len $vlanIpv4Addrs) 0 {{ "hub}}" }}
-                          address:
-                            {{ "{{hub-" }} range $addr := $vlanIpv4Addrs {{ "hub}}" }}
-                            - ip: {{ "{{hub" }} $addr.ip {{ "hub}}" }}
-                              prefix-length: {{ "{{hub" }} $addr.prefix {{ "hub}}" }}
-                            {{ "{{hub-" }} end {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* NNCP per ethernet: nmstate-ethernet-{id}                     */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} range $ethId := $ethernetIds {{ "hub}}" }}
-            {{ "{{hub-" }} $ethName := index $labels (printf "autoshift.io/nmstate-ethernet-%s" $ethId) {{ "hub}}" }}
-            {{ "{{hub-" }} $ethState := index $labels (printf "autoshift.io/nmstate-ethernet-%s-state" $ethId) | default "up" {{ "hub}}" }}
-            {{ "{{hub-" }} $ethMac := index $labels (printf "autoshift.io/nmstate-ethernet-%s-mac" $ethId) | default "" {{ "hub}}" }}
-            {{ "{{hub-" }} $ethMtu := index $labels (printf "autoshift.io/nmstate-ethernet-%s-mtu" $ethId) | default "" {{ "hub}}" }}
-
-            - complianceType: mustonlyhave
-              objectDefinition:
-                apiVersion: nmstate.io/v1
-                kind: NodeNetworkConfigurationPolicy
-                metadata:
-                  name: nmstate-ethernet-{{ "{{hub" }} $ethId {{ "hub}}" }}
-                spec:
-                  {{ "{{hub-" }} if gt (len $nodeSelectorIds) 0 {{ "hub}}" }}
-                  nodeSelector:
-                    {{ "{{hub-" }} range $nsId := $nodeSelectorIds {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsPrefix := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-prefix" $nsId) | default "" {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsName := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-name" $nsId) {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsValue := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-value" $nsId) | default "" {{ "hub}}" }}
-                    {{ "{{hub-" }} if $nsPrefix {{ "hub}}" }}
-                    {{ "{{hub" }} $nsPrefix {{ "hub}}" }}/{{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
-                    {{ "{{hub-" }} else {{ "hub}}" }}
-                    {{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
-                    {{ "{{hub-" }} end {{ "hub}}" }}
-                    {{ "{{hub-" }} end {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                  desiredState:
-                    interfaces:
-                      - name: {{ "{{hub" }} $ethName {{ "hub}}" }}
-                        type: ethernet
-                        state: {{ "{{hub" }} $ethState {{ "hub}}" }}
-                        {{ "{{hub-" }} if $ethMac {{ "hub}}" }}
-                        mac-address: '{{ "{{hub" }} replace "." ":" $ethMac {{ "hub}}" }}'
-                        {{ "{{hub-" }} end {{ "hub}}" }}
-                        {{ "{{hub-" }} if $ethMtu {{ "hub}}" }}
-                        mtu: {{ "{{hub" }} $ethMtu {{ "hub}}" }}
-                        {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* NNCP per OVS bridge: nmstate-ovs-bridge-{id}                 */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} range $ovsId := $ovsBridgeIds {{ "hub}}" }}
-            {{ "{{hub-" }} $ovsBridgeName := index $labels (printf "autoshift.io/nmstate-ovs-bridge-%s" $ovsId) {{ "hub}}" }}
-            {{ "{{hub-" }} $ovsStp := index $labels (printf "autoshift.io/nmstate-ovs-bridge-%s-stp" $ovsId) | default "false" {{ "hub}}" }}
-            {{ "{{hub-" }} $ovsAllowExtraPatch := index $labels (printf "autoshift.io/nmstate-ovs-bridge-%s-allow-extra-patch-ports" $ovsId) | default "true" {{ "hub}}" }}
-            {{ "{{hub-" }} $ovsMcastSnooping := index $labels (printf "autoshift.io/nmstate-ovs-bridge-%s-mcast-snooping" $ovsId) | default "" {{ "hub}}" }}
-
-            {{ "{{hub-" }} $ovsBridgePorts := list {{ "hub}}" }}
-            {{ "{{hub-" }} $portPrefix := printf "autoshift.io/nmstate-ovs-bridge-%s-port-" $ovsId {{ "hub}}" }}
-            {{ "{{hub-" }} range $plabel, $pval := $.ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if hasPrefix $portPrefix $plabel {{ "hub}}" }}
-                {{ "{{hub-" }} $ovsBridgePorts = append $ovsBridgePorts $pval {{ "hub}}" }}
+                          id: {{ "{{hub" }} $vlanId {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
-
+            {{/*OVS bridge NNCPs */}}
+            {{ "{{hub-" }} range $id, $bridge := $ovsBridges {{ "hub}}" }}
+              {{ "{{hub-" }} $bridgeName := (index $bridge "name" | default (printf "ovs-br-%s" $id)) {{ "hub}}" }}
+              {{ "{{hub-" }} $stp := (index $bridge "stp" | default false) {{ "hub}}" }}
+              {{ "{{hub-" }} $allowExtraPatch := (index $bridge "allowExtraPatchPorts" | default true) {{ "hub}}" }}
+              {{ "{{hub-" }} $bridgePorts := (index $bridge "ports" | default list) {{ "hub}}" }}
+              {{ "{{hub-" }} $mcastSnooping := (index $bridge "mcastSnooping" | default "") {{ "hub}}" }}
             - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: nmstate.io/v1
                 kind: NodeNetworkConfigurationPolicy
                 metadata:
-                  name: nmstate-ovs-bridge-{{ "{{hub" }} $ovsId {{ "hub}}" }}
+                  name: nmstate-ovs-bridge-{{ "{{hub" }} $id {{ "hub}}" }}
                 spec:
-                  {{ "{{hub-" }} if gt (len $nodeSelectorIds) 0 {{ "hub}}" }}
+                {{ "{{hub-" }} if (gt (len (keys $nodeSelector)) 0) {{ "hub}}" }}
                   nodeSelector:
-                    {{ "{{hub-" }} range $nsId := $nodeSelectorIds {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsPrefix := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-prefix" $nsId) | default "" {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsName := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-name" $nsId) {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsValue := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-value" $nsId) | default "" {{ "hub}}" }}
-                    {{ "{{hub-" }} if $nsPrefix {{ "hub}}" }}
-                    {{ "{{hub" }} $nsPrefix {{ "hub}}" }}/{{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
-                    {{ "{{hub-" }} else {{ "hub}}" }}
-                    {{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
-                    {{ "{{hub-" }} end {{ "hub}}" }}
-                    {{ "{{hub-" }} end {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub" }} $nodeSelector | toYaml | autoindent {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
                   desiredState:
                     interfaces:
-                      - name: {{ "{{hub" }} $ovsBridgeName {{ "hub}}" }}
+                      - name: {{ "{{hub" }} $bridgeName {{ "hub}}" }}
                         type: ovs-bridge
                         state: up
                         bridge:
-                          allow-extra-patch-ports: {{ "{{hub" }} $ovsAllowExtraPatch {{ "hub}}" }}
+                          allow-extra-patch-ports: {{ "{{hub" }} $allowExtraPatch {{ "hub}}" }}
                           options:
-                            stp: {{ "{{hub" }} $ovsStp {{ "hub}}" }}
-                            {{ "{{hub-" }} if $ovsMcastSnooping {{ "hub}}" }}
-                            mcast-snooping-enable: {{ "{{hub" }} $ovsMcastSnooping {{ "hub}}" }}
-                            {{ "{{hub-" }} end {{ "hub}}" }}
-                          {{ "{{hub-" }} if gt (len $ovsBridgePorts) 0 {{ "hub}}" }}
+                            stp: {{ "{{hub" }} $stp {{ "hub}}" }}
+                {{ "{{hub-" }} if $mcastSnooping {{ "hub}}" }}
+                            mcast-snooping-enable: {{ "{{hub" }} $mcastSnooping {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if (gt (len $bridgePorts) 0) {{ "hub}}" }}
                           port:
-                            {{ "{{hub-" }} range $port := $ovsBridgePorts {{ "hub}}" }}
+                  {{ "{{hub-" }} range $_, $port := $bridgePorts {{ "hub}}" }}
                             - name: {{ "{{hub" }} $port {{ "hub}}" }}
-                            {{ "{{hub-" }} end {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* NNCP: nmstate-network-config (routes + DNS + OVN)            */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} if or (gt (len $routeIds) 0) (or (gt (len $dnsServerIds) 0) (or (gt (len $dnsSearchIds) 0) (gt (len $ovnMappingIds) 0))) {{ "hub}}" }}
+            {{/*Combined nmstate-network-config NNCP (routes+dns+ovn) */}}
+            {{ "{{hub-" }} $dnsServers := (index $dns "servers" | default list) {{ "hub}}" }}
+            {{ "{{hub-" }} $dnsSearch := (index $dns "search" | default list) {{ "hub}}" }}
+            {{ "{{hub-" }} if or (gt (len (keys $routes)) 0) (or (gt (len $dnsServers) 0) (or (gt (len $dnsSearch) 0) (gt (len (keys $ovnMappings)) 0))) {{ "hub}}" }}
             - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: nmstate.io/v1
@@ -478,101 +194,211 @@ spec:
                 metadata:
                   name: nmstate-network-config
                 spec:
-                  {{ "{{hub-" }} if gt (len $nodeSelectorIds) 0 {{ "hub}}" }}
+                {{ "{{hub-" }} if (gt (len (keys $nodeSelector)) 0) {{ "hub}}" }}
                   nodeSelector:
-                    {{ "{{hub-" }} range $nsId := $nodeSelectorIds {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsPrefix := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-prefix" $nsId) | default "" {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsName := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-name" $nsId) {{ "hub}}" }}
-                    {{ "{{hub-" }} $nsValue := index $labels (printf "autoshift.io/nmstate-nodeselector-%s-value" $nsId) | default "" {{ "hub}}" }}
-                    {{ "{{hub-" }} if $nsPrefix {{ "hub}}" }}
-                    {{ "{{hub" }} $nsPrefix {{ "hub}}" }}/{{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
-                    {{ "{{hub-" }} else {{ "hub}}" }}
-                    {{ "{{hub" }} $nsName {{ "hub}}" }}: '{{ "{{hub" }} $nsValue {{ "hub}}" }}'
-                    {{ "{{hub-" }} end {{ "hub}}" }}
-                    {{ "{{hub-" }} end {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub" }} $nodeSelector | toYaml | autoindent {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
                   desiredState:
-                    {{ "{{hub-" }} if gt (len $routeIds) 0 {{ "hub}}" }}
+                {{ "{{hub-" }} if (gt (len (keys $routes)) 0) {{ "hub}}" }}
                     routes:
                       config:
-                        {{ "{{hub-" }} range $routeId := $routeIds {{ "hub}}" }}
-                        {{ "{{hub-" }} $routeDest := index $labels (printf "autoshift.io/nmstate-route-%s-dest" $routeId) {{ "hub}}" }}
-                        {{ "{{hub-" }} $routeCidr := index $labels (printf "autoshift.io/nmstate-route-%s-cidr" $routeId) {{ "hub}}" }}
-                        {{ "{{hub-" }} $routeGw := index $labels (printf "autoshift.io/nmstate-route-%s-gateway" $routeId) {{ "hub}}" }}
-                        {{ "{{hub-" }} $routeIface := index $labels (printf "autoshift.io/nmstate-route-%s-interface" $routeId) {{ "hub}}" }}
-                        {{ "{{hub-" }} $routeMetric := index $labels (printf "autoshift.io/nmstate-route-%s-metric" $routeId) | default "" {{ "hub}}" }}
-                        {{ "{{hub-" }} $routeTable := index $labels (printf "autoshift.io/nmstate-route-%s-table" $routeId) | default "" {{ "hub}}" }}
-                        - destination: {{ "{{hub" }} $routeDest {{ "hub}}" }}/{{ "{{hub" }} $routeCidr {{ "hub}}" }}
-                          next-hop-address: {{ "{{hub" }} $routeGw {{ "hub}}" }}
-                          next-hop-interface: {{ "{{hub" }} $routeIface {{ "hub}}" }}
-                          {{ "{{hub-" }} if $routeMetric {{ "hub}}" }}
-                          metric: {{ "{{hub" }} $routeMetric {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
-                          {{ "{{hub-" }} if $routeTable {{ "hub}}" }}
-                          table-id: {{ "{{hub" }} $routeTable {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
-                        {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} range $routeId, $route := $routes {{ "hub}}" }}
+                    {{ "{{hub-" }} $metric := (index $route "metric" | default "") {{ "hub}}" }}
+                    {{ "{{hub-" }} $tableId := (index $route "tableId" | default "") {{ "hub}}" }}
+                        - destination: {{ "{{hub" }} index $route "destination" {{ "hub}}" }}
+                          next-hop-address: {{ "{{hub" }} index $route "gateway" {{ "hub}}" }}
+                          next-hop-interface: {{ "{{hub" }} index $route "interface" {{ "hub}}" }}
+                    {{ "{{hub-" }} if $metric {{ "hub}}" }}
+                          metric: {{ "{{hub" }} $metric {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
-
-                    {{ "{{hub-" }} if or (gt (len $dnsServerIds) 0) (gt (len $dnsSearchIds) 0) {{ "hub}}" }}
+                    {{ "{{hub-" }} if $tableId {{ "hub}}" }}
+                          table-id: {{ "{{hub" }} $tableId {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if or (gt (len $dnsServers) 0) (gt (len $dnsSearch) 0) {{ "hub}}" }}
                     dns-resolver:
                       config:
-                        {{ "{{hub-" }} if gt (len $dnsServerIds) 0 {{ "hub}}" }}
+                  {{ "{{hub-" }} if (gt (len $dnsServers) 0) {{ "hub}}" }}
                         server:
-                          {{ "{{hub-" }} range $dnsId := $dnsServerIds {{ "hub}}" }}
-                          {{ "{{hub-" }} $server := index $labels (printf "autoshift.io/nmstate-dns-server-%s" $dnsId) {{ "hub}}" }}
+                    {{ "{{hub-" }} range $_, $server := $dnsServers {{ "hub}}" }}
                           - {{ "{{hub" }} $server {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
-                        {{ "{{hub-" }} end {{ "hub}}" }}
-                        {{ "{{hub-" }} if gt (len $dnsSearchIds) 0 {{ "hub}}" }}
-                        search:
-                          {{ "{{hub-" }} range $searchId := $dnsSearchIds {{ "hub}}" }}
-                          {{ "{{hub-" }} $domain := index $labels (printf "autoshift.io/nmstate-dns-search-%s" $searchId) {{ "hub}}" }}
-                          - {{ "{{hub" }} $domain {{ "hub}}" }}
-                          {{ "{{hub-" }} end {{ "hub}}" }}
-                        {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
-
-                    {{ "{{hub-" }} if gt (len $ovnMappingIds) 0 {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if (gt (len $dnsSearch) 0) {{ "hub}}" }}
+                        search:
+                    {{ "{{hub-" }} range $_, $domain := $dnsSearch {{ "hub}}" }}
+                          - {{ "{{hub" }} $domain {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if (gt (len (keys $ovnMappings)) 0) {{ "hub}}" }}
                     ovn:
                       bridge-mappings:
-                        {{ "{{hub-" }} range $mappingId := $ovnMappingIds {{ "hub}}" }}
-                        {{ "{{hub-" }} $localnetName := index $labels (printf "autoshift.io/nmstate-ovn-mapping-%s-localnet" $mappingId) {{ "hub}}" }}
-                        {{ "{{hub-" }} $bridgeName := index $labels (printf "autoshift.io/nmstate-ovn-mapping-%s-bridge" $mappingId) {{ "hub}}" }}
-                        - localnet: {{ "{{hub" }} $localnetName {{ "hub}}" }}
-                          bridge: {{ "{{hub" }} $bridgeName {{ "hub}}" }}
+                  {{ "{{hub-" }} range $mappingId, $mapping := $ovnMappings {{ "hub}}" }}
+                        - localnet: {{ "{{hub" }} index $mapping "localnet" {{ "hub}}" }}
+                          bridge: {{ "{{hub" }} index $mapping "bridge" {{ "hub}}" }}
                           state: present
-                        {{ "{{hub-" }} end {{ "hub}}" }}
-                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
-
-            {{- /* ============================================================ */ -}}
-            {{- /* Legacy file-based NNCPs (nmstate-nncp-* labels)              */ -}}
-            {{- /* ============================================================ */ -}}
-            {{ "{{hub-" }} $nncp_list := list {{ "hub}}" }}
-            {{ "{{hub-" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}
-              {{ "{{hub-" }} if $label | hasPrefix "autoshift.io/nmstate-nncp" {{ "hub}}" }}
-                {{ "{{hub-" }} $nncp_list = append $nncp_list $labelvalue {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} if not (eq 0 (len $nncp_list)) {{ "hub}}" }}
-              {{ "{{hub-" }} range $nncp_list {{ "hub}}" }}
-                {{ "{{hub-" }} $configmap := ((lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (print "nmstate-" .)).data) {{ "hub}}" }}
+            {{/*Per-host NNCPs */}}
+            {{ "{{hub-" }} range $hostname, $host := $hosts {{ "hub}}" }}
+              {{ "{{hub-" }} $hostNet := (index $host "networking" | default dict) {{ "hub}}" }}
+              {{ "{{hub-" }} $hostIfaces := (index $hostNet "interfaces" | default dict) {{ "hub}}" }}
+              {{ "{{hub-" }} $hostRoutes := (index $hostNet "routes" | default dict) {{ "hub}}" }}
+              {{ "{{hub-" }} $hostDns := (index $hostNet "dns" | default dict) {{ "hub}}" }}
+              {{ "{{hub-" }} if or (gt (len (keys $hostIfaces)) 0) (or (gt (len (keys $hostRoutes)) 0) (gt (len (keys $hostDns)) 0)) {{ "hub}}" }}
+                {{ "{{hub-" }} $hostOverrideHostname := (index $host "hostname" | default "") {{ "hub}}" }}
             - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: nmstate.io/v1
                 kind: NodeNetworkConfigurationPolicy
                 metadata:
-                  name: nmstate-{{ "{{hub"}} . {{ "hub}}" }}
+                  name: nmstate-host-{{ "{{hub" }} $hostname {{ "hub}}" }}
                 spec:
-                  {{ "{{hub-" }} if $configmap.nodeSelector {{ "hub}}" }}
                   nodeSelector:
-                    {{ "{{hub" }} $configmap.nodeSelector | base64dec | autoindent {{ "hub}}" }}
+                  {{ "{{hub-" }} if $hostOverrideHostname {{ "hub}}" }}
+                    kubernetes.io/hostname: {{ "{{hub" }} $hostOverrideHostname {{ "hub}}" }}
+                  {{ "{{hub-" }} else {{ "hub}}" }}
+                    kubernetes.io/hostname: {{ "{{hub" }} $hostname {{ "hub}}" }}.{{ "{{" }} $clusterDomain {{ "}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   desiredState:
-                    {{ "{{hub" }}$configmap.nmstate | base64dec | autoindent {{ "hub}}" }}
-              {{ "{{hub-"}} end {{ "hub}}" }}
-            {{ "{{hub-"}} end {{ "hub}}" }}
+                {{ "{{hub-" }} if (gt (len (keys $hostIfaces)) 0) {{ "hub}}" }}
+                    interfaces:
+                {{ "{{hub-" }} range $ifaceId, $hostOverride := $hostIfaces {{ "hub}}" }}
+                  {{ "{{hub-" }} $topoIface := (index $interfaces $ifaceId | default dict) {{ "hub}}" }}
+                  {{ "{{hub-" }} $ifaceType := (index $topoIface "type" | default "ethernet") {{ "hub}}" }}
+                  {{ "{{hub-" }} $ifaceName := (index $topoIface "name" | default "") {{ "hub}}" }}
+                  {{ "{{hub-" }} $ifaceState := (index $topoIface "state" | default "up") {{ "hub}}" }}
+                  {{ "{{hub-" }} $ifaceMtu := (index $topoIface "mtu" | default "") {{ "hub}}" }}
+                  {{ "{{hub-" }} $ifaceMac := (index $hostOverride "mac" | default (index $topoIface "mac" | default "")) {{ "hub}}" }}
+                  {{ "{{hub-" }} $topoIpv4 := (index $topoIface "ipv4" | default "disabled") {{ "hub}}" }}
+                  {{ "{{hub-" }} $topoIpv6 := (index $topoIface "ipv6" | default "disabled") {{ "hub}}" }}
+                  {{ "{{hub-" }} $hostIpv4 := (index $hostOverride "ipv4" | default dict) {{ "hub}}" }}
+                  {{ "{{hub-" }} $hostIpv4Addrs := (index $hostIpv4 "addresses" | default list) {{ "hub}}" }}
+                  {{ "{{hub-" }} $hostIpv6 := (index $hostOverride "ipv6" | default dict) {{ "hub}}" }}
+                  {{ "{{hub-" }} $hostIpv6Addrs := (index $hostIpv6 "addresses" | default list) {{ "hub}}" }}
+                  {{ "{{hub-" }} $hostPorts := (index $hostOverride "ports" | default list) {{ "hub}}" }}
+                  {{ "{{hub-" }} $ports := $hostPorts {{ "hub}}" }}
+                  {{ "{{hub-" }} if (eq (len $ports) 0) {{ "hub}}" }}
+                    {{ "{{hub-" }} $ports = (index $topoIface "ports" | default list) {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                      - name: {{ "{{hub" }} $ifaceName {{ "hub}}" }}
+                        type: {{ "{{hub" }} $ifaceType {{ "hub}}" }}
+                        state: {{ "{{hub" }} $ifaceState {{ "hub}}" }}
+                  {{ "{{hub-" }} if $ifaceMac {{ "hub}}" }}
+                        identifier: mac-address
+                        mac-address: '{{ "{{hub" }} $ifaceMac {{ "hub}}" }}'
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if $ifaceMtu {{ "hub}}" }}
+                        mtu: {{ "{{hub" }} $ifaceMtu {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if eq $topoIpv4 "static" {{ "hub}}" }}
+                        ipv4:
+                          enabled: true
+                          dhcp: false
+                    {{ "{{hub-" }} if (gt (len $hostIpv4Addrs) 0) {{ "hub}}" }}
+                          address:
+                      {{ "{{hub-" }} range $_, $addr := $hostIpv4Addrs {{ "hub}}" }}
+                            - ip: {{ "{{hub" }} index $addr "ip" {{ "hub}}" }}
+                              prefix-length: {{ "{{hub" }} index $addr "prefixLength" {{ "hub}}" }}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} else if eq $topoIpv4 "dhcp" {{ "hub}}" }}
+                        ipv4:
+                          enabled: true
+                          dhcp: true
+                  {{ "{{hub-" }} else {{ "hub}}" }}
+                        ipv4:
+                          enabled: false
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if eq $topoIpv6 "static" {{ "hub}}" }}
+                        ipv6:
+                          enabled: true
+                          dhcp: false
+                          autoconf: false
+                    {{ "{{hub-" }} if (gt (len $hostIpv6Addrs) 0) {{ "hub}}" }}
+                          address:
+                      {{ "{{hub-" }} range $_, $addr := $hostIpv6Addrs {{ "hub}}" }}
+                            - ip: {{ "{{hub" }} index $addr "ip" {{ "hub}}" }}
+                              prefix-length: {{ "{{hub" }} index $addr "prefixLength" {{ "hub}}" }}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} else if eq $topoIpv6 "dhcp" {{ "hub}}" }}
+                        ipv6:
+                          enabled: true
+                          dhcp: true
+                  {{ "{{hub-" }} else if eq $topoIpv6 "autoconf" {{ "hub}}" }}
+                        ipv6:
+                          enabled: true
+                          autoconf: true
+                  {{ "{{hub-" }} else {{ "hub}}" }}
+                        ipv6:
+                          enabled: false
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if eq $ifaceType "bond" {{ "hub}}" }}
+                    {{ "{{hub-" }} $bondMode := (index $topoIface "mode" | default "802.3ad") {{ "hub}}" }}
+                    {{ "{{hub-" }} $bondMiimon := (index $topoIface "miimon" | default "") {{ "hub}}" }}
+                        link-aggregation:
+                          mode: {{ "{{hub" }} $bondMode {{ "hub}}" }}
+                    {{ "{{hub-" }} if $bondMiimon {{ "hub}}" }}
+                          options:
+                            miimon: {{ "{{hub" }} $bondMiimon {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if (gt (len $ports) 0) {{ "hub}}" }}
+                          port:
+                      {{ "{{hub-" }} range $_, $port := $ports {{ "hub}}" }}
+                            - {{ "{{hub" }} $port {{ "hub}}" }}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if eq $ifaceType "vlan" {{ "hub}}" }}
+                    {{ "{{hub-" }} $vlanId := (index $topoIface "id" | default 0) {{ "hub}}" }}
+                    {{ "{{hub-" }} $vlanBase := (index $topoIface "base" | default "") {{ "hub}}" }}
+                        vlan:
+                          base-iface: {{ "{{hub" }} $vlanBase {{ "hub}}" }}
+                          id: {{ "{{hub" }} $vlanId {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if (gt (len (keys $hostRoutes)) 0) {{ "hub}}" }}
+                    routes:
+                      config:
+                  {{ "{{hub-" }} range $routeId, $route := $hostRoutes {{ "hub}}" }}
+                    {{ "{{hub-" }} $metric := (index $route "metric" | default "") {{ "hub}}" }}
+                    {{ "{{hub-" }} $tableId := (index $route "tableId" | default "") {{ "hub}}" }}
+                        - destination: {{ "{{hub" }} index $route "destination" {{ "hub}}" }}
+                          next-hop-address: {{ "{{hub" }} index $route "gateway" {{ "hub}}" }}
+                          next-hop-interface: {{ "{{hub" }} index $route "interface" {{ "hub}}" }}
+                    {{ "{{hub-" }} if $metric {{ "hub}}" }}
+                          metric: {{ "{{hub" }} $metric {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if $tableId {{ "hub}}" }}
+                          table-id: {{ "{{hub" }} $tableId {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} $hostDnsServers := (index $hostDns "servers" | default list) {{ "hub}}" }}
+                {{ "{{hub-" }} $hostDnsSearch := (index $hostDns "search" | default list) {{ "hub}}" }}
+                {{ "{{hub-" }} if or (gt (len $hostDnsServers) 0) (gt (len $hostDnsSearch) 0) {{ "hub}}" }}
+                    dns-resolver:
+                      config:
+                  {{ "{{hub-" }} if (gt (len $hostDnsServers) 0) {{ "hub}}" }}
+                        server:
+                    {{ "{{hub-" }} range $_, $server := $hostDnsServers {{ "hub}}" }}
+                          - {{ "{{hub" }} $server {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if (gt (len $hostDnsSearch) 0) {{ "hub}}" }}
+                        search:
+                    {{ "{{hub-" }} range $_, $domain := $hostDnsSearch {{ "hub}}" }}
+                          - {{ "{{hub" }} $domain {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

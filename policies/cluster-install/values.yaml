@@ -1,0 +1,111 @@
+# =============================================================================
+# Cluster Install Policy - Provision baremetal clusters via Assisted Installer
+# =============================================================================
+#
+# This policy runs on the hub cluster and creates all resources needed to
+# provision new baremetal clusters using ACM Assisted Installer + SiteConfig.
+#
+# Cluster config is read at runtime from rendered-config ConfigMaps created
+# by the cluster-config-maps policy. The rendered config merges clusterset
+# and per-cluster values. Clusters with createCluster: 'true' in their
+# clusterInstall config are provisioned.
+#
+# Labels (on hub clusterset):
+#   cluster-install: 'true'          - Enable cluster install policy on this hub
+#
+# Config structure (per-cluster):
+#   config:
+#     networking:                         # Reusable by other policies (e.g. nmstate)
+#       clusterNetwork:
+#         cidr: 10.128.0.0/14
+#         hostPrefix: 23
+#       machineNetwork:
+#         cidr: '10.0.0.0/25'
+#       serviceNetwork:
+#         - 172.30.0.0/16
+#     hosts:                              # Reusable by other policies (e.g. nmstate)
+#       hostname1:
+#         bmcIP: '192.168.1.10'
+#         bmcPrefix: 'redfish-virtualmedia'
+#         bmcEndpoint: '/redfish/v1/Systems/1'  # optional, overrides cluster-level
+#         bmcCredentialRef:                       # optional, overrides cluster-level
+#           name: 'custom-cred'
+#           namespace: 'custom-ns'
+#         role: master                            # 'master' (default) or 'worker'
+#         bootMACAddress: '00:00:00:00:00:01'
+#         rootDeviceHints:                        # optional, disk selection hints
+#           deviceName: '/dev/sda'                # by device name
+#           serialNumber: 'abc123'                # by serial number
+#           model: 'PERC H730'                    # by model
+#           vendor: 'Dell'                        # by vendor
+#           wwn: '0x50014...'                     # by WWN
+#           hctl: '1:0:0:0'                       # by SCSI address
+#           rotational: true                      # SSD (false) vs HDD (true)
+#           minSizeGigabytes: 120                 # minimum disk size
+#         IP: '10.0.0.10'
+#         primaryMac: '00:00:00:00:00:02'
+#         interfaces:
+#           - macAddress: '00:00:00:00:00:01'
+#             name: 'eno1'
+#           - macAddress: '00:00:00:00:00:02'
+#             name: 'eno2'
+#     disconnected:                       # Shared with disconnected-mirror policy
+#       mirrorRegistry:
+#         host: 'mirror.example.com:5000'  # registry host:port
+#         path: 'ocp'                     # optional, image path prefix
+#         releaseImage: 'openshift/ocp-release' # optional, defaults to openshift-release-dev/ocp-release
+#         ca: |                           # inline CA bundle
+#           -----BEGIN CERTIFICATE-----
+#           ...
+#         caRef:                          # OR reference a hub ConfigMap
+#           name: 'cluster-ca-bundle'
+#           key: 'ca-bundle.crt'
+#           namespace: 'cluster-install-secrets'
+#         mirrors:                        # source → mirror mappings
+#           - source: quay.io/openshift-release-dev/ocp-release
+#             mirror: openshift/release-images
+#           - source: registry.redhat.io   # no mirror = host/path/source
+#       useIDMS: true                     # IDMS (OCP 4.13+) or ICSP (4.12-)
+#       disableDefaultCatalogs: true
+#       catalogs:                         # CatalogSource name = {source}-{mirror-catalog-suffix label}
+#         - source: redhat-operators      # creates CatalogSource "redhat-operators-mirror"
+#           imagePath: redhat/redhat-operator-index
+#           tag: v4.20
+#           publisher: Red Hat
+#     clusterInstall:                     # Install-specific config
+#       createCluster: 'true'             # Trigger provisioning
+#       baseDomain: example.com
+#       openshiftVersion: '4.19.9'
+#       cpuArch: x86_64                   # default: x86_64
+#       clusterImageSet: ''               # optional, overrides openshiftVersion+cpuArch
+#       openshiftChannel: stable          # ClusterImageSet channel label (default: stable)
+#       controlPlaneAgents: 3             # 1 = SNO
+#       workerAgents: 0                   # default: (len hosts) - controlPlaneAgents
+#       apiVip: '10.0.0.1'               # required for multi-node
+#       ingressVip: '10.0.0.2'           # required for multi-node
+#       mastersSchedulable: false         # default: false (multi-node only)
+#       cpuPartitioning: 'None'          # 'None' (default) or 'AllNodes' — install-time only
+#       pullSecretRef: 'default-pull-secret'
+#       bmcCredentialRef: 'default-bmc-cred'
+#       bmcEndpoint: '/redfish/v1/Systems/1'
+#       sshPublicKey: 'ssh-rsa ...'             # inline value
+#       sshPublicKeyRef:                        # OR reference a ConfigMap
+#         name: 'cluster-ssh-keys'
+#         key: 'ssh-public-key'
+#         namespace: 'cluster-install-secrets'  # optional, defaults to policy namespace
+#       secretSourceNamespace: 'cluster-install-secrets'
+#       ntpSources:
+#         - 10.0.0.1
+#       klusterletAddons:
+#         - applicationManager
+#         - certPolicyController
+#         - policyController
+
+# Standard autoshift values (injected by ApplicationSet)
+policy_namespace: open-cluster-policies
+selfManagedHubSet: hub
+autoshift:
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  dryRun: false

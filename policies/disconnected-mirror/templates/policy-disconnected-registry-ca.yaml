@@ -1,11 +1,12 @@
-# Policy to disable default OperatorHub catalogs in disconnected environments
-# Reads config from rendered-config ConfigMaps via hub template lookup
-# Activated when disconnected.disableDefaultCatalogs is true in rendered config
+# Policy to configure registry CA trust on managed clusters
+# Creates a ConfigMap in openshift-config with the mirror registry CA
+# and patches image.config.openshift.io/cluster to reference it
+# Reads CA from rendered-config ConfigMaps via hub template lookup
 {{- $policyNamespace := $.Values.policy_namespace }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-disconnected-disable-default-catalogs
+  name: policy-disconnected-registry-ca
   namespace: {{ $policyNamespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -23,7 +24,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: disconnected-disable-operatorhub-sources
+          name: disconnected-registry-ca-bundle
         spec:
           remediationAction: enforce
           severity: high
@@ -35,21 +36,43 @@ spec:
             {{ "{{hub" }} $config := (index $cm "data" | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $configYaml := (index $config "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $disconnected := (index $configYaml "disconnected" | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} if eq (index $disconnected "disableDefaultCatalogs" | default false) true {{ "hub}}" }}
+            {{ "{{hub" }} $mirror := (index $disconnected "mirrorRegistry" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $mirrorHost := (index $mirror "host") {{ "hub}}" }}
+            {{ "{{hub" }} $ca := (index $mirror "ca" | default "") {{ "hub}}" }}
+            {{ "{{hub" }} $caRef := (index $mirror "caRef" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} if not (empty $caRef) {{ "hub}}" }}
+            {{ "{{hub" }} $refNs := (index $caRef "namespace" | default "{{ $policyNamespace }}") {{ "hub}}" }}
+            {{ "{{hub" }} $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict {{ "hub}}" }}
+            {{ "{{hub" }} $refData := (index $refCM "data" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $ca = (index $refData (index $caRef "key") | default $ca) {{ "hub}}" }}
+            {{ "{{hub" }} end {{ "hub}}" }}
+            {{ "{{hub" }} if and (gt (len $mirrorHost) 0) (gt (len $ca) 0) {{ "hub}}" }}
+            {{ "{{hub" }} $registryKey := (replace ":" ".." $mirrorHost) {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: autoshift-registry-ca
+                  namespace: openshift-config
+                data:
+                  {{ "{{hub" }} $registryKey {{ "hub}}" }}: |
+                    {{ "{{hub" }} $ca | autoindent {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: config.openshift.io/v1
-                kind: OperatorHub
+                kind: Image
                 metadata:
                   name: cluster
                 spec:
-                  disableAllDefaultSources: true
+                  additionalTrustedCA:
+                    name: autoshift-registry-ca
             {{ "{{hub" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-disconnected-disable-default-catalogs
+  name: placement-policy-disconnected-registry-ca
   namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
@@ -76,13 +99,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-disconnected-disable-default-catalogs
+  name: placement-policy-disconnected-registry-ca
   namespace: {{ $policyNamespace }}
 placementRef:
-  name: placement-policy-disconnected-disable-default-catalogs
+  name: placement-policy-disconnected-registry-ca
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-disconnected-disable-default-catalogs
+  - name: policy-disconnected-registry-ca
     apiGroup: policy.open-cluster-management.io
     kind: Policy
