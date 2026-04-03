@@ -158,6 +158,30 @@ spec:
                   tls:
                     termination: edge
                     insecureEdgeTerminationPolicy: Redirect
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: jfrog-instance-ready
+        spec:
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $primary := (lookup "apps/v1" "StatefulSet" "{{ .Values.jfrog.namespace }}" "openshiftartifactoryha-artifactory-ha-primary") | default dict {{ "}}" }}
+            {{ "{{-" }} $primarySpec := (index $primary "spec" | default dict) {{ "}}" }}
+            {{ "{{-" }} $primaryReplicas := (index $primarySpec "replicas" | default 1 | toInt) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps/v1
+                kind: StatefulSet
+                metadata:
+                  name: openshiftartifactoryha-artifactory-ha-primary
+                  namespace: {{ .Values.jfrog.namespace }}
+                status:
+                  readyReplicas: {{ "{{" }} $primaryReplicas {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
