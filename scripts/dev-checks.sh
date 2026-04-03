@@ -91,9 +91,9 @@ else
 fi
 
 # Check a sample of policy charts
-POLICY_COUNT=$(find policies -maxdepth 2 -name Chart.yaml | wc -l | tr -d ' ')
+POLICY_COUNT=$(find policies -maxdepth 3 -name Chart.yaml | wc -l | tr -d ' ')
 POLICY_FAILED=0
-for chart in policies/*/; do
+for chart in policies/*/ policies/certified/*/ policies/community/*/; do
     if [[ -f "$chart/Chart.yaml" ]]; then
         if ! helm lint "$chart" --quiet 2>/dev/null; then
             error "$chart failed lint"

@@ -163,7 +163,14 @@ fi
 
 # Set derived values
 NAMESPACE="$TARGET_NAMESPACE"  # Use required TARGET_NAMESPACE
-POLICY_DIR="policies/${COMPONENT_NAME}"
+
+# Place policy in subdirectory based on catalog source
+case "$SOURCE" in
+    certified-operators) POLICY_SUBDIR="policies/certified" ;;
+    community-operators) POLICY_SUBDIR="policies/community" ;;
+    *)                   POLICY_SUBDIR="policies" ;;
+esac
+POLICY_DIR="${POLICY_SUBDIR}/${COMPONENT_NAME}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATE_DIR="$SCRIPT_DIR/templates"

@@ -338,8 +338,8 @@ build_operator_mappings() {
             # Default to redhat-operators if not specified
             [[ -z "$source" ]] && source="redhat-operators"
 
-            # Find policy directory by searching for name: {package} in policies/*/values.yaml
-            for policy_values in "$PROJECT_ROOT"/policies/*/values.yaml; do
+            # Find policy directory by searching for name: {package} in policies values files
+            for policy_values in "$PROJECT_ROOT"/policies/*/values.yaml "$PROJECT_ROOT"/policies/certified/*/values.yaml "$PROJECT_ROOT"/policies/community/*/values.yaml; do
                 [[ -f "$policy_values" ]] || continue
                 if grep -qE "^[[:space:]]+name:[[:space:]]*['\"]?${package}['\"]?" "$policy_values" 2>/dev/null; then
                     policy_dir=$(dirname "$policy_values")
