@@ -1,264 +1,96 @@
-# jfrog AutoShift Policy
+# JFrog Artifactory HA Policy
 
-## Overview
-This policy installs the openshiftartifactoryha-operator operator using AutoShift patterns.
+Deploys JFrog Artifactory HA with CloudNativePG PostgreSQL and PgBouncer connection pooling.
 
-## Status
-✅ **Operator Installation**: Ready to deploy  
-🔧 **Configuration**: Requires operator-specific setup (see below)
+## Prerequisites
 
-## Quick Deploy
+### Required Operators
 
-### Test Locally
+| Operator | Label | Catalog |
+|----------|-------|---------|
+| JFrog Artifactory | `jfrog: 'true'` | certified-operators |
+| CloudNativePG | `cloudnative-pg: 'true'` | certified-operators |
+
+### Required Secrets
+
+The following secret must be created manually on each target cluster before Artifactory will deploy. The `policy-jfrog-keys` policy checks for this secret (inform-only) and the instance policy gates on it.
+
 ```bash
-# Validate policy renders correctly
-helm template policies/jfrog/
+# Generate random keys
+MASTER_KEY=$(openssl rand -hex 32)
+JOIN_KEY=$(openssl rand -hex 32)
+
+oc create namespace jfrog-system
+oc create secret generic artifactory-keys \
+  -n jfrog-system \
+  --from-literal=master-key="$MASTER_KEY" \
+  --from-literal=join-key="$JOIN_KEY"
 ```
 
-### Enable on Clusters
-Edit AutoShift values files to add the operator labels:
+### Optional Secrets
 
-```yaml
-# In autoshift/values/clustersets/hub.yaml (or other clusterset files)
-hubClusterSets:
-  hub:
-    labels:
-      jfrog: 'true'
-      jfrog-subscription-name: 'openshiftartifactoryha-operator'
-      jfrog-channel: 'stable'
-      jfrog-source: 'certified-operators'
-      jfrog-source-namespace: 'openshift-marketplace'
-      # jfrog-version: 'openshiftartifactoryha-operator.v1.x.x'  # Optional: pin to specific CSV version
-
-managedClusterSets:
-  managed:
-    labels:
-      jfrog: 'true'
-      jfrog-subscription-name: 'openshiftartifactoryha-operator'
-      jfrog-channel: 'stable'
-      jfrog-source: 'certified-operators'
-      jfrog-source-namespace: 'openshift-marketplace'
-      # jfrog-version: 'openshiftartifactoryha-operator.v1.x.x'  # Optional: pin to specific CSV version
-
-# For specific clusters (optional override)
-clusters:
-  my-cluster:
-    labels:
-      jfrog: 'true'
-      jfrog-channel: 'fast'  # Override channel for this cluster
-```
-
-Labels are defined in values files only — never directly on managed clusters. The cluster-labels policy handles propagating these labels from the values files to managed clusters.
-
-### AutoShift Policy Discovery
-New policies are automatically discovered by the ApplicationSet. In Git mode, the ApplicationSet uses a `policies/*` wildcard to pick up all subdirectories. No manual registration is required — simply adding your policy folder under `policies/` is sufficient.
-
-## Configuration
-
-### Namespace Scope
-This operator is configured as:
-- **Cluster-scoped**: Manages resources across all namespaces (default)
-- **Namespace-scoped**: Limited to specific target namespaces (if `targetNamespaces` enabled in values.yaml)
-
-To change scope, edit `values.yaml` and uncomment/configure the `targetNamespaces` field.
-
-### Version Control
-This policy supports AutoShift's operator version control system:
-
-- **Automatic Upgrades**: By default, the operator follows automatic upgrade paths within its channel
-- **Version Pinning**: Add `jfrog-version` label to pin to a specific CSV version
-- **Manual Control**: Pinned versions require manual updates to upgrade
-
-To pin to a specific version, set the version label in your clusterset or per-cluster values file:
-```yaml
-jfrog-version: 'openshiftartifactoryha-operator.v1.x.x'
-```
-
-Find available CSV versions:
 ```bash
-# List available versions for this operator
-oc get packagemanifests openshiftartifactoryha-operator -o jsonpath='{.status.channels[*].currentCSV}'
+# JFrog license (optional - Artifactory runs without it, just limited)
+oc create secret generic artifactory-license \
+  -n jfrog-system \
+  --from-literal=license-key="<your-license-key>"
+
+# Admin password (optional - defaults to 'password')
+oc create secret generic artifactory-admin \
+  -n jfrog-system \
+  --from-literal=password="<your-password>"
 ```
 
-## Next Steps: Configuration
+## Policy Chain
 
-### 1. Explore Installed CRDs
-After operator installation, check what Custom Resources are available:
-```bash
-# Wait for operator to install
-oc get pods -n jfrog-system
-
-# Check available CRDs
-oc get crds | grep jfrog
-
-# Explore CRD specifications
-oc explain <CustomResourceName>
+```
+cloudnative-pg-operator-install
+jfrog-operator-install
+├── jfrog-keys (inform - verifies artifactory-keys secret exists)
+├── cnpg-artifactory (creates HA PostgreSQL cluster)
+│   ├── cnpg-artifactory-ready (inform - checks DB health)
+│   └── cnpg-artifactory-pooler (creates PgBouncer RW + RO)
+└── jfrog-instance (waits for DB + pooler + keys, then deploys)
+    └── jfrog-instance-ready (inform - checks StatefulSet health)
 ```
 
-### 2. Create Configuration Policies
-Add operator-specific configuration policies to `templates/` directory.
-
-#### Common Patterns:
-- `policy-jfrog-config.yaml` - Main configuration
-- `policy-jfrog-<feature>.yaml` - Feature-specific configs
-
-#### Template Structure:
-```yaml
-{{- $policyName := "policy-jfrog-config" }}
-{{- $placementName := "placement-policy-jfrog-config" }}
-
-apiVersion: policy.open-cluster-management.io/v1
-kind: Policy
-metadata:
-  name: {{ $policyName }}
-  namespace: {{ .Values.policy_namespace }}
-  annotations:
-    policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CM Configuration Management
-    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
-spec:
-  disabled: false
-  dependencies:
-    - name: policy-jfrog-operator-install
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-  policy-templates:
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: jfrog-config
-        spec:
-          remediationAction: enforce
-          severity: high
-          evaluationInterval:
-            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: # Your operator's API version
-                kind: # Your operator's Custom Resource
-                metadata:
-                  name: jfrog-config
-                  namespace: {{ .Values.jfrog.namespace }}
-                spec:
-                  # Your operator-specific configuration
-                  # Use dynamic labels when needed:
-                  # setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/jfrog-setting" | default "default-value" {{ "hub}}" }}'
-          pruneObjectBehavior: None
----
-# Use same placement as operator install or create specific targeting
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/jfrog'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-placementRef:
-  name: {{ $placementName }}
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: {{ $policyName }}
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
-```
-
-### 3. Reference Examples
-**Study similar complexity policies:**
-- **Simple**: `policies/openshift-gitops/` - Basic operator + ArgoCD config
-- **Medium**: `policies/advanced-cluster-security/` - Multiple related policies
-- **Complex**: `policies/metallb/` - Multiple configuration types (L2, BGP, etc.)
-- **Advanced**: `policies/openshift-data-foundation/` - Storage cluster configuration
-
-### 4. AutoShift Labels
-Add configuration labels to `values.yaml` and use in templates:
+## Labels
 
 ```yaml
-# Add to values.yaml AutoShift Labels Documentation:
-# jfrog-setting<string>: Configuration option (default: 'value')
-# jfrog-feature-enabled<bool>: Enable optional feature (default: 'false')
-# jfrog-provider<string>: Provider-specific config (default: 'generic')
+# Required
+jfrog: 'true'
+jfrog-subscription-name: openshiftartifactoryha-operator
+jfrog-channel: alpha
+jfrog-source: certified-operators
+jfrog-source-namespace: openshift-marketplace
+cloudnative-pg: 'true'
 
-# Use in templates:
-setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/jfrog-setting" | default "default-value" {{ "hub}}" }}'
-```
+# Sizing
+jfrog-node-replicas: '1'          # Artifactory member node replicas
+cnpg-instances: '2'               # PostgreSQL instances
+cnpg-pooler-instances: '2'        # PgBouncer instances per pooler
 
-## Common Patterns
-
-### CSV Status Checking (Optional)
-For operators that need installation verification:
-```yaml
-- objectDefinition:
-    apiVersion: policy.open-cluster-management.io/v1
-    kind: ConfigurationPolicy
-    metadata:
-      name: jfrog-csv-status
-    spec:
-      remediationAction: inform
-      severity: high
-      evaluationInterval:
-        compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-        noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-      object-templates:
-        - complianceType: musthave
-          objectDefinition:
-            apiVersion: operators.coreos.com/v1alpha1
-            kind: ClusterServiceVersion
-            metadata:
-              namespace: {{ .Values.jfrog.namespace }}
-            status:
-              phase: Succeeded
+# Backups (requires odf: 'true')
+artifactory-db-backups: 'true'
+# artifactory-db-backup-retention: '30d'
+# artifactory-db-backup-schedule: '0 3 * * *'
 ```
 
 ## Troubleshooting
 
-### Policy Not Applied
-1. Check cluster labels: `oc get managedcluster <cluster> --show-labels`
-2. Verify placement: `oc get placement -n open-cluster-policies`
-3. Check policy status: `oc describe policy policy-jfrog-operator-install`
+```bash
+# Check policy status
+oc get policy -A | grep jfrog
 
-### Operator Installation Issues
-1. Check subscription: `oc get subscription -n jfrog-system`
-2. Check install plan: `oc get installplan -n jfrog-system`
-3. Verify operator source exists: `oc get catalogsource -n openshift-marketplace`
+# Check Artifactory pods
+oc get pods -n jfrog-system
 
-### Template Rendering Issues
-1. Test locally: `helm template policies/jfrog/`
-2. Check hub escaping: Look for `{{ "{{hub" }} ... {{ "hub}}" }}` patterns
-3. Validate YAML: `helm lint policies/jfrog/`
+# Check CNPG cluster health
+oc get cluster.postgresql.cnpg.io -n jfrog-system
 
-## Resources
-- [Operator Documentation](https://operatorhub.io/operator/openshiftartifactoryha-operator) - Find your operator details
-- [AutoShift Developer Guide](../../docs/developer-guide.md) - Comprehensive policy development guide
-- [ACM Policy Documentation](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes) - Policy syntax reference in Governence Section
-- [Similar Policies](../) - Browse other policies for patterns and examples
+# Check if keys secret exists
+oc get secret artifactory-keys -n jfrog-system
+
+# Check Artifactory CR
+oc get openshiftartifactoryha -n jfrog-system -o yaml
+```

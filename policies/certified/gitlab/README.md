@@ -1,264 +1,162 @@
-# gitlab AutoShift Policy
+# GitLab Policy
 
-## Overview
-This policy installs the gitlab-operator-kubernetes operator using AutoShift patterns.
+Deploys GitLab on OpenShift with configurable backends for PostgreSQL, Redis, and object storage.
 
-## Status
-✅ **Operator Installation**: Ready to deploy  
-🔧 **Configuration**: Requires operator-specific setup (see below)
+## Prerequisites
 
-## Quick Deploy
+### Required Operators
 
-### Test Locally
+| Operator | Label | Catalog | Required When |
+|----------|-------|---------|---------------|
+| GitLab | `gitlab: 'true'` | certified-operators | Always |
+| CloudNativePG | `cloudnative-pg: 'true'` | certified-operators | db-mode: managed |
+| OpenShift Data Foundation | `odf: 'true'` | redhat-operators | object-storage-mode: managed |
+
+> **Note:** Cert-manager is not required when using edge-terminated routes (the default). OpenShift's router handles TLS termination. GitLab's `installCertmanager` is set to `false`.
+
+### Secrets for External Mode
+
+When using `external` mode for any service, create the corresponding secret on the target cluster before enabling.
+
+**External PostgreSQL:**
 ```bash
-# Validate policy renders correctly
-helm template policies/gitlab/
+oc create namespace gitlab-system
+oc create secret generic gitlab-db-app \
+  -n gitlab-system \
+  --from-literal=host="my-postgres.example.com" \
+  --from-literal=port="5432" \
+  --from-literal=username="gitlab" \
+  --from-literal=password="<password>" \
+  --from-literal=dbname="gitlabhq_production"
 ```
 
-### Enable on Clusters
-Edit AutoShift values files to add the operator labels:
-
-```yaml
-# In autoshift/values/clustersets/hub.yaml (or other clusterset files)
-hubClusterSets:
-  hub:
-    labels:
-      gitlab: 'true'
-      gitlab-subscription-name: 'gitlab-operator-kubernetes'
-      gitlab-channel: 'stable'
-      gitlab-source: 'certified-operators'
-      gitlab-source-namespace: 'openshift-marketplace'
-      # gitlab-version: 'gitlab-operator-kubernetes.v1.x.x'  # Optional: pin to specific CSV version
-
-managedClusterSets:
-  managed:
-    labels:
-      gitlab: 'true'
-      gitlab-subscription-name: 'gitlab-operator-kubernetes'
-      gitlab-channel: 'stable'
-      gitlab-source: 'certified-operators'
-      gitlab-source-namespace: 'openshift-marketplace'
-      # gitlab-version: 'gitlab-operator-kubernetes.v1.x.x'  # Optional: pin to specific CSV version
-
-# For specific clusters (optional override)
-clusters:
-  my-cluster:
-    labels:
-      gitlab: 'true'
-      gitlab-channel: 'fast'  # Override channel for this cluster
-```
-
-Labels are defined in values files only — never directly on managed clusters. The cluster-labels policy handles propagating these labels from the values files to managed clusters.
-
-### AutoShift Policy Discovery
-New policies are automatically discovered by the ApplicationSet. In Git mode, the ApplicationSet uses a `policies/*` wildcard to pick up all subdirectories. No manual registration is required — simply adding your policy folder under `policies/` is sufficient.
-
-## Configuration
-
-### Namespace Scope
-This operator is configured as:
-- **Cluster-scoped**: Manages resources across all namespaces (default)
-- **Namespace-scoped**: Limited to specific target namespaces (if `targetNamespaces` enabled in values.yaml)
-
-To change scope, edit `values.yaml` and uncomment/configure the `targetNamespaces` field.
-
-### Version Control
-This policy supports AutoShift's operator version control system:
-
-- **Automatic Upgrades**: By default, the operator follows automatic upgrade paths within its channel
-- **Version Pinning**: Add `gitlab-version` label to pin to a specific CSV version
-- **Manual Control**: Pinned versions require manual updates to upgrade
-
-To pin to a specific version, set the version label in your clusterset or per-cluster values file:
-```yaml
-gitlab-version: 'gitlab-operator-kubernetes.v1.x.x'
-```
-
-Find available CSV versions:
+**External Redis:**
 ```bash
-# List available versions for this operator
-oc get packagemanifests gitlab-operator-kubernetes -o jsonpath='{.status.channels[*].currentCSV}'
+oc create secret generic gitlab-redis-password \
+  -n gitlab-system \
+  --from-literal=redis-password="<password>"
 ```
 
-## Next Steps: Configuration
+Set the host via label: `gitlab-redis-host: 'my-redis.example.com'`
 
-### 1. Explore Installed CRDs
-After operator installation, check what Custom Resources are available:
+**External Object Storage:**
 ```bash
-# Wait for operator to install
-oc get pods -n gitlab-system
+oc create secret generic gitlab-object-storage-connection \
+  -n gitlab-system \
+  --from-literal=connection="$(cat <<'EOF'
+provider: AWS
+region: us-east-1
+aws_access_key_id: <key>
+aws_secret_access_key: <secret>
+aws_signature_version: 4
+host: s3.example.com
+endpoint: https://s3.example.com
+path_style: true
+EOF
+)"
 
-# Check available CRDs
-oc get crds | grep gitlab
-
-# Explore CRD specifications
-oc explain <CustomResourceName>
+# Also create a ConfigMap with the bucket name
+oc create configmap gitlab-objectstorage \
+  -n gitlab-system \
+  --from-literal=BUCKET_NAME="my-gitlab-bucket"
 ```
 
-### 2. Create Configuration Policies
-Add operator-specific configuration policies to `templates/` directory.
+## Service Modes
 
-#### Common Patterns:
-- `policy-gitlab-config.yaml` - Main configuration
-- `policy-gitlab-<feature>.yaml` - Feature-specific configs
+Each backend defaults to `managed`. Override per-cluster via labels.
 
-#### Template Structure:
-```yaml
-{{- $policyName := "policy-gitlab-config" }}
-{{- $placementName := "placement-policy-gitlab-config" }}
+| Label | Values | Default | Description |
+|-------|--------|---------|-------------|
+| `gitlab-db-mode` | managed / external / bundled | managed | PostgreSQL backend |
+| `gitlab-redis-mode` | managed / external / bundled | managed | Redis backend |
+| `gitlab-object-storage-mode` | managed / external / bundled | managed | Object storage backend |
 
-apiVersion: policy.open-cluster-management.io/v1
-kind: Policy
-metadata:
-  name: {{ $policyName }}
-  namespace: {{ .Values.policy_namespace }}
-  annotations:
-    policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CM Configuration Management
-    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
-spec:
-  disabled: false
-  dependencies:
-    - name: policy-gitlab-operator-install
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-  policy-templates:
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: gitlab-config
-        spec:
-          remediationAction: enforce
-          severity: high
-          evaluationInterval:
-            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: # Your operator's API version
-                kind: # Your operator's Custom Resource
-                metadata:
-                  name: gitlab-config
-                  namespace: {{ .Values.gitlab.namespace }}
-                spec:
-                  # Your operator-specific configuration
-                  # Use dynamic labels when needed:
-                  # setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-setting" | default "default-value" {{ "hub}}" }}'
-          pruneObjectBehavior: None
----
-# Use same placement as operator install or create specific targeting
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/gitlab'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-placementRef:
-  name: {{ $placementName }}
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: {{ $policyName }}
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
+| Mode | Behavior |
+|------|----------|
+| **managed** | AutoShift deploys CNPG/Redis Sentinel/NooBaa (requires their operators) |
+| **external** | User provides connection secrets (see above) |
+| **bundled** | GitLab's built-in components (not recommended for production) |
+
+If `managed` is set but the required operator isn't enabled, GitLab falls back to bundled automatically.
+
+## Policy Chain
+
+```
+gitlab-operator-install + cert-manager-operator-install
+├── gitlab-redis (managed mode: Redis Sentinel HA, 3+3 pods)
+├── cnpg-gitlab (managed mode: HA PostgreSQL)
+│   └── cnpg-gitlab-pooler (PgBouncer RW + RO)
+├── gitlab-object-storage (managed mode: NooBaa OBC)
+└── gitlab-instance (configures GitLab CR based on mode labels)
+    └── gitlab-instance-ready (inform - checks GitLab phase: Running)
 ```
 
-### 3. Reference Examples
-**Study similar complexity policies:**
-- **Simple**: `policies/openshift-gitops/` - Basic operator + ArgoCD config
-- **Medium**: `policies/advanced-cluster-security/` - Multiple related policies
-- **Complex**: `policies/metallb/` - Multiple configuration types (L2, BGP, etc.)
-- **Advanced**: `policies/openshift-data-foundation/` - Storage cluster configuration
-
-### 4. AutoShift Labels
-Add configuration labels to `values.yaml` and use in templates:
+## Labels
 
 ```yaml
-# Add to values.yaml AutoShift Labels Documentation:
-# gitlab-setting<string>: Configuration option (default: 'value')
-# gitlab-feature-enabled<bool>: Enable optional feature (default: 'false')
-# gitlab-provider<string>: Provider-specific config (default: 'generic')
+# Required
+gitlab: 'true'
+gitlab-subscription-name: gitlab-operator-kubernetes
+gitlab-channel: stable
+gitlab-source: certified-operators
+gitlab-source-namespace: openshift-marketplace
 
-# Use in templates:
-setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-setting" | default "default-value" {{ "hub}}" }}'
+# Service modes (default: managed)
+# gitlab-db-mode: 'managed'
+# gitlab-redis-mode: 'managed'
+# gitlab-object-storage-mode: 'managed'
+
+# External mode overrides
+# gitlab-db-host: 'my-postgres.example.com'
+# gitlab-redis-host: 'my-redis.example.com'
+# gitlab-redis-port: '6379'
+
+# GitLab chart version
+# gitlab-chart-version: '9.10.1'
+
+# Database backups (requires managed db mode + odf)
+# gitlab-db-backups: 'true'
+# gitlab-db-backup-retention: '30d'
+# gitlab-db-backup-schedule: '0 2 * * *'
 ```
 
-## Common Patterns
+## Managed Mode Details
 
-### CSV Status Checking (Optional)
-For operators that need installation verification:
-```yaml
-- objectDefinition:
-    apiVersion: policy.open-cluster-management.io/v1
-    kind: ConfigurationPolicy
-    metadata:
-      name: gitlab-csv-status
-    spec:
-      remediationAction: inform
-      severity: high
-      evaluationInterval:
-        compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-        noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-      object-templates:
-        - complianceType: musthave
-          objectDefinition:
-            apiVersion: operators.coreos.com/v1alpha1
-            kind: ClusterServiceVersion
-            metadata:
-              namespace: {{ .Values.gitlab.namespace }}
-            status:
-              phase: Succeeded
-```
+### Redis Sentinel HA
+- 3 Redis pods (1 master + 2 replicas) with AOF persistence
+- 3 Sentinel pods for automatic failover
+- Uses `rhel9/redis-7` image from the OpenShift GitOps operator (already mirrored for disconnected)
+
+### CloudNativePG PostgreSQL
+- HA cluster with configurable instance count (`cnpg-instances` label)
+- PgBouncer connection pooling (RW + RO)
+- TLS enabled by default (auto-generated certificates)
+- Optional scheduled backups to NooBaa S3
+
+### NooBaa Object Storage
+- Auto-provisions ObjectBucketClaim
+- Injects OpenShift service CA for TLS trust
+- Single bucket with per-feature prefixes
 
 ## Troubleshooting
 
-### Policy Not Applied
-1. Check cluster labels: `oc get managedcluster <cluster> --show-labels`
-2. Verify placement: `oc get placement -n open-cluster-policies`
-3. Check policy status: `oc describe policy policy-gitlab-operator-install`
+```bash
+# Check all GitLab policies
+oc get policy -A | grep gitlab
 
-### Operator Installation Issues
-1. Check subscription: `oc get subscription -n gitlab-system`
-2. Check install plan: `oc get installplan -n gitlab-system`
-3. Verify operator source exists: `oc get catalogsource -n openshift-marketplace`
+# Check GitLab CR status
+oc get gitlab gitlab -n gitlab-system -o jsonpath='{.status}'
 
-### Template Rendering Issues
-1. Test locally: `helm template policies/gitlab/`
-2. Check hub escaping: Look for `{{ "{{hub" }} ... {{ "hub}}" }}` patterns
-3. Validate YAML: `helm lint policies/gitlab/`
+# Check pod health
+oc get pods -n gitlab-system
 
-## Resources
-- [Operator Documentation](https://operatorhub.io/operator/gitlab-operator-kubernetes) - Find your operator details
-- [AutoShift Developer Guide](../../docs/developer-guide.md) - Comprehensive policy development guide
-- [ACM Policy Documentation](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes) - Policy syntax reference in Governence Section
-- [Similar Policies](../) - Browse other policies for patterns and examples
+# Check CNPG cluster
+oc get cluster.postgresql.cnpg.io -n gitlab-system
+
+# Check Redis Sentinel
+oc exec -n gitlab-system gitlab-redis-sentinel-0 -- redis-cli -p 26379 sentinel masters
+
+# Force policy re-evaluation
+oc annotate policy <name> -n policies-autoshift \
+  policy.open-cluster-management.io/trigger-update="$(date +%s)" --overwrite
+```
