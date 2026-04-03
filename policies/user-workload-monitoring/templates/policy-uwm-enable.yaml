@@ -27,12 +27,15 @@ spec:
         metadata:
           name: uwm-enable
         spec:
-          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          remediationAction: enforce
           severity: high
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
+          object-templates-raw: |
+            {{`{{`}} $cm := (lookup "v1" "ConfigMap" "openshift-monitoring" "cluster-monitoring-config") | default dict {{`}}`}}
+            {{`{{`}} $existingConfig := (index ($cm.data | default dict) "config.yaml" | default "" | fromYaml) | default dict {{`}}`}}
+            {{`{{`}} $_ := set $existingConfig "enableUserWorkload" true {{`}}`}}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -42,7 +45,7 @@ spec:
                   namespace: openshift-monitoring
                 data:
                   config.yaml: |
-                    enableUserWorkload: true
+                    {{`{{`}} $existingConfig | toYaml | autoindent {{`}}`}}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -56,9 +59,11 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{`{{`}} $prom := (lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "prometheus-user-workload") | default dict {{`}}`}}
-            {{`{{`}} $promReplicas := (index $prom "spec" "replicas" | default 1 | toInt) {{`}}`}}
+            {{`{{`}} $promSpec := (index $prom "spec" | default dict) {{`}}`}}
+            {{`{{`}} $promReplicas := (index $promSpec "replicas" | default 1 | toInt) {{`}}`}}
             {{`{{`}} $thanos := (lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "thanos-ruler-user-workload") | default dict {{`}}`}}
-            {{`{{`}} $thanosReplicas := (index $thanos "spec" "replicas" | default 1 | toInt) {{`}}`}}
+            {{`{{`}} $thanosSpec := (index $thanos "spec" | default dict) {{`}}`}}
+            {{`{{`}} $thanosReplicas := (index $thanosSpec "replicas" | default 1 | toInt) {{`}}`}}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: apps/v1
