@@ -36,12 +36,26 @@ gitlab:
 # gitlab-source-namespace<string>: Catalog namespace (default: 'openshift-marketplace')
 # gitlab-chart-version<string>: GitLab Helm chart version used by the operator (default: '9.10.1')
 #
-# External Services (all default to 'false' — uses bundled components):
-# gitlab-external-db<bool>: Use CloudNativePG instead of bundled PostgreSQL (requires cloudnative-pg: 'true')
-# gitlab-external-redis<bool>: Use Redis Sentinel HA instead of bundled Bitnami Redis (image from GitOps operator)
-# gitlab-external-object-storage<bool>: Use NooBaa/ODF instead of bundled MinIO (requires odf: 'true')
+# Service Modes (managed, external, or bundled — default: managed):
+# gitlab-db-mode<string>: PostgreSQL backend
+#   managed  — deploys CloudNativePG HA cluster + PgBouncer (requires cloudnative-pg: 'true')
+#   external — user provides 'gitlab-db-app' secret with host, port, username, password
+#   bundled  — uses GitLab's built-in PostgreSQL (not recommended for production)
+# gitlab-redis-mode<string>: Redis backend
+#   managed  — deploys Redis Sentinel HA using rhel9/redis-7 from GitOps operator (requires gitops)
+#   external — user provides 'gitlab-redis-password' secret and sets gitlab-redis-host label
+#   bundled  — uses GitLab's bundled Bitnami Redis (requires docker.io images for disconnected)
+# gitlab-object-storage-mode<string>: Object storage backend
+#   managed  — provisions NooBaa ObjectBucketClaim (requires odf: 'true')
+#   external — user provides 'gitlab-object-storage-connection' and 'gitlab-objectstorage' ConfigMap
+#   bundled  — uses GitLab's built-in MinIO (not recommended for production)
 #
-# Database Backups (requires gitlab-external-db and odf):
+# External mode labels (only used when mode is 'external'):
+# gitlab-db-host<string>: Custom PostgreSQL host (default: gitlab-db-pooler-rw.<namespace>.svc)
+# gitlab-redis-host<string>: Custom Redis host (default: gitlab-redis)
+# gitlab-redis-port<string>: Custom Redis port (default: 6379)
+#
+# Database Backups (requires managed db mode and odf):
 # gitlab-db-backups<bool>: Enable scheduled CNPG backups to NooBaa
 # gitlab-db-backup-retention<string>: Backup retention period (default: '30d')
 # gitlab-db-backup-schedule<string>: Cron schedule for base backups (default: '0 2 * * *')
@@ -50,13 +64,8 @@ gitlab:
 # autoshift.io/gitlab: 'true'
 # autoshift.io/gitlab-subscription-name: 'gitlab-operator-kubernetes'
 # autoshift.io/gitlab-channel: 'stable'
-# autoshift.io/gitlab-version: 'gitlab-operator-kubernetes.v2.10.1'
 # autoshift.io/gitlab-chart-version: '9.10.1'
-# autoshift.io/gitlab-source: 'certified-operators'
-# autoshift.io/gitlab-source-namespace: 'openshift-marketplace'
-# autoshift.io/gitlab-external-db: 'true'
-# autoshift.io/gitlab-external-redis: 'true'
-# autoshift.io/gitlab-external-object-storage: 'true'
+# autoshift.io/gitlab-db-mode: 'managed'
+# autoshift.io/gitlab-redis-mode: 'managed'
+# autoshift.io/gitlab-object-storage-mode: 'managed'
 # autoshift.io/gitlab-db-backups: 'true'
-# autoshift.io/gitlab-db-backup-retention: '30d'
-# autoshift.io/gitlab-db-backup-schedule: '0 2 * * *'

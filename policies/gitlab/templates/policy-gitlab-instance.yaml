@@ -43,39 +43,44 @@ spec:
             {{ "{{-" }} $chartVersion := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-chart-version" | default "{{ .Values.gitlab.chartVersion | default "9.10.1" }}" {{ "hub}}" }}" {{ "}}" }}
             {{ "{{-" }} $ns := "{{ .Values.gitlab.namespace }}" {{ "}}" }}
 
-            # Feature flags from cluster labels
-            {{ "{{-" }} $externalDB := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-external-db" | default "false" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{-" }} $externalRedis := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-external-redis" | default "false" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{-" }} $externalObjStore := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-external-object-storage" | default "false" {{ "hub}}" }}" {{ "}}" }}
+            # Service modes: managed (default), external, or bundled
+            {{ "{{-" }} $dbMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $redisMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-redis-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $objStoreMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-object-storage-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
 
-            # External DB: read CNPG pooler credentials if enabled
+            # Check if non-bundled services are ready by looking for their connection secrets
+            # For managed mode: CNPG/Redis/NooBaa policies create these secrets
+            # For external mode: user creates these secrets manually
             {{ "{{-" }} $dbReady := true {{ "}}" }}
             {{ "{{-" }} $dbHost := "" {{ "}}" }}
             {{ "{{-" }} $dbPort := "" {{ "}}" }}
             {{ "{{-" }} $dbUser := "" {{ "}}" }}
             {{ "{{-" }} $dbPass := "" {{ "}}" }}
-            {{ "{{-" }} if eq $externalDB "true" {{ "}}" }}
+            {{ "{{-" }} if ne $dbMode "bundled" {{ "}}" }}
             {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" $ns "gitlab-db-app") | default dict {{ "}}" }}
             {{ "{{-" }} $dbData := ($dbSecret.data | default dict) {{ "}}" }}
             {{ "{{-" }} $dbHost = (printf "gitlab-db-pooler-rw.%s.svc" $ns) {{ "}}" }}
             {{ "{{-" }} $dbPort = (index $dbData "port" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbUser = (index $dbData "username" | default "" | base64dec) {{ "}}" }}
             {{ "{{-" }} $dbPass = (index $dbData "password" | default "" | base64dec) {{ "}}" }}
+            {{/* For external mode, user may provide a custom host via label */}}
+            {{ "{{-" }} if eq $dbMode "external" {{ "}}" }}
+            {{ "{{-" }} $customHost := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-host" | default "" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} if not (empty $customHost) {{ "}}" }}{{ "{{-" }} $dbHost = $customHost {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} if (empty $dbPass) {{ "}}" }}{{ "{{-" }} $dbReady = false {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
 
-            # External Redis: check sentinel password exists if enabled
             {{ "{{-" }} $redisReady := true {{ "}}" }}
-            {{ "{{-" }} if eq $externalRedis "true" {{ "}}" }}
+            {{ "{{-" }} if ne $redisMode "bundled" {{ "}}" }}
             {{ "{{-" }} $redisSecret := (lookup "v1" "Secret" $ns "gitlab-redis-password") | default dict {{ "}}" }}
             {{ "{{-" }} $redisData := ($redisSecret.data | default dict) {{ "}}" }}
             {{ "{{-" }} if (empty (index $redisData "redis-password" | default "")) {{ "}}" }}{{ "{{-" }} $redisReady = false {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
 
-            # External Object Storage: check OBC bucket exists if enabled
             {{ "{{-" }} $objStoreReady := true {{ "}}" }}
             {{ "{{-" }} $bucketName := "" {{ "}}" }}
-            {{ "{{-" }} if eq $externalObjStore "true" {{ "}}" }}
+            {{ "{{-" }} if ne $objStoreMode "bundled" {{ "}}" }}
             {{ "{{-" }} $obcCM := (lookup "v1" "ConfigMap" $ns "gitlab-objectstorage") | default dict {{ "}}" }}
             {{ "{{-" }} $bucketName = (index ($obcCM.data | default dict) "BUCKET_NAME" | default "") {{ "}}" }}
             {{ "{{-" }} if (empty $bucketName) {{ "}}" }}{{ "{{-" }} $objStoreReady = false {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
@@ -84,8 +89,8 @@ spec:
             # Only deploy when all enabled external services are ready
             {{ "{{-" }} if and $dbReady $redisReady $objStoreReady {{ "}}" }}
 
-            # Create PostgreSQL password secret for external DB
-            {{ "{{-" }} if eq $externalDB "true" {{ "}}" }}
+            # Create PostgreSQL password secret for non-bundled DB
+            {{ "{{-" }} if ne $dbMode "bundled" {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -117,9 +122,11 @@ spec:
                           annotations:
                             route.openshift.io/termination: edge
                           class: none
+                        minio:
+                          enabled: {{ "{{" }} eq $objStoreMode "bundled" {{ "}}" }}
 
-            {{/* External PostgreSQL config */}}
-            {{ "{{-" }} if eq $externalDB "true" {{ "}}" }}
+            {{/* Non-bundled PostgreSQL config */}}
+            {{ "{{-" }} if ne $dbMode "bundled" {{ "}}" }}
                         psql:
                           host: {{ "{{" }} $dbHost {{ "}}" }}
                           port: {{ "{{" }} $dbPort {{ "}}" }}
@@ -130,8 +137,9 @@ spec:
                             key: postgresql-password
             {{ "{{-" }} end {{ "}}" }}
 
-            {{/* External Redis Sentinel config */}}
-            {{ "{{-" }} if eq $externalRedis "true" {{ "}}" }}
+            {{/* Non-bundled Redis config — managed uses Sentinel, external reads from labels */}}
+            {{ "{{-" }} if ne $redisMode "bundled" {{ "}}" }}
+            {{ "{{-" }} if eq $redisMode "managed" {{ "}}" }}
                         redis:
                           host: gitlab-redis-0.gitlab-redis-headless.{{ "{{" }} $ns {{ "}}" }}.svc
                           port: 6379
@@ -146,10 +154,22 @@ spec:
                             enabled: true
                             secret: gitlab-redis-password
                             key: redis-password
+            {{ "{{-" }} else {{ "}}" }}
+            {{/* External Redis — user provides host via label, password via secret */}}
+            {{ "{{-" }} $redisHost := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-redis-host" | default "gitlab-redis" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $redisPort := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-redis-port" | default "6379" {{ "hub}}" }}" {{ "}}" }}
+                        redis:
+                          host: {{ "{{" }} $redisHost {{ "}}" }}
+                          port: {{ "{{" }} $redisPort {{ "}}" }}
+                          password:
+                            enabled: true
+                            secret: gitlab-redis-password
+                            key: redis-password
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
 
-            {{/* External Object Storage (NooBaa) config */}}
-            {{ "{{-" }} if eq $externalObjStore "true" {{ "}}" }}
+            {{/* Non-bundled Object Storage config */}}
+            {{ "{{-" }} if ne $objStoreMode "bundled" {{ "}}" }}
                         appConfig:
                           object_store:
                             enabled: true
@@ -180,19 +200,19 @@ spec:
                           key: config
             {{ "{{-" }} end {{ "}}" }}
 
-            {{/* Disable bundled services when external is enabled */}}
+            {{/* Install/disable bundled services based on mode */}}
                       postgresql:
-                        install: {{ "{{" }} not (eq $externalDB "true") {{ "}}" }}
+                        install: {{ "{{" }} eq $dbMode "bundled" {{ "}}" }}
                       redis:
-                        install: {{ "{{" }} not (eq $externalRedis "true") {{ "}}" }}
-            {{ "{{-" }} if not (eq $externalRedis "true") {{ "}}" }}
+                        install: {{ "{{" }} eq $redisMode "bundled" {{ "}}" }}
+            {{ "{{-" }} if eq $redisMode "bundled" {{ "}}" }}
                         resources:
                           requests:
                             cpu: 100m
             {{ "{{-" }} end {{ "}}" }}
                       minio:
-                        install: {{ "{{" }} not (eq $externalObjStore "true") {{ "}}" }}
-            {{ "{{-" }} if not (eq $externalObjStore "true") {{ "}}" }}
+                        install: {{ "{{" }} eq $objStoreMode "bundled" {{ "}}" }}
+            {{ "{{-" }} if eq $objStoreMode "bundled" {{ "}}" }}
                         resources:
                           requests:
                             cpu: 100m
