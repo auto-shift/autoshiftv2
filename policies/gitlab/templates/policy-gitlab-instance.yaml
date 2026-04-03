@@ -124,6 +124,11 @@ spec:
                           class: none
                         minio:
                           enabled: {{ "{{" }} eq $objStoreMode "bundled" {{ "}}" }}
+            {{ "{{-" }} if ne $objStoreMode "bundled" {{ "}}" }}
+                        certificates:
+                          customCAs:
+                            - configMap: gitlab-openshift-service-ca
+            {{ "{{-" }} end {{ "}}" }}
 
             {{/* Non-bundled PostgreSQL config */}}
             {{ "{{-" }} if ne $dbMode "bundled" {{ "}}" }}
@@ -143,6 +148,7 @@ spec:
                         redis:
                           host: gitlab-redis-0.gitlab-redis-headless.{{ "{{" }} $ns {{ "}}" }}.svc
                           port: 6379
+                          sentinelMasterName: gitlab-redis
                           sentinels:
                             - host: gitlab-redis-sentinel-0.gitlab-redis-sentinel-headless.{{ "{{" }} $ns {{ "}}" }}.svc
                               port: 26379
