@@ -28,6 +28,10 @@ spec:
       revision: {{ .Values.autoshiftGitBranchTag }}
       directories:
       - path: 'policies/*'
+      - path: 'policies/cluster-config-maps'
+        exclude: true
+      - path: 'policies/cluster-labels'
+        exclude: true
       {{- if .Values.excludePolicies }}
       {{- range .Values.excludePolicies }}
       - path: 'policies/{{ . }}'
@@ -47,6 +51,7 @@ spec:
         velero.io/exclude-from-backup: "true"
     spec:
       project: default
+      revisionHistoryLimit: {{ .Values.revisionHistoryLimit | default 3 }}
       source:
         {{- if .Values.autoshiftOciRegistry }}
         # OCI mode - use Helm chart from registry
@@ -88,32 +93,14 @@ spec:
             {{-  range $cluster, $clustervalue := .Values.hubClusterSets }}
               {{ $cluster }}{{ $clusterSetSuffix }}:
                 labels:
-                {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
-                  {{ $labelkey }}: '{{ $labelvalue }}'
-                {{- end }}
-                config: {{ (index $clustervalue "config" | default (dict) | toYaml | nindent 18) }}
+                  self-managed: '{{ index $clustervalue.labels "self-managed" | default "true" }}'
             {{- end }}
             {{- end }}
             {{- if .Values.managedClusterSets }}
             managedClusterSets:
-              {{-  range $cluster, $clustervalue := .Values.managedClusterSets }}
+            {{-  range $cluster, $clustervalue := .Values.managedClusterSets }}
               {{ $cluster }}{{ $clusterSetSuffix }}:
-                labels:
-                {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
-                  {{ $labelkey }}: '{{ $labelvalue }}'
-                {{- end }}
-                config: {{ (index $clustervalue "config" | default (dict) | toYaml | nindent 18) }}
-            {{- end }}
-            {{- end }}
-            {{- if .Values.clusters }}
-            clusters:
-              {{-  range $cluster, $clustervalue := .Values.clusters }}
-              {{ $cluster }}:
-                labels:
-                {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
-                  {{ $labelkey }}: '{{ $labelvalue }}'
-                {{- end }}
-                config: {{ (index $clustervalue "config" | default (dict) | toYaml | nindent 18) }}
+                labels: {}
             {{- end }}
             {{- end }}
       ignoreDifferences:

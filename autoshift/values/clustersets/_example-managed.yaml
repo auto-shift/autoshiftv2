@@ -139,10 +139,20 @@ managedClusterSets:
       aap-cabundle-name: 'user-ca-bundle'    # Secret name for CA Bundle
 
       # =======================================================================
-      # Master Nodes (SNO / Compact clusters)
+      # Master Node Kubelet Configuration (SNO / Compact clusters)
       # =======================================================================
       master-nodes: 'false'
       master-max-pods: '250'                 # Max pods per master node (up to 2500)
+      master-system-reserved-memory: '3Gi'   # Memory reserved for OS/system processes including etcd
+      master-system-reserved-cpu: '500m'     # CPU reserved for OS/system processes
+      master-kube-reserved-memory: '1536Mi'  # Memory reserved for kubelet/CRI-O
+      master-kube-reserved-cpu: '500m'       # CPU reserved for kubelet/CRI-O
+      master-eviction-memory: '500Mi'        # Hard eviction threshold for memory.available
+
+      # =======================================================================
+      # Workload Partitioning (CPU isolation via PerformanceProfile)
+      # =======================================================================
+      workload-partitioning: 'false'         # Enable CPU workload partitioning
 
       # =======================================================================
       # Machine Health Checks
@@ -172,6 +182,16 @@ managedClusterSets:
       infra-nodes-memory-mib: ''
       infra-nodes-numcores-per-socket: ''
       infra-nodes-zone-1: ''                 # Add -zone-2, -zone-3 for multiple zones
+      # --- Infra MachineConfigPool ---
+      infra-machineconfigpool: 'false'       # Create dedicated infra MCP (separates from worker pool)
+      # --- Infra Node Kubelet Configuration ---
+      infra-node-config: 'false'             # Enable infra node kubelet tuning (requires infra-machineconfigpool)
+      infra-max-pods: '250'                  # Max pods per infra node
+      infra-system-reserved-memory: '2Gi'    # Memory reserved for OS/system processes
+      infra-system-reserved-cpu: '500m'      # CPU reserved for OS/system processes
+      infra-kube-reserved-memory: '1Gi'      # Memory reserved for kubelet/CRI-O
+      infra-kube-reserved-cpu: '500m'        # CPU reserved for kubelet/CRI-O
+      infra-eviction-memory: '500Mi'         # Hard eviction threshold for memory.available
 
       # =======================================================================
       # Worker Nodes
@@ -181,6 +201,14 @@ managedClusterSets:
       worker-nodes-memory-mib: ''
       worker-nodes-numcores-per-socket: ''
       worker-nodes-zone-1: ''                # Add -zone-2, -zone-3 for multiple zones
+      # --- Worker Node Kubelet Configuration ---
+      worker-node-config: 'false'            # Enable worker node kubelet tuning
+      worker-max-pods: '250'                 # Max pods per worker node (up to 2500)
+      worker-system-reserved-memory: '1Gi'   # Memory reserved for OS/system processes
+      worker-system-reserved-cpu: '250m'     # CPU reserved for OS/system processes
+      worker-kube-reserved-memory: '512Mi'   # Memory reserved for kubelet/CRI-O
+      worker-kube-reserved-cpu: '250m'       # CPU reserved for kubelet/CRI-O
+      worker-eviction-memory: '500Mi'        # Hard eviction threshold for memory.available
 
       # =======================================================================
       # Storage Nodes
