@@ -56,9 +56,11 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{`{{`}} $prom := (lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "prometheus-user-workload") | default dict {{`}}`}}
-            {{`{{`}} $promReplicas := (index $prom "spec" "replicas" | default 1 | toInt) {{`}}`}}
+            {{`{{`}} $promSpec := (index $prom "spec" | default dict) {{`}}`}}
+            {{`{{`}} $promReplicas := (index $promSpec "replicas" | default 1 | toInt) {{`}}`}}
             {{`{{`}} $thanos := (lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "thanos-ruler-user-workload") | default dict {{`}}`}}
-            {{`{{`}} $thanosReplicas := (index $thanos "spec" "replicas" | default 1 | toInt) {{`}}`}}
+            {{`{{`}} $thanosSpec := (index $thanos "spec" | default dict) {{`}}`}}
+            {{`{{`}} $thanosReplicas := (index $thanosSpec "replicas" | default 1 | toInt) {{`}}`}}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: apps/v1
