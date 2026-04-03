@@ -326,8 +326,16 @@ spec:
                             - bash
                             - -c
                             - |
+                              # Wait for Redis master DNS to resolve
+                              MASTER_HOST="gitlab-redis-0.gitlab-redis-headless.{{ .Values.gitlab.namespace }}.svc"
+                              until MASTER_IP=$(getent hosts "$MASTER_HOST" | awk '{print $1}'); do
+                                echo "Waiting for $MASTER_HOST to resolve..."
+                                sleep 2
+                              done
                               cp /config/sentinel.conf.template /tmp/sentinel.conf
                               sed -i "s/REDIS_PASSWORD_PLACEHOLDER/$REDIS_PASSWORD/g" /tmp/sentinel.conf
+                              # Sentinel requires an IP, not a hostname
+                              sed -i "s|$MASTER_HOST|$MASTER_IP|g" /tmp/sentinel.conf
                               exec redis-sentinel /tmp/sentinel.conf
                           ports:
                             - containerPort: 26379
