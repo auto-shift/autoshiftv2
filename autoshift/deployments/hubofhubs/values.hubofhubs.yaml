@@ -16,6 +16,7 @@ hubClusterSets:
         repoUrl: "https://github.com/auto-shift/autoshiftv2.git"
         valuesFiles:
           - deployments/hubofhubs/values.yaml
+          - values/global.yaml
         argoProject: "default"
         gitopsNamespace: "openshift-gitops"
       globalObservability:
@@ -172,8 +173,31 @@ hubClusterSets:
       compliance-channel: stable
       global-observability: 'true'
   hub1:
+    config:
+      autoshift:
+        appName: "autoshift"
+        repoUrl: "https://github.com/auto-shift/autoshiftv2.git"
+        valuesFiles:
+          - deployments/site-hub/values.yaml
+          - values/global.yaml
+        argoProject: "default"
+        gitopsNamespace: "openshift-gitops"
+      globalObservability:
+        useClusterCA: false
+        scrapeInterval: "45s"
+        logLevel: "warn"
+        thanosStorage:
+          source: 
+            accessKeyField: "access-key"
+            secretKeyField: "secret-key"
+            namespace: "policies-autoshift"
+            secretName: "thanos-s3-bucket"
+          bucket: openshift-observability-493595548145-us-east-2-an
+          endpoint:  s3.us-east-2.amazonaws.com
+          insecure: false
     autoshiftRepoUrl: https://github.com/auto-shift/autoshiftv2.git
     labels:
+      global-observability: 'true'
       gitops: 'true' # is expected to be installed on all hub clusters
       gitops-subscription-name: openshift-gitops-operator
       gitops-channel: gitops-1.18
