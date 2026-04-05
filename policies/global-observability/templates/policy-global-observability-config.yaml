@@ -98,20 +98,23 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
-            {{ "{{hub-" }} $thanosConfig := index $obsConfig "thanosStorage" | default dict {{ "hub}}" }}
-            {{ "{{hub-" }} $caBundle := index $thanosConfig "caBundle" | default dict {{ "hub}}" }}
-            {{ "{{hub-" }} $caSourceName := index $caBundle "sourceName" | default "{{ .Values.globalObservability.caBundle.sourceName }}" {{ "hub}}" }}
-            {{ "{{hub-" }} $caSourceKey := index $caBundle "sourceKey" | default "{{ .Values.globalObservability.caBundle.sourceKey }}" {{ "hub}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: Secret
-                metadata:
-                  name: ca-bundle
-                  namespace: {{ .Values.globalObservability.namespace }}
-                type: Opaque
-                stringData:
-                  ca.crt: '{{ "{{" }} fromConfigMap "openshift-config" "{{ "{{hub" }} $caSourceName {{ "hub}}" }}" "{{ "{{hub" }} $caSourceKey {{ "hub}}" }}" {{ "}}" }}'
+            {{ "{{hub-" }} $useClusterCA := ($obsConfig).clusterCA | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} if $useClusterCA {{ "{{hub" }}
+              {{ "{{hub-" }} $thanosConfig := index $obsConfig "thanosStorage" | default dict {{ "hub}}" }}
+              {{ "{{hub-" }} $caBundle := index $thanosConfig "caBundle" | default dict {{ "hub}}" }}
+              {{ "{{hub-" }} $caSourceName := index $caBundle "sourceName" | default "{{ .Values.globalObservability.caBundle.sourceName }}" {{ "hub}}" }}
+              {{ "{{hub-" }} $caSourceKey := index $caBundle "sourceKey" | default "{{ .Values.globalObservability.caBundle.sourceKey }}" {{ "hub}}" }}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: ca-bundle
+                    namespace: {{ .Values.globalObservability.namespace }}
+                  type: Opaque
+                  stringData:
+                    ca.crt: '{{ "{{" }} fromConfigMap "openshift-config" "{{ "{{hub" }} $caSourceName {{ "hub}}" }}" "{{ "{{hub" }} $caSourceKey {{ "hub}}" }}" {{ "}}" }}'
+            {{ "{{hub-" }} end {{ "hub}}" }}
 
     # Create the thanos-object-storage Secret from a source secret containing S3 credentials.
     # The bucket, endpoint, and source secret location are resolved from the rendered-config
@@ -129,6 +132,7 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $useClusterCA := ($obsConfig).clusterCA | default "false" {{ "hub}}" }}
             {{ "{{hub-" }} $thanos := index $obsConfig "thanosStorage" | default dict {{ "hub}}" }}
             {{ "{{hub-" }} $source := index $thanos "source" | default dict {{ "hub}}" }}
             {{ "{{hub-" }} $bucket := index $thanos "bucket" | default "{{ .Values.globalObservability.thanosStorage.bucket }}" {{ "hub}}" }}
@@ -141,7 +145,7 @@ spec:
             {{ "{{" }} $accessKey :=  fromSecret "{{ "{{hub" }} $sourceNs {{ "hub}}" }}" "{{ "{{hub" }} $sourceSecret {{ "hub}}" }}" "{{ "{{hub" }} $accessKeyField {{ "hub}}" }}" | default "" | base64dec {{ "}}" }}
             {{ "{{" }} $secretKey := fromSecret "{{ "{{hub" }} $sourceNs {{ "hub}}" }}" "{{ "{{hub" }} $sourceSecret {{ "hub}}" }}" "{{ "{{hub" }} $secretKeyField {{ "hub}}" }}" | default "" | base64dec {{ "}}" }}
             {{ "{{" }} if or (empty $accessKey) (empty $secretKey) {{ "}}" }}
-            {{ "{{" }} fail "the access key ($accessKeyField) or secret key ($secretKeyField) could not be pulled from the secret \"$sourceSecret\" in the \"$sourceNs\"" {{ "}}" }}
+              {{ "{{" }} fail "the access key ($accessKeyField) or secret key ($secretKeyField) could not be pulled from the secret \"$sourceSecret\" in the \"$sourceNs\"" {{ "}}" }}
             {{ "{{" }} end {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
@@ -162,6 +166,8 @@ spec:
                       secret_key: '{{ "{{" }} $secretKey {{ "}}" }}'
                       http_config:
                         tls_config:
+                          {{ "{{hub-" }} if $useClusterCA {{ "hub}}" }}
                           ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                          {{ "{{hub-" }} end {{ "hub}}" }}
                           insecure_skip_verify: false
 {{- end }}
