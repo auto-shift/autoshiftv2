@@ -81,7 +81,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: global-observability-mtls-repl
+          name: global-observability-secret-repl
         spec:
           remediationAction: enforce
           severity: high
@@ -94,12 +94,14 @@ spec:
                 apiVersion: v1
                 kind: Secret
                 metadata:
-                  name: global-observability-mtls
+                  name: global-observability-secrets
                   namespace: open-cluster-management-observability
                 type: Opaque
                 data:
                   tls.crt: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "global-observability-secrets" "tls.crt" {{ "hub}}" }}'
                   tls.key: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "global-observability-secrets" "tls.key" {{ "hub}}" }}'
+                  ca.crt: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "global-observability-secrets" "ca.crt" {{ "hub}}" }}'
+                  observatorium.url: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "global-observability-secrets" "observatorium.url" {{ "hub}}" }}'
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -135,6 +137,9 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
+            {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $scrapeInterval := index $obsConfig "scapeInterval" | default {{ .Values.globalObservability.scrapeInterval }} {{ "hub}}" }}
+            {{ "{{hub-" }} $logLevel := index $obsConfig "scapeInterval" | default {{ .Values.globalObservability.logLevel }} {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: monitoring.rhobs/v1alpha1
@@ -143,6 +148,8 @@ spec:
                   name: {{ .Values.globalObservability.spokeAgent.prometheusAgentName }}
                   namespace: {{ .Values.globalObservability.namespace }}
                 spec:
+                  scrapeInterval: {{ "{{hub" }} $scrapeInterval {{ "hub}}" }}
+                  logLevel: {{ "{{hub" }} $logLevel {{ "hub}}" }}
                   secrets:
                   {{- range .Values.globalObservability.spokeAgent.secrets }}
                     - {{ . }}
@@ -156,5 +163,5 @@ spec:
                         cert: {}
                         certFile: {{ .Values.globalObservability.spokeAgent.remoteWrite.certFile }}
                         keyFile: {{ .Values.globalObservability.spokeAgent.remoteWrite.keyFile }}
-                      url: '{{ "{{" }} fromSecret "open-cluster-management-agent-addon" "global-observability-url" "observatorium.url" | base64dec {{ "}}" }}'
+                      url: '{{ "{{" }} fromSecret "open-cluster-management-agent-addon" "global-observability-secrets" "observatorium.url" | base64dec {{ "}}" }}'
 {{- end }}
