@@ -1,0 +1,167 @@
+# Prerequisite resources for Global Observability on ACM hub clusters.
+# Creates:
+#   - Namespace: open-cluster-management-observability
+#   - Pull secret copied from cluster pull-secret (required for MCO image pulls)
+#   - CA bundle secret copied from openshift-config/user-ca-bundle (for Thanos S3 TLS)
+#   - thanos-object-storage Secret with S3 credentials copied from a source secret
+#
+# The CA bundle source and thanos storage config are resolved at runtime from the
+# rendered-config ConfigMap (<clustername>.rendered-config) under the
+# "globalObservability" key, falling back to Helm values defaults.
+#
+# Placement: via policyset-global-observability
+# Depends on: policy-global-observability-mch (MCH observability component must be enabled)
+#
+{{- $policyName := "policy-global-observability-config" }}
+{{- $policyNamespace := .Values.policy_namespace }}
+
+{{- if .Values.hubClusterSets }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-7 Continuous Monitoring
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-global-observability-mch
+      namespace: {{ $policyNamespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # Create the MCO namespace
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-ns
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.globalObservability.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
+
+    # Copy cluster pull-secret into the MCO namespace so the operator can pull images
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-pull-secret
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: multiclusterhub-operator-pull-secret
+                  namespace: {{ .Values.globalObservability.namespace }}
+                type: kubernetes.io/dockerconfigjson
+                data:
+                  .dockerconfigjson: '{{`{{ fromSecret "openshift-config" "pull-secret" ".dockerconfigjson" }}`}}'
+
+    # Copy CA bundle from openshift-config into the MCO namespace for Thanos S3 TLS verification.
+    # The source ConfigMap name and key are resolved from the rendered-config ConfigMap.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-thanos-ca
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $thanosConfig := index $obsConfig "thanosStorage" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $caBundle := index $thanosConfig "caBundle" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $caSourceName := index $caBundle "sourceName" | default "{{ .Values.globalObservability.caBundle.sourceName }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $caSourceKey := index $caBundle "sourceKey" | default "{{ .Values.globalObservability.caBundle.sourceKey }}" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: ca-bundle
+                  namespace: {{ .Values.globalObservability.namespace }}
+                type: Opaque
+                stringData:
+                  ca.crt: '{{ "{{" }} fromConfigMap "openshift-config" "{{ "{{hub" }} $caSourceName {{ "hub}}" }}" "{{ "{{hub" }} $caSourceKey {{ "hub}}" }}" {{ "}}" }}'
+
+    # Create the thanos-object-storage Secret from a source secret containing S3 credentials.
+    # The bucket, endpoint, and source secret location are resolved from the rendered-config
+    # ConfigMap, falling back to Helm values defaults.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-thanos-storage
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $thanos := index $obsConfig "thanosStorage" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $source := index $thanos "source" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $bucket := index $thanos "bucket" | default "{{ .Values.globalObservability.thanosStorage.bucket }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $endpoint := index $thanos "endpoint" | default "{{ .Values.globalObservability.thanosStorage.endpoint }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $insecure := index $thanos "insecure" | default "{{ .Values.globalObservability.thanosStorage.insecure }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $sourceNs := index $source "namespace" | default "{{ .Values.globalObservability.thanosStorage.source.namespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $sourceSecret := index $source "secretName" | default "{{ .Values.globalObservability.thanosStorage.source.secretName }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $accessKeyField := index $source "accessKeyField" | default "{{ .Values.globalObservability.thanosStorage.source.accessKeyField }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $secretKeyField := index $source "secretKeyField" | default "{{ .Values.globalObservability.thanosStorage.source.secretKeyField }}" {{ "hub}}" }}
+            {{ "{{" }} $accessKey :=  fromSecret "{{ "{{hub" }} $sourceNs {{ "hub}}" }}" "{{ "{{hub" }} $sourceSecret {{ "hub}}" }}" "{{ "{{hub" }} $accessKeyField {{ "hub}}" }}" | default "" | base64dec {{ "}}" }}
+            {{ "{{" }} $secretKey := fromSecret "{{ "{{hub" }} $sourceNs {{ "hub}}" }}" "{{ "{{hub" }} $sourceSecret {{ "hub}}" }}" "{{ "{{hub" }} $secretKeyField {{ "hub}}" }}" | default "" | base64dec {{ "}}" }}
+            {{ "{{" }} if or (empty $accessKey) (empty $secretKey) {{ "}}" }}
+            {{ "{{" }} fail "the access key ($accessKeyField) or secret key ($secretKeyField) could not be pulled from the secret \"$sourceSecret\" in the \"$sourceNs\"" {{ "}}" }}
+            {{ "{{" }} end {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: thanos-object-storage
+                  namespace: {{ .Values.globalObservability.namespace }}
+                type: Opaque
+                stringData:
+                  thanos.yaml: |
+                    type: s3
+                    config:
+                      bucket: {{ "{{hub" }} $bucket {{ "hub}}" }}
+                      endpoint: {{ "{{hub" }} $endpoint {{ "hub}}" }}
+                      insecure: {{ "{{hub" }} $insecure {{ "hub}}" }}
+                      access_key: '{{ "{{" }} $accessKey {{ "}}" }}'
+                      secret_key: '{{ "{{" }} $secretKey {{ "}}" }}'
+                      http_config:
+                        tls_config:
+                          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                          insecure_skip_verify: false
+{{- end }}

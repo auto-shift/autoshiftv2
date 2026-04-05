@@ -1,0 +1,35 @@
+---
+{{ $policyName := "policy-managed-autoshift-ns" }}
+{{ $policyNamespace := $.Values.policy_namespace }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec: 
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: 
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            {{ "{{hub" }} $autoshiftConfig := (index (fromConfigMap "{{ $policyNamespace }}" (print {{ "{{hub" }} .ManagedClusterName {{ "hub}}" }} ".rendered-config") "config" | default "{}") "autoshift" | default "{}" | fromYaml) {{ "hub}}" }}
+            {{ "{{hub" }} $appName := index $autoshiftConfig "appName" | default "managed-autoshift" {{ "hub}}" }}
+            {{ "{{" }} $policyNamespace := {{ "{{hub-" }} print "policies-" $appName | default "" {{ "-hub}}" }} {{ "}}" }}
+            - complianceType: musthave
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: {{ "{{" }} $policyNamespace {{ "}}" }}
+                labels:
+                  autoshift.io/createdByAutoshift: "true"
+                  openshift.io/cluster-monitoring: "true"

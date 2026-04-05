@@ -1,0 +1,134 @@
+{{- $policyName := "policy-managed-autoshift" }}
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $placementName := printf "%s-%s" "placement" $policyName }}
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec: 
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-gitops-systems-argocd
+      namespace: {{  $policyNamespace }}
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-acm-mch-install
+      namespace: {{  $policyNamespace }}
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-managed-autoshift-repo
+      namespace: {{  $policyNamespace }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-deploy
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+
+            {{ "{{hub-" }} $autoshiftConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print  .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "autoshift" {{ "hub}}" }}
+            {{ "{{hub" }} $appName := index $autoshiftConfig "appName" | default "managed-autoshift" {{ "hub}}" }}
+            {{ "{{hub" }} if not (empty $autoshiftConfig) {{ "hub}}" }}
+              {{ "{{hub-" }} $repoUrl := index $autoshiftConfig "repoUrl" | default "{{ $.Values.repoUrl }}" {{ "hub}}" }}
+              {{ "{{hub-" }} $gitopsNamespace := index $autoshiftConfig "gitopsNamespace" | default "openshift-gitops" {{ "hub}}" }}
+              {{ "{{hub-" }} $defaultValuesFile := (print "values." .ManagedClusterName ".yaml") | list {{ "hub}}" }}
+              {{ "{{hub-" }} $valuesFiles := index $autoshiftConfig "valuesFiles" | default $defaultValuesFile {{ "hub}}" }}
+              {{ "{{hub-" }} $argoProject := index $autoshiftConfig "argoProject" | default "default"  {{ "hub}}" }}
+              {{ "{{hub-" }} $argoServer := index $autoshiftConfig "argoServer" | default "https://kubernetes.default.svc"  {{ "hub}}" }}
+              {{ "{{hub-" }} $targetRevision := index $autoshiftConfig "targetRevision" |  default "main" {{ "hub}}" }}
+              {{ "{{hub-" }} $autoshiftEnabled := index .ManagedClusterLabels "autoshift.io/autoshift-enable-install" | default "false" {{ "hub}}" }}
+              {{ "{{hub-" }} if and (ne $targetRevision "") (ne $gitopsNamespace "") (not (empty $valuesFiles)) (eq $autoshiftEnabled "true") (ne $repoUrl "") {{ "hub}}" }}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: argoproj.io/v1alpha1
+                kind: Application
+                metadata:
+                  name: {{ "{{hub" }} $appName {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                spec:
+                  destination:
+                    namespace: ''
+                    server: {{ "{{hub" }} $argoServer {{ "hub}}" }}
+                  source:
+                    path: autoshift
+                    repoURL: {{ "{{hub" }} $repoUrl {{ "hub}}" }}
+                    targetRevision: {{ "{{hub" }} $targetRevision {{ "hub}}" }}
+                    helm:
+                      valueFiles:
+                      {{ "{{hub-" }} range $idx, $file := $valuesFiles {{ "hub}}" }}
+                        - {{ "{{hub" }} $file {{ "hub}}" }}
+                      {{ "{{hub" }} end {{ "hub}}" }}
+                      values: |-
+                        autoshiftGitRepo: {{ "{{hub" }} $repoUrl {{ "hub}}" }}
+                        autoshiftGitBranchTag: {{ "{{hub" }} $targetRevision {{ "hub}}" }}
+                  sources: []
+                  project: {{ "{{hub" }} $argoProject {{ "hub}}" }}
+                  syncPolicy:
+                    automated:
+                      prune: false
+                      selfHeal: true
+              {{ "{{hub" }} end {{ "hub}}" }}
+            {{ "{{hub" }} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+    {{- range $clusterSet, $_ := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+    {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/autoshift-enable-install'
+              operator: In
+              values: 
+                - 'true'
+            {{- if not ((($.Values).autoshift).enableSelfManagement | default false) }}
+            - key: 'autoshift.io/self-managed'
+              operator: NotIn
+              values: 
+                - 'true'
+           {{ end }}
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName}}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: managed-autoshift
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+---

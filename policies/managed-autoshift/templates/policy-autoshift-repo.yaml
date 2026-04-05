@@ -1,0 +1,122 @@
+{{- $policyName := "policy-managed-autoshift-repo" }}
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $placementName := printf "%s-%s" "placement" $policyName }}
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec: 
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-gitops-systems-argocd
+      namespace: {{  $policyNamespace }}
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-acm-mch-install
+      namespace: {{  $policyNamespace }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: autoshift-repo-secret
+          namespace: {{ $policyNamespace }}
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+
+            {{ "{{hub-" }} $autoshiftConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print  .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "autoshift" {{ "hub}}" }}
+              {{ "{{hub-" }} $gitopsNamespace := index $autoshiftConfig "gitopsNamespace" | default "openshift-gitops" {{ "hub}}" }}
+              {{ "{{hub-" }} $secretRef := index (index $autoshiftConfig "repoSecretRef" | default dict) "repoSecretRef" | default dict {{ "hub}}" }}
+              {{ "{{hub-" }} $secretName := index $secretRef "name" | default "autoshift-repo-secret" {{ "hub}}" }}
+              {{ "{{hub-" }} $secretNamespace := index $secretRef "namespace" | default "{{ $policyNamespace }}" {{ "hub}}" }}
+                [
+                  {
+                    "complianceType": "musthave",
+                    "objectDefinition": {
+                      "kind": "Secret",
+                      "apiVersion": "v1",
+                      "metadata": {
+                        "name": "repo-autoshift",
+                        "namespace": "{{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}",
+                        "labels": {
+                          "argocd.argoproj.io/secret-type": "repository"
+                        }
+                      },
+                      "data": {{ "{{hub" }} copySecretData $secretNamespace $secretName {{ "hub}}" }},
+                      "type": "Opaque"
+
+                    }
+                  }
+                ]
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+    {{- range $clusterSet, $_ := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+    {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/autoshift-enable-install'
+              operator: In
+              values: 
+                - 'true'
+            - key: 'autoshift.io/self-managed'
+              operator: In
+              values: 
+                - 'false'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+#---
+#apiVersion: policy.open-cluster-management.io/v1
+#kind: PlacementBinding
+#metadata:
+#  name: {{ $placementName }}
+#  namespace: {{ $policyNamespace }}
+#placementRef:
+#  name: {{ $placementName}}
+#  apiGroup: cluster.open-cluster-management.io
+#  kind: Placement
+#subjects:
+#  - name: {{ $policyName }}
+#    apiGroup: policy.open-cluster-management.io
+#    kind: Policy
+---
+            {{/*
+            - complianceType: musthave
+              objectDefinition:
+                kind: Secret
+                apiVersion: v1
+                metadata:
+                  name: repo-autoshift
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  labels:
+                    argocd.argoproj.io/secret-type: repository
+                data: '{{ "{{hub" }} copySecretData $secretNamespace $secretName {{ "hub}}" }}'
+                type: Opaque
+                */}}

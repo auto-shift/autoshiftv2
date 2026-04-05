@@ -1,0 +1,89 @@
+# Default values for global-observability.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+policy_namespace: open-cluster-policies
+globalObservability:
+    namespace: open-cluster-management-observability
+    # CA bundle source — copied into a Secret for Thanos S3 TLS verification
+    caBundle:
+      sourceName: user-ca-bundle        # ConfigMap name in openshift-config
+      sourceKey: ca-bundle.crt           # key within the ConfigMap
+    # Thanos object storage — S3 credentials copied from a source secret
+    thanosStorage:
+      source:
+        namespace: ""                    # namespace of the source secret containing S3 credentials
+        secretName: ""                   # name of the source secret
+        accessKeyField: AWS_ACCESS_KEY_ID
+        secretKeyField: AWS_SECRET_ACCESS_KEY
+      bucket: acm-dr
+      endpoint: ""                       # s3 endpoint hostname (e.g. s3.example.com)
+      insecure: false
+    retentionResolutionRaw: 5d
+    retentionResolution5m: 14d
+    retentionResolution1h: 30d
+    enableDownsampling: true
+    scrapeInterval: 300
+    scrapeSizeLimitBytes: "1073741824"
+    workers: 1
+    alertmanagerStorageSize: 10Gi
+    compactStorageSize: 10Gi
+    receiveStorageSize: 10Gi
+    ruleStorageSize: 10Gi
+    storeStorageSize: 10Gi
+    # Spoke agent — patches regional hub PrometheusAgent to add global hub remote-write
+    spokeAgent:
+      # Name of the MCOA PrometheusAgent on regional hubs to patch
+      prometheusAgentName: mcoa-default-platform-metrics-collector-global
+      # Secrets to mount on the PrometheusAgent for global hub mTLS
+      # These must be pre-replicated to each regional hub's MCO namespace
+      secrets:
+        - global-observability-managed-cluster-certs
+        - global-observability-mtls
+        - observability-managed-cluster-certs
+        - observability-controller-open-cluster-management.io-observability-signer-client-cert
+      remoteWrite:
+        name: acm-global-observability
+        remoteTimeout: 30s
+        caFile: /etc/prometheus/secrets/global-observability-managed-cluster-certs/ca.crt
+        certFile: /etc/prometheus/secrets/global-observability-mtls/tls.crt
+        keyFile: /etc/prometheus/secrets/global-observability-mtls/tls.key
+# hubClusterSets:
+#   hub:
+#     labels:
+#       test1: 'test'
+# managedClusterSets:
+#   managed:
+#     labels:
+#       test4: 'test'
+
+### AutoShift Labels Documentation
+# The following labels can be set at the cluster or clusterset level to configure this policy:
+#
+# Enable/Disable:
+# global-observability<bool>: 'true' or 'false' - Enable MultiCluster Observability on the hub (default: 'false')
+#
+# Configuration:
+# global-observability-storage-class<String>: Storage class for Thanos persistent volumes (optional, uses cluster default if unset)
+# global-observability-retention-raw<String>: Retention for raw resolution metrics (default: '5d')
+# global-observability-retention-5m<String>: Retention for 5m resolution metrics (default: '14d')
+# global-observability-retention-1h<String>: Retention for 1h resolution metrics (default: '30d')
+# global-observability-alertmanager-storage-size<String>: Alertmanager PVC size (default: '10Gi')
+# global-observability-compact-storage-size<String>: Compactor PVC size (default: '10Gi')
+# global-observability-receive-storage-size<String>: Receiver PVC size (default: '10Gi')
+# global-observability-rule-storage-size<String>: Rule PVC size (default: '10Gi')
+# global-observability-store-storage-size<String>: Store PVC size (default: '10Gi')
+#
+# Spoke Agent (placed on regional hubs):
+# global-observability-spoke-agent<bool>: 'true' or 'false' - Patch PrometheusAgent on this hub to forward metrics to global hub
+# global-observability-remote-write-url<String>: Global hub observatorium API URL for remote-write (required when spoke-agent is enabled)
+#
+# Prerequisites:
+# - Cluster Observability Operator must be installed on reporting clusters
+# - The MultiClusterHub must have multicluster-observability enabled
+# - A thanos-object-storage secret must exist in open-cluster-management-observability namespace
+# - A ca-bundle secret must exist in open-cluster-management-observability namespace
+#
+# Examples:
+# autoshift.io/global-observability: 'true'
+# autoshift.io/global-observability-storage-class: 'gp3-csi'
+# autoshift.io/global-observability-retention-raw: '7d'
