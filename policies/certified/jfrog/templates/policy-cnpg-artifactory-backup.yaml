@@ -36,6 +36,15 @@ spec:
           object-templates:
             - complianceType: musthave
               objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: openshift-service-ca
+                  namespace: {{ .Values.jfrog.namespace }}
+                  annotations:
+                    service.beta.openshift.io/inject-cabundle: "true"
+            - complianceType: musthave
+              objectDefinition:
                 apiVersion: objectbucket.io/v1alpha1
                 kind: ObjectBucketClaim
                 metadata:
@@ -56,6 +65,9 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
+            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $jfrogCfg := (index $rcmConfig "jfrog" | default dict) {{ "hub}}" }}
             # Read OBC credentials for the backup bucket
             {{ "{{-" }} $obcSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-db-backup") | default dict {{ "}}" }}
             {{ "{{-" }} $obcData := ($obcSecret.data | default dict) {{ "}}" }}
@@ -66,8 +78,8 @@ spec:
             {{ "{{-" }} $bucketName := (index $obcCMData "BUCKET_NAME" | default "") {{ "}}" }}
             {{ "{{-" }} $bucketHost := (index $obcCMData "BUCKET_HOST" | default "") {{ "}}" }}
             {{ "{{-" }} $bucketPort := (index $obcCMData "BUCKET_PORT" | default "443") {{ "}}" }}
-            {{ "{{-" }} $retention := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/artifactory-db-backup-retention" | default "30d" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{-" }} $schedule := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/artifactory-db-backup-schedule" | default "0 3 * * *" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $retention := "{{ "{{hub" }} index $jfrogCfg "dbBackupRetention" | default "30d" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $schedule := "{{ "{{hub" }} index $jfrogCfg "dbBackupSchedule" | default "0 3 * * *" {{ "hub}}" }}" {{ "}}" }}
             {{ "{{-" }} if and (not (empty $accessKey)) (not (empty $bucketName)) {{ "}}" }}
             # Create S3 credentials secret for barman
             - complianceType: musthave
@@ -95,6 +107,9 @@ spec:
                     barmanObjectStore:
                       destinationPath: s3://{{ "{{" }} $bucketName {{ "}}" }}/
                       endpointURL: https://{{ "{{" }} $bucketHost {{ "}}" }}:{{ "{{" }} $bucketPort {{ "}}" }}
+                      endpointCA:
+                        name: openshift-service-ca
+                        key: service-ca.crt
                       s3Credentials:
                         accessKeyId:
                           name: artifactory-db-backup-s3-creds

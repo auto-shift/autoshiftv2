@@ -72,8 +72,17 @@ cnpg-pooler-instances: '2'        # PgBouncer instances per pooler
 
 # Backups (requires odf: 'true')
 artifactory-db-backups: 'true'
-# artifactory-db-backup-retention: '30d'
-# artifactory-db-backup-schedule: '0 3 * * *'
+```
+
+### Config (in clusterset values under `config.jfrog`)
+
+```yaml
+hubClusterSets:
+  hub:
+    config:
+      jfrog:
+        dbBackupSchedule: '0 3 * * *'             # Cron schedule for CNPG base backups
+        dbBackupRetention: '30d'                   # Backup retention period
 ```
 
 ## Troubleshooting

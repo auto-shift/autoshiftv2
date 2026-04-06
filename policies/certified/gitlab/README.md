@@ -111,13 +111,24 @@ gitlab-source-namespace: openshift-marketplace
 # gitlab-redis-host: 'my-redis.example.com'
 # gitlab-redis-port: '6379'
 
-# GitLab chart version
-# gitlab-chart-version: '9.10.1'
-
 # Database backups (requires managed db mode + odf)
 # gitlab-db-backups: 'true'
-# gitlab-db-backup-retention: '30d'
-# gitlab-db-backup-schedule: '0 2 * * *'
+```
+
+### Config (in clusterset values under `config.gitlab`)
+
+Values that contain `/` or spaces can't be Kubernetes labels. Set these in the `config` block:
+
+```yaml
+hubClusterSets:
+  hub:
+    config:
+      gitlab:
+        chartVersion: '9.10.1'                    # GitLab Helm chart version
+        repoPath: autoshift/autoshiftv2            # GitLab group/project for ArgoCD repo
+        siteConfigPath: autoshift/site-config      # GitLab group/project for site config
+        dbBackupSchedule: '0 2 * * *'              # Cron schedule for CNPG base backups
+        dbBackupRetention: '30d'                   # Backup retention period
 ```
 
 ## Managed Mode Details

@@ -36,9 +36,13 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
+            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $gitlabCfg := (index $rcmConfig "gitlab" | default dict) {{ "hub}}" }}
             {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
             {{ "{{-" }} $gitlabUrl := (printf "https://gitlab.%s" $ingressDomain) {{ "}}" }}
-            {{ "{{-" }} $repoUrl := (printf "%s/autoshift/autoshiftv2.git" $gitlabUrl) {{ "}}" }}
+            {{ "{{-" }} $repoPath := "{{ "{{hub" }} index $gitlabCfg "repoPath" | default "autoshift/autoshiftv2" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $repoUrl := (printf "%s/%s.git" $gitlabUrl $repoPath) {{ "}}" }}
             {{ "{{-" }} $password := (fromSecret "{{ .Values.gitlab.namespace }}" "gitlab-gitlab-initial-root-password" "password" | base64dec) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
@@ -69,9 +73,13 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
+            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $gitlabCfg := (index $rcmConfig "gitlab" | default dict) {{ "hub}}" }}
             {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
             {{ "{{-" }} $gitlabUrl := (printf "https://gitlab.%s" $ingressDomain) {{ "}}" }}
-            {{ "{{-" }} $repoUrl := (printf "%s/autoshift/site-config.git" $gitlabUrl) {{ "}}" }}
+            {{ "{{-" }} $siteConfigPath := "{{ "{{hub" }} index $gitlabCfg "siteConfigPath" | default "autoshift/site-config" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $repoUrl := (printf "%s/%s.git" $gitlabUrl $siteConfigPath) {{ "}}" }}
             {{ "{{-" }} $password := (fromSecret "{{ .Values.gitlab.namespace }}" "gitlab-gitlab-initial-root-password" "password" | base64dec) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:

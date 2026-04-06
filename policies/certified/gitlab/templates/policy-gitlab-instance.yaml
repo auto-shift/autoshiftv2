@@ -34,8 +34,11 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
+            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $gitlabCfg := (index $rcmConfig "gitlab" | default dict) {{ "hub}}" }}
             {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
-            {{ "{{-" }} $chartVersion := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-chart-version" | default "{{ .Values.gitlab.chartVersion | default "9.10.1" }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $chartVersion := "{{ "{{hub" }} index $gitlabCfg "chartVersion" | default "9.10.1" {{ "hub}}" }}" {{ "}}" }}
             {{ "{{-" }} $ns := "{{ .Values.gitlab.namespace }}" {{ "}}" }}
 
             # Service modes: managed (default), external, or bundled
@@ -238,6 +241,35 @@ spec:
                             requests:
                               cpu: 500m
                               memory: 1000M
+            {{ "{{-" }} else {{ "}}" }}
+            {{/* Report what's not ready so the policy shows NonCompliant */}}
+            {{ "{{-" }} if not $dbReady {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: gitlab-db-app
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if not $redisReady {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: gitlab-redis-password
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if not $objStoreReady {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: gitlab-objectstorage
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
