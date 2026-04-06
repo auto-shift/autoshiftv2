@@ -29,17 +29,19 @@ spec:
           severity: high
           object-templates-raw: |
             {{ "{{hub-" }} $siteConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "siteConfig" | default dict {{ "hub}}" }}
-            apiVersion: v1
-            kind: ConfigMap
-            metadata:
-                name: siteconfig-operator-configuration
-                namespace: open-cluster-management 
-            data:
-            {{ "{{hub-" }} if eq ($siteConfig).enableReinstall true {{ "hub}}" }}
-                allowReinstalls: true
-            {{ "{{hub-" }} else {{ "hub}}" }}
-                allowReinstalls: false
-            {{ "{{hub-" }} end {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                  name: siteconfig-operator-configuration
+                  namespace: open-cluster-management 
+              data:
+              {{ "{{hub-" }} if eq ($siteConfig).enableReinstall true {{ "hub}}" }}
+                  allowReinstalls: true
+              {{ "{{hub-" }} else {{ "hub}}" }}
+                  allowReinstalls: false
+              {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
