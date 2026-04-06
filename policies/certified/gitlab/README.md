@@ -111,6 +111,9 @@ gitlab-source-namespace: openshift-marketplace
 # gitlab-redis-host: 'my-redis.example.com'
 # gitlab-redis-port: '6379'
 
+# ArgoCD integration
+# gitlab-argocd-integration: 'true'       # Create credential template for all GitLab repos
+
 # Database backups (requires managed db mode + odf)
 # gitlab-db-backups: 'true'
 ```
@@ -125,8 +128,6 @@ hubClusterSets:
     config:
       gitlab:
         chartVersion: '9.10.1'                    # GitLab Helm chart version
-        repoPath: autoshift/autoshiftv2            # GitLab group/project for ArgoCD repo
-        siteConfigPath: autoshift/site-config      # GitLab group/project for site config
         dbBackupSchedule: '0 2 * * *'              # Cron schedule for CNPG base backups
         dbBackupRetention: '30d'                   # Backup retention period
 ```

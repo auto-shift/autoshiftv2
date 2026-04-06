@@ -23,12 +23,12 @@ spec:
       name: policy-gitlab-instance
       namespace: '{{ $policyNamespace }}'
   policy-templates:
-    {{- /* ===== ArgoCD repo secret for the autoshiftv2 repo ===== */}}
+    {{- /* ===== ArgoCD credential template for all GitLab repos ===== */}}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: gitlab-argocd-repo-autoshift
+          name: gitlab-argocd-repo-creds
         spec:
           remediationAction: enforce
           severity: high
@@ -36,66 +36,23 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
-            {{ "{{hub-" }} $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
-            {{ "{{hub-" }} $gitlabCfg := (index $rcmConfig "gitlab" | default dict) {{ "hub}}" }}
             {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
             {{ "{{-" }} $gitlabUrl := (printf "https://gitlab.%s" $ingressDomain) {{ "}}" }}
-            {{ "{{-" }} $repoPath := "{{ "{{hub" }} index $gitlabCfg "repoPath" | default "autoshift/autoshiftv2" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{-" }} $repoUrl := (printf "%s/%s.git" $gitlabUrl $repoPath) {{ "}}" }}
             {{ "{{-" }} $password := (fromSecret "{{ .Values.gitlab.namespace }}" "gitlab-gitlab-initial-root-password" "password" | base64dec) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: Secret
                 metadata:
-                  name: gitlab-repo-autoshift
+                  name: gitlab-repo-creds
                   namespace: {{ $gitopsNamespace }}
                   labels:
-                    argocd.argoproj.io/secret-type: repository
+                    argocd.argoproj.io/secret-type: repo-creds
                 type: Opaque
                 stringData:
-                  url: {{ "{{" }} $repoUrl {{ "}}" }}
+                  url: {{ "{{" }} $gitlabUrl {{ "}}" }}
                   username: root
                   password: {{ "{{" }} $password {{ "}}" }}
-                  insecure: "true"
-                  type: git
-    {{- /* ===== ArgoCD repo secret for the site-config repo ===== */}}
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: gitlab-argocd-repo-site-config
-        spec:
-          remediationAction: enforce
-          severity: high
-          evaluationInterval:
-            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates-raw: |
-            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
-            {{ "{{hub-" }} $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
-            {{ "{{hub-" }} $gitlabCfg := (index $rcmConfig "gitlab" | default dict) {{ "hub}}" }}
-            {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
-            {{ "{{-" }} $gitlabUrl := (printf "https://gitlab.%s" $ingressDomain) {{ "}}" }}
-            {{ "{{-" }} $siteConfigPath := "{{ "{{hub" }} index $gitlabCfg "siteConfigPath" | default "autoshift/site-config" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{-" }} $repoUrl := (printf "%s/%s.git" $gitlabUrl $siteConfigPath) {{ "}}" }}
-            {{ "{{-" }} $password := (fromSecret "{{ .Values.gitlab.namespace }}" "gitlab-gitlab-initial-root-password" "password" | base64dec) {{ "}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: Secret
-                metadata:
-                  name: gitlab-repo-site-config
-                  namespace: {{ $gitopsNamespace }}
-                  labels:
-                    argocd.argoproj.io/secret-type: repository
-                type: Opaque
-                stringData:
-                  url: {{ "{{" }} $repoUrl {{ "}}" }}
-                  username: root
-                  password: {{ "{{" }} $password {{ "}}" }}
-                  insecure: "true"
                   type: git
     {{- /* ===== ArgoCD TLS cert for GitLab ===== */}}
     - objectDefinition:
@@ -142,6 +99,10 @@ spec:
         labelSelector:
           matchExpressions:
             - key: 'autoshift.io/gitlab'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/gitlab-argocd-integration'
               operator: In
               values:
               - 'true'
