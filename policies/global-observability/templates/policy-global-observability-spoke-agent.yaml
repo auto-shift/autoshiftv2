@@ -140,29 +140,31 @@ spec:
             {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
             {{ "{{hub-" }} $scrapeInterval := index $obsConfig "scrapeInterval" | default "{{ .Values.globalObservability.scrapeInterval }}" {{ "hub}}" }}
             {{ "{{hub-" }} $logLevel := index $obsConfig "logLevel" | default {{ .Values.globalObservability.logLevel }} | default "warn" {{ "hub}}" }}
+            {{ range $idx, $name :=  (.Values.globalObservability.spokeAgent.prometheusAgentNames | default (list "mcoa-default-platform-metrics-collector-global" "mcoa-default-user-workload-metrics-collector-global")) }}
             - complianceType: musthave
               recreateOption: IfRequired
               objectDefinition:
                 apiVersion: monitoring.rhobs/v1alpha1
                 kind: PrometheusAgent
                 metadata:
-                  name: {{ .Values.globalObservability.spokeAgent.prometheusAgentName }}
-                  namespace: {{ .Values.globalObservability.namespace }}
+                  name: {{ $name }}
+                  namespace: {{ $.Values.globalObservability.namespace }}
                 spec:
                   scrapeInterval: {{ "{{hub" }} $scrapeInterval {{ "hub}}" }}
                   logLevel: {{ "{{hub" }} $logLevel {{ "hub}}" }}
                   secrets:
-                  {{- range .Values.globalObservability.spokeAgent.secrets }}
+                  {{- range $.Values.globalObservability.spokeAgent.secrets }}
                     - {{ . }}
                   {{- end }}
                   remoteWrite:
-                    - name: {{ .Values.globalObservability.spokeAgent.remoteWrite.name }}
-                      remoteTimeout: {{ .Values.globalObservability.spokeAgent.remoteWrite.remoteTimeout }}
+                    - name: {{ $.Values.globalObservability.spokeAgent.remoteWrite.name }}
+                      remoteTimeout: {{ $.Values.globalObservability.spokeAgent.remoteWrite.remoteTimeout }}
                       tlsConfig:
                         ca: {}
-                        caFile: {{ .Values.globalObservability.spokeAgent.remoteWrite.caFile }}
+                        caFile: {{ $.Values.globalObservability.spokeAgent.remoteWrite.caFile }}
                         cert: {}
-                        certFile: {{ .Values.globalObservability.spokeAgent.remoteWrite.certFile }}
-                        keyFile: {{ .Values.globalObservability.spokeAgent.remoteWrite.keyFile }}
+                        certFile: {{ $.Values.globalObservability.spokeAgent.remoteWrite.certFile }}
+                        keyFile: {{ $.Values.globalObservability.spokeAgent.remoteWrite.keyFile }}
                       url: '{{ "{{" }} fromSecret "open-cluster-management-observability" "global-observability-secrets" "observatorium.url" | base64dec {{ "}}" }}'
+            {{ end }}
 {{- end }}
