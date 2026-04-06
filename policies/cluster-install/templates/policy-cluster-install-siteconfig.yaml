@@ -54,6 +54,7 @@ spec:
                   {{ "{{-" }} $workerCount = (sub (len (keys $hosts)) $controlPlaneCount) {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} $baseDomain := (index $ci "baseDomain") {{ "}}" }}
+                {{ "{{-" }} $fips := (index $ci "fips" | default false) {{ "}}" }}
                 {{ "{{-" }} $managedClusterSet := (printf "%s{{ $.Values.clusterSetSuffix | default "" }}" (index $config "clusterSet" | default "default")) {{ "}}" }}
                 {{ "{{-" }} $sshPublicKey := (index $ci "sshPublicKey" | default "") {{ "}}" }}
                 {{ "{{-" }} $sshPublicKeyRef := (index $ci "sshPublicKeyRef" | default dict) {{ "}}" }}
@@ -158,6 +159,10 @@ spec:
                     metadata:
                       name: {{ "{{" }} $clusterName {{ "}}" }}
                       namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                    {{ "{{-" }} if $fips {{ "}}" }}
+                      annotations:
+                        agent-install.openshift.io/install-config-overrides: '{"fips": true}'
+                    {{ "{{-" }} end {{ "}}" }}
                     spec:
                       clusterDeploymentRef:
                         name: {{ "{{" }} $clusterName {{ "}}" }}
