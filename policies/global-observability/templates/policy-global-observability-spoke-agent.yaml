@@ -157,14 +157,16 @@ spec:
                     - {{ . }}
                   {{- end }}
                   remoteWrite:
-                    - name: {{ $.Values.globalObservability.spokeAgent.remoteWrite.name }}
-                      remoteTimeout: {{ $.Values.globalObservability.spokeAgent.remoteWrite.remoteTimeout }}
+                  {{- range $rw := $.Values.globalObservability.spokeAgent.remoteWrite }}
+                    - name: {{ $rw.name }}
+                      remoteTimeout: {{ $rw.remoteTimeout }}
                       tlsConfig:
                         ca: {}
-                        caFile: {{ $.Values.globalObservability.spokeAgent.remoteWrite.caFile }}
+                        caFile: {{ $rw.caFile }}
                         cert: {}
-                        certFile: {{ $.Values.globalObservability.spokeAgent.remoteWrite.certFile }}
-                        keyFile: {{ $.Values.globalObservability.spokeAgent.remoteWrite.keyFile }}
-                      url: '{{ "{{" }} fromSecret "open-cluster-management-observability" "global-observability-secrets" "observatorium.url" | base64dec {{ "}}" }}'
+                        certFile: {{ $rw.certFile }}
+                        keyFile: {{ $rw.keyFile }}
+                      url: '{{ "{{" }} "{{ ($rw).observatoriumUrl }}" | default  fromSecret "open-cluster-management-observability" "global-observability-secrets" "observatorium.url" | base64dec {{ "}}" }}'
+                  {{- end }}
             {{ end }}
 {{- end }}

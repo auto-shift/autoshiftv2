@@ -126,7 +126,9 @@ Default `spokeAgent.secrets`:
 - A CA bundle ConfigMap must exist in `openshift-config` (specified by `caBundle.*`)
 - For spoke agent functionality: the Cluster Observability Operator must be installed on regional hubs, and mTLS secrets must be pre-replicated to each regional hub's MCO namespace
 
-## Example
+## Examples
+
+### Labels Only
 
 ```yaml
 # In autoshift/values/clustersets/hub.yaml
@@ -137,6 +139,59 @@ hubClusterSets:
       self-managed: 'true'
       global-observability-storage-class: gp3-csi
       global-observability-retention-raw: '7d'
+
+  regional-hub:
+    labels:
+      global-observability: 'true'
+      self-managed: 'false'
+```
+
+### Labels with Config
+
+```yaml
+# In autoshift/values/clustersets/hub.yaml or autoshift/values/clusters/<cluster>.yaml
+hubClusterSets:
+  global-hub:
+    labels:
+      global-observability: 'true'
+      self-managed: 'true'
+    config:
+      globalObservability:
+        useClusterCA: false
+        storageClass: 'gp3-csi'
+        retentionResolutionRaw: '7d'
+        retentionResolution5m: '14d'
+        retentionResolution1h: '30d'
+        enableDownSampling: true
+        interval: 300
+        scrapeSizeLimitBytes: 1073741824
+        scrapeWorkers: 1
+        scrapeInterval: '300s'
+        logLevel: 'warn'
+        alertmanagerStorageSize: '10Gi'
+        compactStorageSize: '10Gi'
+        receiveStorageSize: '10Gi'
+        ruleStorageSize: '10Gi'
+        storeStorageSize: '10Gi'
+        capabilities:
+          platformAnalytics: 'true'
+          platformLogs: 'true'
+          platformMetrics: 'true'
+          userWorkloadLogs: 'true'
+          userWorkloadMetrics: 'true'
+          userWorkloadTraces: 'true'
+        thanosStorage:
+          bucket: 'acm-dr'
+          endpoint: 's3.example.com'
+          insecure: false
+          caBundle:
+            sourceName: 'user-ca-bundle'
+            sourceKey: 'ca-bundle.crt'
+          source:
+            namespace: 'my-secrets-ns'
+            secretName: 'my-s3-secret'
+            accessKeyField: 'AWS_ACCESS_KEY_ID'
+            secretKeyField: 'AWS_SECRET_ACCESS_KEY'
 
   regional-hub:
     labels:
