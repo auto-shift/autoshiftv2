@@ -393,7 +393,7 @@ spec:
                   namespace: {{ .Values.servicemesh3operator.tempoNamespace }}
                 type: Opaque
                 stringData:
-                  endpoint: 'http://{{ "{{" }} fromConfigMap "{{ .Values.servicemesh3operator.tempoNamespace }}" "tempo-bucket-odf" "BUCKET_HOST" {{ "}}" }}:80'
+                  endpoint: 'https://{{ "{{" }} fromConfigMap "{{ .Values.servicemesh3operator.tempoNamespace }}" "tempo-bucket-odf" "BUCKET_HOST" {{ "}}" }}:{{ "{{" }} fromConfigMap "{{ .Values.servicemesh3operator.tempoNamespace }}" "tempo-bucket-odf" "BUCKET_PORT" {{ "}}" }}'
                   bucket: '{{ "{{" }} fromConfigMap "{{ .Values.servicemesh3operator.tempoNamespace }}" "tempo-bucket-odf" "BUCKET_NAME" {{ "}}" }}'
                   access_key_id: '{{ "{{" }} fromSecret "{{ .Values.servicemesh3operator.tempoNamespace }}" "tempo-bucket-odf" "AWS_ACCESS_KEY_ID" | base64dec {{ "}}" }}'
                   access_key_secret: '{{ "{{" }} fromSecret "{{ .Values.servicemesh3operator.tempoNamespace }}" "tempo-bucket-odf" "AWS_SECRET_ACCESS_KEY" | base64dec {{ "}}" }}'
@@ -421,6 +421,9 @@ spec:
                     secret:
                       name: tempo-s3-secret
                       type: s3
+                    tls:
+                      enabled: true
+                      insecureSkipVerify: true
                   storageSize: {{ .Values.servicemesh3operator.tempo.storageSize }}
                   template:
                     queryFrontend:
