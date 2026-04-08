@@ -33,6 +33,13 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
+            {{`{{- $noobaaRoute := (lookup "route.openshift.io/v1" "Route" "openshift-storage" "s3") | default dict }}`}}
+            {{`{{- $noobaaHost := (index ($noobaaRoute.spec | default dict) "host" | default "") }}`}}
+            {{`{{- $caBundleCert := fromConfigMap "openshift-image-registry" "openshift-service-ca.crt" "service-ca.crt" }}`}}
+            {{`{{- if not (empty $noobaaHost) }}`}}
+            {{`{{- $routerCA := (lookup "v1" "Secret" "openshift-ingress-operator" "router-ca") | default dict }}`}}
+            {{`{{- $caBundleCert = (index ($routerCA.data | default dict) "tls.crt" | default "" | base64dec) }}`}}
+            {{`{{- end }}`}}
             {{`{{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}`}}
             - complianceType: musthave
               objectDefinition:
@@ -54,7 +61,7 @@ spec:
                   namespace: openshift-config
                 data:
                   ca-bundle.crt: |
-                    {{`{{ fromConfigMap "openshift-image-registry" "openshift-service-ca.crt" "service-ca.crt" | autoindent }}`}}
+                    {{`{{ $caBundleCert | autoindent }}`}}
             {{`{{hub- end hub}}`}}
             - complianceType: musthave
               objectDefinition:
@@ -83,7 +90,7 @@ spec:
                     s3:
                       region: {{`{{hub index .ManagedClusterLabels "autoshift.io/imageregistry-s3-region" | default "us-east-1" hub}}`}}
                       bucket: {{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_NAME" }}`}}
-                      regionEndpoint: 'https://{{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_HOST" }}`}}:{{`{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_PORT" }}`}}'
+                      regionEndpoint: '{{`{{ if not (empty $noobaaHost) }}https://{{ $noobaaHost }}{{ else }}https://{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_HOST" }}:{{ fromConfigMap "openshift-image-registry" "image-registry-storage" "BUCKET_PORT" }}{{ end }}`}}'
                       virtualHostedStyle: false
                       encrypt: false
                       trustedCA:
