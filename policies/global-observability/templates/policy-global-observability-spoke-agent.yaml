@@ -85,13 +85,13 @@ spec:
 
     #####################################################################
     # Additional: replicate secrets for each additionalRemoteWrites entry
+    # from the rendered-config ConfigMap
     #####################################################################
-    {{- range $rw := .Values.globalObservability.spokeAgent.additionalRemoteWrites }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: global-observability-secret-{{ $rw.secretRef.name }}
+          name: global-observability-additional-secrets
         spec:
           remediationAction: enforce
           severity: high
@@ -100,23 +100,26 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             # INDENTATION ANCHOR
-            {{ "{{hub" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
-            {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not {{ ($rw).onSelfManagedHub | default false }})) {{ "hub}}" }}
+            {{ "{{hub" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $additionalRW := index $obsConfig "additionalRemoteWrites" | default list {{ "hub}}" }}
+            {{ "{{hub-" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
+            {{ "{{hub-" }} range $rw := $additionalRW {{ "hub}}" }}
+              {{ "{{hub-" }} $secretRef := index $rw "secretRef" | default dict {{ "hub}}" }}
+              {{ "{{hub-" }} $onSelfManaged := index $rw "onSelfManagedHub" | default false {{ "hub}}" }}
+              {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) {{ "hub}}" }}
+                {{ "{{hub-" }} if not (empty $secretRef) {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: Secret
                 metadata:
-                  name: {{ $rw.secretRef.name }}
-                  namespace: {{ $.Values.globalObservability.namespace }}
+                  name: '{{ "{{hub" }} index $secretRef "name" {{ "hub}}" }}'
+                  namespace: {{ .Values.globalObservability.namespace }}
                 type: Opaque
-              {{- if $rw.secretRef.fromHub }}
-                data: '{{ "{{hub" }} copySecretData "{{ $rw.secretRef.namespace }}" "{{ $rw.secretRef.name }}" {{ "hub}}" }}'
-              {{- else }}
-                data: '{{ "{{" }} copySecretData "{{ $rw.secretRef.namespace }}" "{{ $rw.secretRef.name }}" {{ "}}" }}'
-              {{- end }}
+                data: '{{ "{{hub" }} copySecretData (index $secretRef "namespace") (index $secretRef "name") {{ "hub}}" }}'
+                {{ "{{hub-" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
-    {{- end }}
 
     #####################################################################
     # Patch PrometheusAgent templates with secrets + remoteWrite entries
@@ -138,6 +141,7 @@ spec:
             {{ "{{hub-" }} $scrapeInterval := index $obsConfig "scrapeInterval" | default "{{ .Values.globalObservability.scrapeInterval }}" {{ "hub}}" }}
             {{ "{{hub-" }} $logLevel := index $obsConfig "logLevel" | default "{{ .Values.globalObservability.logLevel }}" | default "warn" {{ "hub}}" }}
             {{ "{{hub-" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
+            {{ "{{hub-" }} $additionalRW := index $obsConfig "additionalRemoteWrites" | default list {{ "hub}}" }}
             {{ range $idx, $name := (.Values.globalObservability.spokeAgent.prometheusAgentNames | default (list "mcoa-default-platform-metrics-collector-global" "mcoa-default-user-workload-metrics-collector-global")) }}
             - complianceType: musthave
               recreateOption: IfRequired
@@ -155,12 +159,16 @@ spec:
                     {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
                     - {{ $rollup.secretName }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
-                    # Additional: secrets from additionalRemoteWrites
-                  {{- range $rw := $.Values.globalObservability.spokeAgent.additionalRemoteWrites }}
-                      {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not {{ ($rw).onSelfManagedHub | default false }})) {{ "hub}}" }}
-                    - {{ $rw.secretRef.name }}
-                      {{ "{{hub" }} end {{ "hub}}" }}
-                  {{- end }}
+                    # Additional: secrets from additionalRemoteWrites (rendered-config)
+                    {{ "{{hub-" }} range $rw := $additionalRW {{ "hub}}" }}
+                      {{ "{{hub-" }} $secretRef := index $rw "secretRef" | default dict {{ "hub}}" }}
+                      {{ "{{hub-" }} $onSelfManaged := index $rw "onSelfManagedHub" | default false {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) {{ "hub}}" }}
+                        {{ "{{hub-" }} if not (empty $secretRef) {{ "hub}}" }}
+                    - '{{ "{{hub" }} index $secretRef "name" {{ "hub}}" }}'
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                   remoteWrite:
                     # Built-in: global hub rollup — skipped on self-managed hub
                     {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
@@ -174,19 +182,20 @@ spec:
                         keyFile: {{ $rollup.keyFile }}
                       url: '{{ "{{" }} fromSecret "{{ $.Values.globalObservability.namespace }}" "{{ $rollup.secretName }}" "observatorium.url" | base64dec {{ "}}" }}'
                     {{ "{{hub-" }} end {{ "hub}}" }}
-                    # Additional remote-writes
-                  {{- range $rw := $.Values.globalObservability.spokeAgent.additionalRemoteWrites }}
-                    {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not {{ ($rw).onSelfManagedHub | default false }})) {{ "hub}}" }}
-                    - name: {{ $rw.name }}
-                      remoteTimeout: {{ $rw.remoteTimeout }}
+                    # Additional remote-writes (rendered-config)
+                    {{ "{{hub-" }} range $rw := $additionalRW {{ "hub}}" }}
+                      {{ "{{hub-" }} $onSelfManaged := index $rw "onSelfManagedHub" | default false {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) {{ "hub}}" }}
+                    - name: '{{ "{{hub" }} index $rw "name" {{ "hub}}" }}'
+                      remoteTimeout: '{{ "{{hub" }} index $rw "remoteTimeout" | default "30s" {{ "hub}}" }}'
                       tlsConfig:
                         ca: {}
-                        caFile: {{ $rw.caFile }}
+                        caFile: '{{ "{{hub" }} index $rw "caFile" {{ "hub}}" }}'
                         cert: {}
-                        certFile: {{ $rw.certFile }}
-                        keyFile: {{ $rw.keyFile }}
-                      url: {{ $rw.url }}
+                        certFile: '{{ "{{hub" }} index $rw "certFile" {{ "hub}}" }}'
+                        keyFile: '{{ "{{hub" }} index $rw "keyFile" {{ "hub}}" }}'
+                      url: '{{ "{{hub" }} index $rw "url" {{ "hub}}" }}'
+                      {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
-                  {{- end }}
             {{- end }}
 {{- end }}

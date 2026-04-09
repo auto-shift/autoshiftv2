@@ -3,63 +3,67 @@
 # Declare variables to be passed into your templates.
 policy_namespace: open-cluster-policies
 globalObservability:
-    namespace: open-cluster-management-observability
-    # CA bundle source — copied into a Secret for Thanos S3 TLS verification
-    caBundle:
-      sourceName: user-ca-bundle        # ConfigMap name in openshift-config
-      sourceKey: ca-bundle.crt           # key within the ConfigMap
-    # Thanos object storage — S3 credentials copied from a source secret
-    thanosStorage:
-      source:
-        namespace: ""                    # namespace of the source secret containing S3 credentials
-        secretName: ""                   # name of the source secret
-        accessKeyField: AWS_ACCESS_KEY_ID
-        secretKeyField: AWS_SECRET_ACCESS_KEY
-      bucket: acm-dr
-      endpoint: ""                       # s3 endpoint hostname (e.g. s3.example.com)
-      insecure: false
-    retentionResolutionRaw: 5d
-    retentionResolution5m: 14d
-    retentionResolution1h: 30d
-    enableDownsampling: true
-    scrapeInterval: 300s
-    scrapeSizeLimitBytes: "1073741824"
-    workers: 1
-    alertmanagerStorageSize: 10Gi
-    compactStorageSize: 10Gi
-    receiveStorageSize: 10Gi
-    ruleStorageSize: 10Gi
-    storeStorageSize: 10Gi
-    # Spoke agent — patches hub PrometheusAgent templates
-    spokeAgent:
-      # MCOA PrometheusAgent names to patch on hubs
-      prometheusAgentNames:
-        - mcoa-default-platform-metrics-collector-global
-        - mcoa-default-user-workload-metrics-collector-global
-      # Built-in global hub rollup — always deployed, skipped on self-managed hub
-      # Rolls up metrics from regional hubs to the self-managed hub's observatorium
-      globalHubRollup:
-        name: acm-global-observability
-        secretName: global-observability-secrets    # coalesced secret created by policy-global-observability-secrets
-        secretNamespace: policies-autoshift      # namespace where the coalesced secret lives on the hub
-        remoteTimeout: 30s
-        caFile: /etc/prometheus/secrets/global-observability-secrets/ca.crt
-        certFile: /etc/prometheus/secrets/global-observability-secrets/tls.crt
-        keyFile: /etc/prometheus/secrets/global-observability-secrets/tls.key
-      # Additional remote-write targets (optional)
-      # Each entry adds a remote-write + its secrets to all PrometheusAgent templates
-      additionalRemoteWrites: []
-      # - name: external-monitoring
-      #   remoteTimeout: 30s
-      #   onSelfManagedHub: true           # emit on self-managed hub too (default: false)
-      #   url: https://external.example.com/api/v1/receive
-      #   caFile: /etc/prometheus/secrets/external-certs/ca.crt
-      #   certFile: /etc/prometheus/secrets/external-certs/tls.crt
-      #   keyFile: /etc/prometheus/secrets/external-certs/tls.key
-      #   secretRef:
-      #     name: external-certs
-      #     namespace: some-ns
-      #     fromHub: false                 # true = replicate from hub, false = exists locally on each hub
+  namespace: open-cluster-management-observability
+  # CA bundle source — copied into a Secret for Thanos S3 TLS verification
+  caBundle:
+    sourceName: user-ca-bundle        # ConfigMap name in openshift-config
+    sourceKey: ca-bundle.crt           # key within the ConfigMap
+  # Thanos object storage — S3 credentials copied from a source secret
+  thanosStorage:
+    source:
+      namespace: "policies-autoshift"                    # namespace of the source secret containing S3 credentials
+      secretName: "thanos-s3-bucket"                   # name of the source secret
+      accessKeyField: access-key
+      secretKeyField: secret-key
+    bucket: acm-dr
+    endpoint: ""                       # s3 endpoint hostname (e.g. s3.example.com)
+    insecure: false
+  retentionResolutionRaw: 5d
+  retentionResolution5m: 14d
+  retentionResolution1h: 30d
+  enableDownsampling: true
+  scrapeInterval: 300s
+  scrapeSizeLimitBytes: "1073741824"
+  workers: 1
+  alertmanagerStorageSize: 10Gi
+  compactStorageSize: 10Gi
+  receiveStorageSize: 10Gi
+  ruleStorageSize: 10Gi
+  storeStorageSize: 10Gi
+  # Spoke agent — patches hub PrometheusAgent templates
+  spokeAgent:
+    # MCOA PrometheusAgent names to patch on hubs
+    prometheusAgentNames:
+      - mcoa-default-platform-metrics-collector-global
+      - mcoa-default-user-workload-metrics-collector-global
+    # Built-in global hub rollup — always deployed, skipped on self-managed hub
+    # Rolls up metrics from regional hubs to the self-managed hub's observatorium
+    globalHubRollup:
+      name: acm-global-observability
+      secretName: global-observability-secrets    # coalesced secret created by policy-global-observability-secrets
+      secretNamespace: policies-autoshift      # namespace where the coalesced secret lives on the hub
+      remoteTimeout: 30s
+      caFile: /etc/prometheus/secrets/global-observability-secrets/ca.crt
+      certFile: /etc/prometheus/secrets/global-observability-secrets/tls.crt
+      keyFile: /etc/prometheus/secrets/global-observability-secrets/tls.key
+    # Additional remote-write targets are configured per-cluster/clusterset
+    # via the rendered-config ConfigMap under globalObservability.additionalRemoteWrites.
+    # Secrets are always replicated from the hub via copySecretData.
+    #
+    # Example config block (in autoshift/values/clustersets/*.yaml or clusters/*.yaml):
+    #   config:
+    #     globalObservability:
+    #       additionalRemoteWrites:
+    #         - name: external-monitoring
+    #           remoteTimeout: 30s
+    #           onSelfManagedHub: true
+    #           url: https://external.example.com/api/v1/receive
+    #           caFile: /etc/prometheus/secrets/external-certs/ca.crt
+    #           certFile: /etc/prometheus/secrets/external-certs/tls.crt
+    #           keyFile: /etc/prometheus/secrets/external-certs/tls.key
+    #           secretRef:
+    #             name: external-certs
+    #             namespace: some-ns
 # hubClusterSets:
 #   hub:
 #     labels:

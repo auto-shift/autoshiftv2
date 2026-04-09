@@ -10,7 +10,7 @@ Deploys and configures ACM MultiCluster Observability (MCO) on a global hub clus
 | `policy-global-observability-config` | Creates the MCO namespace, pull-secret, CA bundle secret, and Thanos object-storage secret |
 | `policy-global-observability-instance` | Creates the `MultiClusterObservability` CR with retention, storage, and addon settings |
 | `policy-global-observability-secrets` | Builds the `global-observability-secrets` Secret containing mTLS certs and the observatorium API URL |
-| `policy-global-observability-spoke` | Patches PrometheusAgent on regional hubs to add a remote-write target pointing to the global hub |
+| `policy-global-observability-spoke` | Patches PrometheusAgent templates on hub clusters with the built-in global hub rollup and any additional remote-write targets from rendered-config |
 
 ## PolicySets and Placement
 
@@ -18,7 +18,7 @@ Deploys and configures ACM MultiCluster Observability (MCO) on a global hub clus
 |-----------|---------|-------------------|
 | `policyset-global-observability-secrets` | Global hub only | `global-observability: 'true'` AND `self-managed: 'true'` |
 | `policyset-global-observability` | All hub clusters | `global-observability: 'true'` |
-| `policyset-global-observability-spoke` | Regional hubs only | `global-observability: 'true'` AND `self-managed: 'false'` |
+| `policyset-global-observability-spoke` | All hub clusters | `global-observability: 'true'` |
 
 ## Labels
 
@@ -113,22 +113,21 @@ Built-in remote-write that forwards metrics from regional hubs to the self-manag
 | `spokeAgent.globalHubRollup.certFile` | string | `/etc/prometheus/secrets/global-observability-secrets/tls.crt` | Path to the client cert file |
 | `spokeAgent.globalHubRollup.keyFile` | string | `/etc/prometheus/secrets/global-observability-secrets/tls.key` | Path to the client key file |
 
-#### Additional Remote-Writes
+#### Additional Remote-Writes (rendered-config)
 
-Optional list of extra remote-write targets added alongside the built-in rollup.
+Optional list of extra remote-write targets configured per-cluster/clusterset via the rendered-config ConfigMap under `globalObservability.additionalRemoteWrites`. These are added alongside the built-in rollup. Secrets are always replicated from the hub via `copySecretData`.
 
-| Value | Type | Default | Description |
-|-------|------|---------|-------------|
-| `spokeAgent.additionalRemoteWrites[].name` | string | — | Name of the remote-write entry |
-| `spokeAgent.additionalRemoteWrites[].url` | string | — | Remote-write endpoint URL |
-| `spokeAgent.additionalRemoteWrites[].remoteTimeout` | string | — | Timeout for remote-write requests |
-| `spokeAgent.additionalRemoteWrites[].onSelfManagedHub` | bool | `false` | When true, emit on the self-managed hub too |
-| `spokeAgent.additionalRemoteWrites[].caFile` | string | — | CA file path in the PrometheusAgent pod |
-| `spokeAgent.additionalRemoteWrites[].certFile` | string | — | Client cert file path |
-| `spokeAgent.additionalRemoteWrites[].keyFile` | string | — | Client key file path |
-| `spokeAgent.additionalRemoteWrites[].secretRefs[].name` | string | — | Secret name to replicate into the observability namespace |
-| `spokeAgent.additionalRemoteWrites[].secretRefs[].namespace` | string | — | Source namespace of the secret |
-| `spokeAgent.additionalRemoteWrites[].secretRefs[].fromHub` | bool | `false` | When true, secret is replicated from the global hub; when false, read locally on each hub |
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `additionalRemoteWrites[].name` | string | — | Name of the remote-write entry |
+| `additionalRemoteWrites[].url` | string | — | Remote-write endpoint URL |
+| `additionalRemoteWrites[].remoteTimeout` | string | `30s` | Timeout for remote-write requests |
+| `additionalRemoteWrites[].onSelfManagedHub` | bool | `false` | When true, emit on the self-managed hub too |
+| `additionalRemoteWrites[].caFile` | string | — | CA file path in the PrometheusAgent pod |
+| `additionalRemoteWrites[].certFile` | string | — | Client cert file path |
+| `additionalRemoteWrites[].keyFile` | string | — | Client key file path |
+| `additionalRemoteWrites[].secretRef.name` | string | — | Secret name to replicate into the observability namespace |
+| `additionalRemoteWrites[].secretRef.namespace` | string | — | Source namespace of the secret on the hub |
 
 ## Dependencies
 
@@ -141,7 +140,8 @@ Optional list of extra remote-write targets added alongside the built-in rollup.
 - The MultiClusterHub must have `multicluster-observability` enabled (handled by the MCH policy)
 - A source secret with S3 credentials must exist at the location specified by `thanosStorage.source.*`
 - A CA bundle ConfigMap must exist in `openshift-config` (specified by `caBundle.*`)
-- For spoke agent functionality: the Cluster Observability Operator must be installed on regional hubs, and mTLS secrets must be pre-replicated to each regional hub's MCO namespace
+- For spoke agent functionality: the Cluster Observability Operator must be installed on hub clusters
+- For additional remote-writes: referenced secrets must exist on the hub in their specified namespace
 
 ## Examples
 
@@ -209,6 +209,17 @@ hubClusterSets:
             secretName: 'my-s3-secret'
             accessKeyField: 'AWS_ACCESS_KEY_ID'
             secretKeyField: 'AWS_SECRET_ACCESS_KEY'
+        additionalRemoteWrites:
+          - name: external-monitoring
+            remoteTimeout: 30s
+            onSelfManagedHub: true
+            url: https://external.example.com/api/v1/receive
+            caFile: /etc/prometheus/secrets/external-certs/ca.crt
+            certFile: /etc/prometheus/secrets/external-certs/tls.crt
+            keyFile: /etc/prometheus/secrets/external-certs/tls.key
+            secretRef:
+              name: external-certs
+              namespace: some-ns
 
   regional-hub:
     labels:
