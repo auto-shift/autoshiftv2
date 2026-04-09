@@ -114,6 +114,23 @@ gitlab-source-namespace: openshift-marketplace
 # ArgoCD integration
 # gitlab-argocd-integration: 'true'       # Create credential template for all GitLab repos
 
+# Gitaly HA (Praefect)
+# gitlab-gitaly-ha: 'true'              # Enable Praefect HA for git storage (default: false)
+# gitlab-praefect-replicas: '3'         # Praefect proxy replicas (default: 3)
+# gitlab-gitaly-replicas: '3'           # Gitaly replicas per virtual storage (default: 3)
+
+# Database sizing
+# gitlab-db-instances: '2'              # PostgreSQL replicas (default: 2)
+# gitlab-db-pooler-instances: '2'       # PgBouncer replicas (default: 2)
+
+# Component replica scaling (HPA min/max)
+# gitlab-webservice-min-replicas: '2'   # default: 2
+# gitlab-webservice-max-replicas: '4'   # default: 4
+# gitlab-sidekiq-min-replicas: '2'      # default: 2
+# gitlab-sidekiq-max-replicas: '4'      # default: 4
+# gitlab-shell-min-replicas: '2'        # default: 2
+# gitlab-shell-max-replicas: '4'        # default: 4
+
 # Database backups (requires managed db mode + odf)
 # gitlab-db-backups: 'true'
 ```
@@ -127,7 +144,6 @@ hubClusterSets:
   hub:
     config:
       gitlab:
-        chartVersion: '9.10.1'                    # GitLab Helm chart version
         dbBackupSchedule: '0 2 * * *'              # Cron schedule for CNPG base backups
         dbBackupRetention: '30d'                   # Backup retention period
 ```
@@ -137,10 +153,10 @@ hubClusterSets:
 ### Redis Sentinel HA
 - 3 Redis pods (1 master + 2 replicas) with AOF persistence
 - 3 Sentinel pods for automatic failover
-- Uses `rhel9/redis-7` image from the OpenShift GitOps operator (already mirrored for disconnected)
+- Uses `rhel9/redis-7` image sourced dynamically from the OpenShift GitOps operator's `ARGOCD_REDIS_IMAGE` env var. The GitOps operator ships this as a `relatedImage` in its CSV, so oc-mirror captures it automatically — no separate image mirroring config needed for disconnected environments
 
 ### CloudNativePG PostgreSQL
-- HA cluster with configurable instance count (`cnpg-instances` label)
+- HA cluster with configurable instance count (`gitlab-db-instances` label, default: 2)
 - PgBouncer connection pooling (RW + RO)
 - TLS enabled by default (auto-generated certificates)
 - Optional scheduled backups to NooBaa S3
@@ -149,6 +165,26 @@ hubClusterSets:
 - Auto-provisions ObjectBucketClaim
 - Injects OpenShift service CA for TLS trust
 - Single bucket with per-feature prefixes
+
+### Gitaly HA (Praefect) — `gitlab-gitaly-ha: 'true'`
+
+By default GitLab runs a single Gitaly pod for git repository storage — a single point of failure. Enabling Praefect replaces it with a replicated setup:
+
+- **Praefect** (`gitlab-praefect-replicas`, default 3) — gRPC proxy layer that handles write fanout and read distribution across Gitaly nodes
+- **Gitaly StatefulSet** (`gitlab-gitaly-replicas`, default 3) — replicated git storage nodes, one per virtual storage replica
+- **Praefect database** — a `praefect_production` database is created in the existing CNPG cluster using the `gitlab` user. No new CNPG cluster or secrets are required.
+
+When enabled, Praefect intercepts all git operations from GitLab Rails/Sidekiq. Writes are replicated to all healthy Gitaly nodes. If a Gitaly node fails, Praefect automatically routes to a replica. The Praefect DB tracks replication state and manages failover.
+
+```bash
+# Verify Praefect can reach all Gitaly nodes
+oc exec -n gitlab-system gitlab-praefect-0 -- \
+  /usr/local/bin/praefect -config /etc/gitaly/config.toml dial-nodes
+
+# Check replication status
+oc exec -n gitlab-system gitlab-praefect-0 -- \
+  /usr/local/bin/praefect -config /etc/gitaly/config.toml list-storages
+```
 
 ## Troubleshooting
 

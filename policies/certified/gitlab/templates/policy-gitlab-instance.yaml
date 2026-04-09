@@ -34,17 +34,26 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
-            {{ "{{hub-" }} $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
-            {{ "{{hub-" }} $gitlabCfg := (index $rcmConfig "gitlab" | default dict) {{ "hub}}" }}
             {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
-            {{ "{{-" }} $chartVersion := "{{ "{{hub" }} index $gitlabCfg "chartVersion" | default "9.10.3" {{ "hub}}" }}" {{ "}}" }}
             {{ "{{-" }} $ns := "{{ .Values.gitlab.namespace }}" {{ "}}" }}
 
             # Service modes: managed (default), external, or bundled
             {{ "{{-" }} $dbMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
             {{ "{{-" }} $redisMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-redis-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
             {{ "{{-" }} $objStoreMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-object-storage-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
+
+            # Gitaly HA (Praefect)
+            {{ "{{-" }} $gitalyHA := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-gitaly-ha" | default "false" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $praefectReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-praefect-replicas" | default "3" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $gitalyReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-gitaly-replicas" | default "3" | toInt {{ "hub}}" }}" {{ "}}" }}
+
+            # Component replica counts
+            {{ "{{-" }} $webserviceMinReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-webservice-min-replicas" | default "2" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $webserviceMaxReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-webservice-max-replicas" | default "4" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $sidekiqMinReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-sidekiq-min-replicas" | default "2" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $sidekiqMaxReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-sidekiq-max-replicas" | default "4" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $shellMinReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-shell-min-replicas" | default "2" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $shellMaxReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-shell-max-replicas" | default "4" | toInt {{ "hub}}" }}" {{ "}}" }}
 
             # Check if non-bundled services are ready by looking for their connection secrets
             # For managed mode: CNPG/Redis/NooBaa policies create these secrets
@@ -108,7 +117,6 @@ spec:
                   namespace: {{ .Values.gitlab.namespace }}
                 spec:
                   chart:
-                    version: {{ "{{" }} $chartVersion {{ "}}" }}
                     values:
                       global:
                         hosts:
@@ -207,24 +215,47 @@ spec:
                       nginx-ingress:
                         enabled: false
                       installCertmanager: false
+                    {{ "{{-" }} if eq $gitalyHA "true" {{ "}}" }}
+                      praefect:
+                        enabled: true
+                        replaceInternalGitaly: true
+                        autoMigrate: true
+                        dbSecret:
+                          secret: gitlab-db-app
+                          key: password
+                        virtualStorages:
+                          - name: default
+                            gitalyReplicas: {{ "{{" }} $gitalyReplicas {{ "}}" }}
+                            maxUnavailable: 1
+                        psql:
+                          host: gitlab-db-pooler-rw.{{ "{{" }} $ns {{ "}}" }}.svc
+                          port: "5432"
+                          user: gitlab
+                          dbName: praefect_production
+                          sslMode: disable
+                    {{ "{{-" }} end {{ "}}" }}
                       gitlab:
                         gitlab-shell:
-                          minReplicas: 1
-                          maxReplicas: 2
+                          minReplicas: {{ "{{" }} $shellMinReplicas {{ "}}" }}
+                          maxReplicas: {{ "{{" }} $shellMaxReplicas {{ "}}" }}
                         webservice:
-                          minReplicas: 1
-                          maxReplicas: 2
+                          minReplicas: {{ "{{" }} $webserviceMinReplicas {{ "}}" }}
+                          maxReplicas: {{ "{{" }} $webserviceMaxReplicas {{ "}}" }}
                           resources:
                             requests:
                               cpu: 500m
                               memory: 1500M
                         sidekiq:
-                          minReplicas: 1
-                          maxReplicas: 2
+                          minReplicas: {{ "{{" }} $sidekiqMinReplicas {{ "}}" }}
+                          maxReplicas: {{ "{{" }} $sidekiqMaxReplicas {{ "}}" }}
                           resources:
                             requests:
                               cpu: 500m
                               memory: 1000M
+                    {{ "{{-" }} if eq $gitalyHA "true" {{ "}}" }}
+                      praefect:
+                        replicas: {{ "{{" }} $praefectReplicas {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1

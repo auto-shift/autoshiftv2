@@ -15,6 +15,8 @@ Deploys JFrog Artifactory HA with CloudNativePG PostgreSQL and PgBouncer connect
 
 The following secret must be created manually on each target cluster before Artifactory will deploy. The `policy-jfrog-keys` policy checks for this secret (inform-only) and the instance policy gates on it.
 
+**Why this can't be automated:** Artifactory uses `master-key` to encrypt all sensitive data at rest (licenses, passwords, API keys). It must be stable across pod restarts and operator upgrades — if it changes, all encrypted data becomes unreadable. `join-key` authenticates HA cluster nodes. Any policy that auto-generated these would produce a new random value on each enforce cycle, breaking the installation. Generate them once, store them safely.
+
 ```bash
 # Generate random keys
 MASTER_KEY=$(openssl rand -hex 32)
@@ -66,9 +68,9 @@ jfrog-source-namespace: openshift-marketplace
 cloudnative-pg: 'true'
 
 # Sizing
-jfrog-node-replicas: '1'          # Artifactory member node replicas
-cnpg-instances: '2'               # PostgreSQL instances
-cnpg-pooler-instances: '2'        # PgBouncer instances per pooler
+jfrog-node-replicas: '2'          # Artifactory member node replicas (default: 2)
+jfrog-db-instances: '2'           # PostgreSQL instances (default: 2)
+jfrog-db-pooler-instances: '2'   # PgBouncer instances per pooler (default: 2)
 
 # Backups (requires odf: 'true')
 artifactory-db-backups: 'true'

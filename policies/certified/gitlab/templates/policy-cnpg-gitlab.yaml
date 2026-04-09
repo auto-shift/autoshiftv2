@@ -65,7 +65,7 @@ spec:
                   name: gitlab-db
                   namespace: {{ .Values.gitlab.namespace }}
                 spec:
-                  instances: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/cnpg-instances" | default "2" | toInt {{ "hub}}" }}'
+                  instances: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-instances" | default "2" | toInt {{ "hub}}" }}'
                   postgresql:
                     parameters:
                       max_connections: "200"
@@ -130,6 +130,33 @@ spec:
                       ports:
                         - port: 8000
                           protocol: TCP
+    {{- /* Praefect database — only when gitlab-gitaly-ha is enabled */}}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cnpg-gitlab-praefect-db
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitlab-gitaly-ha" | default "false") "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Database
+                metadata:
+                  name: praefect-production
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  cluster:
+                    name: gitlab-db
+                  name: praefect_production
+                  owner: gitlab
+            {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
