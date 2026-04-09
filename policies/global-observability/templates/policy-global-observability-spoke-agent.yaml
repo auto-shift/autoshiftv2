@@ -1,0 +1,172 @@
+# Patches the MCOA-managed PrometheusAgent on regional hubs to add a second
+# remote-write target pointing to the global hub's observatorium API.
+#
+# The PrometheusAgent is created by the regional hub's MCO when capabilities
+# are enabled. This policy uses musthave to merge additional secrets and a
+# remoteWrite entry without overwriting the existing local hub remote-write.
+#
+# The global hub remote-write URL is per-regional-hub via label:
+#   autoshift.io/global-observability-remote-write-url
+#
+# Prerequisites:
+#   - The global hub mTLS secrets must be pre-replicated to each regional
+#     hub's open-cluster-management-observability namespace:
+#       - global-observability-managed-cluster-certs
+#       - global-observability-signer-cert
+#   - The regional hub must have MCO with MCOA capabilities enabled so the
+#     PrometheusAgent exists to be patched.
+#
+# WARNING: Secret names are translated to truncated mount names like
+# secret-<secret-name> cut off at 63 chars. If the cut occurs at a
+# non-alphanumeric character it will break the StatefulSet spec due to
+# RFC 1123 regex violations with no clear error message.
+#
+# Placement: via policyset-global-observability-spoke-agent
+# Depends on: policy-global-observability-instance
+#
+{{- $policyName := "policy-global-observability-spoke" }}
+{{- $policyNamespace := .Values.policy_namespace }}
+
+{{- if .Values.hubClusterSets }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-7 Continuous Monitoring
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-global-observability-instance
+      namespace: {{ $policyNamespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-coo-operator-install
+      namespace: {{ $policyNamespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-api-ca-repl
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: global-observability-managed-cluster-certs
+                  namespace: open-cluster-management-observability
+                type: Opaque
+                data:
+                  ca.crt: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "global-observability-secrets" "ca.crt" {{ "hub}}" }}'
+
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-secret-repl
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: global-observability-secrets
+                  namespace: open-cluster-management-observability
+                type: Opaque
+                data:
+                  tls.crt: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "global-observability-secrets" "tls.crt" {{ "hub}}" }}'
+                  tls.key: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "global-observability-secrets" "tls.key" {{ "hub}}" }}'
+                  ca.crt: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "global-observability-secrets" "ca.crt" {{ "hub}}" }}'
+                  observatorium.url: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "global-observability-secrets" "observatorium.url" {{ "hub}}" }}'
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-url-repl
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: global-observability-url
+                  namespace: open-cluster-management-observability
+                type: Opaque
+                data:
+                  observatorium.url: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "global-observability-secrets" "observatorium.url" {{ "hub}}" }}'
+
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-spoke-agent
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $scrapeInterval := index $obsConfig "scrapeInterval" | default "{{ .Values.globalObservability.scrapeInterval }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $logLevel := index $obsConfig "logLevel" | default {{ .Values.globalObservability.logLevel }} | default "warn" {{ "hub}}" }}
+            {{ range $idx, $name :=  (.Values.globalObservability.spokeAgent.prometheusAgentNames | default (list "mcoa-default-platform-metrics-collector-global" "mcoa-default-user-workload-metrics-collector-global")) }}
+            - complianceType: musthave
+              recreateOption: IfRequired
+              objectDefinition:
+                apiVersion: monitoring.rhobs/v1alpha1
+                kind: PrometheusAgent
+                metadata:
+                  name: {{ $name }}
+                  namespace: {{ $.Values.globalObservability.namespace }}
+                spec:
+                  scrapeInterval: {{ "{{hub" }} $scrapeInterval {{ "hub}}" }}
+                  logLevel: {{ "{{hub" }} $logLevel {{ "hub}}" }}
+                  secrets:
+                  {{- range $.Values.globalObservability.spokeAgent.secrets }}
+                    - {{ . }}
+                  {{- end }}
+                  remoteWrite:
+                  {{- range $rw := $.Values.globalObservability.spokeAgent.remoteWrite }}
+                    - name: {{ $rw.name }}
+                      remoteTimeout: {{ $rw.remoteTimeout }}
+                      tlsConfig:
+                        ca: {}
+                        caFile: {{ $rw.caFile }}
+                        cert: {}
+                        certFile: {{ $rw.certFile }}
+                        keyFile: {{ $rw.keyFile }}
+                      url: '{{ "{{" }} "{{ ($rw).observatoriumUrl }}" | default  fromSecret "open-cluster-management-observability" "global-observability-secrets" "observatorium.url" | base64dec {{ "}}" }}'
+                  {{- end }}
+            {{ end }}
+{{- end }}
