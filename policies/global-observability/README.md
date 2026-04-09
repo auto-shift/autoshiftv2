@@ -96,22 +96,39 @@ All labels are prefixed with `autoshift.io/`.
 
 ### Spoke Agent
 
-Controls how regional hubs forward metrics to the global hub via PrometheusAgent remote-write.
+Controls how hub clusters forward metrics via PrometheusAgent remote-write.
+
+#### Global Hub Rollup
+
+Built-in remote-write that forwards metrics from regional hubs to the self-managed hub's observatorium. Always deployed, automatically skipped on the self-managed hub (MCOA handles local writes).
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
-| `spokeAgent.prometheusAgentNames` | list | `[mcoa-default-platform-metrics-collector-global, mcoa-default-user-workload-metrics-collector-global]` | PrometheusAgent resources to patch on regional hubs |
-| `spokeAgent.secrets` | list | See below | Secrets to mount on the PrometheusAgent for global hub mTLS |
-| `spokeAgent.remoteWrite.name` | string | `acm-global-observability` | Name of the remote-write entry added to PrometheusAgent |
-| `spokeAgent.remoteWrite.remoteTimeout` | string | `30s` | Timeout for remote-write requests |
-| `spokeAgent.remoteWrite.caFile` | string | `/etc/prometheus/secrets/global-observability-secrets/ca.crt` | Path to the CA file inside the PrometheusAgent pod |
-| `spokeAgent.remoteWrite.certFile` | string | `/etc/prometheus/secrets/global-observability-secrets/tls.crt` | Path to the client cert file |
-| `spokeAgent.remoteWrite.keyFile` | string | `/etc/prometheus/secrets/global-observability-secrets/tls.key` | Path to the client key file |
+| `spokeAgent.prometheusAgentNames` | list | `[mcoa-default-platform-metrics-collector-global, mcoa-default-user-workload-metrics-collector-global]` | PrometheusAgent resources to patch on hubs |
+| `spokeAgent.globalHubRollup.name` | string | `acm-global-observability` | Name of the built-in remote-write entry |
+| `spokeAgent.globalHubRollup.secretName` | string | `global-observability-secrets` | Coalesced secret created by `policy-global-observability-secrets` |
+| `spokeAgent.globalHubRollup.secretNamespace` | string | `open-cluster-policies` | Namespace where the coalesced secret lives on the hub |
+| `spokeAgent.globalHubRollup.remoteTimeout` | string | `30s` | Timeout for remote-write requests |
+| `spokeAgent.globalHubRollup.caFile` | string | `/etc/prometheus/secrets/global-observability-secrets/ca.crt` | Path to the CA file inside the PrometheusAgent pod |
+| `spokeAgent.globalHubRollup.certFile` | string | `/etc/prometheus/secrets/global-observability-secrets/tls.crt` | Path to the client cert file |
+| `spokeAgent.globalHubRollup.keyFile` | string | `/etc/prometheus/secrets/global-observability-secrets/tls.key` | Path to the client key file |
 
-Default `spokeAgent.secrets`:
-- `global-observability-secrets`
-- `observability-managed-cluster-certs`
-- `observability-controller-open-cluster-management.io-observability-signer-client-cert`
+#### Additional Remote-Writes
+
+Optional list of extra remote-write targets added alongside the built-in rollup.
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `spokeAgent.additionalRemoteWrites[].name` | string | — | Name of the remote-write entry |
+| `spokeAgent.additionalRemoteWrites[].url` | string | — | Remote-write endpoint URL |
+| `spokeAgent.additionalRemoteWrites[].remoteTimeout` | string | — | Timeout for remote-write requests |
+| `spokeAgent.additionalRemoteWrites[].onSelfManagedHub` | bool | `false` | When true, emit on the self-managed hub too |
+| `spokeAgent.additionalRemoteWrites[].caFile` | string | — | CA file path in the PrometheusAgent pod |
+| `spokeAgent.additionalRemoteWrites[].certFile` | string | — | Client cert file path |
+| `spokeAgent.additionalRemoteWrites[].keyFile` | string | — | Client key file path |
+| `spokeAgent.additionalRemoteWrites[].secretRefs[].name` | string | — | Secret name to replicate into the observability namespace |
+| `spokeAgent.additionalRemoteWrites[].secretRefs[].namespace` | string | — | Source namespace of the secret |
+| `spokeAgent.additionalRemoteWrites[].secretRefs[].fromHub` | bool | `false` | When true, secret is replicated from the global hub; when false, read locally on each hub |
 
 ## Dependencies
 

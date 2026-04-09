@@ -72,10 +72,24 @@ These are Helm chart-level defaults. Per-cluster rendered-config values take pre
 - The AutoShift git repository must be accessible from the target hub (or `useRepoSecret` must be configured for private repos)
 - A per-cluster rendered-config ConfigMap must exist in the policy namespace with the `autoshift` config block
 
-## Example
+## Examples
+
+### Labels Only
 
 ```yaml
-# In autoshift/values/clustersets/hub.yaml (or per-cluster override)
+# In autoshift/values/clustersets/hub.yaml
+hubClusterSets:
+  regional-hubs:
+    labels:
+      gitops: 'true'
+      autoshift-enable-install: 'true'
+      self-managed: 'false'
+```
+
+### Labels with Config
+
+```yaml
+# In autoshift/values/clustersets/hub.yaml or autoshift/values/clusters/<cluster>.yaml
 hubClusterSets:
   regional-hubs:
     labels:
@@ -84,10 +98,17 @@ hubClusterSets:
       self-managed: 'false'
     config:
       autoshift:
-        repoUrl: "https://github.com/my-org/autoshiftv2.git"
-        targetRevision: "release-1.0"
+        appName: 'managed-autoshift'
+        repoUrl: 'https://github.com/my-org/autoshiftv2.git'
+        targetRevision: 'release-1.0'
+        gitopsNamespace: 'openshift-gitops'
+        argoProject: 'infrastructure'
+        argoServer: 'https://kubernetes.default.svc'
         valuesFiles:
-          - "values/global.yaml"
-          - "values/clustersets/hub.yaml"
-        argoProject: "infrastructure"
+          - 'values/global.yaml'
+          - 'values/clustersets/hub.yaml'
+        useRepoSecret: false
+        repoSecretRef:
+          name: 'autoshift-repo-secret'
+          namespace: 'open-cluster-policies'
 ```
