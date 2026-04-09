@@ -10,7 +10,7 @@ Deploys and configures ACM MultiCluster Observability (MCO) on a global hub clus
 | `policy-global-observability-config` | Creates the MCO namespace, pull-secret, CA bundle secret, and Thanos object-storage secret |
 | `policy-global-observability-instance` | Creates the `MultiClusterObservability` CR with retention, storage, and addon settings |
 | `policy-global-observability-secrets` | Builds the `global-observability-secrets` Secret containing mTLS certs and the observatorium API URL |
-| `policy-global-observability-prom-config` | Patches PrometheusAgent templates on hub clusters with the built-in global hub rollup and any additional remote-write targets from rendered-config |
+| `policy-global-observability-prometheus` | Patches PrometheusAgent templates on hub clusters with the built-in global hub rollup and any additional remote-write targets from rendered-config |
 
 ## PolicySets and Placement
 
@@ -18,7 +18,7 @@ Deploys and configures ACM MultiCluster Observability (MCO) on a global hub clus
 |-----------|---------|-------------------|
 | `policyset-global-observability-secrets` | Global hub only | `global-observability: 'true'` AND `self-managed: 'true'` |
 | `policyset-global-observability` | All hub clusters | `global-observability: 'true'` |
-| `policyset-global-observability-prom-config` | All hub clusters | `global-observability: 'true'` |
+| `policyset-global-observability-prometheus` | All hub clusters | `global-observability: 'true'` |
 
 ## Labels
 
@@ -133,7 +133,7 @@ Optional list of extra remote-write targets configured per-cluster/clusterset vi
 
 | Policy | Depends On |
 |--------|-----------|
-| `policy-global-observability-prom-config` | `policy-global-observability-instance`, `policy-coo-operator-install` |
+| `policy-global-observability-prometheus` | `policy-global-observability-instance`, `policy-coo-operator-install` |
 
 ## Prerequisites
 
