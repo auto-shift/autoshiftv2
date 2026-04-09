@@ -191,6 +191,25 @@ spec:
                             bucket: {{ "{{" }} $bucketName {{ "}}" }}
                           dependencyProxy:
                             bucket: {{ "{{" }} $bucketName {{ "}}" }}
+                    {{ "{{-" }} if eq $gitalyHA "true" {{ "}}" }}
+                        praefect:
+                          enabled: true
+                          replaceInternalGitaly: true
+                          autoMigrate: true
+                          dbSecret:
+                            secret: gitlab-db-app
+                            key: password
+                          virtualStorages:
+                            - name: default
+                              gitalyReplicas: {{ "{{" }} $gitalyReplicas {{ "}}" }}
+                              maxUnavailable: 1
+                          psql:
+                            host: gitlab-db-pooler-rw.{{ "{{" }} $ns {{ "}}" }}.svc
+                            port: "5432"
+                            user: gitlab
+                            dbName: praefect_production
+                            sslMode: disable
+                    {{ "{{-" }} end {{ "}}" }}
                       registry:
                         storage:
                           secret: gitlab-registry-storage
@@ -215,25 +234,6 @@ spec:
                       nginx-ingress:
                         enabled: false
                       installCertmanager: false
-                    {{ "{{-" }} if eq $gitalyHA "true" {{ "}}" }}
-                      praefect:
-                        enabled: true
-                        replaceInternalGitaly: true
-                        autoMigrate: true
-                        dbSecret:
-                          secret: gitlab-db-app
-                          key: password
-                        virtualStorages:
-                          - name: default
-                            gitalyReplicas: {{ "{{" }} $gitalyReplicas {{ "}}" }}
-                            maxUnavailable: 1
-                        psql:
-                          host: gitlab-db-pooler-rw.{{ "{{" }} $ns {{ "}}" }}.svc
-                          port: "5432"
-                          user: gitlab
-                          dbName: praefect_production
-                          sslMode: disable
-                    {{ "{{-" }} end {{ "}}" }}
                       gitlab:
                         gitlab-shell:
                           minReplicas: {{ "{{" }} $shellMinReplicas {{ "}}" }}
