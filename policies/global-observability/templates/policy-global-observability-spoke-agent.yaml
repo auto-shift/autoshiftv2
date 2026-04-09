@@ -71,7 +71,7 @@ spec:
           object-templates-raw: |
             # INDENTATION ANCHOR
             {{ "{{hub" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
-            {{ "{{hub" }} if ne $isSelfManaged "true" {{ "hub}}" }}
+            {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -81,7 +81,7 @@ spec:
                   namespace: {{ .Values.globalObservability.namespace }}
                 type: Opaque
                 data: '{{ "{{hub" }} copySecretData "{{ $rollup.secretNamespace }}" "{{ $rollup.secretName }}" {{ "hub}}" }}'
-            {{ "{{hub" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
 
     #####################################################################
     # Additional: replicate secrets for each additionalRemoteWrites entry
@@ -99,8 +99,9 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
+            # INDENTATION ANCHOR
             {{ "{{hub" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
-            {{ "{{hub" }} if not (and (eq $isSelfManaged "true") (not {{ ($rw).onSelfManagedHub | default false }})) {{ "hub}}" }}
+            {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not {{ ($rw).onSelfManagedHub | default false }})) {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -114,7 +115,7 @@ spec:
               {{- else }}
                 data: '{{ "{{" }} copySecretData "{{ $rw.secretRef.namespace }}" "{{ $rw.secretRef.name }}" {{ "}}" }}'
               {{- end }}
-            {{ "{{hub" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
     {{- end }}
 
     #####################################################################
@@ -133,10 +134,10 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             # INDENTATION ANCHOR
-            {{ "{{hub" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
-            {{ "{{hub" }} $scrapeInterval := index $obsConfig "scrapeInterval" | default "{{ .Values.globalObservability.scrapeInterval }}" {{ "hub}}" }}
-            {{ "{{hub" }} $logLevel := index $obsConfig "logLevel" | default "{{ .Values.globalObservability.logLevel }}" | default "warn" {{ "hub}}" }}
-            {{ "{{hub" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
+            {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $scrapeInterval := index $obsConfig "scrapeInterval" | default "{{ .Values.globalObservability.scrapeInterval }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $logLevel := index $obsConfig "logLevel" | default "{{ .Values.globalObservability.logLevel }}" | default "warn" {{ "hub}}" }}
+            {{ "{{hub-" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
             {{ range $idx, $name := (.Values.globalObservability.spokeAgent.prometheusAgentNames | default (list "mcoa-default-platform-metrics-collector-global" "mcoa-default-user-workload-metrics-collector-global")) }}
             - complianceType: musthave
               recreateOption: IfRequired
@@ -151,18 +152,18 @@ spec:
                   logLevel: {{ "{{hub" }} $logLevel {{ "hub}}" }}
                   secrets:
                     {{/* Built-in: global hub rollup secret — skipped on self-managed hub */}}
-                    {{ "{{hub" }} if ne $isSelfManaged "true" {{ "hub}}" }}
+                    {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
                     - {{ $rollup.secretName }}
-                    {{ "{{hub" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                     {{/* Additional: secrets from additionalRemoteWrites */}}
-                  {{ range $rw := $.Values.globalObservability.spokeAgent.additionalRemoteWrites }}
-                      {{ "{{hub" }} if not (and (eq $isSelfManaged "true") (not {{ ($rw).onSelfManagedHub | default false }})) {{ "hub}}" }}
+                  {{- range $rw := $.Values.globalObservability.spokeAgent.additionalRemoteWrites }}
+                      {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not {{ ($rw).onSelfManagedHub | default false }})) {{ "hub}}" }}
                     - {{ $rw.secretRef.name }}
                       {{ "{{hub" }} end {{ "hub}}" }}
-                  {{ end }}
+                  {{- end }}
                   remoteWrite:
                     {{/* Built-in: global hub rollup — skipped on self-managed hub */}}
-                    {{ "{{hub" }} if ne $isSelfManaged "true" {{ "hub}}" }}
+                    {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
                     - name: {{ $rollup.name }}
                       remoteTimeout: {{ $rollup.remoteTimeout }}
                       tlsConfig:
@@ -172,10 +173,10 @@ spec:
                         certFile: {{ $rollup.certFile }}
                         keyFile: {{ $rollup.keyFile }}
                       url: '{{ "{{" }} fromSecret "{{ $.Values.globalObservability.namespace }}" "{{ $rollup.secretName }}" "observatorium.url" | base64dec {{ "}}" }}'
-                    {{ "{{hub" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                     {{/* Additional remote-writes */}}
-                  {{ range $rw := $.Values.globalObservability.spokeAgent.additionalRemoteWrites }}
-                    {{ "{{hub" }} if not (and (eq $isSelfManaged "true") (not {{ ($rw).onSelfManagedHub | default false }})) {{ "hub}}" }}
+                  {{- range $rw := $.Values.globalObservability.spokeAgent.additionalRemoteWrites }}
+                    {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not {{ ($rw).onSelfManagedHub | default false }})) {{ "hub}}" }}
                     - name: {{ $rw.name }}
                       remoteTimeout: {{ $rw.remoteTimeout }}
                       tlsConfig:
@@ -185,7 +186,7 @@ spec:
                         certFile: {{ $rw.certFile }}
                         keyFile: {{ $rw.keyFile }}
                       url: {{ $rw.url }}
-                    {{ "{{hub" }} end {{ "hub}}" }}
-                  {{ end }}
-            {{ end }}
-{{ end }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{- end }}
+            {{- end }}
+{{- end }}
