@@ -30,24 +30,36 @@ globalObservability:
     receiveStorageSize: 10Gi
     ruleStorageSize: 10Gi
     storeStorageSize: 10Gi
-    # Spoke agent — patches regional hub PrometheusAgent to add global hub remote-write
+    # Spoke agent — patches hub PrometheusAgent templates
     spokeAgent:
-      # Name of the MCOA PrometheusAgent on regional hubs to patch
-      prometheusAgentNames: 
+      # MCOA PrometheusAgent names to patch on hubs
+      prometheusAgentNames:
         - mcoa-default-platform-metrics-collector-global
         - mcoa-default-user-workload-metrics-collector-global
-      # Secrets to mount on the PrometheusAgent for global hub mTLS
-      # These must be pre-replicated to each regional hub's MCO namespace
-      secrets:
-        - global-observability-secrets
-        - observability-managed-cluster-certs
-        - observability-controller-open-cluster-management.io-observability-signer-client-cert
-      remoteWrite:
+      # Built-in global hub rollup — always deployed, skipped on self-managed hub
+      # Rolls up metrics from regional hubs to the self-managed hub's observatorium
+      globalHubRollup:
         name: acm-global-observability
+        secretName: global-observability-secrets    # coalesced secret created by policy-global-observability-secrets
+        secretNamespace: policies-autoshift      # namespace where the coalesced secret lives on the hub
         remoteTimeout: 30s
         caFile: /etc/prometheus/secrets/global-observability-secrets/ca.crt
         certFile: /etc/prometheus/secrets/global-observability-secrets/tls.crt
         keyFile: /etc/prometheus/secrets/global-observability-secrets/tls.key
+      # Additional remote-write targets (optional)
+      # Each entry adds a remote-write + its secrets to all PrometheusAgent templates
+      additionalRemoteWrites: []
+      # - name: external-monitoring
+      #   remoteTimeout: 30s
+      #   onSelfManagedHub: true           # emit on self-managed hub too (default: false)
+      #   url: https://external.example.com/api/v1/receive
+      #   caFile: /etc/prometheus/secrets/external-certs/ca.crt
+      #   certFile: /etc/prometheus/secrets/external-certs/tls.crt
+      #   keyFile: /etc/prometheus/secrets/external-certs/tls.key
+      #   secretRef:
+      #     name: external-certs
+      #     namespace: some-ns
+      #     fromHub: false                 # true = replicate from hub, false = exists locally on each hub
 # hubClusterSets:
 #   hub:
 #     labels:
