@@ -151,18 +151,18 @@ spec:
                   scrapeInterval: {{ "{{hub" }} $scrapeInterval {{ "hub}}" }}
                   logLevel: {{ "{{hub" }} $logLevel {{ "hub}}" }}
                   secrets:
-                    {{/* Built-in: global hub rollup secret — skipped on self-managed hub */}}
+                    # Built-in: global hub rollup secret — skipped on self-managed hub
                     {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
                     - {{ $rollup.secretName }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
-                    {{/* Additional: secrets from additionalRemoteWrites */}}
+                    # Additional: secrets from additionalRemoteWrites
                   {{- range $rw := $.Values.globalObservability.spokeAgent.additionalRemoteWrites }}
                       {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not {{ ($rw).onSelfManagedHub | default false }})) {{ "hub}}" }}
                     - {{ $rw.secretRef.name }}
                       {{ "{{hub" }} end {{ "hub}}" }}
                   {{- end }}
                   remoteWrite:
-                    {{/* Built-in: global hub rollup — skipped on self-managed hub */}}
+                    # Built-in: global hub rollup — skipped on self-managed hub
                     {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
                     - name: {{ $rollup.name }}
                       remoteTimeout: {{ $rollup.remoteTimeout }}
@@ -174,7 +174,7 @@ spec:
                         keyFile: {{ $rollup.keyFile }}
                       url: '{{ "{{" }} fromSecret "{{ $.Values.globalObservability.namespace }}" "{{ $rollup.secretName }}" "observatorium.url" | base64dec {{ "}}" }}'
                     {{ "{{hub-" }} end {{ "hub}}" }}
-                    {{/* Additional remote-writes */}}
+                    # Additional remote-writes
                   {{- range $rw := $.Values.globalObservability.spokeAgent.additionalRemoteWrites }}
                     {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not {{ ($rw).onSelfManagedHub | default false }})) {{ "hub}}" }}
                     - name: {{ $rw.name }}
