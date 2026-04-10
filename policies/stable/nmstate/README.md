@@ -447,10 +447,10 @@ The `_validate-cluster-install.tpl` validates at Helm render time:
 
 ```bash
 # Render nmstate chart
-helm template test policies/nmstate/ -f policies/nmstate/values.yaml
+helm template test policies/stable/nmstate/ -f policies/nmstate/values.yaml
 
 # Render with cluster values
-helm template test policies/nmstate/ -f policies/nmstate/values.yaml \
+helm template test policies/stable/nmstate/ -f policies/nmstate/values.yaml \
   -f autoshift/values/global.yaml \
   -f autoshift/values/clustersets/hub.yaml \
   -f autoshift/values/clusters/test-cluster.yaml

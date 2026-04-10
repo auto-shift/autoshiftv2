@@ -192,10 +192,10 @@ subjects:
 
 ### 3. Reference Examples
 **Study similar complexity policies:**
-- **Simple**: `policies/openshift-gitops/` - Basic operator + ArgoCD config
-- **Medium**: `policies/advanced-cluster-security/` - Multiple related policies
-- **Complex**: `policies/metallb/` - Multiple configuration types (L2, BGP, etc.)
-- **Advanced**: `policies/openshift-data-foundation/` - Storage cluster configuration
+- **Simple**: `policies/stable/openshift-gitops/` - Basic operator + ArgoCD config
+- **Medium**: `policies/stable/advanced-cluster-security/` - Multiple related policies
+- **Complex**: `policies/stable/metallb/` - Multiple configuration types (L2, BGP, etc.)
+- **Advanced**: `policies/stable/openshift-data-foundation/` - Storage cluster configuration
 
 ### 4. AutoShift Labels
 Add configuration labels to `values.yaml` and use in templates:

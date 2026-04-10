@@ -28,7 +28,7 @@ metallb-quota-cpu: ''
 metallb-quota-memory: ''
 
 
-Based on name, you will set these values to the name of your manifest file in the policies/metallb/files directory. For example, if your IP Pool file is called internal.yaml, your value would be “internal”. You can copy more values by increasing the number value on each line!
+Based on name, you will set these values to the name of your manifest file in the policies/stable/metallb/files directory. For example, if your IP Pool file is called internal.yaml, your value would be “internal”. You can copy more values by increasing the number value on each line!
 
 IP Pool Files:
 metallb-ippool-1: ''
