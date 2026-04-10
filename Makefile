@@ -23,7 +23,7 @@ NC := \033[0m
 
 # Discover all charts
 BOOTSTRAP_CHARTS := $(shell find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" -exec dirname {} \;)
-POLICY_CHARTS := $(shell find policies -maxdepth 2 -name Chart.yaml -exec dirname {} \;)
+POLICY_CHARTS := $(shell find policies -maxdepth 3 -name Chart.yaml -exec dirname {} \;)
 POLICY_NAMES := $(notdir $(POLICY_CHARTS))
 
 .PHONY: discover
@@ -50,7 +50,7 @@ lint: ## Lint all Helm charts
 	@printf "$(BLUE)[INFO]$(NC) Linting Helm charts...\n"
 	@helm lint autoshift/ --quiet && printf "$(GREEN)✓$(NC) autoshift/ passed\n"
 	@failed=0; \
-	for chart in policies/*/; do \
+	for chart in policies/stable/*/ policies/certified/*/ policies/community/*/; do \
 		if [ -f "$$chart/Chart.yaml" ]; then \
 			helm lint "$$chart" --quiet 2>/dev/null || { printf "$(RED)✗$(NC) $$chart failed\n"; failed=1; }; \
 		fi; \

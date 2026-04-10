@@ -373,8 +373,8 @@ AutoShift provides a complete Infrastructure-as-Code solution for OpenShift usin
 ┌─────────────────────────────────────────────────────────┐
 │  Phase 3: Policy Deployment (via ApplicationSet)       │
 │  ├─ ACM Policy Charts from OCI Registry                │
-│  ├─ policies/openshift-gitops (takes over GitOps)      │
-│  └─ policies/advanced-cluster-management (takes over)  │
+│  ├─ policies/stable/openshift-gitops (takes over GitOps)      │
+│  └─ policies/stable/advanced-cluster-management (takes over)  │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -708,8 +708,8 @@ AutoShift deploys ACM policies that manage various OpenShift components:
 ### Policy Takeover
 
 After AutoShift is deployed:
-1. `policies/openshift-gitops` policy takes over management of the GitOps operator
-2. `policies/advanced-cluster-management` policy takes over management of ACM
+1. `policies/stable/openshift-gitops` policy takes over management of the GitOps operator
+2. `policies/stable/advanced-cluster-management` policy takes over management of ACM
 
 This allows ACM to manage its own upgrades and configuration via GitOps.
 

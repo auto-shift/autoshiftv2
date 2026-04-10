@@ -38,8 +38,8 @@ AutoShift uses a three-phase deployment model:
 ┌────────────────────────────────────────────────────────────┐
 │  Phase 3: Policy Deployment (via ApplicationSet)           │
 │  ├─ ACM Policy Charts (auto-discovered)                    │
-│  ├─ policies/openshift-gitops (takes over GitOps)          │
-│  └─ policies/advanced-cluster-management (takes over ACM)  │
+│  ├─ policies/stable/openshift-gitops (takes over GitOps)          │
+│  └─ policies/stable/advanced-cluster-management (takes over ACM)  │
 └────────────────────────────────────────────────────────────┘
 ```
 

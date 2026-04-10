@@ -236,7 +236,7 @@ hubClusterSets:
       gitops-cluster-ca-bundle: 'true'
 ```
 
-Alternatively, you can enable it globally via the Helm value in `policies/openshift-gitops/values.yaml`:
+Alternatively, you can enable it globally via the Helm value in `policies/stable/openshift-gitops/values.yaml`:
 
 ```yaml
 gitops:

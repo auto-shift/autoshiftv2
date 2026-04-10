@@ -64,7 +64,7 @@ See `autoshift/README.md` for detailed chart documentation.
 
 Values can be set on a per cluster and clusterset level to decide what features of AutoShift will be applied to each cluster. If a value is defined in helm values, a clusterset label and a cluster label precedence will be **cluster > clusterset > helm** values where helm values is the least.
 
-Helm chart defaults (`values.yaml`) live in each policy's Helm chart under the `policies/` directory (e.g., `policies/openshift-gitops/values.yaml`, `policies/advanced-cluster-security/values.yaml`). These defaults can be overridden by clusterset labels in your `autoshift/values/clustersets/` files, and further overridden by per-cluster labels in `autoshift/values/clusters/`.
+Helm chart defaults (`values.yaml`) live in each policy's Helm chart under the `policies/` directory (e.g., `policies/stable/openshift-gitops/values.yaml`, `policies/advanced-cluster-security/values.yaml`). These defaults can be overridden by clusterset labels in your `autoshift/values/clustersets/` files, and further overridden by per-cluster labels in `autoshift/values/clusters/`.
 
 ## Operator Version Control
 
@@ -556,7 +556,7 @@ Automated node health monitoring and remediation.
 
 The Kubernetes NMState Operator declaratively configures Red Hat CoreOS network settings including bonds, VLANs, static routes, and DNS. Network configuration is defined through structured YAML under `config.networking` in clusterset or cluster values files.
 
-See [policies/nmstate/README.md](../policies/nmstate/README.md) for detailed documentation and examples.
+See [policies/stable/nmstate/README.md](../policies/stable/nmstate/README.md) for detailed documentation and examples.
 
 #### Operator Labels
 

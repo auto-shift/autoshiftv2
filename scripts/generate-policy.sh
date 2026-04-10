@@ -3,7 +3,7 @@
 # Generates standardized configuration policies for AutoShift
 #
 # Usage: ./scripts/generate-policy.sh <policy-name> [options]
-# Example: ./scripts/generate-policy.sh my-config --dir policies/my-component --target both
+# Example: ./scripts/generate-policy.sh my-config --dir policies/stable/my-component --target both
 # Example: ./scripts/generate-policy.sh  (interactive mode)
 
 set -e
@@ -83,10 +83,10 @@ usage() {
     echo "  --help                   Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 my-config --dir policies/my-component --target both"
-    echo "  $0 dns-config --dir policies/openshift-dns --target hub"
-    echo "  $0 my-config --dir policies/test --target spoke --dependency lvm-operator-install"
-    echo "  $0 my-config --dir policies/my-component --target both --add-to-autoshift"
+    echo "  $0 my-config --dir policies/stable/my-component --target both"
+    echo "  $0 dns-config --dir policies/stable/openshift-dns --target hub"
+    echo "  $0 my-config --dir policies/stable/test --target spoke --dependency lvm-operator-install"
+    echo "  $0 my-config --dir policies/stable/my-component --target both --add-to-autoshift"
     echo "  $0   # fully interactive"
 }
 
@@ -167,18 +167,18 @@ if [[ -z "$POLICY_DIR" ]]; then
         dirs+=("$dir")
         echo "  $i) $dir"
         i=$((i + 1))
-    done < <(find policies -mindepth 1 -maxdepth 1 -type d | sort)
-    echo "  $i) Create new directory"
+    done < <(find policies/stable policies/certified policies/community -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+    echo "  $i) Create new directory under policies/stable/"
     echo ""
     read -rp "Choice [1-$i]: " choice
 
     if [[ "$choice" -eq "$i" ]] 2>/dev/null; then
-        read -rp "New directory name (under policies/): " new_dir
+        read -rp "New directory name (under policies/stable/): " new_dir
         if [[ -z "$new_dir" ]]; then
             log_error "Directory name is required"
             exit 1
         fi
-        POLICY_DIR="policies/$new_dir"
+        POLICY_DIR="policies/stable/$new_dir"
     elif [[ "$choice" -ge 1 && "$choice" -lt "$i" ]] 2>/dev/null; then
         POLICY_DIR="${dirs[$((choice - 1))]}"
     else
@@ -333,27 +333,27 @@ find_labels_line() {
     local is_commented="$4"
 
     if [[ "$is_commented" == "true" ]]; then
-        awk "
-            /^# $section_type:/ { found_section=1; next }
-            found_section && /^#   $clusterset:/ { found_clusterset=1; next }
+        awk -v sec="$section_type" -v cs="$clusterset" '
+            $0 == "# " sec ":" { found_section=1; next }
+            found_section && $0 == "#   " cs ":" { found_clusterset=1; next }
             found_clusterset && /^#     labels:/ { in_labels=1; last=NR; next }
             in_labels && /^#       / { last=NR; next }
             in_labels && /^#$/ { last=NR; next }
             in_labels { print last; exit }
             /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
             END { if (in_labels) print last }
-        " "$file_path"
+        ' "$file_path"
     else
-        awk "
-            /^$section_type:/ { found_section=1; next }
-            found_section && /^  $clusterset:/ { found_clusterset=1; next }
+        awk -v sec="$section_type" -v cs="$clusterset" '
+            $0 == sec ":" { found_section=1; next }
+            found_section && $0 == "  " cs ":" { found_clusterset=1; next }
             found_clusterset && /^    labels:/ { in_labels=1; last=NR; next }
             in_labels && /^      / { last=NR; next }
             in_labels && /^$/ { last=NR; next }
             in_labels { print last; exit }
             /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
             END { if (in_labels) print last }
-        " "$file_path"
+        ' "$file_path"
     fi
 }
 
@@ -507,23 +507,35 @@ add_to_autoshift_values() {
 
     local values_files_to_update=()
     if [[ -n "$VALUES_FILES" ]]; then
-        # CLI flag: parse comma-separated list
+        # CLI flag: accepts bare names (looked up in clustersets/) or relative paths
+        # Examples: 'hub,sbx'  OR  'autoshift/values/mysite.yaml'
         IFS=',' read -ra file_list <<< "$VALUES_FILES"
-        for file_prefix in "${file_list[@]}"; do
-            file_prefix=$(echo "$file_prefix" | xargs)
-            if [[ -f "autoshift/values/clustersets/$file_prefix.yaml" ]]; then
-                values_files_to_update+=("values/clustersets/$file_prefix.yaml")
+        for entry in "${file_list[@]}"; do
+            entry=$(echo "$entry" | xargs)  # trim whitespace
+            local resolved=""
+            if [[ "$entry" == *.yaml || "$entry" == */* ]]; then
+                # Treat as a path (relative to repo root)
+                [[ "$entry" != autoshift/* ]] && entry="autoshift/$entry"
+                resolved="$entry"
             else
-                log_warning "Values file autoshift/values/clustersets/$file_prefix.yaml not found, skipping"
+                # Treat as a bare name under clustersets/
+                resolved="autoshift/values/clustersets/$entry.yaml"
+            fi
+            if [[ -f "$resolved" ]]; then
+                values_files_to_update+=("${resolved#autoshift/}")
+            else
+                log_warning "Values file $resolved not found, skipping"
             fi
         done
     else
         # Interactive: let user select which values files to update
+        # Search clustersets/ AND parent values/ for single-file setups
+        # Use newline-based find (no -print0/-z) for Git Bash compatibility
         local available_files=()
-        while IFS= read -r -d '' file; do
-            local rel_path="${file#autoshift/}"
-            available_files+=("$rel_path")
-        done < <(find autoshift/values/clustersets -name "*.yaml" -not -name "_*" -print0 2>/dev/null | sort -z)
+        while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            available_files+=("${file#autoshift/}")
+        done < <(find autoshift/values -name "*.yaml" -not -name "_*" 2>/dev/null | sort)
 
         if [[ ${#available_files[@]} -gt 0 ]]; then
             echo ""
@@ -539,7 +551,6 @@ add_to_autoshift_values() {
             files_choice="${files_choice:-$idx}"
 
             if [[ "$files_choice" -eq "$idx" ]] 2>/dev/null; then
-                # All files
                 values_files_to_update=("${available_files[@]}")
             else
                 IFS=',' read -ra chosen <<< "$files_choice"
@@ -555,11 +566,11 @@ add_to_autoshift_values() {
         fi
     fi
 
-    # Always include example files
-    while IFS= read -r -d '' file; do
-        local rel_path="${file#autoshift/}"
-        values_files_to_update+=("$rel_path")
-    done < <(find autoshift/values/clustersets autoshift/values/clusters -name "_example*.yaml" -print0 2>/dev/null)
+    # Always include example files (anywhere under autoshift/values/)
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        values_files_to_update+=("${file#autoshift/}")
+    done < <(find autoshift/values -name "_example*.yaml" 2>/dev/null | sort)
 
     if [[ ${#values_files_to_update[@]} -eq 0 ]]; then
         log_error "No valid values files found to update"

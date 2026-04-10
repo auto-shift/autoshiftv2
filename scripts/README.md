@@ -147,22 +147,22 @@ Missing required values are prompted interactively.
 
 #### Generate a spoke configuration policy (new directory)
 ```bash
-./scripts/generate-policy.sh my-config --dir policies/my-component --target spoke
+./scripts/generate-policy.sh my-config --dir policies/stable/my-component --target spoke
 ```
 
 #### Add a configuration policy to an existing policy directory
 ```bash
-./scripts/generate-policy.sh dns-config --dir policies/openshift-dns --target hub
+./scripts/generate-policy.sh dns-config --dir policies/stable/openshift-dns --target hub
 ```
 
 #### Generate with a dependency
 ```bash
-./scripts/generate-policy.sh storage-config --dir policies/odf-config --target both --dependency odf-operator-install
+./scripts/generate-policy.sh storage-config --dir policies/stable/odf-config --target both --dependency odf-operator-install
 ```
 
 #### Generate with AutoShift integration
 ```bash
-./scripts/generate-policy.sh my-config --dir policies/my-component --target both --add-to-autoshift
+./scripts/generate-policy.sh my-config --dir policies/stable/my-component --target both --add-to-autoshift
 ```
 
 #### Interactive mode (prompts for all values)
@@ -301,18 +301,18 @@ Templates use these placeholders:
 ```bash
 # Test policy generation
 ./scripts/generate-operator-policy.sh test-op test-operator --channel stable --namespace test-operator
-helm template policies/test-op/
-rm -rf policies/test-op/
+helm template policies/stable/test-op/
+rm -rf policies/stable/test-op/
 
 # Test with version pinning
 ./scripts/generate-operator-policy.sh test-op test-operator --channel stable --namespace test-operator --version test-operator.v1.0.0
-helm template policies/test-op/
-rm -rf policies/test-op/
+helm template policies/stable/test-op/
+rm -rf policies/stable/test-op/
 
 # Test configuration policy generation
-./scripts/generate-policy.sh test-config --dir policies/test-config --target both
-helm template policies/test-config/
-rm -rf policies/test-config/
+./scripts/generate-policy.sh test-config --dir policies/stable/test-config --target both
+helm template policies/stable/test-config/
+rm -rf policies/stable/test-config/
 
 # Test imageset generation
 ./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --operators-only --output test-imageset.yaml

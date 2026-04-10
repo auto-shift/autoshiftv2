@@ -31,7 +31,6 @@ DEFAULT_VERSION=""  # Optional version pinning
 
 # Parse arguments
 COMPONENT_NAME=""
-OPERATOR_NAME=""
 SUBSCRIPTION_NAME=""  # Required field
 SOURCE="$DEFAULT_SOURCE"
 SOURCE_NAMESPACE="$DEFAULT_SOURCE_NAMESPACE"
@@ -60,7 +59,9 @@ usage() {
     echo "  --version VERSION         Pin to specific operator version (CSV name, optional)"
     echo "  --namespace-scoped        Add targetNamespaces for namespace-scoped operators"
     echo "  --add-to-autoshift        Add labels to AutoShift values files (default: all files)"
-    echo "  --values-files FILES      Comma-separated list of values files to update (e.g., 'hub,sbx')"
+    echo "  --values-files FILES      Comma-separated list of values files to update; bare name (e.g., 'hub,sbx')
+                            looks in autoshift/values/clustersets/; or pass a relative path
+                            (e.g., 'autoshift/values/mysite.yaml') for non-standard layouts"
     echo "  --show-integration        Show manual integration instructions"
     echo "  --help                    Show this help message"
     echo ""
@@ -168,7 +169,7 @@ NAMESPACE="$TARGET_NAMESPACE"  # Use required TARGET_NAMESPACE
 case "$SOURCE" in
     certified-operators) POLICY_SUBDIR="policies/certified" ;;
     community-operators) POLICY_SUBDIR="policies/community" ;;
-    *)                   POLICY_SUBDIR="policies" ;;
+    *)                   POLICY_SUBDIR="policies/stable" ;;
 esac
 POLICY_DIR="${POLICY_SUBDIR}/${COMPONENT_NAME}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -312,42 +313,48 @@ generate_policy() {
 show_integration_instructions() {
     echo -e "${BLUE}📋 AutoShift Integration Instructions:${NC}"
     echo ""
-    echo "To add this policy to AutoShift, edit autoshift/templates/applicationset.yaml and add:"
-    echo ""
-    echo -e "${YELLOW}    - name: $COMPONENT_NAME"
-    echo "      path: policies/$COMPONENT_NAME"
-    echo "      helm:"
-    echo "        valueFiles:"
-    echo -e "        - values.yaml${NC}"
-    echo ""
-    echo "Then deploy AutoShift to make the policy available across your clusters."
+    echo "The policy has been created in policies/stable/$COMPONENT_NAME/."
+    echo "The ApplicationSet auto-discovers policies under policies/stable/*, so no"
+    echo "manual registration is needed. Commit and push to deploy."
     echo ""
 }
 
 # Add labels to AutoShift values files
 add_to_autoshift_values() {
     log_step "Adding labels to AutoShift values files..."
-    
+
     # Determine which values files to update
     local values_files_to_update=()
     if [[ -n "$VALUES_FILES" ]]; then
-        # CLI flag: parse comma-separated list (e.g., 'hub,sbx,managed')
+        # CLI flag: accepts bare names (looked up in clustersets/) or relative paths
+        # Examples: 'hub,sbx'  OR  'autoshift/values/mysite.yaml'
         IFS=',' read -ra file_list <<< "$VALUES_FILES"
-        for file_prefix in "${file_list[@]}"; do
-            file_prefix=$(echo "$file_prefix" | xargs)  # trim whitespace
-            if [[ -f "autoshift/values/clustersets/$file_prefix.yaml" ]]; then
-                values_files_to_update+=("values/clustersets/$file_prefix.yaml")
+        for entry in "${file_list[@]}"; do
+            entry=$(echo "$entry" | xargs)  # trim whitespace
+            local resolved=""
+            if [[ "$entry" == *.yaml || "$entry" == */* ]]; then
+                # Treat as a path (relative to repo root)
+                [[ "$entry" != autoshift/* ]] && entry="autoshift/$entry"
+                resolved="$entry"
             else
-                log_warning "Values file autoshift/values/clustersets/$file_prefix.yaml not found, skipping"
+                # Treat as a bare name under clustersets/
+                resolved="autoshift/values/clustersets/$entry.yaml"
+            fi
+            if [[ -f "$resolved" ]]; then
+                values_files_to_update+=("${resolved#autoshift/}")
+            else
+                log_warning "Values file $resolved not found, skipping"
             fi
         done
     else
         # Interactive: let user select which values files to update
+        # Search clustersets/ AND the parent values/ directory for single-file setups
+        # Use newline-based find (no -print0/-z) for Git Bash compatibility
         local available_files=()
-        while IFS= read -r -d '' file; do
-            local rel_path="${file#autoshift/}"
-            available_files+=("$rel_path")
-        done < <(find autoshift/values/clustersets -name "*.yaml" -not -name "_*" -print0 2>/dev/null | sort -z)
+        while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            available_files+=("${file#autoshift/}")
+        done < <(find autoshift/values -name "*.yaml" -not -name "_*" 2>/dev/null | sort)
 
         if [[ ${#available_files[@]} -gt 0 ]]; then
             echo ""
@@ -363,7 +370,6 @@ add_to_autoshift_values() {
             files_choice="${files_choice:-$idx}"
 
             if [[ "$files_choice" -eq "$idx" ]] 2>/dev/null; then
-                # All files
                 values_files_to_update=("${available_files[@]}")
             else
                 IFS=',' read -ra chosen <<< "$files_choice"
@@ -379,90 +385,86 @@ add_to_autoshift_values() {
         fi
     fi
 
-    # Always include example files (clustersets and clusters)
-    while IFS= read -r -d '' file; do
-        local rel_path="${file#autoshift/}"
-        values_files_to_update+=("$rel_path")
-    done < <(find autoshift/values/clustersets autoshift/values/clusters -name "_example*.yaml" -print0 2>/dev/null)
-    
+    # Always include example files (anywhere under autoshift/values/)
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        values_files_to_update+=("${file#autoshift/}")
+    done < <(find autoshift/values -name "_example*.yaml" 2>/dev/null | sort)
+
     if [[ ${#values_files_to_update[@]} -eq 0 ]]; then
         log_error "No valid values files found to update"
         return 1
     fi
-    
+
     # Add labels to each values file
     for values_file in "${values_files_to_update[@]}"; do
         local file_path="autoshift/$values_file"
-        
+
         if [[ ! -f "$file_path" ]]; then
             log_warning "File $file_path not found, skipping"
             continue
         fi
-        
+
         log_step "Adding labels to $values_file..."
-        
-        # Process all sections in the file
         add_labels_to_all_sections "$file_path"
-        
         log_success "Updated $values_file"
     done
-    
+
     log_success "Labels added to ${#values_files_to_update[@]} values file(s)"
 }
 
 
 # Add labels to all sections in the values file
+# Captures all section names BEFORE modifying the file to avoid read/write races
 add_labels_to_all_sections() {
     local file_path="$1"
-    
-    # Find all sections and their clustersets
     local sections_found=""
-    
-    # Check for hubClusterSets
+
+    # Pre-capture all section names before any file modifications
+    local hub_clustersets=() managed_clustersets=() active_clusters=() commented_clusters=()
+
     if grep -q "^hubClusterSets:" "$file_path"; then
-        local hub_clustersets
-        hub_clustersets=$(awk '/^hubClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
-        while IFS= read -r clusterset; do
-            [[ -z "$clusterset" ]] && continue
-            add_labels_to_section "$file_path" "hubClusterSets" "$clusterset" false
-            sections_found="$sections_found hubClusterSets/$clusterset"
-        done <<< "$hub_clustersets"
+        while IFS= read -r cs; do
+            [[ -n "$cs" ]] && hub_clustersets+=("$cs")
+        done < <(awk '/^hubClusterSets:/{f=1;next} /^[a-zA-Z]/{f=0} f && /^  [a-zA-Z][^:]*:/{gsub(/:.*$/,""); gsub(/^  /,""); print}' "$file_path")
     fi
-    
-    # Check for managedClusterSets
+
     if grep -q "^managedClusterSets:" "$file_path"; then
-        local managed_clustersets
-        managed_clustersets=$(awk '/^managedClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
-        while IFS= read -r clusterset; do
-            [[ -z "$clusterset" ]] && continue
-            add_labels_to_section "$file_path" "managedClusterSets" "$clusterset" false
-            sections_found="$sections_found managedClusterSets/$clusterset"
-        done <<< "$managed_clustersets"
+        while IFS= read -r cs; do
+            [[ -n "$cs" ]] && managed_clustersets+=("$cs")
+        done < <(awk '/^managedClusterSets:/{f=1;next} /^[a-zA-Z]/{f=0} f && /^  [a-zA-Z][^:]*:/{gsub(/:.*$/,""); gsub(/^  /,""); print}' "$file_path")
     fi
-    
-    # Check for clusters (commented or active)
+
     if grep -q "^clusters:" "$file_path"; then
-        # Active clusters section
-        local active_clusters
-        active_clusters=$(awk '/^clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
-        while IFS= read -r cluster; do
-            [[ -z "$cluster" ]] && continue
-            add_labels_to_section "$file_path" "clusters" "$cluster" false
-            sections_found="$sections_found clusters/$cluster"
-        done <<< "$active_clusters"
+        while IFS= read -r cl; do
+            [[ -n "$cl" ]] && active_clusters+=("$cl")
+        done < <(awk '/^clusters:/{f=1;next} /^[a-zA-Z]/{f=0} f && /^  [a-zA-Z][^:]*:/{gsub(/:.*$/,""); gsub(/^  /,""); print}' "$file_path")
     fi
-    
+
     if grep -q "^# clusters:" "$file_path"; then
-        # Commented clusters section
-        local commented_clusters
-        commented_clusters=$(awk '/^# clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^#   [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^#   /, ""); print}' "$file_path")
-        while IFS= read -r cluster; do
-            [[ -z "$cluster" ]] && continue
-            add_labels_to_section "$file_path" "clusters" "$cluster" true
-            sections_found="$sections_found clusters/$cluster(commented)"
-        done <<< "$commented_clusters"
+        while IFS= read -r cl; do
+            [[ -n "$cl" ]] && commented_clusters+=("$cl")
+        done < <(awk '/^# clusters:/{f=1;next} /^[a-zA-Z]/{f=0} f && /^#   [a-zA-Z][^:]*:/{gsub(/:.*$/,""); gsub(/^#   /,""); print}' "$file_path")
     fi
-    
+
+    # Now apply modifications using pre-captured arrays
+    for cs in "${hub_clustersets[@]}"; do
+        add_labels_to_section "$file_path" "hubClusterSets" "$cs" false
+        sections_found="$sections_found hubClusterSets/$cs"
+    done
+    for cs in "${managed_clustersets[@]}"; do
+        add_labels_to_section "$file_path" "managedClusterSets" "$cs" false
+        sections_found="$sections_found managedClusterSets/$cs"
+    done
+    for cl in "${active_clusters[@]}"; do
+        add_labels_to_section "$file_path" "clusters" "$cl" false
+        sections_found="$sections_found clusters/$cl"
+    done
+    for cl in "${commented_clusters[@]}"; do
+        add_labels_to_section "$file_path" "clusters" "$cl" true
+        sections_found="$sections_found clusters/$cl(commented)"
+    done
+
     if [[ -z "$sections_found" ]]; then
         log_warning "No suitable sections found in $(basename "$file_path")"
     else
@@ -590,6 +592,7 @@ check_component_exists() {
 }
 
 # Find the last label line number in a section/clusterset (to append at bottom)
+# Passes section/clusterset as awk variables (-v) to avoid regex metacharacter issues
 find_labels_line() {
     local file_path="$1"
     local section_type="$2"
@@ -597,27 +600,27 @@ find_labels_line() {
     local is_commented="$4"
 
     if [[ "$is_commented" == "true" ]]; then
-        awk "
-            /^# $section_type:/ { found_section=1; next }
-            found_section && /^#   $clusterset:/ { found_clusterset=1; next }
+        awk -v sec="$section_type" -v cs="$clusterset" '
+            $0 == "# " sec ":" { found_section=1; next }
+            found_section && $0 == "#   " cs ":" { found_clusterset=1; next }
             found_clusterset && /^#     labels:/ { in_labels=1; last=NR; next }
             in_labels && /^#       / { last=NR; next }
             in_labels && /^#$/ { last=NR; next }
             in_labels { print last; exit }
             /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
             END { if (in_labels) print last }
-        " "$file_path"
+        ' "$file_path"
     else
-        awk "
-            /^$section_type:/ { found_section=1; next }
-            found_section && /^  $clusterset:/ { found_clusterset=1; next }
+        awk -v sec="$section_type" -v cs="$clusterset" '
+            $0 == sec ":" { found_section=1; next }
+            found_section && $0 == "  " cs ":" { found_clusterset=1; next }
             found_clusterset && /^    labels:/ { in_labels=1; last=NR; next }
             in_labels && /^      / { last=NR; next }
             in_labels && /^$/ { last=NR; next }
             in_labels { print last; exit }
             /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
             END { if (in_labels) print last }
-        " "$file_path"
+        ' "$file_path"
     fi
 }
 
@@ -635,8 +638,8 @@ main() {
         echo "1. Review generated files in $POLICY_DIR/"
         echo -e "2. Test locally: ${YELLOW}helm template $POLICY_DIR/${NC}"
         echo "3. Customize values.yaml if needed"
-        echo "4. Add to AutoShift ApplicationSet (see below)"
-        echo "5. Add operator-specific configuration policies"
+        echo "4. Add operator-specific configuration policies"
+        echo "5. Commit and push — ApplicationSet auto-discovers $POLICY_SUBDIR/*"
         echo ""
         echo -e "${BLUE}📖 See $POLICY_DIR/README.md for detailed configuration guidance${NC}"
         echo ""

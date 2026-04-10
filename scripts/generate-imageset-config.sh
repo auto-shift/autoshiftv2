@@ -102,7 +102,7 @@ build_operator_mappings() {
             [[ -z "$label" || -z "$package" ]] && continue
 
             # Find policy directory by searching for name: {package} in policies values files
-            for policy_values in "$PROJECT_ROOT"/policies/*/values.yaml "$PROJECT_ROOT"/policies/certified/*/values.yaml "$PROJECT_ROOT"/policies/community/*/values.yaml; do
+            for policy_values in "$PROJECT_ROOT"/policies/stable/*/values.yaml "$PROJECT_ROOT"/policies/certified/*/values.yaml "$PROJECT_ROOT"/policies/community/*/values.yaml; do
                 [[ -f "$policy_values" ]] || continue
                 if grep -qE "^[[:space:]]+name:[[:space:]]*['\"]?${package}['\"]?" "$policy_values" 2>/dev/null; then
                     policy_dir=$(dirname "$policy_values")
@@ -589,7 +589,7 @@ get_policy_file_for_label() {
         echo "$policy_dir/values.yaml"
     else
         # Fallback to direct directory match
-        echo "$PROJECT_ROOT/policies/$label/values.yaml"
+        echo "$PROJECT_ROOT/policies/stable/$label/values.yaml"
     fi
 }
 
@@ -1179,7 +1179,7 @@ EOF
 
             # Discover all policy charts
             local policy_charts=()
-            for chart_dir in policies/*/ policies/certified/*/ policies/community/*/; do
+            for chart_dir in policies/stable/*/ policies/certified/*/ policies/community/*/; do
                 if [[ -f "${chart_dir}Chart.yaml" ]]; then
                     policy_charts+=($(basename "$chart_dir"))
                 fi

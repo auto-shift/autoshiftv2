@@ -1,4 +1,4 @@
-# Policy to configure ImageDigestMirrorSet or ICSP for disconnected environments
+# Policy to configure ImageDigestMirrorSet/ICSP and ImageTagMirrorSet for disconnected environments
 # Reads mirror registry config from rendered-config ConfigMaps via hub template lookup
 {{- $policyNamespace := $.Values.policy_namespace }}
 apiVersion: policy.open-cluster-management.io/v1
@@ -87,6 +87,30 @@ spec:
                         - '{{ "{{hub" }} $mirrorLoc {{ "hub}}" }}'
                   {{ "{{hub" }} end {{ "hub}}" }}
             {{ "{{hub" }} end {{ "hub}}" }}
+            {{ "{{hub" }} end {{ "hub}}" }}
+            {{- /* ImageTagMirrorSet for certified/unsigned operators that reference images by tag */}}
+            {{ "{{hub-" }} $tagMirrors := (index $mirror "tagMirrors" | default list) {{ "hub}}" }}
+            {{ "{{hub" }} if and $useIDMS (gt (len $tagMirrors) 0) {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: config.openshift.io/v1
+                kind: ImageTagMirrorSet
+                metadata:
+                  name: autoshift-disconnected-tag-mirrors
+                spec:
+                  imageTagMirrors:
+                  {{ "{{hub" }} range $_, $entry := $tagMirrors {{ "hub}}" }}
+                  {{ "{{hub" }} $source := (index $entry "source") {{ "hub}}" }}
+                  {{ "{{hub" }} $mirrorLoc := (index $entry "mirror" | default "") {{ "hub}}" }}
+                  {{ "{{hub" }} if $mirrorLoc {{ "hub}}" }}
+                  {{ "{{hub" }} $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) {{ "hub}}" }}
+                  {{ "{{hub" }} else {{ "hub}}" }}
+                  {{ "{{hub" }} $mirrorLoc = $url {{ "hub}}" }}
+                  {{ "{{hub" }} end {{ "hub}}" }}
+                    - source: {{ "{{hub" }} $source {{ "hub}}" }}
+                      mirrors:
+                        - '{{ "{{hub" }} $mirrorLoc {{ "hub}}" }}'
+                  {{ "{{hub" }} end {{ "hub}}" }}
             {{ "{{hub" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
