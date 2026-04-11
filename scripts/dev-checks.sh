@@ -90,17 +90,17 @@ else
     FAILED=1
 fi
 
-# Check a sample of policy charts
+# Check all policy charts under policies/<category>/<chart>/
 POLICY_COUNT=$(find policies -maxdepth 3 -name Chart.yaml | wc -l | tr -d ' ')
 POLICY_FAILED=0
-for chart in policies/*/ policies/certified/*/ policies/community/*/; do
-    if [[ -f "$chart/Chart.yaml" ]]; then
-        if ! helm lint "$chart" --quiet 2>/dev/null; then
-            error "$chart failed lint"
-            POLICY_FAILED=1
-        fi
+while IFS= read -r chart_file; do
+    [[ -z "$chart_file" ]] && continue
+    chart=$(dirname "$chart_file")
+    if ! helm lint "$chart" --quiet 2>/dev/null; then
+        error "$chart failed lint"
+        POLICY_FAILED=1
     fi
-done
+done < <(find policies -maxdepth 3 -name Chart.yaml 2>/dev/null)
 
 if [[ $POLICY_FAILED -eq 0 ]]; then
     success "All $POLICY_COUNT policy charts valid"

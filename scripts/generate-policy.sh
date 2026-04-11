@@ -218,8 +218,9 @@ case "$TARGET" in
         ;;
 esac
 
-# Interactive prompt for add-to-autoshift
-if [[ "$ADD_TO_AUTOSHIFT" == "false" && "$TARGET" != "all" ]]; then
+# Interactive prompt for add-to-autoshift (only when stdin is a TTY;
+# non-interactive callers skip silently and must pass --add-to-autoshift explicitly)
+if [[ "$ADD_TO_AUTOSHIFT" == "false" && "$TARGET" != "all" && -t 0 ]]; then
     echo ""
     read -rp "Add label to AutoShift values files? [y/N]: " add_choice
     if [[ "$add_choice" =~ ^[Yy]$ ]]; then
@@ -325,7 +326,9 @@ build_dependency_block() {
 
 # --- AutoShift values file integration ---
 
-# Find the last label line number in a section/clusterset (to append at bottom)
+# Find the last label line number in a section/clusterset (to append at bottom).
+# Strips trailing comments/whitespace from section-header lines before matching so
+# keys like `  hub:    # <-- change me` still match.
 find_labels_line() {
     local file_path="$1"
     local section_type="$2"
@@ -334,8 +337,13 @@ find_labels_line() {
 
     if [[ "$is_commented" == "true" ]]; then
         awk -v sec="$section_type" -v cs="$clusterset" '
-            $0 == "# " sec ":" { found_section=1; next }
-            found_section && $0 == "#   " cs ":" { found_clusterset=1; next }
+            {
+                stripped = $0
+                sub(/[[:space:]]+#.*$/, "", stripped)
+                sub(/[[:space:]]+$/, "", stripped)
+            }
+            stripped == "# " sec ":" { found_section=1; next }
+            found_section && stripped == "#   " cs ":" { found_clusterset=1; next }
             found_clusterset && /^#     labels:/ { in_labels=1; last=NR; next }
             in_labels && /^#       / { last=NR; next }
             in_labels && /^#$/ { last=NR; next }
@@ -345,8 +353,13 @@ find_labels_line() {
         ' "$file_path"
     else
         awk -v sec="$section_type" -v cs="$clusterset" '
-            $0 == sec ":" { found_section=1; next }
-            found_section && $0 == "  " cs ":" { found_clusterset=1; next }
+            {
+                stripped = $0
+                sub(/[[:space:]]+#.*$/, "", stripped)
+                sub(/[[:space:]]+$/, "", stripped)
+            }
+            stripped == sec ":" { found_section=1; next }
+            found_section && stripped == "  " cs ":" { found_clusterset=1; next }
             found_clusterset && /^    labels:/ { in_labels=1; last=NR; next }
             in_labels && /^      / { last=NR; next }
             in_labels && /^$/ { last=NR; next }
@@ -357,7 +370,10 @@ find_labels_line() {
     fi
 }
 
-# Check if the label already exists in a section
+# Check if the label already exists in a section.
+# Uses awk for proper section tracking — previous grep-based approach with
+# fixed -A windows broke on large values files where the labels block spans
+# hundreds of lines past the clusterset key.
 check_label_exists() {
     local file_path="$1"
     local section_type="$2"
@@ -366,13 +382,33 @@ check_label_exists() {
     local label_key="$5"
 
     if [[ "$is_commented" == "true" ]]; then
-        grep -A 50 "^# $section_type:" "$file_path" | \
-        grep -A 30 "^#   $clusterset:" | \
-        grep -q "^#       $label_key:"
+        awk -v sec="$section_type" -v cs="$clusterset" -v lbl="$label_key" '
+            {
+                stripped = $0
+                sub(/[[:space:]]+#.*$/, "", stripped)
+                sub(/[[:space:]]+$/, "", stripped)
+            }
+            stripped == "# " sec ":" { found_section=1; next }
+            found_section && stripped == "#   " cs ":" { found_clusterset=1; next }
+            found_clusterset && /^#     labels:/ { in_labels=1; next }
+            in_labels && $0 ~ ("^#       " lbl ":") { found=1; exit }
+            /^[a-zA-Z]/ { if (in_labels) exit; found_section=0; found_clusterset=0 }
+            END { if (found) exit 0; exit 1 }
+        ' "$file_path"
     else
-        grep -A 50 "^$section_type:" "$file_path" | \
-        grep -A 30 "^  $clusterset:" | \
-        grep -q "^      $label_key:"
+        awk -v sec="$section_type" -v cs="$clusterset" -v lbl="$label_key" '
+            {
+                stripped = $0
+                sub(/[[:space:]]+#.*$/, "", stripped)
+                sub(/[[:space:]]+$/, "", stripped)
+            }
+            stripped == sec ":" { found_section=1; next }
+            found_section && stripped == "  " cs ":" { found_clusterset=1; next }
+            found_clusterset && /^    labels:/ { in_labels=1; next }
+            in_labels && $0 ~ ("^      " lbl ":") { found=1; exit }
+            /^[a-zA-Z]/ { if (in_labels) exit; found_section=0; found_clusterset=0 }
+            END { if (found) exit 0; exit 1 }
+        ' "$file_path"
     fi
 }
 
@@ -386,7 +422,7 @@ add_label_to_section() {
 
     if check_label_exists "$file_path" "$section_type" "$clusterset" "$is_commented" "$label_key"; then
         log_warning "Label '$label_key' already exists in $section_type/$clusterset, skipping"
-        return 0
+        return 1
     fi
 
     local labels_line
@@ -394,7 +430,7 @@ add_label_to_section() {
 
     if [[ -z "$labels_line" ]]; then
         log_warning "Could not find labels: line for $section_type/$clusterset, skipping"
-        return 0
+        return 1
     fi
 
     # Determine comment style: example files use banner, others use ###
@@ -447,6 +483,9 @@ add_labels_to_file() {
         is_example=true
     fi
 
+    # Only count sections that were actually updated (add_label_to_section returns
+    # non-zero when it skipped, e.g. labels-line not found or duplicate).
+
     # Add to managedClusterSets
     if [[ "$is_example" == "true" || "$TARGET" == "spoke" || "$TARGET" == "both" ]]; then
         if grep -q "^managedClusterSets:" "$file_path"; then
@@ -454,8 +493,9 @@ add_labels_to_file() {
             managed_clustersets=$(awk '/^managedClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
             while IFS= read -r clusterset; do
                 [[ -z "$clusterset" ]] && continue
-                add_label_to_section "$file_path" "managedClusterSets" "$clusterset" false "$LABEL"
-                sections_found="$sections_found managedClusterSets/$clusterset"
+                if add_label_to_section "$file_path" "managedClusterSets" "$clusterset" false "$LABEL"; then
+                    sections_found="$sections_found managedClusterSets/$clusterset"
+                fi
             done <<< "$managed_clustersets"
         fi
     fi
@@ -467,8 +507,9 @@ add_labels_to_file() {
             hub_clustersets=$(awk '/^hubClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
             while IFS= read -r clusterset; do
                 [[ -z "$clusterset" ]] && continue
-                add_label_to_section "$file_path" "hubClusterSets" "$clusterset" false "$LABEL"
-                sections_found="$sections_found hubClusterSets/$clusterset"
+                if add_label_to_section "$file_path" "hubClusterSets" "$clusterset" false "$LABEL"; then
+                    sections_found="$sections_found hubClusterSets/$clusterset"
+                fi
             done <<< "$hub_clustersets"
         fi
     fi
@@ -479,8 +520,9 @@ add_labels_to_file() {
         active_clusters=$(awk '/^clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
         while IFS= read -r cluster; do
             [[ -z "$cluster" ]] && continue
-            add_label_to_section "$file_path" "clusters" "$cluster" false "$LABEL"
-            sections_found="$sections_found clusters/$cluster"
+            if add_label_to_section "$file_path" "clusters" "$cluster" false "$LABEL"; then
+                sections_found="$sections_found clusters/$cluster"
+            fi
         done <<< "$active_clusters"
     fi
 
@@ -489,16 +531,18 @@ add_labels_to_file() {
         commented_clusters=$(awk '/^# clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^#   [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^#   /, ""); print}' "$file_path")
         while IFS= read -r cluster; do
             [[ -z "$cluster" ]] && continue
-            add_label_to_section "$file_path" "clusters" "$cluster" true "$LABEL"
-            sections_found="$sections_found clusters/$cluster(commented)"
+            if add_label_to_section "$file_path" "clusters" "$cluster" true "$LABEL"; then
+                sections_found="$sections_found clusters/$cluster(commented)"
+            fi
         done <<< "$commented_clusters"
     fi
 
     if [[ -z "$sections_found" ]]; then
         log_warning "No matching sections found in $(basename "$file_path")"
-    else
-        log_step "Added '$LABEL' label to:$sections_found"
+        return 1
     fi
+    log_step "Added '$LABEL' label to:$sections_found"
+    return 0
 }
 
 # Add labels to AutoShift values files
@@ -577,6 +621,7 @@ add_to_autoshift_values() {
         return 1
     fi
 
+    local updated_count=0
     for values_file in "${values_files_to_update[@]}"; do
         local file_path="autoshift/$values_file"
         if [[ ! -f "$file_path" ]]; then
@@ -584,11 +629,15 @@ add_to_autoshift_values() {
             continue
         fi
         log_step "Processing $values_file..."
-        add_labels_to_file "$file_path"
-        log_success "Updated $values_file"
+        if add_labels_to_file "$file_path"; then
+            log_success "Updated $values_file"
+            updated_count=$((updated_count + 1))
+        else
+            log_warning "No changes made to $values_file"
+        fi
     done
 
-    log_success "Labels added to ${#values_files_to_update[@]} values file(s)"
+    log_success "Labels added to $updated_count of ${#values_files_to_update[@]} values file(s)"
 }
 
 # Main generation

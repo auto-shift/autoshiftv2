@@ -34,7 +34,7 @@ The OCI chart includes a `files/policy-list.txt` that is **automatically generat
 
 | Aspect | Git Mode | OCI Mode |
 |--------|----------|----------|
-| **Generator** | `git:` - auto-discovers `policies/*` | `list:` - reads `policy-list.txt` |
+| **Generator** | `git:` - auto-discovers `policies/{stable,certified,community}/*` | `list:` - reads `policy-list.txt` |
 | **Source** | Git repository path | OCI chart reference |
 | **Version** | Git branch/tag | Chart version (pinned) |
 | **Dynamic** | Auto-discovers new policies | Fixed to released policies |

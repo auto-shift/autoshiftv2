@@ -45,7 +45,7 @@ AutoShiftv2 orchestrates OpenShift infrastructure through a sophisticated GitOps
 
 ```mermaid
 flowchart TD
-    Git[Git Repository<br/>autoshift + policies/*]
+    Git[Git Repository<br/>autoshift + policies/stable,certified,community/*]
     AutoShift[AutoShift Helm Chart<br/>Creates ApplicationSet]
     Apps[ArgoCD Applications<br/>One per policy]
     Policies[ACM Policies<br/>Deployed to hub]
@@ -124,7 +124,7 @@ flowchart TD
 
 **Key Components & Flow:**
 
-1. **GitOps Foundation**: ArgoCD ApplicationSet monitors `policies/*` directories in Git repository
+1. **GitOps Foundation**: ArgoCD ApplicationSet monitors `policies/{stable,certified,community}/*` directories in Git repository
 2. **Dynamic Application Creation**: ApplicationSet creates individual ArgoCD Applications for each policy
 3. **Helm Chart Deployment**: Each Application deploys a Helm chart containing ACM Policy + Placement + PlacementBinding
 4. **Hub Template Processing**: ACM processes hub templates on the hub cluster, resolving per-cluster values before replication
@@ -181,11 +181,11 @@ rm -rf policies/stable/test-config/
 ls -la policies/
 
 # Validate all existing policies (optional but recommended)
-for policy in policies/*/; do
-  if [ -f "$policy/Chart.yaml" ]; then
-    echo "Validating $policy..."
-    helm template "$policy" > /dev/null && echo "✓ Valid" || echo "✗ Invalid"
-  fi
+# Policy charts live at policies/<category>/<chart>/Chart.yaml
+find policies -maxdepth 3 -name Chart.yaml | while read -r chart_file; do
+  policy=$(dirname "$chart_file")
+  echo "Validating $policy..."
+  helm template "$policy" > /dev/null && echo "✓ Valid" || echo "✗ Invalid"
 done
 ```
 

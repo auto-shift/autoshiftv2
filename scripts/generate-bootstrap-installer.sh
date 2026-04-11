@@ -854,7 +854,7 @@ cat >> "$ARTIFACTS_DIR/charts.txt" << CHARTS_EOF
 ## Policy Charts
 CHARTS_EOF
 
-find policies -maxdepth 2 -name Chart.yaml | while read -r chart_file; do
+find policies -maxdepth 3 -name Chart.yaml | while read -r chart_file; do
     policy_dir=$(dirname "$chart_file")
     policy_name=$(basename "$policy_dir")
     echo "oci://${REGISTRY}/${REGISTRY_NAMESPACE}/policies/${policy_name}:${VERSION}" >> "$ARTIFACTS_DIR/charts.txt"
