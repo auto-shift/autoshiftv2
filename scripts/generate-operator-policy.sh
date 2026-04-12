@@ -8,20 +8,7 @@
 
 set -e
 
-# Colors for output (enabled if stdout or stderr is a terminal)
-if [[ -t 1 ]] || [[ -t 2 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    NC='\033[0m'
-else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    BLUE=''
-    NC=''
-fi
+exec "$(dirname "$0")/terminal-settings.sh"
 
 # Default values
 DEFAULT_SOURCE="redhat-operators"

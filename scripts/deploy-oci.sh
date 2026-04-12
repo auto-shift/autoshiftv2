@@ -4,18 +4,7 @@
 
 set -e
 
-# Colors (enabled if stdout or stderr is a terminal)
-if [[ -t 1 ]] || [[ -t 2 ]]; then
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    RED='\033[0;31m'
-    NC='\033[0m'
-else
-    GREEN=''
-    YELLOW=''
-    RED=''
-    NC=''
-fi
+exec "$(dirname "$0")/terminal-settings.sh"
 
 # Defaults
 REGISTRY="${REGISTRY:-oci://quay.io/autoshift}"
@@ -215,9 +204,6 @@ if [ "$METHOD" = "argocd" ]; then
         autoshiftOciRegistry: true
         autoshiftOciRepo: ${POLICIES_REGISTRY}
         autoshiftOciVersion: \"${VERSION}\"
-        gitopsNamespace: ${NAMESPACE}"
-    else
-        OCI_VALUES="      values: |
         gitopsNamespace: ${NAMESPACE}"
     fi
 
