@@ -35,44 +35,126 @@ hubClusterSets:
   hub:
     config:
       # =======================================================================
-      # User Workload Monitoring (config section - read via rendered-config)
+      # User Workload Monitoring (read via rendered-config ConfigMap)
       # =======================================================================
-      # uwm:
-      #   storageClass: 'gp3-csi'              # Default storage class for all UWM components
-      #   prometheus:
-      #     retention: '24h'                    # Prometheus retention time
-      #     storage: '50Gi'                     # Prometheus PVC size
-      #     storageClass: 'gp3-csi'            # Override storage class for Prometheus only
-      #     dedicatedServiceMonitors: true      # Offload service monitor processing (OCP 4.14+)
-      #     resources:
-      #       requests:
-      #         cpu: '200m'
-      #         memory: '1Gi'
-      #       limits:
-      #         cpu: '1'
-      #         memory: '4Gi'
-      #   thanosRuler:
-      #     retention: '24h'                    # Thanos Ruler retention time
-      #     storage: '10Gi'                     # Thanos Ruler PVC size
-      #     resources:
-      #       requests:
-      #         cpu: '100m'
-      #         memory: '256Mi'
-      #   alertmanager:
-      #     enabled: true                       # Enable dedicated UWM alertmanager
-      #     storage: '10Gi'                     # Alertmanager PVC size
-      #     resources:
-      #       requests:
-      #         cpu: '100m'
-      #         memory: '256Mi'
-      # --- GitLab Config (values with / or spaces that can't be labels) ---
-      # gitlab:
-      #   dbBackupSchedule: '0 2 * * *'
-      #   dbBackupRetention: '30d'
-      # --- JFrog Config ---
-      # jfrog:
-      #   dbBackupSchedule: '0 3 * * *'
-      #   dbBackupRetention: '30d'
+      uwm:
+        storageClass: 'gp3-csi'
+        prometheus:
+          retention: '24h'
+          storage: '50Gi'
+          storageClass: 'gp3-csi'
+          dedicatedServiceMonitors: true
+          resources:
+            requests:
+              cpu: '200m'
+              memory: '1Gi'
+            limits:
+              cpu: '1'
+              memory: '4Gi'
+        thanosRuler:
+          retention: '24h'
+          storage: '10Gi'
+          resources:
+            requests:
+              cpu: '100m'
+              memory: '256Mi'
+        alertmanager:
+          enabled: true
+          storage: '10Gi'
+          resources:
+            requests:
+              cpu: '100m'
+              memory: '256Mi'
+      # =======================================================================
+      # Disconnected Mirror (read via rendered-config ConfigMap)
+      # =======================================================================
+      disconnected:
+        mirrorRegistry:
+          host: 'registry.example.com'
+          port: '5000'
+          path: 'openshift'
+          mirrors:
+            - source: 'registry.redhat.io'
+              mirror: 'registry.example.com:5000/rhel'
+            - source: 'quay.io'
+              mirror: 'registry.example.com:5000/quay'
+        catalogs:
+          - source: redhat-operators
+            image: 'registry.example.com:5000/redhat/redhat-operator-index:v4.20'
+          - source: certified-operators
+            image: 'registry.example.com:5000/redhat/certified-operator-index:v4.20'
+        useIDMS: true
+        disableDefaultCatalogs: true
+      # =======================================================================
+      # GitLab (values with / or spaces that can't be labels)
+      # =======================================================================
+      gitlab:
+        dbBackupSchedule: '0 2 * * *'
+        dbBackupRetention: '30d'
+      # =======================================================================
+      # JFrog Artifactory
+      # =======================================================================
+      jfrog:
+        dbBackupSchedule: '0 3 * * *'
+        dbBackupRetention: '30d'
+      # =======================================================================
+      # Workload Partitioning (CPU isolation via PerformanceProfile)
+      # =======================================================================
+      workloadPartitioning:
+        reservedCpus: '0-3'
+        isolatedCpus: '4-31'
+        nodeSelector:
+          node-role.kubernetes.io/worker: ''
+        numaTopology: 'restricted'
+        hugepages:
+          defaultHugepagesSize: '1G'
+          pages:
+            - size: '1G'
+              count: 4
+      # =======================================================================
+      # NMState Networking (clusterset defaults for network interfaces)
+      # Example: bond with two ports, VLAN on top, static route, DNS
+      # Per-cluster overrides go in clusters/<name>.yaml config section
+      # =======================================================================
+      networking:
+        interfaces:
+          eno1:
+            type: ethernet
+            name: eno1
+            state: up
+            ipv4: disabled
+            ipv6: disabled
+          eno2:
+            type: ethernet
+            name: eno2
+            state: up
+            ipv4: disabled
+            ipv6: disabled
+          mgmt:
+            type: bond
+            name: bond0
+            state: up
+            mode: 802.3ad
+            mtu: 9000
+            miimon: 100
+            ports:
+              - eno1
+              - eno2
+            ipv4: dhcp
+            ipv6: disabled
+        routes:
+          datacenter:
+            dest: '10.0.0.0'
+            cidr: '8'
+            gateway: '192.168.1.1'
+            interface: bond0
+            metric: '100'
+        dns:
+          servers:
+            - '10.0.0.1'
+            - '10.0.0.2'
+          search:
+            - 'example.com'
     labels:
       # =======================================================================
       # Core Configuration

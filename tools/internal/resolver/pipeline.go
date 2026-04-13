@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/auto-shift/autoshiftv2/tools/internal/labels"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // ChartResult holds the outcome for one policy chart.
@@ -57,6 +58,8 @@ func RunPipeline(
 	ctx HubContext,
 	r *Resolver,
 	declared map[string]*labels.Declared,
+	hubConfig map[string]interface{},
+	testdataDir string,
 ) (map[string]*labels.Consumed, []ChartResult, error) {
 	charts, err := discoverCharts(policiesDir)
 	if err != nil {
@@ -72,7 +75,7 @@ func RunPipeline(
 	}
 	defer os.RemoveAll(tmpDir)
 
-	testValuesPath, err := WriteTestValues(tmpDir)
+	testValuesPath, err := WriteTestValues(tmpDir, ctx.ManagedClusterName, hubConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("write test values: %w", err)
 	}
@@ -93,6 +96,16 @@ func RunPipeline(
 	for key := range declared {
 		declaredKeys[key] = true
 	}
+
+	// Load test resources (Secrets, ConfigMaps) from the testdata directory.
+	// These represent resources that hub templates look up via
+	// fromSecret/fromConfigMap/lookup but only exist after operators are
+	// installed. Adding a new resource = drop a YAML file in testdata/.
+	testResources, err := LoadTestResources(testdataDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load test resources: %w", err)
+	}
+	r.SetLocalResources(testResources)
 
 	keysByPolicy := map[string]map[string]bool{}
 	var results []ChartResult
@@ -214,7 +227,23 @@ func RunPipeline(
 			result.ResolveWarns = resolveResult.Errors
 		}
 
-		// 4. Check for empty-string substitutions in the resolved output.
+		// 4. If this is cluster-config-maps, parse its ConfigMap output and
+		//    inject them as local resources for downstream charts.
+		if chart.policy == "stable/cluster-config-maps" || chart.policy == "stable\\cluster-config-maps" {
+			rawCMs, parseErr := ParseConfigMaps(rawYAML)
+			if parseErr == nil && len(rawCMs) > 0 {
+				renderedCM, mergeErr := MergeRenderedConfig(
+					ctx.ManagedClusterName, "policies-autoshift", rawCMs,
+				)
+				if mergeErr == nil {
+					allResources := append(testResources, rawCMs...)
+					allResources = append(allResources, renderedCM)
+					r.SetLocalResources(allResources)
+				}
+			}
+		}
+
+		// 5. Check for empty-string substitutions in the resolved output.
 		//    For each label we provided, if the original had `autoshift.io/<key>`
 		//    and the resolved output has an empty value where the label was, that
 		//    indicates a problem.
@@ -231,6 +260,18 @@ func RunPipeline(
 				}
 			}
 			sort.Strings(result.EmptyLabels)
+		}
+
+		// 6. Validate that the raw helm template output is well-formed YAML.
+		//    This catches template bugs that produce broken YAML before
+		//    resolution — the #1 error source in policy development.
+		//    We validate the RAW output (not the resolved output) because
+		//    the resolver's JSON round-trip can alter formatting.
+		yamlErrors := validateYAML(rawYAML)
+		if len(yamlErrors) > 0 {
+			for _, e := range yamlErrors {
+				result.ResolveWarns = append(result.ResolveWarns, "invalid YAML in helm output: "+e)
+			}
 		}
 
 		results = append(results, result)
@@ -334,6 +375,32 @@ func stripNumberedSuffix(key string) string {
 		}
 	}
 	return key[:idx]
+}
+
+// validateYAML checks that each document in a multi-doc YAML string is
+// well-formed. Returns a list of error descriptions for any document that
+// fails to parse.
+//
+// Documents that still contain spoke-side `{{ }}` template expressions are
+// skipped — they can't be valid YAML until the spoke resolver processes them.
+// Only fully-resolved documents are validated.
+func validateYAML(multiDocYAML string) []string {
+	var errs []string
+	for i, doc := range splitYAMLDocuments(multiDocYAML) {
+		doc = strings.TrimSpace(doc)
+		if doc == "" {
+			continue
+		}
+		// Skip documents with unresolved spoke-side templates.
+		if strings.Contains(doc, "{{") {
+			continue
+		}
+		var obj interface{}
+		if err := sigsyaml.Unmarshal([]byte(doc), &obj); err != nil {
+			errs = append(errs, fmt.Sprintf("document %d: %v", i+1, err))
+		}
+	}
+	return errs
 }
 
 type chartInfo struct {

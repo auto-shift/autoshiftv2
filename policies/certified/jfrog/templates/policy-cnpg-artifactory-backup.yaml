@@ -65,8 +65,11 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
-            {{ "{{hub-" }} $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) {{ "hub}}" }}
+            {{ "{{hub-" }} if not $rcm {{ "hub}}" }}
+            {{ "{{hub-" }} fail (printf "rendered-config ConfigMap not found for cluster %s" .ManagedClusterName) {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $rcmConfig := (index $rcm.data "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $jfrogCfg := (index $rcmConfig "jfrog" | default dict) {{ "hub}}" }}
             # Read OBC credentials for the backup bucket
             {{ "{{-" }} $obcSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-db-backup") | default dict {{ "}}" }}

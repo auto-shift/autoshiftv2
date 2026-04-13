@@ -34,7 +34,10 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) {{ "hub}}" }}
-            {{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
+            {{ "{{hub" }} if not $cm {{ "hub}}" }}
+            {{ "{{hub" }} fail (printf "rendered-config ConfigMap not found for cluster %s" .ManagedClusterName) {{ "hub}}" }}
+            {{ "{{hub" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $config := (index $cm.data "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $wp := (index $config "workloadPartitioning" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $reservedCpus := (index $wp "reservedCpus" | default "") {{ "hub}}" }}
             {{ "{{hub-" }} $isolatedCpus := (index $wp "isolatedCpus" | default "") {{ "hub}}" }}

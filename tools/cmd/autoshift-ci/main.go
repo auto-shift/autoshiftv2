@@ -52,6 +52,7 @@ func cmdLintLabels(args []string) int {
 	fs := flag.NewFlagSet("lint-labels", flag.ExitOnError)
 	policiesDir := fs.String("policies", "policies", "path to the policies/ directory")
 	valuesDir := fs.String("values", "autoshift/values", "path to the autoshift/values/ directory")
+	testdataDir := fs.String("testdata", "testdata", "path to the testdata/ directory with mock Secrets/ConfigMaps for hub template lookups")
 	allowlistPath := fs.String("allowlist", ".github/label-lint-allowlist.yaml", "allowlist file (empty string to disable)")
 	includeProfiles := fs.Bool("include-profiles", false, "also scan non-example profile files — by default only _example*.yaml counts as the authoritative catalog")
 	format := fs.String("format", "text", "output format: text | markdown")
@@ -77,15 +78,21 @@ func cmdLintLabels(args []string) int {
 		ManagedClusterLabels: syntheticLabels,
 	}
 
-	// 3. Create the ACM hub template resolver with fake k8s clients.
+	// 3. Extract hub config from the example file for ConfigMap generation.
+	hubConfig, err := resolver.ExtractHubConfig(*valuesDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not extract hub config: %v\n", err)
+	}
+
+	// 4. Create the ACM hub template resolver with fake k8s clients.
 	r, err := resolver.NewResolver(nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating resolver: %v\n", err)
 		return 1
 	}
 
-	// 4. Run the pipeline: helm template → resolve → validate.
-	consumed, results, err := resolver.RunPipeline(*policiesDir, ctx, r, declared)
+	// 5. Run the pipeline: helm template → resolve → validate.
+	consumed, results, err := resolver.RunPipeline(*policiesDir, ctx, r, declared, hubConfig, *testdataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error running pipeline: %v\n", err)
 		return 1

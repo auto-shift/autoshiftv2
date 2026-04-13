@@ -8,10 +8,12 @@ import (
 	"strings"
 
 	"github.com/stolostron/go-template-utils/v7/pkg/templates"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	fakedynamic "k8s.io/client-go/dynamic/fake"
 	fakeclientset "k8s.io/client-go/kubernetes/fake"
+	fakediscovery "k8s.io/client-go/discovery/fake"
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
@@ -31,7 +33,64 @@ type Resolver struct {
 func NewResolver(localResources []unstructured.Unstructured) (*Resolver, error) {
 	scheme := runtime.NewScheme()
 	dynClient := fakedynamic.NewSimpleDynamicClient(scheme)
-	discClient := fakeclientset.NewSimpleClientset().Discovery()
+	fakeClientset := fakeclientset.NewSimpleClientset()
+
+	// Register API resources so that lookup/fromConfigMap/fromSecret calls
+	// return "not found" instead of "API not installed". Without this, the
+	// fake discovery client doesn't know about any API groups and every
+	// lookup fails with ErrMissingAPIResource.
+	fakeDisc, ok := fakeClientset.Discovery().(*fakediscovery.FakeDiscovery)
+	if ok {
+		fakeDisc.Resources = []*metav1.APIResourceList{
+			{
+				GroupVersion: "v1",
+				APIResources: []metav1.APIResource{
+					{Name: "configmaps", Kind: "ConfigMap", Namespaced: true},
+					{Name: "secrets", Kind: "Secret", Namespaced: true},
+					{Name: "namespaces", Kind: "Namespace", Namespaced: false},
+					{Name: "serviceaccounts", Kind: "ServiceAccount", Namespaced: true},
+					{Name: "nodes", Kind: "Node", Namespaced: false},
+				},
+			},
+			{
+				GroupVersion: "route.openshift.io/v1",
+				APIResources: []metav1.APIResource{
+					{Name: "routes", Kind: "Route", Namespaced: true},
+				},
+			},
+			{
+				GroupVersion: "operators.coreos.com/v1",
+				APIResources: []metav1.APIResource{
+					{Name: "operatorgroups", Kind: "OperatorGroup", Namespaced: true},
+				},
+			},
+			{
+				GroupVersion: "config.openshift.io/v1",
+				APIResources: []metav1.APIResource{
+					{Name: "infrastructures", Kind: "Infrastructure", Namespaced: false},
+				},
+			},
+			{
+				GroupVersion: "machine.openshift.io/v1beta1",
+				APIResources: []metav1.APIResource{
+					{Name: "machinesets", Kind: "MachineSet", Namespaced: true},
+				},
+			},
+			{
+				GroupVersion: "operator.openshift.io/v1",
+				APIResources: []metav1.APIResource{
+					{Name: "ingresscontrollers", Kind: "IngressController", Namespaced: true},
+				},
+			},
+			{
+				GroupVersion: "imageregistry.operator.openshift.io/v1",
+				APIResources: []metav1.APIResource{
+					{Name: "configs", Kind: "Config", Namespaced: false},
+				},
+			},
+		}
+	}
+	discClient := fakeClientset.Discovery()
 
 	tr, err := templates.NewResolverWithClients(
 		dynClient,
@@ -51,6 +110,13 @@ func NewResolver(localResources []unstructured.Unstructured) (*Resolver, error) 
 	}
 
 	return &Resolver{inner: tr}, nil
+}
+
+// SetLocalResources updates the resolver's local resources. These are
+// Kubernetes objects (typically ConfigMaps) that the resolver returns for
+// `lookup`/`fromConfigMap` calls instead of hitting a real API server.
+func (r *Resolver) SetLocalResources(resources []unstructured.Unstructured) {
+	r.inner.WithLocalResources(resources)
 }
 
 // HubContext is the template context struct passed to the ACM resolver. The

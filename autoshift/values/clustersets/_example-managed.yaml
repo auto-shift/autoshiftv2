@@ -29,27 +29,85 @@ managedClusterSets:
   managed:    # <-- Change this name for your clusterset (e.g., sbx, prod, dev)
     config:
       # =======================================================================
-      # User Workload Monitoring (config section - read via rendered-config)
+      # User Workload Monitoring (read via rendered-config ConfigMap)
       # =======================================================================
-      # uwm:
-      #   storageClass: 'gp3-csi'              # Default storage class for all UWM components
-      #   prometheus:
-      #     retention: '24h'
-      #     storage: '50Gi'
-      #     dedicatedServiceMonitors: true      # OCP 4.14+
-      #     resources:
-      #       requests:
-      #         cpu: '200m'
-      #         memory: '1Gi'
-      #       limits:
-      #         cpu: '1'
-      #         memory: '4Gi'
-      #   thanosRuler:
-      #     retention: '24h'
-      #     storage: '10Gi'
-      #   alertmanager:
-      #     enabled: true
-      #     storage: '10Gi'
+      uwm:
+        storageClass: 'gp3-csi'
+        prometheus:
+          retention: '24h'
+          storage: '50Gi'
+          dedicatedServiceMonitors: true
+        thanosRuler:
+          retention: '24h'
+          storage: '10Gi'
+        alertmanager:
+          enabled: true
+          storage: '10Gi'
+      # =======================================================================
+      # Disconnected Mirror (read via rendered-config ConfigMap)
+      # =======================================================================
+      disconnected:
+        mirrorRegistry:
+          host: 'registry.example.com'
+          port: '5000'
+          path: 'openshift'
+          mirrors:
+            - source: 'registry.redhat.io'
+              mirror: 'registry.example.com:5000/rhel'
+          catalogs:
+            - source: redhat-operators
+              image: 'registry.example.com:5000/redhat/redhat-operator-index:v4.20'
+        catalogs:
+          - source: redhat-operators
+            image: 'registry.example.com:5000/redhat/redhat-operator-index:v4.20'
+        useIDMS: true
+        disableDefaultCatalogs: true
+      # =======================================================================
+      # GitLab
+      # =======================================================================
+      gitlab:
+        dbBackupSchedule: '0 2 * * *'
+        dbBackupRetention: '30d'
+      # =======================================================================
+      # JFrog Artifactory
+      # =======================================================================
+      jfrog:
+        dbBackupSchedule: '0 3 * * *'
+        dbBackupRetention: '30d'
+      # =======================================================================
+      # Workload Partitioning (CPU isolation via PerformanceProfile)
+      # =======================================================================
+      workloadPartitioning:
+        reservedCpus: '0-3'
+        isolatedCpus: '4-31'
+        nodeSelector:
+          node-role.kubernetes.io/worker: ''
+      # =======================================================================
+      # NMState Networking (clusterset defaults for network interfaces)
+      # =======================================================================
+      networking:
+        interfaces:
+          eno1:
+            type: ethernet
+            name: eno1
+            state: up
+            ipv4: disabled
+            ipv6: disabled
+          mgmt:
+            type: bond
+            name: bond0
+            state: up
+            mode: 802.3ad
+            mtu: 9000
+            ports:
+              - eno1
+            ipv4: dhcp
+            ipv6: disabled
+        dns:
+          servers:
+            - '10.0.0.1'
+          search:
+            - 'example.com'
     labels:
       # =======================================================================
       # Core Configuration

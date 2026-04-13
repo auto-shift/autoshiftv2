@@ -56,9 +56,11 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub" }} $policyNs := "{{ .Values.policy_namespace }}" {{ "hub}}" }}
-            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
-            {{ "{{hub-" }} $rcData := (index $rcm "data" | default dict) {{ "hub}}" }}
-            {{ "{{hub-" }} $rcConfig := (index $rcData "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) {{ "hub}}" }}
+            {{ "{{hub-" }} if not $rcm {{ "hub}}" }}
+            {{ "{{hub-" }} fail (printf "rendered-config ConfigMap not found for cluster %s" .ManagedClusterName) {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $rcConfig := (index $rcm.data "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $disconnected := (index $rcConfig "disconnected" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $mirror := (index $disconnected "mirrorRegistry" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $mirrorHost := (index $mirror "host" | default "") {{ "hub}}" }}

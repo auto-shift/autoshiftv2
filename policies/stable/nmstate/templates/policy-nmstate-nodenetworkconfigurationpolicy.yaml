@@ -37,8 +37,10 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "%s.rendered-config" .ManagedClusterName)) {{ "hub}}" }}
-            {{/*Read rendered-config and parse into structured data */}}
-            {{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
+            {{ "{{hub" }} if not $cm {{ "hub}}" }}
+            {{ "{{hub" }} fail (printf "rendered-config ConfigMap not found for cluster %s" .ManagedClusterName) {{ "hub}}" }}
+            {{ "{{hub" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $config := (index $cm.data "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $networking := (index $config "networking" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $interfaces := (index $networking "interfaces" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $hosts := (index $config "hosts" | default dict) {{ "hub}}" }}
