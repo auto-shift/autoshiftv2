@@ -48,7 +48,7 @@ spec:
             {{/* Look up the rendered-config ConfigMap for this cluster */}}
             {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
             {{/* Retention */}}
-            {{ "{{hub-" }} $useClusterCA := ($obsConfig).useClusterCA | default false {{ "hub}}" }}
+            {{ "{{hub-" }} $useAlternateCA := ($obsConfig).useAlternateCA | default false {{ "hub}}" }}
             {{ "{{hub-" }} $retentionRaw := index $obsConfig "retentionResolutionRaw" | default "{{ .Values.globalObservability.retentionResolutionRaw }}" {{ "hub}}" }}
             {{ "{{hub-" }} $retention5m := index $obsConfig "retentionResolution5m" | default "{{ .Values.globalObservability.retentionResolution5m }}" {{ "hub}}" }}
             {{ "{{hub-" }} $retention1h := index $obsConfig "retentionResolution1h" | default "{{ .Values.globalObservability.retentionResolution1h }}" {{ "hub}}" }}
@@ -138,8 +138,8 @@ spec:
                     metricObjectStorage:
                       key: thanos.yaml
                       name: thanos-object-storage
-                    {{ "{{hub-" }} if $useClusterCA {{ "hub}}" }}
-                      tlsSecretMountPath: /var/run/secrets/kubernetes.io/serviceaccount
+                    {{ "{{hub-" }} if $useAlternateCA {{ "hub}}" }}
+                      tlsSecretMountPath: /var/run/secrets/kubernetes.io/cluster-ca
                       tlsSecretName: ca-bundle
                     {{ "{{hub-" }} end {{ "hub}}" }}
                     receiveStorageSize: {{ "{{hub" }} $receiveSize {{ "hub}}" }}

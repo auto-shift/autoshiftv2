@@ -174,7 +174,7 @@ hubClusterSets:
       self-managed: 'true'
     config:
       globalObservability:
-        useClusterCA: false
+        useAlternateCA: false
         storageClass: 'gp3-csi'
         retentionResolutionRaw: '7d'
         retentionResolution5m: '14d'

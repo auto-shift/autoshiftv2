@@ -59,7 +59,10 @@ spec:
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
+          object-templates-raw: |
+            {{ "{{hub" }} $acmConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "acm" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $obsConfig := (index $acmConfig "observability" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} if ($obsConfig).useODF {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: objectbucket.io/v1alpha1
@@ -70,6 +73,38 @@ spec:
                 spec:
                   storageClassName: openshift-storage.noobaa.io
                   generateBucketName: acm-observability
+            {{ "{{hub-" }} end {{ "hub}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acm-observability-thanos-ca
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $useAlternateCA := ($obsConfig).useAlternateCA | default false {{ "hub}}" }}
+            {{ "{{hub-" }} if $useAlternateCA {{ "hub}}" }}
+              {{ "{{hub-" }} $thanosConfig := index $obsConfig "thanosStorage" | default dict {{ "hub}}" }}
+              {{ "{{hub-" }} $caBundle := index $thanosConfig "caBundle" | default dict {{ "hub}}" }}
+              {{ "{{hub-" }} $caSourceName := index $caBundle "sourceName" | default "{{ .Values.globalObservability.caBundle.sourceName }}" {{ "hub}}" }}
+              {{ "{{hub-" }} $caSourceName := index $caBundle "sourceNamespace" | default "{{ .Values.globalObservability.caBundle.sourceNamespace }}" {{ "hub}}" }}
+              {{ "{{hub-" }} $caSourceKey := index $caBundle "sourceKey" | default "{{ .Values.globalObservability.caBundle.sourceKey }}" {{ "hub}}" }}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: alternate-ca
+                    namespace: {{ .Values.acm.observability.namespace | default "open-cluster-management-observability" }}
+                  type: Opaque
+                  stringData:
+                    ca.crt: '{{ "{{" }} fromConfigMap "{{ "{{hub" }} $caSourceName {{ "hub}}" }}" "{{ "{{hub" }} $caSourceName {{ "hub}}" }}" "{{ "{{hub" }} $caSourceKey {{ "hub}}" }}" {{ "}}" }}'
+            {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -81,7 +116,58 @@ spec:
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
+          object-templates-raw: |
+            {{ "{{hub" }} $acmConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "acm" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $obsConfig := index $acmConfig "observability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $useAlternateCA := ($obsConfig).useAlternateCA | default false {{ "hub}}" }}
+            {{ "{{hub-" }} $useODF := ($obsConfig).useODF | default false {{ "hub}}" }}
+            {{ "{{-" }} $thanosVars := (dict) {{ "}}" }}
+              ############# NON-ODF EXTERNAL BUCKET #############
+            {{ "{{hub-" }} if not $useODF {{ "hub}}" }}
+            {{ "{{-" }} $_ := set $thanosVars "bucket" {{ "{{hub" }}(($obsConfig).thanosStorage).bucket | default "{{ $.Values.acm.observability.thanosStorage.bucket }}" {{ "hub}}" }} {{ "}}" }}
+            {{ "{{-" }} $_ := set $thanosVars "host" {{ "{{hub" }}(($obsConfig).thanosStorage).host | default "{{ $.Values.acm.observability.thanosStorage.host }}" {{ "hub}}" }} {{ "}}" }}
+            {{ "{{-" }} $_ := set $thanosVars "port" {{ "{{hub" }}(($obsConfig).thanosStorage).port | default "{{ $.Values.acm.observability.thanosStorage.port | default "443" }}" {{ "hub}}" }} {{ "}}" }}
+            {{ "{{-" }} $_ := set $thanosVars "secretNamespace" {{ "{{hub" }}(($obsConfig).thanosStorage).secretNamespace | default "{{ $.Values.acm.observability.thanosStorage.secretNamespace }}" {{ "hub}}" }} {{ "}}" }}
+            {{ "{{-" }} $_ := set $thanosVars "secretName" {{ "{{hub" }}(($obsConfig).thanosStorage).secretName | default "{{ $.Values.acm.observability.thanosStorage.secretName }}" {{ "hub}}" }} {{ "}}" }}
+            {{ "{{-" }} $_ := set $thanosVars "secretKeyField" {{ "{{hub" }}(($obsConfig).thanosStorage).secretKeyField | default "{{ $.Values.acm.observability.thanosStorage.secretKeyField }}" {{ "hub}}" }} {{ "}}" }}
+            {{ "{{-" }} $_ := set $thanosVars "accessKeyField" {{ "{{hub" }}(($obsConfig).thanosStorage).accessKeyField | default "{{ $.Values.acm.observability.thanosStorage.accessKeyField }}" {{ "hub}}" }} {{ "}}" }}
+            {{ "{{-" }} $_ := set $thanosVars "accessKey" (fromSecret $thanosVars.secretNamespace $thanosVars.secretName $thanosVars.accessKeyField | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $_ := set $thanosVars "secretKey" (fromSecret $thanosVars.secretNamespace $thanosVars.secretName $thanosVars.secretKeyField | default "" | base64dec) {{ "}}" }}
+            {{ "{{hub-" }} else {{ "hub}}" }}
+            {{ `{{- $_ := set $thanosVars "bucket" (fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_NAME") }}` }}
+            {{ `{{- $_ := set $thanosVars "host" (fromConfigMap "open-cluster-management-observability" "acm-observability" "HOST_NAME") }}` }}
+            {{ `{{- $_ := set $thanosVars "port" (fromConfigMap "open-cluster-management-observability" "acm-observability" "PORT") }}` }}
+            {{ `{{- $_ := set $thanosVars "secretKey" (fromSecret "open-cluster-management-observability" "acm-observability" "AWS_SECRET_KEY" | base64dec) }}` }}
+            {{ `{{- $_ := set $thanosVars "accessKey" (fromSecret "open-cluster-management-observability" "acm-observability" "AWS_ACCESS_KEY" | base64dec) }}` }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{" }} if or (empty $thanosVars.accessKey) (empty $thanosVars.secretKey) {{ "}}" }}
+              {{ "{{" }} fail (printf "the access key (%s) or secret key (%s) could not be pulled from the secret \"%s\" in the \"%s\"" $thanosVars.accessKeyField $thanosVars.secretKeyField $thanosVars.secretName $thanosVars.secretNamespace) {{ "}}" }}
+            {{ "{{" }} end {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: thanos-object-storage
+                  namespace: {{ .Values.globalObservability.namespace }}
+                type: Opaque
+                stringData:
+                  thanos.yaml: |
+                    type: s3
+                    config:
+                      bucket: {{ "{{" }} $thanosVars.bucket {{ "}}" }}
+                      endpoint: {{ "{{" }} printf "%s:%s" $thanosVars.host $thanosVars.port {{ "}}" }}
+                      insecure: {{ "{{" }} ($thanosVars).insecure | default false {{ "}}" }}
+                      access_key: '{{ "{{" }} $thanosVars.accessKey {{ "}}" }}'
+                      secret_key: '{{ "{{" }} $thanosVars.secretKey {{ "}}" }}'
+                      http_config:
+                        tls_config:
+                          {{ "{{hub-" }} if $useAlternateCA {{ "hub}}" }}
+                          ca_file: /var/run/secrets/kubernetes.io/alternate-ca/ca.crt
+                          {{ "{{hub-" }} else {{ "hub}}" }}
+                          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                          {{ "{{hub-" }} end {{ "hub}}" }}
+                          insecure_skip_verify: {{ ($thanosVars).insecure | default false }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -92,26 +178,6 @@ spec:
                 type: kubernetes.io/dockerconfigjson
                 data:
                   .dockerconfigjson: '{{`{{ fromSecret "openshift-config" "pull-secret" ".dockerconfigjson" }}`}}'
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: Secret
-                metadata:
-                  name: thanos-object-storage
-                  namespace: open-cluster-management-observability
-                type: Opaque
-                stringData:
-                  thanos.yaml: |
-                    type: s3
-                    config:
-                      bucket: {{`{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_NAME" }}`}}
-                      endpoint: '{{`{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_HOST" }}`}}:{{`{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_PORT" }}`}}'
-                      insecure: false
-                      access_key: {{`{{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_ACCESS_KEY_ID" | base64dec }}`}}
-                      secret_key: {{`{{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_SECRET_ACCESS_KEY" | base64dec }}`}}
-                      http_config:
-                        tls_config:
-                          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
             - complianceType: musthave
               objectDefinition:
                 apiVersion: observability.open-cluster-management.io/v1beta2
@@ -125,6 +191,10 @@ spec:
                     metricObjectStorage:
                       name: thanos-object-storage
                       key: thanos.yaml
+                    {{ "{{hub-" }} if $useAlternateCA {{ "hub}}" }}
+                      tlsSecretMountPath: /var/run/secrets/kubernetes.io/alternate-ca
+                      tlsSecretName: alternate-ca
+                    {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
