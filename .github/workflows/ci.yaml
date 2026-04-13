@@ -158,3 +158,61 @@ jobs:
             }
           done < <(find policies -maxdepth 3 -name Chart.yaml)
           echo "All policy templates rendered successfully"
+
+  lint-labels:
+    name: Lint label contract (ACM resolver)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/go.mod
+          cache: true
+          cache-dependency-path: tools/go.sum
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Run go tests
+        working-directory: tools
+        run: go test ./...
+
+      - name: Run govulncheck
+        working-directory: tools
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Run label contract linter
+        working-directory: tools
+        run: |
+          go run ./cmd/autoshift-ci lint-labels \
+            --policies ../policies \
+            --values ../autoshift/values \
+            --allowlist ../.github/label-lint-allowlist.yaml \
+            --strict-orphans \
+            --verbose
+
+      - name: Generate markdown report
+        if: always()
+        working-directory: tools
+        run: |
+          go run ./cmd/autoshift-ci lint-labels \
+            --policies ../policies \
+            --values ../autoshift/values \
+            --allowlist ../.github/label-lint-allowlist.yaml \
+            --format markdown \
+            --output ../label-contract-report.md || true
+
+      - name: Upload markdown report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: label-contract-report
+          path: label-contract-report.md
+          if-no-files-found: warn

@@ -120,7 +120,6 @@ managedClusterSets:
       aap: 'false'
       aap-subscription-name: ansible-automation-platform-operator
       aap-channel: stable-2.6
-      aap-install-plan-approval: Automatic
       aap-source: redhat-operators
       aap-source-namespace: openshift-marketplace
       aap-version: 'aap-operator.v2.6.0-0.1768951413'
@@ -128,15 +127,12 @@ managedClusterSets:
       ### AAP Hub Content File Storage (select file OR s3, not both)
       aap-file-storage: 'false'
       aap-file_storage_storage_class: 'ocs-storagecluster-cephfs'  # Requires RWX storage
-      aap-file_storage_size: 10G
       ### AAP NooBaa S3 Storage - autocreates bucket in AAP namespace
       aap-noobaa-s3-storage: 'false'
-      aap-external-s3-secret-name: ''        # Name of secret for external S3
       aap-eda-disabled: 'false'              # 'true' omits Event-Driven Ansible
       aap-lightspeed-disabled: 'true'        # 'true' omits Ansible Lightspeed
       ### AAP Custom Cert Bundle Injection
       aap-custom-cabundle: 'false'           # 'true' injects cluster CA Bundle into AAP
-      aap-cabundle-name: 'user-ca-bundle'    # Secret name for CA Bundle
 
       # =======================================================================
       # Master Node Kubelet Configuration (SNO / Compact clusters)
@@ -158,25 +154,23 @@ managedClusterSets:
       # Machine Health Checks
       # =======================================================================
       machine-health-checks: 'false'
-      machine-health-checks-zones: ''
+      machine-health-checks-worker: 'true'   # Create MHC for the worker machine pool
+      machine-health-checks-infra: 'false'   # Create MHC for the infra machine pool
+      machine-health-checks-storage: 'false' # Create MHC for the storage machine pool
 
       # =======================================================================
       # DNS Tolerations
       # =======================================================================
-      dns-tolerations: 'false'
-      dns-node-placement: ''
 
       # =======================================================================
       # Manual Remediations
       # =======================================================================
       manual-remediations: 'false'
-      allowed-registries: ''
 
       # =======================================================================
       # Infrastructure Nodes
       # =======================================================================
       infra-nodes: ''                        # Number of infra nodes (blank = not managed, 0 = delete)
-      infra-nodes-provider: aws              # 'aws', 'vmware', or 'baremetal'
       infra-nodes-instance-type: ''          # AWS instance type
       infra-nodes-numcpu: ''
       infra-nodes-memory-mib: ''
@@ -279,7 +273,6 @@ managedClusterSets:
       imageregistry-storage-type: s3             # 's3' or 'pvc'
       imageregistry-s3-region: us-east-2         # Region if type is s3
       imageregistry-pvc-access-mode: ReadWriteMany
-      imageregistry-pvc-size: 100Gi
       imageregistry-pvc-storage-class: ocs-storagecluster-ceph-rbd
       imageregistry-pvc-volume-mode: Block       # 'Block' or 'Filesystem'
       imageregistry-rollout-strategy: RollingUpdate  # 'RollingUpdate' (2+ replicas) or 'Recreate'
@@ -303,9 +296,6 @@ managedClusterSets:
       # nmstate-ethernet-{id}-state: 'up'              # 'up' or 'down'
       # nmstate-ethernet-{id}-mtu: '9000'
       # nmstate-ethernet-{id}-mac: 'aa.bb.cc.dd.ee.ff'
-      nmstate-ethernet-nic3: 'eno3'
-      nmstate-ethernet-nic3-state: 'up'
-      nmstate-ethernet-nic3-mtu: '9000'
       #
       # --- Bond Interface --- (NNCP: nmstate-bond-{id})
       # nmstate-bond-{id}: 'bond0'
@@ -319,14 +309,6 @@ managedClusterSets:
       # nmstate-bond-{id}-ipv4-address-{M}-cidr: '24'
       # nmstate-bond-{id}-ipv4-gateway: '192.168.1.1'
       # nmstate-bond-{id}-ipv6: 'disabled'
-      nmstate-bond-mgmt: 'bond0'
-      nmstate-bond-mgmt-mode: '802.3ad'
-      nmstate-bond-mgmt-port-1: 'eno1'
-      nmstate-bond-mgmt-port-2: 'eno2'
-      nmstate-bond-mgmt-mtu: '9000'
-      nmstate-bond-mgmt-miimon: '100'
-      nmstate-bond-mgmt-ipv4: 'dhcp'
-      nmstate-bond-mgmt-ipv6: 'disabled'
       #
       # --- VLAN Interface --- (NNCP: nmstate-vlan-{id})
       # nmstate-vlan-{id}: 'bond0.100'
@@ -337,13 +319,6 @@ managedClusterSets:
       # nmstate-vlan-{id}-ipv4-address-{M}: '10.100.1.10'
       # nmstate-vlan-{id}-ipv4-address-{M}-cidr: '24'
       # nmstate-vlan-{id}-ipv4-gateway: '10.100.1.1'
-      nmstate-vlan-data: 'bond0.100'
-      nmstate-vlan-data-id: '100'
-      nmstate-vlan-data-base: 'bond0'
-      nmstate-vlan-data-mtu: '1500'
-      nmstate-vlan-data-ipv4: 'static'
-      nmstate-vlan-data-ipv4-address-1: '10.100.1.10'
-      nmstate-vlan-data-ipv4-address-1-cidr: '24'
       #
       # --- Static Routes --- (NNCP: nmstate-network-config)
       # nmstate-route-{id}-dest: '10.0.0.0'
@@ -351,25 +326,15 @@ managedClusterSets:
       # nmstate-route-{id}-gateway: '192.168.1.1'
       # nmstate-route-{id}-interface: 'bond0'
       # nmstate-route-{id}-metric: '100'
-      nmstate-route-dc-dest: '10.0.0.0'
-      nmstate-route-dc-cidr: '8'
-      nmstate-route-dc-gateway: '192.168.1.1'
-      nmstate-route-dc-interface: 'bond0'
-      nmstate-route-dc-metric: '100'
       #
       # --- DNS Configuration --- (NNCP: nmstate-network-config)
       # nmstate-dns-server-{id}: '8.8.8.8'
       # nmstate-dns-search-{id}: 'example.com'
-      nmstate-dns-server-primary: '8.8.8.8'
-      nmstate-dns-search-corp: 'example.com'
       #
       # --- Node Selector ---
       # nmstate-nodeselector-{id}-prefix: 'node-role.kubernetes.io'
       # nmstate-nodeselector-{id}-name: 'worker'
       # nmstate-nodeselector-{id}-value: ''
-      nmstate-nodeselector-worker-prefix: 'node-role.kubernetes.io'
-      nmstate-nodeselector-worker-name: 'worker'
-      nmstate-nodeselector-worker-value: ''
       #
       # --- OVS Bridge (for UDN/localnet) --- (NNCP: nmstate-ovs-bridge-{id})
       # nmstate-ovs-bridge-{id}: 'ovs-br1'
@@ -377,17 +342,10 @@ managedClusterSets:
       # nmstate-ovs-bridge-{id}-stp: 'false'
       # nmstate-ovs-bridge-{id}-allow-extra-patch-ports: 'true'
       # nmstate-ovs-bridge-{id}-mcast-snooping: 'false'
-      nmstate-ovs-bridge-br1: 'ovs-br1'
-      nmstate-ovs-bridge-br1-port-1: 'bond1'
-      nmstate-ovs-bridge-br1-stp: 'false'
-      nmstate-ovs-bridge-br1-allow-extra-patch-ports: 'true'
-      nmstate-ovs-bridge-br1-mcast-snooping: 'false'
       #
       # --- OVN Bridge Mapping (for UDN localnet) --- (NNCP: nmstate-network-config)
       # nmstate-ovn-mapping-{id}-localnet: 'localnet1'
       # nmstate-ovn-mapping-{id}-bridge: 'ovs-br1'
-      nmstate-ovn-mapping-net1-localnet: 'localnet1'
-      nmstate-ovn-mapping-net1-bridge: 'ovs-br1'
       #
       # --- Host-Specific Config (per-node IPs, each host gets its own NNCP) ---
       # nmstate-host-{id}-hostname: 'worker-0.ocp.example.com'
@@ -412,19 +370,9 @@ managedClusterSets:
       # nmstate-host-{id}-route-{id}-interface: 'bond0.100'
       # nmstate-host-{id}-dns-server-{id}: '10.0.0.1'
       # nmstate-host-{id}-dns-search-{id}: 'internal.example.com'
-      nmstate-host-worker0-hostname: 'worker-0.ocp.example.com'
-      nmstate-host-worker0-bond-mgmt: 'bond0'
-      nmstate-host-worker0-bond-mgmt-mode: '802.3ad'
-      nmstate-host-worker0-bond-mgmt-port-1: 'eno1'
-      nmstate-host-worker0-bond-mgmt-port-2: 'eno2'
-      nmstate-host-worker0-bond-mgmt-ipv4: 'static'
-      nmstate-host-worker0-bond-mgmt-ipv4-address-1: '192.168.1.10'
-      nmstate-host-worker0-bond-mgmt-ipv4-address-1-cidr: '24'
-      nmstate-host-worker0-bond-mgmt-ipv6: 'disabled'
       #
       # --- Legacy File-Based ---
       # nmstate-nncp-{name}: 'filename'      # Filename in policies/stable/nmstate/files/
-      nmstate-nncp-myconfig: 'filename'
 
       # =======================================================================
       # Advanced Cluster Security
@@ -584,6 +532,7 @@ managedClusterSets:
       sriov: 'false'
       sriov-subscription-name: sriov-network-operator
       sriov-channel: stable
+      sriov-version: ''
       sriov-source: redhat-operators
       sriov-source-namespace: openshift-marketplace
 

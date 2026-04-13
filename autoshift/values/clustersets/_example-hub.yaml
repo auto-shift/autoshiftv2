@@ -79,6 +79,7 @@ hubClusterSets:
       # =======================================================================
       self-managed: 'true'
       openshift-version: '4.20.12'
+      policy-namespace: ''
 
       # =======================================================================
       # OpenShift GitOps (REQUIRED for AutoShift)
@@ -90,8 +91,8 @@ hubClusterSets:
       gitops-version: 'openshift-gitops-operator.v1.19.1'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
-      # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
-      # gitops-cluster-ca-bundle: 'true'  # Inject cluster trusted CA bundle into ArgoCD repo server
+      gitops-namespace: 'openshift-gitops'
+      gitops-cluster-ca-bundle: 'false'
 
       # =======================================================================
       # Advanced Cluster Management (installed automatically on hub clustersets)
@@ -103,6 +104,12 @@ hubClusterSets:
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'High'       # 'Basic' or 'High'
       acm-observability: 'true'              # Requires ODF for noobaa bucket
+      # ACM Search v2 storage (PVC for the search-indexer PostgreSQL)
+      acm-search-storage: 'false'
+      acm-search-storage-class: 'ocs-storagecluster-ceph-rbd'
+      acm-search-storage-size: '100Gi'
+      # Cluster provisioning (hive-based cluster install flow)
+      cluster-install: 'false'                     # 'true' enables the cluster-install policy set
       acm-enable-provisioning: 'false'
       acm-provisioning-storage-class: ''             # StorageClass name
       acm-provisioning-database-size: 10Gi           # Min 10GiB recommended
@@ -180,23 +187,20 @@ hubClusterSets:
       aap: 'false'
       aap-subscription-name: ansible-automation-platform-operator
       aap-channel: stable-2.6
-      aap-install-plan-approval: Automatic
       aap-source: redhat-operators
       aap-source-namespace: openshift-marketplace
       aap-version: 'aap-operator.v2.6.0-0.1768951413'
       aap-hub-disabled: 'false'              # 'true' omits Hub content storage
+      aap-storage-type: file                 # 'file' (RWX PVC) or 's3' (NooBaa bucket)
       ### AAP Hub Content File Storage (select file OR s3, not both)
       aap-file-storage: 'false'
       aap-file_storage_storage_class: 'ocs-storagecluster-cephfs'  # Requires RWX storage
-      aap-file_storage_size: 10G
       ### AAP NooBaa S3 Storage - autocreates bucket in AAP namespace
       aap-noobaa-s3-storage: 'false'
-      aap-external-s3-secret-name: ''        # Name of secret for external S3
       aap-eda-disabled: 'false'              # 'true' omits Event-Driven Ansible
       aap-lightspeed-disabled: 'true'        # 'true' omits Ansible Lightspeed
       ### AAP Custom Cert Bundle Injection
       aap-custom-cabundle: 'false'           # 'true' injects cluster CA Bundle into AAP
-      aap-cabundle-name: 'user-ca-bundle'    # Secret name for CA Bundle
 
       # =======================================================================
       # Master Node Kubelet Configuration (SNO / Compact clusters)
@@ -220,6 +224,7 @@ hubClusterSets:
       infra-nodes: ''                        # Number of infra nodes (blank = not managed, 0 = delete)
       infra-nodes-provider: aws              # 'aws', 'vmware', or 'baremetal'
       infra-nodes-instance-type: ''          # AWS instance type
+      infra-nodes-volume-size: ''            # AWS root EBS volume size in GB (blank = inherit worker default)
       infra-nodes-numcpu: ''
       infra-nodes-memory-mib: ''
       infra-nodes-numcores-per-socket: ''
@@ -239,6 +244,8 @@ hubClusterSets:
       # Worker Nodes
       # =======================================================================
       worker-nodes: ''                       # Number of worker nodes (blank = not managed)
+      worker-nodes-provider: aws             # 'aws' or 'vmware'
+      worker-nodes-instance-type: ''         # AWS instance type (e.g. 'm5.xlarge')
       worker-nodes-numcpu: ''
       worker-nodes-memory-mib: ''
       worker-nodes-numcores-per-socket: ''
@@ -316,12 +323,12 @@ hubClusterSets:
       # OpenShift Internal Registry
       # =======================================================================
       imageregistry: 'false'
-      imageregistry-management-state: Managed    # 'Managed' or 'Unmanaged'
+      imageregistry-management-state: Managed    # 'Managed' or 'Unmanaged' (operator-level)
       imageregistry-replicas: '3'                # Need 2+ for HA with RWX/S3
       imageregistry-storage-type: s3             # 's3' or 'pvc'
       imageregistry-s3-region: us-east-2         # Region if type is s3
       imageregistry-pvc-access-mode: ReadWriteMany
-      imageregistry-pvc-size: 100Gi
+      imageregistry-pvc-storage: 100Gi           # PVC storage request
       imageregistry-pvc-storage-class: ocs-storagecluster-ceph-rbd
       imageregistry-pvc-volume-mode: Block       # 'Block' or 'Filesystem'
       imageregistry-rollout-strategy: RollingUpdate  # 'RollingUpdate' (2+ replicas) or 'Recreate'
@@ -329,145 +336,12 @@ hubClusterSets:
       # =======================================================================
       # Kubernetes NMState Operator
       # =======================================================================
-      # Identifiers ({id}, {M}) can be numbers or names (e.g., '1', 'mgmt', 'storage').
-      # CONSTRAINT: Identifiers must NOT contain hyphens (-).
-      # Generated NNCPs: nmstate-bond-{id}, nmstate-vlan-{id}, nmstate-ethernet-{id},
-      #                  nmstate-ovs-bridge-{id}, nmstate-network-config
       nmstate: 'false'
       nmstate-subscription-name: kubernetes-nmstate-operator
       nmstate-channel: stable
       nmstate-source: redhat-operators
       nmstate-source-namespace: openshift-marketplace
       nmstate-version: 'kubernetes-nmstate-operator.4.20.0-202601292039'
-      #
-      # --- Ethernet Interface --- (NNCP: nmstate-ethernet-{id})
-      # nmstate-ethernet-{id}: 'eno3'
-      # nmstate-ethernet-{id}-state: 'up'              # 'up' or 'down'
-      # nmstate-ethernet-{id}-mtu: '9000'
-      # nmstate-ethernet-{id}-mac: 'aa.bb.cc.dd.ee.ff'
-      nmstate-ethernet-nic3: 'eno3'
-      nmstate-ethernet-nic3-state: 'up'
-      nmstate-ethernet-nic3-mtu: '9000'
-      #
-      # --- Bond Interface --- (NNCP: nmstate-bond-{id})
-      # nmstate-bond-{id}: 'bond0'
-      # nmstate-bond-{id}-mode: '802.3ad'
-      # nmstate-bond-{id}-port-{M}: 'eno1'
-      # nmstate-bond-{id}-mtu: '9000'
-      # nmstate-bond-{id}-mac: 'aa.bb.cc.dd.ee.ff'
-      # nmstate-bond-{id}-miimon: '100'
-      # nmstate-bond-{id}-ipv4: 'dhcp'                 # 'dhcp', 'static', or 'disabled'
-      # nmstate-bond-{id}-ipv4-address-{M}: '192.168.1.10'
-      # nmstate-bond-{id}-ipv4-address-{M}-cidr: '24'
-      # nmstate-bond-{id}-ipv4-gateway: '192.168.1.1'
-      # nmstate-bond-{id}-ipv6: 'disabled'
-      nmstate-bond-mgmt: 'bond0'
-      nmstate-bond-mgmt-mode: '802.3ad'
-      nmstate-bond-mgmt-port-1: 'eno1'
-      nmstate-bond-mgmt-port-2: 'eno2'
-      nmstate-bond-mgmt-mtu: '9000'
-      nmstate-bond-mgmt-miimon: '100'
-      nmstate-bond-mgmt-ipv4: 'dhcp'
-      nmstate-bond-mgmt-ipv6: 'disabled'
-      #
-      # --- VLAN Interface --- (NNCP: nmstate-vlan-{id})
-      # nmstate-vlan-{id}: 'bond0.100'
-      # nmstate-vlan-{id}-id: '100'
-      # nmstate-vlan-{id}-base: 'bond0'
-      # nmstate-vlan-{id}-mtu: '1500'
-      # nmstate-vlan-{id}-ipv4: 'dhcp'                 # 'dhcp', 'static', or 'disabled'
-      # nmstate-vlan-{id}-ipv4-address-{M}: '10.100.1.10'
-      # nmstate-vlan-{id}-ipv4-address-{M}-cidr: '24'
-      # nmstate-vlan-{id}-ipv4-gateway: '10.100.1.1'
-      nmstate-vlan-data: 'bond0.100'
-      nmstate-vlan-data-id: '100'
-      nmstate-vlan-data-base: 'bond0'
-      nmstate-vlan-data-mtu: '1500'
-      nmstate-vlan-data-ipv4: 'static'
-      nmstate-vlan-data-ipv4-address-1: '10.100.1.10'
-      nmstate-vlan-data-ipv4-address-1-cidr: '24'
-      #
-      # --- Static Routes --- (NNCP: nmstate-network-config)
-      # nmstate-route-{id}-dest: '10.0.0.0'
-      # nmstate-route-{id}-cidr: '8'
-      # nmstate-route-{id}-gateway: '192.168.1.1'
-      # nmstate-route-{id}-interface: 'bond0'
-      # nmstate-route-{id}-metric: '100'
-      nmstate-route-dc-dest: '10.0.0.0'
-      nmstate-route-dc-cidr: '8'
-      nmstate-route-dc-gateway: '192.168.1.1'
-      nmstate-route-dc-interface: 'bond0'
-      nmstate-route-dc-metric: '100'
-      #
-      # --- DNS Configuration --- (NNCP: nmstate-network-config)
-      # nmstate-dns-server-{id}: '8.8.8.8'
-      # nmstate-dns-search-{id}: 'example.com'
-      nmstate-dns-server-primary: '8.8.8.8'
-      nmstate-dns-search-corp: 'example.com'
-      #
-      # --- Node Selector ---
-      # nmstate-nodeselector-{id}-prefix: 'node-role.kubernetes.io'
-      # nmstate-nodeselector-{id}-name: 'worker'
-      # nmstate-nodeselector-{id}-value: ''
-      nmstate-nodeselector-worker-prefix: 'node-role.kubernetes.io'
-      nmstate-nodeselector-worker-name: 'worker'
-      nmstate-nodeselector-worker-value: ''
-      #
-      # --- OVS Bridge (for UDN/localnet) --- (NNCP: nmstate-ovs-bridge-{id})
-      # nmstate-ovs-bridge-{id}: 'ovs-br1'
-      # nmstate-ovs-bridge-{id}-port-{M}: 'bond1'
-      # nmstate-ovs-bridge-{id}-stp: 'false'
-      # nmstate-ovs-bridge-{id}-allow-extra-patch-ports: 'true'
-      # nmstate-ovs-bridge-{id}-mcast-snooping: 'false'
-      nmstate-ovs-bridge-br1: 'ovs-br1'
-      nmstate-ovs-bridge-br1-port-1: 'bond1'
-      nmstate-ovs-bridge-br1-stp: 'false'
-      nmstate-ovs-bridge-br1-allow-extra-patch-ports: 'true'
-      nmstate-ovs-bridge-br1-mcast-snooping: 'false'
-      #
-      # --- OVN Bridge Mapping (for UDN localnet) --- (NNCP: nmstate-network-config)
-      # nmstate-ovn-mapping-{id}-localnet: 'localnet1'
-      # nmstate-ovn-mapping-{id}-bridge: 'ovs-br1'
-      nmstate-ovn-mapping-net1-localnet: 'localnet1'
-      nmstate-ovn-mapping-net1-bridge: 'ovs-br1'
-      #
-      # --- Host-Specific Config (per-node IPs, each host gets its own NNCP) ---
-      # nmstate-host-{id}-hostname: 'worker-0.ocp.example.com'
-      # nmstate-host-{id}-bond-{id}: 'bond0'
-      # nmstate-host-{id}-bond-{id}-mode: '802.3ad'
-      # nmstate-host-{id}-bond-{id}-port-{M}: 'eno1'
-      # nmstate-host-{id}-bond-{id}-ipv4: 'static'
-      # nmstate-host-{id}-bond-{id}-ipv4-address-{M}: '192.168.1.10'
-      # nmstate-host-{id}-bond-{id}-ipv4-address-{M}-cidr: '24'
-      # nmstate-host-{id}-bond-{id}-ipv4-gateway: '192.168.1.1'
-      # nmstate-host-{id}-bond-{id}-ipv6: 'disabled'
-      # nmstate-host-{id}-vlan-{id}: 'bond0.100'
-      # nmstate-host-{id}-vlan-{id}-id: '100'
-      # nmstate-host-{id}-vlan-{id}-base: 'bond0'
-      # nmstate-host-{id}-vlan-{id}-ipv4: 'static'
-      # nmstate-host-{id}-vlan-{id}-ipv4-address-{M}: '10.100.1.10'
-      # nmstate-host-{id}-vlan-{id}-ipv4-address-{M}-cidr: '24'
-      # nmstate-host-{id}-vlan-{id}-ipv4-gateway: '10.100.1.1'
-      # nmstate-host-{id}-route-{id}-dest: '172.16.0.0'
-      # nmstate-host-{id}-route-{id}-cidr: '12'
-      # nmstate-host-{id}-route-{id}-gateway: '10.100.1.1'
-      # nmstate-host-{id}-route-{id}-interface: 'bond0.100'
-      # nmstate-host-{id}-dns-server-{id}: '10.0.0.1'
-      # nmstate-host-{id}-dns-search-{id}: 'internal.example.com'
-      nmstate-host-worker0-hostname: 'worker-0.ocp.example.com'
-      nmstate-host-worker0-bond-mgmt: 'bond0'
-      nmstate-host-worker0-bond-mgmt-mode: '802.3ad'
-      nmstate-host-worker0-bond-mgmt-port-1: 'eno1'
-      nmstate-host-worker0-bond-mgmt-port-2: 'eno2'
-      nmstate-host-worker0-bond-mgmt-ipv4: 'static'
-      nmstate-host-worker0-bond-mgmt-ipv4-address-1: '192.168.1.10'
-      nmstate-host-worker0-bond-mgmt-ipv4-address-1-cidr: '24'
-      nmstate-host-worker0-bond-mgmt-ipv6: 'disabled'
-      #
-      # --- Legacy File-Based ---
-      # nmstate-nncp-{name}: 'filename'      # Filename in policies/stable/nmstate/files/
-      nmstate-nncp-myconfig: 'filename'
-
       # =======================================================================
       # Advanced Cluster Security
       # =======================================================================
@@ -484,10 +358,10 @@ hubClusterSets:
       acs-auth-provider: openshift           # Auth provider type ('openshift')
       acs-auth-min-role: None                # Minimum role for authenticated users
       acs-auth-admin-group: cluster-admins   # Group mapped to Admin role
-      # acs-vm-scanning: 'true'             # Enable VM scanning (Developer Preview)
-      # acs-admission-control: 'true'       # Enable admission control enforcement
-      # acs-network-policies: Enabled       # Network policy generation ('Enabled' or 'Disabled')
-      # acs-default-policies: 'true'        # Deploy baseline SecurityPolicy CRDs
+      acs-vm-scanning: 'false'
+      acs-admission-control: 'false'
+      acs-network-policies: Disabled
+      acs-default-policies: 'false'
 
       # =======================================================================
       # Developer Spaces
@@ -544,6 +418,7 @@ hubClusterSets:
       # =======================================================================
       gitops-dev: 'false'
       gitops-dev-team-dev: 'hub'             # 'hub' or 'standalone'
+      gitops-dev-team-test: 'hub'
 
       # =======================================================================
       # Loki
@@ -581,7 +456,7 @@ hubClusterSets:
       # =======================================================================
       # User Workload Monitoring (settings in config section above)
       # =======================================================================
-      # uwm: 'false'                              # Enable UWM (placement label only)
+      uwm: 'false'                              # Enable UWM (placement label only)
 
       # =======================================================================
       # Compliance Operator STIG Apply
@@ -631,6 +506,7 @@ hubClusterSets:
       sriov: 'false'
       sriov-subscription-name: sriov-network-operator
       sriov-channel: stable
+      sriov-version: ''
       sriov-source: redhat-operators
       sriov-source-namespace: openshift-marketplace
 
@@ -640,6 +516,7 @@ hubClusterSets:
       cert-manager: 'false'
       cert-manager-subscription-name: openshift-cert-manager-operator
       cert-manager-channel: stable-v1
+      cert-manager-version: ''                    # Pin to a specific CSV (empty = follow channel)
       cert-manager-source: redhat-operators
       cert-manager-source-namespace: openshift-marketplace
 
@@ -649,6 +526,7 @@ hubClusterSets:
       cloudnative-pg: 'false'
       cloudnative-pg-subscription-name: cloudnative-pg
       cloudnative-pg-channel: stable-v1
+      cloudnative-pg-version: ''                  # Pin to a specific CSV (empty = follow channel)
       cloudnative-pg-source: certified-operators
       cloudnative-pg-source-namespace: openshift-marketplace
 
@@ -658,31 +536,28 @@ hubClusterSets:
       gitlab: 'false'
       gitlab-subscription-name: gitlab-operator-kubernetes
       gitlab-channel: stable
+      gitlab-version: ''                          # Pin to a specific CSV (empty = follow channel)
       gitlab-source: certified-operators
       gitlab-source-namespace: openshift-marketplace
-      # Service modes: managed (default), external, or bundled
-      # gitlab-db-mode: 'managed'                 # managed: CNPG HA, external: BYO, bundled: built-in
-      # gitlab-redis-mode: 'managed'              # managed: Redis Sentinel, external: BYO, bundled: Bitnami
-      # gitlab-object-storage-mode: 'managed'     # managed: NooBaa, external: BYO S3, bundled: MinIO
-      # External mode labels (only when mode is 'external'):
-      # gitlab-db-host: 'my-postgres.example.com'
-      # gitlab-redis-host: 'my-redis.example.com'
-      # gitlab-redis-port: '6379'
-      # gitlab-argocd-integration: 'true'        # Create ArgoCD credential template for all GitLab repos
-      # gitlab-gitaly-ha: 'true'                  # Enable Gitaly HA via Praefect (default: false)
-      # gitlab-praefect-replicas: '3'            # Praefect proxy replicas (default: 3)
-      # gitlab-gitaly-replicas: '3'              # Gitaly replicas per virtual storage (default: 3)
-      # gitlab-db-instances: '2'                   # PostgreSQL replicas (default: 2)
-      # gitlab-db-pooler-instances: '2'           # PgBouncer replicas (default: 2)
-      # gitlab-db-backups: 'true'                 # Enable CNPG backups (requires managed db + odf)
-      # gitlab-webservice-min-replicas: '2'       # Webservice HPA min (default: 2)
-      # gitlab-webservice-max-replicas: '4'       # Webservice HPA max (default: 4)
-      # gitlab-sidekiq-min-replicas: '2'          # Sidekiq HPA min (default: 2)
-      # gitlab-sidekiq-max-replicas: '4'          # Sidekiq HPA max (default: 4)
-      # gitlab-shell-min-replicas: '2'            # gitlab-shell HPA min (default: 2)
-      # gitlab-shell-max-replicas: '4'            # gitlab-shell HPA max (default: 4)
-      # --- Config values go in config.gitlab (see config section above) ---
-      # dbBackupSchedule, dbBackupRetention
+      gitlab-db-mode: 'managed'
+      gitlab-redis-mode: 'managed'
+      gitlab-object-storage-mode: 'managed'
+      gitlab-db-host: ''
+      gitlab-redis-host: ''
+      gitlab-redis-port: '6379'
+      gitlab-argocd-integration: 'false'
+      gitlab-gitaly-ha: 'false'
+      gitlab-praefect-replicas: '3'
+      gitlab-gitaly-replicas: '3'
+      gitlab-db-instances: '2'
+      gitlab-db-pooler-instances: '2'
+      gitlab-db-backups: 'false'
+      gitlab-webservice-min-replicas: '2'
+      gitlab-webservice-max-replicas: '4'
+      gitlab-sidekiq-min-replicas: '2'
+      gitlab-sidekiq-max-replicas: '4'
+      gitlab-shell-min-replicas: '2'
+      gitlab-shell-max-replicas: '4'
 
       # =======================================================================
       # GitLab Runner
@@ -690,6 +565,7 @@ hubClusterSets:
       gitlab-runner: 'false'
       gitlab-runner-subscription-name: gitlab-runner-operator
       gitlab-runner-channel: stable
+      gitlab-runner-version: ''                   # Pin to a specific CSV (empty = follow channel)
       gitlab-runner-source: certified-operators
       gitlab-runner-source-namespace: openshift-marketplace
 
@@ -699,14 +575,13 @@ hubClusterSets:
       jfrog: 'false'
       jfrog-subscription-name: openshiftartifactoryha-operator
       jfrog-channel: alpha
+      jfrog-version: ''                           # Pin to a specific CSV (empty = follow channel)
       jfrog-source: certified-operators
       jfrog-source-namespace: openshift-marketplace
       jfrog-node-replicas: '2'
-      # jfrog-db-instances: '2'                   # PostgreSQL replicas (default: 2)
-      # jfrog-db-pooler-instances: '2'            # PgBouncer replicas (default: 2)
-      # artifactory-db-backups: 'true'             # Enable CNPG backups (requires cloudnative-pg + odf)
-      # --- Config values go in config.jfrog (see config section above) ---
-      # dbBackupSchedule, dbBackupRetention
+      jfrog-db-instances: '2'
+      jfrog-db-pooler-instances: '2'
+      artifactory-db-backups: 'false'
 
       # =======================================================================
       # Disconnected Mirror Settings

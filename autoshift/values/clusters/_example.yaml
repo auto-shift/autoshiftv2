@@ -23,149 +23,7 @@ clusters:
   my-cluster-name:    # <-- Must match the cluster name in ACM
     config: {}
     labels:
-      # =======================================================================
-      # Any label from hub or managed clusterset can be overridden here.
-      # Only include labels you want to CHANGE from the clusterset defaults.
-      # =======================================================================
-
-      # =======================================================================
-      # Kubernetes NMState Operator - Per-Cluster Network Configuration
-      # =======================================================================
-      # NMState is the most common per-cluster override. Each cluster typically
-      # has unique network configuration (bonds, VLANs, static IPs, routes).
-      # The operator subscription is defined at the clusterset level — only
-      # network configuration labels are needed here.
-      #
-      # Identifiers ({id}, {M}) can be numbers or names (e.g., '1', 'mgmt', 'storage').
-      # CONSTRAINT: Identifiers must NOT contain hyphens (-).
-      # Generated NNCPs: nmstate-bond-{id}, nmstate-vlan-{id}, nmstate-ethernet-{id},
-      #                  nmstate-ovs-bridge-{id}, nmstate-network-config
-      #
       nmstate: 'true'
-      #
-      # --- Bond Interface --- (NNCP: nmstate-bond-{id})
-      # nmstate-bond-{id}: 'bond0'
-      # nmstate-bond-{id}-mode: '802.3ad'              # '802.3ad', 'active-backup', 'balance-rr', etc.
-      # nmstate-bond-{id}-port-{M}: 'eno1'
-      # nmstate-bond-{id}-mtu: '9000'
-      # nmstate-bond-{id}-mac: 'aa.bb.cc.dd.ee.ff'
-      # nmstate-bond-{id}-miimon: '100'
-      # nmstate-bond-{id}-ipv4: 'dhcp'                 # 'dhcp', 'static', or 'disabled'
-      # nmstate-bond-{id}-ipv4-address-{M}: '192.168.1.10'
-      # nmstate-bond-{id}-ipv4-address-{M}-cidr: '24'
-      # nmstate-bond-{id}-ipv6: 'disabled'
-      nmstate-bond-mgmt: 'bond0'
-      nmstate-bond-mgmt-mode: '802.3ad'
-      nmstate-bond-mgmt-port-1: 'eno1'
-      nmstate-bond-mgmt-port-2: 'eno2'
-      nmstate-bond-mgmt-mtu: '9000'
-      nmstate-bond-mgmt-miimon: '100'
-      nmstate-bond-mgmt-ipv4: 'dhcp'
-      nmstate-bond-mgmt-ipv6: 'disabled'
-      #
-      # --- VLAN Interface --- (NNCP: nmstate-vlan-{id})
-      # nmstate-vlan-{id}: 'bond0.100'
-      # nmstate-vlan-{id}-id: '100'
-      # nmstate-vlan-{id}-base: 'bond0'
-      # nmstate-vlan-{id}-mtu: '1500'
-      # nmstate-vlan-{id}-ipv4: 'dhcp'                 # 'dhcp', 'static', or 'disabled'
-      # nmstate-vlan-{id}-ipv4-address-{M}: '10.100.1.10'
-      # nmstate-vlan-{id}-ipv4-address-{M}-cidr: '24'
-      nmstate-vlan-data: 'bond0.100'
-      nmstate-vlan-data-id: '100'
-      nmstate-vlan-data-base: 'bond0'
-      nmstate-vlan-data-mtu: '1500'
-      nmstate-vlan-data-ipv4: 'static'
-      nmstate-vlan-data-ipv4-address-1: '10.100.1.10'
-      nmstate-vlan-data-ipv4-address-1-cidr: '24'
-      #
-      # --- Ethernet Interface --- (NNCP: nmstate-ethernet-{id})
-      # nmstate-ethernet-{id}: 'eno3'
-      # nmstate-ethernet-{id}-state: 'up'              # 'up' or 'down'
-      # nmstate-ethernet-{id}-mtu: '9000'
-      # nmstate-ethernet-{id}-mac: 'aa.bb.cc.dd.ee.ff'
-      nmstate-ethernet-nic3: 'eno3'
-      nmstate-ethernet-nic3-state: 'up'
-      nmstate-ethernet-nic3-mtu: '9000'
-      #
-      # --- Static Routes --- (NNCP: nmstate-network-config)
-      # nmstate-route-{id}-dest: '10.0.0.0'
-      # nmstate-route-{id}-cidr: '8'
-      # nmstate-route-{id}-gateway: '192.168.1.1'
-      # nmstate-route-{id}-interface: 'bond0'
-      # nmstate-route-{id}-metric: '100'
-      nmstate-route-dc-dest: '10.0.0.0'
-      nmstate-route-dc-cidr: '8'
-      nmstate-route-dc-gateway: '192.168.1.1'
-      nmstate-route-dc-interface: 'bond0'
-      nmstate-route-dc-metric: '100'
-      #
-      # --- DNS Configuration --- (NNCP: nmstate-network-config)
-      # nmstate-dns-server-{id}: '8.8.8.8'
-      # nmstate-dns-search-{id}: 'example.com'
-      nmstate-dns-server-primary: '8.8.8.8'
-      nmstate-dns-search-corp: 'example.com'
-      #
-      # --- Node Selector ---
-      # nmstate-nodeselector-{id}-prefix: 'node-role.kubernetes.io'
-      # nmstate-nodeselector-{id}-name: 'worker'
-      # nmstate-nodeselector-{id}-value: ''
-      nmstate-nodeselector-worker-prefix: 'node-role.kubernetes.io'
-      nmstate-nodeselector-worker-name: 'worker'
-      nmstate-nodeselector-worker-value: ''
-      #
-      # --- OVS Bridge (for UDN/localnet) --- (NNCP: nmstate-ovs-bridge-{id})
-      # nmstate-ovs-bridge-{id}: 'ovs-br1'
-      # nmstate-ovs-bridge-{id}-port-{M}: 'bond1'
-      # nmstate-ovs-bridge-{id}-stp: 'false'
-      # nmstate-ovs-bridge-{id}-allow-extra-patch-ports: 'true'
-      # nmstate-ovs-bridge-{id}-mcast-snooping: 'false'
-      nmstate-ovs-bridge-br1: 'ovs-br1'
-      nmstate-ovs-bridge-br1-port-1: 'bond1'
-      nmstate-ovs-bridge-br1-stp: 'false'
-      nmstate-ovs-bridge-br1-allow-extra-patch-ports: 'true'
-      nmstate-ovs-bridge-br1-mcast-snooping: 'false'
-      #
-      # --- OVN Bridge Mapping (for UDN localnet) --- (NNCP: nmstate-network-config)
-      # nmstate-ovn-mapping-{id}-localnet: 'localnet1'
-      # nmstate-ovn-mapping-{id}-bridge: 'ovs-br1'
-      nmstate-ovn-mapping-net1-localnet: 'localnet1'
-      nmstate-ovn-mapping-net1-bridge: 'ovs-br1'
-      #
-      # --- Host-Specific Config (per-node IPs, each host gets its own NNCP) ---
-      # nmstate-host-{id}-hostname: 'worker-0.ocp.example.com'
-      # nmstate-host-{id}-bond-{id}: 'bond0'
-      # nmstate-host-{id}-bond-{id}-mode: '802.3ad'
-      # nmstate-host-{id}-bond-{id}-port-{M}: 'eno1'
-      # nmstate-host-{id}-bond-{id}-ipv4: 'static'
-      # nmstate-host-{id}-bond-{id}-ipv4-address-{M}: '192.168.1.10'
-      # nmstate-host-{id}-bond-{id}-ipv4-address-{M}-cidr: '24'
-      # nmstate-host-{id}-bond-{id}-ipv6: 'disabled'
-      # nmstate-host-{id}-vlan-{id}: 'bond0.100'
-      # nmstate-host-{id}-vlan-{id}-id: '100'
-      # nmstate-host-{id}-vlan-{id}-base: 'bond0'
-      # nmstate-host-{id}-vlan-{id}-ipv4: 'static'
-      # nmstate-host-{id}-vlan-{id}-ipv4-address-{M}: '10.100.1.10'
-      # nmstate-host-{id}-vlan-{id}-ipv4-address-{M}-cidr: '24'
-      # nmstate-host-{id}-route-{id}-dest: '172.16.0.0'
-      # nmstate-host-{id}-route-{id}-cidr: '12'
-      # nmstate-host-{id}-route-{id}-gateway: '10.100.1.1'
-      # nmstate-host-{id}-route-{id}-interface: 'bond0.100'
-      # nmstate-host-{id}-dns-server-{id}: '10.0.0.1'
-      # nmstate-host-{id}-dns-search-{id}: 'internal.example.com'
-      nmstate-host-worker0-hostname: 'worker-0.ocp.example.com'
-      nmstate-host-worker0-bond-mgmt: 'bond0'
-      nmstate-host-worker0-bond-mgmt-mode: '802.3ad'
-      nmstate-host-worker0-bond-mgmt-port-1: 'eno1'
-      nmstate-host-worker0-bond-mgmt-port-2: 'eno2'
-      nmstate-host-worker0-bond-mgmt-ipv4: 'static'
-      nmstate-host-worker0-bond-mgmt-ipv4-address-1: '192.168.1.10'
-      nmstate-host-worker0-bond-mgmt-ipv4-address-1-cidr: '24'
-      nmstate-host-worker0-bond-mgmt-ipv6: 'disabled'
-      #
-      # --- Legacy File-Based ---
-      # nmstate-nncp-{name}: 'filename'      # Filename in policies/stable/nmstate/files/
-      nmstate-nncp-myconfig: 'filename'
 
       # =======================================================================
       # Infrastructure Node Sizing
@@ -174,7 +32,6 @@ clusters:
       infra-nodes-numcpu: '8'
       infra-nodes-memory-mib: '24576'
       infra-nodes-numcores-per-socket: '4'
-      infra-nodes-provider: aws
       infra-nodes-instance-type: 'm5.2xlarge'
       infra-nodes-zone-1: 'us-east-2a'
 
@@ -235,7 +92,6 @@ clusters:
       virt: 'true'
       mtv: 'true'
       node-feature-discovery: 'true'
-      sriov: 'true'
 
       # =======================================================================
       # Version Pinning (overrides clusterset channel-based updates)
