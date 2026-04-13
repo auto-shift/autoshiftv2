@@ -2,7 +2,7 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 policy_namespace: open-cluster-policies
-acm: 
+acm:
   namespace: open-cluster-management
   channel: release-2.15
   sourceNamespace: openshift-marketplace
@@ -16,6 +16,40 @@ acm:
     database_size: 10Gi
     filesystem_storage_size: 100Gi
     image_storage_size: 50Gi
+  # Base MultiClusterObservability configuration — consumed by policy-acm-observability.
+  # Per-cluster overrides live in the rendered-config ConfigMap under the
+  # "acm.observability" key. MCOA capability toggles and spoke-agent / remote-write
+  # configuration live in the global-observability chart.
+  observability:
+    namespace: open-cluster-management-observability
+    # useODF: true provisions an ObjectBucketClaim against NooBaa for Thanos S3.
+    # useAlternateCA: true swaps the Thanos S3 TLS CA for a user-supplied bundle.
+    thanosStorage:
+      bucket: acm-dr
+      host: ""
+      port: "443"
+      secretNamespace: policies-autoshift
+      secretName: thanos-s3-bucket
+      accessKeyField: access-key
+      secretKeyField: secret-key
+      insecure: false
+      caBundle:
+        sourceName: user-ca-bundle
+        sourceKey: ca-bundle.crt
+        sourceNamespace: openshift-config
+    retentionResolutionRaw: 5d
+    retentionResolution5m: 14d
+    retentionResolution1h: 30d
+    enableDownsampling: true
+    interval: 300
+    scrapeSizeLimitBytes: "1073741824"
+    workers: 1
+    alertmanagerStorageSize: 10Gi
+    compactStorageSize: 10Gi
+    receiveStorageSize: 10Gi
+    ruleStorageSize: 10Gi
+    storeStorageSize: 10Gi
+    # storageClass: gp3-csi  # optional; defaults to cluster default if unset
   # Addon tuning for governance controllers at scale
   # Activated by label: acm-addon-tuning: 'true'
   #
@@ -98,7 +132,15 @@ acm:
 # acm-availability-config<String>: 'Basic' or 'High' - Availability configuration (default: 'High')
 #
 # Observability:
-# acm-observability<bool>: 'true' or 'false' - Enable ACM observability (requires ODF)
+# acm-observability<bool>: 'true' or 'false' - Enable ACM MultiClusterObservability on the hub
+#
+# Base MCO config is read from the rendered-config ConfigMap under the "acm.observability" key.
+# Supported keys: namespace, useODF, useAlternateCA, storageClass, retentionResolution{Raw,5m,1h},
+# enableDownsampling, interval, scrapeSizeLimitBytes, workers,
+# {alertmanager,compact,receive,rule,store}StorageSize, thanosStorage.{bucket,host,port,secretNamespace,
+# secretName,accessKeyField,secretKeyField,insecure}, caBundle.{sourceName,sourceKey,sourceNamespace}.
+# MCOA capability toggles and spoke-agent config live under the "globalObservability" key
+# (consumed by the global-observability chart).
 #
 # Search Persistent Storage:
 # acm-search-storage<bool>: 'true' or 'false' - Enable persistent storage for ACM Search (recommended for production)

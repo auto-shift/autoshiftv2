@@ -1,6 +1,18 @@
-# This policy verifies the installation of the official & supported version of
-# the Advanced Cluster Operator on the hub cluster.
+# Installs and configures ACM MultiClusterObservability on the hub.
 #
+# This policy owns the base MCO lifecycle:
+#   * Namespace creation
+#   * MCH patch to enable the multicluster-observability component
+#   * Optional ODF ObjectBucketClaim (useODF)
+#   * Optional alternate-ca Secret for Thanos S3 TLS (useAlternateCA)
+#   * thanos-object-storage Secret, multiclusterhub-operator-pull-secret, and
+#     the MultiClusterObservability CR itself (retention, storage, addon spec)
+#
+# MCOA capability toggles, PrometheusAgent patching, and hub-to-hub rollup
+# secrets are owned by the global-observability policy chart and patch the
+# MCO CR this policy creates.
+#
+{{- $policyNamespace := .Values.policy_namespace }}
 {{- if .Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -52,6 +64,31 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
+          name: acm-observability-mch-component
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operator.open-cluster-management.io/v1
+                kind: MultiClusterHub
+                metadata:
+                  name: multiclusterhub
+                  namespace: {{ .Values.acm.namespace | default "open-cluster-management" }}
+                spec:
+                  overrides:
+                    components:
+                      - configOverrides: {}
+                        enabled: true
+                        name: multicluster-observability
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
           name: acm-observability-bucket
         spec:
           remediationAction: enforce
@@ -86,14 +123,15 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $acmConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "acm" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $obsConfig := index $acmConfig "observability" | default dict {{ "hub}}" }}
             {{ "{{hub-" }} $useAlternateCA := ($obsConfig).useAlternateCA | default false {{ "hub}}" }}
             {{ "{{hub-" }} if $useAlternateCA {{ "hub}}" }}
               {{ "{{hub-" }} $thanosConfig := index $obsConfig "thanosStorage" | default dict {{ "hub}}" }}
               {{ "{{hub-" }} $caBundle := index $thanosConfig "caBundle" | default dict {{ "hub}}" }}
-              {{ "{{hub-" }} $caSourceName := index $caBundle "sourceName" | default "{{ .Values.globalObservability.caBundle.sourceName }}" {{ "hub}}" }}
-              {{ "{{hub-" }} $caSourceName := index $caBundle "sourceNamespace" | default "{{ .Values.globalObservability.caBundle.sourceNamespace }}" {{ "hub}}" }}
-              {{ "{{hub-" }} $caSourceKey := index $caBundle "sourceKey" | default "{{ .Values.globalObservability.caBundle.sourceKey }}" {{ "hub}}" }}
+              {{ "{{hub-" }} $caSourceName := index $caBundle "sourceName" | default "{{ .Values.acm.observability.thanosStorage.caBundle.sourceName }}" {{ "hub}}" }}
+              {{ "{{hub-" }} $caSourceNamespace := index $caBundle "sourceNamespace" | default "{{ .Values.acm.observability.thanosStorage.caBundle.sourceNamespace }}" {{ "hub}}" }}
+              {{ "{{hub-" }} $caSourceKey := index $caBundle "sourceKey" | default "{{ .Values.acm.observability.thanosStorage.caBundle.sourceKey }}" {{ "hub}}" }}
               - complianceType: musthave
                 objectDefinition:
                   apiVersion: v1
@@ -103,7 +141,7 @@ spec:
                     namespace: {{ .Values.acm.observability.namespace | default "open-cluster-management-observability" }}
                   type: Opaque
                   stringData:
-                    ca.crt: '{{ "{{" }} fromConfigMap "{{ "{{hub" }} $caSourceName {{ "hub}}" }}" "{{ "{{hub" }} $caSourceName {{ "hub}}" }}" "{{ "{{hub" }} $caSourceKey {{ "hub}}" }}" {{ "}}" }}'
+                    ca.crt: '{{ "{{" }} fromConfigMap "{{ "{{hub" }} $caSourceNamespace {{ "hub}}" }}" "{{ "{{hub" }} $caSourceName {{ "hub}}" }}" "{{ "{{hub" }} $caSourceKey {{ "hub}}" }}" {{ "}}" }}'
             {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -121,6 +159,20 @@ spec:
             {{ "{{hub-" }} $obsConfig := index $acmConfig "observability" | default dict {{ "hub}}" }}
             {{ "{{hub-" }} $useAlternateCA := ($obsConfig).useAlternateCA | default false {{ "hub}}" }}
             {{ "{{hub-" }} $useODF := ($obsConfig).useODF | default false {{ "hub}}" }}
+            {{/* Retention, storage, and addon-spec vars for the MCO CR */}}
+            {{ "{{hub-" }} $retentionRaw := index $obsConfig "retentionResolutionRaw" | default "{{ .Values.acm.observability.retentionResolutionRaw }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $retention5m := index $obsConfig "retentionResolution5m" | default "{{ .Values.acm.observability.retentionResolution5m }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $retention1h := index $obsConfig "retentionResolution1h" | default "{{ .Values.acm.observability.retentionResolution1h }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $alertmanagerSize := index $obsConfig "alertmanagerStorageSize" | default "{{ .Values.acm.observability.alertmanagerStorageSize }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $compactSize := index $obsConfig "compactStorageSize" | default "{{ .Values.acm.observability.compactStorageSize }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $receiveSize := index $obsConfig "receiveStorageSize" | default "{{ .Values.acm.observability.receiveStorageSize }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $ruleSize := index $obsConfig "ruleStorageSize" | default "{{ .Values.acm.observability.ruleStorageSize }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $storeSize := index $obsConfig "storeStorageSize" | default "{{ .Values.acm.observability.storeStorageSize }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $storageClass := index $obsConfig "storageClass" | default "" {{ "hub}}" }}
+            {{ "{{hub-" }} $enableDownsampling := index $obsConfig "enableDownsampling" | default "{{ .Values.acm.observability.enableDownsampling }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $interval := index $obsConfig "interval" | default {{ .Values.acm.observability.interval | default 300 }} {{ "hub}}" }}
+            {{ "{{hub-" }} $scrapeSizeLimitBytes := index $obsConfig "scrapeSizeLimitBytes" | default {{ .Values.acm.observability.scrapeSizeLimitBytes }} {{ "hub}}" }}
+            {{ "{{hub-" }} $workers := index $obsConfig "workers" | default {{ .Values.acm.observability.workers | default 1 }} {{ "hub}}" }}
             {{ "{{-" }} $thanosVars := (dict) {{ "}}" }}
               ############# NON-ODF EXTERNAL BUCKET #############
             {{ "{{hub-" }} if not $useODF {{ "hub}}" }}
@@ -149,7 +201,7 @@ spec:
                 kind: Secret
                 metadata:
                   name: thanos-object-storage
-                  namespace: {{ .Values.globalObservability.namespace }}
+                  namespace: {{ .Values.acm.observability.namespace | default "open-cluster-management-observability" }}
                 type: Opaque
                 stringData:
                   thanos.yaml: |
@@ -167,7 +219,7 @@ spec:
                           {{ "{{hub-" }} else {{ "hub}}" }}
                           ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
                           {{ "{{hub-" }} end {{ "hub}}" }}
-                          insecure_skip_verify: {{ ($thanosVars).insecure | default false }}
+                          insecure_skip_verify: {{ "{{" }} ($thanosVars).insecure | default false {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -184,10 +236,23 @@ spec:
                 kind: MultiClusterObservability
                 metadata:
                   name: observability
-                  namespace: open-cluster-management-observability
                 spec:
-                  observabilityAddonSpec: {}
+                  advanced:
+                    retentionConfig:
+                      retentionResolution1h: {{ "{{hub" }} $retention1h {{ "hub}}" }}
+                      retentionResolution5m: {{ "{{hub" }} $retention5m {{ "hub}}" }}
+                      retentionResolutionRaw: {{ "{{hub" }} $retentionRaw {{ "hub}}" }}
+                  enableDownsampling: {{ "{{hub" }} $enableDownsampling {{ "hub}}" }}
+                  imagePullPolicy: IfNotPresent
+                  imagePullSecret: multiclusterhub-operator-pull-secret
+                  observabilityAddonSpec:
+                    enableMetrics: true
+                    interval: {{ "{{hub" }} $interval {{ "hub}}" }}
+                    scrapeSizeLimitBytes: {{ "{{hub" }} $scrapeSizeLimitBytes {{ "hub}}" }}
+                    workers: {{ "{{hub" }} $workers {{ "hub}}" }}
                   storageConfig:
+                    alertmanagerStorageSize: {{ "{{hub" }} $alertmanagerSize {{ "hub}}" }}
+                    compactStorageSize: {{ "{{hub" }} $compactSize {{ "hub}}" }}
                     metricObjectStorage:
                       name: thanos-object-storage
                       key: thanos.yaml
@@ -195,6 +260,12 @@ spec:
                       tlsSecretMountPath: /var/run/secrets/kubernetes.io/alternate-ca
                       tlsSecretName: alternate-ca
                     {{ "{{hub-" }} end {{ "hub}}" }}
+                    receiveStorageSize: {{ "{{hub" }} $receiveSize {{ "hub}}" }}
+                    ruleStorageSize: {{ "{{hub" }} $ruleSize {{ "hub}}" }}
+                    {{ "{{hub-" }} if $storageClass {{ "hub}}" }}
+                    storageClass: {{ "{{hub" }} $storageClass {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    storeStorageSize: {{ "{{hub" }} $storeSize {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

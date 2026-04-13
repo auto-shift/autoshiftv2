@@ -1,36 +1,28 @@
 # Default values for global-observability.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
+#
+# This chart owns the global-hub-specific pieces of MultiClusterObservability:
+#   * MCOA capability toggles (patches base MCO CR from policy-acm-observability)
+#   * PrometheusAgent remote-write patching (rollup to global hub + additional targets)
+#   * Global-hub rollup secret creation (self-managed hub)
+#
+# Base MCO lifecycle (namespace, pull secret, CA bundle, thanos-object-storage,
+# MCO CR with retention/storage/addon spec) is owned by policy-acm-observability
+# under the "acm.observability" key in the rendered-config ConfigMap.
+#
 policy_namespace: open-cluster-policies
 globalObservability:
-  namespace: open-cluster-management-observability
-  # CA bundle source — copied into a Secret for Thanos S3 TLS verification
-  caBundle:
-    sourceName: user-ca-bundle        # ConfigMap name in openshift-config
-    sourceKey: ca-bundle.crt           # key within the ConfigMap
-    sourceNamespace: openshift-config
-  # Thanos object storage — S3 credentials copied from a source secret
-  thanosStorage:
-    source:
-      namespace: "policies-autoshift"                    # namespace of the source secret containing S3 credentials
-      secretName: "thanos-s3-bucket"                   # name of the source secret
-      accessKeyField: access-key
-      secretKeyField: secret-key
-    bucket: acm-dr
-    endpoint: ""                       # s3 endpoint hostname (e.g. s3.example.com)
-    insecure: false
-  retentionResolutionRaw: 5d
-  retentionResolution5m: 14d
-  retentionResolution1h: 30d
-  enableDownsampling: true
+  # MCOA capability toggles. Each accepts "true"/"false". Overridable per-cluster
+  # via rendered-config globalObservability.capabilities.*.
+  capabilities:
+    platformAnalytics: "true"
+    platformLogs: "true"
+    platformMetrics: "true"
+    userWorkloadLogs: "true"
+    userWorkloadMetrics: "true"
+    userWorkloadTraces: "true"
+  # Spoke PrometheusAgent scrape configuration
   scrapeInterval: 300s
-  scrapeSizeLimitBytes: "1073741824"
-  workers: 1
-  alertmanagerStorageSize: 10Gi
-  compactStorageSize: 10Gi
-  receiveStorageSize: 10Gi
-  ruleStorageSize: 10Gi
-  storeStorageSize: 10Gi
+  logLevel: warn
   # Spoke agent — patches hub PrometheusAgent templates
   spokeAgent:
     # MCOA PrometheusAgent names to patch on hubs
@@ -65,43 +57,26 @@ globalObservability:
     #           secretRef:
     #             name: external-certs
     #             namespace: some-ns
-# hubClusterSets:
-#   hub:
-#     labels:
-#       test1: 'test'
-# managedClusterSets:
-#   managed:
-#     labels:
-#       test4: 'test'
 
 ### AutoShift Labels Documentation
 # The following labels can be set at the cluster or clusterset level to configure this policy:
 #
 # Enable/Disable:
-# global-observability<bool>: 'true' or 'false' - Enable MultiCluster Observability on the hub (default: 'false')
+# global-observability<bool>: 'true' or 'false' - Enable MCOA capabilities patching + rollup on the hub (default: 'false')
 #
-# Configuration:
-# global-observability-storage-class<String>: Storage class for Thanos persistent volumes (optional, uses cluster default if unset)
-# global-observability-retention-raw<String>: Retention for raw resolution metrics (default: '5d')
-# global-observability-retention-5m<String>: Retention for 5m resolution metrics (default: '14d')
-# global-observability-retention-1h<String>: Retention for 1h resolution metrics (default: '30d')
-# global-observability-alertmanager-storage-size<String>: Alertmanager PVC size (default: '10Gi')
-# global-observability-compact-storage-size<String>: Compactor PVC size (default: '10Gi')
-# global-observability-receive-storage-size<String>: Receiver PVC size (default: '10Gi')
-# global-observability-rule-storage-size<String>: Rule PVC size (default: '10Gi')
-# global-observability-store-storage-size<String>: Store PVC size (default: '10Gi')
+# Per-cluster overrides (via rendered-config ConfigMap under the "globalObservability" key):
+#   capabilities.{platformAnalytics,platformLogs,platformMetrics,
+#                 userWorkloadLogs,userWorkloadMetrics,userWorkloadTraces}: "true"|"false"
+#   scrapeInterval: '300s'
+#   logLevel: 'warn'
+#   additionalRemoteWrites: [...]
 #
-# Spoke Agent (placed on regional hubs):
-# global-observability-spoke-agent<bool>: 'true' or 'false' - Patch PrometheusAgent on this hub to forward metrics to global hub
-# global-observability-remote-write-url<String>: Global hub observatorium API URL for remote-write (required when spoke-agent is enabled)
+# Base MCO config (retention, storage, thanos, etc) lives under the "acm.observability"
+# key and is consumed by policy-acm-observability.
 #
 # Prerequisites:
 # - Cluster Observability Operator must be installed on reporting clusters
-# - The MultiClusterHub must have multicluster-observability enabled
-# - A thanos-object-storage secret must exist in open-cluster-management-observability namespace
-# - A ca-bundle secret must exist in open-cluster-management-observability namespace
+# - policy-acm-observability must be Compliant (creates the base MCO CR and secrets)
 #
 # Examples:
 # autoshift.io/global-observability: 'true'
-# autoshift.io/global-observability-storage-class: 'gp3-csi'
-# autoshift.io/global-observability-retention-raw: '7d'
