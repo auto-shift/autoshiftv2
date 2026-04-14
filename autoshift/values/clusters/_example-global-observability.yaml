@@ -23,44 +23,64 @@ clusters:
   my-cluster-name:    # <-- Must match the cluster name in ACM
     config:
       # =======================================================================
-      # Global Observability (config section - read via rendered-config)
+      # ACM Observability — base MCO CR, secrets, thanos storage, retention
+      # Consumed by: policies/advanced-cluster-management policy-acm-observability
+      # =======================================================================
+      # acm:
+      #   observability:
+      #     useODF: false                       # Provision ObjectBucketClaim on NooBaa (ODF) for S3
+      #     useAlternateCA: false               # Swap default serviceaccount CA for user-supplied bundle
+      #     storageClass: 'gp3-csi'             # StorageClass for Thanos PVs (optional)
+      #     retentionResolutionRaw: '5d'        # Retention for raw metrics
+      #     retentionResolution5m: '14d'        # Retention for 5m metrics
+      #     retentionResolution1h: '30d'        # Retention for 1h metrics
+      #     enableDownsampling: true
+      #     interval: 300                       # ObservabilityAddon scrape interval (seconds)
+      #     scrapeSizeLimitBytes: '1073741824'  # Max scrape size in bytes
+      #     workers: 1                          # Scrape workers
+      #     alertmanagerStorageSize: '10Gi'
+      #     compactStorageSize: '10Gi'
+      #     receiveStorageSize: '10Gi'
+      #     ruleStorageSize: '10Gi'
+      #     storeStorageSize: '10Gi'
+      #     thanosStorage:
+      #       bucket: 'acm-dr'                  # S3 bucket name
+      #       host: 's3.example.com'            # S3 endpoint hostname
+      #       port: '443'                       # S3 endpoint port
+      #       insecure: false
+      #       secretNamespace: 'policies-autoshift'
+      #       secretName: 'thanos-s3-bucket'
+      #       accessKeyField: 'access-key'
+      #       secretKeyField: 'secret-key'
+      #       caBundle:
+      #         sourceName: 'user-ca-bundle'    # ConfigMap with CA (used when useAlternateCA=true)
+      #         sourceKey: 'ca-bundle.crt'
+      #         sourceNamespace: 'openshift-config'
+      # =======================================================================
+      # Global Observability — MCOA capabilities + spoke PrometheusAgent config
+      # Consumed by: policies/global-observability policy-global-observability-*
       # =======================================================================
       # globalObservability:
-      #   useAlternateCA: false                  # Use cluster CA for Thanos S3 TLS verification
-      #   storageClass: 'gp3-csi'             # StorageClass for all Thanos PVs
-      #   retentionResolutionRaw: '5d'        # Retention for raw resolution metrics
-      #   retentionResolution5m: '14d'        # Retention for 5-minute resolution metrics
-      #   retentionResolution1h: '30d'        # Retention for 1-hour resolution metrics
-      #   enableDownSampling: true            # Enable Thanos downsampling
-      #   interval: 300                       # Observability addon scrape interval (seconds)
-      #   scrapeSizeLimitBytes: 1073741824    # Max scrape size in bytes
-      #   scrapeWorkers: 1                    # Number of scrape workers
       #   scrapeInterval: '300s'              # Spoke PrometheusAgent scrape interval
       #   logLevel: 'warn'                    # Spoke PrometheusAgent log level
-      #   alertmanagerStorageSize: '10Gi'     # Alertmanager PVC size
-      #   compactStorageSize: '10Gi'          # Compactor PVC size
-      #   receiveStorageSize: '10Gi'          # Receiver PVC size
-      #   ruleStorageSize: '10Gi'             # Rule PVC size
-      #   storeStorageSize: '10Gi'            # Store PVC size
       #   capabilities:
-      #     platformAnalytics: 'true'         # Enable platform analytics
-      #     platformLogs: 'true'              # Enable platform log collection
-      #     platformMetrics: 'true'           # Enable platform metrics collection
-      #     userWorkloadLogs: 'true'          # Enable user workload log collection
-      #     userWorkloadMetrics: 'true'       # Enable user workload metrics collection
-      #     userWorkloadTraces: 'true'        # Enable user workload trace collection
-      #   thanosStorage:
-      #     bucket: 'acm-dr'                  # S3 bucket name
-      #     endpoint: 's3.example.com'        # S3 endpoint hostname
-      #     insecure: false                   # Allow insecure S3 connections
-      #     caBundle:
-      #       sourceName: 'user-ca-bundle'    # ConfigMap name in openshift-config for CA
-      #       sourceKey: 'ca-bundle.crt'      # Key within the ConfigMap
-      #     source:
-      #       namespace: ''                   # Namespace of source secret with S3 credentials
-      #       secretName: ''                  # Secret name with S3 credentials
-      #       accessKeyField: 'AWS_ACCESS_KEY_ID'
-      #       secretKeyField: 'AWS_SECRET_ACCESS_KEY'
+      #     platformAnalytics: 'true'         # incident detection, rightsizing
+      #     platformLogs: 'true'              # platform log collection
+      #     platformMetrics: 'true'           # platform metrics collection
+      #     userWorkloadLogs: 'true'          # user workload log collection
+      #     userWorkloadMetrics: 'true'       # user workload metrics collection
+      #     userWorkloadTraces: 'true'        # user workload trace collection
+      #   additionalRemoteWrites:
+      #     - name: external-monitoring
+      #       onSelfManagedHub: true          # include on self-managed hub
+      #       url: https://external.example.com/api/v1/receive
+      #       remoteTimeout: 30s
+      #       caFile:   /etc/prometheus/secrets/external-certs/ca.crt
+      #       certFile: /etc/prometheus/secrets/external-certs/tls.crt
+      #       keyFile:  /etc/prometheus/secrets/external-certs/tls.key
+      #       secretRef:
+      #         name: external-certs
+      #         namespace: some-ns
       # =======================================================================
       # Managed AutoShift (config section - read via rendered-config)
       # =======================================================================
