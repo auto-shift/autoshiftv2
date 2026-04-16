@@ -16,16 +16,17 @@ The policy suite handles:
 
 ## Prerequisites
 
-This policy has hard dependencies on 4 operators that must be installed first:
+This policy has hard dependencies on 4 operators and the ODF storage cluster that must be ready first:
 
-| Operator | Policy | Purpose |
+| Dependency | Policy | Purpose |
 |----------|--------|---------|
 | servicemesh3operator | `policies/servicemesh3operator/` | Sail Operator (Istio, IstioCNI, ZTunnel CRDs) |
 | kiali-operator | `policies/kiali/` | Kiali visualization CRDs |
 | tempo-operator | `policies/tempo/` | Tempo distributed tracing CRDs |
 | opentelemetry-operator | `policies/opentelemetry/` | OpenTelemetry Collector CRDs |
+| odf-storage-cluster | `policies/openshift-data-foundation/` | Storage cluster ready for ObjectBucketClaim |
 
-**Critical**: OpenShift Data Foundation (ODF) is required for Tempo S3 storage. The policy creates an ObjectBucketClaim that will fail without ODF.
+**Critical**: OpenShift Data Foundation (ODF) is required for Tempo S3 storage. The policy depends on `policy-storage-cluster-test` to ensure the storage cluster is fully available before creating the ObjectBucketClaim for TempoStack.
 
 ## Enabling Ambient Mesh
 
