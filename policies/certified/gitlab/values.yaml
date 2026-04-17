@@ -1,0 +1,88 @@
+# Default values for gitlab
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+policy_namespace: open-cluster-policies
+gitlab:
+  name: gitlab-operator-kubernetes
+  namespace: gitlab-system
+  channel: stable
+  source: certified-operators
+  sourceNamespace: openshift-marketplace
+  operatorGroupName: gitlab-operator-group
+  targetNamespaces:
+    - gitlab-system
+# hubClusterSets:
+#   hub:
+#     labels:
+#       test1: 'test'
+# managedClusterSets:
+#   managed:
+#     labels:
+#       test4: 'test'
+
+### AutoShift Labels Documentation
+# The following labels can be set at the cluster or clusterset level to configure this policy:
+#
+# Enable/Disable:
+# gitlab<bool>: 'true' or 'false' - Controls whether gitlab is managed
+#
+# Configuration:
+# gitlab-subscription-name<string>: Operator subscription name (default: 'gitlab-operator-kubernetes')
+# gitlab-channel<string>: Operator channel (default: 'stable')
+# gitlab-version<string>: Specific operator version (CSV) to install (optional)
+# gitlab-source<string>: Operator catalog source (default: 'certified-operators')
+# gitlab-source-namespace<string>: Catalog namespace (default: 'openshift-marketplace')
+#
+# Service Modes (managed, external, or bundled — default: managed):
+# gitlab-db-mode<string>: PostgreSQL backend
+#   managed  — deploys CloudNativePG HA cluster + PgBouncer (requires cloudnative-pg: 'true')
+#   external — user provides 'gitlab-db-app' secret with host, port, username, password
+#   bundled  — uses GitLab's built-in PostgreSQL (not recommended for production)
+# gitlab-redis-mode<string>: Redis backend
+#   managed  — deploys Redis Sentinel HA using rhel9/redis-7 from GitOps operator (requires gitops)
+#   external — user provides 'gitlab-redis-password' secret and sets gitlab-redis-host label
+#   bundled  — uses GitLab's bundled Bitnami Redis (requires docker.io images for disconnected)
+# gitlab-object-storage-mode<string>: Object storage backend
+#   managed  — provisions NooBaa ObjectBucketClaim (requires odf: 'true')
+#   external — user provides 'gitlab-object-storage-connection' and 'gitlab-objectstorage' ConfigMap
+#   bundled  — uses GitLab's built-in MinIO (not recommended for production)
+#
+# External mode labels (only used when mode is 'external'):
+# gitlab-db-host<string>: Custom PostgreSQL host (default: gitlab-db-pooler-rw.<namespace>.svc)
+# gitlab-redis-host<string>: Custom Redis host (default: gitlab-redis)
+# gitlab-redis-port<string>: Custom Redis port (default: 6379)
+#
+# ArgoCD Integration:
+# gitlab-argocd-integration<bool>: Create ArgoCD credential template for all GitLab repos + TLS cert
+#
+# Gitaly HA (Praefect):
+# gitlab-gitaly-ha<bool>: Enable Praefect HA for git repository storage (default: false)
+#   Creates a praefect_production database in the existing CNPG cluster and deploys
+#   Praefect proxies + N Gitaly replicas instead of the default single Gitaly pod.
+# gitlab-praefect-replicas<string>: Number of Praefect proxy replicas (default: '3')
+# gitlab-gitaly-replicas<string>: Number of Gitaly replicas per virtual storage (default: '3')
+#
+# Database Backups (label):
+# gitlab-db-backups<bool>: Enable scheduled CNPG backups to NooBaa (requires managed db mode + odf)
+#
+# Config (set in hubClusterSets.config.gitlab, NOT labels — values with / or spaces):
+#   dbBackupSchedule: '0 2 * * *'       # Cron schedule for base backups
+#   dbBackupRetention: '30d'            # Backup retention period
+#
+# Label Examples:
+# autoshift.io/gitlab: 'true'
+# autoshift.io/gitlab-subscription-name: 'gitlab-operator-kubernetes'
+# autoshift.io/gitlab-channel: 'stable'
+# autoshift.io/gitlab-db-mode: 'managed'
+# autoshift.io/gitlab-redis-mode: 'managed'
+# autoshift.io/gitlab-object-storage-mode: 'managed'
+# autoshift.io/gitlab-argocd-integration: 'true'
+# autoshift.io/gitlab-db-backups: 'true'
+#
+# Config Example (in clusterset values file):
+# hubClusterSets:
+#   hub:
+#     config:
+#       gitlab:
+#         dbBackupSchedule: '0 2 * * *'
+#         dbBackupRetention: '30d'

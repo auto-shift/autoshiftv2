@@ -77,7 +77,8 @@ jobs:
           # Count bootstrap charts (root-level Chart.yaml excluding policies/ and autoshift/)
           # This matches the Makefile's BOOTSTRAP_CHARTS discovery
           BOOTSTRAP_DIRS=$(find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" | wc -l | tr -d ' ')
-          POLICY_DIRS=$(find policies -maxdepth 1 -type d ! -name "policies" | wc -l | tr -d ' ')
+          # Policy charts live at policies/<category>/<chart>/Chart.yaml (depth 3)
+          POLICY_DIRS=$(find policies -maxdepth 3 -name Chart.yaml | wc -l | tr -d ' ')
 
           BOOTSTRAP_CHARTS=$(ls .helm-charts/bootstrap/*.tgz 2>/dev/null | wc -l | tr -d ' ')
           POLICY_CHARTS=$(ls .helm-charts/policies/*.tgz 2>/dev/null | wc -l | tr -d ' ')
@@ -112,7 +113,7 @@ jobs:
           fi
 
           POLICY_COUNT=$(wc -l < autoshift/files/policy-list.txt | tr -d ' ')
-          EXPECTED=$(find policies -maxdepth 1 -type d ! -name "policies" | wc -l | tr -d ' ')
+          EXPECTED=$(find policies -maxdepth 3 -name Chart.yaml | wc -l | tr -d ' ')
 
           echo "policy-list.txt contains $POLICY_COUNT entries"
           echo "Expected $EXPECTED policies"
@@ -145,14 +146,15 @@ jobs:
       - name: Validate policy templates render
         run: |
           echo "=== Validating policy templates ==="
-          for policy_dir in policies/*/; do
-            if [ -f "${policy_dir}Chart.yaml" ]; then
-              policy_name=$(basename "$policy_dir")
-              echo "Rendering ${policy_name}..."
-              helm template "$policy_name" "$policy_dir" > /dev/null || {
-                echo "::error::Failed to render $policy_name"
-                exit 1
-              }
-            fi
-          done
+          # Policy charts live at policies/<category>/<chart>/Chart.yaml
+          while IFS= read -r chart_file; do
+            [ -z "$chart_file" ] && continue
+            policy_dir=$(dirname "$chart_file")
+            policy_name=$(basename "$policy_dir")
+            echo "Rendering ${policy_name}..."
+            helm template "$policy_name" "$policy_dir" > /dev/null || {
+              echo "::error::Failed to render $policy_name"
+              exit 1
+            }
+          done < <(find policies -maxdepth 3 -name Chart.yaml)
           echo "All policy templates rendered successfully"

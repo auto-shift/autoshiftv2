@@ -1,0 +1,377 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-gitlab-instance" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-gitlab-operator-install
+      namespace: '{{ $policyNamespace }}'
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
+            {{ "{{-" }} $ns := "{{ .Values.gitlab.namespace }}" {{ "}}" }}
+
+            # Service modes: managed (default), external, or bundled
+            {{ "{{-" }} $dbMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $redisMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-redis-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $objStoreMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-object-storage-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
+
+            # Gitaly HA (Praefect)
+            {{ "{{-" }} $gitalyHA := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-gitaly-ha" | default "false" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $praefectReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-praefect-replicas" | default "3" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $gitalyReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-gitaly-replicas" | default "3" | toInt {{ "hub}}" }}" {{ "}}" }}
+
+            # Component replica counts
+            {{ "{{-" }} $webserviceMinReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-webservice-min-replicas" | default "2" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $webserviceMaxReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-webservice-max-replicas" | default "4" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $sidekiqMinReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-sidekiq-min-replicas" | default "2" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $sidekiqMaxReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-sidekiq-max-replicas" | default "4" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $shellMinReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-shell-min-replicas" | default "2" | toInt {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $shellMaxReplicas := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-shell-max-replicas" | default "4" | toInt {{ "hub}}" }}" {{ "}}" }}
+
+            # Check if non-bundled services are ready by looking for their connection secrets
+            # For managed mode: CNPG/Redis/NooBaa policies create these secrets
+            # For external mode: user creates these secrets manually
+            {{ "{{-" }} $dbReady := true {{ "}}" }}
+            {{ "{{-" }} $dbHost := "" {{ "}}" }}
+            {{ "{{-" }} $dbPort := "" {{ "}}" }}
+            {{ "{{-" }} $dbUser := "" {{ "}}" }}
+            {{ "{{-" }} $dbPass := "" {{ "}}" }}
+            {{ "{{-" }} if ne $dbMode "bundled" {{ "}}" }}
+            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" $ns "gitlab-db-app") | default dict {{ "}}" }}
+            {{ "{{-" }} $dbData := ($dbSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $dbHost = (printf "gitlab-db-pooler-rw.%s.svc" $ns) {{ "}}" }}
+            {{ "{{-" }} $dbPort = (index $dbData "port" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbUser = (index $dbData "username" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbPass = (index $dbData "password" | default "" | base64dec) {{ "}}" }}
+            {{/* For external mode, user may provide a custom host via label */}}
+            {{ "{{-" }} if eq $dbMode "external" {{ "}}" }}
+            {{ "{{-" }} $customHost := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-host" | default "" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} if not (empty $customHost) {{ "}}" }}{{ "{{-" }} $dbHost = $customHost {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if (empty $dbPass) {{ "}}" }}{{ "{{-" }} $dbReady = false {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+
+            {{ "{{-" }} $redisReady := true {{ "}}" }}
+            {{ "{{-" }} if ne $redisMode "bundled" {{ "}}" }}
+            {{ "{{-" }} $redisSecret := (lookup "v1" "Secret" $ns "gitlab-redis-password") | default dict {{ "}}" }}
+            {{ "{{-" }} $redisData := ($redisSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} if (empty (index $redisData "redis-password" | default "")) {{ "}}" }}{{ "{{-" }} $redisReady = false {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+
+            {{ "{{-" }} $objStoreReady := true {{ "}}" }}
+            {{ "{{-" }} $bucketName := "" {{ "}}" }}
+            {{ "{{-" }} if ne $objStoreMode "bundled" {{ "}}" }}
+            {{ "{{-" }} $obcCM := (lookup "v1" "ConfigMap" $ns "gitlab-objectstorage") | default dict {{ "}}" }}
+            {{ "{{-" }} $bucketName = (index ($obcCM.data | default dict) "BUCKET_NAME" | default "") {{ "}}" }}
+            {{ "{{-" }} if (empty $bucketName) {{ "}}" }}{{ "{{-" }} $objStoreReady = false {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+
+            # Only deploy when all enabled external services are ready
+            {{ "{{-" }} if and $dbReady $redisReady $objStoreReady {{ "}}" }}
+            {{ "{{-" }} if ne $dbMode "bundled" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: gitlab-postgresql-password
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+                type: Opaque
+                stringData:
+                  postgresql-password: {{ "{{" }} $dbPass {{ "}}" }}
+                  postgresql-postgres-password: {{ "{{" }} $dbPass {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps.gitlab.com/v1beta1
+                kind: GitLab
+                metadata:
+                  name: gitlab
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  chart:
+                    {{ "{{-" }} $csvList := (lookup "operators.coreos.com/v1alpha1" "ClusterServiceVersion" "{{ .Values.gitlab.namespace }}" "") | default dict {{ "}}" }}
+                    {{ "{{-" }} $chartVersion := "" {{ "}}" }}
+                    {{ "{{-" }} range $_, $c := ($csvList.items | default list) {{ "}}" }}
+                    {{ "{{-" }} if and (not $chartVersion) (hasPrefix "gitlab-operator-kubernetes" $c.metadata.name) {{ "}}" }}
+                    {{ "{{-" }} $ex := (index $c.metadata.annotations "alm-examples" | default "[]" | fromJson) {{ "}}" }}
+                    {{ "{{-" }} range $_, $e := $ex {{ "}}" }}
+                    {{ "{{-" }} if not $chartVersion {{ "}}" }}{{ "{{-" }} $chartVersion = (index $e "spec" "chart" "version" | default "") {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if $chartVersion {{ "}}" }}
+                    version: '{{ "{{" }} $chartVersion {{ "}}" }}'
+                    {{ "{{-" }} end {{ "}}" }}
+                    values:
+                      global:
+                        hosts:
+                          domain: {{ "{{" }} $ingressDomain {{ "}}" }}
+                        ingress:
+                          annotations:
+                            route.openshift.io/termination: edge
+                          class: none
+                        minio:
+                          enabled: {{ "{{" }} eq $objStoreMode "bundled" {{ "}}" }}
+                    {{ "{{-" }} if ne $objStoreMode "bundled" {{ "}}" }}
+                        certificates:
+                          customCAs:
+                            - configMap: gitlab-openshift-service-ca
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if ne $dbMode "bundled" {{ "}}" }}
+                        psql:
+                          host: {{ "{{" }} $dbHost {{ "}}" }}
+                          port: {{ "{{" }} $dbPort {{ "}}" }}
+                          username: {{ "{{" }} $dbUser {{ "}}" }}
+                          database: gitlabhq_production
+                          password:
+                            secret: gitlab-postgresql-password
+                            key: postgresql-password
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if eq $redisMode "managed" {{ "}}" }}
+                        redis:
+                          host: gitlab-redis
+                          port: 6379
+                          sentinels:
+                            - host: gitlab-redis-sentinel-0.gitlab-redis-sentinel-headless.{{ "{{" }} $ns {{ "}}" }}.svc
+                              port: 26379
+                            - host: gitlab-redis-sentinel-1.gitlab-redis-sentinel-headless.{{ "{{" }} $ns {{ "}}" }}.svc
+                              port: 26379
+                            - host: gitlab-redis-sentinel-2.gitlab-redis-sentinel-headless.{{ "{{" }} $ns {{ "}}" }}.svc
+                              port: 26379
+                          password:
+                            enabled: true
+                            secret: gitlab-redis-password
+                            key: redis-password
+                    {{ "{{-" }} else if eq $redisMode "external" {{ "}}" }}
+                        redis:
+                          host: {{ "{{" }} "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-redis-host" | default "gitlab-redis" {{ "hub}}" }}" {{ "}}" }}
+                          port: {{ "{{" }} "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-redis-port" | default "6379" {{ "hub}}" }}" {{ "}}" }}
+                          password:
+                            enabled: true
+                            secret: gitlab-redis-password
+                            key: redis-password
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if ne $objStoreMode "bundled" {{ "}}" }}
+                        appConfig:
+                          object_store:
+                            enabled: true
+                            proxy_download: true
+                            connection:
+                              secret: gitlab-object-storage-connection
+                              key: connection
+                          lfs:
+                            bucket: {{ "{{" }} $bucketName {{ "}}" }}
+                          artifacts:
+                            bucket: {{ "{{" }} $bucketName {{ "}}" }}
+                          uploads:
+                            bucket: {{ "{{" }} $bucketName {{ "}}" }}
+                          packages:
+                            bucket: {{ "{{" }} $bucketName {{ "}}" }}
+                          backups:
+                            bucket: {{ "{{" }} $bucketName {{ "}}" }}
+                            tmpBucket: {{ "{{" }} $bucketName {{ "}}" }}
+                          terraformState:
+                            bucket: {{ "{{" }} $bucketName {{ "}}" }}
+                          ciSecureFiles:
+                            bucket: {{ "{{" }} $bucketName {{ "}}" }}
+                          dependencyProxy:
+                            bucket: {{ "{{" }} $bucketName {{ "}}" }}
+                    {{ "{{-" }} if eq $gitalyHA "true" {{ "}}" }}
+                        praefect:
+                          enabled: true
+                          replaceInternalGitaly: true
+                          autoMigrate: true
+                          dbSecret:
+                            secret: gitlab-db-app
+                            key: password
+                          virtualStorages:
+                            - name: default
+                              gitalyReplicas: {{ "{{" }} $gitalyReplicas {{ "}}" }}
+                              maxUnavailable: 1
+                          psql:
+                            host: gitlab-db-pooler-rw.{{ "{{" }} $ns {{ "}}" }}.svc
+                            port: "5432"
+                            user: gitlab
+                            dbName: praefect_production
+                            sslMode: disable
+                    {{ "{{-" }} end {{ "}}" }}
+                      registry:
+                        storage:
+                          secret: gitlab-registry-storage
+                          key: config
+                    {{ "{{-" }} end {{ "}}" }}
+                      postgresql:
+                        install: {{ "{{" }} eq $dbMode "bundled" {{ "}}" }}
+                      redis:
+                        install: {{ "{{" }} eq $redisMode "bundled" {{ "}}" }}
+                    {{ "{{-" }} if eq $redisMode "bundled" {{ "}}" }}
+                        resources:
+                          requests:
+                            cpu: 100m
+                    {{ "{{-" }} end {{ "}}" }}
+                      minio:
+                        install: {{ "{{" }} eq $objStoreMode "bundled" {{ "}}" }}
+                    {{ "{{-" }} if eq $objStoreMode "bundled" {{ "}}" }}
+                        resources:
+                          requests:
+                            cpu: 100m
+                    {{ "{{-" }} end {{ "}}" }}
+                      nginx-ingress:
+                        enabled: false
+                      installCertmanager: false
+                      gitlab:
+                        gitlab-shell:
+                          minReplicas: {{ "{{" }} $shellMinReplicas {{ "}}" }}
+                          maxReplicas: {{ "{{" }} $shellMaxReplicas {{ "}}" }}
+                        webservice:
+                          minReplicas: {{ "{{" }} $webserviceMinReplicas {{ "}}" }}
+                          maxReplicas: {{ "{{" }} $webserviceMaxReplicas {{ "}}" }}
+                          resources:
+                            requests:
+                              cpu: 500m
+                              memory: 1500M
+                        sidekiq:
+                          minReplicas: {{ "{{" }} $sidekiqMinReplicas {{ "}}" }}
+                          maxReplicas: {{ "{{" }} $sidekiqMaxReplicas {{ "}}" }}
+                          resources:
+                            requests:
+                              cpu: 500m
+                              memory: 1000M
+                    {{ "{{-" }} if eq $gitalyHA "true" {{ "}}" }}
+                      praefect:
+                        replicas: {{ "{{" }} $praefectReplicas {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-instance-prereqs
+        spec:
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ns := "{{ .Values.gitlab.namespace }}" {{ "}}" }}
+            {{ "{{-" }} $dbMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $redisMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-redis-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $objStoreMode := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-object-storage-mode" | default "managed" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{" }} if ne $dbMode "bundled" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: gitlab-db-app
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+            {{ "{{" }} end {{ "}}" }}
+            {{ "{{" }} if ne $redisMode "bundled" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: gitlab-redis-password
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+            {{ "{{" }} end {{ "}}" }}
+            {{ "{{" }} if ne $objStoreMode "bundled" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: gitlab-objectstorage
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+            {{ "{{" }} end {{ "}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-instance-ready
+        spec:
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps.gitlab.com/v1beta1
+                kind: GitLab
+                metadata:
+                  name: gitlab
+                  namespace: {{ .Values.gitlab.namespace }}
+                status:
+                  phase: Running
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitlab'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

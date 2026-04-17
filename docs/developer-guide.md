@@ -15,10 +15,10 @@ Generate and deploy an operator policy in under 5 minutes:
 ./scripts/generate-operator-policy.sh cert-manager cert-manager-operator --channel stable --namespace cert-manager --version cert-manager.v1.14.4 --add-to-autoshift
 
 # 2. Validate the generated policy
-helm template policies/cert-manager/
+helm template policies/stable/cert-manager/
 
 # 3. Commit and push - AutoShift will automatically deploy via GitOps
-git add policies/cert-manager/
+git add policies/stable/cert-manager/
 git commit -m "Add cert-manager operator policy"
 git push origin main  # or your branch if contributing
 ```
@@ -45,7 +45,7 @@ AutoShiftv2 orchestrates OpenShift infrastructure through a sophisticated GitOps
 
 ```mermaid
 flowchart TD
-    Git[Git Repository<br/>autoshift + policies/*]
+    Git[Git Repository<br/>autoshift + policies/stable,certified,community/*]
     AutoShift[AutoShift Helm Chart<br/>Creates ApplicationSet]
     Apps[ArgoCD Applications<br/>One per policy]
     Policies[ACM Policies<br/>Deployed to hub]
@@ -124,7 +124,7 @@ flowchart TD
 
 **Key Components & Flow:**
 
-1. **GitOps Foundation**: ArgoCD ApplicationSet monitors `policies/*` directories in Git repository
+1. **GitOps Foundation**: ArgoCD ApplicationSet monitors `policies/{stable,certified,community}/*` directories in Git repository
 2. **Dynamic Application Creation**: ApplicationSet creates individual ArgoCD Applications for each policy
 3. **Helm Chart Deployment**: Each Application deploys a Helm chart containing ACM Policy + Placement + PlacementBinding
 4. **Hub Template Processing**: ACM processes hub templates on the hub cluster, resolving per-cluster values before replication
@@ -165,13 +165,13 @@ cd autoshiftv2
 
 # Test operator policy generation
 ./scripts/generate-operator-policy.sh test-operator test-operator --channel stable --namespace test-operator
-helm template policies/test-operator/
-rm -rf policies/test-operator/
+helm template policies/stable/test-operator/
+rm -rf policies/stable/test-operator/
 
 # Test configuration policy generation
-./scripts/generate-policy.sh test-config --dir policies/test-config --target both
-helm template policies/test-config/
-rm -rf policies/test-config/
+./scripts/generate-policy.sh test-config --dir policies/stable/test-config --target both
+helm template policies/stable/test-config/
+rm -rf policies/stable/test-config/
 ```
 
 ### First-Time Setup Validation
@@ -181,11 +181,11 @@ rm -rf policies/test-config/
 ls -la policies/
 
 # Validate all existing policies (optional but recommended)
-for policy in policies/*/; do
-  if [ -f "$policy/Chart.yaml" ]; then
-    echo "Validating $policy..."
-    helm template "$policy" > /dev/null && echo "✓ Valid" || echo "✗ Invalid"
-  fi
+# Policy charts live at policies/<category>/<chart>/Chart.yaml
+find policies -maxdepth 3 -name Chart.yaml | while read -r chart_file; do
+  policy=$(dirname "$chart_file")
+  echo "Validating $policy..."
+  helm template "$policy" > /dev/null && echo "✓ Valid" || echo "✗ Invalid"
 done
 ```
 
@@ -226,10 +226,10 @@ oc describe packagemanifest your-operator -n openshift-marketplace
 
 ### Step 3: Understand Generated Files
 
-Your new policy directory (`policies/my-component/`) contains:
+Your new policy directory (`policies/stable/my-component/`) contains:
 
 ```
-policies/my-component/
+policies/stable/my-component/
 ├── Chart.yaml                          # Helm chart metadata
 ├── values.yaml                         # Default configuration
 ├── README.md                           # Policy documentation
@@ -247,19 +247,19 @@ oc get crds | grep my-component
 
 # 2. Generate a configuration policy (adds to existing policy directory)
 ./scripts/generate-policy.sh my-component-config \
-  --dir policies/my-component \
+  --dir policies/stable/my-component \
   --target both \
   --dependency my-component-operator-install
 
 # 3. Edit the generated template - replace the placeholder ConfigMap with your actual resource
-vi policies/my-component/templates/policy-my-component-config.yaml
+vi policies/stable/my-component/templates/policy-my-component-config.yaml
 ```
 
 The generator creates a complete policy with the correct structure (Policy + ConfigurationPolicy + Placement + PlacementBinding), `evaluationInterval`, dry-run support, and cluster tolerations. You can also generate standalone configuration policies in a new directory:
 
 ```bash
 # Create a new policy directory for non-operator configuration
-./scripts/generate-policy.sh my-cluster-config --dir policies/my-cluster-config --target spoke
+./scripts/generate-policy.sh my-cluster-config --dir policies/stable/my-cluster-config --target spoke
 
 # Or use interactive mode to be guided through the options
 ./scripts/generate-policy.sh
@@ -271,10 +271,10 @@ See [generate-policy.sh documentation](../scripts/README.md#generate-policysh) f
 
 ```bash
 # Validate your policy renders correctly
-helm template policies/my-component/
+helm template policies/stable/my-component/
 
 # Commit and push to deploy
-git add policies/my-component/
+git add policies/stable/my-component/
 git commit -m "Add my-component operator with configuration"
 git push
 
@@ -453,7 +453,7 @@ Configuration precedence: **Individual Cluster > ClusterSet > Default Values**
 AutoShift handles dependencies through logical ordering and shared placement rules. For explicit dependencies, add to policy spec.dependencies section like the example below:
 
 ```yaml
-# In policies/my-component/README.md
+# In policies/stable/my-component/README.md
 ## Dependencies
 
 This policy depends on:
@@ -490,17 +490,17 @@ spec:
 
 ```bash
 # 1. Make changes to policy templates
-vi policies/my-component/templates/policy-my-component-config.yaml
+vi policies/stable/my-component/templates/policy-my-component-config.yaml
 
 # 2. Validate changes
-helm template policies/my-component/
+helm template policies/stable/my-component/
 
 # 3. Update with different label values
 vi autoshift/values/clustersets/sbx.yaml
 vi autoshift/values/clustersets/hub.yaml
 
 # 4. Commit and deploy
-git add policies/my-component/
+git add policies/stable/my-component/
 git add autoshift/
 git commit -m "Update my-component configuration"
 git push
@@ -537,7 +537,7 @@ config:
         name: 'cluster-ca-bundle'
         key: 'ca-bundle.crt'
         namespace: 'cluster-install-secrets'
-      mirrors:                                    # source → mirror path mappings
+      mirrors:                                    # IDMS — digest-based (Red Hat signed content)
         - source: quay.io/openshift-release-dev/ocp-release
           mirror: openshift/release-images
         - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
@@ -545,6 +545,10 @@ config:
         - source: registry.redhat.io
         - source: quay.io
         - source: registry.access.redhat.com
+      tagMirrors:                                 # ITMS — tag-based (certified/unsigned ISV operators)
+        - source: registry.connect.redhat.com
+        - source: registry.gitlab.com
+        - source: docker.io
     disableDefaultCatalogs: true                  # disable default OperatorHub
     catalogs:                                     # name = {source}-{mirror-catalog-suffix label}
       - source: redhat-operators
@@ -636,7 +640,7 @@ gitops-channel: gitops-1.18
 
 ```bash
 # Validate single policy
-helm template policies/my-component/ | oc apply --dry-run=client -f -
+helm template policies/stable/my-component/ | oc apply --dry-run=client -f -
 
 # Validate all policies
 find policies/ -name "Chart.yaml" -exec dirname {} \; | while read policy; do
@@ -687,13 +691,13 @@ oc get policyreports -A
 
 4. **Test Thoroughly**
    ```bash
-   helm template policies/my-operator/
+   helm template policies/stable/my-operator/
    # Deploy and validate in test environment
    ```
 
 5. **Submit Pull Request**
    ```bash
-   git add policies/my-operator/
+   git add policies/stable/my-operator/
    git commit -m "Add my-operator policy with configuration"
    git push origin feature/add-my-operator-policy
    ```

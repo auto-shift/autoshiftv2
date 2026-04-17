@@ -130,7 +130,7 @@ networking:
     servers: [10.0.0.53]
 ```
 
-See [policies/nmstate/README.md](../policies/nmstate/README.md) for the full interface config reference.
+See [policies/stable/nmstate/README.md](../policies/stable/nmstate/README.md) for the full interface config reference.
 
 ### hosts
 
@@ -184,7 +184,7 @@ disconnected:
     # ca: |                                 # OR inline CA bundle
     #   -----BEGIN CERTIFICATE-----
     #   ...
-    mirrors:                                # source → mirror path mappings
+    mirrors:                                # IDMS — digest-based (Red Hat signed content)
       - source: quay.io/openshift-release-dev/ocp-release
         mirror: openshift/release-images  # path in mirror registry (host/mirror)
       - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
@@ -192,7 +192,11 @@ disconnected:
       - source: registry.redhat.io          # no mirror = host/path
       - source: quay.io
       - source: registry.access.redhat.com
-  useIDMS: true                             # IDMS (OCP 4.13+) or ICSP (4.12-)
+    tagMirrors:                             # ITMS — tag-based (certified/unsigned ISV operators)
+      - source: registry.connect.redhat.com # certified operator images (not signed, tag-referenced)
+      - source: registry.gitlab.com         # GitLab operator images
+      - source: docker.io                   # community operators
+  useIDMS: true                             # IDMS/ITMS (OCP 4.13+) or ICSP (4.12-)
   disableDefaultCatalogs: true              # disable default OperatorHub catalogs
   catalogs:                                 # CatalogSource name = {source}-{mirror-catalog-suffix label}
     - source: redhat-operators

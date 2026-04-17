@@ -373,8 +373,8 @@ AutoShift provides a complete Infrastructure-as-Code solution for OpenShift usin
 ┌─────────────────────────────────────────────────────────┐
 │  Phase 3: Policy Deployment (via ApplicationSet)       │
 │  ├─ ACM Policy Charts from OCI Registry                │
-│  ├─ policies/openshift-gitops (takes over GitOps)      │
-│  └─ policies/advanced-cluster-management (takes over)  │
+│  ├─ policies/stable/openshift-gitops (takes over GitOps)      │
+│  └─ policies/stable/advanced-cluster-management (takes over)  │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -708,8 +708,8 @@ AutoShift deploys ACM policies that manage various OpenShift components:
 ### Policy Takeover
 
 After AutoShift is deployed:
-1. `policies/openshift-gitops` policy takes over management of the GitOps operator
-2. `policies/advanced-cluster-management` policy takes over management of ACM
+1. `policies/stable/openshift-gitops` policy takes over management of the GitOps operator
+2. `policies/stable/advanced-cluster-management` policy takes over management of ACM
 
 This allows ACM to manage its own upgrades and configuration via GitOps.
 
@@ -854,7 +854,7 @@ cat >> "$ARTIFACTS_DIR/charts.txt" << CHARTS_EOF
 ## Policy Charts
 CHARTS_EOF
 
-find policies -maxdepth 2 -name Chart.yaml | while read -r chart_file; do
+find policies -maxdepth 3 -name Chart.yaml | while read -r chart_file; do
     policy_dir=$(dirname "$chart_file")
     policy_name=$(basename "$policy_dir")
     echo "oci://${REGISTRY}/${REGISTRY_NAMESPACE}/policies/${policy_name}:${VERSION}" >> "$ARTIFACTS_DIR/charts.txt"

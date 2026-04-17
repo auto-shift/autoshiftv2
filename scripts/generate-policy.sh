@@ -3,7 +3,7 @@
 # Generates standardized configuration policies for AutoShift
 #
 # Usage: ./scripts/generate-policy.sh <policy-name> [options]
-# Example: ./scripts/generate-policy.sh my-config --dir policies/my-component --target both
+# Example: ./scripts/generate-policy.sh my-config --dir policies/stable/my-component --target both
 # Example: ./scripts/generate-policy.sh  (interactive mode)
 
 set -e
@@ -83,10 +83,10 @@ usage() {
     echo "  --help                   Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 my-config --dir policies/my-component --target both"
-    echo "  $0 dns-config --dir policies/openshift-dns --target hub"
-    echo "  $0 my-config --dir policies/test --target spoke --dependency lvm-operator-install"
-    echo "  $0 my-config --dir policies/my-component --target both --add-to-autoshift"
+    echo "  $0 my-config --dir policies/stable/my-component --target both"
+    echo "  $0 dns-config --dir policies/stable/openshift-dns --target hub"
+    echo "  $0 my-config --dir policies/stable/test --target spoke --dependency lvm-operator-install"
+    echo "  $0 my-config --dir policies/stable/my-component --target both --add-to-autoshift"
     echo "  $0   # fully interactive"
 }
 
@@ -167,18 +167,18 @@ if [[ -z "$POLICY_DIR" ]]; then
         dirs+=("$dir")
         echo "  $i) $dir"
         i=$((i + 1))
-    done < <(find policies -mindepth 1 -maxdepth 1 -type d | sort)
-    echo "  $i) Create new directory"
+    done < <(find policies/stable policies/certified policies/community -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+    echo "  $i) Create new directory under policies/stable/"
     echo ""
     read -rp "Choice [1-$i]: " choice
 
     if [[ "$choice" -eq "$i" ]] 2>/dev/null; then
-        read -rp "New directory name (under policies/): " new_dir
+        read -rp "New directory name (under policies/stable/): " new_dir
         if [[ -z "$new_dir" ]]; then
             log_error "Directory name is required"
             exit 1
         fi
-        POLICY_DIR="policies/$new_dir"
+        POLICY_DIR="policies/stable/$new_dir"
     elif [[ "$choice" -ge 1 && "$choice" -lt "$i" ]] 2>/dev/null; then
         POLICY_DIR="${dirs[$((choice - 1))]}"
     else
@@ -218,8 +218,9 @@ case "$TARGET" in
         ;;
 esac
 
-# Interactive prompt for add-to-autoshift
-if [[ "$ADD_TO_AUTOSHIFT" == "false" && "$TARGET" != "all" ]]; then
+# Interactive prompt for add-to-autoshift (only when stdin is a TTY;
+# non-interactive callers skip silently and must pass --add-to-autoshift explicitly)
+if [[ "$ADD_TO_AUTOSHIFT" == "false" && "$TARGET" != "all" && -t 0 ]]; then
     echo ""
     read -rp "Add label to AutoShift values files? [y/N]: " add_choice
     if [[ "$add_choice" =~ ^[Yy]$ ]]; then
@@ -325,7 +326,9 @@ build_dependency_block() {
 
 # --- AutoShift values file integration ---
 
-# Find the last label line number in a section/clusterset (to append at bottom)
+# Find the last label line number in a section/clusterset (to append at bottom).
+# Strips trailing comments/whitespace from section-header lines before matching so
+# keys like `  hub:    # <-- change me` still match.
 find_labels_line() {
     local file_path="$1"
     local section_type="$2"
@@ -333,31 +336,44 @@ find_labels_line() {
     local is_commented="$4"
 
     if [[ "$is_commented" == "true" ]]; then
-        awk "
-            /^# $section_type:/ { found_section=1; next }
-            found_section && /^#   $clusterset:/ { found_clusterset=1; next }
+        awk -v sec="$section_type" -v cs="$clusterset" '
+            {
+                stripped = $0
+                sub(/[[:space:]]+#.*$/, "", stripped)
+                sub(/[[:space:]]+$/, "", stripped)
+            }
+            stripped == "# " sec ":" { found_section=1; next }
+            found_section && stripped == "#   " cs ":" { found_clusterset=1; next }
             found_clusterset && /^#     labels:/ { in_labels=1; last=NR; next }
             in_labels && /^#       / { last=NR; next }
             in_labels && /^#$/ { last=NR; next }
             in_labels { print last; exit }
             /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
             END { if (in_labels) print last }
-        " "$file_path"
+        ' "$file_path"
     else
-        awk "
-            /^$section_type:/ { found_section=1; next }
-            found_section && /^  $clusterset:/ { found_clusterset=1; next }
+        awk -v sec="$section_type" -v cs="$clusterset" '
+            {
+                stripped = $0
+                sub(/[[:space:]]+#.*$/, "", stripped)
+                sub(/[[:space:]]+$/, "", stripped)
+            }
+            stripped == sec ":" { found_section=1; next }
+            found_section && stripped == "  " cs ":" { found_clusterset=1; next }
             found_clusterset && /^    labels:/ { in_labels=1; last=NR; next }
             in_labels && /^      / { last=NR; next }
             in_labels && /^$/ { last=NR; next }
             in_labels { print last; exit }
             /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
             END { if (in_labels) print last }
-        " "$file_path"
+        ' "$file_path"
     fi
 }
 
-# Check if the label already exists in a section
+# Check if the label already exists in a section.
+# Uses awk for proper section tracking — previous grep-based approach with
+# fixed -A windows broke on large values files where the labels block spans
+# hundreds of lines past the clusterset key.
 check_label_exists() {
     local file_path="$1"
     local section_type="$2"
@@ -366,13 +382,33 @@ check_label_exists() {
     local label_key="$5"
 
     if [[ "$is_commented" == "true" ]]; then
-        grep -A 50 "^# $section_type:" "$file_path" | \
-        grep -A 30 "^#   $clusterset:" | \
-        grep -q "^#       $label_key:"
+        awk -v sec="$section_type" -v cs="$clusterset" -v lbl="$label_key" '
+            {
+                stripped = $0
+                sub(/[[:space:]]+#.*$/, "", stripped)
+                sub(/[[:space:]]+$/, "", stripped)
+            }
+            stripped == "# " sec ":" { found_section=1; next }
+            found_section && stripped == "#   " cs ":" { found_clusterset=1; next }
+            found_clusterset && /^#     labels:/ { in_labels=1; next }
+            in_labels && $0 ~ ("^#       " lbl ":") { found=1; exit }
+            /^[a-zA-Z]/ { if (in_labels) exit; found_section=0; found_clusterset=0 }
+            END { if (found) exit 0; exit 1 }
+        ' "$file_path"
     else
-        grep -A 50 "^$section_type:" "$file_path" | \
-        grep -A 30 "^  $clusterset:" | \
-        grep -q "^      $label_key:"
+        awk -v sec="$section_type" -v cs="$clusterset" -v lbl="$label_key" '
+            {
+                stripped = $0
+                sub(/[[:space:]]+#.*$/, "", stripped)
+                sub(/[[:space:]]+$/, "", stripped)
+            }
+            stripped == sec ":" { found_section=1; next }
+            found_section && stripped == "  " cs ":" { found_clusterset=1; next }
+            found_clusterset && /^    labels:/ { in_labels=1; next }
+            in_labels && $0 ~ ("^      " lbl ":") { found=1; exit }
+            /^[a-zA-Z]/ { if (in_labels) exit; found_section=0; found_clusterset=0 }
+            END { if (found) exit 0; exit 1 }
+        ' "$file_path"
     fi
 }
 
@@ -386,7 +422,7 @@ add_label_to_section() {
 
     if check_label_exists "$file_path" "$section_type" "$clusterset" "$is_commented" "$label_key"; then
         log_warning "Label '$label_key' already exists in $section_type/$clusterset, skipping"
-        return 0
+        return 1
     fi
 
     local labels_line
@@ -394,7 +430,7 @@ add_label_to_section() {
 
     if [[ -z "$labels_line" ]]; then
         log_warning "Could not find labels: line for $section_type/$clusterset, skipping"
-        return 0
+        return 1
     fi
 
     # Determine comment style: example files use banner, others use ###
@@ -425,7 +461,9 @@ add_label_to_section() {
     fi
 
     local temp_file
-    temp_file=$(mktemp)
+    local _project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+    mkdir -p "$_project_root/.tmp"
+    temp_file="$_project_root/.tmp/policy-gen.$$.tmp"
     head -n "$labels_line" "$file_path" > "$temp_file"
     echo "$label_content" >> "$temp_file"
     tail -n +$((labels_line + 1)) "$file_path" >> "$temp_file"
@@ -445,6 +483,9 @@ add_labels_to_file() {
         is_example=true
     fi
 
+    # Only count sections that were actually updated (add_label_to_section returns
+    # non-zero when it skipped, e.g. labels-line not found or duplicate).
+
     # Add to managedClusterSets
     if [[ "$is_example" == "true" || "$TARGET" == "spoke" || "$TARGET" == "both" ]]; then
         if grep -q "^managedClusterSets:" "$file_path"; then
@@ -452,8 +493,9 @@ add_labels_to_file() {
             managed_clustersets=$(awk '/^managedClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
             while IFS= read -r clusterset; do
                 [[ -z "$clusterset" ]] && continue
-                add_label_to_section "$file_path" "managedClusterSets" "$clusterset" false "$LABEL"
-                sections_found="$sections_found managedClusterSets/$clusterset"
+                if add_label_to_section "$file_path" "managedClusterSets" "$clusterset" false "$LABEL"; then
+                    sections_found="$sections_found managedClusterSets/$clusterset"
+                fi
             done <<< "$managed_clustersets"
         fi
     fi
@@ -465,8 +507,9 @@ add_labels_to_file() {
             hub_clustersets=$(awk '/^hubClusterSets:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
             while IFS= read -r clusterset; do
                 [[ -z "$clusterset" ]] && continue
-                add_label_to_section "$file_path" "hubClusterSets" "$clusterset" false "$LABEL"
-                sections_found="$sections_found hubClusterSets/$clusterset"
+                if add_label_to_section "$file_path" "hubClusterSets" "$clusterset" false "$LABEL"; then
+                    sections_found="$sections_found hubClusterSets/$clusterset"
+                fi
             done <<< "$hub_clustersets"
         fi
     fi
@@ -477,8 +520,9 @@ add_labels_to_file() {
         active_clusters=$(awk '/^clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^  [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^  /, ""); print}' "$file_path")
         while IFS= read -r cluster; do
             [[ -z "$cluster" ]] && continue
-            add_label_to_section "$file_path" "clusters" "$cluster" false "$LABEL"
-            sections_found="$sections_found clusters/$cluster"
+            if add_label_to_section "$file_path" "clusters" "$cluster" false "$LABEL"; then
+                sections_found="$sections_found clusters/$cluster"
+            fi
         done <<< "$active_clusters"
     fi
 
@@ -487,16 +531,18 @@ add_labels_to_file() {
         commented_clusters=$(awk '/^# clusters:/{flag=1; next} /^[a-zA-Z]/{flag=0} flag && /^#   [a-zA-Z][^:]*:/{gsub(/:.*/, ""); gsub(/^#   /, ""); print}' "$file_path")
         while IFS= read -r cluster; do
             [[ -z "$cluster" ]] && continue
-            add_label_to_section "$file_path" "clusters" "$cluster" true "$LABEL"
-            sections_found="$sections_found clusters/$cluster(commented)"
+            if add_label_to_section "$file_path" "clusters" "$cluster" true "$LABEL"; then
+                sections_found="$sections_found clusters/$cluster(commented)"
+            fi
         done <<< "$commented_clusters"
     fi
 
     if [[ -z "$sections_found" ]]; then
         log_warning "No matching sections found in $(basename "$file_path")"
-    else
-        log_step "Added '$LABEL' label to:$sections_found"
+        return 1
     fi
+    log_step "Added '$LABEL' label to:$sections_found"
+    return 0
 }
 
 # Add labels to AutoShift values files
@@ -505,23 +551,35 @@ add_to_autoshift_values() {
 
     local values_files_to_update=()
     if [[ -n "$VALUES_FILES" ]]; then
-        # CLI flag: parse comma-separated list
+        # CLI flag: accepts bare names (looked up in clustersets/) or relative paths
+        # Examples: 'hub,sbx'  OR  'autoshift/values/mysite.yaml'
         IFS=',' read -ra file_list <<< "$VALUES_FILES"
-        for file_prefix in "${file_list[@]}"; do
-            file_prefix=$(echo "$file_prefix" | xargs)
-            if [[ -f "autoshift/values/clustersets/$file_prefix.yaml" ]]; then
-                values_files_to_update+=("values/clustersets/$file_prefix.yaml")
+        for entry in "${file_list[@]}"; do
+            entry=$(echo "$entry" | xargs)  # trim whitespace
+            local resolved=""
+            if [[ "$entry" == *.yaml || "$entry" == */* ]]; then
+                # Treat as a path (relative to repo root)
+                [[ "$entry" != autoshift/* ]] && entry="autoshift/$entry"
+                resolved="$entry"
             else
-                log_warning "Values file autoshift/values/clustersets/$file_prefix.yaml not found, skipping"
+                # Treat as a bare name under clustersets/
+                resolved="autoshift/values/clustersets/$entry.yaml"
+            fi
+            if [[ -f "$resolved" ]]; then
+                values_files_to_update+=("${resolved#autoshift/}")
+            else
+                log_warning "Values file $resolved not found, skipping"
             fi
         done
     else
         # Interactive: let user select which values files to update
+        # Search clustersets/ AND parent values/ for single-file setups
+        # Use newline-based find (no -print0/-z) for Git Bash compatibility
         local available_files=()
-        while IFS= read -r -d '' file; do
-            local rel_path="${file#autoshift/}"
-            available_files+=("$rel_path")
-        done < <(find autoshift/values/clustersets -name "*.yaml" -not -name "_*" -print0 2>/dev/null | sort -z)
+        while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            available_files+=("${file#autoshift/}")
+        done < <(find autoshift/values -name "*.yaml" -not -name "_*" 2>/dev/null | sort)
 
         if [[ ${#available_files[@]} -gt 0 ]]; then
             echo ""
@@ -537,7 +595,6 @@ add_to_autoshift_values() {
             files_choice="${files_choice:-$idx}"
 
             if [[ "$files_choice" -eq "$idx" ]] 2>/dev/null; then
-                # All files
                 values_files_to_update=("${available_files[@]}")
             else
                 IFS=',' read -ra chosen <<< "$files_choice"
@@ -553,17 +610,18 @@ add_to_autoshift_values() {
         fi
     fi
 
-    # Always include example files
-    while IFS= read -r -d '' file; do
-        local rel_path="${file#autoshift/}"
-        values_files_to_update+=("$rel_path")
-    done < <(find autoshift/values/clustersets autoshift/values/clusters -name "_example*.yaml" -print0 2>/dev/null)
+    # Always include example files (anywhere under autoshift/values/)
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        values_files_to_update+=("${file#autoshift/}")
+    done < <(find autoshift/values -name "_example*.yaml" 2>/dev/null | sort)
 
     if [[ ${#values_files_to_update[@]} -eq 0 ]]; then
         log_error "No valid values files found to update"
         return 1
     fi
 
+    local updated_count=0
     for values_file in "${values_files_to_update[@]}"; do
         local file_path="autoshift/$values_file"
         if [[ ! -f "$file_path" ]]; then
@@ -571,11 +629,15 @@ add_to_autoshift_values() {
             continue
         fi
         log_step "Processing $values_file..."
-        add_labels_to_file "$file_path"
-        log_success "Updated $values_file"
+        if add_labels_to_file "$file_path"; then
+            log_success "Updated $values_file"
+            updated_count=$((updated_count + 1))
+        else
+            log_warning "No changes made to $values_file"
+        fi
     done
 
-    log_success "Labels added to ${#values_files_to_update[@]} values file(s)"
+    log_success "Labels added to $updated_count of ${#values_files_to_update[@]} values file(s)"
 }
 
 # Main generation
@@ -604,7 +666,9 @@ else
 fi
 
 # Write substitution blocks to temp files for reliable multi-line replacement
-TMPDIR_SUB=$(mktemp -d)
+_project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+TMPDIR_SUB="$_project_root/.tmp/policy-sub-$$"
+mkdir -p "$TMPDIR_SUB"
 build_clustersets > "$TMPDIR_SUB/clustersets"
 build_predicates > "$TMPDIR_SUB/predicates"
 build_dependency_block > "$TMPDIR_SUB/dependency"
