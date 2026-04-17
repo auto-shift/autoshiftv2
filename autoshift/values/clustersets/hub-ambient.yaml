@@ -1,0 +1,99 @@
+# Hub Cluster — Ambient Service Mesh
+# Minimal hub configuration plus the servicemesh3-ambient policy and all of its dependencies.
+# Includes ODF and storage nodes required for the TempoStack S3 ObjectBucketClaim.
+#
+# Optional:
+#   - servicemesh3operator-tempo: 'true'  — wires Kiali to the TempoStack for trace visualization
+
+hubClusterSets:
+  hub:
+    labels:
+      # Required: OpenShift version for image mirroring and compatibility
+      openshift-version: '4.20.12'
+
+      # Required: Indicates this is a self-managed hub cluster
+      self-managed: 'true'
+
+      ### OpenShift GitOps (REQUIRED)
+      # GitOps is required to deploy AutoShift itself
+      gitops: 'true'
+      gitops-subscription-name: openshift-gitops-operator
+      gitops-disable-default-argocd: 'true'
+      gitops-channel: gitops-1.19
+      gitops-source: redhat-operators
+      gitops-source-namespace: openshift-marketplace
+
+      ### Advanced Cluster Management (AUTOMATIC)
+      # ACM is automatically installed on all hub clustersets by policy
+      acm-subscription-name: advanced-cluster-management
+      acm-channel: release-2.15
+      acm-source: redhat-operators
+      acm-source-namespace: openshift-marketplace
+
+      ### OpenShift Service Mesh 3 (Sail Operator) — operator install
+      servicemesh3operator: 'true'
+      servicemesh3operator-subscription-name: servicemeshoperator3
+      servicemesh3operator-channel: stable
+      servicemesh3operator-source: redhat-operators
+      servicemesh3operator-source-namespace: openshift-marketplace
+      # servicemesh3operator-version: 'servicemeshoperator3.v3.3.1'
+
+      ### Ambient mesh configuration (IstioCNI, Istio, ZTunnel, Kiali, Tempo)
+      servicemesh3-ambient: 'true'
+      # servicemesh3operator-istio-version: 'v1.28-latest'
+      # servicemesh3operator-tempo: 'true'  — wires Kiali to TempoStack
+
+      ### Kiali — service mesh console
+      kiali: 'true'
+      kiali-subscription-name: kiali-ossm
+      kiali-channel: stable
+      kiali-source: redhat-operators
+      kiali-source-namespace: openshift-marketplace
+      # kiali-version: 'kiali-operator.v2.x.x'
+
+      ### Tempo — distributed tracing backend (requires ODF/NooBaa for S3 bucket)
+      tempo: 'true'
+      tempo-subscription-name: tempo-product
+      tempo-channel: stable
+      tempo-source: redhat-operators
+      tempo-source-namespace: openshift-marketplace
+      # tempo-version: 'tempo-operator.v0.x.x'
+
+      ### OpenTelemetry — trace collection and forwarding to Tempo
+      opentelemetry: 'true'
+      opentelemetry-subscription-name: opentelemetry-product
+      opentelemetry-channel: stable
+      opentelemetry-source: redhat-operators
+      opentelemetry-source-namespace: openshift-marketplace
+      # opentelemetry-version: 'opentelemetry-operator.v0.x.x'
+
+      ### Storage Nodes — required for ODF storage cluster
+      storage-nodes: '3'
+      storage-nodes-instance-type: 'm6in.8xlarge'
+      storage-nodes-provider: aws
+      # storage-nodes-zone-1: 'us-east-2a'
+      # storage-nodes-zone-2: 'us-east-2b'
+      # storage-nodes-zone-3: 'us-east-2c'
+      # storage-nodes-region: 'us-east-2'
+      storage-nodes-numcpu: ''
+      storage-nodes-memory-mib: ''
+      storage-nodes-numcores-per-socket: ''
+
+      ### OpenShift Data Foundation — provides NooBaa OBC storage for TempoStack
+      odf: 'true'
+      odf-subscription-name: odf-operator
+      odf-channel: stable-4.20
+      odf-source: redhat-operators
+      odf-source-namespace: openshift-marketplace
+      odf-multi-cloud-gateway: standard
+      odf-noobaa-pvpool: ''
+      odf-noobaa-store-size: ''
+      odf-noobaa-store-num-volumes: ''
+      odf-ocs-storage-class-name: 'gp3-csi'
+      odf-ocs-storage-size: '2Ti'
+      odf-ocs-storage-count: '2'
+      odf-ocs-storage-replicas: '3'
+      odf-resource-profile: balanced
+      odf-default-storageclass: ocs-storagecluster-ceph-rbd
+      odf-csi-all-nodes: 'true'
+      # odf-version: 'odf-operator.v4.x.x'
