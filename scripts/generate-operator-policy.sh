@@ -106,6 +106,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --values-files)
             VALUES_FILES="$2"
+            ADD_TO_AUTOSHIFT=true  # --values-files implies --add-to-autoshift
             shift 2
             ;;
         --show-integration)
@@ -385,9 +386,10 @@ add_to_autoshift_values() {
         fi
     fi
 
-    # Always include example files (anywhere under autoshift/values/)
+    # Always include example files that have a labels: section
     while IFS= read -r file; do
         [[ -z "$file" ]] && continue
+        grep -q "^    labels:" "$file" || continue
         values_files_to_update+=("${file#autoshift/}")
     done < <(find autoshift/values -name "_example*.yaml" 2>/dev/null | sort)
 
@@ -648,7 +650,7 @@ find_labels_line() {
             found_clusterset && /^#     labels:/ { in_labels=1; last=NR; next }
             in_labels && /^#       / { last=NR; next }
             in_labels && /^#$/ { last=NR; next }
-            in_labels { print last; exit }
+            in_labels { print last; in_labels=0; exit }
             /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
             END { if (in_labels) print last }
         ' "$file_path"
@@ -664,7 +666,7 @@ find_labels_line() {
             found_clusterset && /^    labels:/ { in_labels=1; last=NR; next }
             in_labels && /^      / { last=NR; next }
             in_labels && /^$/ { last=NR; next }
-            in_labels { print last; exit }
+            in_labels { print last; in_labels=0; exit }
             /^[a-zA-Z]/ { if (in_labels) { print last; exit } found_section=0; found_clusterset=0 }
             END { if (in_labels) print last }
         ' "$file_path"
