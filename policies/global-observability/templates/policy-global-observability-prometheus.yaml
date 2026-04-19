@@ -87,7 +87,7 @@ spec:
                       "apiVersion": "v1",
                       "metadata": {
                         "name": "{{ $rollup.secretName }}",
-                        "namespace": "{{ .Values.globalObservability.namespace }}",
+                        "namespace": "{{ $.Values.globalObservability.namespace }}",
                       },
                       "data": {{ "{{hub" }} copySecretData "{{ $rollup.secretNamespace }}" "{{ $rollup.secretName }}" {{ "hub}}" }},
                       "type": "Opaque"
@@ -122,6 +122,15 @@ spec:
               {{ "{{hub-" }} $onSelfManaged := index $rw "onSelfManagedHub" | default false {{ "hub}}" }}
               {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) {{ "hub}}" }}
                 {{ "{{hub-" }} if not (empty $secretRef) {{ "hub}}" }}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: '{{ "{{hub" }} index $secretRef "name" {{ "hub}}" }}'
+                    namespace: {{ .Values.globalObservability.namespace }}
+                  type: Opaque
+                  data: '{{ "{{hub" }} copySecretData (index $secretRef "namespace") (index $secretRef "name") {{ "hub}}" }}'
                 {{ "{{hub-" }} end {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
