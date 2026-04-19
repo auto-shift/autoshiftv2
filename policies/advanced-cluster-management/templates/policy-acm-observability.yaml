@@ -141,7 +141,8 @@ spec:
                     namespace: {{ .Values.acm.observability.namespace | default "open-cluster-management-observability" }}
                   type: Opaque
                   stringData:
-                    ca.crt: '{{ "{{" }} fromConfigMap "{{ "{{hub" }} $caSourceNamespace {{ "hub}}" }}" "{{ "{{hub" }} $caSourceName {{ "hub}}" }}" "{{ "{{hub" }} $caSourceKey {{ "hub}}" }}" {{ "}}" }}'
+                    ca.crt: |
+                      {{ "{{" }} fromConfigMap "{{ "{{hub" }} $caSourceNamespace {{ "hub}}" }}" "{{ "{{hub" }} $caSourceName {{ "hub}}" }}" "{{ "{{hub" }} $caSourceKey {{ "hub}}" }}"  | autoindent {{ "}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
@@ -179,10 +180,10 @@ spec:
               {{ "{{-" }} $_ := set $thanosVars "bucket" "{{ "{{hub" }}(($obsConfig).thanosStorage).bucket | default "{{ $.Values.acm.observability.thanosStorage.bucket }}" {{ "hub}}" }}" {{ "}}" }}
               {{ "{{-" }} $_ := set $thanosVars "host" "{{ "{{hub" }}(($obsConfig).thanosStorage).host | default "{{ $.Values.acm.observability.thanosStorage.host }}" {{ "hub}}" }}" {{ "}}" }}
               {{ "{{-" }} $_ := set $thanosVars "port" "{{ "{{hub" }}(($obsConfig).thanosStorage).port | default "{{ $.Values.acm.observability.thanosStorage.port | default "443" }}" {{ "hub}}" }}" {{ "}}" }}
-              {{ "{{-" }} $_ := set $thanosVars "secretNamespace" "{{ "{{hub" }}(($obsConfig).thanosStorage).secretNamespace | default "{{ $.Values.acm.observability.thanosStorage.secretNamespace }}" {{ "hub}}" }}" {{ "}}" }}
-              {{ "{{-" }} $_ := set $thanosVars "secretName" "{{ "{{hub" }}(($obsConfig).thanosStorage).secretName | default "{{ $.Values.acm.observability.thanosStorage.secretName }}" {{ "hub}}" }}" {{ "}}" }}
-              {{ "{{-" }} $_ := set $thanosVars "secretKeyField" "{{ "{{hub" }}(($obsConfig).thanosStorage).secretKeyField | default "{{ $.Values.acm.observability.thanosStorage.secretKeyField }}" {{ "hub}}" }}" {{ "}}" }}
-              {{ "{{-" }} $_ := set $thanosVars "accessKeyField" "{{ "{{hub" }}(($obsConfig).thanosStorage).accessKeyField | default "{{ $.Values.acm.observability.thanosStorage.accessKeyField }}" {{ "hub}}" }}" {{ "}}" }}
+              {{ "{{-" }} $_ := set $thanosVars "secretNamespace" "{{ "{{hub" }}((($obsConfig).thanosStorage).s3Secret).namespace | default "{{ $.Values.acm.observability.thanosStorage.s3Secret.namespace }}" {{ "hub}}" }}" {{ "}}" }}
+              {{ "{{-" }} $_ := set $thanosVars "secretName" "{{ "{{hub" }}((($obsConfig).thanosStorage).s3Secret).name | default "{{ $.Values.acm.observability.thanosStorage.s3Secret.name }}" {{ "hub}}" }}" {{ "}}" }}
+              {{ "{{-" }} $_ := set $thanosVars "secretKeyField" "{{ "{{hub" }}((($obsConfig).thanosStorage).s3Secret).secretKey | default "{{ $.Values.acm.observability.thanosStorage.s3Secret.secretKey }}" {{ "hub}}" }}" {{ "}}" }}
+              {{ "{{-" }} $_ := set $thanosVars "accessKeyField" "{{ "{{hub" }}((($obsConfig).thanosStorage).s3Secret).accessKey | default "{{ $.Values.acm.observability.thanosStorage.s3Secret.accessKey }}" {{ "hub}}" }}" {{ "}}" }}
               {{ "{{-" }} $_ := set $thanosVars "accessKey" (fromSecret $thanosVars.secretNamespace $thanosVars.secretName $thanosVars.accessKeyField | default "" | base64dec) {{ "}}" }}
               {{ "{{-" }} $_ := set $thanosVars "secretKey" (fromSecret $thanosVars.secretNamespace $thanosVars.secretName $thanosVars.secretKeyField | default "" | base64dec) {{ "}}" }}
             {{ "{{hub-" }} else {{ "hub}}" }}
