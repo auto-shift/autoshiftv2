@@ -79,15 +79,22 @@ spec:
             # INDENTATION ANCHOR
             {{ "{{hub" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
             {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: Secret
-                metadata:
-                  name: {{ $rollup.secretName }}
-                  namespace: {{ .Values.globalObservability.namespace }}
-                type: Opaque
-                data: {{ "{{hub" }} copySecretData "{{ $rollup.secretNamespace }}" "{{ $rollup.secretName }}" | toYaml {{ "hub}}" }}
+                [
+                  {
+                    "complianceType": "musthave",
+                    "objectDefinition": {
+                      "kind": "Secret",
+                      "apiVersion": "v1",
+                      "metadata": {
+                        "name": "{{ $rollup.secretName }}",
+                        "namespace": "{{ .Values.globalObservability.namespace }}",
+                      },
+                      "data": {{ "{{hub" }} copySecretData "{{ $rollup.secretNamespace }}" "{{ $rollup.secretName }}" {{ "hub}}" }},
+                      "type": "Opaque"
+
+                    }
+                  }
+                ]
             {{ "{{hub-" }} end {{ "hub}}" }}
 
     #####################################################################
