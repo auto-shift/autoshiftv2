@@ -76,24 +76,19 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            [
-              {{ "{{hub" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
-              {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
-              {
-                "complianceType": "musthave",
-                "objectDefinition": {
-                  "apiVersion": "v1",
-                  "kind": "Secret",
-                  "metadata": {
-                    "name": "{{ $rollup.secretName }}",
-                    "namespace": "{{ .Values.globalObservability.namespace }}"
-                  },
-                  "type": "Opaque",
-                  "data": {{ "{{hub" }} copySecretData "{{ $rollup.secretNamespace }}" "{{ $rollup.secretName }}" {{ "hub}}" }}
-                }
-              }
-              {{ "{{hub-" }} end {{ "hub}}" }}
-            ]
+            # INDENTATION ANCHOR
+            {{ "{{hub" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
+            {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: {{ $rollup.secretName }}
+                  namespace: {{ .Values.globalObservability.namespace }}
+                type: Opaque
+                data: '{{ "{{hub" }} copySecretData "{{ $rollup.secretNamespace }}" "{{ $rollup.secretName }}" | toLiteral {{ "hub}}" }}'
+            {{ "{{hub-" }} end {{ "hub}}" }}
 
     #####################################################################
     # Additional: replicate secrets for each additionalRemoteWrites entry
