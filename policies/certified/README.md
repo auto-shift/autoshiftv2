@@ -21,5 +21,5 @@ To exclude individual certified operator policies from a cluster, add to your va
 
 ```yaml
 excludePolicies:
-  - certified/my-certified-operator
+  - my-certified-operator
 ```

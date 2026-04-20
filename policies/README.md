@@ -23,11 +23,11 @@ Operators from the `community-operators` catalog. No vendor support. See [commun
 
 ## Auto-Discovery
 
-The ApplicationSet automatically discovers policies from all three directories. No manual registration is required. To exclude individual policies, use `excludePolicies` in your values with the relative path:
+The ApplicationSet automatically discovers policies from all three directories. No manual registration is required. To exclude individual policies, use `excludePolicies` in your values with the policy folder name:
 
 ```yaml
 excludePolicies:
   - openshift-data-foundation      # Red Hat operator
-  - certified/jfrog                 # Certified operator
-  - community/my-operator           # Community operator
+  - jfrog                          # Certified operator
+  - my-operator                    # Community operator
 ```

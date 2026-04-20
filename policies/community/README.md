@@ -21,7 +21,7 @@ To exclude individual community operator policies from a cluster, add to your va
 
 ```yaml
 excludePolicies:
-  - community/my-community-operator
+  - my-community-operator
 ```
 
 ## Disconnected Environments
