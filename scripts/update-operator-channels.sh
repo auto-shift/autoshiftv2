@@ -23,25 +23,10 @@
 
 set -e
 
+exec "$(dirname "$0")/terminal-settings.sh"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-# Colors (enabled if either stdout or stderr is a terminal)
-if [[ -t 1 ]] || [[ -t 2 ]]; then
-    RED=$'\033[0;31m'
-    GREEN=$'\033[0;32m'
-    YELLOW=$'\033[1;33m'
-    BLUE=$'\033[0;34m'
-    CYAN=$'\033[0;36m'
-    NC=$'\033[0m'
-else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    BLUE=''
-    CYAN=''
-    NC=''
-fi
 
 log() { echo -e "${BLUE}[INFO]${NC} $1" >&2; }
 success() { echo -e "${GREEN}[OK]${NC} $1" >&2; }
