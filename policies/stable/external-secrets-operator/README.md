@@ -119,7 +119,7 @@ metadata:
 spec:
   disabled: false
   dependencies:
-    - name: policy-external-secrets-operator-operator-install
+    - name: policy-external-secrets-operator-install
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -245,7 +245,7 @@ For operators that need installation verification:
 ### Policy Not Applied
 1. Check cluster labels: `oc get managedcluster <cluster> --show-labels`
 2. Verify placement: `oc get placement -n open-cluster-policies`
-3. Check policy status: `oc describe policy policy-external-secrets-operator-operator-install`
+3. Check policy status: `oc describe policy policy-external-secrets-operator-install`
 
 ### Operator Installation Issues
 1. Check subscription: `oc get subscription -n external-secrets-operator`

@@ -143,6 +143,21 @@ jobs:
           mv /tmp/linux-amd64/helm /usr/local/bin/helm
           chmod +x /usr/local/bin/helm
 
+      - name: Validate policy name lengths
+        run: |
+          echo "=== Validating policy name lengths (max 40 chars) ==="
+          FAILED=0
+          while IFS= read -r file; do
+            while IFS= read -r name; do
+              len=${#name}
+              if [ "$len" -gt 40 ]; then
+                echo "::error file=$file::Policy name '$name' is $len chars (max 40). Combined with a 20-char namespace this exceeds ACM's 62-char limit."
+                FAILED=1
+              fi
+            done < <(grep -oP '(?<=\$policyName := ")[^"]+' "$file" 2>/dev/null || true)
+          done < <(find policies -name "*.yaml")
+          [ "$FAILED" -eq 0 ] && echo "All policy names within limit" || exit 1
+
       - name: Validate policy templates render
         run: |
           echo "=== Validating policy templates ==="
