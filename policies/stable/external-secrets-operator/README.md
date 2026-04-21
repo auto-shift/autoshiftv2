@@ -24,7 +24,7 @@ hubClusterSets:
   hub:
     labels:
       external-secrets-operator: 'true'
-      external-secrets-operator-subscription-name: 'external-secrets-operator'
+      external-secrets-operator-subscription-name: 'openshift-external-secrets-operator'
       external-secrets-operator-channel: 'stable-v1'
       external-secrets-operator-source: 'redhat-operators'
       external-secrets-operator-source-namespace: 'openshift-marketplace'
@@ -34,7 +34,7 @@ managedClusterSets:
   managed:
     labels:
       external-secrets-operator: 'true'
-      external-secrets-operator-subscription-name: 'external-secrets-operator'
+      external-secrets-operator-subscription-name: 'openshift-external-secrets-operator'
       external-secrets-operator-channel: 'stable-v1'
       external-secrets-operator-source: 'redhat-operators'
       external-secrets-operator-source-namespace: 'openshift-marketplace'
