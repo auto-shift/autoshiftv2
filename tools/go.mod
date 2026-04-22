@@ -1,6 +1,6 @@
 module github.com/auto-shift/autoshiftv2/tools
 
-go 1.25.0
+go 1.25.9
 
 require (
 	github.com/stolostron/go-template-utils/v7 v7.2.0
