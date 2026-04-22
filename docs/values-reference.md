@@ -8,8 +8,7 @@ AutoShift uses a **composable values file** pattern. Instead of a single monolit
 autoshift/values/
   global.yaml                        # Shared config: git repo, branch, dryRun
   clustersets/
-    _example-hub.yaml                # Reference: ALL hub clusterset options
-    _example-managed.yaml            # Reference: ALL managed clusterset options
+    _example.yaml                    # Reference: ALL clusterset options (hub and managed)
     hub.yaml                         # Hub clusterset — full enterprise profile
     hub-minimal.yaml                 # Hub clusterset — minimal (GitOps + ACM only)
     hub-baremetal-sno.yaml           # Hub clusterset — baremetal single-node
@@ -45,14 +44,17 @@ Labels follow this override precedence (highest to lowest):
 
 ### Creating Custom Profiles
 
-Copy an `_example-*.yaml` file and uncomment/modify the labels you need:
+Copy `_example.yaml` and make two edits (top-level key and clusterset name):
 
 ```bash
 # Create a custom hub profile
-cp autoshift/values/clustersets/_example-hub.yaml autoshift/values/clustersets/my-hub.yaml
+cp autoshift/values/clustersets/_example.yaml autoshift/values/clustersets/my-hub.yaml
+# Keep hubClusterSets, change "hub" to your clusterset name
 
 # Create a custom managed profile
-cp autoshift/values/clustersets/_example-managed.yaml autoshift/values/clustersets/my-managed.yaml
+cp autoshift/values/clustersets/_example.yaml autoshift/values/clustersets/my-managed.yaml
+# Change hubClusterSets → managedClusterSets, change "hub" to your clusterset name
+# Remove labels marked "# hub only"
 
 # Create per-cluster overrides
 cp autoshift/values/clusters/_example.yaml autoshift/values/clusters/my-cluster.yaml

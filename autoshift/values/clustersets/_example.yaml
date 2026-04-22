@@ -1,15 +1,32 @@
 # ==============================================================================
-# Hub ClusterSet Example - ALL Available Options
+# ClusterSet Example - ALL Available Options (Hub and Managed)
 # ==============================================================================
-# Copy this file and rename it (e.g., hub.yaml, hub-prod.yaml) to create
-# your own hub clusterset profile.
+# This file is the single reference for all available labels and config.
+# Copy it and make two changes to adapt it for your clusterset:
 #
-# Usage in ArgoCD Application:
+#   1. TOP-LEVEL KEY:
+#        Hub:     hubClusterSets:
+#        Managed: managedClusterSets:
+#
+#   2. CLUSTERSET NAME (the key under hubClusterSets/managedClusterSets):
+#        Change "hub" to your clusterset name (e.g., managed, prod, sbx, dev)
+#
+# Labels marked "# hub only" are only meaningful on hub clusters (ACM,
+# cluster provisioning, self-managed registration) — omit them from managed
+# clusterset profiles.
+#
+# Usage in ArgoCD Application (hub):
 #   valueFiles:
 #     - values/global.yaml
 #     - values/clustersets/my-hub.yaml
-#     - values/clustersets/managed.yaml    # optional: add managed spoke clusters
 #     - values/clusters/my-cluster.yaml    # optional: per-cluster overrides
+#
+# Usage in ArgoCD Application (managed):
+#   valueFiles:
+#     - values/global.yaml
+#     - values/clustersets/my-hub.yaml        # hub defines managed clustersets too
+#     - values/clustersets/my-managed.yaml    # uses managedClusterSets key
+#     - values/clusters/my-cluster.yaml       # optional: per-cluster overrides
 #
 # Notes:
 #   - Set a label to 'true' to enable, 'false' to disable
@@ -30,55 +47,146 @@
 #   - infra-nodes
 #   - worker-nodes
 
-# Hub Cluster Sets with Feature Flags. Blank will remove
+# ← CHANGE 1: use managedClusterSets for managed clusterset profiles
 hubClusterSets:
-  hub:
+  hub:  # ← CHANGE 2: replace with your clusterset name
     config:
       # =======================================================================
       # User Workload Monitoring (config section - read via rendered-config)
       # =======================================================================
-      # uwm:
-      #   storageClass: 'gp3-csi'              # Default storage class for all UWM components
-      #   prometheus:
-      #     retention: '24h'                    # Prometheus retention time
-      #     storage: '50Gi'                     # Prometheus PVC size
-      #     storageClass: 'gp3-csi'            # Override storage class for Prometheus only
-      #     dedicatedServiceMonitors: true      # Offload service monitor processing (OCP 4.14+)
-      #     resources:
-      #       requests:
-      #         cpu: '200m'
-      #         memory: '1Gi'
-      #       limits:
-      #         cpu: '1'
-      #         memory: '4Gi'
-      #   thanosRuler:
-      #     retention: '24h'                    # Thanos Ruler retention time
-      #     storage: '10Gi'                     # Thanos Ruler PVC size
-      #     resources:
-      #       requests:
-      #         cpu: '100m'
-      #         memory: '256Mi'
-      #   alertmanager:
-      #     enabled: true                       # Enable dedicated UWM alertmanager
-      #     storage: '10Gi'                     # Alertmanager PVC size
-      #     resources:
-      #       requests:
-      #         cpu: '100m'
-      #         memory: '256Mi'
-      # --- GitLab Config (values with / or spaces that can't be labels) ---
-      # gitlab:
-      #   dbBackupSchedule: '0 2 * * *'
-      #   dbBackupRetention: '30d'
-      # --- JFrog Config ---
-      # jfrog:
-      #   dbBackupSchedule: '0 3 * * *'
-      #   dbBackupRetention: '30d'
+      uwm:
+        storageClass: 'gp3-csi'
+        prometheus:
+          retention: '24h'
+          storage: '50Gi'
+          storageClass: 'gp3-csi'
+          dedicatedServiceMonitors: true
+          resources:
+            requests:
+              cpu: '200m'
+              memory: '1Gi'
+            limits:
+              cpu: '1'
+              memory: '4Gi'
+        thanosRuler:
+          retention: '24h'
+          storage: '10Gi'
+          resources:
+            requests:
+              cpu: '100m'
+              memory: '256Mi'
+        alertmanager:
+          enabled: true
+          storage: '10Gi'
+          resources:
+            requests:
+              cpu: '100m'
+              memory: '256Mi'
+      # =======================================================================
+      # Disconnected Mirror (read via rendered-config ConfigMap)
+      # =======================================================================
+      disconnected:
+        mirrorRegistry:
+          host: 'registry.example.com'
+          port: '5000'
+          path: 'openshift'
+          mirrors:
+            - source: 'registry.redhat.io'
+              mirror: 'registry.example.com:5000/rhel'
+            - source: 'quay.io'
+              mirror: 'registry.example.com:5000/quay'
+        catalogs:
+          - source: redhat-operators
+            image: 'registry.example.com:5000/redhat/redhat-operator-index:v4.20'
+          - source: certified-operators
+            image: 'registry.example.com:5000/redhat/certified-operator-index:v4.20'
+        useIDMS: true
+        disableDefaultCatalogs: true
+      # =======================================================================
+      # GitLab (values with / or spaces that can't be labels)
+      # =======================================================================
+      gitlab:
+        dbBackupSchedule: '0 2 * * *'
+        dbBackupRetention: '30d'
+      # =======================================================================
+      # JFrog Artifactory
+      # =======================================================================
+      jfrog:
+        dbBackupSchedule: '0 3 * * *'
+        dbBackupRetention: '30d'
+      # =======================================================================
+      # Workload Partitioning (CPU isolation via PerformanceProfile)
+      # =======================================================================
+      workloadPartitioning:
+        reservedCpus: '0-3'
+        isolatedCpus: '4-31'
+        nodeSelector:
+          node-role.kubernetes.io/worker: ''
+        numaTopology: 'restricted'
+        hugepages:
+          defaultHugepagesSize: '1G'
+          pages:
+            - size: '1G'
+              count: 4
+      # =======================================================================
+      # NMState Networking (clusterset defaults for network interfaces)
+      # Example: bond with two ports, VLAN on top, static route, DNS
+      # Per-cluster overrides go in clusters/<name>.yaml config section
+      # =======================================================================
+      networking:
+        interfaces:
+          eno1:
+            type: ethernet
+            name: eno1
+            state: up
+            ipv4: disabled
+            ipv6: disabled
+          eno2:
+            type: ethernet
+            name: eno2
+            state: up
+            ipv4: disabled
+            ipv6: disabled
+          mgmt:
+            type: bond
+            name: bond0
+            state: up
+            mode: 802.3ad
+            mtu: 9000
+            miimon: 100
+            ports:
+              - eno1
+              - eno2
+            ipv4: dhcp
+            ipv6: disabled
+        routes:
+          datacenter:
+            destination: '10.0.0.0/8'
+            gateway: '192.168.1.1'
+            interface: bond0
+            metric: '100'
+        ovsBridges:
+          br-ex:
+            name: br-ex
+            ports:
+              - bond0
+        ovnMappings:
+          physnet1:
+            localnet: physnet1
+            bridge: br-ex
+        dns:
+          servers:
+            - '10.0.0.1'
+            - '10.0.0.2'
+          search:
+            - 'example.com'
     labels:
       # =======================================================================
       # Core Configuration
       # =======================================================================
-      self-managed: 'true'
+      self-managed: 'true'                # hub only — registers hub as a self-managed cluster
       openshift-version: '4.20.12'
+      policy-namespace: ''               # hub only — overrides the ACM policy namespace
 
       # =======================================================================
       # OpenShift GitOps (REQUIRED for AutoShift)
@@ -90,11 +198,11 @@ hubClusterSets:
       gitops-version: 'openshift-gitops-operator.v1.19.1'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
-      # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
-      # gitops-cluster-ca-bundle: 'true'  # Inject cluster trusted CA bundle into ArgoCD repo server
+      gitops-namespace: 'openshift-gitops'          # Override ArgoCD namespace per-cluster
+      gitops-cluster-ca-bundle: 'true'              # Inject cluster trusted CA bundle into ArgoCD repo server
 
       # =======================================================================
-      # Advanced Cluster Management (installed automatically on hub clustersets)
+      # Advanced Cluster Management (hub only — not installed on managed clusters)
       # =======================================================================
       acm-subscription-name: advanced-cluster-management
       acm-version: 'advanced-cluster-management.v2.15.1'
@@ -103,7 +211,13 @@ hubClusterSets:
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'High'       # 'Basic' or 'High'
       acm-observability: 'true'              # Requires ODF for noobaa bucket
-      acm-enable-provisioning: 'false'
+      # ACM Search v2 storage (PVC for the search-indexer PostgreSQL)
+      acm-search-storage: 'false'
+      acm-search-storage-class: 'ocs-storagecluster-ceph-rbd'
+      acm-search-storage-size: '100Gi'
+      # Cluster provisioning (hive-based cluster install flow)
+      cluster-install: 'false'                     # hub only — enables the cluster-install policy set
+      acm-enable-provisioning: 'false'            # hub only
       acm-provisioning-storage-class: ''             # StorageClass name
       acm-provisioning-database-size: 10Gi           # Min 10GiB recommended
       acm-provisioning-filesystem-storage-size: 100Gi # Min 100GiB recommended
@@ -153,9 +267,12 @@ hubClusterSets:
       servicemesh3operator: 'false'
       servicemesh3operator-subscription-name: servicemeshoperator3
       servicemesh3operator-channel: stable
+      servicemesh3operator-version: 'servicemeshoperator3.v3.3.1'
+      servicemesh3operator-istio-version: '1.24.3'  # Istio control plane version
+      servicemesh3operator-tempo: 'false'            # Enable Tempo distributed tracing
       servicemesh3operator-source: redhat-operators
       servicemesh3operator-source-namespace: openshift-marketplace
-      servicemesh3operator-version: 'servicemeshoperator3.v3.3.1'
+      servicemesh3-ambient: 'false'                  # Enable Ambient mesh mode
 
       # =======================================================================
       # MetalLB
@@ -185,6 +302,7 @@ hubClusterSets:
       aap-source-namespace: openshift-marketplace
       aap-version: 'aap-operator.v2.6.0-0.1768951413'
       aap-hub-disabled: 'false'              # 'true' omits Hub content storage
+      aap-storage-type: 's3'                 # 's3', 'pvc', or 'none' (default: none)
       ### AAP Hub Content File Storage (select file OR s3, not both)
       aap-file-storage: 'false'
       aap-file_storage_storage_class: 'ocs-storagecluster-cephfs'  # Requires RWX storage
@@ -215,11 +333,25 @@ hubClusterSets:
       workload-partitioning: 'false'         # Enable CPU workload partitioning
 
       # =======================================================================
+      # Machine Health Checks
+      # =======================================================================
+      machine-health-checks: 'false'
+      machine-health-checks-worker: 'true'   # Create MHC for the worker machine pool
+      machine-health-checks-infra: 'false'   # Create MHC for the infra machine pool
+      machine-health-checks-storage: 'false' # Create MHC for the storage machine pool
+
+      # =======================================================================
+      # Manual Remediations
+      # =======================================================================
+      manual-remediations: 'false'
+
+      # =======================================================================
       # Infrastructure Nodes
       # =======================================================================
       infra-nodes: ''                        # Number of infra nodes (blank = not managed, 0 = delete)
       infra-nodes-provider: aws              # 'aws', 'vmware', or 'baremetal'
       infra-nodes-instance-type: ''          # AWS instance type
+      infra-nodes-volume-size: '100'         # Root volume size in GiB
       infra-nodes-numcpu: ''
       infra-nodes-memory-mib: ''
       infra-nodes-numcores-per-socket: ''
@@ -239,6 +371,8 @@ hubClusterSets:
       # Worker Nodes
       # =======================================================================
       worker-nodes: ''                       # Number of worker nodes (blank = not managed)
+      worker-nodes-provider: aws              # 'aws', 'vmware', or 'baremetal'
+      worker-nodes-instance-type: ''          # AWS instance type
       worker-nodes-numcpu: ''
       worker-nodes-memory-mib: ''
       worker-nodes-numcores-per-socket: ''
@@ -484,10 +618,10 @@ hubClusterSets:
       acs-auth-provider: openshift           # Auth provider type ('openshift')
       acs-auth-min-role: None                # Minimum role for authenticated users
       acs-auth-admin-group: cluster-admins   # Group mapped to Admin role
-      # acs-vm-scanning: 'true'             # Enable VM scanning (Developer Preview)
-      # acs-admission-control: 'true'       # Enable admission control enforcement
-      # acs-network-policies: Enabled       # Network policy generation ('Enabled' or 'Disabled')
-      # acs-default-policies: 'true'        # Deploy baseline SecurityPolicy CRDs
+      acs-vm-scanning: 'true'               # Enable VM scanning (Developer Preview)
+      acs-admission-control: 'true'         # Enable admission control enforcement
+      acs-network-policies: Enabled         # Network policy generation ('Enabled' or 'Disabled')
+      acs-default-policies: 'true'          # Deploy baseline SecurityPolicy CRDs
 
       # =======================================================================
       # Developer Spaces
@@ -544,6 +678,7 @@ hubClusterSets:
       # =======================================================================
       gitops-dev: 'false'
       gitops-dev-team-dev: 'hub'             # 'hub' or 'standalone'
+      gitops-dev-team-test: 'hub'            # 'hub' or 'standalone'
 
       # =======================================================================
       # Loki
@@ -581,7 +716,7 @@ hubClusterSets:
       # =======================================================================
       # User Workload Monitoring (settings in config section above)
       # =======================================================================
-      # uwm: 'false'                              # Enable UWM (placement label only)
+      uwm: 'false'                              # Enable UWM (placement label only)
 
       # =======================================================================
       # Compliance Operator STIG Apply
@@ -640,6 +775,7 @@ hubClusterSets:
       cert-manager: 'false'
       cert-manager-subscription-name: openshift-cert-manager-operator
       cert-manager-channel: stable-v1
+      cert-manager-version: 'cert-manager-operator.v1.15.1'
       cert-manager-source: redhat-operators
       cert-manager-source-namespace: openshift-marketplace
 
@@ -649,6 +785,7 @@ hubClusterSets:
       cloudnative-pg: 'false'
       cloudnative-pg-subscription-name: cloudnative-pg
       cloudnative-pg-channel: stable-v1
+      cloudnative-pg-version: 'cloudnative-pg.v1.25.1'
       cloudnative-pg-source: certified-operators
       cloudnative-pg-source-namespace: openshift-marketplace
 
@@ -658,31 +795,32 @@ hubClusterSets:
       gitlab: 'false'
       gitlab-subscription-name: gitlab-operator-kubernetes
       gitlab-channel: stable
+      gitlab-version: 'gitlab-operator-kubernetes.v1.5.1'
       gitlab-source: certified-operators
       gitlab-source-namespace: openshift-marketplace
       # Service modes: managed (default), external, or bundled
-      # gitlab-db-mode: 'managed'                 # managed: CNPG HA, external: BYO, bundled: built-in
-      # gitlab-redis-mode: 'managed'              # managed: Redis Sentinel, external: BYO, bundled: Bitnami
-      # gitlab-object-storage-mode: 'managed'     # managed: NooBaa, external: BYO S3, bundled: MinIO
+      gitlab-db-mode: 'managed'                 # managed: CNPG HA, external: BYO, bundled: built-in
+      gitlab-redis-mode: 'managed'              # managed: Redis Sentinel, external: BYO, bundled: Bitnami
+      gitlab-object-storage-mode: 'managed'     # managed: NooBaa, external: BYO S3, bundled: MinIO
       # External mode labels (only when mode is 'external'):
-      # gitlab-db-host: 'my-postgres.example.com'
-      # gitlab-redis-host: 'my-redis.example.com'
-      # gitlab-redis-port: '6379'
-      # gitlab-argocd-integration: 'true'        # Create ArgoCD credential template for all GitLab repos
-      # gitlab-gitaly-ha: 'true'                  # Enable Gitaly HA via Praefect (default: false)
-      # gitlab-praefect-replicas: '3'            # Praefect proxy replicas (default: 3)
-      # gitlab-gitaly-replicas: '3'              # Gitaly replicas per virtual storage (default: 3)
-      # gitlab-gitaly-storage-class: 'ocs-storagecluster-cephfs'  # StorageClass for Gitaly PVC (omit for cluster default; use RWX for multi-node)
-      # gitlab-redis-storage-class: 'ocs-storagecluster-cephfs'   # StorageClass for bundled Redis PVC (omit for cluster default)
-      # gitlab-db-instances: '2'                   # PostgreSQL replicas (default: 2)
-      # gitlab-db-pooler-instances: '2'           # PgBouncer replicas (default: 2)
-      # gitlab-db-backups: 'true'                 # Enable CNPG backups (requires managed db + odf)
-      # gitlab-webservice-min-replicas: '2'       # Webservice HPA min (default: 2)
-      # gitlab-webservice-max-replicas: '4'       # Webservice HPA max (default: 4)
-      # gitlab-sidekiq-min-replicas: '2'          # Sidekiq HPA min (default: 2)
-      # gitlab-sidekiq-max-replicas: '4'          # Sidekiq HPA max (default: 4)
-      # gitlab-shell-min-replicas: '2'            # gitlab-shell HPA min (default: 2)
-      # gitlab-shell-max-replicas: '4'            # gitlab-shell HPA max (default: 4)
+      gitlab-db-host: 'my-postgres.example.com'
+      gitlab-redis-host: 'my-redis.example.com'
+      gitlab-redis-port: '6379'
+      gitlab-argocd-integration: 'true'         # Create ArgoCD credential template for all GitLab repos
+      gitlab-gitaly-ha: 'true'                  # Enable Gitaly HA via Praefect (default: false)
+      gitlab-praefect-replicas: '3'             # Praefect proxy replicas (default: 3)
+      gitlab-gitaly-replicas: '3'               # Gitaly replicas per virtual storage (default: 3)
+      gitlab-gitaly-storage-class: 'ocs-storagecluster-cephfs'  # StorageClass for Gitaly PVC (omit for cluster default; use RWX for multi-node)
+      gitlab-redis-storage-class: 'ocs-storagecluster-cephfs'   # StorageClass for bundled Redis PVC (omit for cluster default)
+      gitlab-db-instances: '2'                  # PostgreSQL replicas (default: 2)
+      gitlab-db-pooler-instances: '2'           # PgBouncer replicas (default: 2)
+      gitlab-db-backups: 'true'                 # Enable CNPG backups (requires managed db + odf)
+      gitlab-webservice-min-replicas: '2'       # Webservice HPA min (default: 2)
+      gitlab-webservice-max-replicas: '4'       # Webservice HPA max (default: 4)
+      gitlab-sidekiq-min-replicas: '2'          # Sidekiq HPA min (default: 2)
+      gitlab-sidekiq-max-replicas: '4'          # Sidekiq HPA max (default: 4)
+      gitlab-shell-min-replicas: '2'            # gitlab-shell HPA min (default: 2)
+      gitlab-shell-max-replicas: '4'            # gitlab-shell HPA max (default: 4)
       # --- Config values go in config.gitlab (see config section above) ---
       # dbBackupSchedule, dbBackupRetention
 
@@ -692,6 +830,7 @@ hubClusterSets:
       gitlab-runner: 'false'
       gitlab-runner-subscription-name: gitlab-runner-operator
       gitlab-runner-channel: stable
+      gitlab-runner-version: 'gitlab-runner-operator.v1.30.1'
       gitlab-runner-source: certified-operators
       gitlab-runner-source-namespace: openshift-marketplace
 
@@ -701,12 +840,13 @@ hubClusterSets:
       jfrog: 'false'
       jfrog-subscription-name: openshiftartifactoryha-operator
       jfrog-channel: alpha
+      jfrog-version: 'openshiftartifactoryha-operator.v107.98.14'
       jfrog-source: certified-operators
       jfrog-source-namespace: openshift-marketplace
       jfrog-node-replicas: '2'
-      # jfrog-db-instances: '2'                   # PostgreSQL replicas (default: 2)
-      # jfrog-db-pooler-instances: '2'            # PgBouncer replicas (default: 2)
-      # artifactory-db-backups: 'true'             # Enable CNPG backups (requires cloudnative-pg + odf)
+      jfrog-db-instances: '2'                   # PostgreSQL replicas (default: 2)
+      jfrog-db-pooler-instances: '2'            # PgBouncer replicas (default: 2)
+      artifactory-db-backups: 'true'            # Enable CNPG backups (requires cloudnative-pg + odf)
       # --- Config values go in config.jfrog (see config section above) ---
       # dbBackupSchedule, dbBackupRetention
 
@@ -732,6 +872,7 @@ hubClusterSets:
       external-secrets-operator: 'false'
       external-secrets-operator-subscription-name: openshift-external-secrets-operator
       external-secrets-operator-channel: stable-v1
+      external-secrets-operator-version: 'openshift-external-secrets-operator.v0.12.1'
       external-secrets-operator-source: redhat-operators
       external-secrets-operator-source-namespace: openshift-marketplace
       # Opentelemetry
@@ -739,5 +880,6 @@ hubClusterSets:
       opentelemetry: 'false'
       opentelemetry-subscription-name: opentelemetry-product
       opentelemetry-channel: stable
+      opentelemetry-version: 'opentelemetry-operator.v0.120.0'
       opentelemetry-source: redhat-operators
       opentelemetry-source-namespace: openshift-marketplace

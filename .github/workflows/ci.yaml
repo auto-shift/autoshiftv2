@@ -33,34 +33,13 @@ jobs:
         run: |
           dnf -y install \
             make \
-            jq \
             git \
-            findutils \
-            https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
-          dnf -y install yq
+            findutils
           # Install Helm from official releases
           curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp
           mv /tmp/linux-amd64/helm /usr/local/bin/helm
           chmod +x /usr/local/bin/helm
           helm version
-
-      - name: Lint Helm charts
-        run: make lint
-
-      - name: Validate YAML syntax
-        run: |
-          echo "=== Validating values files ==="
-          for f in autoshift/values/global.yaml autoshift/values/clustersets/*.yaml autoshift/values/clusters/*.yaml; do
-            [ -f "$f" ] || continue
-            echo "Checking $f..."
-            yq eval '.' "$f" > /dev/null
-          done
-
-      - name: Template rendering test
-        run: |
-          echo "=== Testing template rendering ==="
-          helm template autoshift autoshift -f autoshift/values/global.yaml -f autoshift/values/clustersets/hub.yaml -f autoshift/values/clustersets/managed.yaml > /dev/null
-          echo "Template rendering successful"
 
       - name: Dry-run packaging
         run: |
@@ -130,18 +109,18 @@ jobs:
           cat autoshift/files/policy-list.txt
 
   validate-policies:
+    name: Validate policy rendering and config (ACM resolver)
     runs-on: ubuntu-latest
-    container:
-      image: registry.access.redhat.com/ubi9/ubi:latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Helm
-        run: |
-          curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp
-          mv /tmp/linux-amd64/helm /usr/local/bin/helm
-          chmod +x /usr/local/bin/helm
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/go.mod
+          cache: true
+          cache-dependency-path: tools/go.sum
 
       - name: Validate policy name lengths
         run: |
@@ -158,18 +137,27 @@ jobs:
           done < <(find policies -name "*.yaml")
           [ "$FAILED" -eq 0 ] && echo "All policy names within limit" || exit 1
 
-      - name: Validate policy templates render
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Run govulncheck
+        working-directory: tools
         run: |
-          echo "=== Validating policy templates ==="
-          # Policy charts live at policies/<category>/<chart>/Chart.yaml
-          while IFS= read -r chart_file; do
-            [ -z "$chart_file" ] && continue
-            policy_dir=$(dirname "$chart_file")
-            policy_name=$(basename "$policy_dir")
-            echo "Rendering ${policy_name}..."
-            helm template "$policy_name" "$policy_dir" > /dev/null || {
-              echo "::error::Failed to render $policy_name"
-              exit 1
-            }
-          done < <(find policies -maxdepth 3 -name Chart.yaml)
-          echo "All policy templates rendered successfully"
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Validate policies (render, hub/spoke resolution, config coverage, label contract)
+        working-directory: tools
+        run: go test -tags integration ./... -v -count=1
+        env:
+          LABEL_REPORT_OUTPUT: ${{ github.workspace }}/label-contract-report.md
+
+      - name: Upload label contract report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: label-contract-report
+          path: label-contract-report.md
+          if-no-files-found: warn
