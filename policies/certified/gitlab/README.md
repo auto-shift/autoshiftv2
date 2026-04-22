@@ -119,6 +119,10 @@ gitlab-source-namespace: openshift-marketplace
 # gitlab-praefect-replicas: '3'         # Praefect proxy replicas (default: 3)
 # gitlab-gitaly-replicas: '3'           # Gitaly replicas per virtual storage (default: 3)
 
+# Storage classes (optional — omit to use cluster default)
+# gitlab-gitaly-storage-class: 'ocs-storagecluster-cephfs'  # StorageClass for Gitaly PVC; use RWX class to avoid Multi-Attach errors on multi-node clusters
+# gitlab-redis-storage-class: 'ocs-storagecluster-cephfs'   # StorageClass for bundled Redis PVC (only when gitlab-redis-mode: bundled)
+
 # Database sizing
 # gitlab-db-instances: '2'              # PostgreSQL replicas (default: 2)
 # gitlab-db-pooler-instances: '2'       # PgBouncer replicas (default: 2)
