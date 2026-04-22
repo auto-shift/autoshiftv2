@@ -58,6 +58,7 @@ spec:
             # Storage classes for persistent volumes (empty = use cluster default; set label to override)
             {{ "{{-" }} $gitalyStorageClass := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-gitaly-storage-class" | default "" {{ "hub}}" }}" {{ "}}" }}
             {{ "{{-" }} $redisStorageClass := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-redis-storage-class" | default "" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $disconnected := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false" {{ "hub}}" }}" {{ "}}" }}
 
             # Check if non-bundled services are ready by looking for their connection secrets
             # For managed mode: CNPG/Redis/NooBaa policies create these secrets
@@ -208,6 +209,16 @@ spec:
                             bucket: {{ "{{" }} $bucketName {{ "}}" }}
                           dependencyProxy:
                             bucket: {{ "{{" }} $bucketName {{ "}}" }}
+                            {{ "{{-" }} if eq $disconnected "true" {{ "}}" }}
+                            enabled: false
+                            {{ "{{-" }} else {{ "}}" }}
+                            object_store:
+                              enabled: true
+                              proxy_download: true
+                              connection:
+                                secret: gitlab-object-storage-connection
+                                key: connection
+                            {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} if eq $gitalyHA "true" {{ "}}" }}
                         praefect:
                           enabled: true
