@@ -579,6 +579,8 @@ add_to_autoshift_values() {
         local available_files=()
         while IFS= read -r file; do
             [[ -z "$file" ]] && continue
+            # hub-minimal.yaml is intentionally restricted to gitops + acm only
+            [[ "$file" == *"hub-minimal.yaml" ]] && continue
             available_files+=("${file#autoshift/}")
         done < <(find autoshift/values -name "*.yaml" -not -name "_*" 2>/dev/null | sort)
 
