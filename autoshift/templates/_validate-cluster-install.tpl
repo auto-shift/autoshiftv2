@@ -7,7 +7,7 @@ Returns newline-separated error strings (empty string = no errors).
   {{- $path := .path -}}
   {{- $disconnected := .config -}}
   {{- $validDisconnectedKeys := list "mirrorRegistry" "useIDMS" "disableDefaultCatalogs" "catalogs" "osImages" -}}
-  {{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "mirrors" "releaseImage" -}}
+  {{- $validMirrorRegKeys := list "host" "path" "ca" "caRef" "mirrors" "tagMirrors" "releaseImage" -}}
   {{- $validMirrorEntryKeys := list "source" "mirror" -}}
   {{- $validCaRefKeys := list "name" "key" "namespace" -}}
   {{- $validCatalogKeys := list "source" "imagePath" "tag" "publisher" "displayName" "updateInterval" -}}
@@ -38,6 +38,20 @@ Returns newline-separated error strings (empty string = no errors).
 {{ printf "%s: disconnected.mirrorRegistry.mirrors[%d].source is required" $path $idx }}
       {{- end -}}
     {{- end -}}
+  {{- end -}}
+  {{- $tagMirrorEntries := ($mirrorReg.tagMirrors | default list) -}}
+  {{- range $idx, $entry := $tagMirrorEntries -}}
+    {{- range $key, $_ := $entry -}}
+      {{- if not (has $key $validMirrorEntryKeys) }}
+{{ printf "%s: disconnected.mirrorRegistry.tagMirrors[%d].%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validMirrorEntryKeys) }}
+      {{- end -}}
+    {{- end -}}
+    {{- if not (index $entry "source") }}
+{{ printf "%s: disconnected.mirrorRegistry.tagMirrors[%d].source is required" $path $idx }}
+    {{- end -}}
+  {{- end -}}
+  {{- if and (gt (len $tagMirrorEntries) 0) (not $mirrorReg.host) }}
+{{ printf "%s: disconnected.mirrorRegistry.host is required when tagMirrors are defined" $path }}
   {{- end -}}
   {{- $caRef := ($mirrorReg.caRef | default dict) -}}
   {{- if not (empty $caRef) -}}

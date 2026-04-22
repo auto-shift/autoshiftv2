@@ -25,6 +25,12 @@ hubClusterSets:
         alertmanager:
           enabled: false
           storage: '10Gi'
+      gitlab:
+        dbBackupSchedule: '0 2 * * *'
+        dbBackupRetention: '30d'
+      jfrog:
+        dbBackupSchedule: '0 3 * * *'
+        dbBackupRetention: '30d'
     labels:
       # OpenShift version for cluster deployment and image mirroring
       openshift-version: '4.20.12'
@@ -33,7 +39,7 @@ hubClusterSets:
       gitops: 'true' # is expected to be installed on all hub clusters
       gitops-subscription-name: openshift-gitops-operator
       gitops-disable-default-argocd: 'true'
-      gitops-channel: gitops-1.19
+      gitops-channel: gitops-1.20
       # gitops-version: 'openshift-gitops-operator.v1.18.0'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
@@ -41,7 +47,7 @@ hubClusterSets:
       ### Advanced Cluster Manager
       acm-subscription-name: advanced-cluster-management
       # acm-version: 'advanced-cluster-management.v2.14.0'
-      acm-channel: release-2.15
+      acm-channel: release-2.16
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'High'
@@ -72,6 +78,15 @@ hubClusterSets:
       acm-addon-gpf-mem-request: '128Mi'
       acm-addon-gpf-cpu-request: '100m'
       acm-addon-gpf-mem-limit: '512Mi'
+      ### User Workload Monitoring
+      uwm: 'true'
+      ### node-maintenance
+      node-maintenance: 'true'
+      node-maintenance-subscription-name: node-maintenance-operator
+      node-maintenance-channel: stable
+      node-maintenance-source: redhat-operators
+      node-maintenance-source-namespace: openshift-marketplace
+      node-maintenance-version: 'node-maintenance-operator.v5.5.0'
       ### Tempo
       tempo: 'true'
       tempo-subscription-name: tempo-product
@@ -86,14 +101,27 @@ hubClusterSets:
       kiali-source: redhat-operators
       kiali-source-namespace: openshift-marketplace
       # kiali-version: 'kiali-operator.v2.17.2'
-      ### Servicemesh3
+      ### Servicemesh3 Operator
       servicemesh3operator: 'true'
       servicemesh3operator-subscription-name: servicemeshoperator3
       servicemesh3operator-channel: stable
       servicemesh3operator-source: redhat-operators
       servicemesh3operator-source-namespace: openshift-marketplace
       # servicemesh3operator-version: 'servicemeshoperator3.v3.3.1'
+      ### Servicemesh3 Ambient
       servicemesh3-ambient: 'true'
+      ### OpenTelemetry
+      opentelemetry: 'true'
+      opentelemetry-subscription-name: opentelemetry-product
+      opentelemetry-channel: stable
+      opentelemetry-source: redhat-operators
+      opentelemetry-source-namespace: openshift-marketplace
+      ### external-secrets-operator
+      external-secrets-operator: 'true'
+      external-secrets-operator-subscription-name: openshift-external-secrets-operator
+      external-secrets-operator-channel: stable-v1
+      external-secrets-operator-source: redhat-operators
+      external-secrets-operator-source-namespace: openshift-marketplace
       ### MetalLB
       metallb: 'false'
       metallb-subscription-name: metallb-operator
@@ -267,7 +295,7 @@ hubClusterSets:
       dev-hub: 'true'
       dev-hub-subscription-name: rhdh
       # dev-hub-version: 'rhdh.v1.5.0'
-      dev-hub-channel: fast-1.8
+      dev-hub-channel: fast-1.9
       dev-hub-source: redhat-operators
       dev-hub-source-namespace: openshift-marketplace
       ### OpenShift Pipelines
@@ -288,7 +316,7 @@ hubClusterSets:
       quay: 'true'
       quay-subscription-name: quay-operator
       # quay-version: 'quay-operator.v3.15.0'
-      quay-channel: stable-3.16
+      quay-channel: stable-3.17
       quay-source: redhat-operators
       quay-source-namespace: openshift-marketplace
       ### Developer OpenShift Gitops
@@ -300,7 +328,7 @@ hubClusterSets:
       loki: 'true'
       loki-subscription-name: loki-operator
       # loki-version: 'loki-operator.v6.3.0'
-      loki-channel: stable-6.4
+      loki-channel: stable-6.5
       loki-source: redhat-operators
       loki-source-namespace: openshift-marketplace
       loki-size: 1x.extra-small
@@ -310,7 +338,7 @@ hubClusterSets:
       logging: 'true'
       logging-subscription-name: cluster-logging
       # logging-version: 'cluster-logging.v6.3.0'
-      logging-channel: stable-6.4
+      logging-channel: stable-6.5
       logging-source: redhat-operators
       logging-source-namespace: openshift-marketplace
       ### Cluster Observability Operator
@@ -320,8 +348,6 @@ hubClusterSets:
       coo-channel: stable
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
-      ### User Workload Monitoring
-      uwm: 'true'
       ### Compliance Operator Stig Apply
       compliance: 'true'
       compliance-auto-remediate: 'true'
@@ -356,22 +382,54 @@ hubClusterSets:
       node-feature-discovery-source: redhat-operators
       node-feature-discovery-source-namespace: openshift-marketplace
       # node-feature-discovery-version: 'nfd.4.18.0-202511261113'
-      ### node-maintenance
-      node-maintenance: 'true'
-      node-maintenance-subscription-name: node-maintenance-operator
-      node-maintenance-channel: stable
-      node-maintenance-source: redhat-operators
-      node-maintenance-source-namespace: openshift-marketplace
-      node-maintenance-version: 'node-maintenance-operator.v5.5.0'
-      ### external-secrets-operator
-      external-secrets-operator: 'true'
-      external-secrets-operator-subscription-name: external-secrets-operator
-      external-secrets-operator-channel: stable-v1
-      external-secrets-operator-source: redhat-operators
-      external-secrets-operator-source-namespace: openshift-marketplace
-      ### opentelemetry
-      opentelemetry: 'true'
-      opentelemetry-subscription-name: opentelemetry-product
-      opentelemetry-channel: stable
-      opentelemetry-source: redhat-operators
-      opentelemetry-source-namespace: openshift-marketplace
+      ### gitlab
+      gitlab: 'false'
+      gitlab-subscription-name: gitlab-operator-kubernetes
+      gitlab-channel: stable
+      gitlab-source: certified-operators
+      gitlab-source-namespace: openshift-marketplace
+      # gitlab-db-mode: 'managed'              # managed (default), external, or bundled
+      # gitlab-redis-mode: 'managed'           # managed (default), external, or bundled
+      # gitlab-object-storage-mode: 'managed'  # managed (default), external, or bundled
+      gitlab-db-instances: '2'
+      gitlab-db-pooler-instances: '2'
+      gitlab-db-backups: 'true'
+      gitlab-gitaly-ha: 'true'
+      gitlab-praefect-replicas: '3'
+      gitlab-gitaly-replicas: '3'
+      gitlab-gitaly-storage-class: 'ocs-storagecluster-cephfs'
+      gitlab-redis-storage-class: 'ocs-storagecluster-cephfs'
+      gitlab-webservice-min-replicas: '2'
+      gitlab-webservice-max-replicas: '4'
+      gitlab-sidekiq-min-replicas: '2'
+      gitlab-sidekiq-max-replicas: '4'
+      gitlab-shell-min-replicas: '2'
+      gitlab-shell-max-replicas: '4'
+      ### gitlab-runner
+      gitlab-runner: 'false'  # Disabled: v1.47.0 has broken kube-rbac-proxy image on registry.gitlab.com
+      gitlab-runner-subscription-name: gitlab-runner-operator
+      gitlab-runner-channel: stable
+      gitlab-runner-source: certified-operators
+      gitlab-runner-source-namespace: openshift-marketplace
+      ### cert-manager
+      cert-manager: 'true'
+      cert-manager-subscription-name: openshift-cert-manager-operator
+      cert-manager-channel: stable-v1
+      cert-manager-source: redhat-operators
+      cert-manager-source-namespace: openshift-marketplace
+      ### jfrog
+      jfrog: 'false'
+      jfrog-subscription-name: openshiftartifactoryha-operator
+      jfrog-channel: alpha
+      jfrog-source: certified-operators
+      jfrog-source-namespace: openshift-marketplace
+      jfrog-db-instances: '2'
+      jfrog-db-pooler-instances: '2'
+      jfrog-node-replicas: '2'
+      artifactory-db-backups: 'true'
+      ### cloudnative-pg
+      cloudnative-pg: 'false'
+      cloudnative-pg-subscription-name: cloudnative-pg
+      cloudnative-pg-channel: stable-v1
+      cloudnative-pg-source: certified-operators
+      cloudnative-pg-source-namespace: openshift-marketplace
