@@ -1,4 +1,5 @@
 {{- include "autoshift.validate-cluster-install" . }}
+{{- include "autoshift.validate-naming" . }}
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -27,14 +28,22 @@ spec:
       repoURL: {{ .Values.autoshiftGitRepo }}
       revision: {{ .Values.autoshiftGitBranchTag }}
       directories:
-      - path: 'policies/*'
-      - path: 'policies/cluster-config-maps'
+      - path: 'policies/stable/*'
+      - path: 'policies/certified/*'
+      - path: 'policies/community/*'
+      - path: 'policies/stable/cluster-config-maps'
         exclude: true
-      - path: 'policies/cluster-labels'
+      - path: 'policies/stable/cluster-labels'
+        exclude: true
+      - path: 'policies/certified'
+        exclude: true
+      - path: 'policies/community'
+        exclude: true
+      - path: 'policies/stable'
         exclude: true
       {{- if .Values.excludePolicies }}
       {{- range .Values.excludePolicies }}
-      - path: 'policies/{{ . }}'
+      - path: 'policies/*/{{ . }}'
         exclude: true
       {{- end }}
       {{- end }}
@@ -52,57 +61,63 @@ spec:
     spec:
       project: default
       revisionHistoryLimit: {{ .Values.revisionHistoryLimit | default 3 }}
-      source:
+      sources: 
+        - repoURL: {{ (.Values.autoshiftValues).repoUrl | default .Values.autoshiftGitRepo }}
+          targetRevision: {{ (.Values.autoshiftValues).targetRevision | default .Values.autoshiftGitBranchTag }}
+          ref: values
         {{- if .Values.autoshiftOciRegistry }}
-        # OCI mode - use Helm chart from registry
-        path: .
-        repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
-        targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
+        - path: .
+          repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
+          targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
         {{- else }}
         # Git mode - use path in Git repository
-        path: '{{"{{"}} .path.path {{"}}"}}'
-        repoURL: {{ .Values.autoshiftGitRepo }}
-        targetRevision: {{ .Values.autoshiftGitBranchTag }}
+        - path: '{{"{{"}} .path.path {{"}}"}}'
+          repoURL: {{ .Values.autoshiftGitRepo }}
+          targetRevision: {{ .Values.autoshiftGitBranchTag }}
         {{- end }}
-        helm:
-          valueFiles:
-          - values.yaml
-          valuesObject:
-            {{- $clusterSetSuffix := "" }}
-            {{- if .Values.versionedClusterSets }}
-              {{- $versionTag := "" }}
+          helm:
+            valueFiles:
               {{- if .Values.autoshiftOciRegistry }}
-                {{- $versionTag = .Values.autoshiftOciVersion | default "latest" }}
+              - $values/policies/{{ "{{" }} .name {{ "}}" }}/values.yaml
               {{- else }}
-                {{- $versionTag = .Values.autoshiftGitBranchTag | default "main" }}
+              - $values/{{ "{{" }} .path.path {{ "}}" }}/values.yaml
               {{- end }}
-              {{- /* Sanitize for DNS: replace dots and slashes with dashes, lowercase */ -}}
-              {{- $clusterSetSuffix = printf "-%s" ($versionTag | replace "." "-" | replace "/" "-" | lower) }}
-            {{- end }}
-            gitopsNamespace: {{ .Values.gitopsNamespace }}
-            selfManagedHubSet: {{ .Values.selfManagedHubSet }}{{ $clusterSetSuffix }}
-            policy_namespace: {{ printf "policies-%s" .Release.Name }}
-            clusterSetSuffix: {{ $clusterSetSuffix }}
-            autoshift:
-              dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
-              evaluationInterval:
-                compliant: {{ (((.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-                noncompliant: {{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-            {{- if .Values.hubClusterSets }}
-            hubClusterSets:
-            {{-  range $cluster, $clustervalue := .Values.hubClusterSets }}
-              {{ $cluster }}{{ $clusterSetSuffix }}:
-                labels:
-                  self-managed: '{{ index $clustervalue.labels "self-managed" | default "true" }}'
-            {{- end }}
-            {{- end }}
-            {{- if .Values.managedClusterSets }}
-            managedClusterSets:
-            {{-  range $cluster, $clustervalue := .Values.managedClusterSets }}
-              {{ $cluster }}{{ $clusterSetSuffix }}:
-                labels: {}
-            {{- end }}
-            {{- end }}
+            valuesObject:
+              {{- $clusterSetSuffix := "" }}
+              {{- if .Values.versionedClusterSets }}
+                {{- $versionTag := "" }}
+                {{- if .Values.autoshiftOciRegistry }}
+                  {{- $versionTag = .Values.autoshiftOciVersion | default "latest" }}
+                {{- else }}
+                  {{- $versionTag = .Values.autoshiftGitBranchTag | default "main" }}
+                {{- end }}
+                {{- /* Sanitize for DNS: replace dots and slashes with dashes, lowercase */ -}}
+                {{- $clusterSetSuffix = printf "-%s" ($versionTag | replace "." "-" | replace "/" "-" | lower) }}
+              {{- end }}
+              gitopsNamespace: {{ .Values.gitopsNamespace }}
+              selfManagedHubSet: {{ .Values.selfManagedHubSet }}{{ $clusterSetSuffix }}
+              policy_namespace: {{ printf "policies-%s" .Release.Name }}
+              clusterSetSuffix: {{ $clusterSetSuffix }}
+              autoshift:
+                dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
+                evaluationInterval:
+                  compliant: {{ (((.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+                  noncompliant: {{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+              {{- if .Values.hubClusterSets }}
+              hubClusterSets:
+              {{-  range $cluster, $clustervalue := .Values.hubClusterSets }}
+                {{ $cluster }}{{ $clusterSetSuffix }}:
+                  labels:
+                    self-managed: '{{ index $clustervalue.labels "self-managed" | default "true" }}'
+              {{- end }}
+              {{- end }}
+              {{- if .Values.managedClusterSets }}
+              managedClusterSets:
+              {{-  range $cluster, $clustervalue := .Values.managedClusterSets }}
+                {{ $cluster }}{{ $clusterSetSuffix }}:
+                  labels: {}
+              {{- end }}
+              {{- end }}
       ignoreDifferences:
       - group: "apps"
         kind: "Project"

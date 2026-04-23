@@ -17,6 +17,16 @@ else
     NC=''
 fi
 
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    echo "Usage: $0 <quay-token> [organization]"
+    echo ""
+    echo "Create all AutoShift Quay.io repositories (bootstrap, main, and policy charts)."
+    echo ""
+    echo "Get your token from: https://quay.io/organization/autoshift?tab=applications"
+    echo "Create an OAuth Application with 'Create Repositories' permission"
+    exit 0
+fi
+
 QUAY_TOKEN="${1:-}"
 ORG="${2:-autoshift}"
 
@@ -33,9 +43,11 @@ API_URL="https://quay.io/api/v1"
 echo "Creating repositories in organization: $ORG"
 echo ""
 
-# Discover all charts
-BOOTSTRAP_CHARTS=$(find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" -exec dirname {} \; | xargs -n1 basename)
-POLICY_CHARTS=$(find policies -maxdepth 2 -name Chart.yaml -exec dirname {} \; | xargs -n1 basename)
+# Discover all charts.
+# Bootstrap charts live at <chart>/Chart.yaml (depth 2).
+# Policy charts live at policies/<category>/<chart>/Chart.yaml (depth 3).
+BOOTSTRAP_CHARTS=$(find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" -exec dirname {} \; | xargs -r -n1 basename)
+POLICY_CHARTS=$(find policies -maxdepth 3 -name Chart.yaml -exec dirname {} \; | xargs -r -n1 basename)
 
 # Function to create repository
 create_repo() {

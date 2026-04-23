@@ -1,0 +1,254 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-jfrog-instance" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-jfrog-operator-install
+      namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-cnpg-artifactory
+      namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-cnpg-artifactory-pooler
+      namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-jfrog-keys
+      namespace: '{{ $policyNamespace }}'
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: jfrog-scc
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: security.openshift.io/v1
+                kind: SecurityContextConstraints
+                metadata:
+                  name: anyuid
+                users:
+                  - system:serviceaccount:openshift-operators:artifactory-ha-operator
+                  - system:serviceaccount:{{ .Values.jfrog.namespace }}:openshiftartifactoryha-artifactory-ha
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: jfrog-artifactory-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $dbSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-db-app") | default dict {{ "}}" }}
+            {{ "{{-" }} $dbData := ($dbSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $dbHost := "artifactory-db-pooler-rw.{{ .Values.jfrog.namespace }}.svc" {{ "}}" }}
+            {{ "{{-" }} $dbPort := (index $dbData "port" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $dbName := (index $dbData "dbname" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $keysSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-keys") | default dict {{ "}}" }}
+            {{ "{{-" }} $keysData := ($keysSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $masterKey := (index $keysData "master-key" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $joinKey := (index $keysData "join-key" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} $licenseSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-license") {{ "}}" }}
+            {{ "{{-" }} $adminSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-admin") | default dict {{ "}}" }}
+            {{ "{{-" }} $adminData := ($adminSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $adminPassword := (index $adminData "password" | default "" | base64dec) {{ "}}" }}
+            {{ "{{-" }} if and (not (empty $dbPort)) (not (empty $dbName)) (not (empty $masterKey)) (not (empty $joinKey)) {{ "}}" }}
+            {{ "{{-" }} if not (empty $adminPassword) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: artifactory-admin-creds
+                  namespace: {{ .Values.jfrog.namespace }}
+                type: Opaque
+                stringData:
+                  admin-creds: "admin={{ "{{" }} $adminPassword {{ "}}" }}"
+            {{ "{{-" }} end {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: artifactory-db-pooler-jdbc
+                  namespace: {{ .Values.jfrog.namespace }}
+                type: Opaque
+                stringData:
+                  jdbc-uri: "jdbc:postgresql://{{ "{{" }} $dbHost {{ "}}" }}:{{ "{{" }} $dbPort {{ "}}" }}/{{ "{{" }} $dbName {{ "}}" }}"
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: charts.helm.k8s.io/v1
+                kind: OpenshiftArtifactoryHa
+                metadata:
+                  name: openshiftartifactoryha
+                  namespace: {{ .Values.jfrog.namespace }}
+                spec:
+                  artifactory-ha:
+                    artifactory:
+                      masterKey: {{ "{{" }} $masterKey {{ "}}" }}
+                      joinKey: {{ "{{" }} $joinKey {{ "}}" }}
+            {{ "{{-" }} if $licenseSecret {{ "}}" }}
+                      license:
+                        secret: artifactory-license
+                        dataKey: license-key
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if not (empty $adminPassword) {{ "}}" }}
+                      admin:
+                        secret: artifactory-admin-creds
+                        dataKey: admin-creds
+            {{ "{{-" }} end {{ "}}" }}
+                      node:
+                        replicaCount: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/jfrog-node-replicas" | default "1" {{ "hub}}" }}
+                        waitForPrimaryStartup:
+                          enabled: false
+                      persistence:
+                        enabled: true
+                        size: 200Gi
+                    databaseUpgradeReady: true
+                    database:
+                      type: postgresql
+                      driver: org.postgresql.Driver
+                      url: jdbc:postgresql://{{ "{{" }} $dbHost {{ "}}" }}:{{ "{{" }} $dbPort {{ "}}" }}/{{ "{{" }} $dbName {{ "}}" }}
+                      secrets:
+                        user:
+                          name: artifactory-db-app
+                          key: username
+                        password:
+                          name: artifactory-db-app
+                          key: password
+                        url:
+                          name: artifactory-db-pooler-jdbc
+                          key: jdbc-uri
+                    postgresql:
+                      enabled: false
+                    nginx:
+                      enabled: false
+                    waitForDatabase: true
+            {{ "{{-" }} end {{ "}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: jfrog-artifactory-route
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: route.openshift.io/v1
+                kind: Route
+                metadata:
+                  name: artifactory
+                  namespace: {{ .Values.jfrog.namespace }}
+                spec:
+                  host: artifactory.{{ "{{" }} $ingressDomain {{ "}}" }}
+                  to:
+                    kind: Service
+                    name: openshiftartifactoryha-artifactory-ha-primary
+                    weight: 100
+                  port:
+                    targetPort: 8082
+                  tls:
+                    termination: edge
+                    insecureEdgeTerminationPolicy: Redirect
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: jfrog-instance-ready
+        spec:
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $primary := (lookup "apps/v1" "StatefulSet" "{{ .Values.jfrog.namespace }}" "openshiftartifactoryha-artifactory-ha-primary") | default dict {{ "}}" }}
+            {{ "{{-" }} $primarySpec := (index $primary "spec" | default dict) {{ "}}" }}
+            {{ "{{-" }} $primaryReplicas := (index $primarySpec "replicas" | default 1 | toInt) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps/v1
+                kind: StatefulSet
+                metadata:
+                  name: openshiftartifactoryha-artifactory-ha-primary
+                  namespace: {{ .Values.jfrog.namespace }}
+                status:
+                  readyReplicas: {{ "{{" }} $primaryReplicas {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/jfrog'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

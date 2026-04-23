@@ -41,7 +41,7 @@ oc login --token=sha256~lQ...dI --server=https://api.cluster.example.com:6443
 > [!NOTE]
 > Alternatively you can use the devcontainer provided by this repository. By default the container will install the stable version of `oc` and the latest Red Hat provided version of `helm`. These versions can be specified by setting the `OCP_VERSION` and `HELM_VERSION` variables before building. From the container you can login as usual with `oc login` or copy your kubeconfig into the container `podman cp ${cluster_dir}/auth/kubeconfig ${container-name}:/workspaces/.kube/config`.
 
-If installing in a disconnected or internet-disadvantaged environment, update the values in `policies/openshift-gitops/values.yaml` and `policies/advanced-cluster-management/values.yaml` with the source mirror registry, otherwise leave these values as is.
+If installing in a disconnected or internet-disadvantaged environment, update the values in `policies/stable/openshift-gitops/values.yaml` and `policies/stable/advanced-cluster-management/values.yaml` with the source mirror registry, otherwise leave these values as is.
 
 If your clone of AutoShiftv2 requires credentials or you would like to add credentials to any other git repos you can do this in the `openshift-gitops/values` file before installing. This can also be done in the OpenShift GitOps GUI after install.
 
@@ -50,7 +50,7 @@ If your clone of AutoShiftv2 requires credentials or you would like to add crede
 Using helm, install OpenShift GitOps:
 
 ```console
-helm upgrade --install openshift-gitops openshift-gitops -f policies/openshift-gitops/values.yaml
+helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml
 ```
 
 > [!NOTE]
@@ -109,7 +109,7 @@ If this is not the case you may need to run `helm upgrade ...` command again.
 Using helm, install OpenShift Advanced Cluster Management on the hub cluster:
 
 ```console
-helm upgrade --install advanced-cluster-management advanced-cluster-management -f policies/advanced-cluster-management/values.yaml
+helm upgrade --install advanced-cluster-management advanced-cluster-management -f policies/stable/advanced-cluster-management/values.yaml
 ```
 
 Test if Red Hat Advanced Cluster Management has installed correctly, this may take some time:

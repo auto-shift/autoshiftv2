@@ -8,8 +8,7 @@ AutoShift uses a **composable values file** pattern. Instead of a single monolit
 autoshift/values/
   global.yaml                        # Shared config: git repo, branch, dryRun
   clustersets/
-    _example-hub.yaml                # Reference: ALL hub clusterset options
-    _example-managed.yaml            # Reference: ALL managed clusterset options
+    _example.yaml                    # Reference: ALL clusterset options (hub and managed)
     hub.yaml                         # Hub clusterset — full enterprise profile
     hub-minimal.yaml                 # Hub clusterset — minimal (GitOps + ACM only)
     hub-baremetal-sno.yaml           # Hub clusterset — baremetal single-node
@@ -45,14 +44,17 @@ Labels follow this override precedence (highest to lowest):
 
 ### Creating Custom Profiles
 
-Copy an `_example-*.yaml` file and uncomment/modify the labels you need:
+Copy `_example.yaml` and make two edits (top-level key and clusterset name):
 
 ```bash
 # Create a custom hub profile
-cp autoshift/values/clustersets/_example-hub.yaml autoshift/values/clustersets/my-hub.yaml
+cp autoshift/values/clustersets/_example.yaml autoshift/values/clustersets/my-hub.yaml
+# Keep hubClusterSets, change "hub" to your clusterset name
 
 # Create a custom managed profile
-cp autoshift/values/clustersets/_example-managed.yaml autoshift/values/clustersets/my-managed.yaml
+cp autoshift/values/clustersets/_example.yaml autoshift/values/clustersets/my-managed.yaml
+# Change hubClusterSets → managedClusterSets, change "hub" to your clusterset name
+# Remove labels marked "# hub only"
 
 # Create per-cluster overrides
 cp autoshift/values/clusters/_example.yaml autoshift/values/clusters/my-cluster.yaml
@@ -64,7 +66,7 @@ See `autoshift/README.md` for detailed chart documentation.
 
 Values can be set on a per cluster and clusterset level to decide what features of AutoShift will be applied to each cluster. If a value is defined in helm values, a clusterset label and a cluster label precedence will be **cluster > clusterset > helm** values where helm values is the least.
 
-Helm chart defaults (`values.yaml`) live in each policy's Helm chart under the `policies/` directory (e.g., `policies/openshift-gitops/values.yaml`, `policies/advanced-cluster-security/values.yaml`). These defaults can be overridden by clusterset labels in your `autoshift/values/clustersets/` files, and further overridden by per-cluster labels in `autoshift/values/clusters/`.
+Helm chart defaults (`values.yaml`) live in each policy's Helm chart under the `policies/` directory (e.g., `policies/stable/openshift-gitops/values.yaml`, `policies/advanced-cluster-security/values.yaml`). These defaults can be overridden by clusterset labels in your `autoshift/values/clustersets/` files, and further overridden by per-cluster labels in `autoshift/values/clusters/`.
 
 ## Operator Version Control
 
@@ -556,7 +558,7 @@ Automated node health monitoring and remediation.
 
 The Kubernetes NMState Operator declaratively configures Red Hat CoreOS network settings including bonds, VLANs, static routes, and DNS. Network configuration is defined through structured YAML under `config.networking` in clusterset or cluster values files.
 
-See [policies/nmstate/README.md](../policies/nmstate/README.md) for detailed documentation and examples.
+See [policies/stable/nmstate/README.md](../policies/stable/nmstate/README.md) for detailed documentation and examples.
 
 #### Operator Labels
 

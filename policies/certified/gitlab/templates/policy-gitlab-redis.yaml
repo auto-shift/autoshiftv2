@@ -1,0 +1,508 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-gitlab-redis" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-gitlab-operator-install
+      namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-gitops-operator-install
+      namespace: '{{ $policyNamespace }}'
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-redis-password
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $existingSecret := (lookup "v1" "Secret" "{{ .Values.gitlab.namespace }}" "gitlab-redis-password") | default dict {{ "}}" }}
+            {{ "{{-" }} $existingData := ($existingSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $existingPass := (index $existingData "redis-password" | default "") {{ "}}" }}
+            {{ "{{-" }} if (empty $existingPass) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: gitlab-redis-password
+                  namespace: {{ .Values.gitlab.namespace }}
+                type: Opaque
+                stringData:
+                  redis-password: {{ "{{" }} printf "gitlabRedis%s" "{{ "{{hub" }} .ManagedClusterName {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-redis
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $redisPass := (lookup "v1" "Secret" "{{ .Values.gitlab.namespace }}" "gitlab-redis-password").data {{ "}}" }}
+            {{ "{{-" }} $password := (index $redisPass "redis-password" | base64dec) {{ "}}" }}
+            # Resolve the Redis image from the OpenShift GitOps operator deployment.
+            # The operator ships rhel9/redis-7 as a relatedImage, so oc-mirror captures
+            # it automatically. By reading ARGOCD_REDIS_IMAGE from the operator's env vars,
+            # we get the exact pinned digest that is guaranteed to exist in the mirror.
+            # Falls back to :latest for connected environments where the lookup may fail.
+            {{ "{{-" }} $gitopsDeploy := (lookup "apps/v1" "Deployment" "openshift-gitops-operator" "openshift-gitops-operator-controller-manager") | default dict {{ "}}" }}
+            {{ "{{-" }} $redisImage := "registry.redhat.io/rhel9/redis-7:latest" {{ "}}" }}
+            {{ "{{-" }} range ((($gitopsDeploy.spec).template).spec).containers {{ "}}" }}
+            {{ "{{-" }} range .env {{ "}}" }}
+            {{ "{{-" }} if eq .name "ARGOCD_REDIS_IMAGE" {{ "}}" }}
+            {{ "{{-" }} $redisImage = .value {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: gitlab-redis-scripts
+                  namespace: {{ .Values.gitlab.namespace }}
+                data:
+                  start-replica.sh: |
+                    #!/bin/bash
+                    exec redis-server /etc/redis/redis.conf \
+                      --appendonly yes \
+                      --requirepass "$REDIS_PASSWORD" \
+                      --masterauth "$REDIS_PASSWORD" \
+                      --replicaof gitlab-redis-0.gitlab-redis-headless.{{ .Values.gitlab.namespace }}.svc 6379
+                  start-sentinel.sh: |
+                    #!/bin/bash
+                    cp /etc/redis/sentinel.conf.template /tmp/sentinel.conf
+                    sed -i "s/REDIS_PASSWORD_PLACEHOLDER/$REDIS_PASSWORD/g" /tmp/sentinel.conf
+                    exec redis-sentinel /tmp/sentinel.conf
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: gitlab-redis-sentinel-config
+                  namespace: {{ .Values.gitlab.namespace }}
+                data:
+                  sentinel.conf.template: |
+                    port 26379
+                    sentinel monitor gitlab-redis gitlab-redis-0.gitlab-redis-headless.{{ .Values.gitlab.namespace }}.svc 6379 2
+                    sentinel auth-pass gitlab-redis REDIS_PASSWORD_PLACEHOLDER
+                    sentinel down-after-milliseconds gitlab-redis 5000
+                    sentinel failover-timeout gitlab-redis 10000
+                    sentinel parallel-syncs gitlab-redis 1
+            {{/* Redis master + replica StatefulSet */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Service
+                metadata:
+                  name: gitlab-redis-headless
+                  namespace: {{ .Values.gitlab.namespace }}
+                  labels:
+                    app: gitlab-redis
+                spec:
+                  clusterIP: None
+                  selector:
+                    app: gitlab-redis
+                  ports:
+                    - port: 6379
+                      targetPort: 6379
+                      name: redis
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Service
+                metadata:
+                  name: gitlab-redis
+                  namespace: {{ .Values.gitlab.namespace }}
+                  labels:
+                    app: gitlab-redis
+                spec:
+                  selector:
+                    app: gitlab-redis
+                  ports:
+                    - port: 6379
+                      targetPort: 6379
+                      name: redis
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps/v1
+                kind: StatefulSet
+                metadata:
+                  name: gitlab-redis
+                  namespace: {{ .Values.gitlab.namespace }}
+                  labels:
+                    app: gitlab-redis
+                spec:
+                  serviceName: gitlab-redis-headless
+                  replicas: 3
+                  selector:
+                    matchLabels:
+                      app: gitlab-redis
+                  template:
+                    metadata:
+                      labels:
+                        app: gitlab-redis
+                    spec:
+                      initContainers:
+                        - name: init-redis
+                          image: {{ "{{" }} $redisImage {{ "}}" }}
+                          command:
+                            - bash
+                            - -c
+                            - |
+                              ORDINAL=${HOSTNAME##*-}
+                              if [ "$ORDINAL" = "0" ]; then
+                                echo "Starting as master"
+                              else
+                                cp /scripts/start-replica.sh /tmp/start-replica.sh
+                                chmod +x /tmp/start-replica.sh
+                              fi
+                          volumeMounts:
+                            - name: scripts
+                              mountPath: /scripts
+                          env:
+                            - name: REDIS_PASSWORD
+                              valueFrom:
+                                secretKeyRef:
+                                  name: gitlab-redis-password
+                                  key: redis-password
+                      containers:
+                        - name: redis
+                          image: {{ "{{" }} $redisImage {{ "}}" }}
+                          command:
+                            - bash
+                            - -c
+                            - |
+                              ORDINAL=${HOSTNAME##*-}
+                              if [ "$ORDINAL" = "0" ]; then
+                                exec redis-server /etc/redis/redis.conf \
+                                  --appendonly yes \
+                                  --requirepass "$REDIS_PASSWORD" \
+                                  --masterauth "$REDIS_PASSWORD"
+                              else
+                                exec redis-server /etc/redis/redis.conf \
+                                  --appendonly yes \
+                                  --requirepass "$REDIS_PASSWORD" \
+                                  --masterauth "$REDIS_PASSWORD" \
+                                  --replicaof gitlab-redis-0.gitlab-redis-headless.{{ .Values.gitlab.namespace }}.svc 6379
+                              fi
+                          ports:
+                            - containerPort: 6379
+                              name: redis
+                          env:
+                            - name: REDIS_PASSWORD
+                              valueFrom:
+                                secretKeyRef:
+                                  name: gitlab-redis-password
+                                  key: redis-password
+                          resources:
+                            requests:
+                              cpu: 100m
+                              memory: 256Mi
+                            limits:
+                              cpu: 500m
+                              memory: 512Mi
+                          volumeMounts:
+                            - name: redis-data
+                              mountPath: /var/lib/redis/data
+                            - name: scripts
+                              mountPath: /scripts
+                          readinessProbe:
+                            exec:
+                              command:
+                                - bash
+                                - -c
+                                - redis-cli -a "$REDIS_PASSWORD" ping | grep PONG
+                            initialDelaySeconds: 5
+                            periodSeconds: 10
+                          livenessProbe:
+                            exec:
+                              command:
+                                - bash
+                                - -c
+                                - redis-cli -a "$REDIS_PASSWORD" ping | grep PONG
+                            initialDelaySeconds: 15
+                            periodSeconds: 20
+                      volumes:
+                        - name: scripts
+                          configMap:
+                            name: gitlab-redis-scripts
+                            defaultMode: 0755
+                  volumeClaimTemplates:
+                    - metadata:
+                        name: redis-data
+                      spec:
+                        accessModes:
+                          - ReadWriteOnce
+                        resources:
+                          requests:
+                            storage: 8Gi
+            {{/* Sentinel StatefulSet */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Service
+                metadata:
+                  name: gitlab-redis-sentinel-headless
+                  namespace: {{ .Values.gitlab.namespace }}
+                  labels:
+                    app: gitlab-redis-sentinel
+                spec:
+                  clusterIP: None
+                  selector:
+                    app: gitlab-redis-sentinel
+                  ports:
+                    - port: 26379
+                      targetPort: 26379
+                      name: sentinel
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Service
+                metadata:
+                  name: gitlab-redis-sentinel
+                  namespace: {{ .Values.gitlab.namespace }}
+                  labels:
+                    app: gitlab-redis-sentinel
+                spec:
+                  selector:
+                    app: gitlab-redis-sentinel
+                  ports:
+                    - port: 26379
+                      targetPort: 26379
+                      name: sentinel
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps/v1
+                kind: StatefulSet
+                metadata:
+                  name: gitlab-redis-sentinel
+                  namespace: {{ .Values.gitlab.namespace }}
+                  labels:
+                    app: gitlab-redis-sentinel
+                spec:
+                  serviceName: gitlab-redis-sentinel-headless
+                  replicas: 3
+                  selector:
+                    matchLabels:
+                      app: gitlab-redis-sentinel
+                  template:
+                    metadata:
+                      labels:
+                        app: gitlab-redis-sentinel
+                    spec:
+                      containers:
+                        - name: sentinel
+                          image: {{ "{{" }} $redisImage {{ "}}" }}
+                          command:
+                            - bash
+                            - -c
+                            - |
+                              # Wait for Redis master DNS to resolve
+                              MASTER_HOST="gitlab-redis-0.gitlab-redis-headless.{{ .Values.gitlab.namespace }}.svc"
+                              until MASTER_IP=$(getent hosts "$MASTER_HOST" | awk '{print $1}'); do
+                                echo "Waiting for $MASTER_HOST to resolve..."
+                                sleep 2
+                              done
+                              cp /config/sentinel.conf.template /tmp/sentinel.conf
+                              sed -i "s/REDIS_PASSWORD_PLACEHOLDER/$REDIS_PASSWORD/g" /tmp/sentinel.conf
+                              # Sentinel requires an IP, not a hostname
+                              sed -i "s|$MASTER_HOST|$MASTER_IP|g" /tmp/sentinel.conf
+                              exec redis-sentinel /tmp/sentinel.conf
+                          ports:
+                            - containerPort: 26379
+                              name: sentinel
+                          env:
+                            - name: REDIS_PASSWORD
+                              valueFrom:
+                                secretKeyRef:
+                                  name: gitlab-redis-password
+                                  key: redis-password
+                          resources:
+                            requests:
+                              cpu: 50m
+                              memory: 64Mi
+                            limits:
+                              cpu: 200m
+                              memory: 128Mi
+                          volumeMounts:
+                            - name: sentinel-config
+                              mountPath: /config
+                          readinessProbe:
+                            exec:
+                              command:
+                                - redis-cli
+                                - -p
+                                - "26379"
+                                - ping
+                            initialDelaySeconds: 5
+                            periodSeconds: 10
+                          livenessProbe:
+                            exec:
+                              command:
+                                - redis-cli
+                                - -p
+                                - "26379"
+                                - ping
+                            initialDelaySeconds: 15
+                            periodSeconds: 20
+                      volumes:
+                        - name: sentinel-config
+                          configMap:
+                            name: gitlab-redis-sentinel-config
+                            defaultMode: 0644
+            {{/* PodDisruptionBudgets */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: policy/v1
+                kind: PodDisruptionBudget
+                metadata:
+                  name: gitlab-redis
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  minAvailable: 1
+                  selector:
+                    matchLabels:
+                      app: gitlab-redis
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: policy/v1
+                kind: PodDisruptionBudget
+                metadata:
+                  name: gitlab-redis-sentinel
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  minAvailable: 2
+                  selector:
+                    matchLabels:
+                      app: gitlab-redis-sentinel
+            {{/* ServiceMonitor for Redis metrics */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: monitoring.coreos.com/v1
+                kind: ServiceMonitor
+                metadata:
+                  name: gitlab-redis
+                  namespace: {{ .Values.gitlab.namespace }}
+                  labels:
+                    app: gitlab-redis
+                spec:
+                  selector:
+                    matchLabels:
+                      app: gitlab-redis
+                  endpoints:
+                    - port: redis
+                      interval: 30s
+            {{/* NetworkPolicy — allow GitLab pods and Sentinel to reach Redis */}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: networking.k8s.io/v1
+                kind: NetworkPolicy
+                metadata:
+                  name: gitlab-redis-allow
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  podSelector:
+                    matchLabels:
+                      app: gitlab-redis
+                  ingress:
+                    - from:
+                        - namespaceSelector:
+                            matchLabels:
+                              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+                      ports:
+                        - port: 6379
+                          protocol: TCP
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: networking.k8s.io/v1
+                kind: NetworkPolicy
+                metadata:
+                  name: gitlab-redis-sentinel-allow
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  podSelector:
+                    matchLabels:
+                      app: gitlab-redis-sentinel
+                  ingress:
+                    - from:
+                        - namespaceSelector:
+                            matchLabels:
+                              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+                      ports:
+                        - port: 26379
+                          protocol: TCP
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitlab'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/gitlab-redis-mode'
+              operator: NotIn
+              values:
+              - 'bundled'
+              - 'external'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

@@ -1,0 +1,190 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-cnpg-gitlab-pooler" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-cnpg-gitlab
+      namespace: '{{ $policyNamespace }}'
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cnpg-gitlab-pooler-rw
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Pooler
+                metadata:
+                  name: gitlab-db-pooler-rw
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  cluster:
+                    name: gitlab-db
+                  instances: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-pooler-instances" | default "2" | toInt {{ "hub}}" }}'
+                  type: rw
+                  pgbouncer:
+                    poolMode: session
+                    parameters:
+                      max_client_conn: "1000"
+                      default_pool_size: "50"
+                      min_pool_size: "10"
+                      reserve_pool_size: "10"
+                      server_reset_query: DISCARD ALL
+                      server_check_query: SELECT 1
+                      server_check_delay: "30"
+                      query_wait_timeout: "120"
+                  template:
+                    metadata:
+                      labels:
+                        app: gitlab-db-pooler
+                    spec:
+                      containers:
+                        - name: pgbouncer
+                          resources:
+                            requests:
+                              cpu: 100m
+                              memory: 128Mi
+                            limits:
+                              cpu: 500m
+                              memory: 256Mi
+                      affinity:
+                        podAntiAffinity:
+                          preferredDuringSchedulingIgnoredDuringExecution:
+                            - weight: 1
+                              podAffinityTerm:
+                                topologyKey: kubernetes.io/hostname
+                                labelSelector:
+                                  matchLabels:
+                                    app: gitlab-db-pooler
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cnpg-gitlab-pooler-ro
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Pooler
+                metadata:
+                  name: gitlab-db-pooler-ro
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  cluster:
+                    name: gitlab-db
+                  instances: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-pooler-instances" | default "2" | toInt {{ "hub}}" }}'
+                  type: ro
+                  pgbouncer:
+                    poolMode: session
+                    parameters:
+                      max_client_conn: "1000"
+                      default_pool_size: "50"
+                      min_pool_size: "10"
+                      reserve_pool_size: "10"
+                      server_reset_query: DISCARD ALL
+                      server_check_query: SELECT 1
+                      server_check_delay: "30"
+                      query_wait_timeout: "120"
+                  template:
+                    metadata:
+                      labels:
+                        app: gitlab-db-pooler
+                    spec:
+                      containers:
+                        - name: pgbouncer
+                          resources:
+                            requests:
+                              cpu: 100m
+                              memory: 128Mi
+                            limits:
+                              cpu: 500m
+                              memory: 256Mi
+                      affinity:
+                        podAntiAffinity:
+                          preferredDuringSchedulingIgnoredDuringExecution:
+                            - weight: 1
+                              podAffinityTerm:
+                                topologyKey: kubernetes.io/hostname
+                                labelSelector:
+                                  matchLabels:
+                                    app: gitlab-db-pooler
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitlab'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/cloudnative-pg'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/gitlab-db-mode'
+              operator: NotIn
+              values:
+              - 'bundled'
+              - 'external'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
