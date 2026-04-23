@@ -103,6 +103,69 @@ hubClusterSets:
         useIDMS: true
         disableDefaultCatalogs: true
       # =======================================================================
+      # Developer GitOps (per-team ArgoCD sizing and RBAC)
+      # =======================================================================
+      gitops-dev:
+        dev:
+          disableAdmin: 'false'
+          rbac_policies:
+            - 'g, openshift-systems, role:admin'
+            - 'g, openshift-dev-leads, role:admin'
+            - 'g, openshift-developers, role:readonly'
+          controller:
+            limits:
+              cpu: '2000m'
+              memory: '2048Mi'
+            requests:
+              cpu: '250m'
+              memory: '1024Mi'
+          server:
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '125m'
+              memory: '128Mi'
+          dex:
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '250m'
+              memory: '128Mi'
+          redis:
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '250m'
+              memory: '128Mi'
+          repo:
+            limits:
+              cpu: '1000m'
+              memory: '1024Mi'
+            requests:
+              cpu: '250m'
+              memory: '256Mi'
+          ha:
+            enabled: 'false'
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '250m'
+              memory: '128Mi'
+          applicationSet:
+            limits:
+              cpu: '2'
+              memory: '1Gi'
+            requests:
+              cpu: '250m'
+              memory: '512Mi'
+        test:
+          rbac_policies:
+            - 'g, openshift-systems, role:admin'
+      # =======================================================================
       # GitLab (values with / or spaces that can't be labels)
       # =======================================================================
       gitlab:
@@ -642,6 +705,9 @@ hubClusterSets:
       dev-hub-channel: fast-1.9
       dev-hub-source: redhat-operators
       dev-hub-source-namespace: openshift-marketplace
+      dev-hub-instance-name: developer-hub
+      dev-hub-instance-namespace: rhdh
+      dev-hub-gitops-team: dev               # gitops-dev team whose ArgoCD to integrate
 
       # =======================================================================
       # OpenShift Pipelines
@@ -662,6 +728,8 @@ hubClusterSets:
       tas-channel: stable
       tas-source: redhat-operators
       tas-source-namespace: openshift-marketplace
+      tas-namespace: openshift-operators
+      tas-org-name: TSSC
 
       # =======================================================================
       # Quay
@@ -677,8 +745,18 @@ hubClusterSets:
       # Developer OpenShift GitOps (team ArgoCD instances)
       # =======================================================================
       gitops-dev: 'false'
-      gitops-dev-team-dev: 'hub'             # 'hub' or 'standalone'
+      gitops-dev-team-dev: 'standalone'      # 'hub' or 'standalone'
       gitops-dev-team-test: 'hub'            # 'hub' or 'standalone'
+      gitops-dev-team-dev-tssc: 'true'       # Enable TSSC integration for this team's ArgoCD
+
+      # =======================================================================
+      # TSSC App Namespaces
+      # App namespace assignments live in the config section of per-cluster
+      # values files (values/clusters/<cluster>.yaml), not as flat labels.
+      # Each team writes their own cluster file; Helm deep-merges the map keys.
+      # See docs/multi-source.md for the team onboarding setup.
+      # =======================================================================
+      tssc-app-namespaces: 'false'
 
       # =======================================================================
       # Loki
@@ -825,6 +903,14 @@ hubClusterSets:
       # dbBackupSchedule, dbBackupRetention
 
       # =======================================================================
+      # GitHub (external SCM — no operator; enables Developer Hub catalog + SCM integration)
+      # Admin pre-creates tssc-github-credentials in github-system on the hub.
+      # =======================================================================
+      github: 'false'
+      # github-host is optional; omit for github.com, set for GitHub Enterprise
+      # github-host: github.example.com
+
+      # =======================================================================
       # GitLab Runner
       # =======================================================================
       gitlab-runner: 'false'
@@ -875,6 +961,8 @@ hubClusterSets:
       external-secrets-operator-version: 'openshift-external-secrets-operator.v0.12.1'
       external-secrets-operator-source: redhat-operators
       external-secrets-operator-source-namespace: openshift-marketplace
+      
+      # =======================================================================
       # Opentelemetry
       # =======================================================================
       opentelemetry: 'false'
@@ -883,3 +971,50 @@ hubClusterSets:
       opentelemetry-version: 'opentelemetry-operator.v0.120.0'
       opentelemetry-source: redhat-operators
       opentelemetry-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Keycloak
+      # =======================================================================
+      keycloak: 'false'
+      keycloak-subscription-name: rhbk-operator
+      keycloak-channel: stable-v26.4
+      keycloak-version: 'rhbk-operator.v26.4.0-opr.1'
+      keycloak-source: redhat-operators
+      keycloak-source-namespace: openshift-marketplace
+      keycloak-namespace: keycloak-system
+      keycloak-db-external: 'false'
+      keycloak-db-cluster-name: keycloak-pgsql
+      keycloak-db-instances: '1'
+      keycloak-db-storage: 10Gi
+      keycloak-db-pooler-instances: '2'
+      keycloak-db-pool-size: '20'
+      keycloak-db-pool-min-size: '5'
+      keycloak-db-pool-reserve-size: '5'
+      keycloak-db-pool-max-client-conn: '200'
+      keycloak-db-host: keycloak-pgsql-pooler-rw.keycloak-system.svc
+      keycloak-db-secret: keycloak-pgsql-user
+      keycloak-db-name: keycloak
+      keycloak-realm-name: tssc-iam
+
+      # =======================================================================
+      # Trusted Profile Analyzer
+      # =======================================================================
+      trusted-profile-analyzer: 'false'
+      trusted-profile-analyzer-subscription-name: rhtpa-operator
+      trusted-profile-analyzer-channel: stable-v1.1
+      trusted-profile-analyzer-version: 'rhtpa-operator.v1.1.0'
+      trusted-profile-analyzer-source: redhat-operators
+      trusted-profile-analyzer-source-namespace: openshift-marketplace
+      trusted-profile-analyzer-db-external: 'false'
+      trusted-profile-analyzer-namespace: trusted-profile-analyzer
+      trusted-profile-analyzer-db-cluster-name: tpa-pgsql
+      trusted-profile-analyzer-db-instances: '2'
+      trusted-profile-analyzer-db-storage: 32Gi
+      trusted-profile-analyzer-db-pooler-instances: '2'
+      trusted-profile-analyzer-db-pool-size: '40'
+      trusted-profile-analyzer-db-pool-min-size: '5'
+      trusted-profile-analyzer-db-pool-reserve-size: '10'
+      trusted-profile-analyzer-db-pool-max-client-conn: '400'
+      trusted-profile-analyzer-db-host: ''
+      trusted-profile-analyzer-db-name: tpa
+      trusted-profile-analyzer-db-secret: ''

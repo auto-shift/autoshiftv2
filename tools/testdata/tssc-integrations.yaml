@@ -1,0 +1,118 @@
+---
+# Stubs for TSSC integration Secrets created by Day 2 policies on the managed
+# cluster. Spoke template lookups use these to wire integration endpoints and
+# tokens into downstream policies. Values are low-entropy fakes for test purposes only.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tssc-tas-integration
+  namespace: openshift-operators
+type: Opaque
+data:
+  rekor_url: aHR0cHM6Ly9yZWtvci5hcHBzLnRlc3QtY2x1c3Rlci50ZXN0LmV4YW1wbGUuY29t
+  tuf_url: aHR0cHM6Ly90dWYuYXBwcy50ZXN0LWNsdXN0ZXIudGVzdC5leGFtcGxlLmNvbQ==
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tssc-tpa-integration
+  namespace: trusted-profile-analyzer
+type: Opaque
+data:
+  bombastic_api_url: aHR0cHM6Ly9zYm9tLmFwcHMudGVzdC1jbHVzdGVyLnRlc3QuZXhhbXBsZS5jb20=
+  vexination_api_url: aHR0cHM6Ly92ZXguYXBwcy50ZXN0LWNsdXN0ZXIudGVzdC5leGFtcGxlLmNvbQ==
+  collectorist_api_url: aHR0cHM6Ly9jb2xsZWN0b3Jpc3QuYXBwcy50ZXN0LWNsdXN0ZXIudGVzdC5leGFtcGxlLmNvbQ==
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tssc-acs-integration
+  namespace: stackrox
+type: Opaque
+data:
+  endpoint: aHR0cHM6Ly9jZW50cmFsLnN0YWNrcm94LnN2Yzo0NDNK
+  token: dGVzdC1hY3MtYXBpLXRva2Vu
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tssc-argocd-integration
+  namespace: openshift-gitops-dev
+type: Opaque
+data:
+  ARGOCD_HOSTNAME: b3BlbnNoaWZ0LWdpdG9wcy1zZXJ2ZXIuYXBwcy50ZXN0LWNsdXN0ZXIudGVzdC5leGFtcGxlLmNvbQ==
+  ARGOCD_USER: YWRtaW4=
+  ARGOCD_PASSWORD: dGVzdC1hcmdvY2QtcGFzc3dvcmQ=
+  ARGOCD_API_TOKEN: dGVzdC1hcmdvY2QtYXBpLXRva2Vu
+---
+# Fake GitHub credentials — admin creates this Secret in github-system on the hub.
+# ACM hub templates read it to populate GITHUB_HOST/TOKEN/ORG in the Developer Hub env secret.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tssc-github-credentials
+  namespace: github-system
+type: Opaque
+data:
+  # host: github.com
+  host: Z2l0aHViLmNvbQ==
+  # token: fake-github-api-token-not-real
+  token: ZmFrZS1naXRodWItYXBpLXRva2VuLW5vdC1yZWFs
+  # org: my-org
+  org: bXktb3Jn
+---
+# Fake GitLab credentials — admin creates this Secret in gitlab-system on the hub.
+# No Job needed: ACM reads it via spoke lookup (Developer Hub) and hub template
+# lookup (tssc-app-namespaces propagation to managed cluster -ci namespaces).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tssc-gitlab-credentials
+  namespace: gitlab-system
+type: Opaque
+data:
+  # host: gitlab.apps.test-cluster.test.example.com
+  host: Z2l0bGFiLmFwcHMudGVzdC1jbHVzdGVyLnRlc3QuZXhhbXBsZS5jb20=
+  # token: fake-gitlab-api-token-not-real
+  token: ZmFrZS1naXRsYWItYXBpLXRva2VuLW5vdC1yZWFs
+  # username: tssc-service-account
+  username: dHNzYy1zZXJ2aWNlLWFjY291bnQ=
+---
+# Fake cosign signing-secrets (openshift-pipelines) — admin pre-creates on hub,
+# ACM hub templates propagate to all pipelines-enabled clusters. All three fields
+# required: Tekton Chains reads cosign.key+password for signing, cosign.pub for verification.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: signing-secrets
+  namespace: openshift-pipelines
+type: Opaque
+data:
+  # cosign.pub: -----BEGIN PUBLIC KEY-----\nfake-test-public-key-not-real\n-----END PUBLIC KEY-----
+  cosign.pub: LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KZmFrZS10ZXN0LXB1YmxpYy1rZXktbm90LXJlYWwKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==
+  # cosign.key: -----BEGIN ENCRYPTED SIGSTORE PRIVATE KEY-----\nfake-test-private-key-not-real\n-----END ENCRYPTED SIGSTORE PRIVATE KEY-----
+  cosign.key: LS0tLS1CRUdJTiBFTkNSWVBURUQgU0lHU1RPUkUgUFJJVkFURSBLRVktLS0tLQpmYWtlLXRlc3QtcHJpdmF0ZS1rZXktbm90LXJlYWwKLS0tLS1FTkQgRU5DUllQVEVEIFNJR1NUT1JFIFBSSVZBVEUgS0VZLS0tLS0K
+  # cosign.password: (empty — no passphrase for Tekton Chains compatibility)
+  cosign.password: ""
+---
+# ArgoCD Route and admin secret stubs — hub templates read these to build
+# tssc-argocd-integration without a Job. Admin password is the initial ArgoCD
+# admin credential; ACM propagates updates on every evaluation cycle.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: argocd-dev-server
+  namespace: openshift-gitops-dev
+spec:
+  # host: argocd-dev-server.apps.test-cluster.test.example.com
+  host: argocd-dev-server.apps.test-cluster.test.example.com
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-dev-cluster
+  namespace: openshift-gitops-dev
+type: Opaque
+data:
+  # admin.password: test-argocd-admin-password
+  admin.password: dGVzdC1hcmdvY2QtYWRtaW4tcGFzc3dvcmQ=

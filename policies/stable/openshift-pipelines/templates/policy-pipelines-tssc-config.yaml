@@ -1,0 +1,164 @@
+{{- $policyName := "policy-pipelines-tssc-config" }}
+{{- $placementName := "placement-policy-pipelines-tssc-config" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-pipelines-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # ── Prereq: signing-secrets must exist on this cluster ───────────────────
+    # On the hub: checks the admin-created keypair before propagation.
+    # On managed clusters: verifies propagation produced a secret with the
+    # required keys. inform-only — never attempts to create the secret.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: signing-secrets-prereq
+        spec:
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: signing-secrets
+                  namespace: {{ .Values.pipelines.chainsNamespace }}
+                data:
+                  cosign.pub: ''
+                  cosign.key: ''
+                  cosign.password: ''
+    # ── TektonConfig — Tekton Chains transparency + PaC settings ─────────────
+    # Patches the operator-managed TektonConfig (named 'config') to enable
+    # Tekton Chains with Rekor transparency. The rekor URL is read from the
+    # tssc-tas-integration Secret created by policy-tas-securesign.
+    # If TAS is not enabled the URL resolves to "" and transparency is still
+    # enabled (chains will use the public Rekor instance as fallback).
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: tekton-chains-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $tasNs := index .ManagedClusterLabels "autoshift.io/tas-namespace" | default "openshift-operators" {{ "}}" }}
+            {{ "{{-" }} $tasData := (lookup "v1" "Secret" $tasNs "tssc-tas-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $rekorUrl := index $tasData "rekor_url" | default "" | b64dec {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operator.tekton.dev/v1alpha1
+                kind: TektonConfig
+                metadata:
+                  name: config
+                spec:
+                  chain:
+                    generateSigningSecret: false
+                    'transparency.enabled': 'true'
+                    'transparency.url': '{{ "{{" }} $rekorUrl {{ "}}" }}'
+                  platforms:
+                    openshift:
+                      pipelinesAsCode:
+                        settings:
+                          application-name: TSSC CI
+                          remember-ok-to-test: 'false'
+                  pruner:
+                    keep: 2
+    # ── Cosign signing keypair ────────────────────────────────────────────────
+    # Admin generates the keypair externally (cosign generate-key-pair) and
+    # pre-creates signing-secrets in openshift-pipelines on the hub. ACM hub
+    # templates propagate all three fields to every pipelines-enabled cluster.
+    # Using a single hub-managed keypair ensures consistent image verification
+    # across all clusters in the fleet.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: tekton-signing-secret
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $pipNs := "{{ .Values.pipelines.chainsNamespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $signingData := (lookup "v1" "Secret" $pipNs "signing-secrets" | default dict).data | default dict {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: signing-secrets
+                  namespace: {{ "{{hub" }} $pipNs {{ "hub}}" }}
+                type: Opaque
+                data:
+                  cosign.key: '{{ "{{hub" }} index $signingData "cosign.key" | default "" {{ "hub}}" }}'
+                  cosign.pub: '{{ "{{hub" }} index $signingData "cosign.pub" | default "" {{ "hub}}" }}'
+                  cosign.password: '{{ "{{hub" }} index $signingData "cosign.password" | default "" {{ "hub}}" }}'
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/pipelines'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

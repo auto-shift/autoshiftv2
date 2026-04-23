@@ -1,0 +1,241 @@
+# TSSC (Trusted Software Supply Chain) - Hub Cluster Profile
+# =============================================================================
+# Add this file to your hub ArgoCD Application valueFiles AFTER your base
+# hub profile to enable all TSSC services:
+#
+#   valueFiles:
+#     - values/global.yaml
+#     - values/clustersets/hub.yaml    # base hub profile
+#     - values/clustersets/tssc.yaml   # TSSC additions
+#
+# App namespace configuration uses structured config, not flat labels.
+# Add tssc-app-namespaces: 'true' to each cluster that should host app namespaces,
+# then define which teams and apps land on that cluster via the config section in
+# values/clusters/<cluster-name>.yaml (or a team values file):
+#
+#   clusters:
+#     dev-cluster:
+#       labels:
+#         tssc-app-namespaces: 'true'
+#       config:
+#         tssc-apps:
+#           team1:
+#             myapp:
+#               environments: [ci, dev]
+#
+#   # test cluster — stage namespace only
+#   clusters:
+#     test-cluster:
+#       labels:
+#         tssc-app-namespaces: 'true'
+#       config:
+#         tssc-apps:
+#           team1:
+#             myapp:
+#               environments: [stage]
+#
+# The team name becomes the ArgoCD namespace (openshift-gitops-{team}) and the
+# namespace prefix ({team}-{app}-{env}). Multiple teams use separate map keys
+# and are deep-merged by Helm — no conflicts across team files.
+#
+# See docs/tssc.md and docs/multi-source.md for full topology options.
+#
+# See docs/tssc.md for full deployment order, topology options, and
+# troubleshooting guidance.
+# =============================================================================
+
+hubClusterSets:
+  hub:
+    config:
+      # =========================================================================
+      # Developer GitOps (per-team ArgoCD sizing and RBAC)
+      # Keys are team names matching gitops-dev-team-{team} labels below.
+      # =========================================================================
+      gitops-dev:
+        dev:
+          # Must be 'false' — ACM hub templates read the argocd-{team}-cluster
+          # admin Secret to populate tssc-argocd-integration. Admin credentials
+          # are scoped to this team's ArgoCD instance only.
+          disableAdmin: 'false'
+          rbac_policies:
+            - 'g, system:cluster-admins, role:admin'
+            - 'g, openshift-dev-leads, role:admin'
+            - 'g, openshift-developers, role:readonly'
+          controller:
+            limits:
+              cpu: '2000m'
+              memory: '2048Mi'
+            requests:
+              cpu: '250m'
+              memory: '1024Mi'
+          server:
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '125m'
+              memory: '128Mi'
+          dex:
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '125m'
+              memory: '128Mi'
+          redis:
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '125m'
+              memory: '128Mi'
+          repo:
+            limits:
+              cpu: '1000m'
+              memory: '1024Mi'
+            requests:
+              cpu: '250m'
+              memory: '256Mi'
+          ha:
+            enabled: 'false'
+          applicationSet:
+            limits:
+              cpu: '2'
+              memory: '1Gi'
+            requests:
+              cpu: '250m'
+              memory: '512Mi'
+
+    labels:
+      # =========================================================================
+      # OpenShift Pipelines (Tekton)
+      # Required for TSSC pipelines and cosign keypair provisioning.
+      # =========================================================================
+      pipelines: 'true'
+      pipelines-subscription-name: openshift-pipelines-operator-rh
+      pipelines-channel: pipelines-1.21
+      pipelines-source: redhat-operators
+      pipelines-source-namespace: openshift-marketplace
+      # pipelines-version: 'openshift-pipelines-operator-rh.v1.21.0'
+
+      # =========================================================================
+      # Red Hat Keycloak
+      # OIDC realm for all TSSC services. Must be deployed first.
+      # =========================================================================
+      keycloak: 'true'
+      keycloak-subscription-name: rhbk-operator
+      keycloak-channel: stable-v26.4
+      keycloak-source: redhat-operators
+      keycloak-source-namespace: openshift-marketplace
+      # keycloak-version: 'rhbk-operator.v26.4.0-opr.1'
+      keycloak-namespace: keycloak-system
+      keycloak-realm-name: tssc-iam
+      # Internal CNPG PostgreSQL (default). To use an external DB set:
+      # keycloak-db-external: 'true'
+      # keycloak-db-host: <host>
+      # keycloak-db-secret: <secret-name>
+      # keycloak-db-name: keycloak
+      keycloak-db-cluster-name: keycloak-pgsql
+      keycloak-db-instances: '1'
+      keycloak-db-storage: 10Gi
+      keycloak-db-pooler-instances: '2'
+      keycloak-db-pool-size: '20'
+      keycloak-db-pool-min-size: '5'
+      keycloak-db-pool-reserve-size: '5'
+      keycloak-db-pool-max-client-conn: '200'
+
+      # =========================================================================
+      # Trusted Artifact Signer (TAS / RHTAS)
+      # Sigstore-based container image and artifact signing.
+      # =========================================================================
+      tas: 'true'
+      tas-subscription-name: rhtas-operator
+      tas-channel: stable
+      tas-source: redhat-operators
+      tas-source-namespace: openshift-marketplace
+      # tas-version: 'rhtas-operator.v1.2.0'
+
+      # =========================================================================
+      # Trusted Profile Analyzer (TPA / RHTPA)
+      # SBOM ingestion and continuous security posture assessment.
+      # =========================================================================
+      trusted-profile-analyzer: 'true'
+      trusted-profile-analyzer-subscription-name: rhtpa-operator
+      trusted-profile-analyzer-channel: stable-v1.1
+      trusted-profile-analyzer-source: redhat-operators
+      trusted-profile-analyzer-source-namespace: openshift-marketplace
+      # trusted-profile-analyzer-version: 'rhtpa-operator.v1.1.0'
+      trusted-profile-analyzer-namespace: trusted-profile-analyzer
+      # Internal CNPG PostgreSQL (default). To use an external DB set:
+      # trusted-profile-analyzer-db-external: 'true'
+      # trusted-profile-analyzer-db-host: <host>
+      # trusted-profile-analyzer-db-secret: <secret-name>
+      # trusted-profile-analyzer-db-name: tpa
+      trusted-profile-analyzer-db-cluster-name: tpa-pgsql
+      trusted-profile-analyzer-db-instances: '2'
+      trusted-profile-analyzer-db-storage: 32Gi
+      trusted-profile-analyzer-db-pooler-instances: '2'
+      trusted-profile-analyzer-db-pool-size: '40'
+      trusted-profile-analyzer-db-pool-min-size: '5'
+      trusted-profile-analyzer-db-pool-reserve-size: '10'
+      trusted-profile-analyzer-db-pool-max-client-conn: '400'
+
+      # =========================================================================
+      # Advanced Cluster Security (ACS / RHACS)
+      # Runtime security, image scanning, and admission control.
+      # =========================================================================
+      acs: 'true'
+      acs-subscription-name: rhacs-operator
+      acs-channel: stable
+      acs-source: redhat-operators
+      acs-source-namespace: openshift-marketplace
+      # acs-version: 'rhacs-operator.v4.6.0'
+      acs-monitoring: 'true'
+      # acs-admission-control: 'true'    # Uncomment to enforce admission policies
+      # acs-vm-scanning: 'true'          # Dev Preview: VM scanning
+      acs-auth-provider: openshift
+      acs-auth-min-role: None
+      acs-auth-admin-group: cluster-admins
+
+      # =========================================================================
+      # Red Hat Developer Hub (RHDH / Backstage)
+      # Self-service developer portal wired to all TSSC integrations.
+      # =========================================================================
+      dev-hub: 'true'
+      dev-hub-subscription-name: rhdh
+      dev-hub-channel: fast-1.9
+      dev-hub-source: redhat-operators
+      dev-hub-source-namespace: openshift-marketplace
+      # dev-hub-version: 'rhdh-operator.v1.9.0'
+      dev-hub-instance-name: developer-hub
+      dev-hub-instance-namespace: rhdh
+      dev-hub-gitops-team: dev             # Must match a gitops-dev-team-{name} label below
+
+      # =========================================================================
+      # Developer GitOps (team ArgoCD instances)
+      # gitops-dev-team-{name}: 'hub' means ArgoCD manages remote clusters.
+      # gitops-dev-team-{name}: 'standalone' means it only manages the local cluster.
+      # gitops-dev-team-{name}-tssc: 'true' enables TSSC ArgoCD token generation.
+      # Sizing and RBAC for each team live in config.gitops-dev above.
+      # =========================================================================
+      gitops-dev: 'true'
+      gitops-dev-team-dev: 'hub'           # 'hub' for multi-cluster; 'standalone' for single-cluster
+      gitops-dev-team-dev-tssc: 'true'     # Creates tssc-argocd-integration for pipelines + Developer Hub
+
+      # =========================================================================
+      # GitLab (source code management for TSSC pipelines)
+      # Admin must pre-create tssc-gitlab-credentials in gitlab-system on the hub.
+      # ACM hub templates read and propagate the secret to all -ci namespaces.
+      # Developer Hub spoke templates read it directly from gitlab-system.
+      # =========================================================================
+      gitlab: 'true'
+      gitlab-subscription-name: gitlab-operator-kubernetes
+      gitlab-channel: stable
+      gitlab-source: certified-operators
+      gitlab-source-namespace: openshift-marketplace
+      gitlab-db-mode: managed
+      gitlab-redis-mode: managed
+      gitlab-object-storage-mode: managed
+      gitlab-argocd-integration: 'true'
+      gitlab-db-instances: '2'
+      gitlab-db-pooler-instances: '2'

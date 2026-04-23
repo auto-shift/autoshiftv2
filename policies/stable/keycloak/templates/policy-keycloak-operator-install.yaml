@@ -1,0 +1,111 @@
+{{- $policyName := "policy-keycloak-operator-install" }}
+{{- $placementName := "placement-policy-keycloak-operator-install" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: keycloak-operator-ns
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.keycloak.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1beta1
+        kind: OperatorPolicy
+        metadata:
+          name: install-operator-keycloak
+        spec:
+          remediationAction: enforce
+          severity: high
+          complianceType: musthave
+          operatorGroup:
+            # if operator group exists in namespace use that, otherwise use namespace name as default
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.keycloak.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.keycloak.namespace }}{{ "{{" }} end {{ "}}" }}'
+            namespace: {{ .Values.keycloak.namespace }}
+            {{- if .Values.keycloak.targetNamespaces }}
+            targetNamespaces:
+              {{- range .Values.keycloak.targetNamespaces }}
+              - {{ . }}
+              {{- end }}
+            {{- end }}
+          subscription:
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-subscription-name" | default "{{ .Values.keycloak.name }}" {{ "hub}}" }}'
+            namespace: {{ .Values.keycloak.namespace }}
+            # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
+            source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/keycloak-source" | default "{{ .Values.keycloak.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-source-namespace" | default "{{ .Values.keycloak.sourceNamespace }}" {{ "hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-channel" | default "{{ .Values.keycloak.channel }}" {{ "hub}}" }}'
+            startingCSV: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-version" | default "" {{ "hub}}" }}'
+          # Upgrade approval for subscription will be set based on if version is set not this flag
+          # If version is set install plan is set to manual and only the version specified will be installed
+          upgradeApproval: Automatic
+          versions:
+            - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-version" | default "" {{ "hub}}" }}'
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/keycloak'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

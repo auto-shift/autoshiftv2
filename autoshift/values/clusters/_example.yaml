@@ -21,7 +21,27 @@
 
 clusters:
   my-cluster-name:    # <-- Must match the cluster name in ACM
-    config: {}
+    config:
+      # =========================================================================
+      # TSSC App Namespaces
+      # Define which team apps land on this cluster and which environments to create.
+      # Each team writes their own cluster file; Helm deep-merges tssc-apps map keys
+      # so team1 and team2 files for the same cluster never conflict.
+      #
+      # Namespace naming: {team}-{app}-{env}
+      #   team1 + myapp + ci   → team1-myapp-ci
+      #   team1 + myapp + dev  → team1-myapp-development
+      #   team1 + myapp + stage → team1-myapp-stage
+      #   team1 + myapp + prod → team1-myapp-prod
+      #
+      # ArgoCD instance is openshift-gitops-{team} — one instance per team.
+      # =========================================================================
+      tssc-apps:
+        team1:
+          myapp:
+            environments: [ci, dev]
+          otherapp:
+            environments: [ci, dev, stage]
     labels:
       # =======================================================================
       # Any label from hub or managed clusterset can be overridden here.
@@ -337,6 +357,8 @@ clusters:
       external-secrets-operator-channel: stable-v1
       external-secrets-operator-source: redhat-operators
       external-secrets-operator-source-namespace: openshift-marketplace
+      
+      # =======================================================================
       # Opentelemetry
       # =======================================================================
       opentelemetry: 'false'
@@ -344,3 +366,21 @@ clusters:
       opentelemetry-channel: stable
       opentelemetry-source: redhat-operators
       opentelemetry-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Keycloak
+      # =======================================================================
+      keycloak: 'false'
+      keycloak-subscription-name: rhbk-operator
+      keycloak-channel: stable-v26.4
+      keycloak-source: redhat-operators
+      keycloak-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Trusted Profile Analyzer
+      # =======================================================================
+      trusted-profile-analyzer: 'false'
+      trusted-profile-analyzer-subscription-name: rhtpa-operator
+      trusted-profile-analyzer-channel: stable-v1.1
+      trusted-profile-analyzer-source: redhat-operators
+      trusted-profile-analyzer-source-namespace: openshift-marketplace

@@ -1,0 +1,499 @@
+{{- $policyName := "policy-keycloak-config" }}
+{{- $placementName := "placement-policy-keycloak-config" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-keycloak-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-cloudnative-pg-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # ── Keycloak PostgreSQL database (CloudNativePG) ──────────────────────────
+    # Skipped entirely when keycloak-db-external: 'true' — operator provides
+    # the DB secret named by keycloak-db-secret on the managed cluster.
+    # When CNPG mode (default), auto-creates <cluster>-user Secret with
+    # username/password and routes connections through PgBouncer.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: keycloak-database
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} if ne (index .ManagedClusterLabels "autoshift.io/keycloak-db-external" | default "false") "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Cluster
+                metadata:
+                  name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-db-cluster-name" | default "keycloak-pgsql" {{ "hub}}" }}'
+                  namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "hub}}" }}'
+                spec:
+                  instances: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-db-instances" | default "1" | toInt {{ "hub}}" }}'
+                  postgresql:
+                    parameters:
+                      max_connections: "200"
+                      shared_buffers: 256MB
+                  bootstrap:
+                    initdb:
+                      database: keycloak
+                      owner: keycloak
+                  storage:
+                    size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-db-storage" | default "10Gi" {{ "hub}}" }}'
+                  resources:
+                    requests:
+                      cpu: "250m"
+                      memory: 512Mi
+                    limits:
+                      cpu: "1"
+                      memory: 2Gi
+                  affinity:
+                    enablePodAntiAffinity: true
+                    topologyKey: kubernetes.io/hostname
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Pooler
+                metadata:
+                  name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-db-cluster-name" | default "keycloak-pgsql" {{ "hub}}" }}-pooler-rw'
+                  namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "hub}}" }}'
+                spec:
+                  cluster:
+                    name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-db-cluster-name" | default "keycloak-pgsql" {{ "hub}}" }}'
+                  instances: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-db-pooler-instances" | default "2" | toInt {{ "hub}}" }}'
+                  type: rw
+                  pgbouncer:
+                    poolMode: session
+                    parameters:
+                      max_client_conn: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-db-pool-max-client-conn" | default "200" {{ "hub}}" }}'
+                      default_pool_size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-db-pool-size" | default "20" {{ "hub}}" }}'
+                      min_pool_size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-db-pool-min-size" | default "5" {{ "hub}}" }}'
+                      reserve_pool_size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-db-pool-reserve-size" | default "5" {{ "hub}}" }}'
+                      server_reset_query: DISCARD ALL
+                  template:
+                    spec:
+                      containers:
+                        - name: pgbouncer
+                          resources:
+                            requests:
+                              cpu: 50m
+                              memory: 64Mi
+                            limits:
+                              cpu: 200m
+                              memory: 128Mi
+                      affinity:
+                        podAntiAffinity:
+                          preferredDuringSchedulingIgnoredDuringExecution:
+                            - weight: 1
+                              podAffinityTerm:
+                                topologyKey: kubernetes.io/hostname
+                                labelSelector:
+                                  matchLabels:
+                                    cnpg.io/poolerName: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-db-cluster-name" | default "keycloak-pgsql" {{ "hub}}" }}-pooler-rw'
+            {{ "{{hub-" }} end {{ "hub}}" }}
+    # ── Keycloak CR and TLS Service ──────────────────────────────────────────
+    # The Service with the OpenShift serving-cert annotation triggers automatic
+    # TLS secret generation which the Keycloak CR then references.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: keycloak-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "}}" }}
+            {{ "{{-" }} $dbHost := index .ManagedClusterLabels "autoshift.io/keycloak-db-host" | default "keycloak-pgsql-pooler-rw.keycloak-system.svc" {{ "}}" }}
+            {{ "{{-" }} $dbSecret := index .ManagedClusterLabels "autoshift.io/keycloak-db-secret" | default "keycloak-pgsql-user" {{ "}}" }}
+            {{ "{{-" }} $dbName := index .ManagedClusterLabels "autoshift.io/keycloak-db-name" | default "keycloak" {{ "}}" }}
+            {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
+            {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
+            {{ "{{-" }} $hostname := printf "keycloak.apps.%s" $baseDomain {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Service
+                metadata:
+                  name: keycloak
+                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                  annotations:
+                    service.beta.openshift.io/serving-cert-secret-name: keycloak-tls
+                spec:
+                  ports:
+                    - name: https
+                      port: 8443
+                      targetPort: 8443
+                  selector:
+                    app: keycloak
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: k8s.keycloak.org/v2alpha1
+                kind: Keycloak
+                metadata:
+                  name: keycloak
+                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                spec:
+                  instances: 1
+                  additionalOptions:
+                    - name: enable-recovery
+                      value: "true"
+                  transaction:
+                    xaEnabled: true
+                  db:
+                    vendor: postgres
+                    database: '{{ "{{" }} $dbName {{ "}}" }}'
+                    host: '{{ "{{" }} $dbHost {{ "}}" }}'
+                    usernameSecret:
+                      name: '{{ "{{" }} $dbSecret {{ "}}" }}'
+                      key: username
+                    passwordSecret:
+                      name: '{{ "{{" }} $dbSecret {{ "}}" }}'
+                      key: password
+                  hostname:
+                    hostname: '{{ "{{" }} $hostname {{ "}}" }}'
+                    strict: false
+                    strictBackchannel: false
+                  http:
+                    httpEnabled: false
+                    tlsSecret: keycloak-tls
+                  ingress:
+                    enabled: false
+    # ── Realm secrets propagated from hub Secret ─────────────────────────────
+    # Hub Secret 'tssc-keycloak-config' in policy_namespace must exist before
+    # enabling this policy. Keys: admin-password, tas-client-secret,
+    # tpa-cli-secret, tpa-frontend-secret, rhdh-client-secret.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: keycloak-realm-secrets
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $ns := index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $adminPass := fromSecret "{{ .Values.policy_namespace }}" "tssc-keycloak-config" "admin-password" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-realms-admin-user
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
+                type: Opaque
+                data:
+                  username: '{{ "{{hub" }} "admin" | b64enc {{ "hub}}" }}'
+                  password: '{{ "{{hub" }} $adminPass | b64enc {{ "hub}}" }}'
+            {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: trusted-artifact-signer-clients
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
+                type: Opaque
+                data:
+                  trustedArtifactSigner: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "tssc-keycloak-config" "tas-client-secret" | b64enc {{ "hub}}" }}'
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false") "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tpa-realm-clients
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
+                type: Opaque
+                data:
+                  cli: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "tssc-keycloak-config" "tpa-cli-secret" | b64enc {{ "hub}}" }}'
+                  frontend: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "tssc-keycloak-config" "tpa-frontend-secret" | b64enc {{ "hub}}" }}'
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-trustificationauth-integration
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
+                type: Opaque
+                stringData:
+                  oidc_client_id: cli
+                  oidc_client_secret: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "tssc-keycloak-config" "tpa-cli-secret" {{ "hub}}" }}'
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/dev-hub" | default "false") "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: rhdh-realm-clients
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
+                type: Opaque
+                data:
+                  rhdh: '{{ "{{hub" }} fromSecret "{{ .Values.policy_namespace }}" "tssc-keycloak-config" "rhdh-client-secret" | b64enc {{ "hub}}" }}'
+            {{ "{{hub-" }} end {{ "hub}}" }}
+    # ── KeycloakRealmImport — tssc-iam realm with TSSC clients ───────────────
+    # The realm spec is pushed declaratively. On first apply Keycloak performs
+    # a full realm import; subsequent evaluations reconcile drift.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: keycloak-realm-import
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "}}" }}
+            {{ "{{-" }} $realm := index .ManagedClusterLabels "autoshift.io/keycloak-realm-name" | default "tssc-iam" {{ "}}" }}
+            {{ "{{-" }} $tasEnabled := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" {{ "}}" }}
+            {{ "{{-" }} $tpaEnabled := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false") "true" {{ "}}" }}
+            {{ "{{-" }} $rhdhEnabled := eq (index .ManagedClusterLabels "autoshift.io/dev-hub" | default "false") "true" {{ "}}" }}
+            {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
+            {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
+            {{ "{{-" }} $appsDomain := printf "apps.%s" $baseDomain {{ "}}" }}
+            {{ "{{-" }} $tasSecret := (lookup "v1" "Secret" $ns "trusted-artifact-signer-clients" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $tpaSecret := (lookup "v1" "Secret" $ns "tpa-realm-clients" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $rhdhSecret := (lookup "v1" "Secret" $ns "rhdh-realm-clients" | default dict).data | default dict {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: k8s.keycloak.org/v2alpha1
+                kind: KeycloakRealmImport
+                metadata:
+                  name: '{{ "{{" }} $realm {{ "}}" }}'
+                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                  labels:
+                    app: keycloak
+                spec:
+                  keycloakCRName: keycloak
+                  realm:
+                    realm: '{{ "{{" }} $realm {{ "}}" }}'
+                    displayName: TSSC IAM
+                    enabled: true
+                    accessCodeLifespan: 60
+                    accessCodeLifespanLogin: 1800
+                    accessCodeLifespanUserAction: 300
+                    accessTokenLifespan: 300
+                    accessTokenLifespanForImplicitFlow: 900
+                    adminEventsDetailsEnabled: false
+                    adminEventsEnabled: false
+                    clientScopes:
+                      - name: read:document
+                        protocol: openid-connect
+                        attributes:
+                          include.in.token.scope: "true"
+                          display.on.consent.screen: "true"
+                      - name: write:document
+                        protocol: openid-connect
+                        attributes:
+                          include.in.token.scope: "true"
+                          display.on.consent.screen: "true"
+                      - name: create:document
+                        protocol: openid-connect
+                        attributes:
+                          include.in.token.scope: "true"
+                          display.on.consent.screen: "true"
+                      - name: update:document
+                        protocol: openid-connect
+                        attributes:
+                          include.in.token.scope: "true"
+                          display.on.consent.screen: "true"
+                      - name: delete:document
+                        protocol: openid-connect
+                        attributes:
+                          include.in.token.scope: "true"
+                          display.on.consent.screen: "true"
+                    clients:
+                    {{ "{{-" }} if $tasEnabled {{ "}}" }}
+                      - clientId: trusted-artifact-signer
+                        clientAuthenticatorType: client-secret
+                        secret: '{{ "{{" }} index $tasSecret "trustedArtifactSigner" | default "" | b64dec {{ "}}" }}'
+                        enabled: true
+                        name: trusted-artifact-signer
+                        description: Client for Red Hat Trusted Artifact Signer authentication
+                        publicClient: true
+                        bearerOnly: false
+                        directAccessGrantsEnabled: true
+                        standardFlowEnabled: true
+                        fullScopeAllowed: true
+                        protocol: openid-connect
+                        defaultClientScopes:
+                          - profile
+                          - email
+                        optionalClientScopes: []
+                        redirectUris:
+                          - "*"
+                          - "urn:ietf:wg:oauth:2.0:oob"
+                        attributes:
+                          request.object.signature.alg: RS256
+                          user.info.response.signature.alg: RS256
+                        protocolMappers:
+                          - name: audience
+                            protocol: openid-connect
+                            protocolMapper: oidc-hardcoded-claim-mapper
+                            consentRequired: false
+                            config:
+                              access.token.claim: "true"
+                              claim.name: aud
+                              claim.value: trusted-artifact-signer
+                              id.token.claim: "true"
+                              userinfo.token.claim: "true"
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if $tpaEnabled {{ "}}" }}
+                      - clientId: cli
+                        clientAuthenticatorType: client-secret
+                        secret: '{{ "{{" }} index $tpaSecret "cli" | default "" | b64dec {{ "}}" }}'
+                        enabled: true
+                        publicClient: false
+                        bearerOnly: false
+                        directAccessGrantsEnabled: false
+                        standardFlowEnabled: false
+                        fullScopeAllowed: true
+                        serviceAccountsEnabled: true
+                        protocol: openid-connect
+                        defaultClientScopes:
+                          - web-origins
+                          - profile
+                          - roles
+                          - read:document
+                          - email
+                          - create:document
+                          - update:document
+                          - delete:document
+                        attributes:
+                          access.token.lifespan: "300"
+                          post.logout.redirect.uris: +
+                      - clientId: frontend
+                        clientAuthenticatorType: client-secret
+                        secret: '{{ "{{" }} index $tpaSecret "frontend" | default "" | b64dec {{ "}}" }}'
+                        enabled: true
+                        publicClient: true
+                        bearerOnly: false
+                        directAccessGrantsEnabled: false
+                        standardFlowEnabled: true
+                        implicitFlowEnabled: true
+                        fullScopeAllowed: true
+                        protocol: openid-connect
+                        defaultClientScopes:
+                          - web-origins
+                          - profile
+                          - roles
+                          - read:document
+                          - email
+                          - create:document
+                          - delete:document
+                        attributes:
+                          access.token.lifespan: "300"
+                          post.logout.redirect.uris: +
+                        redirectUris:
+                          - "http://localhost:8080"
+                          - 'https://server-tssc-tpa.{{ "{{" }} $appsDomain {{ "}}" }}'
+                          - 'https://server-tssc-tpa.{{ "{{" }} $appsDomain {{ "}}" }}/*'
+                          - 'https://sbom-tssc-tpa.{{ "{{" }} $appsDomain {{ "}}" }}'
+                          - 'https://sbom-tssc-tpa.{{ "{{" }} $appsDomain {{ "}}" }}/*'
+                        webOrigins:
+                          - "*"
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if $rhdhEnabled {{ "}}" }}
+                      - clientId: rhdh
+                        clientAuthenticatorType: client-secret
+                        secret: '{{ "{{" }} index $rhdhSecret "rhdh" | default "" | b64dec {{ "}}" }}'
+                        enabled: true
+                        publicClient: false
+                        bearerOnly: false
+                        directAccessGrantsEnabled: true
+                        standardFlowEnabled: true
+                        fullScopeAllowed: true
+                        serviceAccountsEnabled: true
+                        protocol: openid-connect
+                        defaultClientScopes:
+                          - web-origins
+                          - acr
+                          - roles
+                          - profile
+                          - email
+                        optionalClientScopes: []
+                        redirectUris:
+                          - 'https://rhdh-backstage.{{ "{{" }} $appsDomain {{ "}}" }}/api/auth/oidc/handler/frame'
+                          - 'https://rhdh-backstage.{{ "{{" }} $appsDomain {{ "}}" }}/*'
+                        webOrigins:
+                          - 'https://rhdh-backstage.{{ "{{" }} $appsDomain {{ "}}" }}'
+                        attributes:
+                          backchannel.logout.session.required: "true"
+                          backchannel.logout.revoke.offline.tokens: "false"
+                    {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/keycloak'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

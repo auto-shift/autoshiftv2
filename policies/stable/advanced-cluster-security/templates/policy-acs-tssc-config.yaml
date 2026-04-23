@@ -1,0 +1,193 @@
+{{- if .Values.hubClusterSets }}
+{{- $policyName := "policy-acs-tssc-config" }}
+{{- $placementName := "placement-policy-acs-tssc-config" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-acs-central
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # ── RBAC for ACS API token Job ────────────────────────────────────────────
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-tssc-rbac
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: tssc-acs-config
+                  namespace: {{ .Values.acs.namespace }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: Role
+                metadata:
+                  name: tssc-acs-config
+                  namespace: {{ .Values.acs.namespace }}
+                rules:
+                  - apiGroups: [""]
+                    resources: ["secrets"]
+                    verbs: ["create", "get", "patch", "update"]
+                  - apiGroups: ["route.openshift.io"]
+                    resources: ["routes"]
+                    verbs: ["get", "list"]
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: tssc-acs-config
+                  namespace: {{ .Values.acs.namespace }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: Role
+                  name: tssc-acs-config
+                subjects:
+                  - kind: ServiceAccount
+                    name: tssc-acs-config
+                    namespace: {{ .Values.acs.namespace }}
+    # ── ACS API token → tssc-acs-integration Secret ───────────────────────────
+    # Generates an Admin-role ACS API token via the Central REST API and stores
+    # it in tssc-acs-integration. The Job only runs when the secret is absent or
+    # has no token key. Uses backoffLimit for retry while Central is initialising.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: acs-integration-secret
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $existingData := (lookup "v1" "Secret" "{{ .Values.acs.namespace }}" "tssc-acs-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $token := index $existingData "token" | default "" {{ "}}" }}
+            {{ "{{-" }} if eq $token "" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: batch/v1
+                kind: Job
+                metadata:
+                  name: tssc-acs-generate-token
+                  namespace: {{ .Values.acs.namespace }}
+                spec:
+                  backoffLimit: 20
+                  ttlSecondsAfterFinished: 600
+                  template:
+                    spec:
+                      serviceAccountName: tssc-acs-config
+                      restartPolicy: OnFailure
+                      containers:
+                        - name: generate-token
+                          image: registry.redhat.io/openshift4/ose-tools-rhel9:latest
+                          env:
+                            - name: ACS_NAMESPACE
+                              value: {{ .Values.acs.namespace }}
+                            - name: ROX_PASSWORD
+                              valueFrom:
+                                secretKeyRef:
+                                  name: central-htpasswd
+                                  key: password
+                          command:
+                            - /bin/bash
+                            - -c
+                            - |
+                              set -e
+                              ACS_HOST=$(oc get route central -n "${ACS_NAMESPACE}" \
+                                -o jsonpath='{.spec.host}' 2>/dev/null || true)
+                              if [ -z "${ACS_HOST}" ]; then
+                                echo "Central route not ready, will retry"
+                                exit 1
+                              fi
+                              OUTPUT=$(curl -sk \
+                                --user "admin:${ROX_PASSWORD}" \
+                                --data '{"name":"TSSC","role":"Admin"}' \
+                                "https://${ACS_HOST}/v1/apitokens/generate")
+                              TOKEN=$(echo "${OUTPUT}" | jq -r '.token // empty')
+                              if [ -z "${TOKEN}" ]; then
+                                echo "Token generation failed: ${OUTPUT}"
+                                exit 1
+                              fi
+                              oc create secret generic tssc-acs-integration \
+                                --namespace="${ACS_NAMESPACE}" \
+                                --from-literal="endpoint=https://${ACS_HOST}:443" \
+                                --from-literal="token=${TOKEN}" \
+                                --dry-run=client -o yaml | oc apply -f -
+                              echo "tssc-acs-integration created successfully"
+                          securityContext:
+                            allowPrivilegeEscalation: false
+                          resources:
+                            requests:
+                              cpu: 50m
+                              memory: 64Mi
+                            limits:
+                              cpu: 200m
+                              memory: 128Mi
+            {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acs'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

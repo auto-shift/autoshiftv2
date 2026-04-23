@@ -2,59 +2,6 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates
 policy_namespace: open-cluster-policies
-teams:
-  dev:
-    gitops_rbac_policies:
-    - 'g, openshift-systems, role:admin'
-    - 'g, openshift-dev-leads, role:admin'
-    - 'g, openshift-developers, role:readonly'
-    # OPTIONAL
-    controller:
-      limits:
-        cpu: 2000m
-        memory: 2048Mi
-      requests:
-        cpu: 250m
-        memory: 1024Mi
-    ha:
-      enabled: false
-      limits:
-        cpu: 500m
-        memory: 256Mi
-      requests:
-        cpu: 250m
-        memory: 128Mi
-    redis:
-      limits:
-        cpu: 500m
-        memory: 256Mi
-      requests:
-        cpu: 250m
-        memory: 128Mi
-    repo:
-      limits:
-        cpu: 1000m
-        memory: 1024Mi
-      requests:
-        cpu: 250m
-        memory: 256Mi    
-    server:
-      limits:
-        cpu: 500m
-        memory: 256Mi
-      requests:
-        cpu: 125m
-        memory: 128Mi
-    dex:
-      limits:
-        cpu: 500m
-        memory: 256Mi
-      requests:
-        cpu: 250m
-        memory: 128Mi
-  test:
-    gitops_rbac_policies:
-    - 'g, openshift-systems, role:admin'
 # hubClusterSets:
 #   hub:
 #     labels:
@@ -73,7 +20,16 @@ teams:
 #   Auto-discovered from labels via prefix matching by the openshift-gitops policy.
 #
 # Team Configuration:
-# gitops-dev-team-<teamname><String>: 'standalone' or 'hub' - Deploy mode for specific teams
+# gitops-dev-team-<team><String>: 'standalone' or 'hub' - Deploy ArgoCD for this team
+#   Auto-discovered from labels via prefix matching. No values list needed.
+# gitops-dev-team-<team>-tssc<bool>: 'true' - Enable TSSC integration for this team's ArgoCD
+#   Requires config.gitops-dev.<team>.disableAdmin: 'false'
+#
+# Per-team RBAC and sizing live in the config section (read via rendered-config ConfigMap):
+#   config.gitops-dev.<team>.rbac_policies: list of 'g, <group>, role:<role>' entries
+#   config.gitops-dev.<team>.disableAdmin: 'true'|'false' (default: 'true')
+#   config.gitops-dev.<team>.controller/server/redis/repo/ha/dex/applicationSet:
+#     limits/requests: cpu/memory
 #                                     - 'standalone': Deploy ArgoCD instance on the cluster
 #                                     - 'hub': Use shared ArgoCD instance from hub cluster
 #

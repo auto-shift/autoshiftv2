@@ -1,13 +1,9 @@
-{{- range $team, $value := .Values.teams }}
----
-# This policy verifies the installation of the official & supported version of
-# the GitOps Operator for different teams.
-#
+{{- if .Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-gitops-{{ $team }}-argocd
-  namespace: {{ $.Values.policy_namespace }}
+  name: policy-gitops-dev-argocd
+  namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CM Configuration Management
@@ -19,7 +15,7 @@ spec:
   disabled: false
   dependencies:
     - name: policy-gitops-operator-install
-      namespace: {{ $.Values.policy_namespace }}
+      namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
@@ -28,20 +24,46 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: gitops-{{ $team }}-argocd
+          name: gitops-dev-argocd
         spec:
           remediationAction: enforce
           severity: high
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
+          object-templates-raw: |
+            {{ "{{hub-" }} $cm := (lookup "v1" "ConfigMap" "{{ $.Values.policy_namespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $configData := (index $cm "data" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $configYaml := (index $configData "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $devConfig := (index $configYaml "gitops-dev" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
+            {{ "{{hub-" }} if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-tssc" $label)) {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $val "hub" {{ "hub}}" }}
+            {{ "{{hub-" }} $team := replace "autoshift.io/gitops-dev-team-" "" $label {{ "hub}}" }}
+            {{ "{{hub-" }} $tc := index $devConfig $team | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $rbacList := index $tc "rbac_policies" | default list {{ "hub}}" }}
+            {{ "{{hub-" }} $policies := prepend $rbacList "g, system:cluster-admins, role:admin" {{ "hub}}" }}
+            {{ "{{hub-" }} $serverLimits := index (index $tc "server" | default dict) "limits" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $serverReqs := index (index $tc "server" | default dict) "requests" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $dexLimits := index (index $tc "dex" | default dict) "limits" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $dexReqs := index (index $tc "dex" | default dict) "requests" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $repoLimits := index (index $tc "repo" | default dict) "limits" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $repoReqs := index (index $tc "repo" | default dict) "requests" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $haConf := index $tc "ha" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $haLimits := index $haConf "limits" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $haReqs := index $haConf "requests" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $redisLimits := index (index $tc "redis" | default dict) "limits" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $redisReqs := index (index $tc "redis" | default dict) "requests" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $ctrlLimits := index (index $tc "controller" | default dict) "limits" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $ctrlReqs := index (index $tc "controller" | default dict) "requests" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $appSetLimits := index (index $tc "applicationSet" | default dict) "limits" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $appSetReqs := index (index $tc "applicationSet" | default dict) "requests" | default dict {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 kind: Namespace
                 apiVersion: v1
                 metadata:
-                  name: openshift-gitops-{{ $team }}
+                  name: openshift-gitops-{{ "{{hub" }} $team {{ "hub}}" }}
                   labels:
                     openshift.io/cluster-monitoring: "true"
             - complianceType: musthave
@@ -50,16 +72,16 @@ spec:
                 kind: ArgoCD
                 metadata:
                   name: argocd-dev
-                  namespace: openshift-gitops-{{ $team }}
+                  namespace: openshift-gitops-{{ "{{hub" }} $team {{ "hub}}" }}
                 spec:
                   server:
                     resources:
                       limits:
-                        cpu: {{ (($value.server).limits).cpu | default "500m" }}
-                        memory: {{ (($value.server).limits).memory | default "256Mi" }}
+                        cpu: {{ "{{hub" }} index $serverLimits "cpu" | default "500m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $serverLimits "memory" | default "256Mi" {{ "hub}}" }}
                       requests:
-                        cpu: {{ (($value.server).requests).cpu | default "125m" }}
-                        memory: {{ (($value.server).requests).memory | default "128Mi" }}
+                        cpu: {{ "{{hub" }} index $serverReqs "cpu" | default "125m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $serverReqs "memory" | default "128Mi" {{ "hub}}" }}
                     route:
                       enabled: true
                   monitoring:
@@ -68,62 +90,59 @@ spec:
                     dex:
                       resources:
                         limits:
-                          cpu: {{ (($value.dex).limits).cpu | default "500m" }}
-                          memory: {{ (($value.dex).limits).memory | default "256Mi" }}
+                          cpu: {{ "{{hub" }} index $dexLimits "cpu" | default "500m" {{ "hub}}" }}
+                          memory: {{ "{{hub" }} index $dexLimits "memory" | default "256Mi" {{ "hub}}" }}
                         requests:
-                          cpu: {{ (($value.dex).requests).cpu | default "125m" }}
-                          memory: {{ (($value.dex).requests).memory | default "128Mi" }}
+                          cpu: {{ "{{hub" }} index $dexReqs "cpu" | default "125m" {{ "hub}}" }}
+                          memory: {{ "{{hub" }} index $dexReqs "memory" | default "128Mi" {{ "hub}}" }}
                       openShiftOAuth: true
                     provider: dex
                   rbac:
                     defaultPolicy: ''
                     policy: |
-                      g, system:cluster-admins, role:admin
-                    {{- range $value.gitops_rbac_policies }}
-                      {{ . }}
-                    {{- end }}
+                      {{ "{{hub" }} join "\n                      " $policies {{ "hub}}" }}
                     scopes: '[groups]'
                   repo:
                     resources:
                       limits:
-                        cpu: {{ (($value.repo).limits).cpu | default "1000m" }}
-                        memory: {{ (($value.repo).limits).memory | default "1024Mi" }}
+                        cpu: {{ "{{hub" }} index $repoLimits "cpu" | default "1000m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $repoLimits "memory" | default "1024Mi" {{ "hub}}" }}
                       requests:
-                        cpu: {{ (($value.repo).requests).cpu | default "250m" }}
-                        memory: {{ (($value.repo).requests).memory | default "256Mi" }}
+                        cpu: {{ "{{hub" }} index $repoReqs "cpu" | default "250m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $repoReqs "memory" | default "256Mi" {{ "hub}}" }}
                   ha:
                     resources:
                       limits:
-                        cpu: {{ (($value.ha).limits).cpu | default "500m" }}
-                        memory: {{ (($value.ha).limits).memory | default "256Mi" }}
+                        cpu: {{ "{{hub" }} index $haLimits "cpu" | default "500m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $haLimits "memory" | default "256Mi" {{ "hub}}" }}
                       requests:
-                        cpu: {{ (($value.ha).requests).cpu | default "125m" }}
-                        memory: {{ (($value.ha).requests).memory | default "128Mi" }}
-                    enabled: {{ ($value.ha).enabled | default "false" }}
+                        cpu: {{ "{{hub" }} index $haReqs "cpu" | default "125m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $haReqs "memory" | default "128Mi" {{ "hub}}" }}
+                    enabled: {{ "{{hub" }} index $haConf "enabled" | default "false" {{ "hub}}" }}
                   redis:
                     resources:
                       limits:
-                        cpu: {{ (($value.redis).limits).cpu | default "500m" }}
-                        memory: {{ (($value.redis).limits).memory | default "256Mi" }}
+                        cpu: {{ "{{hub" }} index $redisLimits "cpu" | default "500m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $redisLimits "memory" | default "256Mi" {{ "hub}}" }}
                       requests:
-                        cpu: {{ (($value.redis).requests).cpu | default "125m" }}
-                        memory: {{ (($value.redis).requests).memory | default "128Mi" }}
+                        cpu: {{ "{{hub" }} index $redisReqs "cpu" | default "125m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $redisReqs "memory" | default "128Mi" {{ "hub}}" }}
                   controller:
                     resources:
                       limits:
-                        cpu: {{ (($value.controller).limits).cpu | default "2000m" }}
-                        memory: {{ (($value.controller).limits).memory | default "2048Mi" }}
+                        cpu: {{ "{{hub" }} index $ctrlLimits "cpu" | default "2000m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $ctrlLimits "memory" | default "2048Mi" {{ "hub}}" }}
                       requests:
-                        cpu: {{ (($value.controller).requests).cpu | default "250m" }}
-                        memory: {{ (($value.controller).requests).memory | default "1024Mi" }}
+                        cpu: {{ "{{hub" }} index $ctrlReqs "cpu" | default "250m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $ctrlReqs "memory" | default "1024Mi" {{ "hub}}" }}
                   applicationSet:
                     resources:
                       limits:
-                        cpu: {{ (($value.applicationSet).limits).cpu | default "2" }}
-                        memory: {{ (($value.applicationSet).limits).memory | default "1Gi" }}
+                        cpu: {{ "{{hub" }} index $appSetLimits "cpu" | default "2" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $appSetLimits "memory" | default "1Gi" {{ "hub}}" }}
                       requests:
-                        cpu: {{ (($value.applicationSet).requests).cpu | default "250m" }}
-                        memory: {{ (($value.applicationSet).requests).memory | default "512Mi" }}
+                        cpu: {{ "{{hub" }} index $appSetReqs "cpu" | default "250m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $appSetReqs "memory" | default "512Mi" {{ "hub}}" }}
                   resourceExclusions: |
                     - apiGroups:
                       - tekton.dev
@@ -131,15 +150,15 @@ spec:
                       - '*'
                       kinds:
                       - TaskRun
-                      - PipelineRun        
-                  disableAdmin: {{ $value.disableAdmin | default "true" }}
+                      - PipelineRun
+                  disableAdmin: '{{ "{{hub" }} index $tc "disableAdmin" | default "true" | toBool {{ "hub}}" }}'
             - complianceType: musthave
               objectDefinition:
                 apiVersion: argoproj.io/v1alpha1
                 kind: RolloutManager
                 metadata:
                   name: argo-rollout
-                  namespace: openshift-gitops-{{ $team }}
+                  namespace: openshift-gitops-{{ "{{hub" }} $team {{ "hub}}" }}
                   labels:
                     example: basic
             - complianceType: musthave
@@ -147,11 +166,11 @@ spec:
                 apiVersion: cluster.open-cluster-management.io/v1beta1
                 kind: Placement
                 metadata:
-                  name: openshift-gitops-{{ $team }}
-                  namespace: openshift-gitops-{{ $team }}
+                  name: openshift-gitops-{{ "{{hub" }} $team {{ "hub}}" }}
+                  namespace: openshift-gitops-{{ "{{hub" }} $team {{ "hub}}" }}
                 spec:
                   clusterSets:
-                  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+                  {{- range $clusterSet, $csValue := $.Values.managedClusterSets }}
                     - {{ $clusterSet }}
                   {{- end }}
                   predicates:
@@ -162,7 +181,7 @@ spec:
                               operator: In
                               values:
                               - 'true'
-                            - key: 'autoshift.io/gitops-dev-team-{{ $team }}'
+                            - key: 'autoshift.io/gitops-dev-team-{{ "{{hub" }} $team {{ "hub}}" }}'
                               operator: In
                               values:
                               - 'hub'
@@ -176,45 +195,48 @@ spec:
                 apiVersion: apps.open-cluster-management.io/v1beta1
                 kind: GitOpsCluster
                 metadata:
-                  name: argo-acm-importer-{{ $team }}
-                  namespace: openshift-gitops-{{ $team }}
+                  name: argo-acm-importer-{{ "{{hub" }} $team {{ "hub}}" }}
+                  namespace: openshift-gitops-{{ "{{hub" }} $team {{ "hub}}" }}
                 spec:
                   argoServer:
                     cluster: notused
-                    argoNamespace: openshift-gitops-{{ $team }}
+                    argoNamespace: openshift-gitops-{{ "{{hub" }} $team {{ "hub}}" }}
                   placementRef:
                     kind: Placement
                     apiVersion: cluster.open-cluster-management.io/v1beta1
-                    name: openshift-gitops-{{ $team }}
-                    namespace: openshift-gitops-{{ $team }}
-            {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+                    name: openshift-gitops-{{ "{{hub" }} $team {{ "hub}}" }}
+                    namespace: openshift-gitops-{{ "{{hub" }} $team {{ "hub}}" }}
+            {{- range $clusterSet, $csValue := $.Values.managedClusterSets }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: cluster.open-cluster-management.io/v1beta2
                 kind: ManagedClusterSetBinding
                 metadata:
                   name: {{ $clusterSet }}
-                  namespace: openshift-gitops-{{ $team }}
+                  namespace: openshift-gitops-{{ "{{hub" }} $team {{ "hub}}" }}
                 spec:
                   clusterSet: {{ $clusterSet }}
             {{- end }}
-            {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+            {{- range $clusterSet, $csValue := $.Values.hubClusterSets }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: cluster.open-cluster-management.io/v1beta2
                 kind: ManagedClusterSetBinding
                 metadata:
                   name: {{ $clusterSet }}
-                  namespace: openshift-gitops-{{ $team }}
+                  namespace: openshift-gitops-{{ "{{hub" }} $team {{ "hub}}" }}
                 spec:
                   clusterSet: {{ $clusterSet }}
-            {{ end }}
+            {{- end }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-gitops-{{ $team }}-argocd
-  namespace: {{ $.Values.policy_namespace }}
+  name: placement-policy-gitops-dev-argocd
+  namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
   {{- range $clusterSet, $value := $.Values.hubClusterSets }}
@@ -228,10 +250,6 @@ spec:
               operator: In
               values:
               - 'true'
-            - key: 'autoshift.io/gitops-dev-team-{{ $team }}'
-              operator: In
-              values:
-              - 'hub'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
@@ -241,14 +259,14 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-gitops-{{ $team }}-argocd
-  namespace: {{ $.Values.policy_namespace }}
+  name: placement-policy-gitops-dev-argocd
+  namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-gitops-{{ $team }}-argocd
+  name: placement-policy-gitops-dev-argocd
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-gitops-{{ $team }}-argocd
+  - name: policy-gitops-dev-argocd
     apiGroup: policy.open-cluster-management.io
     kind: Policy
 {{- end }}

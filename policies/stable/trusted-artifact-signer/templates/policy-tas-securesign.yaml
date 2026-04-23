@@ -1,0 +1,158 @@
+{{- $policyName := "policy-tas-securesign" }}
+{{- $placementName := "placement-policy-tas-securesign" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-rhtas-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-keycloak-config
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # ── Securesign CR ─────────────────────────────────────────────────────────
+    # The Securesign operator provisions Fulcio, Rekor, Trillian, and TUF.
+    # Fulcio uses Keycloak OIDC — the issuer URL is derived from the cluster's
+    # DNS baseDomain so it matches the Keycloak Route created by policy-keycloak-config.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: tas-securesign
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/tas-namespace" | default "{{ .Values.rhtasOperator.namespace }}" {{ "}}" }}
+            {{ "{{-" }} $realm := index .ManagedClusterLabels "autoshift.io/keycloak-realm-name" | default "tssc-iam" {{ "}}" }}
+            {{ "{{-" }} $orgName := index .ManagedClusterLabels "autoshift.io/tas-org-name" | default "TSSC" {{ "}}" }}
+            {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
+            {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
+            {{ "{{-" }} $appsDomain := printf "apps.%s" $baseDomain {{ "}}" }}
+            {{ "{{-" }} $kcNs := index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "keycloak-system" {{ "}}" }}
+            {{ "{{-" }} $oidcIssuer := printf "https://keycloak.%s/realms/%s" $appsDomain $realm {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rhtas.redhat.com/v1alpha1
+                kind: Securesign
+                metadata:
+                  name: trusted-artifact-signer
+                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                spec:
+                  fulcio:
+                    externalAccess:
+                      enabled: true
+                    certificate:
+                      commonName: 'fulcio.{{ "{{" }} $appsDomain {{ "}}" }}'
+                      organizationEmail: 'tas@{{ "{{" }} $baseDomain {{ "}}" }}'
+                      organizationName: '{{ "{{" }} $orgName {{ "}}" }}'
+                    config:
+                      OIDCIssuers:
+                        - Issuer: '{{ "{{" }} $oidcIssuer {{ "}}" }}'
+                          IssuerURL: '{{ "{{" }} $oidcIssuer {{ "}}" }}'
+                          ClientID: trusted-artifact-signer
+                          Type: email
+                  rekor:
+                    externalAccess:
+                      enabled: true
+                    rekorSearchUI:
+                      enabled: true
+                    signer:
+                      kms: secret
+                  trillian:
+                    database:
+                      create: true
+                  tuf:
+                    externalAccess:
+                      enabled: true
+    # ── TAS integration secret ────────────────────────────────────────────────
+    # Provides rekor and TUF URLs to other TSSC components (pipelines, RHDH).
+    # Other policies can read this secret to wire TAS endpoints.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: tas-integration-secret
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/tas-namespace" | default "{{ .Values.rhtasOperator.namespace }}" {{ "}}" }}
+            {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
+            {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
+            {{ "{{-" }} $appsDomain := printf "apps.%s" $baseDomain {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-tas-integration
+                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                type: Opaque
+                stringData:
+                  rekor_url: 'https://rekor-server-{{ "{{" }} $ns {{ "}}" }}.{{ "{{" }} $appsDomain {{ "}}" }}'
+                  tuf_url: 'https://tuf-{{ "{{" }} $ns {{ "}}" }}.{{ "{{" }} $appsDomain {{ "}}" }}'
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/tas'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

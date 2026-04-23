@@ -1,0 +1,148 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-gitops-dev-tssc-config
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-gitops-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # ── Prereq: ArgoCD Route and admin Secret must exist per team ────────────
+    # Hub templates compute the Route and Secret names from gitops-dev-team-*
+    # labels. Spoke checks verify both resources exist before the integration
+    # secret is populated. inform-only — never creates missing ArgoCD resources.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: argocd-route-prereq
+        spec:
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
+            {{ "{{hub-" }} if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (hasSuffix "-tssc" $label) {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $val "true" {{ "hub}}" }}
+            {{ "{{hub-" }} $team := trimSuffix "-tssc" (replace "autoshift.io/gitops-dev-team-" "" $label) {{ "hub}}" }}
+            {{ "{{hub-" }} $argoNs := printf "openshift-gitops-%s" $team {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: route.openshift.io/v1
+                kind: Route
+                metadata:
+                  name: {{ "{{hub" }} printf "argocd-%s-server" $team {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $argoNs {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: {{ "{{hub" }} printf "argocd-%s-cluster" $team {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $argoNs {{ "hub}}" }}
+                data:
+                  admin.password: ''
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+    # ── ArgoCD admin credentials → tssc-argocd-integration Secret ────────────
+    # Hub templates read the ArgoCD Route hostname and admin password directly
+    # from the hub cluster and write them into tssc-argocd-integration on each
+    # gitops-enabled cluster. ACM reconciles on every evaluation cycle, so
+    # credential rotation only requires updating the source secret on the hub.
+    # Each team gets its own ArgoCD instance (argocd-{team}), so admin access
+    # here is scoped to that team's ArgoCD and its managed applications only.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-dev-tssc-integration-secret
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
+            {{ "{{hub-" }} if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (hasSuffix "-tssc" $label) {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $val "true" {{ "hub}}" }}
+            {{ "{{hub-" }} $team := trimSuffix "-tssc" (replace "autoshift.io/gitops-dev-team-" "" $label) {{ "hub}}" }}
+            {{ "{{hub-" }} $argoNs := printf "openshift-gitops-%s" $team {{ "hub}}" }}
+            {{ "{{hub-" }} $routeName := printf "argocd-%s-server" $team {{ "hub}}" }}
+            {{ "{{hub-" }} $adminSecretName := printf "argocd-%s-cluster" $team {{ "hub}}" }}
+            {{ "{{hub-" }} $routeSpec := (lookup "route.openshift.io/v1" "Route" $argoNs $routeName | default dict).spec | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $hostname := index $routeSpec "host" | default "" {{ "hub}}" }}
+            {{ "{{hub-" }} $adminData := (lookup "v1" "Secret" $argoNs $adminSecretName | default dict).data | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $adminPassword := index $adminData "admin.password" | default "" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-argocd-integration
+                  namespace: {{ "{{hub" }} $argoNs {{ "hub}}" }}
+                type: Opaque
+                data:
+                  ARGOCD_HOSTNAME: '{{ "{{hub" }} $hostname | b64enc {{ "hub}}" }}'
+                  ARGOCD_USER: '{{ "{{hub" }} "admin" | b64enc {{ "hub}}" }}'
+                  ARGOCD_PASSWORD: '{{ "{{hub" }} $adminPassword {{ "hub}}" }}'
+                  ARGOCD_API_TOKEN: '{{ "{{hub" }} "" | b64enc {{ "hub}}" }}'
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-gitops-dev-tssc-config
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops-dev'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-gitops-dev-tssc-config
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-gitops-dev-tssc-config
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-gitops-dev-tssc-config
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

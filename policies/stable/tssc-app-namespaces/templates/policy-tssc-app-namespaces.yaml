@@ -1,0 +1,317 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-tssc-app-namespaces
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-openshift-pipelines-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # ── CI namespaces: Tekton pipelines + all integration secrets ───────────────
+    # Reads config.tssc-apps from the cluster rendered-config ConfigMap.
+    # Each team's apps are keyed by team name — Helm deep-merges multiple team
+    # files so different teams' entries never overwrite each other.
+    # Namespace: {team}-{app}-ci
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: tssc-app-ns-ci
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $policyNs := "{{ .Values.policy_namespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $cm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $cmData := index $cm "data" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $cfg := index $cmData "config" | default "" | fromYaml | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $tsscApps := index $cfg "tssc-apps" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $tpaNs := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "trusted-profile-analyzer" {{ "hub}}" }}
+            {{ "{{hub-" }} $gitlabEnabled := index .ManagedClusterLabels "autoshift.io/gitlab" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $glData := (lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials" | default dict).data | default dict {{ "hub}}" }}
+            {{ "{{-" }} $pullSecretData := (lookup "v1" "Secret" "openshift-config" "pull-secret" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $dockerConfigJson := index $pullSecretData ".dockerconfigjson" | default "" {{ "}}" }}
+            {{ "{{-" }} $cosignData := (lookup "v1" "Secret" "openshift-pipelines" "signing-secrets" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $acsData := (lookup "v1" "Secret" "stackrox" "tssc-acs-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $tasData := (lookup "v1" "Secret" "openshift-operators" "tssc-tas-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $tpaNs := "{{ "{{hub" }} $tpaNs {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $tpaData := (lookup "v1" "Secret" $tpaNs "tssc-tpa-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{hub-" }} range $team, $apps := $tsscApps {{ "hub}}" }}
+            {{ "{{hub-" }} $argoNs := printf "openshift-gitops-%s" $team {{ "hub}}" }}
+            {{ "{{hub-" }} range $app, $appCfg := $apps {{ "hub}}" }}
+            {{ "{{hub-" }} $envs := index $appCfg "environments" | default list {{ "hub}}" }}
+            {{ "{{hub-" }} if has "ci" $envs {{ "hub}}" }}
+            {{ "{{hub-" }} $prefix := printf "%s-%s" $team $app {{ "hub}}" }}
+            {{ "{{-" }} $argoNs := "{{ "{{hub" }} $argoNs {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $argoData := (lookup "v1" "Secret" $argoNs "tssc-argocd-integration" | default dict).data | default dict {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} printf "%s-ci" $prefix {{ "hub}}" }}
+                  labels:
+                    argocd.argoproj.io/managed-by: {{ "{{hub" }} $argoNs {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-image-registry-auth
+                  namespace: {{ "{{hub" }} printf "%s-ci" $prefix {{ "hub}}" }}
+                type: kubernetes.io/dockerconfigjson
+                data:
+                  .dockerconfigjson: '{{ "{{" }} $dockerConfigJson {{ "}}" }}'
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: pipeline
+                  namespace: {{ "{{hub" }} printf "%s-ci" $prefix {{ "hub}}" }}
+                imagePullSecrets:
+                  - name: tssc-image-registry-auth
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: cosign-pub
+                  namespace: {{ "{{hub" }} printf "%s-ci" $prefix {{ "hub}}" }}
+                type: Opaque
+                data:
+                  cosign.pub: '{{ "{{" }} index $cosignData "cosign.pub" | default "" {{ "}}" }}'
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-acs-integration
+                  namespace: {{ "{{hub" }} printf "%s-ci" $prefix {{ "hub}}" }}
+                type: Opaque
+                data:
+                  endpoint: '{{ "{{" }} index $acsData "endpoint" | default "" {{ "}}" }}'
+                  token: '{{ "{{" }} index $acsData "token" | default "" {{ "}}" }}'
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-tas-integration
+                  namespace: {{ "{{hub" }} printf "%s-ci" $prefix {{ "hub}}" }}
+                type: Opaque
+                data:
+                  rekor_url: '{{ "{{" }} index $tasData "rekor_url" | default "" {{ "}}" }}'
+                  tuf_url: '{{ "{{" }} index $tasData "tuf_url" | default "" {{ "}}" }}'
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-tpa-integration
+                  namespace: {{ "{{hub" }} printf "%s-ci" $prefix {{ "hub}}" }}
+                type: Opaque
+                data:
+                  bombastic_api_url: '{{ "{{" }} index $tpaData "bombastic_api_url" | default "" {{ "}}" }}'
+                  vexination_api_url: '{{ "{{" }} index $tpaData "vexination_api_url" | default "" {{ "}}" }}'
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-argocd-integration
+                  namespace: {{ "{{hub" }} printf "%s-ci" $prefix {{ "hub}}" }}
+                type: Opaque
+                data:
+                  ARGOCD_HOSTNAME: '{{ "{{" }} index $argoData "ARGOCD_HOSTNAME" | default "" {{ "}}" }}'
+                  ARGOCD_USER: '{{ "{{" }} index $argoData "ARGOCD_USER" | default "" {{ "}}" }}'
+                  ARGOCD_PASSWORD: '{{ "{{" }} index $argoData "ARGOCD_PASSWORD" | default "" {{ "}}" }}'
+                  ARGOCD_API_TOKEN: '{{ "{{" }} index $argoData "ARGOCD_API_TOKEN" | default "" {{ "}}" }}'
+            {{ "{{hub-" }} if eq $gitlabEnabled "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-gitlab-integration
+                  namespace: {{ "{{hub" }} printf "%s-ci" $prefix {{ "hub}}" }}
+                type: Opaque
+                data:
+                  host: '{{ "{{hub" }} index $glData "host" | default "" {{ "hub}}" }}'
+                  token: '{{ "{{hub" }} index $glData "token" | default "" {{ "hub}}" }}'
+                  username: '{{ "{{hub" }} index $glData "username" | default "" {{ "hub}}" }}'
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+    # ── App env namespaces: namespace + registry auth + pipeline SA ─────────────
+    # Environments: dev → {prefix}-development, stage → {prefix}-stage, prod → {prefix}-prod
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: tssc-app-ns-env
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $policyNs := "{{ .Values.policy_namespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $cm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $cmData := index $cm "data" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $cfg := index $cmData "config" | default "" | fromYaml | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $tsscApps := index $cfg "tssc-apps" | default dict {{ "hub}}" }}
+            {{ "{{-" }} $pullSecretData := (lookup "v1" "Secret" "openshift-config" "pull-secret" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $dockerConfigJson := index $pullSecretData ".dockerconfigjson" | default "" {{ "}}" }}
+            {{ "{{hub-" }} range $team, $apps := $tsscApps {{ "hub}}" }}
+            {{ "{{hub-" }} $argoNs := printf "openshift-gitops-%s" $team {{ "hub}}" }}
+            {{ "{{hub-" }} range $app, $appCfg := $apps {{ "hub}}" }}
+            {{ "{{hub-" }} $envs := index $appCfg "environments" | default list {{ "hub}}" }}
+            {{ "{{hub-" }} $prefix := printf "%s-%s" $team $app {{ "hub}}" }}
+            {{ "{{hub-" }} if has "dev" $envs {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} printf "%s-development" $prefix {{ "hub}}" }}
+                  labels:
+                    argocd.argoproj.io/managed-by: {{ "{{hub" }} $argoNs {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-image-registry-auth
+                  namespace: {{ "{{hub" }} printf "%s-development" $prefix {{ "hub}}" }}
+                type: kubernetes.io/dockerconfigjson
+                data:
+                  .dockerconfigjson: '{{ "{{" }} $dockerConfigJson {{ "}}" }}'
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: pipeline
+                  namespace: {{ "{{hub" }} printf "%s-development" $prefix {{ "hub}}" }}
+                imagePullSecrets:
+                  - name: tssc-image-registry-auth
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if has "stage" $envs {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} printf "%s-stage" $prefix {{ "hub}}" }}
+                  labels:
+                    argocd.argoproj.io/managed-by: {{ "{{hub" }} $argoNs {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-image-registry-auth
+                  namespace: {{ "{{hub" }} printf "%s-stage" $prefix {{ "hub}}" }}
+                type: kubernetes.io/dockerconfigjson
+                data:
+                  .dockerconfigjson: '{{ "{{" }} $dockerConfigJson {{ "}}" }}'
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: pipeline
+                  namespace: {{ "{{hub" }} printf "%s-stage" $prefix {{ "hub}}" }}
+                imagePullSecrets:
+                  - name: tssc-image-registry-auth
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if has "prod" $envs {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} printf "%s-prod" $prefix {{ "hub}}" }}
+                  labels:
+                    argocd.argoproj.io/managed-by: {{ "{{hub" }} $argoNs {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-image-registry-auth
+                  namespace: {{ "{{hub" }} printf "%s-prod" $prefix {{ "hub}}" }}
+                type: kubernetes.io/dockerconfigjson
+                data:
+                  .dockerconfigjson: '{{ "{{" }} $dockerConfigJson {{ "}}" }}'
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: pipeline
+                  namespace: {{ "{{hub" }} printf "%s-prod" $prefix {{ "hub}}" }}
+                imagePullSecrets:
+                  - name: tssc-image-registry-auth
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-tssc-app-namespaces
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/tssc-app-namespaces'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-tssc-app-namespaces
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-tssc-app-namespaces
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-tssc-app-namespaces
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

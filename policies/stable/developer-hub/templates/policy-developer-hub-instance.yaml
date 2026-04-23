@@ -1,0 +1,438 @@
+{{- $policyName := "policy-developer-hub-instance" }}
+{{- $placementName := "placement-policy-developer-hub-instance" }}
+{{- $instanceName := .Values.developerHub.instanceName }}
+{{- $instanceNs := .Values.developerHub.instanceNamespace }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-developer-hub-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # ── Prereq: GitHub credentials must exist on this cluster ────────────────
+    # Checks that the admin-created tssc-github-credentials Secret exists in
+    # github-system with the required keys before hub templates attempt to read
+    # it. inform-only — the policy reports NonCompliant if the secret is absent.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: github-credentials-prereq
+        spec:
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $githubEnabled := index .ManagedClusterLabels "autoshift.io/github" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $githubEnabled "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-github-credentials
+                  namespace: github-system
+                data:
+                  host: ''
+                  token: ''
+                  org: ''
+            {{ "{{hub-" }} end {{ "hub}}" }}
+    # ── Prereq: GitLab credentials must exist on this cluster ────────────────
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-credentials-prereq
+        spec:
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $gitlabEnabled := index .ManagedClusterLabels "autoshift.io/gitlab" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $gitlabEnabled "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-gitlab-credentials
+                  namespace: gitlab-system
+                data:
+                  host: ''
+                  token: ''
+                  username: ''
+            {{ "{{hub-" }} end {{ "hub}}" }}
+    # ── Namespace ─────────────────────────────────────────────────────────────
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: developer-hub-namespace
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $devHubNs := index .ManagedClusterLabels "autoshift.io/dev-hub-instance-namespace" | default "{{ $instanceNs }}" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} $devHubNs {{ "hub}}" }}
+    # ── App Config ConfigMap ───────────────────────────────────────────────────
+    # Assembles the Backstage app-config from hub template conditionals.
+    # References ${VAR} env vars — the tssc-developer-hub-env Secret populates them.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: developer-hub-app-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $devHubNs := index .ManagedClusterLabels "autoshift.io/dev-hub-instance-namespace" | default "{{ $instanceNs }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $kcRealm := index .ManagedClusterLabels "autoshift.io/keycloak-realm-name" | default "tssc-iam" {{ "hub}}" }}
+            {{ "{{hub-" }} $acsEnabled := index .ManagedClusterLabels "autoshift.io/acs" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $tpaEnabled := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $tasEnabled := index .ManagedClusterLabels "autoshift.io/tas" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $gitlabEnabled := index .ManagedClusterLabels "autoshift.io/gitlab" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $githubEnabled := index .ManagedClusterLabels "autoshift.io/github" | default "false" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: tssc-developer-hub-app-config
+                  namespace: {{ "{{hub" }} $devHubNs {{ "hub}}" }}
+                data:
+                  app-config.tssc.yaml: |
+                    app:
+                      title: Red Hat Developer Hub
+                      baseUrl: ${BACKEND_URL}
+                    backend:
+                      auth:
+                        externalAccess:
+                          - type: static
+                            options:
+                              token: ${BACKEND_SECRET}
+                              subject: legacy
+                      baseUrl: ${BACKEND_URL}
+                      cors:
+                        origin: ${BACKEND_URL}
+                    auth:
+                      environment: production
+                      providers:
+                        oidc:
+                          production:
+                            metadataUrl: ${KEYCLOAK_URL}/realms/{{ "{{hub" }} $kcRealm {{ "hub}}" }}/.well-known/openid-configuration
+                            clientId: ${KEYCLOAK_CLIENT_ID}
+                            clientSecret: ${KEYCLOAK_CLIENT_SECRET}
+                            scope: openid email profile groups
+                            prompt: auto
+                            signIn:
+                              resolvers:
+                                - resolver: preferredUsernameMatchingUserEntityName
+                    signInPage: oidc
+                    catalog:
+                      rules:
+                        - allow: [Component, System, Group, Resource, Location, Template, API]
+                      locations: []
+                      {{ "{{hub-" }} if or (eq $gitlabEnabled "true") (eq $githubEnabled "true") {{ "hub}}" }}
+                      providers:
+                        {{ "{{hub-" }} if eq $gitlabEnabled "true" {{ "hub}}" }}
+                        gitlab:
+                          default:
+                            host: ${GITLAB_HOST}
+                            branch: main
+                            fallbackBranch: master
+                            entityFilename: catalog-info.yaml
+                            projectPattern: '[\s\S]*'
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                        {{ "{{hub-" }} if eq $githubEnabled "true" {{ "hub}}" }}
+                        github:
+                          default:
+                            organization: ${GITHUB_ORG}
+                            catalogPath: /catalog-info.yaml
+                            filters:
+                              branch: main
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    argocd:
+                      appLocatorMethods:
+                        - type: config
+                          instances:
+                            - name: default
+                              url: https://${ARGOCD_HOSTNAME}
+                              token: ${ARGOCD_API_TOKEN}
+                              username: ${ARGOCD_USER}
+                    {{ "{{hub-" }} if or (eq $gitlabEnabled "true") (eq $githubEnabled "true") {{ "hub}}" }}
+                    integrations:
+                      {{ "{{hub-" }} if eq $gitlabEnabled "true" {{ "hub}}" }}
+                      gitlab:
+                        - host: ${GITLAB_HOST}
+                          token: ${GITLAB_TOKEN}
+                          apiBaseUrl: https://${GITLAB_HOST}/api/v4
+                          baseUrl: https://${GITLAB_HOST}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq $githubEnabled "true" {{ "hub}}" }}
+                      github:
+                        - host: ${GITHUB_HOST}
+                          token: ${GITHUB_TOKEN}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if eq $acsEnabled "true" {{ "hub}}" }}
+                    acs:
+                      endpoint: ${ACS_ENDPOINT}
+                      token: ${ACS_API_TOKEN}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if eq $tpaEnabled "true" {{ "hub}}" }}
+                    trustification:
+                      bombasticApiUrl: ${TPA_BOMBASTIC_API_URL}
+                      vexinationApiUrl: ${TPA_VEXINATION_API_URL}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if eq $tasEnabled "true" {{ "hub}}" }}
+                    tas:
+                      rekorUrl: ${REKOR_URL}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+    # ── Dynamic Plugins ConfigMap ──────────────────────────────────────────────
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: developer-hub-dynamic-plugins
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $devHubNs := index .ManagedClusterLabels "autoshift.io/dev-hub-instance-namespace" | default "{{ $instanceNs }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $acsEnabled := index .ManagedClusterLabels "autoshift.io/acs" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $tpaEnabled := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $tasEnabled := index .ManagedClusterLabels "autoshift.io/tas" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $gitlabEnabled := index .ManagedClusterLabels "autoshift.io/gitlab" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $githubEnabled := index .ManagedClusterLabels "autoshift.io/github" | default "false" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: tssc-developer-hub-dynamic-plugins
+                  namespace: {{ "{{hub" }} $devHubNs {{ "hub}}" }}
+                data:
+                  dynamic-plugins.yaml: |
+                    includes:
+                      - dynamic-plugins.default.yaml
+                    plugins:
+                      - package: '@janus-idp/backstage-plugin-tekton'
+                        disabled: false
+                      - package: '@roadiehq/backstage-plugin-argo-cd'
+                        disabled: false
+                      - package: '@roadiehq/backstage-plugin-argo-cd-backend-dynamic'
+                        disabled: false
+                      - package: '@janus-idp/backstage-plugin-topology'
+                        disabled: false
+                      {{ "{{hub-" }} if eq $acsEnabled "true" {{ "hub}}" }}
+                      - package: '@janus-idp/backstage-plugin-acs'
+                        disabled: false
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq $tpaEnabled "true" {{ "hub}}" }}
+                      - package: '@redhat-developer/backstage-plugin-tpa'
+                        disabled: false
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq $tasEnabled "true" {{ "hub}}" }}
+                      - package: '@janus-idp/backstage-plugin-signing'
+                        disabled: false
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq $gitlabEnabled "true" {{ "hub}}" }}
+                      - package: '@backstage-community/plugin-gitlab'
+                        disabled: false
+                      - package: '@backstage-community/plugin-gitlab-backend-module-dynamic'
+                        disabled: false
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq $githubEnabled "true" {{ "hub}}" }}
+                      - package: '@backstage/plugin-catalog-backend-module-github-dynamic'
+                        disabled: false
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+    # ── Environment Secret ─────────────────────────────────────────────────────
+    # Assembles env vars from integration secrets via spoke-side lookups.
+    # All ${VAR} references in the app-config resolve from these values.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: developer-hub-env
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $devHubNs := index .ManagedClusterLabels "autoshift.io/dev-hub-instance-namespace" | default "{{ $instanceNs }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $devHubName := index .ManagedClusterLabels "autoshift.io/dev-hub-instance-name" | default "{{ $instanceName }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $argoTeam := index .ManagedClusterLabels "autoshift.io/dev-hub-gitops-team" | default "dev" {{ "hub}}" }}
+            {{ "{{hub-" }} $argoNs := printf "openshift-gitops-%s" $argoTeam {{ "hub}}" }}
+            {{ "{{hub-" }} $kcNs := index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "keycloak-system" {{ "hub}}" }}
+            {{ "{{hub-" }} $kcRealm := index .ManagedClusterLabels "autoshift.io/keycloak-realm-name" | default "tssc-iam" {{ "hub}}" }}
+            {{ "{{hub-" }} $tpaNs := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "trusted-profile-analyzer" {{ "hub}}" }}
+            {{ "{{-" }} $ns := "{{ "{{hub" }} $devHubNs {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $argoNs := "{{ "{{hub" }} $argoNs {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $kcNs := "{{ "{{hub" }} $kcNs {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $tpaNs := "{{ "{{hub" }} $tpaNs {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $argoData := (lookup "v1" "Secret" $argoNs "tssc-argocd-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $argoHostname := index $argoData "ARGOCD_HOSTNAME" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $argoToken := index $argoData "ARGOCD_API_TOKEN" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $argoUser := index $argoData "ARGOCD_USER" | default "YWRtaW4=" | b64dec {{ "}}" }}
+            {{ "{{-" }} $kcRouteSpec := (lookup "route.openshift.io/v1" "Route" $kcNs "keycloak" | default dict).spec | default dict {{ "}}" }}
+            {{ "{{-" }} $kcHost := index $kcRouteSpec "host" | default "" {{ "}}" }}
+            {{ "{{-" }} $kcClientData := (lookup "v1" "Secret" $kcNs "rhdh-realm-clients" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $kcClientSecret := index $kcClientData "rhdh" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $dhRouteSpec := (lookup "route.openshift.io/v1" "Route" $ns "developer-hub" | default dict).spec | default dict {{ "}}" }}
+            {{ "{{-" }} $dhHost := index $dhRouteSpec "host" | default "" {{ "}}" }}
+            {{ "{{-" }} $backendSecretData := (lookup "v1" "Secret" $ns "tssc-developer-hub-backend-secret" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $backendSecret := index $backendSecretData "secret" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $acsData := (lookup "v1" "Secret" "stackrox" "tssc-acs-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $acsEndpoint := index $acsData "endpoint" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $acsToken := index $acsData "token" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $tpaData := (lookup "v1" "Secret" $tpaNs "tssc-tpa-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $tpaBombastic := index $tpaData "bombastic_api_url" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $tpaVexination := index $tpaData "vexination_api_url" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $tasData := (lookup "v1" "Secret" "openshift-operators" "tssc-tas-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $rekorUrl := index $tasData "rekor_url" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $glData := (lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $glHost := index $glData "host" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $glToken := index $glData "token" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $ghData := (lookup "v1" "Secret" "github-system" "tssc-github-credentials" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $ghHost := index $ghData "host" | default "github.com" | b64dec {{ "}}" }}
+            {{ "{{-" }} $ghToken := index $ghData "token" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $ghOrg := index $ghData "org" | default "" | b64dec {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-developer-hub-env
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+                type: Opaque
+                stringData:
+                  BACKEND_URL: 'https://{{ "{{" }} $dhHost {{ "}}" }}'
+                  BACKEND_SECRET: '{{ "{{" }} $backendSecret {{ "}}" }}'
+                  KEYCLOAK_URL: 'https://{{ "{{" }} $kcHost {{ "}}" }}'
+                  KEYCLOAK_REALM: '{{ "{{hub" }} $kcRealm {{ "hub}}" }}'
+                  KEYCLOAK_CLIENT_ID: developer-hub
+                  KEYCLOAK_CLIENT_SECRET: '{{ "{{" }} $kcClientSecret {{ "}}" }}'
+                  ARGOCD_HOSTNAME: '{{ "{{" }} $argoHostname {{ "}}" }}'
+                  ARGOCD_USER: '{{ "{{" }} $argoUser {{ "}}" }}'
+                  ARGOCD_API_TOKEN: '{{ "{{" }} $argoToken {{ "}}" }}'
+                  ACS_ENDPOINT: '{{ "{{" }} $acsEndpoint {{ "}}" }}'
+                  ACS_API_TOKEN: '{{ "{{" }} $acsToken {{ "}}" }}'
+                  TPA_BOMBASTIC_API_URL: '{{ "{{" }} $tpaBombastic {{ "}}" }}'
+                  TPA_VEXINATION_API_URL: '{{ "{{" }} $tpaVexination {{ "}}" }}'
+                  REKOR_URL: '{{ "{{" }} $rekorUrl {{ "}}" }}'
+                  GITLAB_HOST: '{{ "{{" }} $glHost {{ "}}" }}'
+                  GITLAB_TOKEN: '{{ "{{" }} $glToken {{ "}}" }}'
+                  GITHUB_HOST: '{{ "{{" }} $ghHost {{ "}}" }}'
+                  GITHUB_TOKEN: '{{ "{{" }} $ghToken {{ "}}" }}'
+                  GITHUB_ORG: '{{ "{{" }} $ghOrg {{ "}}" }}'
+    # ── Backstage Instance ─────────────────────────────────────────────────────
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: developer-hub-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $devHubNs := index .ManagedClusterLabels "autoshift.io/dev-hub-instance-namespace" | default "{{ $instanceNs }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $devHubName := index .ManagedClusterLabels "autoshift.io/dev-hub-instance-name" | default "{{ $instanceName }}" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rhdh.redhat.com/v1alpha3
+                kind: Backstage
+                metadata:
+                  name: {{ "{{hub" }} $devHubName {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $devHubNs {{ "hub}}" }}
+                spec:
+                  application:
+                    appConfig:
+                      configMaps:
+                        - name: tssc-developer-hub-app-config
+                    dynamicPlugins:
+                      configMaps:
+                        - name: tssc-developer-hub-dynamic-plugins
+                    extraEnvs:
+                      secrets:
+                        - name: tssc-developer-hub-env
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/dev-hub'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

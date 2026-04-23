@@ -1,0 +1,392 @@
+{{- $policyName := "policy-tpa-instance" }}
+{{- $placementName := "placement-policy-tpa-instance" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-trusted-profile-analyzer-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-cloudnative-pg-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-keycloak-config
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    # ── TPA PostgreSQL database (CloudNativePG) ───────────────────────────────
+    # Skipped entirely when trusted-profile-analyzer-db-external: 'true'.
+    # When CNPG mode (default), provisions an HA cluster + PgBouncer pooler and
+    # auto-creates <cluster>-user Secret with username/password.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: tpa-database
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} if ne (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-external" | default "false") "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Cluster
+                metadata:
+                  name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-cluster-name" | default "tpa-pgsql" {{ "hub}}" }}'
+                  namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "hub}}" }}'
+                spec:
+                  instances: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-instances" | default "2" | toInt {{ "hub}}" }}'
+                  postgresql:
+                    parameters:
+                      max_connections: "200"
+                      shared_buffers: 256MB
+                  bootstrap:
+                    initdb:
+                      database: tpa
+                      owner: tpa
+                  storage:
+                    size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-storage" | default "32Gi" {{ "hub}}" }}'
+                  resources:
+                    requests:
+                      cpu: "500m"
+                      memory: 1Gi
+                    limits:
+                      cpu: "2"
+                      memory: 4Gi
+                  affinity:
+                    enablePodAntiAffinity: true
+                    topologyKey: kubernetes.io/hostname
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Pooler
+                metadata:
+                  name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-cluster-name" | default "tpa-pgsql" {{ "hub}}" }}-pooler-rw'
+                  namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "hub}}" }}'
+                spec:
+                  cluster:
+                    name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-cluster-name" | default "tpa-pgsql" {{ "hub}}" }}'
+                  instances: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-pooler-instances" | default "2" | toInt {{ "hub}}" }}'
+                  type: rw
+                  pgbouncer:
+                    poolMode: session
+                    parameters:
+                      max_client_conn: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-pool-max-client-conn" | default "400" {{ "hub}}" }}'
+                      default_pool_size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-pool-size" | default "40" {{ "hub}}" }}'
+                      min_pool_size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-pool-min-size" | default "5" {{ "hub}}" }}'
+                      reserve_pool_size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-pool-reserve-size" | default "10" {{ "hub}}" }}'
+                      server_reset_query: DISCARD ALL
+                  template:
+                    spec:
+                      containers:
+                        - name: pgbouncer
+                          resources:
+                            requests:
+                              cpu: 50m
+                              memory: 64Mi
+                            limits:
+                              cpu: 200m
+                              memory: 128Mi
+                      affinity:
+                        podAntiAffinity:
+                          preferredDuringSchedulingIgnoredDuringExecution:
+                            - weight: 1
+                              podAffinityTerm:
+                                topologyKey: kubernetes.io/hostname
+                                labelSelector:
+                                  matchLabels:
+                                    cnpg.io/poolerName: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-cluster-name" | default "tpa-pgsql" {{ "hub}}" }}-pooler-rw'
+            {{ "{{hub-" }} end {{ "hub}}" }}
+    # ── TPA DB credentials secret ─────────────────────────────────────────────
+    # Normalises DB connection details into a single Secret that the TPA CR
+    # references via secretKeyRef. Two modes:
+    #   CNPG (default): reads username/password from CNPG-created <cluster>-user
+    #     Secret and constructs the pooler host automatically.
+    #   External: reads username/password from the Secret named by
+    #     trusted-profile-analyzer-db-secret; host and dbname come from labels.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: tpa-db-credentials
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "}}" }}
+            {{ "{{-" }} $clusterName := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-cluster-name" | default "tpa-pgsql" {{ "}}" }}
+            {{ "{{-" }} $external := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-external" | default "false") "true" {{ "}}" }}
+            {{ "{{-" }} $dbUser := "" {{ "}}" }}
+            {{ "{{-" }} $dbPass := "" {{ "}}" }}
+            {{ "{{-" }} $dbHost := "" {{ "}}" }}
+            {{ "{{-" }} $dbName := "tpa" {{ "}}" }}
+            {{ "{{-" }} if $external {{ "}}" }}
+            {{ "{{-" }} $extSecretName := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-secret" | default "" {{ "}}" }}
+            {{ "{{-" }} $extData := (lookup "v1" "Secret" $ns $extSecretName | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $dbUser = index $extData "username" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $dbPass = index $extData "password" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $dbHost = index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-host" | default "" {{ "}}" }}
+            {{ "{{-" }} $dbName = index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-name" | default "tpa" {{ "}}" }}
+            {{ "{{-" }} else {{ "}}" }}
+            {{ "{{-" }} $cnpgData := (lookup "v1" "Secret" $ns (printf "%s-user" $clusterName) | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $dbUser = index $cnpgData "username" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $dbPass = index $cnpgData "password" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $dbHost = printf "%s-pooler-rw.%s.svc" $clusterName $ns {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-tpa-db-config
+                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                type: Opaque
+                stringData:
+                  host: '{{ "{{" }} $dbHost {{ "}}" }}'
+                  port: "5432"
+                  dbname: '{{ "{{" }} $dbName {{ "}}" }}'
+                  user: '{{ "{{" }} $dbUser {{ "}}" }}'
+                  password: '{{ "{{" }} $dbPass {{ "}}" }}'
+    # ── TrustedProfileAnalyzer CR ─────────────────────────────────────────────
+    # Deploys the TPA application wired to the CNPG database and Keycloak OIDC.
+    # OIDC issuer is derived from cluster DNS so it matches the Keycloak Route.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: tpa-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "}}" }}
+            {{ "{{-" }} $realm := index .ManagedClusterLabels "autoshift.io/keycloak-realm-name" | default "tssc-iam" {{ "}}" }}
+            {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
+            {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
+            {{ "{{-" }} $appsDomain := printf "apps.%s" $baseDomain {{ "}}" }}
+            {{ "{{-" }} $oidcIssuer := printf "https://keycloak.%s/realms/%s" $appsDomain $realm {{ "}}" }}
+            {{ "{{-" }} $tpaCliSecret := (lookup "v1" "Secret" $ns "tpa-realm-clients" | default dict).data | default dict {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rhtpa.io/v1
+                kind: TrustedProfileAnalyzer
+                metadata:
+                  name: trustedprofileanalyzer
+                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                spec:
+                  appDomain: '{{ "{{" }} $appsDomain {{ "}}" }}'
+                  collector: {}
+                  database:
+                    sslMode: disable
+                    host:
+                      valueFrom:
+                        secretKeyRef:
+                          name: tssc-tpa-db-config
+                          key: host
+                    port:
+                      valueFrom:
+                        secretKeyRef:
+                          name: tssc-tpa-db-config
+                          key: port
+                    name:
+                      valueFrom:
+                        secretKeyRef:
+                          name: tssc-tpa-db-config
+                          key: dbname
+                    username:
+                      valueFrom:
+                        secretKeyRef:
+                          name: tssc-tpa-db-config
+                          key: user
+                    password:
+                      valueFrom:
+                        secretKeyRef:
+                          name: tssc-tpa-db-config
+                          key: password
+                  createDatabase:
+                    name:
+                      valueFrom:
+                        secretKeyRef:
+                          name: tssc-tpa-db-config
+                          key: dbname
+                    username:
+                      valueFrom:
+                        secretKeyRef:
+                          name: tssc-tpa-db-config
+                          key: user
+                    password:
+                      valueFrom:
+                        secretKeyRef:
+                          name: tssc-tpa-db-config
+                          key: password
+                  migrateDatabase:
+                    username:
+                      valueFrom:
+                        secretKeyRef:
+                          name: tssc-tpa-db-config
+                          key: user
+                    password:
+                      valueFrom:
+                        secretKeyRef:
+                          name: tssc-tpa-db-config
+                          key: password
+                  infrastructure:
+                    port: 9010
+                  ingress:
+                    className: openshift-default
+                  metrics:
+                    enabled: false
+                  modules:
+                    createDatabase:
+                      enabled: true
+                    migrateDatabase:
+                      enabled: true
+                    createImporters:
+                      enabled: true
+                      importers:
+                        cve:
+                          cve:
+                            description: CVE list v5
+                            period: 1d
+                            source: https://github.com/CVEProject/cvelistV5
+                            disabled: false
+                        osv-github:
+                          osv:
+                            description: GitHub Advisory Database
+                            period: 1d
+                            source: https://github.com/github/advisory-database
+                            path: advisories
+                            disabled: false
+                    server:
+                      enabled: true
+                      replicas: 1
+                      resources:
+                        requests:
+                          cpu: "1"
+                          memory: 8Gi
+                  oidc:
+                    issuerUrl: '{{ "{{" }} $oidcIssuer {{ "}}" }}'
+                    clients:
+                      frontend:
+                        clientId: frontend
+                      cli:
+                        clientId: cli
+                        clientSecret:
+                          valueFrom:
+                            secretKeyRef:
+                              name: tpa-realm-clients
+                              key: cli
+                  openshift:
+                    useServiceCa: true
+                  partOf: trustify
+                  replicas: 1
+                  rust:
+                    logFilter: info
+                    backtrace: false
+                  storage:
+                    type: filesystem
+                    size: '{{ "{{" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-storage" | default "32Gi" {{ "}}" }}'
+                  tls:
+                    serviceEnabled: true
+                    additionalTrustAnchor: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                  tracing:
+                    enabled: false
+    # ── TPA integration secret ────────────────────────────────────────────────
+    # Provides TPA endpoint to other TSSC components (RHDH, pipelines).
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: tpa-integration-secret
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "}}" }}
+            {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
+            {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
+            {{ "{{-" }} $appsDomain := printf "apps.%s" $baseDomain {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-tpa-integration
+                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                type: Opaque
+                stringData:
+                  bombastic_api_url: 'https://sbom.{{ "{{" }} $appsDomain {{ "}}" }}'
+                  vexination_api_url: 'https://vex.{{ "{{" }} $appsDomain {{ "}}" }}'
+                  collectorist_api_url: 'https://collectorist.{{ "{{" }} $appsDomain {{ "}}" }}'
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/trusted-profile-analyzer'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
