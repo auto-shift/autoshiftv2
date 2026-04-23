@@ -28,23 +28,20 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           remediationAction: enforce
-          object-templates-raw: | 
-            [
+          object-templates-raw: |
             {{ "{{-" }} $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace") | default "{{ .Values.gitopsNamespace | default .Values.infraNodes.gitops.namespace }}" {{ "}}" }}
-            {{ "{{-" }} $ArgoCD := (lookup "{{ .Values.infraNodes.gitops.apiVersion }}" "{{ .Values.infraNodes.gitops.kind }}" $gitopsNs "{{ .Values.infraNodes.gitops.metadata.name }}") | default dict  {{ "}}" }}
-              {{ "{{-" }} if  not (empty $ArgoCD)  {{ "}}" }}
-                {{ "{{-" }} $spec := $ArgoCD.spec {{ "}}" }} 
-                {{ "{{-" }} $newSpecNoTolerations := unset $spec "tolerations" {{ "}}" }}
-                {{ "{{-" }} $newSpec := set $newSpecNoTolerations "runOnInfra" false {{ "}}" }}
-                {{ "{{-" }} $ArgoCDNoStatus := unset $ArgoCD "status"  {{ "}}" }}
-                {{ "{{-" }} $objectDefinition := set $ArgoCDNoStatus "spec" $newSpec {{ "}}" }}
-                  {
-                    "complianceType": "mustonlyhave",
-                    "objectDefinition": {{ "{{" }} $objectDefinition | toRawJson {{ "}}" }} 
-                  }
-              {{ "{{-" }} end {{ "}}" }} 
-            ]
-             
+            {{ "{{-" }} $ArgoCD := (lookup "{{ .Values.infraNodes.gitops.apiVersion }}" "{{ .Values.infraNodes.gitops.kind }}" $gitopsNs "{{ .Values.infraNodes.gitops.metadata.name }}") | default dict {{ "}}" }}
+            {{ "{{-" }} if not (empty $ArgoCD) {{ "}}" }}
+            {{ "{{-" }} $spec := $ArgoCD.spec {{ "}}" }}
+            {{ "{{-" }} $newSpecNoTolerations := unset $spec "tolerations" {{ "}}" }}
+            {{ "{{-" }} $newSpec := set $newSpecNoTolerations "runOnInfra" false {{ "}}" }}
+            {{ "{{-" }} $ArgoCDNoStatus := unset $ArgoCD "status" {{ "}}" }}
+            {{ "{{-" }} $objectDefinition := set $ArgoCDNoStatus "spec" $newSpec {{ "}}" }}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                {{ "{{" }} $objectDefinition | toYaml | autoindent {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

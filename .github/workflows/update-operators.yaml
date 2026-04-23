@@ -1,0 +1,68 @@
+name: Update Operator Channels
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'  # Monday 8am UTC
+  workflow_dispatch:      # Allow manual trigger
+
+jobs:
+  update-operators:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install oc CLI
+        run: |
+          curl -fsSL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz -C /tmp
+          sudo mv /tmp/oc /usr/local/bin/oc
+          oc version --client
+
+      - name: Write pull secret
+        run: echo '${{ secrets.PULL_SECRET }}' > /tmp/pull-secret.json
+
+      - name: Run update script
+        id: update
+        run: |
+          scripts/update-operator-channels.sh \
+            --pull-secret /tmp/pull-secret.json \
+            --update-all
+          rm -f /tmp/pull-secret.json
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "=== Changed files ==="
+            git diff --name-only
+          fi
+
+      - name: Create PR
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="automation/update-operators-$(date +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add autoshift/values/
+          git commit -m "chore: update operator channels and versions"
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "chore: update operator channels and versions" \
+            --body "$(cat <<'EOF'
+          Automated operator channel update.
+
+          Run by: ${{ github.workflow }}
+          Triggered: ${{ github.event_name }}
+
+          ## Changes
+          Review the diff to confirm channel/version bumps look reasonable before merging.
+          EOF
+          )" \
+            --reviewer bcarr-rh \
+            --label dependencies
