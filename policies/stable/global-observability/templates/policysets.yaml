@@ -1,0 +1,165 @@
+# PolicySets for Global Observability
+#
+# Groups global-observability policies by shared placement:
+#   - policyset-global-observability-secrets: global hub rollup secret creation (self-managed hub only)
+#   - policyset-global-observability: MCOA capabilities patch on MCO CR (all global-obs hubs)
+#   - policyset-global-observability-prometheus: PrometheusAgent remote-write patching
+#
+{{- if .Values.hubClusterSets }}
+##### GLOBAL HUB POLICY SET #####
+---
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: policyset-global-observability-secrets
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  description: policies that need to run on the global hub to replicate secrets
+  policies:
+    - policy-global-observability-secrets
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policyset-global-observability-secrets
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/global-observability'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/self-managed'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policyset-global-observability-secrets
+  namespace: {{ $.Values.policy_namespace }}
+placementRef:
+  name: placement-policyset-global-observability-secrets
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policyset-global-observability-secrets
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+---
+##### ALL HUBS POLICY SET #####
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: policyset-global-observability
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  description: MCOA capabilities patched onto the base MultiClusterObservability CR
+  policies:
+    - policy-global-observability-mcoa
+---
+kind: Placement
+apiVersion: cluster.open-cluster-management.io/v1beta1
+metadata:
+  name: placement-policyset-global-observability
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/global-observability'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policyset-global-observability
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policyset-global-observability
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policyset-global-observability
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+---
+##### PROMETHEUS CONFIG POLICY SET #####
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: policyset-global-observability-prometheus
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  description: global observability PrometheusAgent remote-write configuration on hub clusters
+  policies:
+    - policy-global-observability-prometheus-exists
+    - policy-global-observability-prometheus
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policyset-global-observability-prometheus
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/global-observability'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/self-managed'
+              operator: In
+              values:
+              - 'false'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policyset-global-observability-prometheus
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policyset-global-observability-prometheus
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policyset-global-observability-prometheus
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+{{- end }}

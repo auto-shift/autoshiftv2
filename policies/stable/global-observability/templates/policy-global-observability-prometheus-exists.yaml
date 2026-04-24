@@ -1,0 +1,60 @@
+# Inform-only gate: verifies the MCOA-managed PrometheusAgent templates
+# exist in the hub observability namespace before the patching policy runs.
+#
+# Rationale: the MCOA addon-manager pod only picks up PrometheusAgent
+# templates it created itself. If ACM creates them via a policy, the
+# addon controller will not replicate them (or their secrets) to managed
+# clusters. This policy only checks for existence — it never creates or
+# modifies the resources. Used as a Compliant dependency by
+# policy-global-observability-prometheus so the patching policy waits
+# for MCOA to produce the templates first.
+#
+# Placement: via policyset-global-observability-prometheus
+#
+{{- $policyName := "policy-global-observability-prometheus-exists" }}
+{{- $policyNamespace := .Values.policy_namespace }}
+{{- $mcoaPolicyName := "policy-global-observability-mcoa" }}
+{{- $prometheusAgentNames := .Values.globalObservability.spokeAgent.prometheusAgentNames | default (list "mcoa-default-platform-metrics-collector-global" "mcoa-default-user-workload-metrics-collector-global") }}
+
+{{- if .Values.hubClusterSets }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-7 Continuous Monitoring
+spec:
+  remediationAction: inform
+  disabled: false
+  dependencies:
+    - name: {{ $mcoaPolicyName }}
+      namespace: {{ $policyNamespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-prometheus-exists
+        spec:
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+          {{- range $name := $prometheusAgentNames }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: monitoring.rhobs/v1alpha1
+                kind: PrometheusAgent
+                metadata:
+                  name: {{ $name }}
+                  namespace: {{ $.Values.globalObservability.namespace }}
+          {{- end }}
+{{- end }}
