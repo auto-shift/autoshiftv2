@@ -1,0 +1,107 @@
+# Patches the MultiClusterObservability CR on global hubs to enable MCOA
+# (Multi Cluster Observability Addon) capabilities — platform analytics,
+# logs, metrics, and user-workload logs/metrics/traces. Capability toggles
+# come from the rendered-config ConfigMap under the "globalObservability.capabilities"
+# key (defaults to all "true" from values.yaml).
+#
+# Base MCO CR (namespace, secrets, retention, storage) is owned by
+# policy-acm-observability — this policy merely musthave-patches the
+# capabilities block on top of that CR.
+#
+# Placement: via policyset-global-observability
+# Depends on: policy-acm-observability (MCO CR must exist first)
+#
+{{- $policyName := "policy-global-observability-mcoa" }}
+{{- $policyNamespace := .Values.policy_namespace }}
+
+{{- if .Values.hubClusterSets }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-7 Continuous Monitoring
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-acm-observability
+      namespace: {{ $policyNamespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-mcoa
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $capabilities := index $obsConfig "capabilities" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $platformAnalytics := index $capabilities "platformAnalytics" | default "{{ .Values.globalObservability.capabilities.platformAnalytics | default "true" }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $platformLogs := index $capabilities "platformLogs" | default "{{ .Values.globalObservability.capabilities.platformLogs | default "true" }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $platformMetrics := index $capabilities "platformMetrics" | default "{{ .Values.globalObservability.capabilities.platformMetrics | default "true" }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $userWorkloadLogs := index $capabilities "userWorkloadLogs" | default "{{ .Values.globalObservability.capabilities.userWorkloadLogs | default "true" }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $userWorkloadMetrics := index $capabilities "userWorkloadMetrics" | default "{{ .Values.globalObservability.capabilities.userWorkloadMetrics | default "true" }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $userWorkloadTraces := index $capabilities "userWorkloadTraces" | default "{{ .Values.globalObservability.capabilities.userWorkloadTraces | default "true" }}" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: observability.open-cluster-management.io/v1beta2
+                kind: MultiClusterObservability
+                metadata:
+                  name: observability
+                spec:
+                  {{ "{{hub-" }} if or (eq $platformAnalytics "true") (eq $platformLogs "true") (eq $platformMetrics "true") (eq $userWorkloadLogs "true") (eq $userWorkloadMetrics "true") (eq $userWorkloadTraces "true") {{ "hub}}" }}
+                  capabilities:
+                    {{ "{{hub-" }} if or (eq $platformAnalytics "true") (eq $platformLogs "true") (eq $platformMetrics "true") {{ "hub}}" }}
+                    platform:
+                      {{ "{{hub" }} if eq $platformAnalytics "true" {{ "hub}}" }}
+                      analytics:
+                        incidentDetection: {}
+                        namespaceRightSizingRecommendation: {}
+                        virtualizationRightSizingRecommendation: {}
+                      {{ "{{hub" }} end {{ "hub}}" }}
+                      {{ "{{hub" }} if eq $platformLogs "true" {{ "hub}}" }}
+                      logs:
+                        collection: {}
+                      {{ "{{hub" }} end {{ "hub}}" }}
+                      {{ "{{hub" }} if eq $platformMetrics "true" {{ "hub}}" }}
+                      metrics:
+                        default:
+                          enabled: true
+                        ui: {}
+                      {{ "{{hub" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if or (eq $userWorkloadLogs "true") (eq $userWorkloadMetrics "true") (eq $userWorkloadTraces "true") {{ "hub}}" }}
+                    userWorkloads:
+                      {{ "{{hub" }} if eq $userWorkloadLogs "true" {{ "hub}}" }}
+                      logs:
+                        collection:
+                          clusterLogForwarder: {}
+                      {{ "{{hub" }} end {{ "hub}}" }}
+                      {{ "{{hub" }} if eq $userWorkloadMetrics "true" {{ "hub}}" }}
+                      metrics:
+                        default:
+                          enabled: true
+                      {{ "{{hub" }} end {{ "hub}}" }}
+                      {{ "{{hub" }} if eq $userWorkloadTraces "true" {{ "hub}}" }}
+                      traces:
+                        collection:
+                          collector: {}
+                          instrumentation: {}
+                      {{ "{{hub" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+{{- end }}
