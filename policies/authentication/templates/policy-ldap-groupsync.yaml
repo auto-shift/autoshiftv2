@@ -1,0 +1,294 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-ldap-groupsync
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
+  disabled: false
+  hubTemplateOptions:
+    serviceAccountName: secret-reader
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: ldap-groupsync-namespace
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.ldap_groupsync_namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: ldap-groupsync-jobs
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw : |
+            # Fetch ldap secret name
+            {{ "{{hub-" }} $secret := index .ManagedClusterLabels "autoshift.io/ldap-groupsync-secret" | default "{{ .Values.ldap_groupsync_secret }}" {{ "hub}}" }}
+            # Get bindDN
+            {{ "{{hub" }} $bindDN := fromSecret (index .ManagedClusterLabels `autoshift.io/auth-secrets-namespace`) $secret "bindDN" {{ "hub}}" }}
+
+            # Build list of ldapsyncconfigs
+            {{ "{{hub-" }} $cfg := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml {{ "hub}}" }}
+            {{ "{{hub-" }} $ldapsyncconfigs := list {{ "hub}}" }}
+            {{ "{{hub-" }} range $item := (index $cfg "default-ldap-syncconfigs" | default (list))  {{ "hub}}" }}
+              {{ "{{hub-" }} $ldapsyncconfigs = append $ldapsyncconfigs $item {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $item := (index $cfg "clusterset-ldap-syncconfigs" | default (list))  {{ "hub}}" }}
+              {{ "{{hub-" }} $ldapsyncconfigs = append $ldapsyncconfigs $item {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $item := (index $cfg "cluster-ldap-syncconfigs" | default (list))  {{ "hub}}" }}
+              {{ "{{hub-" }} $ldapsyncconfigs = append $ldapsyncconfigs $item {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+
+            # Build ldapsyncconfigs
+            {{ "{{hub-" }} range $index, $ldapsyncconfig := $ldapsyncconfigs {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  namespace: {{ .Values.ldap_groupsync_namespace }}
+                  name: ldap-syncconfig-{{ "{{hub $index hub}}" }}
+                data:
+                  ldapsyncconfig.yaml: |
+                    kind: LDAPSyncConfig
+                    apiVersion: v1
+                    url: ldaps://vaphc1dc1.va.gov:3269
+                    insecure: false
+                    bindDN: {{ "{{hub" }} $bindDN | base64dec | quote {{ "hub}}" }}
+                    bindPassword:
+                      file: /etc/ldap/bindPassword
+                    ca: /etc/config/ca.crt
+                    rfc2307:
+                      groupsQuery:
+                        baseDN: {{ "{{hub" }} index $ldapsyncconfig "baseDN" | quote {{ "hub}}" }}
+                        scope: sub
+                        derefAliases: never
+                        filter: {{ "{{hub" }} index $ldapsyncconfig "filter" | quote {{ "hub}}" }}
+                        pageSize: 0
+                        timeout: 0
+                      groupUIDAttribute: dn
+                      groupNameAttributes: [ cn ]
+                      groupMembershipAttributes: [ member ]
+                      usersQuery:
+                        baseDN: DC=va,DC=gov
+                        scope: sub
+                        derefAliases: never
+                        pageSize: 0
+                        timeout: 0
+                      userUIDAttribute: dn
+                      userNameAttributes: [ userPrincipalName ]
+                      tolerateMemberNotFoundErrors: true
+                      tolerateMemberOutOfScopeErrors: true
+                  ca.crt: |
+                    {{ "{{hub" }} index $cfg "user-ca-bundle" | autoindent {{ "hub}}" }}
+
+            - complianceType: musthave
+              objectDefinition:
+                kind: Job
+                apiVersion: batch/v1
+                metadata:
+                  namespace: {{ .Values.ldap_groupsync_namespace }}
+                  name: initial-group-sync-{{ "{{hub $index hub}}" }}
+                spec:
+                  backoffLimit: 0
+                  ttlSecondsAfterFinished: 1800
+                  template:
+                    spec:
+                      containers:
+                        - name: ldap-group-sync
+                          image: {{ .Values.ldap_job_image }}
+                          command:
+                            - "/bin/bash"
+                            - "-c"
+                            - "oc adm groups sync --sync-config=/etc/config/ldapsyncconfig.yaml --confirm -v3"
+                          volumeMounts:
+                          {{ "{{hub-" }} if $secret {{ "hub}}" }}
+                            - mountPath: "/etc/config"
+                              name: "ldap-sync-volume"
+                            - mountPath: "/etc/ldap"
+                              name: "ldap-secret"
+                          {{ "{{hub- else hub}}"}}
+                            - mountPath: "/etc/config"
+                              name: "ldap-sync-volume"
+                          {{ "{{hub- end hub}}"}}
+                      volumes:
+                      {{ "{{hub-" }} if $secret {{ "hub}}" }}
+                        - name: "ldap-sync-volume"
+                          configMap:
+                            name: "ldap-syncconfig-{{ "{{hub $index hub}}" }}"
+                        - name: "ldap-secret"
+                          secret:
+                            secretName: {{ "{{hub" }} $secret | quote {{ "hub}}" }}
+                      {{ "{{hub- else hub}}"}}
+                        - name: "ldap-sync-volume"
+                          configMap:
+                            name: "ldapsyncconfig"
+                      {{ "{{hub- end hub}}"}}
+                      restartPolicy: "Never"
+                      terminationGracePeriodSeconds: 30
+                      activeDeadlineSeconds: 500
+                      dnsPolicy: "ClusterFirst"
+                      serviceAccountName: "ldap-group-syncer"
+            - complianceType: musthave
+              objectDefinition:
+                kind: CronJob
+                apiVersion: batch/v1
+                metadata:
+                  name: cron-group-sync-{{ "{{hub $index hub}}" }}
+                  namespace: {{ .Values.ldap_groupsync_namespace }}
+                spec:
+                  schedule: {{ .Values.ldap_schedule | quote }}
+                  concurrencyPolicy: Forbid
+                  successfulJobsHistoryLimit: {{ .Values.ldap_successfulJobsHistoryLimit }}
+                  failedJobsHistoryLimit: {{ .Values.ldap_failedJobsHistoryLimit }}
+                  jobTemplate:
+                    spec:
+                      backoffLimit: 0
+                      ttlSecondsAfterFinished: 1800
+                      template:
+                        spec:
+                          containers:
+                            - name: ldap-group-sync-{{ "{{hub $index hub}}" }}
+                              image: {{ .Values.ldap_job_image }}
+                              command:
+                                - "/bin/bash"
+                                - "-c"
+                                - "oc adm groups sync --sync-config=/etc/config/ldapsyncconfig.yaml --confirm -v5"
+                              volumeMounts:
+                              {{ "{{hub-" }} if $secret {{ "hub}}" }}
+                                - mountPath: "/etc/config"
+                                  name: "ldap-sync-volume"
+                                - mountPath: "/etc/ldap"
+                                  name: "ldap-secret"
+                              {{ "{{hub- else hub}}"}}
+                                - mountPath: "/etc/config"
+                                  name: "ldap-sync-volume"
+                              {{ "{{hub- end hub}}"}}
+                          volumes:
+                          {{ "{{hub-" }} if $secret {{ "hub}}" }}
+                            - name: "ldap-sync-volume"
+                              configMap:
+                                name: "ldap-syncconfig-{{ "{{hub $index hub}}" }}"
+                            - name: "ldap-secret"
+                              secret:
+                                secretName: {{ "{{hub" }} $secret | quote {{ "hub}}" }}
+                          {{ "{{hub- else hub}}"}}
+                            - name: "ldap-sync-volume"
+                              configMap:
+                                name: "ldap-syncconfig-{{ "{{hub $index hub}}" }}"
+                          {{ "{{hub- end hub}}"}}
+                          restartPolicy: "Never"
+                          terminationGracePeriodSeconds: 30
+                          activeDeadlineSeconds: 900
+                          dnsPolicy: "ClusterFirst"
+                          serviceAccountName: "ldap-group-syncer"
+
+            {{ "{{hub- end hub}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: ldap-groupsync-serviceaccount
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRole
+                metadata:
+                  name: ldap-group-syncer
+                rules:
+                  - apiGroups:
+                      - ''
+                      - user.openshift.io
+                    resources:
+                      - groups
+                    verbs:
+                      - get
+                      - list
+                      - create
+                      - update
+            - complianceType: mustonlyhave
+              objectDefinition:
+                kind: ClusterRoleBinding
+                apiVersion: rbac.authorization.k8s.io/v1
+                metadata:
+                  name: ldap-group-syncer
+                subjects:
+                  - kind: ServiceAccount
+                    name: ldap-group-syncer
+                    namespace: {{ .Values.ldap_groupsync_namespace }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: ClusterRole
+                  name: ldap-group-syncer
+            - complianceType: musthave
+              objectDefinition:
+                kind: ServiceAccount
+                apiVersion: v1
+                metadata:
+                  name: ldap-group-syncer
+                  namespace: {{ .Values.ldap_groupsync_namespace }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-ldap-groupsync
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/ldap-sync'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-ldap-groupsync
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-ldap-groupsync
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-ldap-groupsync
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

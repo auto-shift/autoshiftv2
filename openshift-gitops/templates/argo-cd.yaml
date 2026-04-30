@@ -57,6 +57,17 @@ spec:
       requests:
         cpu: {{ ((.Values.gitops.repo).requests).cpu | default "250m" }}
         memory: {{ ((.Values.gitops.repo).requests).memory | default "256Mi" }}
+    {{- if .Values.gitops.repo.cluster_ca_bundle }}
+    volumeMounts:
+      # TODO: Consider further templating for more generic use cases
+      - mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+        name: user-ca-bundle
+        subPath: ca-bundle.crt
+    volumes:
+      - configMap:
+          name: user-ca-bundle
+        name: user-ca-bundle
+    {{- end }}
   ha:
     resources:
       limits:

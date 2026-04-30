@@ -1,0 +1,70 @@
+{{- $files := .Files.Glob "files/oauth/**" }}
+{{- if $files }}
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-auth-configmaps
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: oauth-operator-configmaps
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates:
+            {{- range $path, $_ := $files }}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: oauth-{{ ($path | trimPrefix "files/oauth/" | split ".")._0 }}
+                  namespace: {{ $.Values.policy_namespace }}
+                data:
+                  oauth: {{ ($.Files.Get $path | b64enc) }}
+            {{- end }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-auth-configmaps
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates: [] # If configuration files exist, assume the user wants to use them on a cluster somewhere
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-auth-configmaps
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-auth-configmaps
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-auth-configmaps
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

@@ -1,0 +1,82 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-trident-storage-profiles
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+spec:
+  disabled: false
+  dependencies:
+    - name: policy-virtualization-hyperconverged
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: trident-storage-profiles
+          namespace: policies-autoshift
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates-raw: |
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: cdi.kubevirt.io/v1beta1
+                kind: StorageProfile
+                metadata:
+                  annotations: 
+                    snapshot.storage.kubernetes.io/is-default-class: "true"
+                  name: netapp-nvme-rwx
+                spec:
+                  claimPropertySets:
+                  - accessModes:
+                      - ReadWriteMany
+                    volumeMode: Block
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-trident-storage-profiles
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/trident'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-trident-storage-profiles
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-trident-storage-profiles
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-trident-storage-profiles
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

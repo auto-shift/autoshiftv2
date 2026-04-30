@@ -1,0 +1,118 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-rolebindings
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: rolebindings
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw : |
+            # Build list of RoleBindings
+            {{ "{{hub-" }} $cfg := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml {{ "hub}}" }}
+            {{ "{{hub-" }} $rolebindings := list {{ "hub}}" }}
+            {{ "{{hub-" }} range $item := (index $cfg "default-rolebindings" | default (list))  {{ "hub}}" }}
+              {{ "{{hub-" }} $rolebindings = append $rolebindings $item {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $item := (index $cfg "clusterset-rolebindings" | default (list))  {{ "hub}}" }}
+              {{ "{{hub-" }} $rolebindings = append $rolebindings $item {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} range $item := (index $cfg "cluster-rolebindings" | default (list))  {{ "hub}}" }}
+              {{ "{{hub-" }} $rolebindings = append $rolebindings $item {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+
+            # Build rolebindings
+            {{ "{{hub-" }} range $rolebinding := $rolebindings {{ "hub}}" }}
+              {{ "{{hub-" }} $subject := index $rolebinding "subject" {{ "hub}}" }}
+              {{ "{{hub-" }} $role := "" {{ "hub}}" }}
+              {{ "{{hub-" }} if index $rolebinding "role" {{ "hub}}" }}
+                {{ "{{hub-" }} $role = index $rolebinding "role" {{ "hub}}" }}
+              {{ "{{hub-" }} else if index $rolebinding "cluster-role" {{ "hub}}" }}
+                {{ "{{hub-" }} $role = index $rolebinding "cluster-role" {{ "hub}}" }}
+              {{ "{{hub- end hub}}" }}
+              {{ "{{hub-" }} $kind := index $rolebinding "kind" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                kind: ClusterRoleBinding
+                apiVersion: rbac.authorization.k8s.io/v1
+                metadata:
+                  name: {{ "{{hub" }} printf "%s-%s" $role $subject {{ "hub}}" }}
+                {{ "{{hub-" }} if index $rolebinding "namespace" {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} index $rolebinding "namespace" {{ "hub}}" }}
+                {{ "{{hub- end hub}}" }}
+                subjects:
+                  {{ "{{hub-" }} if or (eq $kind "Group") (eq $kind "group") {{ "hub}}" }}
+                  - kind: Group
+                  {{ "{{hub-" }} else if or (eq $kind "User") (eq $kind "user") {{ "hub}}" }}
+                  - kind: User
+                  {{ "{{hub-" }} else if or (eq $kind "ServiceAccount") (eq $kind "serviceaccount") (eq $kind "SA") (eq $kind "sa") {{ "hub}}" }}
+                  - kind: ServiceAccount
+                    namespace: {{ "{{hub" }} index $rolebinding "subject-namespace" {{ "hub}}" }}
+                  {{ "{{hub- end hub}}" }}
+                    apiGroup: rbac.authorization.k8s.io
+                    name: {{ "{{hub" }} $subject {{ "hub}}" }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  {{ "{{hub-" }} if index $rolebinding "cluster-role" {{ "hub}}" }}
+                  kind: ClusterRole
+                  name: {{ "{{hub" }} index $rolebinding "cluster-role" {{ "hub}}" }}
+                  {{ "{{hub- else hub}}" }}
+                  kind: Role
+                  name: {{ "{{hub" }} index $rolebinding "role" {{ "hub}}" }}
+                  {{ "{{hub- end hub}}" }}
+            {{ "{{hub- end hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-rolebindings
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/rolebindings'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-rolebindings
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-rolebindings
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-rolebindings
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

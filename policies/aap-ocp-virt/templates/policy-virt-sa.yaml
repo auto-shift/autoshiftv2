@@ -1,0 +1,267 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-aap-virt-sa
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: AutoShiftv2
+    policy.open-cluster-management.io/controls: OpenShift Standard
+spec:
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: aap-virt-sa
+          namespace: {{ .Values.policy_namespace }}
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: aap-virt-sa
+                  namespace: {{ .Values.virt_ns }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: aap-virt-sa-cluster-role
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                kind: ClusterRole
+                apiVersion: rbac.authorization.k8s.io/v1
+                metadata:
+                  name: aap-virt-sa-cluster-role
+                rules:
+                  - verbs:
+                      - get
+                      - list
+                      - watch
+                      - create
+                      - delete
+                      - update
+                      - patch
+                    apiGroups:
+                      - ''
+                      - kubevirt.io
+                      - snapshot.kubevirt.io
+                      - cdi.kubevirt.io
+                      - upload.cdi.kubevirt.io
+                      - batch
+                    resources:
+                      - virtualmachines
+                      - virtualmachineinstances
+                      - services
+                      - virtualmachinesnapshots
+                      - datavolumes
+                      - persistentvolumeclaims
+                      - events
+                      - uploadtokenrequests
+                      - cronjobs
+                      - secrets
+                      - webhook
+                  - verbs:
+                      - get
+                      - list
+                      - watch
+                      - create
+                      - delete
+                      - update
+                      - patch
+                    apiGroups:
+                      - forklift.konveyor.io
+                    resources:
+                      - plans
+                      - providers
+                      - networkmaps
+                      - storagemaps
+                      - migrations
+                      - host
+                      - hooks
+                      - forkliftcontrollers
+                  - verbs:
+                      - get
+                      - list
+                    apiGroups:
+                      - k8s.cni.cncf.io
+                      - k8s.ovn.org
+                    resources:
+                      - network-attachment-definitions
+                      - clusteruserdefinednetworks
+                  - verbs:
+                      - get
+                      - list
+                    apiGroups:
+                      - ''
+                      - project.openshift.io
+                    resources:
+                      - projects
+                      - namespaces
+                  - verbs:
+                      - get
+                      - list
+                      - create
+                      - patch
+                      - update
+                    apiGroups:
+                      - ''
+                    resources:
+                      - persistentvolume
+                      - storageclass
+                  - verbs:
+                      - get
+                      - list
+                      - create
+                      - patch
+                      - update
+                    apiGroups:
+                      - subresources.kubevirt.io
+                    resources:
+                      - virtualmachines/restart
+                      - virtualmachines/addvolume
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: aap-virt-sa-cluster-rolebinding
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                kind: ClusterRoleBinding
+                apiVersion: rbac.authorization.k8s.io/v1
+                metadata:
+                  name: aap-virt-sa-cluster-rolebinding
+                  namespace: {{ .Values.virt_ns }}
+                subjects:
+                  - kind: ServiceAccount
+                    name: aap-virt-sa
+                    namespace: {{ .Values.virt_ns }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: ClusterRole
+                  name: aap-virt-sa-cluster-role
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: oc-runner-sa-virt
+          namespace: {{ .Values.policy_namespace }}
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: oc-runner-virt
+                  namespace: {{ .Values.virt_ns }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: oc-runner-virt-role
+          namespace: {{ .Values.policy_namespace }}
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                kind: Role
+                apiVersion: rbac.authorization.k8s.io/v1
+                metadata:
+                  name: oc-runner-virt-role
+                  namespace: {{ .Values.virt_ns }}
+                rules:
+                  - apiGroups:
+                      - ""
+                    resources:
+                      - serviceaccounts/token
+                      - pods
+                      - secrets
+                    verbs:
+                      - get
+                      - list
+                      - watch
+                      - create
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: oc-runner-virt-rolebinding
+          namespace: {{ .Values.policy_namespace }}
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                kind: RoleBinding
+                apiVersion: rbac.authorization.k8s.io/v1
+                metadata:
+                  name: oc-runner-virt-rolebinding
+                  namespace: {{ .Values.virt_ns }}
+                subjects:
+                  - kind: ServiceAccount
+                    name: oc-runner-virt
+                    namespace: {{ .Values.virt_ns }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: Role
+                  name: oc-runner-virt-role
+
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-aap-virt-sa
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/aap-ocp-virt'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-aap-virt-sa
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-aap-virt-sa
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-aap-virt-sa
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

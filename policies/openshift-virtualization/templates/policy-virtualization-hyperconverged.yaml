@@ -33,10 +33,12 @@ spec:
                 apiVersion: hco.kubevirt.io/v1beta1
                 kind: HyperConverged
                 metadata:
-                  name: kubevirt-hyperconverged
                   annotations:
                     deployOVS: 'false'
-                  namespace: {{ .Values.virt.namespace }}
+                  name: kubevirt-hyperconverged
+                  namespace: openshift-cnv
+                  labels:
+                    app: kubevirt-hyperconverged
                 spec:
                   virtualMachineOptions:
                     disableFreePageReporting: false
@@ -57,9 +59,8 @@ spec:
                     server:
                       duration: 24h0m0s
                       renewBefore: 12h0m0s
-                  applicationAwareConfig:
-                    allowApplicationAwareClusterResourceQuota: false
-                    vmiCalcConfigName: DedicatedVirtualResources
+                  infra: {}
+                  evictionStrategy: LiveMigrate
                   featureGates:
                     enableCommonBootImageImport: true
                     downwardMetrics: false
@@ -76,8 +77,137 @@ spec:
                     workloadUpdateMethods:
                       - LiveMigrate
                   uninstallStrategy: BlockUninstallIfWorkloadsExist
-                  resourceRequirements:
-                    vmiCPUAllocationRatio: 10
+                  dataImportCronTemplates:
+                    - metadata:
+                        annotations:
+                          cdi.kubevirt.io/storage.bind.immediate.requested: 'true'
+                        labels:
+                          kubevirt.io/dynamic-credentials-support: 'true'
+                        name: centos-stream10-image-cron
+                      spec:
+                        garbageCollect: Outdated
+                        importsToKeep: 1
+                        managedDataSource: centos-stream10
+                        schedule: 49 1/12 * * *
+                        template:
+                          metadata: {}
+                          spec:
+                            source:
+                              registry:
+                                pullMethod: node
+                                url: 'docker://quay.io/containerdisks/centos-stream:10'
+                            storage:
+                              resources:
+                                requests:
+                                  storage: 30Gi
+                    - metadata:
+                        annotations:
+                          cdi.kubevirt.io/storage.bind.immediate.requested: 'true'
+                        labels:
+                          kubevirt.io/dynamic-credentials-support: 'true'
+                        name: centos-stream9-image-cron
+                      spec:
+                        garbageCollect: Outdated
+                        importsToKeep: 1
+                        managedDataSource: centos-stream9
+                        schedule: 49 1/12 * * *
+                        template:
+                          metadata: {}
+                          spec:
+                            source:
+                              registry:
+                                pullMethod: node
+                                url: 'docker://quay.io/containerdisks/centos-stream:9'
+                            storage:
+                              resources:
+                                requests:
+                                  storage: 30Gi
+                    - metadata:
+                        annotations:
+                          cdi.kubevirt.io/storage.bind.immediate.requested: 'true'
+                        labels:
+                          kubevirt.io/dynamic-credentials-support: 'true'
+                        name: fedora-image-cron
+                      spec:
+                        garbageCollect: Outdated
+                        importsToKeep: 1
+                        managedDataSource: fedora
+                        schedule: 49 1/12 * * *
+                        template:
+                          metadata: {}
+                          spec:
+                            source:
+                              registry:
+                                pullMethod: node
+                                url: 'docker://quay.io/containerdisks/fedora:latest'
+                            storage:
+                              resources:
+                                requests:
+                                  storage: 30Gi
+                    - metadata:
+                        annotations:
+                          cdi.kubevirt.io/storage.bind.immediate.requested: 'true'
+                        labels:
+                          kubevirt.io/dynamic-credentials-support: 'true'
+                        name: rhel10-image-cron
+                      spec:
+                        garbageCollect: Outdated
+                        importsToKeep: 1
+                        managedDataSource: rhel10
+                        schedule: 49 1/12 * * *
+                        template:
+                          metadata: {}
+                          spec:
+                            source:
+                              registry:
+                                imageStream: rhel10-guest
+                                pullMethod: node
+                            storage:
+                              resources:
+                                requests:
+                                  storage: 30Gi
+                    - metadata:
+                        annotations:
+                          cdi.kubevirt.io/storage.bind.immediate.requested: 'true'
+                        name: rhel8-image-cron
+                      spec:
+                        garbageCollect: Outdated
+                        importsToKeep: 1
+                        managedDataSource: rhel8
+                        schedule: 49 1/12 * * *
+                        template:
+                          metadata: {}
+                          spec:
+                            source:
+                              registry:
+                                imageStream: rhel8-guest
+                                pullMethod: node
+                            storage:
+                              resources:
+                                requests:
+                                  storage: 30Gi
+                    - metadata:
+                        annotations:
+                          cdi.kubevirt.io/storage.bind.immediate.requested: 'true'
+                        labels:
+                          kubevirt.io/dynamic-credentials-support: 'true'
+                        name: rhel9-image-cron
+                      spec:
+                        garbageCollect: Outdated
+                        importsToKeep: 1
+                        managedDataSource: rhel9
+                        schedule: 49 1/12 * * *
+                        template:
+                          metadata: {}
+                          spec:
+                            source:
+                              registry:
+                                imageStream: rhel9-guest
+                                pullMethod: node
+                            storage:
+                              resources:
+                                requests:
+                                  storage: 30Gi
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

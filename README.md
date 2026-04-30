@@ -481,6 +481,22 @@ created for each replica of the image service. 2GiB per OSImage entry is require
 
 Manages the automated cluster labeling system that applies `autoshift.io/` prefixed labels to clusters and cluster sets. This policy automatically propagates labels from cluster sets to individual clusters and manages the label hierarchy.
 
+### Ansible Automation Platform
+
+| Variable                         | Type      | Default Value              | Notes |
+|----------------------------------|-----------|----------------------------|-------|
+| `aap`                            | bool      | `true` or `false`          |  |
+| `aap-channel`                    | string    | `stable-2.5`             |  |
+| `aap-install-plan-approval`      | string    | `Automatic`                |  |
+| `aap-source`                     | string    | `redhat-operators`         |  |
+| `aap-hub-disabled`               | bool      | `true` or `false`          | 'false' will include Hub content storage in your deployment, 'true' will omit.       |
+| `aap-file-storage`               | bool      | `true` or `false`          | 'false' will use file storage for Hub content storage in your deployment, 'true' will omit. |
+| `aap-file_storage_storage_class` | string    | `ocs-storagecluster-cephfs`| you will set the storage class for your file storage, defaults to ODF. you must have a RWX capable storage class if using anything else. |
+| `aap-file_storage_size`          | bool      | `10G`                      | set the pvc claim size for your file storage.  |
+| `aap-s3-storage`                 | bool      | `true` or `false`          | 'false' will use ODF NooBa for Hub content storage in your deployment, 'true' will omit. |
+| `aap-eda-disabled`               | bool      | `true` or `false`          | 'false' will include EDA in your deployment, 'true' will omit. |
+| `aap-lightspeed-disabled`        | bool      | `true` or `false`          | 'false' will include Ansible Lightspeed in your deployment, 'true' will omit. |
+
 ### MetalLB
 
 | Variable                            | Type              | Default Value             | Notes |

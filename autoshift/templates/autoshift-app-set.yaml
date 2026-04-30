@@ -2,7 +2,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
   name: "{{ .Release.Name }}-policies"
-  namespace: openshift-gitops
+  namespace: {{ .Values.gitopsNamespace }}
   labels:
     velero.io/exclude-from-backup: "true"
 spec:
@@ -45,13 +45,14 @@ spec:
         app: "{{ .Release.Name }}-policies"
         velero.io/exclude-from-backup: "true"
     spec:
+      revisionHistoryLimit: 1
       project: default
       source:
         {{- if .Values.autoshiftOciRegistry }}
         # OCI mode - use Helm chart from registry
         path: .
         repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
-        targetRevision: {{ .Values.autoshiftOciVersion | default .Chart.Version }}
+        targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
         {{- else }}
         # Git mode - use path in Git repository
         path: '{{"{{"}} .path.path {{"}}"}}'
@@ -62,22 +63,27 @@ spec:
           valueFiles:
           - values.yaml
           valuesObject:
+            config: {{ (index .Values "config" | default (dict) | toYaml | nindent 16) }}
             {{- $clusterSetSuffix := "" }}
             {{- if .Values.versionedClusterSets }}
               {{- $versionTag := "" }}
               {{- if .Values.autoshiftOciRegistry }}
-                {{- $versionTag = .Values.autoshiftOciVersion | default .Chart.Version }}
+                {{- $versionTag = .Values.autoshiftOciVersion | default "latest" }}
               {{- else }}
                 {{- $versionTag = .Values.autoshiftGitBranchTag | default "main" }}
               {{- end }}
               {{- /* Sanitize for DNS: replace dots and slashes with dashes, lowercase */ -}}
               {{- $clusterSetSuffix = printf "-%s" ($versionTag | replace "." "-" | replace "/" "-" | lower) }}
             {{- end }}
+            gitopsNamespace: {{ .Values.gitopsNamespace }}
             selfManagedHubSet: {{ .Values.selfManagedHubSet }}{{ $clusterSetSuffix }}
             policy_namespace: {{ printf "policies-%s" .Release.Name }}
             clusterSetSuffix: {{ $clusterSetSuffix }}
             autoshift:
               dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
+              evaluationInterval:
+                compliant: {{ (((.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+                noncompliant: {{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
             {{- if .Values.hubClusterSets }}
             hubClusterSets:
             {{-  range $cluster, $clustervalue := .Values.hubClusterSets }}
@@ -86,6 +92,7 @@ spec:
                 {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
                   {{ $labelkey }}: '{{ $labelvalue }}'
                 {{- end }}
+                config: {{ (index $clustervalue "config" | default (dict) | toYaml | nindent 18) }}
             {{- end }}
             {{- end }}
             {{- if .Values.managedClusterSets }}
@@ -96,6 +103,7 @@ spec:
                 {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
                   {{ $labelkey }}: '{{ $labelvalue }}'
                 {{- end }}
+                config: {{ (index $clustervalue "config" | default (dict) | toYaml | nindent 18) }}
             {{- end }}
             {{- end }}
             {{- if .Values.clusters }}
@@ -106,6 +114,7 @@ spec:
                 {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
                   {{ $labelkey }}: '{{ $labelvalue }}'
                 {{- end }}
+                config: {{ (index $clustervalue "config" | default (dict) | toYaml | nindent 18) }}
             {{- end }}
             {{- end }}
       ignoreDifferences:
