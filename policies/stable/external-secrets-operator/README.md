@@ -80,6 +80,118 @@ Find available CSV versions:
 oc get packagemanifests external-secrets-operator -o jsonpath='{.status.channels[*].currentCSV}'
 ```
 
+## SecretStore / ClusterSecretStore Configuration
+
+Beyond installing the operator, this policy renders ESO `SecretStore` and `ClusterSecretStore`
+resources from per-cluster rendered-config ConfigMaps. Real config lives in cluster/clusterset
+values files under `config.eso.stores`; the stores policy reads each cluster's rendered-config
+at runtime and emits matching resources.
+
+### Enabling
+
+The single label `autoshift.io/external-secrets-operator: 'true'` opts a cluster into both the
+operator install policy and the stores policy. A cluster that has the label but no
+`config.eso.stores` entries gets the operator installed and an empty stores policy — no stores
+rendered, no harm done.
+
+### Supported providers
+
+The chart's accepted provider list is configured in `values.yaml` under
+`esoStores.validProviders` and currently covers:
+
+- `vault` (HashiCorp Vault)
+- `aws` (AWS Secrets Manager / Parameter Store)
+- `azurekv` (Azure Key Vault)
+- `gcpsm` (Google Cloud Secret Manager)
+- `kubernetes` (remote/local Kubernetes Secret store)
+
+Per-provider field schemas, auth methods, and minimal vs fully-fleshed examples are documented
+in `values.yaml` as commented YAML. Adding a new provider requires both updating
+`esoStores.validProviders` and confirming the rendering path passes through the user's
+`provider.<type>` block as-is (it does — there is no per-provider field-level logic).
+
+### Per-store cluster filtering
+
+Each store entry may carry a `clusterSelector` block evaluated at runtime against
+`.ManagedClusterLabels` on the receiving cluster. Both `matchLabels` and `matchExpressions`
+(operators `In`, `NotIn`, `Exists`, `DoesNotExist`) are supported. Entries whose selector does
+not match the current cluster are skipped silently. Entries with no `clusterSelector` always
+render.
+
+This lets a single clusterset-level config declare a store and restrict it to a subset of
+clusters in the set without splitting the config.
+
+### SecretStore vs ClusterSecretStore
+
+Each entry's `kind` field selects between namespaced `SecretStore` (per-namespace, lives in
+`namespace`) and cluster-scoped `ClusterSecretStore` (no `metadata.namespace`, optional
+`conditions[]` to restrict consuming namespaces). Default is `ClusterSecretStore`, configured
+under `esoStores.defaults.kind` in `values.yaml`.
+
+For `SecretStore` entries, the target namespace falls back to `esoStores.defaults.namespace`
+(default: `external-secrets-operator`) when the entry omits `.namespace`.
+
+For `ClusterSecretStore`, any `*SecretRef.namespace` and `caProvider.namespace` fields inside
+the provider block are required (the cluster store has no namespace to inherit from). The chart
+does not enforce this — ESO surfaces a runtime error if missing.
+
+### Validation
+
+Two layers, both sharing `esoStores.validProviders`:
+
+- **Chart-render time** (Helm): rejects inline default stores in `.Values.esoStores.stores` that
+  are missing `.name`, declare zero or multiple keys under `.provider`, or name a provider not
+  in `validProviders`. Failure aborts `helm template` with a descriptive error.
+- **Hub-template runtime** (per-cluster): re-runs the same checks against the live store list
+  pulled from rendered-config. Any malformed entry causes the entire stores policy to fail to
+  render on that cluster, surfacing as **whole-policy noncompliance** with the validation error
+  visible in policy status. Bad entries do not partially apply.
+
+### Example: clusterset config with two stores
+
+```yaml
+# In an autoshift clusterset values file
+config:
+  eso:
+    stores:
+      - name: vault-shared
+        kind: ClusterSecretStore
+        clusterSelector:
+          matchLabels:
+            tier: prod
+        conditions:
+          - namespaceSelector:
+              matchLabels:
+                eso-tier: shared
+        provider:
+          vault:
+            server: https://vault.corp.example.com:8200
+            path: kv
+            version: v2
+            auth:
+              kubernetes:
+                mountPath: kubernetes
+                role: shared-reader
+                serviceAccountRef:
+                  name: eso-vault-sa
+                  namespace: external-secrets-operator
+      - name: aws-team-a
+        kind: SecretStore
+        namespace: team-a
+        provider:
+          aws:
+            service: SecretsManager
+            region: us-east-1
+            auth:
+              jwt:
+                serviceAccountRef:
+                  name: team-a-irsa-sa
+```
+
+The first store deploys only to clusters labeled `tier: prod` and is consumable from any
+namespace labeled `eso-tier: shared`. The second deploys everywhere in the clusterset and is
+namespaced to `team-a`.
+
 ## Next Steps: Configuration
 
 ### 1. Explore Installed CRDs

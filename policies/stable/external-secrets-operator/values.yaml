@@ -11,7 +11,32 @@ externalSecretsOperator:
   operatorGroupName: external-secrets-operator-operator-group
   # targetNamespaces: # Optional: specify target namespaces for namespace-scoped operators
   #   - external-secrets-operator
-  
+
+# SecretStore / ClusterSecretStore rendering. Real per-cluster store config lives in
+# rendered-config ConfigMaps under `config.eso.stores` and is read at runtime by the
+# stores policy template via hub-template lookup. Inline entries under .stores below
+# are validated at chart-render time and are intended only for tests / static defaults.
+esoStores:
+  # validProviders gates which provider keys are accepted, in BOTH layers:
+  #   - chart-render time: helm fails if any inline default store names a provider not listed here
+  #   - hub-template runtime: the policy fails to render (whole-policy noncompliant) if any
+  #     rendered-config store names a provider not listed here
+  # Adding a provider here also requires adding rendering support in
+  # templates/policy-external-secrets-stores.yaml.
+  validProviders:
+    - vault
+    - aws
+    - azurekv
+    - gcpsm
+    - kubernetes
+  defaults:
+    # kind used when a store entry omits .kind
+    kind: ClusterSecretStore        # SecretStore | ClusterSecretStore
+    # namespace used for kind=SecretStore entries that omit .namespace
+    namespace: external-secrets-operator
+  # Inline stores. Leave empty in the typical case — real config flows from rendered-config.
+  stores: []
+
 # hubClusterSets:
 #   hub:
 #     labels:
@@ -26,6 +51,7 @@ externalSecretsOperator:
 #
 # Enable/Disable:
 # external-secrets-operator<bool>: 'true' or 'false' - Controls whether external-secrets-operator is managed
+#   (also gates rendering of SecretStore / ClusterSecretStore resources from rendered-config)
 #
 # Configuration:
 # external-secrets-operator-subscription-name<string>: Operator subscription name (default: 'openshift-external-secrets-operator')
@@ -41,3 +67,131 @@ externalSecretsOperator:
 # autoshift.io/external-secrets-operator-version: 'operator-name.v1.x.x'
 # autoshift.io/external-secrets-operator-source: 'redhat-operators'
 # autoshift.io/external-secrets-operator-source-namespace: 'openshift-marketplace'
+
+### SecretStore / ClusterSecretStore configuration reference
+#
+# Real config lives in cluster/clusterset values files under config.eso.stores and flows
+# through the rendered-config ConfigMap. The stores policy reads each cluster's
+# rendered-config at runtime, validates each entry, applies the per-store clusterSelector
+# filter, and renders the matching resources.
+#
+# Whole-policy failure semantics: any invalid entry (bad provider, multiple providers,
+# missing identity) causes the entire stores policy to surface as noncompliant on that
+# cluster. Bad entries do not partially apply.
+#
+# config:
+#   eso:
+#     stores:
+#       - name: vault-shared
+#         kind: ClusterSecretStore     # SecretStore | ClusterSecretStore (default from esoStores.defaults.kind)
+#         namespace: my-app            # used only when kind=SecretStore (default from esoStores.defaults.namespace)
+#         clusterSelector:             # optional per-store filter on .ManagedClusterLabels
+#           matchLabels:
+#             tier: prod
+#           matchExpressions:
+#             - { key: env, operator: In, values: [prod, stage] }
+#         conditions:                  # CSS only — restricts which namespaces may consume the store
+#           - namespaces: [team-a, team-b]
+#           - namespaceRegexes: ['^prod-.*$']
+#           - namespaceSelector:
+#               matchLabels: { eso-tier: shared }
+#         refreshInterval: 300         # seconds; 0/empty = controller default
+#         controller: ''               # empty = default controller
+#         provider:
+#           # exactly one of vault | aws | azurekv | gcpsm | kubernetes (must be in esoStores.validProviders)
+#
+#           vault:
+#             server: https://vault.example.com:8200
+#             path: secret
+#             version: v2              # v1 | v2
+#             namespace: ''            # Vault Enterprise namespace (NOT a k8s namespace)
+#             caBundle: ''             # base64 PEM (use either caBundle OR caProvider, not both)
+#             caProvider:
+#               type: ConfigMap        # ConfigMap | Secret
+#               name: vault-ca
+#               key: ca.crt
+#               namespace: external-secrets   # CSS only
+#             auth:
+#               # exactly one of: tokenSecretRef | kubernetes | appRole | jwt | cert | ldap | userPass | iam | gcp
+#               kubernetes:
+#                 mountPath: kubernetes
+#                 role: app-role
+#                 serviceAccountRef:
+#                   name: app-sa
+#                   namespace: external-secrets   # CSS only
+#                   audiences: [vault]
+#               # tokenSecretRef: { name, key, namespace }
+#               # appRole:
+#               #   path: approle
+#               #   roleId: <id>
+#               #   secretRef: { name, key, namespace }
+#
+#           # aws:
+#           #   service: SecretsManager        # SecretsManager | ParameterStore
+#           #   region: us-east-1
+#           #   role: arn:aws:iam::...:role/eso         # optional sts:AssumeRole target
+#           #   prefix: ''                              # optional key prefix
+#           #   auth:
+#           #     # one of: jwt (IRSA/Pod Identity, preferred) | secretRef (static creds) | omitted (SDK chain)
+#           #     jwt:
+#           #       serviceAccountRef:
+#           #         name: app-irsa-sa
+#           #         namespace: external-secrets       # CSS only
+#           #         audiences: ['sts.amazonaws.com']
+#           #     # secretRef:
+#           #     #   accessKeyIDSecretRef:     { name, key, namespace }
+#           #     #   secretAccessKeySecretRef: { name, key, namespace }
+#           #     #   sessionTokenSecretRef:    { name, key, namespace }
+#
+#           # azurekv:
+#           #   vaultUrl: https://my-kv.vault.azure.net
+#           #   authType: WorkloadIdentity     # WorkloadIdentity (preferred) | ServicePrincipal | ManagedIdentity (deprecated)
+#           #   tenantId: ''
+#           #   environmentType: PublicCloud   # PublicCloud | USGovernmentCloud | ChinaCloud | GermanCloud | AzureStackCloud
+#           #   identityId: ''                 # niche: pick one MI when multiple are assigned
+#           #   serviceAccountRef:             # required for WorkloadIdentity
+#           #     name: app-wi-sa
+#           #     namespace: external-secrets  # CSS only
+#           #   authSecretRef:                 # required for ServicePrincipal
+#           #     clientId:          { name, key, namespace }
+#           #     clientSecret:      { name, key, namespace }
+#           #     clientCertificate: { name, key, namespace }
+#           #     tenantId:          { name, key, namespace }
+#
+#           # gcpsm:
+#           #   projectID: my-gcp-project
+#           #   location: ''                   # required for CMEK / regional secrets
+#           #   secretVersionSelectionPolicy: LatestOrFail   # LatestOrFail | LatestOrFetch
+#           #   auth:
+#           #     # one of: workloadIdentity (GKE) | secretRef (off-cluster SA key) | omitted (ADC)
+#           #     workloadIdentity:
+#           #       clusterLocation: ''
+#           #       clusterName: ''
+#           #       clusterProjectID: ''
+#           #       serviceAccountRef:
+#           #         name: app-wi-sa
+#           #         namespace: external-secrets    # CSS only
+#           #     # secretRef:
+#           #     #   secretAccessKeySecretRef: { name, key, namespace }   # GCP SA JSON key
+#
+#           # kubernetes:
+#           #   remoteNamespace: shared-secrets
+#           #   server:
+#           #     url: ''                          # default kubernetes.default
+#           #     caBundle: ''                     # XOR caProvider
+#           #     caProvider:
+#           #       type: ConfigMap                # ConfigMap | Secret
+#           #       name: kube-root-ca.crt
+#           #       key: ca.crt
+#           #       namespace: ''                  # CSS only
+#           #   auth:
+#           #     # exactly one of: serviceAccount | token | cert
+#           #     serviceAccount:
+#           #       name: eso-reader
+#           #       namespace: external-secrets    # CSS only
+#           #       audiences: []
+#           #     # token:
+#           #     #   bearerToken: { name, key, namespace }
+#           #     # cert:
+#           #     #   clientCert: { name, key, namespace }
+#           #     #   clientKey:  { name, key, namespace }
