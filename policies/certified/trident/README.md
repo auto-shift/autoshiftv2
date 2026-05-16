@@ -1,179 +1,101 @@
-## Autoshift Trident Automation ##
-
-With these Autoshift policies, you can automate the deployment of the
-Trident Operator, the Trident Orchestrator operand, and manage its
-objects directly from source control.
-
-
-**OVERVIEW**
-
-The workflow is straightforward:
-
-  - Deploy the Trident Operator
-  - Deploy the Trident Orchestrator once the operator becomes available
-  - Manage Trident resources such as:
-      - TridentBackendConfig
-      - StorageClass
-
-Backends can be created using:
-
-  - Label-driven configuration (recommended)
-  - File-based configuration (legacy)
-
-
-**IMPORTANT WARNING**
-
-These policies include MachineConfigs that will trigger node reboots.
-
-There is an OpenShift bug that sets the same NQN ID on each node in the
-cluster. This causes issues in NetApp ONTAP when creating PVCs.
-
-Bug reference:
-https://issues.redhat.com/browse/RHEL-8041
-
-To resolve this:
-
-  - One MachineConfig ensures each node has a unique NQN reflecting its
-    hostname.
-
-      Example:
-      nqn.2024-05.io.openshift:<HOSTNAME>
-
-  - Another MachineConfig enables nvme-tcp in the kernel, which is
-    required for Trident to provision NVMe storage.
-
-Plan maintenance windows accordingly.
-
-
-## CREDENTIALS
-
-You must create the Trident credentials secret on the ACM hub cluster
-in a namespace of your choice.
-
-Example:
-
-oc create secret generic netapp-creds \
-  -n your-namespace \
-  --from-literal=username=vsadmin \
-  --from-literal=password='password'
-
-**This will require a service account to be created in the policies-autoshift namespace with read permissions on secrets to your namespace.**
-
-
-## VALUES CONFIGURATION
-
-**In autoshift/values.hub.yaml you must define:**
-
-  trident: true <br>
-  trident-creds-secret: netapp-creds <br>
-
-**Enable label-driven configuration:**
-
-  trident-label-config: true
-
-**Optional legacy file-based configuration:**
-
-**Example values.hub.yaml:**
-
-  trident: true <br>
-  trident-creds-secret: netapp-creds <br>
-  trident-label-config: true <br>
-
-
-## LABEL-DRIVEN CONFIGURATION (RECOMMENDED) ##
-
-**Enable:**
-
-  trident-label-config: true 
-
-This dynamically creates TridentBackendConfig and StorageClass objects
-using ManagedCluster labels.
-
-**Example cluster labels:**
-
-  trident-backend-1-svm: Data-NFS-SVM-OpenShift <br>
-  trident-backend-1-managementlif: 192.168.1.1 <br>
-  trident-backend-1-secret: netapp-creds
-
-**Defaults:**
-
-  storageDriverName = ontap-san <br>
-  sanType = nvme <br>
-  fsType = ext4 <br>
-  allowVolumeExpansion = true <br>
-
-**Generated objects:**
-
-  TridentBackendConfig:
-    backend-data-nfs-svm-openshift-nvme
-
-  StorageClass:
-    data-nfs-svm-openshift-nvme
-
-**To create multiple backends, increment the number:**
-
-  trident-backend-2-svm: Data-SVM-Backup <br>
-  trident-backend-2-managementlif: 192.168.1.2 <br>
-  trident-backend-2-secret: netapp-creds <br>
-  trident-backend-2-santype: iscsi <br>
-
-**Each increment creates:**
-
-  - A separate backend
-  - A separate StorageClass
-
-
-## FILE-BASED CONFIGURATION (LEGACY FEATURE) ##
-
-
-This is a legacy compatibility feature and is not the preferred method.
-
-It allows you to drop raw YAML files into the policy's files directory
-and have them applied automatically via ConfigMaps once Trident is
-installed.
-
-How it works:
-
-  - Place a YAML file (backend, storageclass, etc.) in the files folder
-  - Reference that file using a trident-config-* value
-  - The policy wraps the file into a ConfigMap
-  - The ConfigMap content is decoded and applied to the managed cluster
-
-This method exists for:
-
-  - Backward compatibility
-  - Highly customized backend definitions
-  - Advanced ONTAP configuration not covered by labels
-
-**To pull in multiple files, make sure the value is unique:**
-
-  trident-config-prodsvm: filename.yaml <br>
-
-*New deployments should use label-driven automation.*
-
-
-## DEPLOYMENT
-
-Once your configuration is ready:
-
-  1. Commit changes to your Git repository
-  2. Push to the branch watched by your GitOps pipeline
-  3. ACM will reconcile and deploy
-
-**Typical deployment time: approximately 15 minutes.**
-
-
-## SUMMARY
-
-This policy stack provides:
-
-  - Automated Trident operator installation
-  - Automated NVMe kernel configuration
-  - Automatic unique NQN enforcement
-  - GitOps-driven backend management
-  - Recommended label-based backend automation
-  - Legacy file-based backend support
-  - Automatic StorageClass generation
-  - Multi-backend provisioning support
-
-Everything is managed from source control.
+# Trident Storage Policy
+
+This policy deploys and configures [NetApp Trident](https://docs.netapp.com/us-en/trident/) as a storage provisioner on OpenShift clusters managed by AutoShift. It creates the necessary Trident backends, secrets, and StorageClasses to enable dynamic persistent volume provisioning.
+
+> **Note:** This policy only supports **NVMe/TCP** configurations. Other transport protocols (iSCSI, FC, NFS) are not supported.
+
+## Enabling Trident
+
+To enable Trident for a ClusterSet, add the following to your ClusterSet section. Set `trident` to `'true'` to enable installation:
+
+```yaml
+### Trident
+trident: 'true'
+trident-name: trident-operator
+trident-install-plan-approval: Automatic
+trident-source: certified-operators
+trident-source-namespace: openshift-marketplace
+trident-channel: stable
+```
+
+| Field | Description |
+|---|---|
+| `trident` | Set to `'true'` to enable, `'false'` to disable |
+| `trident-name` | Name of the Trident operator subscription |
+| `trident-install-plan-approval` | Operator install plan approval mode (`Automatic` or `Manual`) |
+| `trident-source` | Operator catalog source |
+| `trident-source-namespace` | Namespace of the catalog source |
+| `trident-channel` | Operator update channel |
+
+## Storage Configuration
+
+Once enabled, add a `trident` block under your cluster's `config` section to configure storage backends:
+
+```yaml
+clusters:
+  cluster-name:
+    config:
+      trident:
+        storage:
+          - backendName:        # Name for the Trident backend
+            secretName:         # Name of the secret containing SVM credentials
+            secretNamespace:    # Namespace where the secret lives
+            svmLif:             # SVM NVMe/TCP data LIF IP address
+            storageClassName:   # Name of the StorageClass to create
+            defaultStorageClass: # Set to "true" to make this the default StorageClass
+            useREST:            # Must be "true" — ONTAP REST API is required
+            authMethod:         # Authentication method (e.g. vsaadmin, cert)
+```
+
+Multiple storage backends can be defined by adding additional list entries under `storage`.
+
+## Authentication
+
+The `authMethod` field in each storage backend entry controls how Trident authenticates to the ONTAP SVM. Two methods are supported:
+
+### `password` (default)
+
+The policy will copy `username` and `password` from a secret you pre-create on the **hub cluster**. The secret must exist in the namespace specified by `secretNamespace` and be named to match `secretName` before the policy runs. These credentials will be the credentials you use to reach the management LIF. The policy reads those values from the hub and propagates them as a new secret into the `trident` namespace on the managed cluster.
+
+```yaml
+- backendName: <tbc-name>
+  secretName: <name-of-secret-on-hub>
+  secretNamespace: <namespace-where-secret-lives-on-hub>   # namespace on the hub where your secret lives
+  authMethod: password
+```
+
+The secret on the hub must have the following keys:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-svm-secret
+  namespace: my-hub-namespace
+type: Opaque
+stringData:
+  username: <svm-username>
+  password: <svm-password>
+```
+
+### `cert` / `certs`
+
+When using certificate-based authentication, the policy pulls the private key directly from the `api-tls` secret in the `openshift-config` namespace on the managed cluster. **This means a valid `api-tls` secret must already exist in `openshift-config`** — this is typically the cluster's API TLS certificate and is present on any standard OpenShift cluster.
+
+
+```yaml
+- backendName: <backend-name>
+  secretName: <name-of-secret-on-hub>
+  authMethod: certs
+  secretNamespace: <namespace-where-secret-lives-on-hub>
+```
+
+### CA Bundle
+
+Regardless of auth method, the storage config policy always pulls the trusted CA bundle from the `user-ca-bundle` ConfigMap in the `openshift-config` namespace on the managed cluster:
+
+```
+openshift-config/user-ca-bundle → ca-bundle.crt
+```
+
+**This ConfigMap must exist.** On OpenShift, it is managed by the cluster and populated when a custom PKI is configured. If your ONTAP SVM uses a certificate signed by a custom or internal CA, ensure that CA is included in the cluster's trusted bundle so Trident can verify the SVM's identity.
