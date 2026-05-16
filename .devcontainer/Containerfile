@@ -2,6 +2,8 @@ FROM registry.access.redhat.com/ubi9/ubi
 
 ARG OCP_VERSION=stable-4.18
 ARG HELM_VERSION=v3.16.3
+ARG GO_VERSION=1.25.0
+ARG GITLEAKS_VERSION=8.24.3
 
 LABEL description="A container for administrating OpenShift Clusters."
 
@@ -28,6 +30,16 @@ RUN curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OCP_VER
     mv /tmp/linux-amd64/helm /usr/local/bin/helm &&\
     chmod +x /usr/local/bin/helm &&\
     rm -rf /tmp/linux-amd64
+
+# Install Go
+RUN curl -sL https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz | tar xz -C /usr/local
+
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# Install gitleaks
+RUN curl -sL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz \
+    | tar xz -C /usr/local/bin gitleaks &&\
+    chmod +x /usr/local/bin/gitleaks
 
 # Create vscode user
 RUN mkdir -p /workspaces/.kube &&\

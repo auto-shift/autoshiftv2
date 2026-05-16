@@ -10,6 +10,7 @@ Complete documentation for AutoShift - Infrastructure as Code for OpenShift usin
 
 ### Configuration
 - **[Values Reference](values-reference.md)** - All cluster labels and configuration options
+- **[Workload Partitioning](workload-partitioning.md)** - CPU isolation, PerformanceProfile sizing, NUMA topology
 
 ### Release & Operations
 - **[Release & OCI Guide](releases.md)** - Release process, OCI mode, private registries, disconnected environments, version management
@@ -37,8 +38,8 @@ AutoShift uses a three-phase deployment model:
 ┌────────────────────────────────────────────────────────────┐
 │  Phase 3: Policy Deployment (via ApplicationSet)           │
 │  ├─ ACM Policy Charts (auto-discovered)                    │
-│  ├─ policies/openshift-gitops (takes over GitOps)          │
-│  └─ policies/advanced-cluster-management (takes over ACM)  │
+│  ├─ policies/stable/openshift-gitops (takes over GitOps)          │
+│  └─ policies/stable/advanced-cluster-management (takes over ACM)  │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -47,7 +48,7 @@ AutoShift uses a three-phase deployment model:
 - **Managed Clusters**: Spoke clusters managed by ACM policies
 - **Labels**: Configured in values files only, propagated to clusters by the cluster-labels policy
 - **OCI Mode**: Deploy all components from OCI registries (no Git dependency)
-- **Git Mode**: Deploy from Git repository with auto-discovery via `policies/*` wildcard
+- **Git Mode**: Deploy from Git repository with auto-discovery under `policies/{stable,certified,community}/*`
 
 ### Minimum Requirements
 All hub clusters must have:

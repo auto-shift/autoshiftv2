@@ -1,0 +1,235 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-cnpg-gitlab" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-cloudnative-pg-operator-install
+      namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-gitlab-operator-install
+      namespace: '{{ $policyNamespace }}'
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cnpg-gitlab-ns
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.gitlab.namespace }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cnpg-gitlab
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Cluster
+                metadata:
+                  name: gitlab-db
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  instances: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-db-instances" | default "2" | toInt {{ "hub}}" }}'
+                  postgresql:
+                    parameters:
+                      max_connections: "200"
+                      shared_buffers: 512MB
+                      effective_cache_size: 1536MB
+                      work_mem: 8MB
+                  bootstrap:
+                    initdb:
+                      database: gitlabhq_production
+                      owner: gitlab
+                  storage:
+                    size: 50Gi
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: 2Gi
+                    limits:
+                      cpu: "2"
+                      memory: 4Gi
+                  affinity:
+                    enablePodAntiAffinity: true
+                    topologyKey: kubernetes.io/hostname
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: monitoring.coreos.com/v1
+                kind: ServiceMonitor
+                metadata:
+                  name: gitlab-db
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  selector:
+                    matchLabels:
+                      cnpg.io/cluster: gitlab-db
+                  endpoints:
+                    - port: metrics
+                      interval: 30s
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: networking.k8s.io/v1
+                kind: NetworkPolicy
+                metadata:
+                  name: gitlab-db-allow
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  podSelector:
+                    matchLabels:
+                      cnpg.io/cluster: gitlab-db
+                  ingress:
+                    - from:
+                        - namespaceSelector:
+                            matchLabels:
+                              kubernetes.io/metadata.name: {{ .Values.gitlab.namespace }}
+                      ports:
+                        - port: 5432
+                          protocol: TCP
+                        - port: 9187
+                          protocol: TCP
+                    - from:
+                        - namespaceSelector:
+                            matchLabels:
+                              kubernetes.io/metadata.name: openshift-operators
+                      ports:
+                        - port: 8000
+                          protocol: TCP
+    {{- /* Praefect database — only when gitlab-gitaly-ha is enabled */}}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cnpg-gitlab-praefect-db
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitlab-gitaly-ha" | default "false") "true" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Database
+                metadata:
+                  name: praefect-production
+                  namespace: {{ .Values.gitlab.namespace }}
+                spec:
+                  cluster:
+                    name: gitlab-db
+                  name: praefect_production
+                  owner: gitlab
+            {{ "{{hub-" }} end {{ "hub}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cnpg-gitlab-ready
+        spec:
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{`{{`}} $cluster := (lookup "postgresql.cnpg.io/v1" "Cluster" "{{ .Values.gitlab.namespace }}" "gitlab-db") | default dict {{`}}`}}
+            {{`{{`}} $specInstances := (index (index $cluster "spec" | default dict) "instances" | default 1 | toInt) {{`}}`}}
+            {{`{{`}} $readyInstances := (index (index $cluster "status" | default dict) "readyInstances" | default 0 | toInt) {{`}}`}}
+            {{`{{`}} if lt $readyInstances $specInstances {{`}}`}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Cluster
+                metadata:
+                  name: gitlab-db
+                  namespace: {{ .Values.gitlab.namespace }}
+                status:
+                  readyInstances: {{`{{`}} $specInstances {{`}}`}}
+            {{`{{`}} end {{`}}`}}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitlab'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/cloudnative-pg'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/gitlab-db-mode'
+              operator: NotIn
+              values:
+              - 'bundled'
+              - 'external'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

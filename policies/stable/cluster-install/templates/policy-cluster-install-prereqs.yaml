@@ -1,0 +1,132 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-cluster-install-prereqs" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+  disabled: false
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: {{ $policyName }}
+        spec:
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            {{ "{{-" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
+            {{ "{{-" }} range $_, $cm := ($configMaps.items | default list) {{ "}}" }}
+              {{ "{{-" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
+              {{ "{{-" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
+              {{ "{{-" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
+              {{ "{{-" }} if eq (index $ci "createCluster" | default "") "true" {{ "}}" }}
+                {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion") {{ "}}" }}
+                {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
+                {{ "{{-" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
+                {{ "{{-" }} $disconnected := (index $config "disconnected" | default dict) {{ "}}" }}
+                {{ "{{-" }} $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) {{ "}}" }}
+                {{ "{{-" }} $mirrorHost := (index $mirrorReg "host" | default "") {{ "}}" }}
+                {{ "{{-" }} $mirrorPath := (index $mirrorReg "path" | default "") {{ "}}" }}
+                {{ "{{-" }} $releaseImagePath := "openshift-release-dev/ocp-release" {{ "}}" }}
+                {{ "{{-" }} $releaseRegistry := "quay.io" {{ "}}" }}
+                {{ "{{-" }} if $mirrorHost {{ "}}" }}
+                  {{ "{{-" }} $releaseRegistry = $mirrorHost {{ "}}" }}
+                  {{ "{{-" }} if $mirrorPath {{ "}}" }}
+                    {{ "{{-" }} $releaseRegistry = (printf "%s/%s" $mirrorHost $mirrorPath) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} $releaseImagePath = (index $mirrorReg "releaseImage" | default $releaseImagePath) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}
+                {{ "{{" }} if not (index $ci "clusterImageSet") {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: hive.openshift.io/v1
+                kind: ClusterImageSet
+                metadata:
+                  name: {{ "{{" }} $imageSet {{ "}}" }}
+                  labels:
+                    visible: 'true'
+                    channel: {{ "{{" }} index $ci "openshiftChannel" | default "stable" {{ "}}" }}
+                spec:
+                  releaseImage: '{{ "{{" }} $releaseRegistry {{ "}}" }}/{{ "{{" }} $releaseImagePath {{ "}}" }}:{{ "{{" }} $openshiftVersion {{ "}}" }}-{{ "{{" }} $cpuArch {{ "}}" }}'
+                {{ "{{" }} end {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: agent.open-cluster-management.io/v1
+                kind: KlusterletAddonConfig
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}
+                  namespace: {{ "{{" }} $clusterName {{ "}}" }}
+                spec:
+                {{ "{{-" }} $addons := (index $ci "klusterletAddons" | default list) {{ "}}" }}
+                {{ "{{-" }} if (eq (len $addons) 0) {{ "}}" }}
+                  {{ "{{-" }} $addons = list "applicationManager" "certPolicyController" "policyController" {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                  applicationManager:
+                    enabled: {{ "{{" }} has "applicationManager" $addons {{ "}}" }}
+                  certPolicyController:
+                    enabled: {{ "{{" }} has "certPolicyController" $addons {{ "}}" }}
+                  policyController:
+                    enabled: {{ "{{" }} has "policyController" $addons {{ "}}" }}
+                  searchCollector:
+                    enabled: {{ "{{" }} has "searchCollector" $addons {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-install'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

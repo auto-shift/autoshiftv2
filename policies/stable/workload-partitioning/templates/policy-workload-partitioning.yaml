@@ -1,0 +1,139 @@
+{{- /* ================================================================== */}}
+{{- /* Deploys a PerformanceProfile for CPU workload partitioning.        */}}
+{{- /* Reserves CPUs for control plane and isolates the rest for user     */}}
+{{- /* workloads. Config is read from the rendered-config ConfigMap.      */}}
+{{- /* ================================================================== */}}
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-workload-partitioning" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+  disabled: false
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: workload-partitioning-performance-profile
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) {{ "hub}}" }}
+            {{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
+            {{ "{{hub-" }} $wp := (index $config "workloadPartitioning" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $reservedCpus := (index $wp "reservedCpus" | default "") {{ "hub}}" }}
+            {{ "{{hub-" }} $isolatedCpus := (index $wp "isolatedCpus" | default "") {{ "hub}}" }}
+            {{ "{{hub-" }} if and (not (empty $reservedCpus)) (not (empty $isolatedCpus)) {{ "hub}}" }}
+            {{ "{{hub-" }} $nodeSelector := (index $wp "nodeSelector" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $numaTopology := (index $wp "numaTopology" | default "") {{ "hub}}" }}
+            {{ "{{hub-" }} $hugepages := (index $wp "hugepages" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $realTimeKernel := (index $wp "realTimeKernel" | default "false") {{ "hub}}" }}
+            {{ "{{hub-" }} $disableIrqBalancing := (index $wp "globallyDisableIrqLoadBalancing" | default "false") {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: performance.openshift.io/v2
+                kind: PerformanceProfile
+                metadata:
+                  name: workload-partitioning
+                spec:
+                  cpu:
+                    reserved: {{ "{{hub" }} $reservedCpus {{ "hub}}" }}
+                    isolated: {{ "{{hub" }} $isolatedCpus {{ "hub}}" }}
+            {{ "{{hub-" }} if (gt (len (keys $nodeSelector)) 0) {{ "hub}}" }}
+                  nodeSelector:
+                    {{ "{{hub" }} $nodeSelector | toYaml | autoindent {{ "hub}}" }}
+            {{ "{{hub-" }} else {{ "hub}}" }}
+                  nodeSelector:
+                    node-role.kubernetes.io/master: ''
+            {{ "{{hub-" }} end {{ "hub}}" }}
+                  machineConfigPoolSelector:
+                    matchLabels:
+            {{ "{{hub-" }} if (gt (len (keys $nodeSelector)) 0) {{ "hub}}" }}
+                      {{ "{{hub" }} $nodeSelector | toYaml | autoindent {{ "hub}}" }}
+            {{ "{{hub-" }} else {{ "hub}}" }}
+                      pools.operator.machineconfiguration.openshift.io/master: ''
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if not (empty $numaTopology) {{ "hub}}" }}
+                  numa:
+                    topologyPolicy: {{ "{{hub" }} $numaTopology {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if (eq $realTimeKernel "true") {{ "hub}}" }}
+                  realTimeKernel:
+                    enabled: true
+            {{ "{{hub-" }} end {{ "hub}}" }}
+                  globallyDisableIrqLoadBalancing: {{ "{{hub" }} $disableIrqBalancing {{ "hub}}" }}
+            {{ "{{hub-" }} if (gt (len (keys $hugepages)) 0) {{ "hub}}" }}
+            {{ "{{hub-" }} $defaultSize := (index $hugepages "defaultSize" | default "") {{ "hub}}" }}
+            {{ "{{hub-" }} $pages := (index $hugepages "pages" | default list) {{ "hub}}" }}
+                  hugepages:
+            {{ "{{hub-" }} if not (empty $defaultSize) {{ "hub}}" }}
+                    defaultHugepagesSize: {{ "{{hub" }} $defaultSize {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if (gt (len $pages) 0) {{ "hub}}" }}
+                    pages:
+            {{ "{{hub-" }} range $_, $page := $pages {{ "hub}}" }}
+                      - size: {{ "{{hub" }} index $page "size" {{ "hub}}" }}
+                        count: {{ "{{hub" }} index $page "count" {{ "hub}}" }}
+            {{ "{{hub-" }} if (index $page "node" | default "") {{ "hub}}" }}
+                        node: {{ "{{hub" }} index $page "node" {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/workload-partitioning'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

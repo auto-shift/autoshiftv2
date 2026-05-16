@@ -1,0 +1,885 @@
+# ==============================================================================
+# ClusterSet Example - ALL Available Options (Hub and Managed)
+# ==============================================================================
+# This file is the single reference for all available labels and config.
+# Copy it and make two changes to adapt it for your clusterset:
+#
+#   1. TOP-LEVEL KEY:
+#        Hub:     hubClusterSets:
+#        Managed: managedClusterSets:
+#
+#   2. CLUSTERSET NAME (the key under hubClusterSets/managedClusterSets):
+#        Change "hub" to your clusterset name (e.g., managed, prod, sbx, dev)
+#
+# Labels marked "# hub only" are only meaningful on hub clusters (ACM,
+# cluster provisioning, self-managed registration) — omit them from managed
+# clusterset profiles.
+#
+# Usage in ArgoCD Application (hub):
+#   valueFiles:
+#     - values/global.yaml
+#     - values/clustersets/my-hub.yaml
+#     - values/clusters/my-cluster.yaml    # optional: per-cluster overrides
+#
+# Usage in ArgoCD Application (managed):
+#   valueFiles:
+#     - values/global.yaml
+#     - values/clustersets/my-hub.yaml        # hub defines managed clustersets too
+#     - values/clustersets/my-managed.yaml    # uses managedClusterSets key
+#     - values/clusters/my-cluster.yaml       # optional: per-cluster overrides
+#
+# Notes:
+#   - Set a label to 'true' to enable, 'false' to disable
+#   - Blank ('') means the feature is not managed / uses defaults
+#   - For each operator, you must define ALL required labels:
+#       {operator}: 'true'
+#       {operator}-subscription-name: '...'
+#       {operator}-channel: '...'
+#       {operator}-source: '...'
+#       {operator}-source-namespace: '...'
+#   - Specifying {operator}-version pins to that CSV and sets manual approval
+# ==============================================================================
+
+# --- Global Overrides (override values from global.yaml) ---
+# Uncomment to override globals when this file is loaded after global.yaml
+# selfManagedHubSet: hub
+# excludePolicies:
+#   - infra-nodes
+#   - worker-nodes
+
+# ← CHANGE 1: use managedClusterSets for managed clusterset profiles
+hubClusterSets:
+  hub:  # ← CHANGE 2: replace with your clusterset name
+    config:
+      # =======================================================================
+      # User Workload Monitoring (config section - read via rendered-config)
+      # =======================================================================
+      uwm:
+        storageClass: 'gp3-csi'
+        prometheus:
+          retention: '24h'
+          storage: '50Gi'
+          storageClass: 'gp3-csi'
+          dedicatedServiceMonitors: true
+          resources:
+            requests:
+              cpu: '200m'
+              memory: '1Gi'
+            limits:
+              cpu: '1'
+              memory: '4Gi'
+        thanosRuler:
+          retention: '24h'
+          storage: '10Gi'
+          resources:
+            requests:
+              cpu: '100m'
+              memory: '256Mi'
+        alertmanager:
+          enabled: true
+          storage: '10Gi'
+          resources:
+            requests:
+              cpu: '100m'
+              memory: '256Mi'
+      # =======================================================================
+      # Disconnected Mirror (read via rendered-config ConfigMap)
+      # =======================================================================
+      disconnected:
+        mirrorRegistry:
+          host: 'registry.example.com'
+          port: '5000'
+          path: 'openshift'
+          mirrors:
+            - source: 'registry.redhat.io'
+              mirror: 'registry.example.com:5000/rhel'
+            - source: 'quay.io'
+              mirror: 'registry.example.com:5000/quay'
+        catalogs:
+          - source: redhat-operators
+            image: 'registry.example.com:5000/redhat/redhat-operator-index:v4.20'
+          - source: certified-operators
+            image: 'registry.example.com:5000/redhat/certified-operator-index:v4.20'
+        useIDMS: true
+        disableDefaultCatalogs: true
+      # =======================================================================
+      # GitLab (values with / or spaces that can't be labels)
+      # =======================================================================
+      gitlab:
+        dbBackupSchedule: '0 2 * * *'
+        dbBackupRetention: '30d'
+      # =======================================================================
+      # JFrog Artifactory
+      # =======================================================================
+      jfrog:
+        dbBackupSchedule: '0 3 * * *'
+        dbBackupRetention: '30d'
+      # =======================================================================
+      # Workload Partitioning (CPU isolation via PerformanceProfile)
+      # =======================================================================
+      workloadPartitioning:
+        reservedCpus: '0-3'
+        isolatedCpus: '4-31'
+        nodeSelector:
+          node-role.kubernetes.io/worker: ''
+        numaTopology: 'restricted'
+        hugepages:
+          defaultHugepagesSize: '1G'
+          pages:
+            - size: '1G'
+              count: 4
+      # =======================================================================
+      # NMState Networking (clusterset defaults for network interfaces)
+      # Example: bond with two ports, VLAN on top, static route, DNS
+      # Per-cluster overrides go in clusters/<name>.yaml config section
+      # =======================================================================
+      networking:
+        interfaces:
+          eno1:
+            type: ethernet
+            name: eno1
+            state: up
+            ipv4: disabled
+            ipv6: disabled
+          eno2:
+            type: ethernet
+            name: eno2
+            state: up
+            ipv4: disabled
+            ipv6: disabled
+          mgmt:
+            type: bond
+            name: bond0
+            state: up
+            mode: 802.3ad
+            mtu: 9000
+            miimon: 100
+            ports:
+              - eno1
+              - eno2
+            ipv4: dhcp
+            ipv6: disabled
+        routes:
+          datacenter:
+            destination: '10.0.0.0/8'
+            gateway: '192.168.1.1'
+            interface: bond0
+            metric: '100'
+        ovsBridges:
+          br-ex:
+            name: br-ex
+            ports:
+              - bond0
+        ovnMappings:
+          physnet1:
+            localnet: physnet1
+            bridge: br-ex
+        dns:
+          servers:
+            - '10.0.0.1'
+            - '10.0.0.2'
+          search:
+            - 'example.com'
+    labels:
+      # =======================================================================
+      # Core Configuration
+      # =======================================================================
+      self-managed: 'true'                # hub only — registers hub as a self-managed cluster
+      openshift-version: '4.20.12'
+      policy-namespace: ''               # hub only — overrides the ACM policy namespace
+
+      # =======================================================================
+      # OpenShift GitOps (REQUIRED for AutoShift)
+      # =======================================================================
+      gitops: 'true'
+      gitops-subscription-name: openshift-gitops-operator
+      gitops-disable-default-argocd: 'true'
+      gitops-channel: gitops-1.20
+      gitops-version: 'openshift-gitops-operator.v1.19.1'
+      gitops-source: redhat-operators
+      gitops-source-namespace: openshift-marketplace
+      gitops-namespace: 'openshift-gitops'          # Override ArgoCD namespace per-cluster
+      gitops-cluster-ca-bundle: 'true'              # Inject cluster trusted CA bundle into ArgoCD repo server
+
+      # =======================================================================
+      # Advanced Cluster Management (hub only — not installed on managed clusters)
+      # =======================================================================
+      acm-subscription-name: advanced-cluster-management
+      acm-version: 'advanced-cluster-management.v2.15.1'
+      acm-channel: release-2.16
+      acm-source: redhat-operators
+      acm-source-namespace: openshift-marketplace
+      acm-availability-config: 'High'       # 'Basic' or 'High'
+      acm-observability: 'true'              # Requires ODF for noobaa bucket
+      # ACM Search v2 storage (PVC for the search-indexer PostgreSQL)
+      acm-search-storage: 'false'
+      acm-search-storage-class: 'ocs-storagecluster-ceph-rbd'
+      acm-search-storage-size: '100Gi'
+      # Cluster provisioning (hive-based cluster install flow)
+      cluster-install: 'false'                     # hub only — enables the cluster-install policy set
+      acm-enable-provisioning: 'false'            # hub only
+      acm-provisioning-storage-class: ''             # StorageClass name
+      acm-provisioning-database-size: 10Gi           # Min 10GiB recommended
+      acm-provisioning-filesystem-storage-size: 100Gi # Min 100GiB recommended
+      acm-provisioning-image-storage-size: 50Gi      # 2GiB per OSImage entry
+      # ACM Addon Tuning (for scale)
+      acm-addon-tuning: 'true'
+      # config-policy-controller tuning (annotations on ManagedClusterAddOn)
+      acm-addon-cpc-eval-concurrency: '5'    # Concurrent policy evaluations (default: 2)
+      acm-addon-cpc-client-qps: '75'         # K8s API client QPS (default: 30)
+      acm-addon-cpc-client-burst: '100'      # K8s API client burst (default: 45)
+      # config-policy-controller resource limits (via AddOnDeploymentConfig)
+      acm-addon-cpc-mem-request: '256Mi'
+      acm-addon-cpc-cpu-request: '150m'
+      acm-addon-cpc-mem-limit: '1Gi'
+      # governance-policy-framework tuning (annotations on ManagedClusterAddOn)
+      acm-addon-gpf-eval-concurrency: '5'    # Concurrent policy evaluations (default: 2)
+      acm-addon-gpf-client-qps: '75'         # K8s API client QPS (default: 30)
+      acm-addon-gpf-client-burst: '100'      # K8s API client burst (default: 45)
+      # governance-policy-framework resource limits (via AddOnDeploymentConfig)
+      acm-addon-gpf-mem-request: '128Mi'
+      acm-addon-gpf-cpu-request: '100m'
+      acm-addon-gpf-mem-limit: '512Mi'
+
+      # =======================================================================
+      # Tempo
+      # =======================================================================
+      tempo: 'false'
+      tempo-subscription-name: tempo-product
+      tempo-channel: stable
+      tempo-source: redhat-operators
+      tempo-source-namespace: openshift-marketplace
+      tempo-version: 'tempo-operator.v0.19.0-3'
+
+      # =======================================================================
+      # Kiali
+      # =======================================================================
+      kiali: 'false'
+      kiali-subscription-name: kiali-ossm
+      kiali-channel: stable
+      kiali-source: redhat-operators
+      kiali-source-namespace: openshift-marketplace
+      kiali-version: 'kiali-operator.v2.17.3'
+
+      # =======================================================================
+      # Service Mesh 3
+      # =======================================================================
+      servicemesh3operator: 'false'
+      servicemesh3operator-subscription-name: servicemeshoperator3
+      servicemesh3operator-channel: stable
+      servicemesh3operator-version: 'servicemeshoperator3.v3.3.1'
+      servicemesh3operator-istio-version: '1.24.3'  # Istio control plane version
+      servicemesh3operator-tempo: 'false'            # Enable Tempo distributed tracing
+      servicemesh3operator-source: redhat-operators
+      servicemesh3operator-source-namespace: openshift-marketplace
+      servicemesh3-ambient: 'false'                  # Enable Ambient mesh mode
+
+      # =======================================================================
+      # MetalLB
+      # =======================================================================
+      metallb: 'false'
+      metallb-subscription-name: metallb-operator
+      metallb-version: 'metallb-operator.v4.20.0-202602021426'
+      metallb-source: redhat-operators
+      metallb-source-namespace: openshift-marketplace
+      metallb-channel: stable
+      metallb-quota: 'false'
+      metallb-quota-cpu: ''                  # Number of cpu for Resource Quota
+      metallb-quota-memory: ''               # Memory for Resource Quota (e.g., 2Gi)
+      metallb-ippool-1: ''                   # Name of IPPool config file (add -2, -3 for more)
+      metallb-l2-1: ''                       # Name of L2 Advertisement config file
+      metallb-bgp-1: ''                      # Name of BGP Advertisement config file
+      metallb-peer-1: ''                     # Name of BGP Peer config file
+
+      # =======================================================================
+      # Ansible Automation Platform
+      # =======================================================================
+      aap: 'false'
+      aap-subscription-name: ansible-automation-platform-operator
+      aap-channel: stable-2.6
+      aap-install-plan-approval: Automatic
+      aap-source: redhat-operators
+      aap-source-namespace: openshift-marketplace
+      aap-version: 'aap-operator.v2.6.0-0.1768951413'
+      aap-hub-disabled: 'false'              # 'true' omits Hub content storage
+      aap-storage-type: 's3'                 # 's3', 'pvc', or 'none' (default: none)
+      ### AAP Hub Content File Storage (select file OR s3, not both)
+      aap-file-storage: 'false'
+      aap-file_storage_storage_class: 'ocs-storagecluster-cephfs'  # Requires RWX storage
+      aap-file_storage_size: 10G
+      ### AAP NooBaa S3 Storage - autocreates bucket in AAP namespace
+      aap-noobaa-s3-storage: 'false'
+      aap-external-s3-secret-name: ''        # Name of secret for external S3
+      aap-eda-disabled: 'false'              # 'true' omits Event-Driven Ansible
+      aap-lightspeed-disabled: 'true'        # 'true' omits Ansible Lightspeed
+      ### AAP Custom Cert Bundle Injection
+      aap-custom-cabundle: 'false'           # 'true' injects cluster CA Bundle into AAP
+      aap-cabundle-name: 'user-ca-bundle'    # Secret name for CA Bundle
+
+      # =======================================================================
+      # Master Node Kubelet Configuration (SNO / Compact clusters)
+      # =======================================================================
+      master-nodes: 'false'
+      master-max-pods: '250'                 # Max pods per master node (up to 2500)
+      master-system-reserved-memory: '3Gi'   # Memory reserved for OS/system processes including etcd
+      master-system-reserved-cpu: '500m'     # CPU reserved for OS/system processes
+      master-kube-reserved-memory: '1536Mi'  # Memory reserved for kubelet/CRI-O
+      master-kube-reserved-cpu: '500m'       # CPU reserved for kubelet/CRI-O
+      master-eviction-memory: '500Mi'        # Hard eviction threshold for memory.available
+
+      # =======================================================================
+      # Workload Partitioning (CPU isolation via PerformanceProfile)
+      # =======================================================================
+      workload-partitioning: 'false'         # Enable CPU workload partitioning
+
+      # =======================================================================
+      # Machine Health Checks
+      # =======================================================================
+      machine-health-checks: 'false'
+      machine-health-checks-worker: 'true'   # Create MHC for the worker machine pool
+      machine-health-checks-infra: 'false'   # Create MHC for the infra machine pool
+      machine-health-checks-storage: 'false' # Create MHC for the storage machine pool
+
+      # =======================================================================
+      # Manual Remediations
+      # =======================================================================
+      manual-remediations: 'false'
+
+      # =======================================================================
+      # Infrastructure Nodes
+      # =======================================================================
+      infra-nodes: ''                        # Number of infra nodes (blank = not managed, 0 = delete)
+      infra-nodes-provider: aws              # 'aws', 'vmware', or 'baremetal'
+      infra-nodes-instance-type: ''          # AWS instance type
+      infra-nodes-volume-size: '100'         # Root volume size in GiB
+      infra-nodes-numcpu: ''
+      infra-nodes-memory-mib: ''
+      infra-nodes-numcores-per-socket: ''
+      infra-nodes-zone-1: ''                 # Add -zone-2, -zone-3 for multiple zones
+      # --- Infra MachineConfigPool ---
+      infra-machineconfigpool: 'false'       # Create dedicated infra MCP (separates from worker pool)
+      # --- Infra Node Kubelet Configuration ---
+      infra-node-config: 'false'             # Enable infra node kubelet tuning (requires infra-machineconfigpool)
+      infra-max-pods: '250'                  # Max pods per infra node
+      infra-system-reserved-memory: '2Gi'    # Memory reserved for OS/system processes
+      infra-system-reserved-cpu: '500m'      # CPU reserved for OS/system processes
+      infra-kube-reserved-memory: '1Gi'      # Memory reserved for kubelet/CRI-O
+      infra-kube-reserved-cpu: '500m'        # CPU reserved for kubelet/CRI-O
+      infra-eviction-memory: '500Mi'         # Hard eviction threshold for memory.available
+
+      # =======================================================================
+      # Worker Nodes
+      # =======================================================================
+      worker-nodes: ''                       # Number of worker nodes (blank = not managed)
+      worker-nodes-provider: aws              # 'aws', 'vmware', or 'baremetal'
+      worker-nodes-instance-type: ''          # AWS instance type
+      worker-nodes-numcpu: ''
+      worker-nodes-memory-mib: ''
+      worker-nodes-numcores-per-socket: ''
+      worker-nodes-zone-1: ''                # Add -zone-2, -zone-3 for multiple zones
+      # --- Worker Node Kubelet Configuration ---
+      worker-node-config: 'false'            # Enable worker node kubelet tuning
+      worker-max-pods: '250'                 # Max pods per worker node (up to 2500)
+      worker-system-reserved-memory: '1Gi'   # Memory reserved for OS/system processes
+      worker-system-reserved-cpu: '250m'     # CPU reserved for OS/system processes
+      worker-kube-reserved-memory: '512Mi'   # Memory reserved for kubelet/CRI-O
+      worker-kube-reserved-cpu: '250m'       # CPU reserved for kubelet/CRI-O
+      worker-eviction-memory: '500Mi'        # Hard eviction threshold for memory.available
+
+      # =======================================================================
+      # Storage Nodes
+      # =======================================================================
+      storage-nodes: ''                      # Number of storage nodes (blank = not managed)
+      storage-nodes-provider: aws            # 'aws', 'vmware', or 'baremetal'
+      storage-nodes-instance-type: 'm6in.8xlarge'  # AWS instance type
+      storage-nodes-numcpu: ''
+      storage-nodes-memory-mib: ''
+      storage-nodes-numcores-per-socket: ''
+      storage-nodes-zone-1: 'us-east-2a'    # Add -zone-2, -zone-3 for multiple zones
+      storage-nodes-region: 'us-east-2'
+      storage-nodes-node-1: 'node-1'         # For baremetal: specify node names
+      storage-nodes-node-2: 'node-2'
+
+      # =======================================================================
+      # LVM Operator
+      # =======================================================================
+      lvm: 'false'
+      lvm-subscription-name: lvms-operator
+      lvm-version: 'lvms-operator.v4.20.0'
+      lvm-default: 'true'                   # Set as default StorageClass
+      lvm-fstype: xfs                        # 'xfs' or 'ext4'
+      lvm-size-percent: 90                   # Percentage of VG for thinpool
+      lvm-overprovision-ratio: 10
+      lvm-channel: stable-4.20
+      lvm-source: redhat-operators
+      lvm-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Local Storage Operator
+      # =======================================================================
+      local-storage: 'false'
+      local-storage-subscription-name: local-storage-operator
+      local-storage-version: 'local-storage-operator.v4.20.0-202602032049'
+      local-storage-channel: stable
+      local-storage-source: redhat-operators
+      local-storage-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # OpenShift Data Foundation
+      # =======================================================================
+      odf: 'false'
+      odf-subscription-name: odf-operator
+      odf-version: 'odf-operator.v4.20.5-rhodf'
+      odf-multi-cloud-gateway: standalone    # 'standalone' (noobaa only) or 'standard' (full ODF)
+      odf-noobaa-pvpool: ''                  # Use PV pool for noobaa backing store
+      odf-noobaa-store-size: ''              # e.g., '500Gi' - size of noobaa backing store
+      odf-noobaa-store-num-volumes: ''       # e.g., '1' - number of volumes
+      odf-ocs-storage-class-name: 'gp3-csi'  # StorageClass for OCS (if not local-storage)
+      odf-ocs-storage-size: ''               # Storage size per device (e.g., '2Ti')
+      odf-ocs-storage-count: ''              # Number of replica sets of drives
+      odf-ocs-storage-replicas: ''           # Replicas ('3' recommended; '1' for flexibleScaling)
+      odf-ocs-flexible-scaling: 'false'      # Sets failure domain to host, spreads OSDs evenly
+      odf-resource-profile: balanced         # 'lean', 'balanced', or 'performance'
+      odf-default-storageclass: 'ocs-storagecluster-ceph-rbd'  # Sets as default StorageClass
+      odf-csi-all-nodes: 'false'            # 'true' to run CSI plugins on all nodes (masters, infra, storage)
+      odf-channel: stable-4.20
+      odf-source: redhat-operators
+      odf-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # OpenShift Internal Registry
+      # =======================================================================
+      imageregistry: 'false'
+      imageregistry-management-state: Managed    # 'Managed' or 'Unmanaged'
+      imageregistry-replicas: '3'                # Need 2+ for HA with RWX/S3
+      imageregistry-storage-type: s3             # 's3' or 'pvc'
+      imageregistry-s3-region: us-east-2         # Region if type is s3
+      imageregistry-pvc-access-mode: ReadWriteMany
+      imageregistry-pvc-size: 100Gi
+      imageregistry-pvc-storage-class: ocs-storagecluster-ceph-rbd
+      imageregistry-pvc-volume-mode: Block       # 'Block' or 'Filesystem'
+      imageregistry-rollout-strategy: RollingUpdate  # 'RollingUpdate' (2+ replicas) or 'Recreate'
+
+      # =======================================================================
+      # Kubernetes NMState Operator
+      # =======================================================================
+      # Identifiers ({id}, {M}) can be numbers or names (e.g., '1', 'mgmt', 'storage').
+      # CONSTRAINT: Identifiers must NOT contain hyphens (-).
+      # Generated NNCPs: nmstate-bond-{id}, nmstate-vlan-{id}, nmstate-ethernet-{id},
+      #                  nmstate-ovs-bridge-{id}, nmstate-network-config
+      nmstate: 'false'
+      nmstate-subscription-name: kubernetes-nmstate-operator
+      nmstate-channel: stable
+      nmstate-source: redhat-operators
+      nmstate-source-namespace: openshift-marketplace
+      nmstate-version: 'kubernetes-nmstate-operator.4.20.0-202601292039'
+      #
+      # --- Ethernet Interface --- (NNCP: nmstate-ethernet-{id})
+      # nmstate-ethernet-{id}: 'eno3'
+      # nmstate-ethernet-{id}-state: 'up'              # 'up' or 'down'
+      # nmstate-ethernet-{id}-mtu: '9000'
+      # nmstate-ethernet-{id}-mac: 'aa.bb.cc.dd.ee.ff'
+      nmstate-ethernet-nic3: 'eno3'
+      nmstate-ethernet-nic3-state: 'up'
+      nmstate-ethernet-nic3-mtu: '9000'
+      #
+      # --- Bond Interface --- (NNCP: nmstate-bond-{id})
+      # nmstate-bond-{id}: 'bond0'
+      # nmstate-bond-{id}-mode: '802.3ad'
+      # nmstate-bond-{id}-port-{M}: 'eno1'
+      # nmstate-bond-{id}-mtu: '9000'
+      # nmstate-bond-{id}-mac: 'aa.bb.cc.dd.ee.ff'
+      # nmstate-bond-{id}-miimon: '100'
+      # nmstate-bond-{id}-ipv4: 'dhcp'                 # 'dhcp', 'static', or 'disabled'
+      # nmstate-bond-{id}-ipv4-address-{M}: '192.168.1.10'
+      # nmstate-bond-{id}-ipv4-address-{M}-cidr: '24'
+      # nmstate-bond-{id}-ipv4-gateway: '192.168.1.1'
+      # nmstate-bond-{id}-ipv6: 'disabled'
+      nmstate-bond-mgmt: 'bond0'
+      nmstate-bond-mgmt-mode: '802.3ad'
+      nmstate-bond-mgmt-port-1: 'eno1'
+      nmstate-bond-mgmt-port-2: 'eno2'
+      nmstate-bond-mgmt-mtu: '9000'
+      nmstate-bond-mgmt-miimon: '100'
+      nmstate-bond-mgmt-ipv4: 'dhcp'
+      nmstate-bond-mgmt-ipv6: 'disabled'
+      #
+      # --- VLAN Interface --- (NNCP: nmstate-vlan-{id})
+      # nmstate-vlan-{id}: 'bond0.100'
+      # nmstate-vlan-{id}-id: '100'
+      # nmstate-vlan-{id}-base: 'bond0'
+      # nmstate-vlan-{id}-mtu: '1500'
+      # nmstate-vlan-{id}-ipv4: 'dhcp'                 # 'dhcp', 'static', or 'disabled'
+      # nmstate-vlan-{id}-ipv4-address-{M}: '10.100.1.10'
+      # nmstate-vlan-{id}-ipv4-address-{M}-cidr: '24'
+      # nmstate-vlan-{id}-ipv4-gateway: '10.100.1.1'
+      nmstate-vlan-data: 'bond0.100'
+      nmstate-vlan-data-id: '100'
+      nmstate-vlan-data-base: 'bond0'
+      nmstate-vlan-data-mtu: '1500'
+      nmstate-vlan-data-ipv4: 'static'
+      nmstate-vlan-data-ipv4-address-1: '10.100.1.10'
+      nmstate-vlan-data-ipv4-address-1-cidr: '24'
+      #
+      # --- Static Routes --- (NNCP: nmstate-network-config)
+      # nmstate-route-{id}-dest: '10.0.0.0'
+      # nmstate-route-{id}-cidr: '8'
+      # nmstate-route-{id}-gateway: '192.168.1.1'
+      # nmstate-route-{id}-interface: 'bond0'
+      # nmstate-route-{id}-metric: '100'
+      nmstate-route-dc-dest: '10.0.0.0'
+      nmstate-route-dc-cidr: '8'
+      nmstate-route-dc-gateway: '192.168.1.1'
+      nmstate-route-dc-interface: 'bond0'
+      nmstate-route-dc-metric: '100'
+      #
+      # --- DNS Configuration --- (NNCP: nmstate-network-config)
+      # nmstate-dns-server-{id}: '8.8.8.8'
+      # nmstate-dns-search-{id}: 'example.com'
+      nmstate-dns-server-primary: '8.8.8.8'
+      nmstate-dns-search-corp: 'example.com'
+      #
+      # --- Node Selector ---
+      # nmstate-nodeselector-{id}-prefix: 'node-role.kubernetes.io'
+      # nmstate-nodeselector-{id}-name: 'worker'
+      # nmstate-nodeselector-{id}-value: ''
+      nmstate-nodeselector-worker-prefix: 'node-role.kubernetes.io'
+      nmstate-nodeselector-worker-name: 'worker'
+      nmstate-nodeselector-worker-value: ''
+      #
+      # --- OVS Bridge (for UDN/localnet) --- (NNCP: nmstate-ovs-bridge-{id})
+      # nmstate-ovs-bridge-{id}: 'ovs-br1'
+      # nmstate-ovs-bridge-{id}-port-{M}: 'bond1'
+      # nmstate-ovs-bridge-{id}-stp: 'false'
+      # nmstate-ovs-bridge-{id}-allow-extra-patch-ports: 'true'
+      # nmstate-ovs-bridge-{id}-mcast-snooping: 'false'
+      nmstate-ovs-bridge-br1: 'ovs-br1'
+      nmstate-ovs-bridge-br1-port-1: 'bond1'
+      nmstate-ovs-bridge-br1-stp: 'false'
+      nmstate-ovs-bridge-br1-allow-extra-patch-ports: 'true'
+      nmstate-ovs-bridge-br1-mcast-snooping: 'false'
+      #
+      # --- OVN Bridge Mapping (for UDN localnet) --- (NNCP: nmstate-network-config)
+      # nmstate-ovn-mapping-{id}-localnet: 'localnet1'
+      # nmstate-ovn-mapping-{id}-bridge: 'ovs-br1'
+      nmstate-ovn-mapping-net1-localnet: 'localnet1'
+      nmstate-ovn-mapping-net1-bridge: 'ovs-br1'
+      #
+      # --- Host-Specific Config (per-node IPs, each host gets its own NNCP) ---
+      # nmstate-host-{id}-hostname: 'worker-0.ocp.example.com'
+      # nmstate-host-{id}-bond-{id}: 'bond0'
+      # nmstate-host-{id}-bond-{id}-mode: '802.3ad'
+      # nmstate-host-{id}-bond-{id}-port-{M}: 'eno1'
+      # nmstate-host-{id}-bond-{id}-ipv4: 'static'
+      # nmstate-host-{id}-bond-{id}-ipv4-address-{M}: '192.168.1.10'
+      # nmstate-host-{id}-bond-{id}-ipv4-address-{M}-cidr: '24'
+      # nmstate-host-{id}-bond-{id}-ipv4-gateway: '192.168.1.1'
+      # nmstate-host-{id}-bond-{id}-ipv6: 'disabled'
+      # nmstate-host-{id}-vlan-{id}: 'bond0.100'
+      # nmstate-host-{id}-vlan-{id}-id: '100'
+      # nmstate-host-{id}-vlan-{id}-base: 'bond0'
+      # nmstate-host-{id}-vlan-{id}-ipv4: 'static'
+      # nmstate-host-{id}-vlan-{id}-ipv4-address-{M}: '10.100.1.10'
+      # nmstate-host-{id}-vlan-{id}-ipv4-address-{M}-cidr: '24'
+      # nmstate-host-{id}-vlan-{id}-ipv4-gateway: '10.100.1.1'
+      # nmstate-host-{id}-route-{id}-dest: '172.16.0.0'
+      # nmstate-host-{id}-route-{id}-cidr: '12'
+      # nmstate-host-{id}-route-{id}-gateway: '10.100.1.1'
+      # nmstate-host-{id}-route-{id}-interface: 'bond0.100'
+      # nmstate-host-{id}-dns-server-{id}: '10.0.0.1'
+      # nmstate-host-{id}-dns-search-{id}: 'internal.example.com'
+      nmstate-host-worker0-hostname: 'worker-0.ocp.example.com'
+      nmstate-host-worker0-bond-mgmt: 'bond0'
+      nmstate-host-worker0-bond-mgmt-mode: '802.3ad'
+      nmstate-host-worker0-bond-mgmt-port-1: 'eno1'
+      nmstate-host-worker0-bond-mgmt-port-2: 'eno2'
+      nmstate-host-worker0-bond-mgmt-ipv4: 'static'
+      nmstate-host-worker0-bond-mgmt-ipv4-address-1: '192.168.1.10'
+      nmstate-host-worker0-bond-mgmt-ipv4-address-1-cidr: '24'
+      nmstate-host-worker0-bond-mgmt-ipv6: 'disabled'
+      #
+      # --- Legacy File-Based ---
+      # nmstate-nncp-{name}: 'filename'      # Filename in policies/stable/nmstate/files/
+      nmstate-nncp-myconfig: 'filename'
+
+      # =======================================================================
+      # Advanced Cluster Security
+      # =======================================================================
+      acs: 'false'
+      acs-subscription-name: rhacs-operator
+      acs-version: 'rhacs-operator.v4.9.2'
+      acs-egress-connectivity: Online        # 'Online' or 'Offline' (disconnected)
+      acs-channel: stable
+      acs-source: redhat-operators
+      acs-source-namespace: openshift-marketplace
+      ### ACS Day 2 Configuration
+      acs-scanner-v4: Enabled               # Scanner V4 component state ('Enabled' or 'Disabled')
+      acs-monitoring: 'true'                 # Enable OpenShift monitoring integration
+      acs-auth-provider: openshift           # Auth provider type ('openshift')
+      acs-auth-min-role: None                # Minimum role for authenticated users
+      acs-auth-admin-group: cluster-admins   # Group mapped to Admin role
+      acs-vm-scanning: 'true'               # Enable VM scanning (Developer Preview)
+      acs-admission-control: 'true'         # Enable admission control enforcement
+      acs-network-policies: Enabled         # Network policy generation ('Enabled' or 'Disabled')
+      acs-default-policies: 'true'          # Deploy baseline SecurityPolicy CRDs
+
+      # =======================================================================
+      # Developer Spaces
+      # =======================================================================
+      dev-spaces: 'false'
+      dev-spaces-subscription-name: devspaces
+      dev-spaces-version: 'devspacesoperator.v3.26.0'
+      dev-spaces-channel: stable
+      dev-spaces-source: redhat-operators
+      dev-spaces-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Developer Hub
+      # =======================================================================
+      dev-hub: 'false'
+      dev-hub-subscription-name: rhdh
+      dev-hub-version: 'rhdh-operator.v1.8.3'
+      dev-hub-channel: fast-1.9
+      dev-hub-source: redhat-operators
+      dev-hub-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # OpenShift Pipelines
+      # =======================================================================
+      pipelines: 'false'
+      pipelines-subscription-name: openshift-pipelines-operator-rh
+      pipelines-version: 'openshift-pipelines-operator-rh.v1.21.0'
+      pipelines-channel: pipelines-1.21
+      pipelines-source: redhat-operators
+      pipelines-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Trusted Artifact Signer
+      # =======================================================================
+      tas: 'false'
+      tas-subscription-name: rhtas-operator
+      tas-version: 'rhtas-operator.v1.3.2'
+      tas-channel: stable
+      tas-source: redhat-operators
+      tas-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Quay
+      # =======================================================================
+      quay: 'false'
+      quay-subscription-name: quay-operator
+      quay-version: 'quay-operator.v3.8.15'
+      quay-channel: stable-3.17
+      quay-source: redhat-operators
+      quay-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Developer OpenShift GitOps (team ArgoCD instances)
+      # =======================================================================
+      gitops-dev: 'false'
+      gitops-dev-team-dev: 'hub'             # 'hub' or 'standalone'
+      gitops-dev-team-test: 'hub'            # 'hub' or 'standalone'
+
+      # =======================================================================
+      # Loki
+      # =======================================================================
+      loki: 'false'
+      loki-subscription-name: loki-operator
+      loki-version: 'loki-operator.v6.4.2'
+      loki-channel: stable-6.5
+      loki-source: redhat-operators
+      loki-source-namespace: openshift-marketplace
+      loki-size: 1x.extra-small             # LokiStack size
+      loki-storageclass: gp3-csi             # StorageClass for Loki
+      loki-lokistack-name: logging-lokistack
+
+      # =======================================================================
+      # OpenShift Logging
+      # =======================================================================
+      logging: 'false'
+      logging-subscription-name: cluster-logging
+      logging-version: 'cluster-logging.v6.4.2'
+      logging-channel: stable-6.5
+      logging-source: redhat-operators
+      logging-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Cluster Observability Operator
+      # =======================================================================
+      coo: 'false'
+      coo-subscription-name: cluster-observability-operator
+      coo-version: 'cluster-observability-operator.v1.3.1'
+      coo-channel: stable
+      coo-source: redhat-operators
+      coo-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # User Workload Monitoring (settings in config section above)
+      # =======================================================================
+      uwm: 'false'                              # Enable UWM (placement label only)
+
+      # =======================================================================
+      # Compliance Operator STIG Apply
+      # =======================================================================
+      compliance: 'false'
+      compliance-auto-remediate: 'true'
+      compliance-storage-class: ''           # StorageClass for compliance scan results (optional)
+      compliance-subscription-name: compliance-operator
+      compliance-version: 'compliance-operator.v1.8.2'
+      compliance-source: redhat-operators
+      compliance-source-namespace: openshift-marketplace
+      compliance-channel: stable
+
+      # =======================================================================
+      # OpenShift Virtualization
+      # =======================================================================
+      virt: 'false'
+      virt-subscription-name: kubevirt-hyperconverged
+      virt-channel: stable
+      virt-version: 'kubevirt-hyperconverged-operator.v4.20.6'
+      virt-source: redhat-operators
+      virt-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Migration Toolkit for Virtualization
+      # =======================================================================
+      mtv: 'false'
+      mtv-subscription-name: mtv-operator
+      mtv-channel: release-v2.9
+      mtv-source: redhat-operators
+      mtv-source-namespace: openshift-marketplace
+      mtv-version: 'mtv-operator.v2.9.6'
+
+      # =======================================================================
+      # Node Feature Discovery
+      # =======================================================================
+      node-feature-discovery: 'false'
+      node-feature-discovery-subscription-name: nfd
+      node-feature-discovery-channel: stable
+      node-feature-discovery-source: redhat-operators
+      node-feature-discovery-source-namespace: openshift-marketplace
+      node-feature-discovery-version: 'nfd.4.20.0-202601292039'
+
+      # =======================================================================
+      # SR-IOV Network Operator
+      # =======================================================================
+      sriov: 'false'
+      sriov-subscription-name: sriov-network-operator
+      sriov-channel: stable
+      sriov-source: redhat-operators
+      sriov-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Cert Manager
+      # =======================================================================
+      cert-manager: 'false'
+      cert-manager-subscription-name: openshift-cert-manager-operator
+      cert-manager-channel: stable-v1
+      cert-manager-version: 'cert-manager-operator.v1.15.1'
+      cert-manager-source: redhat-operators
+      cert-manager-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # CloudNativePG (HA PostgreSQL)
+      # =======================================================================
+      cloudnative-pg: 'false'
+      cloudnative-pg-subscription-name: cloudnative-pg
+      cloudnative-pg-channel: stable-v1
+      cloudnative-pg-version: 'cloudnative-pg.v1.25.1'
+      cloudnative-pg-source: certified-operators
+      cloudnative-pg-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # GitLab
+      # =======================================================================
+      gitlab: 'false'
+      gitlab-subscription-name: gitlab-operator-kubernetes
+      gitlab-channel: stable
+      gitlab-version: 'gitlab-operator-kubernetes.v1.5.1'
+      gitlab-source: certified-operators
+      gitlab-source-namespace: openshift-marketplace
+      # Service modes: managed (default), external, or bundled
+      gitlab-db-mode: 'managed'                 # managed: CNPG HA, external: BYO, bundled: built-in
+      gitlab-redis-mode: 'managed'              # managed: Redis Sentinel, external: BYO, bundled: Bitnami
+      gitlab-object-storage-mode: 'managed'     # managed: NooBaa, external: BYO S3, bundled: MinIO
+      # External mode labels (only when mode is 'external'):
+      gitlab-db-host: 'my-postgres.example.com'
+      gitlab-redis-host: 'my-redis.example.com'
+      gitlab-redis-port: '6379'
+      gitlab-argocd-integration: 'true'         # Create ArgoCD credential template for all GitLab repos
+      gitlab-gitaly-ha: 'true'                  # Enable Gitaly HA via Praefect (default: false)
+      gitlab-praefect-replicas: '3'             # Praefect proxy replicas (default: 3)
+      gitlab-gitaly-replicas: '3'               # Gitaly replicas per virtual storage (default: 3)
+      gitlab-gitaly-storage-class: 'ocs-storagecluster-cephfs'  # StorageClass for Gitaly PVC (omit for cluster default; use RWX for multi-node)
+      gitlab-redis-storage-class: 'ocs-storagecluster-cephfs'   # StorageClass for bundled Redis PVC (omit for cluster default)
+      gitlab-db-instances: '2'                  # PostgreSQL replicas (default: 2)
+      gitlab-db-pooler-instances: '2'           # PgBouncer replicas (default: 2)
+      gitlab-db-backups: 'true'                 # Enable CNPG backups (requires managed db + odf)
+      gitlab-webservice-min-replicas: '2'       # Webservice HPA min (default: 2)
+      gitlab-webservice-max-replicas: '4'       # Webservice HPA max (default: 4)
+      gitlab-sidekiq-min-replicas: '2'          # Sidekiq HPA min (default: 2)
+      gitlab-sidekiq-max-replicas: '4'          # Sidekiq HPA max (default: 4)
+      gitlab-shell-min-replicas: '2'            # gitlab-shell HPA min (default: 2)
+      gitlab-shell-max-replicas: '4'            # gitlab-shell HPA max (default: 4)
+      # --- Config values go in config.gitlab (see config section above) ---
+      # dbBackupSchedule, dbBackupRetention
+
+      # =======================================================================
+      # GitLab Runner
+      # =======================================================================
+      gitlab-runner: 'false'
+      gitlab-runner-subscription-name: gitlab-runner-operator
+      gitlab-runner-channel: stable
+      gitlab-runner-version: 'gitlab-runner-operator.v1.30.1'
+      gitlab-runner-source: certified-operators
+      gitlab-runner-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # JFrog Artifactory
+      # =======================================================================
+      jfrog: 'false'
+      jfrog-subscription-name: openshiftartifactoryha-operator
+      jfrog-channel: alpha
+      jfrog-version: 'openshiftartifactoryha-operator.v107.98.14'
+      jfrog-source: certified-operators
+      jfrog-source-namespace: openshift-marketplace
+      jfrog-node-replicas: '2'
+      jfrog-db-instances: '2'                   # PostgreSQL replicas (default: 2)
+      jfrog-db-pooler-instances: '2'            # PgBouncer replicas (default: 2)
+      artifactory-db-backups: 'true'            # Enable CNPG backups (requires cloudnative-pg + odf)
+      # --- Config values go in config.jfrog (see config section above) ---
+      # dbBackupSchedule, dbBackupRetention
+
+      # =======================================================================
+      # Disconnected Mirror Settings
+      # =======================================================================
+      disconnected-mirror: 'false'           # Enable mirrored catalog sources
+      mirror-catalog-suffix: 'mirror'        # redhat-operators + -mirror = redhat-operators-mirror
+
+      # =======================================================================
+      # Node Maintenance
+      # =======================================================================
+      node-maintenance: 'false'
+      node-maintenance-subscription-name: node-maintenance-operator
+      node-maintenance-channel: stable
+      node-maintenance-source: redhat-operators
+      node-maintenance-source-namespace: openshift-marketplace
+      node-maintenance-version: 'node-maintenance-operator.v5.5.0'
+
+      # =======================================================================
+      # External Secrets Operator
+      # =======================================================================
+      external-secrets-operator: 'false'
+      external-secrets-operator-subscription-name: openshift-external-secrets-operator
+      external-secrets-operator-channel: stable-v1
+      external-secrets-operator-version: 'openshift-external-secrets-operator.v0.12.1'
+      external-secrets-operator-source: redhat-operators
+      external-secrets-operator-source-namespace: openshift-marketplace
+      # Opentelemetry
+      # =======================================================================
+      opentelemetry: 'false'
+      opentelemetry-subscription-name: opentelemetry-product
+      opentelemetry-channel: stable
+      opentelemetry-version: 'opentelemetry-operator.v0.120.0'
+      opentelemetry-source: redhat-operators
+      opentelemetry-source-namespace: openshift-marketplace

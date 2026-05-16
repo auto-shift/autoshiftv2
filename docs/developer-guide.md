@@ -1,8 +1,8 @@
 # AutoShiftv2 - Developer Guide
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![OpenShift](https://img.shields.io/badge/OpenShift-4.18%2B-red)](https://www.openshift.com/)
-[![RHACM](https://img.shields.io/badge/RHACM-2.14%2B-purple)](https://www.redhat.com/en/technologies/management/advanced-cluster-management)
+[![OpenShift](https://img.shields.io/badge/OpenShift-4.20%2B-red)](https://www.openshift.com/)
+[![RHACM](https://img.shields.io/badge/RHACM-2.15%2B-purple)](https://www.redhat.com/en/technologies/management/advanced-cluster-management)
 
 **Build and manage OpenShift Platform Plus infrastructure as code with policy-driven automation**
 
@@ -15,10 +15,10 @@ Generate and deploy an operator policy in under 5 minutes:
 ./scripts/generate-operator-policy.sh cert-manager cert-manager-operator --channel stable --namespace cert-manager --version cert-manager.v1.14.4 --add-to-autoshift
 
 # 2. Validate the generated policy
-helm template policies/cert-manager/
+helm template policies/stable/cert-manager/
 
 # 3. Commit and push - AutoShift will automatically deploy via GitOps
-git add policies/cert-manager/
+git add policies/stable/cert-manager/
 git commit -m "Add cert-manager operator policy"
 git push origin main  # or your branch if contributing
 ```
@@ -27,15 +27,15 @@ Your operator is now being deployed across your clusters! Check the ArgoCD dashb
 
 ## 📋 Table of Contents
 
-- [Architecture Overview](#-architecture-overview)
-- [Developer Setup](#-developer-setup)
-- [Creating Your First Policy](#-creating-your-first-policy)
-- [Policy Development Guide](#-policy-development-guide)
-- [Common Development Tasks](#-common-development-tasks)
-- [Testing and Validation](#-testing-and-validation)
-- [Contributing](#-contributing)
-- [Troubleshooting](#-troubleshooting)
-- [Additional Resources](#-additional-resources)
+- [Architecture Overview](#architecture-overview)
+- [Developer Setup](#developer-setup)
+- [Creating Your First Policy](#creating-your-first-policy)
+- [Policy Development Guide](#policy-development-guide)
+- [Common Development Tasks](#common-development-tasks)
+- [Testing and Validation](#testing-and-validation)
+- [Contributing](#contributing)
+- [Troubleshooting](#troubleshooting)
+- [Additional Resources](#additional-resources)
 
 ## 🏗️ Architecture Overview
 
@@ -45,7 +45,7 @@ AutoShiftv2 orchestrates OpenShift infrastructure through a sophisticated GitOps
 
 ```mermaid
 flowchart TD
-    Git[Git Repository<br/>autoshift + policies/*]
+    Git[Git Repository<br/>autoshift + policies/stable,certified,community/*]
     AutoShift[AutoShift Helm Chart<br/>Creates ApplicationSet]
     Apps[ArgoCD Applications<br/>One per policy]
     Policies[ACM Policies<br/>Deployed to hub]
@@ -124,19 +124,22 @@ flowchart TD
 
 **Key Components & Flow:**
 
-1. **GitOps Foundation**: ArgoCD ApplicationSet monitors `policies/*` directories in Git repository
+1. **GitOps Foundation**: ArgoCD ApplicationSet monitors `policies/{stable,certified,community}/*` directories in Git repository
 2. **Dynamic Application Creation**: ApplicationSet creates individual ArgoCD Applications for each policy
 3. **Helm Chart Deployment**: Each Application deploys a Helm chart containing ACM Policy + Placement + PlacementBinding
-4. **Hub Template Processing**: ACM processes policy templates on hub cluster using cluster labels from ConfigMaps
+4. **Hub Template Processing**: ACM processes hub templates on the hub cluster, resolving per-cluster values before replication
 5. **Policy Propagation**: ACM Policy Framework propagates processed policies to target spoke clusters
-6. **Spoke Template Processing**: Policy agents on spoke clusters process templates again with local cluster context
+6. **Spoke Template Processing**: Policy agents on spoke clusters process any remaining regular templates with local cluster context
 7. **Resource Application**: Final Kubernetes resources are applied on spoke clusters
 
-**Label-Driven Configuration:**
-- **cluster-labels policy**: Applies `autoshift.io/*` labels to clusters from ConfigMaps
-- **Hub templates**: `{{hub index .ManagedClusterLabels "autoshift.io/key" hub}}` access cluster labels
+**Two Configuration Patterns:**
+
+- **Label-based** (operator policies): Labels defined in values files are propagated to ManagedClusters by the `cluster-labels` policy. Hub templates read labels via `{{hub index .ManagedClusterLabels "autoshift.io/key" hub}}` to configure operator subscriptions, channels, etc.
+- **Config-based** (nmstate, cluster-install): Structured YAML config defined in values files is merged by the `cluster-config-maps` policy into rendered-config ConfigMaps. Hub templates read these ConfigMaps via `lookup` + `fromYaml` to generate complex resources like NNCPs and NMStateConfigs.
+
+**Cluster Targeting:**
 - **Placement matching**: Selects target clusters using label expressions and cluster sets
-- **Dynamic behavior**: Same policy template produces different resources per cluster based on labels
+- **Dynamic behavior**: Same policy template produces different resources per cluster based on labels or config
 
 ## 🛠️ Developer Setup
 
@@ -162,13 +165,13 @@ cd autoshiftv2
 
 # Test operator policy generation
 ./scripts/generate-operator-policy.sh test-operator test-operator --channel stable --namespace test-operator
-helm template policies/test-operator/
-rm -rf policies/test-operator/
+helm template policies/stable/test-operator/
+rm -rf policies/stable/test-operator/
 
 # Test configuration policy generation
-./scripts/generate-policy.sh test-config --dir policies/test-config --target both
-helm template policies/test-config/
-rm -rf policies/test-config/
+./scripts/generate-policy.sh test-config --dir policies/stable/test-config --target both
+helm template policies/stable/test-config/
+rm -rf policies/stable/test-config/
 ```
 
 ### First-Time Setup Validation
@@ -178,11 +181,11 @@ rm -rf policies/test-config/
 ls -la policies/
 
 # Validate all existing policies (optional but recommended)
-for policy in policies/*/; do
-  if [ -f "$policy/Chart.yaml" ]; then
-    echo "Validating $policy..."
-    helm template "$policy" > /dev/null && echo "✓ Valid" || echo "✗ Invalid"
-  fi
+# Policy charts live at policies/<category>/<chart>/Chart.yaml
+find policies -maxdepth 3 -name Chart.yaml | while read -r chart_file; do
+  policy=$(dirname "$chart_file")
+  echo "Validating $policy..."
+  helm template "$policy" > /dev/null && echo "✓ Valid" || echo "✗ Invalid"
 done
 ```
 
@@ -223,10 +226,10 @@ oc describe packagemanifest your-operator -n openshift-marketplace
 
 ### Step 3: Understand Generated Files
 
-Your new policy directory (`policies/my-component/`) contains:
+Your new policy directory (`policies/stable/my-component/`) contains:
 
 ```
-policies/my-component/
+policies/stable/my-component/
 ├── Chart.yaml                          # Helm chart metadata
 ├── values.yaml                         # Default configuration
 ├── README.md                           # Policy documentation
@@ -244,34 +247,34 @@ oc get crds | grep my-component
 
 # 2. Generate a configuration policy (adds to existing policy directory)
 ./scripts/generate-policy.sh my-component-config \
-  --dir policies/my-component \
+  --dir policies/stable/my-component \
   --target both \
   --dependency my-component-operator-install
 
 # 3. Edit the generated template - replace the placeholder ConfigMap with your actual resource
-vi policies/my-component/templates/policy-my-component-config.yaml
+vi policies/stable/my-component/templates/policy-my-component-config.yaml
 ```
 
 The generator creates a complete policy with the correct structure (Policy + ConfigurationPolicy + Placement + PlacementBinding), `evaluationInterval`, dry-run support, and cluster tolerations. You can also generate standalone configuration policies in a new directory:
 
 ```bash
 # Create a new policy directory for non-operator configuration
-./scripts/generate-policy.sh my-cluster-config --dir policies/my-cluster-config --target spoke
+./scripts/generate-policy.sh my-cluster-config --dir policies/stable/my-cluster-config --target spoke
 
 # Or use interactive mode to be guided through the options
 ./scripts/generate-policy.sh
 ```
 
-See [generate-policy.sh documentation](../scripts/README.md#-generate-policysh) for all options including placement targets (`hub`, `spoke`, `both`, `all`) and dependency management.
+See [generate-policy.sh documentation](../scripts/README.md#generate-policysh) for all options including placement targets (`hub`, `spoke`, `both`, `all`) and dependency management.
 
 ### Step 5: Test and Deploy
 
 ```bash
 # Validate your policy renders correctly
-helm template policies/my-component/
+helm template policies/stable/my-component/
 
 # Commit and push to deploy
-git add policies/my-component/
+git add policies/stable/my-component/
 git commit -m "Add my-component operator with configuration"
 git push
 
@@ -313,6 +316,110 @@ channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-c
 name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subscription-name" | default "my-component-operator" {{ "hub}}" }}'
 ```
 
+### Hub Template Pitfalls
+
+#### Trim Markers (`{{-` / `{{hub-`) — The Indentation Rule
+
+**How `{{-` works:** It trims ALL whitespace (spaces, tabs, newlines) to the LEFT of the template tag until it hits non-whitespace content.
+
+**The critical rule:** Inside YAML block scalars (`|`), `{{-` template directives MUST be at the **same indentation level** as the content lines around them. If a `{{-` directive is at a shallower indent than the content above, the left-trim eats past the newline into the previous content line, merging two lines into one and producing invalid YAML.
+
+```yaml
+# WRONG — directive at 16 spaces, content at 20 spaces
+# The {{- eats 4 extra spaces into the previous content line, merging the lines
+                    spec:
+                      imageSetRef:
+                        name: {{ "{{" }} $imageSet {{ "}}" }}
+                {{ "{{-" }} if $condition {{ "}}" }}
+                      mirrorRegistryRef: ...
+# Resolves to: "name: value      mirrorRegistryRef:" — broken YAML!
+
+# CORRECT — directive aligned with content at 20 spaces
+                    spec:
+                      imageSetRef:
+                        name: {{ "{{" }} $imageSet {{ "}}" }}
+                    {{ "{{-" }} if $condition {{ "}}" }}
+                      mirrorRegistryRef: ...
+# Resolves to clean, separate lines
+```
+
+**Best practice:** Always use `{{-` for clean output. Just ensure the `{{-` directive is indented to match the surrounding content lines in the block scalar.
+
+#### `toYaml` Requires `autoindent`
+
+**Never use `toYaml` without `autoindent`** in `object-templates-raw`. Plain `toYaml` outputs at column 0, which terminates any enclosing YAML block scalar (`|`) and corrupts the document. `autoindent` detects the surrounding indentation level and preserves it.
+
+```yaml
+# WRONG — breaks out of the block scalar
+{{ "{{" }} $myDict | toYaml {{ "}}" }}
+
+# CORRECT — maintains indentation
+{{ "{{" }} $myDict | toYaml | autoindent {{ "}}" }}
+```
+
+#### Comments in object-templates-raw
+
+- `{{/* comment */}}` (Go-style, no trim) — **recommended**. Leaves a whitespace-only line that `{{-` trims naturally.
+- `{{- /* */ -}}` (trim markers) — **dangerous**. Merges adjacent lines.
+- `# YAML comment` — survives into output. Can merge with subsequent template lines.
+- **Hub templates do NOT support comments.** `{{hub /* comment */ hub}}` is invalid and will cause a parse error. Only use Go-style comments (`{{/* */}}`) outside of `{{hub ... hub}}` delimiters.
+
+#### Other Gotchas
+
+**`fromYaml`, `fromJson`, `toYaml`, `toJson` work in hub templates.** This enables reading structured data from ConfigMaps directly:
+
+```yaml
+{{ "{{hub-" }} $cm := (lookup "v1" "ConfigMap" $ns $name) {{ "hub}}" }}
+{{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
+```
+
+**`trimPrefix` and `trimSuffix` are not available** in ACM hub templates. Use `replace` instead:
+
+```yaml
+# Use this:
+{{ "{{hub" }} $name := (replace "managed-cluster-config." "" $cmName) {{ "hub}}" }}
+# Not this (will error):
+{{ "{{hub" }} $name := (trimPrefix "managed-cluster-config." $cmName) {{ "hub}}" }}
+```
+
+**`lookup` returns a Go map, not a string.** Use `| default dict` to safely handle missing resources:
+
+```yaml
+{{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" $ns $name) | default dict {{ "hub}}" }}
+{{ "{{hub" }} $data := (index $cm "data" | default dict) {{ "hub}}" }}
+```
+
+**Mixing hub and regular templates** is supported. Hub templates resolve first (on the hub), producing literal text. That text is then evaluated as a regular Go template on the managed cluster. This enables hub-side config injection combined with managed-cluster-side lookups.
+
+The key pattern: a hub template can inject a value as a literal string, and a regular template on the spoke can use that string in a `lookup` or other expression. For example, the nmstate NNCP policy uses hub templates to read host config from the hub, then a regular template to look up the cluster's DNS domain on the spoke:
+
+```yaml
+object-templates-raw: |
+  {{/*  Hub resolves this — reads config from rendered-config ConfigMap on the hub */}}
+  {{ "{{hub" }} $cm := (lookup "v1" "ConfigMap" "policies-autoshift" (printf "%s.rendered-config" .ManagedClusterName)) {{ "hub}}" }}
+  {{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
+  {{ "{{hub-" }} $hosts := (index $config "hosts" | default dict) {{ "hub}}" }}
+  {{/*  Spoke resolves this — looks up DNS config on the managed cluster */}}
+  {{ "{{" }} $clusterDomain := ((lookup "config.openshift.io/v1" "DNS" "" "cluster").spec.baseDomain | default "") {{ "}}" }}
+  {{/*  Hub injects the hostname string, spoke provides the domain */}}
+  {{ "{{hub-" }} range $hostname, $host := $hosts {{ "hub}}" }}
+      kubernetes.io/hostname: {{ "{{hub" }} $hostname {{ "hub}}" }}.{{ "{{" }} $clusterDomain {{ "}}" }}
+  {{ "{{hub-" }} end {{ "hub}}" }}
+```
+
+After hub resolution for a cluster with `master-0` in its hosts, the spoke sees:
+
+```yaml
+  {{ "{{" }} $clusterDomain := ((lookup "config.openshift.io/v1" "DNS" "" "cluster").spec.baseDomain | default "") {{ "}}" }}
+      kubernetes.io/hostname: master-0.{{ "{{" }} $clusterDomain {{ "}}" }}
+```
+
+The spoke then resolves `$clusterDomain` via its own DNS lookup, producing:
+
+```yaml
+      kubernetes.io/hostname: master-0.my-cluster.example.com
+```
+
 ### Label-Based Configuration
 
 Labels are configured in AutoShift values files and propagated to clusters by the cluster-labels policy:
@@ -346,7 +453,7 @@ Configuration precedence: **Individual Cluster > ClusterSet > Default Values**
 AutoShift handles dependencies through logical ordering and shared placement rules. For explicit dependencies, add to policy spec.dependencies section like the example below:
 
 ```yaml
-# In policies/my-component/README.md
+# In policies/stable/my-component/README.md
 ## Dependencies
 
 This policy depends on:
@@ -383,17 +490,17 @@ spec:
 
 ```bash
 # 1. Make changes to policy templates
-vi policies/my-component/templates/policy-my-component-config.yaml
+vi policies/stable/my-component/templates/policy-my-component-config.yaml
 
 # 2. Validate changes
-helm template policies/my-component/
+helm template policies/stable/my-component/
 
 # 3. Update with different label values
 vi autoshift/values/clustersets/sbx.yaml
 vi autoshift/values/clustersets/hub.yaml
 
 # 4. Commit and deploy
-git add policies/my-component/
+git add policies/stable/my-component/
 git add autoshift/
 git commit -m "Update my-component configuration"
 git push
@@ -416,6 +523,53 @@ oc get applications -n openshift-gitops my-component -o yaml
 ```
 
 ### Working with Disconnected Environments
+
+Disconnected mirror configuration is centralized in `config.disconnected` within cluster or clusterset values files. This single block drives both install-time (mirrorRegistryRef, ClusterImageSet, InfraEnv CA) and post-install (IDMS/ICSP, CatalogSources) mirror config.
+
+```yaml
+# In autoshift/values/clusters/my-cluster.yaml or clustersets/managed.yaml
+config:
+  disconnected:
+    mirrorRegistry:
+      host: 'mirror.example.com:5000'            # registry host:port
+      path: 'ocp'                                 # optional, image path prefix
+      caRef:                                      # reference a hub ConfigMap for CA
+        name: 'cluster-ca-bundle'
+        key: 'ca-bundle.crt'
+        namespace: 'cluster-install-secrets'
+      mirrors:                                    # IDMS — digest-based (Red Hat signed content)
+        - source: quay.io/openshift-release-dev/ocp-release
+          mirror: openshift/release-images
+        - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+          mirror: openshift/release
+        - source: registry.redhat.io
+        - source: quay.io
+        - source: registry.access.redhat.com
+      tagMirrors:                                 # ITMS — tag-based (certified/unsigned ISV operators)
+        - source: registry.connect.redhat.com
+        - source: registry.gitlab.com
+        - source: docker.io
+    disableDefaultCatalogs: true                  # disable default OperatorHub
+    catalogs:                                     # name = {source}-{mirror-catalog-suffix label}
+      - source: redhat-operators
+        imagePath: redhat/redhat-operator-index
+        tag: v4.20
+        publisher: Red Hat
+```
+
+**Labels still required** for operator source switching (OperatorPolicy can only read labels):
+```yaml
+labels:
+  disconnected-mirror: 'true'
+  mirror-catalog-suffix: 'mirror'
+```
+
+**What it configures:**
+- **cluster-install**: mirrorRegistryRef ConfigMap (registries.conf + CA), AgentClusterInstall, InfraEnv additionalTrustBundle, ClusterImageSet releaseImage pointing to mirror
+- **disconnected-mirror**: IDMS/ICSP, CatalogSources (name = `{source}-{suffix}`), OperatorHub disable
+- **Operator policies**: source ternary reads `disconnected-mirror` + `mirror-catalog-suffix` labels
+
+**ClusterImageSet note:** The Assisted Installer does NOT use IDMS — the ClusterImageSet `releaseImage` must point directly to the mirror registry. AutoShift handles this automatically when `disconnected.mirrorRegistry.url` is set.
 
 ```bash
 # Generate ImageSet for disconnected environments
@@ -486,7 +640,7 @@ gitops-channel: gitops-1.18
 
 ```bash
 # Validate single policy
-helm template policies/my-component/ | oc apply --dry-run=client -f -
+helm template policies/stable/my-component/ | oc apply --dry-run=client -f -
 
 # Validate all policies
 find policies/ -name "Chart.yaml" -exec dirname {} \; | while read policy; do
@@ -537,13 +691,13 @@ oc get policyreports -A
 
 4. **Test Thoroughly**
    ```bash
-   helm template policies/my-operator/
+   helm template policies/stable/my-operator/
    # Deploy and validate in test environment
    ```
 
 5. **Submit Pull Request**
    ```bash
-   git add policies/my-operator/
+   git add policies/stable/my-operator/
    git commit -m "Add my-operator policy with configuration"
    git push origin feature/add-my-operator-policy
    ```
@@ -706,4 +860,4 @@ oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 
 ---
 
-**Ready to contribute?** Start by [creating your first policy](#-creating-your-first-policy) or explore our [existing policies](../policies/) for examples!
+**Ready to contribute?** Start by [creating your first policy](#creating-your-first-policy) or explore our [existing policies](../policies/) for examples!

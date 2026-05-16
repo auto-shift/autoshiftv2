@@ -47,8 +47,8 @@ For full step-by-step instructions, see the [Quick Start Guide](docs/quickstart.
 
 ```bash
 # 1. Bootstrap GitOps and ACM
-helm upgrade --install openshift-gitops openshift-gitops -f policies/openshift-gitops/values.yaml
-helm upgrade --install advanced-cluster-management advanced-cluster-management -f policies/advanced-cluster-management/values.yaml
+helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml
+helm upgrade --install advanced-cluster-management advanced-cluster-management -f policies/stable/advanced-cluster-management/values.yaml
 
 # 2. Deploy AutoShift via ArgoCD Application
 # See Quick Start Guide for the full Application manifest

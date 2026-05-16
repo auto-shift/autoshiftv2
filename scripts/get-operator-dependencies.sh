@@ -8,9 +8,25 @@
 # Requirements:
 #   - oc CLI (for oc image extract)
 #   - jq (for JSON parsing)
-#   - Pull secret configured (~/.docker/config.json or REGISTRY_AUTH_FILE)
+#   - Pull secret file in the repo root (pull-secret.json) or specified via --pull-secret
 
 set -e
+
+# Detect Windows/Git Bash and test symlink capability
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+    _test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.tmp/symlink-test-$$"
+    mkdir -p "$_test_dir"
+    if ! ln -s "$_test_dir" "$_test_dir/test-link" 2>/dev/null; then
+        rm -rf "$_test_dir"
+        echo -e "\033[0;31m[ERROR]\033[0m This script requires 'oc image extract' which creates Linux symlinks." >&2
+        echo -e "\033[0;31m[ERROR]\033[0m Windows requires Developer Mode or admin privileges for symlinks." >&2
+        echo -e "\033[0;31m[ERROR]\033[0m Either enable Developer Mode (Settings > System > For developers) or" >&2
+        echo -e "\033[0;31m[ERROR]\033[0m run this on Mac/Linux/WSL2 instead, then use the output with:" >&2
+        echo -e "\033[0;31m[ERROR]\033[0m   ./scripts/generate-imageset-config.sh --dependencies-file scripts/operator-dependencies.json" >&2
+        exit 1
+    fi
+    rm -rf "$_test_dir"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -35,6 +51,10 @@ success() { echo -e "${GREEN}[OK]${NC} $1" >&2; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
 error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
+# Local temp directory — everything stays in the repo
+LOCAL_TMP="$PROJECT_ROOT/.tmp"
+mkdir -p "$LOCAL_TMP"
+
 # Defaults
 CATALOG=""
 CATALOG_OVERRIDE=false
@@ -44,6 +64,7 @@ OUTPUT_FORMAT="text"
 CACHE_DIR="$PROJECT_ROOT/.cache/catalog-cache"
 RECURSIVE=true
 KNOWN_DEPS_FILE="$SCRIPT_DIR/known-dependencies.json"
+PULL_SECRET=""
 
 usage() {
     cat << EOF
@@ -54,7 +75,7 @@ Extract operator dependencies from an operator catalog index.
 This script requires:
   - oc CLI installed
   - jq installed
-  - Valid pull secret for registry.redhat.io (in ~/.docker/config.json or REGISTRY_AUTH_FILE)
+  - Pull secret file (default: pull-secret.json in repo root, or --pull-secret PATH)
 
 Options:
   --catalog CATALOG      Catalog image (overrides auto-detection from openshift-version)
@@ -131,6 +152,10 @@ while [[ $# -gt 0 ]]; do
             CACHE_DIR="$2"
             shift 2
             ;;
+        --pull-secret)
+            PULL_SECRET="$2"
+            shift 2
+            ;;
         --help|-h)
             usage
             exit 0
@@ -147,6 +172,24 @@ done
 if [[ "$SHOW_ALL" == "false" && -z "$OPERATORS" ]]; then
     error "Either --operators or --all is required"
     usage
+    exit 1
+fi
+
+# Auto-detect pull secret from repo root if not specified
+if [[ -z "$PULL_SECRET" ]]; then
+    for ps_file in "$PROJECT_ROOT/pull-secret.json" "$PROJECT_ROOT/pull-secret.txt"; do
+        if [[ -f "$ps_file" ]]; then
+            PULL_SECRET="$ps_file"
+            break
+        fi
+    done
+fi
+
+# Export pull secret for oc image extract
+if [[ -n "$PULL_SECRET" ]]; then
+    export REGISTRY_AUTH_FILE="$PULL_SECRET"
+elif [[ -z "${REGISTRY_AUTH_FILE:-}" ]]; then
+    error "No pull secret found. Place pull-secret.json in the repo root or use --pull-secret PATH"
     exit 1
 fi
 
@@ -206,9 +249,15 @@ if [[ ! -d "$CATALOG_DIR/configs" ]]; then
     # Extract full image and access configs directory
     # Note: extracting /configs directly doesn't work reliably, so we extract root
     # Use --filter-by-os to handle multi-arch manifests (catalog images are linux/amd64 only)
-    if ! oc image extract "$CATALOG" --path /:"$CATALOG_DIR" --confirm --filter-by-os=linux/amd64 2>/dev/null; then
+    # Convert path for Windows compatibility (Git Bash uses /c/... but oc.exe needs C:\...)
+    extract_dest="$CATALOG_DIR"
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        extract_dest=$(cygpath -w "$CATALOG_DIR")
+    fi
+    # MSYS_NO_PATHCONV prevents Git Bash from converting /: path syntax
+    if ! MSYS_NO_PATHCONV=1 oc image extract "$CATALOG" --path "/":"$extract_dest" --confirm --filter-by-os=linux/amd64; then
         error "Failed to extract catalog. Check:"
-        error "  - Pull secret is configured (~/.docker/config.json or REGISTRY_AUTH_FILE)"
+        error "  - Pull secret exists (pull-secret.json in repo root or --pull-secret PATH)"
         error "  - Registry access to $CATALOG"
         error "  - oc CLI is authenticated"
         exit 1
@@ -290,8 +339,8 @@ get_deps() {
 }
 
 # Collect results using temp file (avoid associative arrays for bash 3.x compatibility)
-RESULTS_FILE=$(mktemp)
-VISITED_FILE=$(mktemp)
+RESULTS_FILE="$LOCAL_TMP/dep-results.$$"
+VISITED_FILE="$LOCAL_TMP/dep-visited.$$"
 trap "rm -f $RESULTS_FILE $VISITED_FILE" EXIT
 
 # Function to recursively resolve dependencies

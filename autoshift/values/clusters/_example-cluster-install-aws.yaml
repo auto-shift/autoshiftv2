@@ -1,0 +1,135 @@
+# ==============================================================================
+# AWS Cluster Install Example - Provision an AWS Cluster via Hive
+# ==============================================================================
+# Copy this file and rename it after your cluster (e.g., my-aws-cluster.yaml).
+# Add it to the ArgoCD Application valueFiles to deploy.
+#
+# Usage in ArgoCD Application:
+#   valueFiles:
+#     - values/global.yaml
+#     - values/clustersets/hub.yaml
+#     - values/clustersets/managed.yaml
+#     - values/clusters/my-aws-cluster.yaml    # <-- this file
+#
+# Prerequisites:
+#   - Hub clusterset must have: cluster-install: 'true'
+#   - Source secret must exist (see below)
+#   - Route53 hosted zone for baseDomain
+#   - AWS IAM user with required permissions
+#     (see https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_aws/installing-aws-account)
+#
+# Generate SSH keys (ECDSA or RSA required for FIPS, NOT ed25519):
+#   ssh-keygen -t ecdsa -b 521 -N '' -f ~/.ssh/ocp-cluster
+#
+# Create the source secret (single secret pattern, matches ACM GUI):
+#   oc create namespace cluster-install-secrets
+#   oc create secret generic aws-creds \
+#     -n cluster-install-secrets \
+#     --from-literal=aws_access_key_id=<key> \
+#     --from-literal=aws_secret_access_key=<secret> \
+#     --from-file=ssh-privatekey=$HOME/.ssh/ocp-cluster \
+#     --from-file=ssh-publickey=$HOME/.ssh/ocp-cluster.pub \
+#     --from-file=pullSecret=~/pull-secret.json
+#
+# See docs/cluster-install.md for the full guide.
+# ==============================================================================
+
+clusters:
+  my-aws-cluster:
+    config:
+      clusterSet: managed
+
+      # =====================================================================
+      # Networking — SDN configuration
+      # =====================================================================
+      networking:
+        clusterNetwork:
+          cidr: 10.128.0.0/14
+          hostPrefix: 23
+        machineNetwork:
+          cidr: 10.0.0.0/16
+        serviceNetwork:
+          - 172.30.0.0/16
+
+      # =====================================================================
+      # Cluster Install — install-specific config
+      # =====================================================================
+      clusterInstall:
+        createCluster: 'true'
+        platform: aws
+        baseDomain: example.com
+        openshiftVersion: '4.20.16'
+        # cpuArch: x86_64                           # default: x86_64
+        # openshiftChannel: stable                   # ClusterImageSet channel label
+        # clusterImageSet: ''                        # optional, overrides openshiftVersion
+
+        # --- Secrets ---
+        pullSecretRef:                               # reference to pull secret
+          name: 'aws-creds'                          # secret name
+          key: 'pullSecret'                          # key in secret (default: .dockerconfigjson)
+          namespace: 'cluster-install-secrets'
+        secretSourceNamespace: 'cluster-install-secrets'
+
+        # --- Cluster Management ---
+        # klusterletAddons:
+        #   - applicationManager
+        #   - certPolicyController
+        #   - policyController
+        #   - searchCollector
+
+      # =====================================================================
+      # AWS — platform-specific config
+      # =====================================================================
+      aws:
+        region: us-east-1
+        credentialRef: 'aws-creds'                   # secret with aws_access_key_id + aws_secret_access_key
+        sshPrivateKeyRef: 'aws-creds'                # secret with ssh-privatekey key
+        sshKeyRef:                                   # reads ssh-publickey from secret for install-config
+          name: 'aws-creds'
+          key: 'ssh-publickey'
+          namespace: 'cluster-install-secrets'
+        # sshPublicKey: 'ssh-ecdsa AAAAE2...'        # OR inline public key instead of sshKeyRef
+        fips: true                                    # default: false (requires ECDSA or RSA keys)
+        networkType: OVNKubernetes                    # default: OVNKubernetes
+
+        # --- Control Plane ---
+        controlPlane:
+          instanceType: m5.xlarge
+          rootVolume:
+            iops: 4000
+            size: 100                                 # GB
+            type: io1                                 # io1, io2, gp2, gp3
+
+        # --- Workers ---
+        workers:
+          replicas: 3
+          instanceType: m5.xlarge
+          rootVolume:
+            iops: 2000
+            size: 100
+            type: io1
+
+      # =====================================================================
+      # Disconnected — optional, same as baremetal
+      # =====================================================================
+      # For disconnected AWS installs, the install-config automatically includes
+      # imageDigestSources and additionalTrustBundle from this config.
+      # disconnected:
+      #   mirrorRegistry:
+      #     host: 'mirror.example.com:5000'
+      #     path: 'ocp'
+      #     caRef:                                   # reference a ConfigMap with the CA
+      #       name: 'cluster-ca-bundle'
+      #       key: 'ca-bundle.crt'
+      #       namespace: 'cluster-install-secrets'
+      #     # ca: |                                  # OR inline CA
+      #     #   -----BEGIN CERTIFICATE-----
+      #     #   ...
+      #     mirrors:
+      #       - source: quay.io/openshift-release-dev/ocp-release
+      #         mirror: openshift/release-images
+      #       - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+      #         mirror: openshift/release
+      #       - source: registry.redhat.io           # no mirror = host/path
+      #       - source: quay.io
+      #       - source: registry.access.redhat.com

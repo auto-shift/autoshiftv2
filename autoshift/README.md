@@ -20,8 +20,7 @@ Values are split into composable files that you combine via Helm's `-f` flag or 
 values/
   global.yaml                        # Shared config (always include first)
   clustersets/
-    _example-hub.yaml                # Reference: ALL hub options (copy to create your own)
-    _example-managed.yaml            # Reference: ALL managed options
+    _example.yaml                    # Reference: ALL options — copy to create hub or managed profile
     hub.yaml                         # Hub — full enterprise profile
     hub-minimal.yaml                 # Hub — minimal (GitOps + ACM only)
     hub-baremetal-sno.yaml           # Hub — baremetal single-node OpenShift
@@ -180,12 +179,13 @@ When a version is specified, the operator subscription is set to manual install 
 
 ## Creating Custom Profiles
 
-1. Copy the appropriate example file:
+1. Copy the example file:
    ```bash
-   cp values/clustersets/_example-hub.yaml values/clustersets/my-hub.yaml
-   cp values/clustersets/_example-managed.yaml values/clustersets/my-managed.yaml
+   cp values/clustersets/_example.yaml values/clustersets/my-hub.yaml
+   cp values/clustersets/_example.yaml values/clustersets/my-managed.yaml
    cp values/clusters/_example.yaml values/clusters/my-cluster.yaml
    ```
+   For managed profiles: change `hubClusterSets` → `managedClusterSets`, rename the clusterset key, and remove `# hub only` labels.
 
 2. Edit the copy — uncomment and set the labels you need
 

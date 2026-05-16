@@ -1,0 +1,127 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-gitlab-argocd-config" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+{{- $gitopsNamespace := $.Values.gitopsNamespace | default "openshift-gitops" }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-gitlab-instance
+      namespace: '{{ $policyNamespace }}'
+  policy-templates:
+    {{- /* ===== ArgoCD credential template for all GitLab repos ===== */}}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-argocd-repo-creds
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
+            {{ "{{-" }} $gitlabUrl := (printf "https://gitlab.%s" $ingressDomain) {{ "}}" }}
+            {{ "{{-" }} $password := (fromSecret "{{ .Values.gitlab.namespace }}" "gitlab-gitlab-initial-root-password" "password" | base64dec) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: gitlab-repo-creds
+                  namespace: {{ $gitopsNamespace }}
+                  labels:
+                    argocd.argoproj.io/secret-type: repo-creds
+                type: Opaque
+                stringData:
+                  url: {{ "{{" }} $gitlabUrl {{ "}}" }}
+                  username: root
+                  password: {{ "{{" }} $password {{ "}}" }}
+                  type: git
+    {{- /* ===== ArgoCD TLS cert for GitLab ===== */}}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-argocd-tls-cert
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
+            {{ "{{-" }} $gitlabHost := (printf "gitlab.%s" $ingressDomain) {{ "}}" }}
+            {{ "{{-" }} $tlsCert := (fromSecret "{{ .Values.gitlab.namespace }}" "gitlab-wildcard-tls" "tls.crt" | base64dec) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: argocd-tls-certs-cm
+                  namespace: {{ $gitopsNamespace }}
+                data:
+                  {{ "{{" }} $gitlabHost {{ "}}" }}: |
+                    {{ "{{" }} $tlsCert | autoindent {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitlab'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/gitlab-argocd-integration'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
