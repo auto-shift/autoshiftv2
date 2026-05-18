@@ -175,17 +175,16 @@ func TestPipeline_MutationSweep(t *testing.T) {
 			expectAbsentString:   "CatalogSource",
 		},
 		{
-			// mirrorRegistry removal causes a len-on-zero-value error in the hub
-			// template (policy bug: $mirrors needs | default list). The correct
-			// assertion is that the policy no longer resolves cleanly — ResolveOK
-			// must be false, signalling the missing-config condition.
-			name: "remove mirror registry → policy resolution error (mirrors zero value)",
+			// Disconnected clusters must have mirrorRegistry configured — a missing
+			// mirrorRegistry is a misconfiguration that should surface as a hub
+			// template resolution error rather than silently deploying empty policies.
+			name: "remove mirror registry → policy resolution error (misconfigured disconnected cluster)",
 			mutateConfigs: func(cfg *ExampleConfigs) {
 				disc, _ := cfg.HubConfig["disconnected"].(map[string]interface{})
 				delete(disc, "mirrorRegistry")
 			},
-			expectAbsentInPolicy:         "stable/disconnected-mirror",
-			expectResolutionError:        true,
+			expectAbsentInPolicy:  "stable/disconnected-mirror",
+			expectResolutionError: true,
 		},
 		{
 			// compliance-auto-remediate is a leaf label (no sub-labels) so Pass b
