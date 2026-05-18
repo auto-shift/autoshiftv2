@@ -4,11 +4,15 @@ package resolver
 
 import (
 	"encoding/json"
+	"flag"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/auto-shift/autoshiftv2/tools/internal/labels"
+	"k8s.io/klog"
 )
 
 // deepCloneConfigs returns a deep copy of ExampleConfigs via JSON round-trip.
@@ -87,6 +91,21 @@ func runMutated(
 // This is the negative-test counterpart of TestPipeline_EndToEnd: it proves
 // the detection mechanism works, not just that the current config is clean.
 func TestPipeline_MutationSweep(t *testing.T) {
+	// Suppress klog output — mutation cases intentionally trigger hub-resolution
+	// errors which klog logs with full policy JSON. All assertions use t.Error,
+	// so suppressing the library noise keeps the output readable.
+	// klog v1 defaults to logtostderr=true which writes directly to os.Stderr,
+	// bypassing SetOutput, so we must also raise the stderrthreshold to FATAL.
+	klog.InitFlags(nil)
+	flag.Set("logtostderr", "false")      //nolint:errcheck
+	flag.Set("stderrthreshold", "FATAL")  //nolint:errcheck
+	klog.SetOutput(io.Discard)
+	t.Cleanup(func() {
+		flag.Set("logtostderr", "true")       //nolint:errcheck
+		flag.Set("stderrthreshold", "ERROR")  //nolint:errcheck
+		klog.SetOutput(os.Stderr)
+	})
+
 	root := repoRoot(t)
 	valuesDir := filepath.Join(root, "autoshift", "values")
 	allowlistPath := filepath.Join(root, ".github", "label-lint-allowlist.yaml")
