@@ -1,7 +1,6 @@
 # This policy uses OpenShift Logging Operator to forward 
 # logs to Loki.
 #
-# Note that OpenShift 4.18 is required.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -36,6 +35,9 @@ spec:
         spec:
           remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates:
             - complianceType: musthave
               objectDefinition:
@@ -108,30 +110,32 @@ spec:
                   name: logging
                   namespace: {{ .Values.loki.lokistackNamespace }}
                 spec:
+                  collector:
+                    resources:
+                      limits:
+                        cpu: {{ .Values.collector.limitCPU }} 
+                        memory: {{ .Values.collector.limitMemory }} 
+                      requests:
+                        cpu: {{ .Values.collector.requestsCPU }} 
+                        memory: {{ .Values.collector.requestsMemory }} 
                   managementState: Managed
+                  serviceAccount:
+                    name: collector
                   outputs:
-                    - lokiStack:
+                    - name: lokistack-output
+                      type: lokiStack
+                      lokiStack:
+                        target:
+                          name: {{ .Values.loki.lokistackName }}
+                          namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-namespace" | default "{{ .Values.loki.lokistackNamespace }}" {{ "hub}}" }}'
                         authentication:
                           token:
                             from: serviceAccount
-                        target:
-                          name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-lokistack-name" | default "{{ .Values.loki.lokistackName }}" {{ "hub}}" }}'
-                          namespace: {{ .Values.loki.lokistackNamespace }}
-                      name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-lokistack-name" | default "{{ .Values.loki.lokistackName }}" {{ "hub}}" }}'
                       tls:
                         ca:
                           configMapName: openshift-service-ca.crt
                           key: service-ca.crt
-                      type: lokiStack
-                  pipelines:
-                    - inputRefs:
-                        - infrastructure
-                        - application
-                      name: logs-to-loki
-                      outputRefs:
-                        - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-lokistack-name" | default "{{ .Values.loki.lokistackName }}" {{ "hub}}" }}'
-                  serviceAccount:
-                    name: collector
+                  pipelines: {{ .Values.loki.pipelines | toYaml | nindent 24 }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -151,6 +155,10 @@ spec:
         labelSelector:
           matchExpressions:
             - key: 'autoshift.io/logging'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/loki'
               operator: In
               values:
               - 'true'

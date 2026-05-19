@@ -31,6 +31,8 @@ spec:
           severity: high
           object-templates-raw : |
             # Fetch ldap secret name
+            {{ "{{hub-" }} $cfg := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}" | fromYaml {{ "hub}}" }}
+            {{ "{{hub-" }} $ldapConfig := index $cfg `ldap` | default (dict) {{ "hub}}" }}
             {{ "{{hub-" }} $secret := index .ManagedClusterLabels "autoshift.io/ldap-groupsync-secret" | default "{{ .Values.ldap_groupsync_secret }}" {{ "hub}}" }}
             # Get bindDN
             {{ "{{hub" }} $bindDN := fromSecret (index .ManagedClusterLabels `autoshift.io/auth-secrets-namespace`) $secret "bindDN" {{ "hub}}" }}
@@ -62,7 +64,7 @@ spec:
                         ca:
                           name: ldap-ca
                         insecure: false
-                        url: 'ldaps://vaphc1dc1.va.gov:3269/dc=va,dc=gov?sAMAccountName?sub?(objectclass=person)'
+                        url: '{{ "{{hub" }} index $ldapConfig `url` {{ "hub}}" }}/{{ "{{hub" }} index $ldapConfig `url-search` {{ "hub}}" }}'
                   tokenConfig:
                     accessTokenInactivityTimeout: 10m0s
                     accessTokenMaxAgeSeconds: 28800

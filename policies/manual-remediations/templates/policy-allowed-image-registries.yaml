@@ -19,7 +19,21 @@ spec:
         metadata:
           name: set-allowed-registries
         spec:
+          remediationAction: enforce
+          severity: high
           object-templates-raw: |
+            # Build list of allowed registries
+            {{ `{{hub-` }} $cfg := fromConfigMap `{{ $.Values.policy_namespace }}` (print .ManagedClusterName `.rendered-config`) `config` | default `{}` | fromYaml {{ `hub}}` }}
+            {{ `{{hub-` }} $allowedRegistries := list {{ `hub}}` }}
+            {{ `{{hub-` }} range $item := (index $cfg `default-allowed-registries` | default (list))  {{ `hub}}` }}
+              {{ `{{hub-` }} $allowedRegistries = append $allowedRegistries $item {{ `hub}}` }}
+            {{ `{{hub-` }} end {{ `hub}}` }}
+            {{ `{{hub-` }} range $item := (index $cfg `clusterset-allowed-registries` | default (list))  {{ `hub}}` }}
+              {{ `{{hub-` }} $allowedRegistries = append $allowedRegistries $item {{ `hub}}` }}
+            {{ `{{hub-` }} end {{ `hub}}` }}
+            {{ `{{hub-` }} range $item := (index $cfg `cluster-allowed-registries` | default (list))  {{ `hub}}` }}
+              {{ `{{hub-` }} $allowedRegistries = append $allowedRegistries $item {{ `hub}}` }}
+            {{ `{{hub-` }} end {{ `hub}}` }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: config.openshift.io/v1
@@ -28,18 +42,16 @@ spec:
                   name: cluster
                 spec:
                   allowedRegistriesForImport: 
-                    - domainName: quay.io
-                      insecure: false
-                    - domainName: registry.redhat.io
-                      insecure: false                                     
-                  registrySources: 
+                    {{ `{{hub-` }} range $registry := (index $allowedRegistries | default (list)) {{ `hub}}` }}
+                    - domainName: {{ `{{hub` }} index $registry `domainName` {{ `hub}}` }}
+                      insecure: {{ `{{hub` }} index $registry `insecure` | default `false` {{ `hub}}` }}
+                    {{ `{{hub- end hub}}` }}
+                  registrySources:
                     allowedRegistries:
-                    - quay.io
-                    - registry.redhat.io
-                    - image-registry.openshift-image-registry.svc:5000
-          pruneObjectBehavior: None
-          remediationAction: enforce
-          severity: high
+                      {{ `{{hub-` }} range $registry := (index $allowedRegistries | default (list)) {{ `hub}}` }}
+                      - {{ `{{hub` }} index $registry `domainName` {{ `hub}}` }}
+                      {{ `{{hub- end hub}}` }}
+
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

@@ -1,0 +1,127 @@
+# This policy creates a loki stack using a noobaa bucket from OpenShift Data Foundation.
+#
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-loki-odf-bucket
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-7 Continuous Monitoring
+spec:
+  dependencies:
+    - name: policy-loki-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-storage-cluster-test
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: openshift-loki-bucketclaim
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: objectbucket.io/v1alpha1
+                kind: ObjectBucketClaim
+                metadata:
+                  name: loki-bucket-odf
+                  namespace: {{ .Values.loki.lokistackNamespace }}
+                spec:
+                  generateBucketName: loki-bucket-odf
+                  storageClassName: openshift-storage.noobaa.io
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: openshift-loki-bucket-secret-odf
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: logging-loki
+                  namespace: {{ .Values.loki.lokistackNamespace }}
+                type: Opaque
+                stringData:
+                  access_key_id: '{{`{{ fromSecret "openshift-logging" "loki-bucket-odf" "AWS_ACCESS_KEY_ID" | base64dec }}`}}'
+                  access_key_secret: '{{`{{ fromSecret "openshift-logging" "loki-bucket-odf" "AWS_SECRET_ACCESS_KEY" | base64dec }}`}}'
+                  bucketnames: '{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_NAME" }}`}}'
+                  endpoint: 'https://{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_HOST" }}`}}:{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_PORT" }}`}}'
+                  region: '{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_REGION" }}`}}'
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-loki-odf-bucket
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/loki-s3'
+              operator: In
+              values:
+              - 'false'
+    # - requiredClusterSelector:
+    #     labelSelector:
+    #       matchExpressions:
+    #         - key: 'autoshift.io/loki'
+    #           operator: In
+    #           values:
+    #             - 'true'
+    #         - key: 'autoshift.io/loki-s3-endpoint'
+    #           operator: 'DoesNotExist'
+
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-loki-odf-bucket
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-loki-odf-bucket
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-loki-odf-bucket
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

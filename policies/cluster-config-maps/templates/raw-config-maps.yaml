@@ -1,8 +1,17 @@
-{{- $defaultConfigs := (index $.Values "config" | default dict) }}
+{{- $defaultConfig := (index $.Values "config" | default dict) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: 
+  name: "{{ .Release.Name | replace "cluster-config-maps" "" }}default-configs"
+  namespace: "{{ $.Values.policy_namespace }}" 
+  labels:
+    autoshift.io/cluster-default-configs: ""
+data:
+  config: '{{ $defaultConfig | toJson }}'
+
 {{- range $clusterName, $cluster := $.Values.clusters }}
-{{- $clusterConfig := (dict) }}
-{{- $_ := (merge $clusterConfig (index $cluster "config" | default dict) $defaultConfigs) }}
-  {{- if not (empty $clusterConfig) }}
+{{- $clusterConfig := (index $cluster "config" | default dict) }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -12,17 +21,14 @@ metadata:
   labels:
     autoshift.io/cluster-configs: ""
 data:
-    config: '{{ $clusterConfig | toJson }}'
-  {{- end }}
+  config: '{{ $clusterConfig | toJson }}'
 {{- end }}
 
 {{- $clusterSets := (dict) }}
 {{- $hubClusterSets := (index $.Values "hubClusterSets" | default dict) }}
 {{- $managedClusterSets := (index $.Values "managedClusterSets" | default dict) }}
 {{- range $clusterSetName, $clusterSet := (merge $clusterSets $hubClusterSets $managedClusterSets) }}
-{{- $clusterSetConfig := (dict) }}
-{{- $_ := (merge $clusterSetConfig (index $clusterSet "config" | default dict) $defaultConfigs) }}
-  {{- if not (empty $clusterSetConfig) }}
+{{- $clusterSetConfig := (index $clusterSet "config" | default dict) }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -32,7 +38,5 @@ metadata:
   labels:
     autoshift.io/cluster-set-configs: ""
 data:
-    config: '{{ $clusterSetConfig | toJson }}'
-  {{- end }}
+  config: '{{ $clusterSetConfig | toJson }}'
 {{- end }}
----

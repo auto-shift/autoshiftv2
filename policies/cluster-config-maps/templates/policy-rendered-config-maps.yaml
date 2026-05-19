@@ -1,8 +1,8 @@
-
-{{- $policyNamespace := $.Values.policy_namespace }}
-{{- $policyName := "policy-cluster-configs" }}
-{{- $placementName := "placement-cluster-configs" }}
-{{- $configPolicyName := "policy-cluster-configs" }}
+{{- if not (empty $.Values.hubClusterSets) }}
+  {{- $policyNamespace := $.Values.policy_namespace }}
+  {{- $policyName := "policy-cluster-configs" }}
+  {{- $placementName := "placement-cluster-configs" }}
+  {{- $configPolicyName := "policy-cluster-configs" }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -28,38 +28,99 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates-raw: |
-            {{ "{{" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "}}" }}
-            {{ "{{" }} if not (empty $managedClusterLookupResult) {{ "}}" }}
-              {{ "{{" }} $managedClusters := (index $managedClusterLookupResult "items") | default list {{ "}}" }}
-              {{ "{{" }} $lastIndex := (sub (len $managedClusters) 1) {{ "}}" }}
-              {{ "{{" }} if (ne $lastIndex -1) {{ "}}" }}
-                {{ "{{" }} range $index, $cluster := $managedClusters {{ "}}" }}
-                  {{ "{{" }} $clusterSet := (index $cluster.metadata.labels "cluster.open-cluster-management.io/clusterset") | default "" {{ "}}" }}
-                  {{ "{{" }} $clusterName := (index $cluster "metadata" "name") {{ "}}" }}
-                  {{ "{{" }} $clusterConfigMapName := (print "managed-cluster-config." $clusterName) {{ "}}" }}
-                  {{ "{{" }} $clusterSetConfigMapName := (print "cluster-set-config." $clusterSet)  {{ "}}" }}
-                  {{ "{{" }} $clusterConfigMap := (lookup "v1" "ConfigMap" $policyNamespace $clusterConfigMapName "autoshift.io/cluster-configs" | default dict) {{ "}}" }}
-                  {{ "{{" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" $policyNamespace $clusterSetConfigMapName "autoshift.io/cluster-set-configs" | default dict) {{ "}}" }}
-                  {{ "{{" }} $clusterConfig := ($clusterConfigMap.data.config | default "{}" | fromJson) {{ "}}" }}
-                  {{ "{{" }} $clusterSetConfig := ($clusterSetConfigMap.data.config | default "{}" | fromJson) {{ "}}" }}
-                  {{ "{{" }} $renderedConfig := (dict) {{ "}}" }}
-                  {{ "{{" }} $_ := (merge $renderedConfig $clusterConfig $clusterSetConfig) {{ "}}" }}
+            #Indentation Anchor
+            {{ "{{" }} $allRendered := dict {{ "}}" }}
+            {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "}}" }}
+            {{ "{{-" }} $allClusterConfigs := (dict) {{ "}}" }}
+            {{ "{{-" }} $allClusterSetConfigs := (dict) {{ "}}" }}
+            {{ "{{-" }} $clusterConfigMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-configs") | default dict {{ "}}" }}
+            {{ "{{-" }} $clusterSetConfigMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-set-configs") | default dict {{ "}}" }}
+            {{ "{{-" }} $defaultConfigs := (dict) {{ "}}" }}
+            {{ "{{-" }} $defaultConfigMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-default-configs") | default dict {{ "}}" }}
+            ##### DEFAULT CONFIG MAPS #####
+            {{ "{{-" }} range $idx, $cm := $defaultConfigMaps.items {{ "}}" }}
+                {{ "{{-" }} $_ := set $defaultConfigs $cm.metadata.namespace ((($cm).data).config | default "{}" | fromJson) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### CLUSTER SET CONFIG MAPS #####
+            {{ "{{-" }} $seenClusterSetConfigs := (dict) {{ "}}" }}
+            {{ "{{-" }} range $_, $clusterSetConfigMap := $clusterSetConfigMaps.items {{ "}}" }}
+              {{ "{{-" }} $cm := $clusterSetConfigMap {{ "}}" }}
+              {{ "{{-" }} if hasPrefix "cluster-set-config." $cm.metadata.name {{ "}}" }}
+                {{ "{{-" }}  $clusterSetName := ($cm.metadata.name | replace "cluster-set-config." "")  {{ "}}" }}
+                {{ "{{-" }} if (hasKey $seenClusterSetConfigs $clusterSetName) {{ "}}" }}
+                  {{ "{{-" }} fail (printf "Duplicate cluster set config detected: ManagedClusterSet %s has multiple config maps!. ManagedClusterSet config maps must be unique across all namespaces!" ($cm.metadata.name | replace "cluster-set-config." "")) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $_ := set $seenClusterSetConfigs $clusterSetName $cm.metadata.namespace {{ "}}" }}
+                {{ "{{-" }} $clusterSetName := ($cm.metadata.name | replace "cluster-set-config." "") {{ "}}" }}
+                {{ "{{-" }} if not (hasKey $allClusterSetConfigs $cm.metadata.namespace) {{ "}}" }}
+                  {{ "{{-" }} $_ := set $allClusterSetConfigs $cm.metadata.namespace (dict) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $clusterSetConfig := (index $clusterSetConfigMap.data "config" | default "{}" | fromJson) {{ "}}" }}
+                {{ "{{-" }} $_ := set (index $allClusterSetConfigs $cm.metadata.namespace) $clusterSetName $clusterSetConfig{{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### CLUSTER CONFIG MAPS ####
+            {{ "{{-" }} range $_, $clusterConfigMap := ($clusterConfigMaps.items | default list) {{ "}}" }}
+              {{ "{{-" }} if hasPrefix "managed-cluster-config." $clusterConfigMap.metadata.name {{ "}}" }}
+                {{ "{{-" }} $clusterConfig := (index $clusterConfigMap.data "config" | default "{}" | fromJson) {{ "}}" }}
+                {{ "{{-" }} $clusterNs := $clusterConfigMap.metadata.namespace {{ "}}" }}
+                {{ "{{-" }} $clusterName := ($clusterConfigMap.metadata.name | replace "managed-cluster-config." "") {{ "}}" }}
+                {{ "{{-" }} $wrapper := (dict $clusterNs (dict $clusterName $clusterConfig)) {{ "}}" }}
+                {{ "{{-" }} $allClusterConfigs = merge $wrapper $allClusterConfigs {{ "}}" }}
+                {{ "{{-" }} $clusterSetName := ($clusterConfig.clusterSet | default "") {{ "}}" }}
+                {{ "{{-" }} $clusterSetConfig := (dig $clusterNs $clusterSetName (dict) $allClusterSetConfigs )  {{ "}}" }}
+                {{ "{{-" }} $defaultConfig := (index $defaultConfigs $clusterNs | default dict)  {{ "}}" }}
+                {{ "{{-" }} $renderedConfig := (dict) {{ "}}" }}
+                {{ "{{-" }} $_ := merge $renderedConfig $clusterConfig $clusterSetConfig $defaultConfig   {{ "}}" }}
+                {{ "{{-" }} if not (hasKey $allRendered $clusterNs) {{ "}}" }}
+                  {{ "{{-" }} $_ := set $allRendered $clusterNs (dict) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $_ := set (index $allRendered $clusterNs) $clusterName $renderedConfig {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} range $_, $cluster := $managedClusterLookupResult.items {{ "}}" }}
+              {{ "{{-" }} $clusterSetName := index ((($cluster).metadata).labels | default dict) "cluster.open-cluster-management.io/clusterset" | default ""  {{ "}}" }}
+              {{ "{{-" }} $clusterSetNamespace  := (index $seenClusterSetConfigs $clusterSetName | default "")  {{ "}}" }}
+              {{ "{{-" }} $clusterSetConfig := (dig $clusterSetNamespace $clusterSetName (dict) $allClusterSetConfigs) {{ "}}" }}
+              {{ "{{-" }} $defaultConfig := (index $defaultConfigs $clusterSetNamespace | default dict) {{ "}}" }}
+              {{ "{{-" }} if ne $clusterSetNamespace "" {{ "}}" }}
+                {{ "{{-" }} $clusterConfig := (dig $clusterSetNamespace $cluster.metadata.name (dict) $allClusterConfigs) {{ "}}" }}
+                {{ "{{-" }} $renderedConfig := (dict) {{ "}}" }}
+                {{ "{{-" }} $_ := merge $renderedConfig $clusterConfig $clusterSetConfig $defaultConfig {{ "}}" }}
+                {{ "{{-" }} $wrapper := (dict $clusterSetNamespace (dict $cluster.metadata.name $renderedConfig)) {{ "}}" }}
+                {{ "{{-" }} $_ := merge $wrapper $allRendered {{ "}}" }}
+                {{ "{{-" }} $allRendered = $wrapper {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: cluster-config-debug
+                  namespace: {{ $.Values.policy_namespace }}
+                  labels:
+                    autoshift.io/debug: ""
+                data:
+                  allRendered: |
+                    {{ "{{" }} $allRendered | toYaml | autoindent {{ "}}" }}
+
+            {{ "{{-" }} range $ns, $clusters := ($allRendered | default dict) {{ "}}" }}
+              {{ "{{-" }} range $clusterName, $config := $clusters {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: ConfigMap
                 metadata:
                   name: {{ "{{" }} (printf "%s.%s" $clusterName "rendered-config") {{ "}}" }}
-                  namespace: {{ "{{" }} $policyNamespace {{ "}}" }}
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
                   labels:
                     autoshift.io/rendered-config-map: ""
                 data:
                   config: |
-                    {{ "{{" }} $renderedConfig | toYaml | autoindent {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{" }} $config | toYaml | autoindent {{ "}}" }}
+              {{ "{{" }} end {{ "}}" }}
+            {{ "{{" }} end {{ "}}" }}
 
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -91,3 +152,4 @@ subjects:
   - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy
+{{ end }}

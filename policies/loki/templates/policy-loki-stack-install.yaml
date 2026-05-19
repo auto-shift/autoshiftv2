@@ -1,6 +1,5 @@
 # This policy creates a loki stack using a noobaa bucket from OpenShift Data Foundation.
 #
-# Note that OpenShift 4.18 is required.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -17,7 +16,12 @@ spec:
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
-    - name: policy-storage-cluster-test
+    - name: policy-loki-secret-test
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-loki-ca-bundle
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -25,6 +29,7 @@ spec:
 {{ if (($.Values.autoshift).dryRun) }}
   remediationAction: inform
 {{ end }}
+  remediationAction: enforce
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -35,13 +40,16 @@ spec:
         spec:
           remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates:
             - complianceType: musthave
               objectDefinition:
                 apiVersion: loki.grafana.com/v1
                 kind: LokiStack
                 metadata:
-                  name: '{{ "{{" }}hub index .ManagedClusterLabels "autoshift.io/loki-lokistack-name" | default "{{ .Values.loki.lokistackName }}" hub{{ "}}" }}'
+                  name: {{ .Values.loki.lokistackName }}
                   namespace: {{ .Values.loki.lokistackNamespace }}
                 spec:
                   hashRing:
@@ -49,8 +57,11 @@ spec:
                   limits:
                     global:
                       ingestion:
-                        ingestionBurstSize: 16
-                        ingestionRate: 8
+                        ingestionBurstSize: 200
+                        perStreamRateLimit: 25
+                        perStreamRateLimitBurst: 100
+                      retention:
+                        days: 30
                       queries:
                         queryTimeout: 3m
                   managementState: Managed
@@ -61,58 +72,14 @@ spec:
                       - effectiveDate: '2024-09-22'
                         version: v13
                     tls:
-                      caName: openshift-service-ca.crt
-                      caKey:  service-ca.crt
+                      caName: loki-ca-bundle
+                      caKey:  ca.crt
                     secret:
-                      name: logging-loki-odf
+                      name: logging-loki
                       type: s3
+                      credentialMode: static
                   tenants:
                     mode: {{ .Values.loki.lokistackNamespace }}
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: openshift-loki-bucketclaim
-        spec:
-          remediationAction: enforce # will be overridden by remediationAction in parent policy
-          severity: high
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: objectbucket.io/v1alpha1
-                kind: ObjectBucketClaim
-                metadata:
-                  name: loki-bucket-odf
-                  namespace: {{ .Values.loki.lokistackNamespace }}
-                  annotations:
-                    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-                    argocd.argoproj.io/sync-wave: "4"
-                spec:
-                  generateBucketName: loki-bucket-odf
-                  storageClassName: openshift-storage.noobaa.io
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: openshift-loki-bucket-secret
-        spec:
-          remediationAction: enforce
-          severity: high
-          object-templates:
-            - complianceType: mustonlyhave
-              objectDefinition:
-                apiVersion: v1
-                kind: Secret
-                metadata:
-                  name: logging-loki-odf
-                  namespace: {{ .Values.loki.lokistackNamespace }}
-                type: Opaque
-                stringData:
-                  access_key_id: '{{`{{ fromSecret "openshift-logging" "loki-bucket-odf" "AWS_ACCESS_KEY_ID" | base64dec }}`}}'
-                  access_key_secret: '{{`{{ fromSecret "openshift-logging" "loki-bucket-odf" "AWS_SECRET_ACCESS_KEY" | base64dec }}`}}'
-                  bucketnames: '{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_NAME" }}`}}'
-                  endpoint: 'https://{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_HOST" }}`}}:{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_PORT" }}`}}'
-                  region: '{{`{{ fromConfigMap "openshift-logging" "loki-bucket-odf" "BUCKET_REGION" }}`}}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

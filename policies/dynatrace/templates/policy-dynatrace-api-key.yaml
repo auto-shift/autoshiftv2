@@ -1,7 +1,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-trident-user-secret
+  name: policy-dynatrace-api-key
   namespace: {{ .Values.policy_namespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -15,7 +15,7 @@ spec:
   hubTemplateOptions:
     serviceAccountName: secret-reader
   dependencies:
-    - name: policy-trident-operator-install
+    - name: policy-dynatrace-operator-install
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -25,29 +25,31 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: trident-user-secret
-          namespace: policies-autoshift
+          name: dynatrace-api-key-secret
+          namespace: {{ .Values.policy_namespace }}
         spec:
           remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
           object-templates-raw: |
-            {{ "{{hub" }} $secret := index .ManagedClusterLabels "autoshift.io/trident-creds-secret" {{ "hub}}" }}
+            {{ "{{hub" }} $configs := index (index (fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "dynatrace" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} range $connections := $configs.connection {{ "hub}}" }}
             - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: v1
                 kind: Secret
                 metadata:
-                  name: {{ "{{hub"}} $secret {{ "hub}}" }}
-                  namespace: {{ .Values.trident.namespace }}
+                  name: dynakube
+                  namespace: {{ .Values.dynatrace.namespace }}
                 type: Opaque
                 data:
-                  username: {{ "{{hub" }} fromSecret (index .ManagedClusterLabels `autoshift.io/trident-secrets-namespace`) $secret "username" {{ "hub}}" }}
-                  password: {{ "{{hub" }} fromSecret (index .ManagedClusterLabels `autoshift.io/trident-secrets-namespace`) $secret "password" {{ "hub}}" }}
+                  apiToken: {{ "{{hub" }} fromSecret $connections.secretNamespace $connections.apiTokensSecretName "apiToken" {{ "hub}}" }}
+                  dataIngestToken: {{ "{{hub" }} fromSecret $connections.secretNamespace $connections.apiTokensSecretName "dataIngestToken" {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-trident-user-secret
+  name: placement-policy-dynatrace-api-key
   namespace: {{ .Values.policy_namespace }}
 spec:
   clusterSets:
@@ -61,9 +63,7 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/trident-creds-secret'
-              operator: Exists
-            - key: 'autoshift.io/trident'
+            - key: 'autoshift.io/dynatrace'
               operator: In
               values:
               - 'true'
@@ -76,13 +76,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-trident-user-secret
+  name: placement-policy-dynatrace-api-key
   namespace: {{ .Values.policy_namespace }}
 placementRef:
-  name: placement-policy-trident-user-secret
+  name: placement-policy-dynatrace-api-key
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-trident-user-secret
+  - name: policy-dynatrace-api-key
     apiGroup: policy.open-cluster-management.io
     kind: Policy

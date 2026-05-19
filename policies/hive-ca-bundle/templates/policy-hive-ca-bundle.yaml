@@ -1,0 +1,104 @@
+# This policy configures Hive to trust additional CAs for cluster imports.
+# It patches HiveConfig with additionalCertificateAuthoritiesSecretRef and
+# deploys the CA bundle Secret into each managed cluster's namespace on the hub.
+#
+# The CA bundle is sourced from openshift-config/user-ca-bundle ConfigMap on the hub.
+# The Secret is deployed to every ManagedCluster namespace discovered via lookup.
+#
+{{- if .Values.hubClusterSets }}
+{{- $policyName := "policy-hive-ca-bundle" }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, SC System and Communications Protection
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, SC-12 Cryptographic Key Establishment and Management
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  policy-templates:
+    # Part 1: Ensure HiveConfig has additionalCertificateAuthoritiesSecretRef
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: hive-config-ca-ref
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: hive.openshift.io/v1
+                kind: HiveConfig
+                metadata:
+                  name: hive
+                spec:
+                  additionalCertificateAuthoritiesSecretRef:
+                    - name: {{ .Values.hive.caSecretName }}
+    # Part 2: Deploy CA bundle Secret into every managed cluster namespace on the hub.
+    # Uses hub template lookup to discover all ManagedClusters and iterate over them.
+    # The CA data is sourced from openshift-config/user-ca-bundle ConfigMap on the hub.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: hive-ca-bundle-secrets
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $caData := fromConfigMap ("{{ ((.Values).hive).caConfigMapNamespace }}" | default "openshift-config") "{{ ((.Values).hive).caConfigMapName | default "user-ca-bundle" }}" "{{ ((.Values).hive).caConfigMapKey | default "ca-bundle.crt" }}" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: {{ .Values.hive.caSecretName }}
+                  namespace: 'hive'
+                type: Opaque
+                stringData:
+                  ca.crt: | 
+                    {{ "{{" }} $caData | autoindent {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-{{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-{{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-{{ $policyName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

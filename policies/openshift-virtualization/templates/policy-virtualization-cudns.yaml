@@ -12,41 +12,13 @@ spec:
   remediationAction: inform
 {{ end }}
   dependencies: 
-    - name: policy-nmstate
+    - name: policy-virtualization-br-data
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
   disabled: false
   policy-templates:
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: policy-virtualization-data-br-nncp
-        spec:
-          remediationAction: enforce
-          severity: high
-          object-templates:
-            - complianceType: mustonlyhave
-              objectDefinition:
-                apiVersion: nmstate.io/v1
-                kind: NodeNetworkConfigurationPolicy
-                metadata:
-                  name: bond0-with-br-data
-                spec:
-                  desiredState:
-                    interfaces:
-                      - bridge:
-                          allow-extra-patch-ports: true
-                          options:
-                            stp: false
-                          port:
-                            - name: bond0
-                        description: A dedicated OVS bridge with bond0 as a port
-                        name: br-data
-                        state: up
-                        type: ovs-bridge
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -112,10 +84,6 @@ spec:
         labelSelector:
           matchExpressions:
             - key: 'autoshift.io/virt'
-              operator: In
-              values:
-              - 'true'
-            - key: 'autoshift.io/virt-cudn-config'
               operator: In
               values:
               - 'true'

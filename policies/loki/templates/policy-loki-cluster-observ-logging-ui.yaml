@@ -1,7 +1,5 @@
-# This policy verifies the installation of the official & supported version of
-# the Cluster Observability Operator on the managed clusters.
+# This policy enables the Loki logging UI plugin for Cluster Observability on the managed clusters.
 #
-# Note that OpenShift 4.18 is required.
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -36,6 +34,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates:
             - complianceType: musthave
               objectDefinition:
@@ -46,7 +47,7 @@ spec:
                 spec:
                   logging:
                     lokiStack:
-                      name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-lokistack-name" | default "{{ .Values.loki.lokistackName }}" {{ "hub}}" }}'
+                      name: {{ .Values.loki.lokistackName }}
                   type: Logging
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -67,6 +68,10 @@ spec:
         labelSelector:
           matchExpressions:
             - key: 'autoshift.io/coo'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/loki'
               operator: In
               values:
               - 'true'

@@ -1,16 +1,20 @@
 {{- if (.Files.Glob "files/**") }}
 {{- $files := .Files.Glob "files/**" }}
 {{- if $files }}
+{{- if not (empty .Values.hubClusterSets) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
   name: policy-trident-configmaps
   namespace: {{ .Values.policy_namespace }}
   annotations:
-    policy.open-cluster-management.io/standards: AutoShiftv2
-    policy.open-cluster-management.io/categories: Trident
-    policy.open-cluster-management.io/controls: OpenShift Standard
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
 spec:
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
   disabled: false
   policy-templates:
     - objectDefinition:
@@ -65,5 +69,6 @@ subjects:
   - name: policy-trident-configmaps
     apiGroup: policy.open-cluster-management.io
     kind: Policy
+{{- end }}
 {{- end }}
 {{- end }}

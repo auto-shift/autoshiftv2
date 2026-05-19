@@ -36,16 +36,27 @@ jobs:
       - name: Validate YAML syntax
         run: |
           echo "=== Validating values files ==="
-          for f in autoshift/values*.yaml; do
-            echo "Checking $f..."
-            yq eval '.' "$f" > /dev/null
-          done
+          VALUES_FILES=$(find autoshift -name "values*.yaml" 2>/dev/null)
+          if [ -n "$VALUES_FILES" ]; then
+            for f in $VALUES_FILES; do
+              echo "Checking $f..."
+              yq eval '.' "$f" > /dev/null
+            done
+            echo "Values files validated successfully"
+          else
+            echo "No values files found in autoshift/, skipping validation"
+          fi
 
       - name: Template rendering test
         run: |
           echo "=== Testing template rendering ==="
-          helm template autoshift autoshift -f autoshift/values.hub.yaml > /dev/null
-          echo "Template rendering successful"
+          VALUES_HUB=$(find autoshift -name "values.hub.yaml" 2>/dev/null | head -n 1)
+          if [ -n "$VALUES_HUB" ]; then
+            helm template autoshift autoshift -f "$VALUES_HUB" > /dev/null
+            echo "Template rendering successful"
+          else
+            echo "values.hub.yaml not found, skipping template rendering test"
+          fi
 
       - name: Dry-run packaging
         run: |

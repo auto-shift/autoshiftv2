@@ -1,0 +1,109 @@
+{{- $policyName := "policy-dynatrace-node-exporter-metrics" }}
+{{- $placementName := "placement-policy-dynatrace-node-exporter-metrics" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+  remediationAction: enforce
+  dependencies:
+    - name: policy-dynatrace-deploy-dynakube
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-dynatrace-activegate-sa-token
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: policy-dynatrace-node-exporter
+        spec:
+          remediationAction: enforce
+          severity: low
+          object-templates-raw: |
+              {{ "{{" }}- range $pod := (lookup "v1" "Pod" "openshift-monitoring" "").items {{ "}}" }}
+              {{ "{{" }}- if $pod.metadata.labels {{ "}}" }}
+              {{ "{{" }}- if eq (index $pod.metadata.labels "app.kubernetes.io/name") "node-exporter" {{ "}}" }}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: v1
+                  kind: Pod
+                  metadata:
+                    name: {{ "{{" }} $pod.metadata.name {{ "}}" }}
+                    namespace: openshift-monitoring
+                    annotations:
+                      metrics.dynatrace.com/insecure_skip_verify: 'true'
+                      metrics.dynatrace.com/port: '9100'
+                      metrics.dynatrace.com/secure: 'true'
+                      metrics.dynatrace.com/scrape: 'true'
+                      metrics.dynatrace.com/http.auth: 'secret:dynatrace:dynatrace-activegate-token:token'
+              {{ "{{" }}- end {{ "}}" }}
+              {{ "{{" }}- end {{ "}}" }}
+              {{ "{{" }}- end {{ "}}" }}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: v1
+                  kind: Service
+                  metadata:
+                    name: node-exporter
+                    namespace: openshift-monitoring
+                    annotations:
+                      metrics.dynatrace.com/insecure_skip_verify: 'true'
+                      metrics.dynatrace.com/port: '9100'
+                      metrics.dynatrace.com/secure: 'true'
+                      metrics.dynatrace.com/scrape: 'true'
+                      metrics.dynatrace.com/http.auth: "secret:dynatrace:dynatrace-activegate-token:token"
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/dynatrace'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

@@ -3,16 +3,30 @@
 # Declare variables to be passed into your templates.
 policy_namespace: open-cluster-policies
 loki:
-    name: loki-operator
-    cliImage: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
-    namespace: openshift-operators-redhat
-    channel: stable-6.4
-    source: redhat-operators
-    sourceNamespace: openshift-marketplace
-    size: 1x.extra-small
-    storageClass: gp3-csi
-    lokistackName: logging-lokistack
-    lokistackNamespace: openshift-logging
+  name: loki-operator
+  cliImage: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+  namespace: openshift-operators-redhat
+  channel: stable-6.4
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  size: 1x.extra-small
+  storageClass: gp3-csi
+  lokistackName: logging-lokistack
+  lokistackNamespace: openshift-logging
+  pipelines:
+    - name: logs-to-loki
+      inputRefs:
+        - application
+        - infrastructure
+        - audit # commenting out to reduce log traffic in the lab.
+      outputRefs:
+        - lokistack-output
+collector:
+  limitCPU: 6
+  limitMemory: 8Gi
+  requestsCPU: 500m 
+  requestsMemory: 64Mi 
+
 # hubClusterSets:
 #   hub:
 #     labels:

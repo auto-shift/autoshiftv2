@@ -40,14 +40,14 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
-          object-templates-raw : |
+          object-templates-raw: |
             # Fetch ldap secret name
             {{ "{{hub-" }} $secret := index .ManagedClusterLabels "autoshift.io/ldap-groupsync-secret" | default "{{ .Values.ldap_groupsync_secret }}" {{ "hub}}" }}
             # Get bindDN
             {{ "{{hub" }} $bindDN := fromSecret (index .ManagedClusterLabels `autoshift.io/auth-secrets-namespace`) $secret "bindDN" {{ "hub}}" }}
 
             # Build list of ldapsyncconfigs
-            {{ "{{hub-" }} $cfg := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml {{ "hub}}" }}
+            {{ "{{hub-" }} $cfg := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}" | fromYaml {{ "hub}}" }}
             {{ "{{hub-" }} $ldapsyncconfigs := list {{ "hub}}" }}
             {{ "{{hub-" }} range $item := (index $cfg "default-ldap-syncconfigs" | default (list))  {{ "hub}}" }}
               {{ "{{hub-" }} $ldapsyncconfigs = append $ldapsyncconfigs $item {{ "hub}}" }}
@@ -58,6 +58,7 @@ spec:
             {{ "{{hub-" }} range $item := (index $cfg "cluster-ldap-syncconfigs" | default (list))  {{ "hub}}" }}
               {{ "{{hub-" }} $ldapsyncconfigs = append $ldapsyncconfigs $item {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $ldapConfig := index $cfg `ldap` | default (dict) {{ "hub}}" }}
 
             # Build ldapsyncconfigs
             {{ "{{hub-" }} range $index, $ldapsyncconfig := $ldapsyncconfigs {{ "hub}}" }}
@@ -72,7 +73,7 @@ spec:
                   ldapsyncconfig.yaml: |
                     kind: LDAPSyncConfig
                     apiVersion: v1
-                    url: ldaps://vaphc1dc1.va.gov:3269
+                    url: {{ "{{hub" }} index $ldapConfig `url` {{ "hub}}" }}
                     insecure: false
                     bindDN: {{ "{{hub" }} $bindDN | base64dec | quote {{ "hub}}" }}
                     bindPassword:

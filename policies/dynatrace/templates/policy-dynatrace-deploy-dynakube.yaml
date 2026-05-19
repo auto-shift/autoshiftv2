@@ -1,0 +1,181 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-dynatrace-deploy-dynakube
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CA-2 Security Assessments, CA-7 Continuous Monitoring
+spec:
+  dependencies:
+    - name: policy-dynatrace-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-dynatrace-api-key
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  disabled: false
+  hubTemplateOptions:
+    serviceAccountName: secret-reader
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: deploy-dynatrace-dynakube
+        spec:
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          customMessage:
+            noncompliant: >-
+              {{ "{{hub" }} if and (eq .ManagedClusterName "local-cluster") (not (index .ManagedClusterLabels "autoshift.io/dynatrace-hub-cluster-name")) {{ "hub}}" }}
+              ❌ Hub cluster detected but dynatrace-hub-cluster-name label is missing!
+              By default, ACM names the hub "local-cluster"; Dynatrace requires a unique name to import the hub correctly.
+              {{ "{{hub" }} end {{ "hub}}" }}
+              ❌ Double check your labels to make sure your DynaKube object has the data required. Reference documentation as needed.
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            {{ "{{hub-" }} $configs := index (index (fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "dynatrace" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $clusterName := .ManagedClusterName {{ "hub}}" }}
+            {{ "{{hub-" }} $clusterLabels := .ManagedClusterLabels {{ "hub}}" }}
+            {{ "{{hub-" }} range $dynatrace := $configs.connection {{ "hub}}" }}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: dynatrace.com/v1beta6
+                kind: DynaKube
+                metadata:
+                  {{ "{{hub-" }} if eq $clusterName "local-cluster" {{ "hub}}" }}
+                  name: "{{ "{{hub" }} index $clusterLabels `autoshift.io/dynatrace-hub-cluster-name` {{ "hub}}" }}"
+                  {{ "{{hub-" }} else {{ "hub}}" }}
+                  name: "{{ "{{hub" }} $clusterName {{ "hub}}" }}"
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  namespace: {{ .Values.dynatrace.namespace }}
+                spec:
+                  tokens: dynakube
+                  trustedCAs: cert
+                  apiUrl: "{{ "{{hub" }} $dynatrace.apiUrl {{ "hub}}" }}"
+                  skipCertCheck: false
+                  metadataEnrichment:
+                    enabled: true
+                  oneAgent:
+                    cloudNativeFullStack:
+                      initResources:
+                        requests:
+                          cpu: {{ "{{hub" }} (($configs.oneAgent.resources).requests).cpu | default ((.Values.dynatrace.oneAgent.resources).requests).cpu | default "50m" {{ "hub}}" }}
+                          memory: {{ "{{hub" }} (($configs.oneAgent.resources).requests).memory | default ((.Values.dynatrace.oneAgent.resources).requests).memory | default "100Mi" {{ "hub}}" }}
+                        limits:
+                          cpu: {{ "{{hub" }} (($configs.oneAgent.resources).limits).cpu | default ((.Values.dynatrace.oneAgent.resources).limits).cpu | default "500m" {{ "hub}}" }}
+                          memory: {{ "{{hub" }} (($configs.oneAgent.resources).limits).memory | default ((.Values.dynatrace.oneAgent.resources).limits).memory | default "1Gi" {{ "hub}}" }}
+                      tolerations:
+                        - effect: NoSchedule
+                          key: node-role.kubernetes.io/master
+                          operator: Exists
+                        - effect: NoSchedule
+                          key: node-role.kubernetes.io/control-plane
+                          operator: Exists
+                      {{ "{{hub-" }} if (not (empty $configs.excludedNamespaces)) {{ "hub}}" }}
+                      namespaceSelector:
+                        matchExpressions:
+                          - key: kubernetes.io/metadata.name
+                            operator: NotIn
+                            values:
+                              {{- "{{hub" }} range $configs.excludedNamespaces {{ "hub}}" }}
+                              - {{ "{{hub" }} . {{ "hub}}" }}
+                              {{- "{{hub" }} end {{ "hub}}" }}
+                      {{- "{{hub" }} end {{ "hub}}" }}
+                      args:
+                        {{ "{{hub-" }} range $arg := $configs.oneAgent.args {{ "hub}}" }}
+                        - {{ "{{hub" }} $arg {{ "hub}}" }}
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                      labels:
+                        {{ "{{hub-" }} range $label := $configs.oneAgent.labels {{ "hub}}" }}
+                        {{ "{{hub-" }} $kv := split "=" $label {{ "hub}}" }}
+                        {{ "{{hub" }} $kv._0 {{ "hub}}" }}: "{{ "{{hub" }} $kv._1 {{ "hub}}" }}"
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                  activeGate:
+                    capabilities:
+                      - routing
+                      - kubernetes-monitoring
+                      - dynatrace-api
+                    resources:
+                      requests:
+                        cpu: {{ "{{hub" }} (($configs.activeGate.resources).requests).cpu | default ((.Values.dynatrace.activeGate.resources).requests).cpu | default "500m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} (($configs.activeGate.resources).requests).memory | default ((.Values.dynatrace.activeGate.resources).requests).memory | default "512Mi" {{ "hub}}" }}
+                      limits:
+                        cpu: {{ "{{hub" }} (($configs.activeGate.resources).limits).cpu | default ((.Values.dynatrace.activeGate.resources).limits).cpu | default "1000m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} (($configs.activeGate.resources).limits).memory | default ((.Values.dynatrace.activeGate.resources).limits).memory | default "1.5Gi" {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: dynatrace-dynakube-test
+          namespace: {{ .Values.policy_namespace }}
+        spec:
+          remediationAction: inform # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: dynatrace.com/v1beta6
+                kind: DynaKube
+                metadata:
+                apiVersion: dynatrace.com/v1beta6
+                kind: DynaKube
+                metadata:
+                {{ "{{hub" }}- if eq .ManagedClusterName "local-cluster" {{ "hub}}" }}
+                  name: {{ "{{hub index .ManagedClusterLabels `autoshift.io/dynatrace-hub-cluster-name` hub}}" }}
+                {{ "{{hub" }}- else {{ "hub}}" }}
+                  name: {{ "{{hub .ManagedClusterName hub}}" }}
+                {{ "{{hub" }}- end {{ "hub}}" }}
+                  namespace: {{ .Values.dynatrace.namespace }}
+                status:
+                  phase: Running
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-dynatrace-deploy-dynakube
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/dynatrace'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-dynatrace-deploy-dynakube
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-dynatrace-deploy-dynakube
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-dynatrace-deploy-dynakube
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

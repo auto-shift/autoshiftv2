@@ -32,7 +32,7 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
-          object-templates:
+          object-templates-raw: |
             - complianceType: musthave
               objectDefinition:
                 apiVersion: operators.coreos.com/v1alpha1
@@ -76,7 +76,7 @@ spec:
                     resources:
                       limits:
                         cpu: {{ ((.Values.gitops.server).limits).cpu | default "500m" }}
-                        memory: {{ ((.Values.gitops.server).limits).memory | default "256Mi" }}
+                        memory: {{ ((.Values.gitops.server).limits).memory | default "1024Mi" }}
                       requests:
                         cpu: {{ ((.Values.gitops.server).requests).cpu | default "125m" }}
                         memory: {{ ((.Values.gitops.server).requests).memory | default "128Mi" }}
@@ -99,9 +99,11 @@ spec:
                     defaultPolicy: ''
                     policy: |
                       g, system:cluster-admins, role:admin
-                    {{- range .Values.gitops.rbac_policies}}
-                      {{ . }}
-                    {{- end }}
+                    {{ "{{hub-" }} $cfg := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}" | fromYaml {{ "hub}}" }}
+                    {{ "{{hub-" }} $rbacPolicies := (index $cfg "argo-rbac-policies" | default (list)) {{ "hub}}" }}
+                    {{ "{{hub-" }} range $rbacPolicy := $rbacPolicies | default (list) {{ "hub}}" }}
+                      {{ "{{hub $rbacPolicy hub}}" }}
+                    {{ "{{hub- end hub}}" }}
                     scopes: '[groups]'
                   repo:
                     resources:
