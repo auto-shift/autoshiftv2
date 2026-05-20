@@ -322,7 +322,12 @@ spec:
 }
 
 func TestResolveSpokeTemplates_LookupMissingReturnsEmpty(t *testing.T) {
-	r, err := NewSpokeResolver(nil)
+	root := repoRoot(t)
+	testResources, err := LoadTestResources(filepath.Join(root, "tools", "testdata"))
+	if err != nil {
+		t.Fatalf("LoadTestResources: %v", err)
+	}
+	r, err := NewSpokeResolver(testResources)
 	if err != nil {
 		t.Fatalf("NewSpokeResolver: %v", err)
 	}
