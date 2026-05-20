@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Pre-commit checks:
 #   1. Secret scan (gitleaks) — always, if installed
-#   2. Helm lint — when chart files change
-#   3. Policy validation (go test) — when policies/values/tools change:
+#   2. Policy name length — always (ACM 62-char namespace+name limit)
+#   3. Helm lint — when chart files change
+#   4. Policy validation (go test) — when policies/values/tools change:
 #        helm render + hub template resolution + spoke template resolution + label contract
 set -euo pipefail
 
@@ -22,7 +23,25 @@ else
   echo "  Linux:  https://github.com/gitleaks/gitleaks/releases" >&2
 fi
 
-# ── 2. Helm lint on changed charts ───────────────────────────────────────────
+# ── 2. Policy name length check ──────────────────────────────────────────────
+# ACM enforces: len(policy_namespace) + len(policy_name) <= 62
+# policy_namespace = "policies-{release}" (min 18 chars), so policy names must be <= 40 chars.
+FAILED=0
+while IFS= read -r file; do
+  while IFS= read -r name; do
+    len=${#name}
+    if [ "$len" -gt 40 ]; then
+      echo "pre-commit: policy name '$name' in $file is $len chars (max 40)" >&2
+      FAILED=1
+    fi
+  done < <(grep -oP '(?<=\$policyName := ")[^"]+' "$file" 2>/dev/null || true)
+done < <(find "$REPO_ROOT/policies" -name "*.yaml")
+if [ "$FAILED" -ne 0 ]; then
+  echo "pre-commit: policy name(s) too long — combined namespace+name must be <= 62 chars" >&2
+  exit 1
+fi
+
+# ── 3. Helm lint on changed charts ───────────────────────────────────────────
 if command -v helm &>/dev/null; then
   declare -A charts_to_lint
 
@@ -52,7 +71,7 @@ if command -v helm &>/dev/null; then
   fi
 fi
 
-# ── 3. Policy validation (go test) ───────────────────────────────────────────
+# ── 4. Policy validation (go test) ───────────────────────────────────────────
 # Runs on any change to policies, values, or tools.
 # Unit tests: label/contract parsing logic.
 # Integration tests: helm render → hub template resolution → spoke template
