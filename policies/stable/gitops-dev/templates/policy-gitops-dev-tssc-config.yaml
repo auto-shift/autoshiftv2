@@ -85,23 +85,23 @@ spec:
             {{ "{{hub-" }} $argoNs := printf "openshift-gitops-%s" $team {{ "hub}}" }}
             {{ "{{hub-" }} $routeName := printf "argocd-%s-server" $team {{ "hub}}" }}
             {{ "{{hub-" }} $adminSecretName := printf "argocd-%s-cluster" $team {{ "hub}}" }}
-            {{ "{{hub-" }} $routeSpec := (lookup "route.openshift.io/v1" "Route" $argoNs $routeName | default dict).spec | default dict {{ "hub}}" }}
-            {{ "{{hub-" }} $hostname := index $routeSpec "host" | default "" {{ "hub}}" }}
-            {{ "{{hub-" }} $adminData := (lookup "v1" "Secret" $argoNs $adminSecretName | default dict).data | default dict {{ "hub}}" }}
-            {{ "{{hub-" }} $adminPassword := index $adminData "admin.password" | default "" {{ "hub}}" }}
+            {{ "{{-" }} $routeSpec := (lookup "route.openshift.io/v1" "Route" "{{ "{{hub" }} $argoNs {{ "hub}}" }}" "{{ "{{hub" }} $routeName {{ "hub}}" }}" | default dict).spec | default dict {{ "}}" }}
+            {{ "{{-" }} $hostname := index $routeSpec "host" | default "" {{ "}}" }}
+            {{ "{{-" }} $adminData := (lookup "v1" "Secret" "{{ "{{hub" }} $argoNs {{ "hub}}" }}" "{{ "{{hub" }} $adminSecretName {{ "hub}}" }}" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $adminPassword := index $adminData "admin.password" | default "" {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: Secret
                 metadata:
                   name: tssc-argocd-integration
-                  namespace: {{ "{{hub" }} $argoNs {{ "hub}}" }}
+                  namespace: '{{ "{{hub" }} $argoNs {{ "hub}}" }}'
                 type: Opaque
                 data:
-                  ARGOCD_HOSTNAME: '{{ "{{hub" }} $hostname | b64enc {{ "hub}}" }}'
-                  ARGOCD_USER: '{{ "{{hub" }} "admin" | b64enc {{ "hub}}" }}'
-                  ARGOCD_PASSWORD: '{{ "{{hub" }} $adminPassword {{ "hub}}" }}'
-                  ARGOCD_API_TOKEN: '{{ "{{hub" }} "" | b64enc {{ "hub}}" }}'
+                  ARGOCD_HOSTNAME: '{{ "{{" }} $hostname | b64enc {{ "}}" }}'
+                  ARGOCD_USER: '{{ "{{" }} "admin" | b64enc {{ "}}" }}'
+                  ARGOCD_PASSWORD: '{{ "{{" }} $adminPassword {{ "}}" }}'
+                  ARGOCD_API_TOKEN: '{{ "{{" }} "" | b64enc {{ "}}" }}'
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
