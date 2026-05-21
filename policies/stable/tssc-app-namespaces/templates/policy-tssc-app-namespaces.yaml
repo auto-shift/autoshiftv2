@@ -43,12 +43,12 @@ spec:
             {{ "{{hub-" }} $tsscApps := index $cfg "tssc-apps" | default dict {{ "hub}}" }}
             {{ "{{hub-" }} $tpaNs := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "trusted-profile-analyzer" {{ "hub}}" }}
             {{ "{{hub-" }} $gitlabEnabled := index .ManagedClusterLabels "autoshift.io/gitlab" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $githubEnabled := index .ManagedClusterLabels "autoshift.io/github" | default "false" {{ "hub}}" }}
             {{ "{{-" }} $pullSecretData := (lookup "v1" "Secret" "openshift-config" "pull-secret" | default dict).data | default dict {{ "}}" }}
             {{ "{{-" }} $dockerConfigJson := index $pullSecretData ".dockerconfigjson" | default "" {{ "}}" }}
             {{ "{{-" }} $cosignData := (lookup "v1" "Secret" "openshift-pipelines" "signing-secrets" | default dict).data | default dict {{ "}}" }}
             {{ "{{-" }} $acsData := (lookup "v1" "Secret" "stackrox" "tssc-acs-integration" | default dict).data | default dict {{ "}}" }}
             {{ "{{-" }} $tasData := (lookup "v1" "Secret" "openshift-operators" "tssc-tas-integration" | default dict).data | default dict {{ "}}" }}
-            {{ "{{-" }} $glData := (lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials" | default dict).data | default dict {{ "}}" }}
             {{ "{{-" }} $tpaNs := "{{ "{{hub" }} $tpaNs {{ "hub}}" }}" {{ "}}" }}
             {{ "{{-" }} $tpaData := (lookup "v1" "Secret" $tpaNs "tssc-tpa-integration" | default dict).data | default dict {{ "}}" }}
             {{ "{{hub-" }} range $team, $apps := $tsscApps {{ "hub}}" }}
@@ -57,8 +57,17 @@ spec:
             {{ "{{hub-" }} $envs := index $appCfg "environments" | default list {{ "hub}}" }}
             {{ "{{hub-" }} if has "ci" $envs {{ "hub}}" }}
             {{ "{{hub-" }} $prefix := printf "%s-%s" $team $app {{ "hub}}" }}
+            {{ "{{hub-" }} $gitProvider := index $appCfg "git-provider" | default "gitlab" {{ "hub}}" }}
+            {{ "{{hub-" }} $gitSecretNs := ternary "github-system" "gitlab-system" (eq $gitProvider "github") {{ "hub}}" }}
+            {{ "{{hub-" }} $gitSecretName := ternary "tssc-github-credentials" "tssc-gitlab-credentials" (eq $gitProvider "github") {{ "hub}}" }}
+            {{ "{{hub-" }} $gitHostCfg := index $appCfg "git-host" | default "" {{ "hub}}" }}
             {{ "{{-" }} $argoNs := "{{ "{{hub" }} $argoNs {{ "hub}}" }}" {{ "}}" }}
             {{ "{{-" }} $argoData := (lookup "v1" "Secret" $argoNs "tssc-argocd-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $gitData := (lookup "v1" "Secret" "{{ "{{hub" }} $gitSecretNs {{ "hub}}" }}" "{{ "{{hub" }} $gitSecretName {{ "hub}}" }}" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $gitHost := "{{ "{{hub" }} $gitHostCfg {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} if eq $gitHost "" {{ "}}" }}
+            {{ "{{-" }} $gitHost = printf "https://gitlab.%s" ((lookup "config.openshift.io/v1" "Ingress" "" "cluster" | default dict).spec.domain | default "") {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -142,19 +151,19 @@ spec:
                   ARGOCD_USER: '{{ "{{" }} index $argoData "ARGOCD_USER" | default "" {{ "}}" }}'
                   ARGOCD_PASSWORD: '{{ "{{" }} index $argoData "ARGOCD_PASSWORD" | default "" {{ "}}" }}'
                   ARGOCD_API_TOKEN: '{{ "{{" }} index $argoData "ARGOCD_API_TOKEN" | default "" {{ "}}" }}'
-            {{ "{{hub-" }} if eq $gitlabEnabled "true" {{ "hub}}" }}
+            {{ "{{hub-" }} if or (eq $gitlabEnabled "true") (eq $githubEnabled "true") {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: Secret
                 metadata:
-                  name: tssc-gitlab-integration
+                  name: tssc-git-integration
                   namespace: {{ "{{hub" }} printf "%s-ci" $prefix {{ "hub}}" }}
                 type: Opaque
                 data:
-                  host: '{{ "{{" }} index $glData "host" | default "" {{ "}}" }}'
-                  token: '{{ "{{" }} index $glData "token" | default "" {{ "}}" }}'
-                  username: '{{ "{{" }} index $glData "username" | default "" {{ "}}" }}'
+                  host: '{{ "{{" }} $gitHost {{ "}}" }}'
+                  token: '{{ "{{" }} index $gitData "token" | default "" {{ "}}" }}'
+                  username: '{{ "{{" }} index $gitData "username" | default "" {{ "}}" }}'
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}

@@ -54,6 +54,34 @@ spec:
                   username: root
                   password: {{ "{{" }} $password {{ "}}" }}
                   type: git
+    {{- /* ===== TSSC integration credentials ===== */}}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitlab-tssc-credentials
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
+            {{ "{{-" }} $gitlabUrl := printf "https://gitlab.%s" $ingressDomain {{ "}}" }}
+            {{ "{{-" }} $password := (fromSecret "{{ .Values.gitlab.namespace }}" "gitlab-gitlab-initial-root-password" "password" | base64dec) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-gitlab-credentials
+                  namespace: {{ .Values.gitlab.namespace }}
+                type: Opaque
+                stringData:
+                  host: '{{ "{{" }} $gitlabUrl {{ "}}" }}'
+                  token: '{{ "{{" }} $password {{ "}}" }}'
+                  username: root
     {{- /* ===== ArgoCD TLS cert for GitLab ===== */}}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
