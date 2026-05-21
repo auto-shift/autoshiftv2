@@ -44,6 +44,7 @@ spec:
           object-templates-raw: |
             {{ "{{hub-" }} $configs := index (index (fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "dynatrace" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $clusterName := .ManagedClusterName {{ "hub}}" }}
+            {{ "{{hub-" }} $metadataEnrichment := $configs.metadataEnrichment {{ "hub}}" }}
             {{ "{{hub-" }} $clusterLabels := .ManagedClusterLabels {{ "hub}}" }}
             {{ "{{hub-" }} range $dynatrace := $configs.connection {{ "hub}}" }}
             - complianceType: mustonlyhave
@@ -64,6 +65,14 @@ spec:
                   skipCertCheck: false
                   metadataEnrichment:
                     enabled: true
+                    namespaceSelector:
+                      matchExpressions:
+                        - key: kubernetes.io/metadata.name
+                          operator: NotIn
+                          values:
+                            {{- "{{hub" }} range $metadataEnrichment.excludedNamespaces {{ "hub}}" }}
+                            - {{ "{{hub" }} . {{ "hub}}" }}
+                            {{- "{{hub" }} end {{ "hub}}" }}
                   oneAgent:
                     cloudNativeFullStack:
                       initResources:
@@ -80,13 +89,13 @@ spec:
                         - effect: NoSchedule
                           key: node-role.kubernetes.io/control-plane
                           operator: Exists
-                      {{ "{{hub-" }} if (not (empty $configs.excludedNamespaces)) {{ "hub}}" }}
+                      {{ "{{hub-" }} if (not (empty $configs.oneAgent.excludedNamespaces)) {{ "hub}}" }}
                       namespaceSelector:
                         matchExpressions:
                           - key: kubernetes.io/metadata.name
                             operator: NotIn
                             values:
-                              {{- "{{hub" }} range $configs.excludedNamespaces {{ "hub}}" }}
+                              {{- "{{hub" }} range $configs.oneAgent.excludedNamespaces {{ "hub}}" }}
                               - {{ "{{hub" }} . {{ "hub}}" }}
                               {{- "{{hub" }} end {{ "hub}}" }}
                       {{- "{{hub" }} end {{ "hub}}" }}
