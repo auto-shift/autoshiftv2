@@ -33,7 +33,7 @@ spec:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
-                  name: {{ .Values.keycloak.namespace }}
+                  name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "hub}}" }}'
                   labels:
                     openshift.io/cluster-monitoring: "true"
     - objectDefinition:
@@ -47,17 +47,13 @@ spec:
           complianceType: musthave
           operatorGroup:
             # if operator group exists in namespace use that, otherwise use namespace name as default
-            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.keycloak.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.keycloak.namespace }}{{ "{{" }} end {{ "}}" }}'
-            namespace: {{ .Values.keycloak.namespace }}
-            {{- if .Values.keycloak.targetNamespaces }}
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "hub}}" }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "hub}}" }}{{ "{{" }} end {{ "}}" }}'
+            namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "hub}}" }}'
             targetNamespaces:
-              {{- range .Values.keycloak.targetNamespaces }}
-              - {{ . }}
-              {{- end }}
-            {{- end }}
+              - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "hub}}" }}'
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-subscription-name" | default "{{ .Values.keycloak.name }}" {{ "hub}}" }}'
-            namespace: {{ .Values.keycloak.namespace }}
+            namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "hub}}" }}'
             # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
             source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/keycloak-source" | default "{{ .Values.keycloak.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/keycloak-source-namespace" | default "{{ .Values.keycloak.sourceNamespace }}" {{ "hub}}" }}'

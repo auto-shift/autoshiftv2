@@ -33,7 +33,7 @@ spec:
                 apiVersion: v1
                 kind: Namespace
                 metadata:
-                  name: {{ .Values.trustedProfileAnalyzer.namespace }}
+                  name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "hub}}" }}'
                   labels:
                     openshift.io/cluster-monitoring: "true"
     - objectDefinition:
@@ -47,17 +47,13 @@ spec:
           complianceType: musthave
           operatorGroup:
             # if operator group exists in namespace use that, otherwise use namespace name as default
-            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.trustedProfileAnalyzer.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.trustedProfileAnalyzer.namespace }}{{ "{{" }} end {{ "}}" }}'
-            namespace: {{ .Values.trustedProfileAnalyzer.namespace }}
-            {{- if .Values.trustedProfileAnalyzer.targetNamespaces }}
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "hub}}" }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "hub}}" }}{{ "{{" }} end {{ "}}" }}'
+            namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "hub}}" }}'
             targetNamespaces:
-              {{- range .Values.trustedProfileAnalyzer.targetNamespaces }}
-              - {{ . }}
-              {{- end }}
-            {{- end }}
+              - '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "hub}}" }}'
           subscription:
             name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-subscription-name" | default "{{ .Values.trustedProfileAnalyzer.name }}" {{ "hub}}" }}'
-            namespace: {{ .Values.trustedProfileAnalyzer.namespace }}
+            namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "hub}}" }}'
             # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
             source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-source" | default "{{ .Values.trustedProfileAnalyzer.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-source-namespace" | default "{{ .Values.trustedProfileAnalyzer.sourceNamespace }}" {{ "hub}}" }}'
