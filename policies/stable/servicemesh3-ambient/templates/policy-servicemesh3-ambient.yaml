@@ -81,6 +81,30 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ .Values.servicemesh3operator.tempoNamespace }}
+    # Network Operator — configure OVN-Kubernetes for ambient mode
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: servicemesh3-ambient-network-operator
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operator.openshift.io/v1
+                kind: Network
+                metadata:
+                  name: cluster
+                spec:
+                  defaultNetwork:
+                    ovnKubernetesConfig:
+                      gatewayConfig:
+                        routingViaHost: true
     # IstioCNI — manages the CNI DaemonSet for traffic redirection
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
