@@ -138,40 +138,49 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "}}" }}
-            {{ "{{-" }} $clusterName := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-cluster-name" | default "tpa-pgsql" {{ "}}" }}
-            {{ "{{-" }} $external := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-external" | default "false") "true" {{ "}}" }}
-            {{ "{{-" }} $dbUser := "" {{ "}}" }}
-            {{ "{{-" }} $dbPass := "" {{ "}}" }}
-            {{ "{{-" }} $dbHost := "" {{ "}}" }}
-            {{ "{{-" }} $dbName := "tpa" {{ "}}" }}
-            {{ "{{-" }} if $external {{ "}}" }}
-            {{ "{{-" }} $extSecretName := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-secret" | default "" {{ "}}" }}
-            {{ "{{-" }} $extData := (lookup "v1" "Secret" $ns $extSecretName | default dict).data | default dict {{ "}}" }}
-            {{ "{{-" }} $dbUser = index $extData "username" | default "" | b64dec {{ "}}" }}
-            {{ "{{-" }} $dbPass = index $extData "password" | default "" | b64dec {{ "}}" }}
-            {{ "{{-" }} $dbHost = index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-host" | default "" {{ "}}" }}
-            {{ "{{-" }} $dbName = index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-name" | default "tpa" {{ "}}" }}
-            {{ "{{-" }} else {{ "}}" }}
-            {{ "{{-" }} $cnpgData := (lookup "v1" "Secret" $ns (printf "%s-user" $clusterName) | default dict).data | default dict {{ "}}" }}
-            {{ "{{-" }} $dbUser = index $cnpgData "username" | default "" | b64dec {{ "}}" }}
-            {{ "{{-" }} $dbPass = index $cnpgData "password" | default "" | b64dec {{ "}}" }}
-            {{ "{{-" }} $dbHost = printf "%s-pooler-rw.%s.svc" $clusterName $ns {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{hub-" }} $ns := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $clusterName := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-cluster-name" | default "tpa-pgsql" {{ "hub}}" }}
+            {{ "{{hub-" }} $external := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-external" | default "false") "true" {{ "hub}}" }}
+            {{ "{{hub-" }} if $external {{ "hub}}" }}
+            {{ "{{hub-" }} $extSecretName := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-secret" | default "" {{ "hub}}" }}
+            {{ "{{hub-" }} $dbHost := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-host" | default "" {{ "hub}}" }}
+            {{ "{{hub-" }} $dbName := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-name" | default "tpa" {{ "hub}}" }}
+            {{ "{{-" }} $extData := (lookup "v1" "Secret" "{{ "{{hub" }} $ns {{ "hub}}" }}" "{{ "{{hub" }} $extSecretName {{ "hub}}" }}" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $dbUser := index $extData "username" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $dbPass := index $extData "password" | default "" | b64dec {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: Secret
                 metadata:
                   name: tssc-tpa-db-config
-                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
                 type: Opaque
                 stringData:
-                  host: '{{ "{{" }} $dbHost {{ "}}" }}'
+                  host: '{{ "{{hub" }} $dbHost {{ "hub}}" }}'
                   port: "5432"
-                  dbname: '{{ "{{" }} $dbName {{ "}}" }}'
+                  dbname: '{{ "{{hub" }} $dbName {{ "hub}}" }}'
                   user: '{{ "{{" }} $dbUser {{ "}}" }}'
                   password: '{{ "{{" }} $dbPass {{ "}}" }}'
+            {{ "{{hub-" }} else {{ "hub}}" }}
+            {{ "{{-" }} $cnpgData := (lookup "v1" "Secret" "{{ "{{hub" }} $ns {{ "hub}}" }}" "{{ "{{hub" }} $clusterName {{ "hub}}" }}-user" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $dbUser := index $cnpgData "username" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $dbPass := index $cnpgData "password" | default "" | b64dec {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-tpa-db-config
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
+                type: Opaque
+                stringData:
+                  host: '{{ "{{hub" }} $clusterName {{ "hub}}" }}-pooler-rw.{{ "{{hub" }} $ns {{ "hub}}" }}.svc'
+                  port: "5432"
+                  dbname: tpa
+                  user: '{{ "{{" }} $dbUser {{ "}}" }}'
+                  password: '{{ "{{" }} $dbPass {{ "}}" }}'
+            {{ "{{hub-" }} end {{ "hub}}" }}
     # ── TrustedProfileAnalyzer CR ─────────────────────────────────────────────
     # Deploys the TPA application wired to the CNPG database and Keycloak OIDC.
     # OIDC issuer is derived from cluster DNS so it matches the Keycloak Route.
@@ -187,20 +196,20 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "}}" }}
-            {{ "{{-" }} $realm := index .ManagedClusterLabels "autoshift.io/keycloak-realm-name" | default "tssc-iam" {{ "}}" }}
+            {{ "{{hub-" }} $ns := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $realm := index .ManagedClusterLabels "autoshift.io/keycloak-realm-name" | default "tssc-iam" {{ "hub}}" }}
             {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
             {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
             {{ "{{-" }} $appsDomain := printf "apps.%s" $baseDomain {{ "}}" }}
-            {{ "{{-" }} $oidcIssuer := printf "https://keycloak.%s/realms/%s" $appsDomain $realm {{ "}}" }}
-            {{ "{{-" }} $tpaCliSecret := (lookup "v1" "Secret" $ns "tpa-realm-clients" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $oidcIssuer := printf "https://keycloak.%s/realms/{{ "{{hub" }} $realm {{ "hub}}" }}" $appsDomain {{ "}}" }}
+            {{ "{{-" }} $tpaCliSecret := (lookup "v1" "Secret" "{{ "{{hub" }} $ns {{ "hub}}" }}" "tpa-realm-clients" | default dict).data | default dict {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rhtpa.io/v1
                 kind: TrustedProfileAnalyzer
                 metadata:
                   name: trustedprofileanalyzer
-                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
                 spec:
                   appDomain: '{{ "{{" }} $appsDomain {{ "}}" }}'
                   collector: {}
@@ -313,7 +322,7 @@ spec:
                     backtrace: false
                   storage:
                     type: filesystem
-                    size: '{{ "{{" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-storage" | default "32Gi" {{ "}}" }}'
+                    size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-db-storage" | default "32Gi" {{ "hub}}" }}'
                   tls:
                     serviceEnabled: true
                     additionalTrustAnchor: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
@@ -333,7 +342,7 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "}}" }}
+            {{ "{{hub-" }} $ns := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-namespace" | default "{{ .Values.trustedProfileAnalyzer.namespace }}" {{ "hub}}" }}
             {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
             {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
             {{ "{{-" }} $appsDomain := printf "apps.%s" $baseDomain {{ "}}" }}
@@ -343,7 +352,7 @@ spec:
                 kind: Secret
                 metadata:
                   name: tssc-tpa-integration
-                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
                 type: Opaque
                 stringData:
                   bombastic_api_url: 'https://sbom.{{ "{{" }} $appsDomain {{ "}}" }}'

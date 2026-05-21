@@ -130,10 +130,10 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "}}" }}
-            {{ "{{-" }} $dbHost := index .ManagedClusterLabels "autoshift.io/keycloak-db-host" | default "keycloak-pgsql-pooler-rw.keycloak-system.svc" {{ "}}" }}
-            {{ "{{-" }} $dbSecret := index .ManagedClusterLabels "autoshift.io/keycloak-db-secret" | default "keycloak-pgsql-user" {{ "}}" }}
-            {{ "{{-" }} $dbName := index .ManagedClusterLabels "autoshift.io/keycloak-db-name" | default "keycloak" {{ "}}" }}
+            {{ "{{hub-" }} $ns := index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $dbHost := index .ManagedClusterLabels "autoshift.io/keycloak-db-host" | default "keycloak-pgsql-pooler-rw.keycloak-system.svc" {{ "hub}}" }}
+            {{ "{{hub-" }} $dbSecret := index .ManagedClusterLabels "autoshift.io/keycloak-db-secret" | default "keycloak-pgsql-user" {{ "hub}}" }}
+            {{ "{{hub-" }} $dbName := index .ManagedClusterLabels "autoshift.io/keycloak-db-name" | default "keycloak" {{ "hub}}" }}
             {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
             {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
             {{ "{{-" }} $hostname := printf "keycloak.apps.%s" $baseDomain {{ "}}" }}
@@ -143,7 +143,7 @@ spec:
                 kind: Service
                 metadata:
                   name: keycloak
-                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
                   annotations:
                     service.beta.openshift.io/serving-cert-secret-name: keycloak-tls
                 spec:
@@ -159,7 +159,7 @@ spec:
                 kind: Keycloak
                 metadata:
                   name: keycloak
-                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
                 spec:
                   instances: 1
                   additionalOptions:
@@ -169,13 +169,13 @@ spec:
                     xaEnabled: true
                   db:
                     vendor: postgres
-                    database: '{{ "{{" }} $dbName {{ "}}" }}'
-                    host: '{{ "{{" }} $dbHost {{ "}}" }}'
+                    database: '{{ "{{hub" }} $dbName {{ "hub}}" }}'
+                    host: '{{ "{{hub" }} $dbHost {{ "hub}}" }}'
                     usernameSecret:
-                      name: '{{ "{{" }} $dbSecret {{ "}}" }}'
+                      name: '{{ "{{hub" }} $dbSecret {{ "hub}}" }}'
                       key: username
                     passwordSecret:
-                      name: '{{ "{{" }} $dbSecret {{ "}}" }}'
+                      name: '{{ "{{hub" }} $dbSecret {{ "hub}}" }}'
                       key: password
                   hostname:
                     hostname: '{{ "{{" }} $hostname {{ "}}" }}'
@@ -278,30 +278,30 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "}}" }}
-            {{ "{{-" }} $realm := index .ManagedClusterLabels "autoshift.io/keycloak-realm-name" | default "tssc-iam" {{ "}}" }}
-            {{ "{{-" }} $tasEnabled := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" {{ "}}" }}
-            {{ "{{-" }} $tpaEnabled := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false") "true" {{ "}}" }}
-            {{ "{{-" }} $rhdhEnabled := eq (index .ManagedClusterLabels "autoshift.io/dev-hub" | default "false") "true" {{ "}}" }}
+            {{ "{{hub-" }} $ns := index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "{{ .Values.keycloak.namespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $realm := index .ManagedClusterLabels "autoshift.io/keycloak-realm-name" | default "tssc-iam" {{ "hub}}" }}
+            {{ "{{hub-" }} $tasEnabled := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" {{ "hub}}" }}
+            {{ "{{hub-" }} $tpaEnabled := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false") "true" {{ "hub}}" }}
+            {{ "{{hub-" }} $rhdhEnabled := eq (index .ManagedClusterLabels "autoshift.io/dev-hub" | default "false") "true" {{ "hub}}" }}
             {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
             {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
             {{ "{{-" }} $appsDomain := printf "apps.%s" $baseDomain {{ "}}" }}
-            {{ "{{-" }} $tasSecret := (lookup "v1" "Secret" $ns "trusted-artifact-signer-clients" | default dict).data | default dict {{ "}}" }}
-            {{ "{{-" }} $tpaSecret := (lookup "v1" "Secret" $ns "tpa-realm-clients" | default dict).data | default dict {{ "}}" }}
-            {{ "{{-" }} $rhdhSecret := (lookup "v1" "Secret" $ns "rhdh-realm-clients" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $tasSecret := (lookup "v1" "Secret" "{{ "{{hub" }} $ns {{ "hub}}" }}" "trusted-artifact-signer-clients" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $tpaSecret := (lookup "v1" "Secret" "{{ "{{hub" }} $ns {{ "hub}}" }}" "tpa-realm-clients" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $rhdhSecret := (lookup "v1" "Secret" "{{ "{{hub" }} $ns {{ "hub}}" }}" "rhdh-realm-clients" | default dict).data | default dict {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: k8s.keycloak.org/v2alpha1
                 kind: KeycloakRealmImport
                 metadata:
-                  name: '{{ "{{" }} $realm {{ "}}" }}'
-                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                  name: '{{ "{{hub" }} $realm {{ "hub}}" }}'
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
                   labels:
                     app: keycloak
                 spec:
                   keycloakCRName: keycloak
                   realm:
-                    realm: '{{ "{{" }} $realm {{ "}}" }}'
+                    realm: '{{ "{{hub" }} $realm {{ "hub}}" }}'
                     displayName: TSSC IAM
                     enabled: true
                     accessCodeLifespan: 60
@@ -338,7 +338,7 @@ spec:
                           include.in.token.scope: "true"
                           display.on.consent.screen: "true"
                     clients:
-                    {{ "{{-" }} if $tasEnabled {{ "}}" }}
+                    {{ "{{hub-" }} if $tasEnabled {{ "hub}}" }}
                       - clientId: trusted-artifact-signer
                         clientAuthenticatorType: client-secret
                         secret: '{{ "{{" }} index $tasSecret "trustedArtifactSigner" | default "" | b64dec {{ "}}" }}'
@@ -372,8 +372,8 @@ spec:
                               claim.value: trusted-artifact-signer
                               id.token.claim: "true"
                               userinfo.token.claim: "true"
-                    {{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} if $tpaEnabled {{ "}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if $tpaEnabled {{ "hub}}" }}
                       - clientId: cli
                         clientAuthenticatorType: client-secret
                         secret: '{{ "{{" }} index $tpaSecret "cli" | default "" | b64dec {{ "}}" }}'
@@ -427,8 +427,8 @@ spec:
                           - 'https://sbom-tssc-tpa.{{ "{{" }} $appsDomain {{ "}}" }}/*'
                         webOrigins:
                           - "*"
-                    {{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} if $rhdhEnabled {{ "}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if $rhdhEnabled {{ "hub}}" }}
                       - clientId: rhdh
                         clientAuthenticatorType: client-secret
                         secret: '{{ "{{" }} index $rhdhSecret "rhdh" | default "" | b64dec {{ "}}" }}'
@@ -455,7 +455,7 @@ spec:
                         attributes:
                           backchannel.logout.session.required: "true"
                           backchannel.logout.revoke.offline.tokens: "false"
-                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

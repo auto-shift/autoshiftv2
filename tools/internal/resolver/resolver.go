@@ -320,13 +320,11 @@ func (r *Resolver) ResolveSpokeTemplates(rawYAML string, ctx ...HubContext) Reso
 			continue
 		}
 
-		// Pass the cluster context so spoke templates that access .ManagedClusterLabels
-		// (e.g., to derive the gitops namespace) resolve correctly.
-		var spokeCtx interface{}
-		if len(ctx) > 0 {
-			spokeCtx = ctx[0]
-		}
-		result, err := r.inner.ResolveTemplate(jsonBytes, spokeCtx, &templates.ResolveOptions{})
+		// Spoke templates run on the managed cluster and do NOT have access to
+		// .ManagedClusterLabels — that is a hub-only context. Passing nil here
+		// ensures the test catches any accidental use of .ManagedClusterLabels
+		// in object-templates-raw (which would fail on a real cluster).
+		result, err := r.inner.ResolveTemplate(jsonBytes, nil, &templates.ResolveOptions{})
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s %s: spoke resolve: %v", kind, name, err))
 			resolved = append(resolved, doc)

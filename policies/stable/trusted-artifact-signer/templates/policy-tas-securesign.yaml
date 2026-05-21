@@ -43,21 +43,20 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/tas-namespace" | default "{{ .Values.rhtasOperator.namespace }}" {{ "}}" }}
-            {{ "{{-" }} $realm := index .ManagedClusterLabels "autoshift.io/keycloak-realm-name" | default "tssc-iam" {{ "}}" }}
-            {{ "{{-" }} $orgName := index .ManagedClusterLabels "autoshift.io/tas-org-name" | default "TSSC" {{ "}}" }}
+            {{ "{{hub-" }} $ns := index .ManagedClusterLabels "autoshift.io/tas-namespace" | default "{{ .Values.rhtasOperator.namespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $realm := index .ManagedClusterLabels "autoshift.io/keycloak-realm-name" | default "tssc-iam" {{ "hub}}" }}
+            {{ "{{hub-" }} $orgName := index .ManagedClusterLabels "autoshift.io/tas-org-name" | default "TSSC" {{ "hub}}" }}
             {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
             {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
             {{ "{{-" }} $appsDomain := printf "apps.%s" $baseDomain {{ "}}" }}
-            {{ "{{-" }} $kcNs := index .ManagedClusterLabels "autoshift.io/keycloak-namespace" | default "keycloak-system" {{ "}}" }}
-            {{ "{{-" }} $oidcIssuer := printf "https://keycloak.%s/realms/%s" $appsDomain $realm {{ "}}" }}
+            {{ "{{-" }} $oidcIssuer := printf "https://keycloak.%s/realms/{{ "{{hub" }} $realm {{ "hub}}" }}" $appsDomain {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rhtas.redhat.com/v1alpha1
                 kind: Securesign
                 metadata:
                   name: trusted-artifact-signer
-                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
                 spec:
                   fulcio:
                     externalAccess:
@@ -65,7 +64,7 @@ spec:
                     certificate:
                       commonName: 'fulcio.{{ "{{" }} $appsDomain {{ "}}" }}'
                       organizationEmail: 'tas@{{ "{{" }} $baseDomain {{ "}}" }}'
-                      organizationName: '{{ "{{" }} $orgName {{ "}}" }}'
+                      organizationName: '{{ "{{hub" }} $orgName {{ "hub}}" }}'
                     config:
                       OIDCIssuers:
                         - Issuer: '{{ "{{" }} $oidcIssuer {{ "}}" }}'
@@ -100,7 +99,7 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{-" }} $ns := index .ManagedClusterLabels "autoshift.io/tas-namespace" | default "{{ .Values.rhtasOperator.namespace }}" {{ "}}" }}
+            {{ "{{hub-" }} $ns := index .ManagedClusterLabels "autoshift.io/tas-namespace" | default "{{ .Values.rhtasOperator.namespace }}" {{ "hub}}" }}
             {{ "{{-" }} $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict {{ "}}" }}
             {{ "{{-" }} $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" {{ "}}" }}
             {{ "{{-" }} $appsDomain := printf "apps.%s" $baseDomain {{ "}}" }}
@@ -110,11 +109,11 @@ spec:
                 kind: Secret
                 metadata:
                   name: tssc-tas-integration
-                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                  namespace: '{{ "{{hub" }} $ns {{ "hub}}" }}'
                 type: Opaque
                 stringData:
-                  rekor_url: 'https://rekor-server-{{ "{{" }} $ns {{ "}}" }}.{{ "{{" }} $appsDomain {{ "}}" }}'
-                  tuf_url: 'https://tuf-{{ "{{" }} $ns {{ "}}" }}.{{ "{{" }} $appsDomain {{ "}}" }}'
+                  rekor_url: 'https://rekor-server-{{ "{{hub" }} $ns {{ "hub}}" }}.{{ "{{" }} $appsDomain {{ "}}" }}'
+                  tuf_url: 'https://tuf-{{ "{{hub" }} $ns {{ "hub}}" }}.{{ "{{" }} $appsDomain {{ "}}" }}'
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
