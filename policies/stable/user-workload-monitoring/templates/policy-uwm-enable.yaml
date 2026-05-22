@@ -34,15 +34,19 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub-" }} if not (index .ManagedClusterLabels "autoshift.io/infra-nodes") {{ "hub}}" }}
-            {{`{{`}} $cm := (lookup "v1" "ConfigMap" "openshift-monitoring" "cluster-monitoring-config") | default dict {{`}}`}}
-            {{`{{`}} $data := ($cm.data | default dict) {{`}}`}}
-            {{`{{`}} $cfg := (index $data "config.yaml" | default "" | fromYaml) | default dict {{`}}`}}
+            {{`{{`}} $cmData := ((lookup "v1" "ConfigMap" "openshift-monitoring" "cluster-monitoring-config" | default dict).data | default dict) {{`}}`}}
+            {{`{{`}} $cfg := (index $cmData "config.yaml" | default "" | fromYaml) | default dict {{`}}`}}
             {{`{{`}} $_ := set $cfg "enableUserWorkload" true {{`}}`}}
-            {{`{{`}} $_ := set $data "config.yaml" ($cfg | toYaml) {{`}}`}}
-            {{`{{`}} $_ := set $cm "data" $data {{`}}`}}
-            {{`{{`}} $_ := unset $cm "status" {{`}}`}}
             - complianceType: musthave
-              objectDefinition: {{`{{`}} $cm | toRawJson {{`}}`}}
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: cluster-monitoring-config
+                  namespace: openshift-monitoring
+                data:
+                  config.yaml: |
+                    {{`{{`}} $cfg | toYaml | autoindent {{`}}`}}
             {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1

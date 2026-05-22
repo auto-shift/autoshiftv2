@@ -33,9 +33,8 @@ spec:
           name: {{ $configPolicyName }}
         spec:
           object-templates-raw: |
-            {{`{{`}} $cm := (lookup "v1" "ConfigMap" "openshift-monitoring" "cluster-monitoring-config") | default dict {{`}}`}}
-            {{`{{`}} $data := ($cm.data | default dict) {{`}}`}}
-            {{`{{`}} $cfg := (index $data "config.yaml" | default "" | fromYaml) | default dict {{`}}`}}
+            {{`{{`}} $cmData := ((lookup "v1" "ConfigMap" "openshift-monitoring" "cluster-monitoring-config" | default dict).data | default dict) {{`}}`}}
+            {{`{{`}} $cfg := (index $cmData "config.yaml" | default "" | fromYaml) | default dict {{`}}`}}
             {{`{{`}} $infraSelector := dict "node-role.kubernetes.io/infra" "" {{`}}`}}
             {{`{{`}} $infraTolerations := list (dict "key" "node-role.kubernetes.io/infra" "effect" "NoSchedule") (dict "key" "node-role.kubernetes.io/infra" "effect" "NoExecute") {{`}}`}}
             {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/uwm" | default "false") "true" {{ "hub}}" }}
@@ -48,11 +47,16 @@ spec:
             {{`{{`}} $_ := set $existing "tolerations" $infraTolerations {{`}}`}}
             {{`{{`}} $_ := set $cfg $comp $existing {{`}}`}}
             {{`{{`}} end {{`}}`}}
-            {{`{{`}} $_ := set $data "config.yaml" ($cfg | toYaml) {{`}}`}}
-            {{`{{`}} $_ := set $cm "data" $data {{`}}`}}
-            {{`{{`}} $_ := unset $cm "status" {{`}}`}}
             - complianceType: musthave
-              objectDefinition: {{`{{`}} $cm | toRawJson {{`}}`}}
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: cluster-monitoring-config
+                  namespace: openshift-monitoring
+                data:
+                  config.yaml: |
+                    {{`{{`}} $cfg | toYaml | autoindent {{`}}`}}
           pruneObjectBehavior: {{ .Values.infraNodes.monitoring.pruneObjectBehavior | default "None" }}
           remediationAction: enforce
           severity: high
