@@ -60,12 +60,8 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{`{{`}} $prom := (lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "prometheus-user-workload") | default dict {{`}}`}}
-            {{`{{`}} $promSpec := (index $prom "spec" | default dict) {{`}}`}}
-            {{`{{`}} $promReplicas := (index $promSpec "replicas" | default 1 | toInt) {{`}}`}}
-            {{`{{`}} $thanos := (lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "thanos-ruler-user-workload") | default dict {{`}}`}}
-            {{`{{`}} $thanosSpec := (index $thanos "spec" | default dict) {{`}}`}}
-            {{`{{`}} $thanosReplicas := (index $thanosSpec "replicas" | default 1 | toInt) {{`}}`}}
+            {{`{{`}} $promReady := (index ((lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "prometheus-user-workload" | default dict).status | default dict) "readyReplicas" | default 0 | int) {{`}}`}}
+            {{`{{`}} $thanosReady := (index ((lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "thanos-ruler-user-workload" | default dict).status | default dict) "readyReplicas" | default 0 | int) {{`}}`}}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: apps/v1
@@ -74,7 +70,7 @@ spec:
                   name: prometheus-user-workload
                   namespace: openshift-user-workload-monitoring
                 status:
-                  readyReplicas: {{`{{`}} $promReplicas {{`}}`}}
+                  readyReplicas: {{`{{`}} max 1 $promReady {{`}}`}}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: apps/v1
@@ -83,7 +79,7 @@ spec:
                   name: thanos-ruler-user-workload
                   namespace: openshift-user-workload-monitoring
                 status:
-                  readyReplicas: {{`{{`}} $thanosReplicas {{`}}`}}
+                  readyReplicas: {{`{{`}} max 1 $thanosReady {{`}}`}}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
