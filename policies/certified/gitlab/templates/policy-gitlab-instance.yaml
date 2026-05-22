@@ -110,13 +110,15 @@ spec:
                   namespace: {{ .Values.gitlab.namespace }}
                 spec:
                   chart:
+                    {{ "{{-" }} $chartVersion := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitlab-chart-version" | default "" {{ "hub}}" }}" {{ "}}" }}
+                    {{ "{{-" }} if empty $chartVersion {{ "}}" }}
                     {{ "{{-" }} $csvList := (lookup "operators.coreos.com/v1alpha1" "ClusterServiceVersion" "{{ .Values.gitlab.namespace }}" "") | default dict {{ "}}" }}
-                    {{ "{{-" }} $chartVersion := "" {{ "}}" }}
                     {{ "{{-" }} range $_, $c := ($csvList.items | default list) {{ "}}" }}
                     {{ "{{-" }} if and (not $chartVersion) (hasPrefix "gitlab-operator-kubernetes" $c.metadata.name) {{ "}}" }}
                     {{ "{{-" }} $ex := (index $c.metadata.annotations "alm-examples" | default "[]" | fromJson) {{ "}}" }}
                     {{ "{{-" }} range $_, $e := $ex {{ "}}" }}
                     {{ "{{-" }} if not $chartVersion {{ "}}" }}{{ "{{-" }} $chartVersion = (index $e "spec" "chart" "version" | default "") {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
