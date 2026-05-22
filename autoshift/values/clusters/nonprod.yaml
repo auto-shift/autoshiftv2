@@ -1,0 +1,89 @@
+clusters:
+  nonprod:
+    config:
+      clusterSet: managed
+
+      # =====================================================================
+      # Networking
+      # =====================================================================
+      networking:
+        clusterNetwork:
+          cidr: 10.128.0.0/14
+          hostPrefix: 23
+        machineNetwork:
+          cidr: 10.0.0.0/16
+        serviceNetwork:
+          - 172.30.0.0/16
+
+      # =====================================================================
+      # Cluster Install
+      # =====================================================================
+      clusterInstall:
+        createCluster: 'true'
+        platform: aws
+        baseDomain: sandbox3261.opentlc.com
+        openshiftVersion: '4.20.12'
+        pullSecretRef:
+          name: 'aws-creds'
+          key: 'pullSecret'
+          namespace: 'cluster-install-secrets'
+        secretSourceNamespace: 'cluster-install-secrets'
+
+      # =====================================================================
+      # AWS
+      # =====================================================================
+      aws:
+        region: us-east-2
+        credentialRef: 'aws-creds'
+        sshPrivateKeyRef: 'aws-creds'
+        sshKeyRef:
+          name: 'aws-creds'
+          key: 'ssh-publickey'
+          namespace: 'cluster-install-secrets'
+        fips: false
+        networkType: OVNKubernetes
+        controlPlane:
+          instanceType: m5.xlarge
+          rootVolume:
+            iops: 4000
+            size: 100
+            type: io1
+        workers:
+          replicas: 3
+          instanceType: m5.xlarge
+          rootVolume:
+            iops: 2000
+            size: 100
+            type: io1
+
+      # =====================================================================
+      # TSSC app namespaces — define which teams/apps land on this cluster
+      # =====================================================================
+      tssc-apps:
+        dev:
+          sample-app:
+            environments: [ci, dev, stage]
+
+    labels:
+      # =====================================================================
+      # TSSC spoke requirements
+      # =====================================================================
+      # Tekton — pipelines run in the -ci namespace on this cluster
+      pipelines: 'true'
+      pipelines-subscription-name: openshift-pipelines-operator-rh
+      pipelines-channel: pipelines-1.21
+      pipelines-source: redhat-operators
+      pipelines-source-namespace: openshift-marketplace
+
+      # App namespaces policy places CI/dev/stage namespaces here
+      tssc-app-namespaces: 'true'
+
+      # Developer GitOps — standalone ArgoCD for the dev team (manages this cluster only)
+      gitops-dev-team-dev: 'standalone'
+      gitops-dev-team-dev-tssc: 'true'
+
+      # =====================================================================
+      # Disable ODF on the spoke — saves cost, not required for TSSC testing
+      # gp3-csi (default AWS EBS) is sufficient for pipelines and ArgoCD
+      # =====================================================================
+      odf: 'false'
