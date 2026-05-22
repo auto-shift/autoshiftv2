@@ -38,21 +38,21 @@ spec:
             {{ "{{-" }} $svcList := ((lookup "v1" "Service" $ns "" | default dict).items | default list) {{ "}}" }}
             {{ "{{-" }} range $svc := $svcList {{ "}}" }}
             {{ "{{-" }} range $port := ($svc.spec.ports | default list) {{ "}}" }}
-            {{ "{{-" }} if contains "metrics" $port.name {{ "}}" }}
+            {{ "{{-" }} if contains "metrics" ($port.name | toString) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: monitoring.coreos.com/v1
                 kind: ServiceMonitor
                 metadata:
-                  name: {{ "{{" }} $svc.metadata.name {{ "}}" }}
+                  name: {{ "{{" }} $svc.metadata.name | toString {{ "}}" }}
                   namespace: {{ "{{" }} $ns {{ "}}" }}
                 spec:
                   endpoints:
-                    - port: {{ "{{" }} $port.name {{ "}}" }}
+                    - port: {{ "{{" }} $port.name | toString {{ "}}" }}
                       scheme: http
                   selector:
                     matchLabels:
-                      app: {{ "{{" }} index ($svc.metadata.labels | default dict) "app" {{ "}}" }}
+                      app: {{ "{{" }} index ($svc.metadata.labels | default dict) "app" | toString {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
