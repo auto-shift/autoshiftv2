@@ -32,88 +32,27 @@ spec:
         metadata:
           name: {{ $configPolicyName }}
         spec:
-          object-templates:
+          object-templates-raw: |
+            {{`{{`}} $cm := (lookup "v1" "ConfigMap" "openshift-monitoring" "cluster-monitoring-config") | default dict {{`}}`}}
+            {{`{{`}} $data := ($cm.data | default dict) {{`}}`}}
+            {{`{{`}} $cfg := (index $data "config.yaml" | default "" | fromYaml) | default dict {{`}}`}}
+            {{`{{`}} $infraSelector := dict "node-role.kubernetes.io/infra" "" {{`}}`}}
+            {{`{{`}} $infraTolerations := list (dict "key" "node-role.kubernetes.io/infra" "effect" "NoSchedule") (dict "key" "node-role.kubernetes.io/infra" "effect" "NoExecute") {{`}}`}}
+            {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/uwm" | default "false") "true" {{ "hub}}" }}
+            {{`{{`}} $_ := set $cfg "enableUserWorkload" true {{`}}`}}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{`{{`}} $components := list "alertmanagerMain" "prometheusK8s" "prometheusOperator" "k8sPrometheusAdapter" "kubeStateMetrics" "telemeterClient" "openshiftStateMetrics" "thanosQuerier" "monitoringPlugin" {{`}}`}}
+            {{`{{`}} range $comp := $components {{`}}`}}
+            {{`{{`}} $existing := (index $cfg $comp | default dict) {{`}}`}}
+            {{`{{`}} $_ := set $existing "nodeSelector" $infraSelector {{`}}`}}
+            {{`{{`}} $_ := set $existing "tolerations" $infraTolerations {{`}}`}}
+            {{`{{`}} $_ := set $cfg $comp $existing {{`}}`}}
+            {{`{{`}} end {{`}}`}}
+            {{`{{`}} $_ := set $data "config.yaml" ($cfg | toYaml) {{`}}`}}
+            {{`{{`}} $_ := set $cm "data" $data {{`}}`}}
+            {{`{{`}} $_ := unset $cm "status" {{`}}`}}
             - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: ConfigMap
-                metadata:
-                  name: {{ $configMapName }}
-                  namespace: openshift-monitoring
-                data:
-                  config.yaml: |+
-                    alertmanagerMain:
-                      nodeSelector: 
-                        node-role.kubernetes.io/infra: ""
-                      tolerations:
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoSchedule
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoExecute
-                    prometheusK8s:
-                      nodeSelector:
-                        node-role.kubernetes.io/infra: ""
-                      tolerations:
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoSchedule
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoExecute
-                    prometheusOperator:
-                      nodeSelector:
-                        node-role.kubernetes.io/infra: ""
-                      tolerations:
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoSchedule
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoExecute
-                    k8sPrometheusAdapter:
-                      nodeSelector:
-                        node-role.kubernetes.io/infra: ""
-                      tolerations:
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoSchedule
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoExecute
-                    kubeStateMetrics:
-                      nodeSelector:
-                        node-role.kubernetes.io/infra: ""
-                      tolerations:
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoSchedule
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoExecute
-                    telemeterClient:
-                      nodeSelector:
-                        node-role.kubernetes.io/infra: ""
-                      tolerations:
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoSchedule
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoExecute
-                    openshiftStateMetrics:
-                      nodeSelector:
-                        node-role.kubernetes.io/infra: ""
-                      tolerations:
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoSchedule
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoExecute
-                    thanosQuerier:
-                      nodeSelector:
-                        node-role.kubernetes.io/infra: ""
-                      tolerations:
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoSchedule
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoExecute
-                    monitoringPlugin:
-                      nodeSelector:
-                        node-role.kubernetes.io/infra: ""
-                      tolerations:
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoSchedule
-                      - key: node-role.kubernetes.io/infra
-                        effect: NoExecute
+              objectDefinition: {{`{{`}} $cm | toRawJson {{`}}`}}
           pruneObjectBehavior: {{ .Values.infraNodes.monitoring.pruneObjectBehavior | default "None" }}
           remediationAction: enforce
           severity: high
