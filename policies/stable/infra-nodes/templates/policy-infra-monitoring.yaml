@@ -40,7 +40,10 @@ spec:
             {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/uwm" | default "false") "true" {{ "hub}}" }}
             {{`{{`}} $_ := set $cfg "enableUserWorkload" true {{`}}`}}
             {{ "{{hub-" }} end {{ "hub}}" }}
-            {{`{{`}} $components := list "alertmanagerMain" "prometheusK8s" "prometheusOperator" "k8sPrometheusAdapter" "kubeStateMetrics" "telemeterClient" "openshiftStateMetrics" "thanosQuerier" "monitoringPlugin" {{`}}`}}
+            {{`{{`}} $components := list "alertmanagerMain" "prometheusK8s" "prometheusOperator" "kubeStateMetrics" "openshiftStateMetrics" "thanosQuerier" "monitoringPlugin" {{`}}`}}
+            {{ "{{hub-" }} if ne (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true" {{ "hub}}" }}
+            {{`{{`}} $components = append $components "telemeterClient" {{`}}`}}
+            {{ "{{hub-" }} end {{ "hub}}" }}
             {{`{{`}} range $comp := $components {{`}}`}}
             {{`{{`}} $existing := (index $cfg $comp | default dict) {{`}}`}}
             {{`{{`}} $_ := set $existing "nodeSelector" $infraSelector {{`}}`}}
