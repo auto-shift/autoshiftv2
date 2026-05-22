@@ -30,9 +30,6 @@ spec:
           name: {{ $configPolicyName }}
         spec:
           severity: high
-          evaluationInterval:
-            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{-" }} $ns := (lookup "v1" "Namespace" "" "{{ $policyNamespace }}")  {{ "}}" }}
             {{ "{{-" }} $nsLabels := (index $ns "metadata" "labels") {{ "}}" }}
@@ -60,6 +57,19 @@ subjects:
     apiGroup: policy.open-cluster-management.io
     kind: Policy
 ---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: "{{ $placementName }}-missing-label"
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: "{{ $placementName}}-missing-label"
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -76,5 +86,22 @@ spec:
         labelSelector:
           matchLabels:
             {{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "self-managed" }}: "false"
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: "{{ $placementName }}-missing-label"
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+    {{- range $_, $clusterSet := $managedHubs }}
+    - {{ $clusterSet }}
+    {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: "{{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "self-managed" }}"
+              operator: DoesNotExist
 
 {{- end }}

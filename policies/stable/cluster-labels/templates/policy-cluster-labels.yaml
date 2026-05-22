@@ -1,14 +1,17 @@
 {{- $managedHubs := dict }}
 {{- $selfManagedHubs := dict }}
 {{- range $k, $v := $.Values.hubClusterSets  }}
-  {{-  if eq ((index $v.labels "self-managed") | default "true")  "false" }}
+  {{-  if eq ((index $v.labels "self-managed") | default "false")  "false" }}
     {{- $_ := set $managedHubs $k $k }}
   {{- else }}
     {{- $_ := set $selfManagedHubs $k $k }}
   {{- end }}
 {{- end }}
 {{- $policyNamespace := $.Values.policy_namespace }}
-{{- $targets := list "selfmanagedhub" }}
+{{- $targets := list }}
+{{- if not (empty $selfManagedHubs) }}
+  {{- $targets = append $targets "hubofhubs" }}
+{{- end }}
 {{- if not (empty $managedHubs) }}
   {{- $targets = append $targets "managedHub" }}
 {{- end }}
@@ -48,53 +51,78 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
-          evaluationInterval:
-            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            [
-              {{ "{{-" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
-              {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "}}" }}
-              {{ "{{-" }} if not (empty $managedClusterLookupResult) {{ "}}" }}
-                {{ "{{-" }} $managedClusters := (index $managedClusterLookupResult "items") | default list {{ "}}" }}
-                {{ "{{-" }} $lastIndex := (sub (len $managedClusters) 1) {{ "}}" }}
-                {{ "{{-" }} if (ne $lastIndex -1) {{ "}}" }}
-                  {{ "{{-" }} range $index, $cluster := $managedClusters {{ "}}" }}
-                    {{ "{{-" }} $existingLabels :=  (index $cluster "metadata" "labels") {{ "}}" }}
-                    {{ "{{-" }} $clusterSet := (index $existingLabels "cluster.open-cluster-management.io/clusterset") | default "" {{ "}}" }}
-                    {{ "{{-" }} $clusterName := (index $cluster "metadata" "name") {{ "}}" }}
-                    {{ "{{-" }} $clusterConfigMap := (lookup "v1" "ConfigMap" $policyNamespace (print "managed-cluster." $clusterName) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
-                    {{ "{{-" }} $clusterSetConfigMap := (lookup "v1" "ConfigMap" $policyNamespace (print "cluster-set." $clusterSet) "autoshift.io/cluster-labels" | default dict) {{ "}}" }}
-                    {{ "{{-" }} $clusterData := (index $clusterConfigMap "data" | default dict) {{ "}}" }}
-                    {{ "{{-" }} $clusterSetData := (index $clusterSetConfigMap "data" | default dict) {{ "}}" }}
-                    {{ "{{-" }} $labelPrefix := (index $clusterData "labelPrefix" | default (index $clusterSetData "labelPrefix" | default "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}")) {{ "}}" }}
-                    {{ "{{-" }} if (ne $clusterSet "") {{ "}}" }}
+            #Indentation Anchor
+            {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "}}" }}
+            {{ "{{-" }} if not (empty $managedClusterLookupResult) {{ "}}" }}
+              {{ "{{-" }} $allClusterLabels := (dict) {{ "}}" }}
+              {{ "{{-" }} $allClusterSetLabels := (dict) {{ "}}" }}
+              {{ "{{-" }} $managedClusters := (index $managedClusterLookupResult "items") | default list {{ "}}" }}
+              {{ "{{-" }} $lastIndex := (sub (len $managedClusters) 1) {{ "}}" }}
+              {{ "{{-" }} if (ne $lastIndex -1) {{ "}}" }}
+                {{ "{{-" }} $managedClusterConfigObjects := (list) {{ "}}" }}
+                {{ "{{-" }} $labelPrefix := "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}" {{ "}}" }}
+                {{ "{{-" }} $seenClusters := (dict) {{ "}}" }}
+                {{ "{{-" }} $labelConfigs := lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-labels" {{ "}}" }}
+                {{ "{{-" }} range $idx, $cm := (index $labelConfigs "items" | default list) {{ "}}" }}
+                ##### CLUSTER SET #####
+                  {{ "{{-" }} if (hasPrefix "cluster-set." $cm.metadata.name) {{ "}}" }}
+                    {{ "{{-" }} $clusterSetName := ($cm.metadata.name | replace "cluster-set." "") {{ "}}" }}
+                    {{ "{{-" }} $clusterSetNs := $cm.metadata.namespace {{ "}}" }}
+                    {{ "{{-" }} if hasKey $allClusterSetLabels $clusterSetName {{ "}}" }}
+                      {{ "{{-" }} fail (printf "Multiple configurations for ManagedClusterSet [%s] detected!. Only one namespace/autoshift deployment can manage a given managed cluster! Conflicting namespaces: '%s' and '%s'" $clusterSetName $clusterSetNs (dig $clusterSetName "namespace" "" $allClusterSetLabels)) {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} $existingLabelsNoAutoshift := (dict) {{ "}}" }}
-                    {{ "{{-" }} range $label, $value := $existingLabels {{ "}}" }}
-                      {{ "{{-" }} if not (hasPrefix $labelPrefix $label) {{ "}}" }}
-                        {{ "{{-" }} $_ :=  set $existingLabelsNoAutoshift $label $value {{ "}}" }}
-                      {{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} $clusterSetLabels := (index $clusterSetData "labels" | default "") | fromJson | default dict{{ "}}" }}
-                    {{ "{{-" }} $clusterLabels := (index $clusterData "labels" | default "") | fromJson | default dict{{ "}}" }}
-                    {{ "{{-" }} $tempLabels := merge (dict) $clusterLabels $clusterSetLabels $existingLabelsNoAutoshift {{ "}}" }}
-                    {{ "{{-" }} $newLabels := dict {{ "}}" }}
-                    {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
-                      {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
-                        {{ "{{-" }} $_ := set $newLabels $label $value {{ "}}" }}
-                      {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} $metadata := set $cluster.metadata "labels" $newLabels {{ "}}" }}
-                    {{ "{{-" }} $objectDefinition := set $cluster "metadata" $metadata {{ "}}" }}
-                    {{ "{{-" }} $_ := unset $objectDefinition "status" {{ "}}" }}
-                    {
-                      "complianceType": "mustonlyhave",
-                      "objectDefinition": {{ "{{" }} $objectDefinition | toRawJson  {{ "}}" }}
-                    }{{ "{{-" }} if ne $lastIndex $index {{ "}}" }},{{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $clusterSetLabels := ((($cm).data).labels | default "{}" | fromJson) {{ "}}" }}
+                    {{ "{{-" }} $clusterSetEntry := (dict $clusterSetName (dict "namespace" $clusterSetNs "labels" $clusterSetLabels)) {{ "}}" }}
+                    {{ "{{-" }} $allClusterSetLabels = merge $clusterSetEntry $allClusterSetLabels {{ "}}" }}
+                  {{ "{{-" }} else if (hasPrefix "managed-cluster." $cm.metadata.name) {{ "}}" }}
+                    {{ "{{-" }} $clusterNs := $cm.metadata.namespace {{ "}}" }}
+                    {{ "{{-" }} $clusterName := ($cm.metadata.name | replace "managed-cluster." "") {{ "}}" }}
+                    {{ "{{-" }} $clusterLabels := ((($cm).data).labels | default "{}" | fromJson) {{ "}}" }}
+                    {{ "{{-" }} $wrapper := (dict $clusterNs (dict $clusterName (dict "labels" $clusterLabels))) {{ "}}" }}
+                    {{ "{{-" }} $allClusterLabels = merge $wrapper $allClusterLabels {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} range $index, $cluster := $managedClusters {{ "}}" }}
+                  {{ "{{-" }} $existingLabels :=  (dig  "metadata" "labels" (dict) $cluster) {{ "}}" }}
+                  {{ "{{-" }} $clusterSetName := (index $existingLabels "cluster.open-cluster-management.io/clusterset") | default "" {{ "}}" }}
+                  {{ "{{-" }} $renderedLabels := (dict) {{ "}}" }}
+                  {{ "{{-" }} $clusterSetLabels := (dict) {{ "}}" }}
+                  {{ "{{-" }} $clusterLabels := (dict) {{ "}}" }}
+                  {{ "{{-" }} $existingLabelsNoAutoshift := (dict) {{ "}}" }}
+                  {{ "{{-" }} $managedClusterObj := (dict) {{ "}}" }}
+                  {{ "{{-" }} range $label, $value := $existingLabels {{ "}}" }}
+                    {{ "{{-" }} if not (hasPrefix $labelPrefix $label) {{ "}}" }}
+                      {{ "{{-" }} $_ :=  set $existingLabelsNoAutoshift $label $value {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if ne $clusterSetName "" {{ "}}" }}
+                    {{ "{{-" }} $clusterName := (index $cluster "metadata" "name") {{ "}}" }}
+                    {{ "{{-" }} $clusterTenancyNamespace := (dig $clusterSetName "namespace" "" $allClusterSetLabels) {{ "}}" }}
+                    {{ "{{-" }} if ne $clusterTenancyNamespace "" {{ "}}" }}
+                      {{ "{{-" }} $clusterLabels = (dig $clusterTenancyNamespace $clusterName "labels" (dict) $allClusterLabels) {{ "}}" }}
+                      {{ "{{-" }} $clusterSetLabels = (index $allClusterSetLabels $clusterSetName "labels" | default dict) {{ "}}" }}
+                      {{ "{{-" }} $tempLabels := merge (dict) $clusterLabels $clusterSetLabels $existingLabelsNoAutoshift {{ "}}" }}
+                      {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
+                        {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
+                          {{ "{{-" }} $_ := set $renderedLabels $label $value {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} else {{ "}}" }}
+                      {{ "{{-" }} $renderedLabels = $existingLabelsNoAutoshift {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} else {{ "}}" }}
+                    {{ "{{-" }} $renderedLabels = $existingLabelsNoAutoshift {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $metadata := set $cluster.metadata "labels" $renderedLabels {{ "}}" }}
+                    {{ "{{-" }} $objectDefinition := set $cluster "metadata" $metadata {{ "}}" }}
+                    {{ "{{-" }} $_ := unset $objectDefinition "status" {{ "}}" }}
+                    {{ "{{-" }} $_ := set $managedClusterObj "complianceType" "mustonlyhave" {{ "}}" }}
+                    {{ "{{-" }} $_ := set $managedClusterObj "objectDefinition" $objectDefinition {{ "}}" }}
+                    {{ "{{-" }} $managedClusterConfigObjects = append $managedClusterConfigObjects $managedClusterObj {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{" }} $managedClusterConfigObjects | toRawJson | autoindent {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
-            ]
+            {{ "{{-" }} end {{ "}}" }}
 ---
 
   {{- if (eq $target "managedHub") }}
@@ -116,7 +144,7 @@ spec:
       operator: Exists
 ---
   {{- end }}
-  {{- if (eq $target "selfmanagedhub") }}
+  {{- if (eq $target "hubofhubs") }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
