@@ -103,6 +103,8 @@ spec:
                       {{ "{{-" }} $clusterLabels = (dig $clusterTenancyNamespace $clusterName "labels" (dict) $allClusterLabels) {{ "}}" }}
                       {{ "{{-" }} $clusterSetLabels = (index $allClusterSetLabels $clusterSetName "labels" | default dict) {{ "}}" }}
                       {{ "{{-" }} $tempLabels := merge (dict) $clusterLabels $clusterSetLabels $existingLabelsNoAutoshift {{ "}}" }}
+                      {{ "{{-" }} $_ := set $renderedLabels "autoshift.io/owning-namespace" $clusterTenancyNamespace {{ "}}" }}
+                      {{ "{{-" }} $_ := set $renderedLabels "autoshift.io/owning-deployment" (replace "policies-" "" $clusterTenancyNamespace) {{ "}}" }}
                       {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
                         {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
                           {{ "{{-" }} $_ := set $renderedLabels $label $value {{ "}}" }}
