@@ -40,7 +40,7 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{hub-" }} $githubEnabled := index .ManagedClusterLabels "autoshift.io/github" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $githubEnabled := index .ManagedClusterLabels "autoshift.io/tssc-github" | default "false" {{ "hub}}" }}
             {{ "{{hub-" }} if eq $githubEnabled "true" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
@@ -118,7 +118,13 @@ spec:
             {{ "{{hub-" }} $tpaEnabled := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false" {{ "hub}}" }}
             {{ "{{hub-" }} $tasEnabled := index .ManagedClusterLabels "autoshift.io/tas" | default "false" {{ "hub}}" }}
             {{ "{{hub-" }} $gitlabEnabled := index .ManagedClusterLabels "autoshift.io/gitlab" | default "false" {{ "hub}}" }}
-            {{ "{{hub-" }} $githubEnabled := index .ManagedClusterLabels "autoshift.io/github" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $githubEnabled := index .ManagedClusterLabels "autoshift.io/tssc-github" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $azureEnabled := index .ManagedClusterLabels "autoshift.io/tssc-azure" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $jenkinsEnabled := index .ManagedClusterLabels "autoshift.io/tssc-jenkins" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $bitbucketEnabled := index .ManagedClusterLabels "autoshift.io/tssc-bitbucket" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $nexusEnabled := index .ManagedClusterLabels "autoshift.io/tssc-nexus" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $quayIntEnabled := index .ManagedClusterLabels "autoshift.io/tssc-quay" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $artifactoryEnabled := index .ManagedClusterLabels "autoshift.io/tssc-artifactory" | default "false" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -155,6 +161,34 @@ spec:
                               resolvers:
                                 - resolver: preferredUsernameMatchingUserEntityName
                     signInPage: oidc
+                    {{ "{{hub-" }} if or (eq $artifactoryEnabled "true") (eq $nexusEnabled "true") (eq $quayIntEnabled "true") {{ "hub}}" }}
+                    proxy:
+                      endpoints:
+                        {{ "{{hub-" }} if eq $artifactoryEnabled "true" {{ "hub}}" }}
+                        '/jfrog-artifactory/api':
+                          target: ${ARTIFACTORY_URL}
+                          headers:
+                            Authorization: 'Bearer ${ARTIFACTORY_API_TOKEN}'
+                          secure: true
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                        {{ "{{hub-" }} if eq $nexusEnabled "true" {{ "hub}}" }}
+                        '/nexus-repository-manager':
+                          target: ${NEXUS_URL}
+                          headers:
+                            X-Requested-With: 'XMLHttpRequest'
+                          changeOrigin: true
+                          secure: true
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                        {{ "{{hub-" }} if eq $quayIntEnabled "true" {{ "hub}}" }}
+                        '/quay/api':
+                          target: ${QUAY_URL}
+                          changeOrigin: true
+                          headers:
+                            X-Requested-With: 'XMLHttpRequest'
+                            Authorization: 'Bearer ${QUAY_API_TOKEN}'
+                          secure: true
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                     catalog:
                       rules:
                         - allow: [Component, System, Group, Resource, Location, Template, API]
@@ -187,7 +221,32 @@ spec:
                               url: https://${ARGOCD_HOSTNAME}
                               token: ${ARGOCD_API_TOKEN}
                               username: ${ARGOCD_USER}
-                    {{ "{{hub-" }} if or (eq $gitlabEnabled "true") (eq $githubEnabled "true") {{ "hub}}" }}
+                    {{ "{{hub-" }} if eq $artifactoryEnabled "true" {{ "hub}}" }}
+                    artifactory:
+                      uiUrl: ${ARTIFACTORY_URL}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if eq $azureEnabled "true" {{ "hub}}" }}
+                    azureDevOps:
+                      host: ${AZURE_HOST}
+                      organization: ${AZURE_ORG}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if eq $jenkinsEnabled "true" {{ "hub}}" }}
+                    jenkins:
+                      instances:
+                        - name: default
+                          baseUrl: ${JENKINS_BASEURL}
+                          username: ${JENKINS_USERNAME}
+                          apiKey: ${JENKINS_TOKEN}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if eq $nexusEnabled "true" {{ "hub}}" }}
+                    nexus:
+                      uiUrl: ${NEXUS_URL}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if eq $quayIntEnabled "true" {{ "hub}}" }}
+                    quay:
+                      uiUrl: ${QUAY_URL}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} if or (eq $gitlabEnabled "true") (eq $githubEnabled "true") (eq $azureEnabled "true") (eq $bitbucketEnabled "true") {{ "hub}}" }}
                     integrations:
                       {{ "{{hub-" }} if eq $gitlabEnabled "true" {{ "hub}}" }}
                       gitlab:
@@ -200,6 +259,17 @@ spec:
                       github:
                         - host: ${GITHUB_HOST}
                           token: ${GITHUB_TOKEN}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq $azureEnabled "true" {{ "hub}}" }}
+                      azure:
+                        - host: ${AZURE_HOST}
+                          credentials:
+                            - personalAccessToken: ${AZURE_TOKEN}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq $bitbucketEnabled "true" {{ "hub}}" }}
+                      bitbucketCloud:
+                        - appPassword: ${BITBUCKET_APP_PASSWORD}
+                          username: ${BITBUCKET_USERNAME}
                       {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} if eq $acsEnabled "true" {{ "hub}}" }}
@@ -230,11 +300,15 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub-" }} $devHubNs := index .ManagedClusterLabels "autoshift.io/dev-hub-instance-namespace" | default "{{ $instanceNs }}" {{ "hub}}" }}
-            {{ "{{hub-" }} $acsEnabled := index .ManagedClusterLabels "autoshift.io/acs" | default "false" {{ "hub}}" }}
-            {{ "{{hub-" }} $tpaEnabled := index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false" {{ "hub}}" }}
-            {{ "{{hub-" }} $tasEnabled := index .ManagedClusterLabels "autoshift.io/tas" | default "false" {{ "hub}}" }}
             {{ "{{hub-" }} $gitlabEnabled := index .ManagedClusterLabels "autoshift.io/gitlab" | default "false" {{ "hub}}" }}
-            {{ "{{hub-" }} $githubEnabled := index .ManagedClusterLabels "autoshift.io/github" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $githubEnabled := index .ManagedClusterLabels "autoshift.io/tssc-github" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $argoEnabled := ne (index .ManagedClusterLabels "autoshift.io/gitops-dev" | default "false") "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $azureEnabled := index .ManagedClusterLabels "autoshift.io/tssc-azure" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $jenkinsEnabled := index .ManagedClusterLabels "autoshift.io/tssc-jenkins" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $bitbucketEnabled := index .ManagedClusterLabels "autoshift.io/tssc-bitbucket" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $nexusEnabled := index .ManagedClusterLabels "autoshift.io/tssc-nexus" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $quayIntEnabled := index .ManagedClusterLabels "autoshift.io/tssc-quay" | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} $artifactoryEnabled := index .ManagedClusterLabels "autoshift.io/tssc-artifactory" | default "false" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -247,36 +321,242 @@ spec:
                     includes:
                       - dynamic-plugins.default.yaml
                     plugins:
-                      - package: '@janus-idp/backstage-plugin-tekton'
+                      #
+                      # CI
+                      #
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-tekton:bs_1.45.3__3.33.3'
                         disabled: false
-                      - package: '@roadiehq/backstage-plugin-argo-cd'
-                        disabled: false
-                      - package: '@roadiehq/backstage-plugin-argo-cd-backend-dynamic'
-                        disabled: false
-                      - package: '@janus-idp/backstage-plugin-topology'
-                        disabled: false
-                      {{ "{{hub-" }} if eq $acsEnabled "true" {{ "hub}}" }}
-                      - package: '@janus-idp/backstage-plugin-acs'
+                        pluginConfig:
+                          dynamicPlugins:
+                            frontend:
+                              backstage-community.plugin-tekton:
+                                mountPoints:
+                                  - config:
+                                      if:
+                                        allOf:
+                                          - isTektonCIAvailable
+                                      layout:
+                                        gridColumn: 1 / -1
+                                        gridRowStart: 1
+                                    importName: TektonCI
+                                    mountPoint: entity.page.ci/cards
+                      {{ "{{hub-" }} if eq $githubEnabled "true" {{ "hub}}" }}
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-github-actions:bs_1.45.3__0.18.0'
                         disabled: false
                       {{ "{{hub-" }} end {{ "hub}}" }}
-                      {{ "{{hub-" }} if eq $tpaEnabled "true" {{ "hub}}" }}
-                      - package: '@redhat-developer/backstage-plugin-tpa'
+                      {{ "{{hub-" }} if eq $azureEnabled "true" {{ "hub}}" }}
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-azure-devops-backend:bs_1.45.3__0.23.0'
+                        disabled: false
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-azure-devops:bs_1.45.3__0.23.0'
+                        disabled: false
+                        pluginConfig:
+                          dynamicPlugins:
+                            frontend:
+                              backstage-community.plugin-azure-devops:
+                                mountPoints:
+                                  - mountPoint: entity.page.ci/cards
+                                    importName: EntityAzurePipelinesContent
+                                    config:
+                                      layout:
+                                        gridColumn: "1 / -1"
+                                      if:
+                                        allOf:
+                                          - isAzurePipelinesAvailable
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq $jenkinsEnabled "true" {{ "hub}}" }}
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-jenkins:bs_1.45.3__0.26.0'
+                        disabled: false
+                        pluginConfig:
+                          dynamicPlugins:
+                            frontend:
+                              backstage-community.plugin-jenkins:
+                                mountPoints:
+                                  - mountPoint: entity.page.ci/cards
+                                    importName: EntityJenkinsContent
+                                    config:
+                                      layout:
+                                        gridColumn: "1 / -1"
+                                      if:
+                                        allOf:
+                                          - isJenkinsAvailable
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-jenkins-backend:bs_1.45.3__0.22.0'
                         disabled: false
                       {{ "{{hub-" }} end {{ "hub}}" }}
-                      {{ "{{hub-" }} if eq $tasEnabled "true" {{ "hub}}" }}
-                      - package: '@janus-idp/backstage-plugin-signing'
+                      - package: 'oci://quay.io/redhat-tssc/backstage-plugins:1.9.0!tssc-plugins-backstage-community-plugin-multi-source-security-viewer'
                         disabled: false
+                        pluginConfig:
+                          dynamicPlugins:
+                            frontend:
+                              tssc-plugins.backstage-community-plugin-multi-source-security-viewer:
+                                mountPoints:
+                                  - config:
+                                      layout:
+                                        gridColumn: 1 / -1
+                                        gridRowStart: 2
+                                      if:
+                                        allOf:
+                                          - isMultiCIAvailable
+                                    importName: EntityMultiCIPipelinesContent
+                                    mountPoint: entity.page.ci/cards
+                                entityTabs:
+                                  - path: /ci
+                                    title: CI
+                                    mountPoint: entity.page.ci
+                      - package: 'oci://quay.io/redhat-tssc/backstage-plugins:1.9.0!tssc-plugins-backstage-community-plugin-multi-source-security-viewer-backend'
+                        disabled: false
+                      #
+                      # ArgoCD
+                      #
+                      {{ "{{hub-" }} if $argoEnabled {{ "hub}}" }}
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-argocd:bs_1.45.3__2.4.3'
+                        disabled: false
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-argocd-backend:bs_1.45.3__1.0.2'
+                        disabled: false
+                        pluginConfig:
+                          argocd:
+                            appLocatorMethods:
+                              - type: 'config'
+                                instances: []
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/roadiehq-scaffolder-backend-argocd:bs_1.45.3__1.8.1'
+                        disabled: false
+                        pluginConfig:
+                          argocd:
+                            appLocatorMethods:
+                              - type: 'config'
+                                instances: []
                       {{ "{{hub-" }} end {{ "hub}}" }}
+                      #
+                      # Kubernetes
+                      #
+                      - package: './dynamic-plugins/dist/backstage-plugin-kubernetes'
+                        disabled: false
+                      - package: './dynamic-plugins/dist/backstage-plugin-kubernetes-backend-dynamic'
+                        disabled: false
+                        pluginConfig:
+                          kubernetes:
+                            clusterLocatorMethods:
+                              - clusters:
+                                  - authProvider: serviceAccount
+                                    customResources:
+                                      - group: argoproj.io
+                                        apiVersion: v1alpha1
+                                        plural: rollouts
+                                      - apiVersion: v1
+                                        group: route.openshift.io
+                                        plural: routes
+                                      - apiVersion: v1
+                                        group: tekton.dev
+                                        plural: pipelineruns
+                                      - apiVersion: v1
+                                        group: tekton.dev
+                                        plural: taskruns
+                                    name: rhdh-cluster
+                                    serviceAccountToken: ${K8S_SERVICEACCOUNT_TOKEN}
+                                    skipTLSVerify: true
+                                    url: https://kubernetes.default.svc
+                                type: config
+                            serviceLocatorMethod:
+                              type: multiTenant
+                      - package: './dynamic-plugins/dist/backstage-community-plugin-topology'
+                        disabled: false
+                      #
+                      # GitLab
+                      #
                       {{ "{{hub-" }} if eq $gitlabEnabled "true" {{ "hub}}" }}
-                      - package: '@backstage-community/plugin-gitlab'
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/immobiliarelabs-backstage-plugin-gitlab:bs_1.45.3__6.13.0'
                         disabled: false
-                      - package: '@backstage-community/plugin-gitlab-backend-module-dynamic'
+                        pluginConfig:
+                          dynamicPlugins:
+                            frontend:
+                              immobiliarelabs.backstage-plugin-gitlab:
+                                mountPoints:
+                                  - mountPoint: entity.page.ci/cards
+                                    importName: EntityGitlabPipelinesTable
+                                    config:
+                                      layout:
+                                        gridColumn: "1 / -1"
+                                      if:
+                                        allOf:
+                                          - isGitlabAvailable
+                                          - hasAnnotation:
+                                              - gitlab.com/enabled
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/immobiliarelabs-backstage-plugin-gitlab-backend:bs_1.45.3__6.13.0'
+                        disabled: false
+                      - package: './dynamic-plugins/dist/backstage-plugin-scaffolder-backend-module-gitlab-dynamic'
+                        disabled: false
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      #
+                      # GitHub
+                      #
+                      {{ "{{hub-" }} if eq $bitbucketEnabled "true" {{ "hub}}" }}
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-plugin-scaffolder-backend-module-bitbucket-cloud:bs_1.45.3__0.2.15'
                         disabled: false
                       {{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} if eq $githubEnabled "true" {{ "hub}}" }}
-                      - package: '@backstage/plugin-catalog-backend-module-github-dynamic'
+                      - package: './dynamic-plugins/dist/backstage-plugin-scaffolder-backend-module-github-dynamic'
                         disabled: false
                       {{ "{{hub-" }} end {{ "hub}}" }}
+                      #
+                      # Image Registry
+                      #
+                      {{ "{{hub-" }} if eq $artifactoryEnabled "true" {{ "hub}}" }}
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-jfrog-artifactory:bs_1.45.3__1.24.1'
+                        disabled: false
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq $nexusEnabled "true" {{ "hub}}" }}
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-nexus-repository-manager:bs_1.45.3__1.19.4'
+                        disabled: false
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq $quayIntEnabled "true" {{ "hub}}" }}
+                      - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-quay:bs_1.45.3__1.28.1'
+                        disabled: false
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      #
+                      # TechDocs
+                      #
+                      - package: './dynamic-plugins/dist/backstage-plugin-techdocs'
+                        disabled: false
+                      - package: './dynamic-plugins/dist/backstage-plugin-techdocs-backend-dynamic'
+                        disabled: false
+                      #
+                      # RBAC
+                      #
+                      - package: './dynamic-plugins/dist/backstage-community-plugin-rbac'
+                        disabled: false
+                      #
+                      # Keycloak
+                      #
+                      - package: './dynamic-plugins/dist/backstage-community-plugin-catalog-backend-module-keycloak-dynamic'
+                        disabled: false
+    # ── Backend Secret ─────────────────────────────────────────────────────────
+    # Generates a stable backend signing secret derived from the cluster UID.
+    # Deterministic so re-evaluations don't rotate the value.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: developer-hub-backend-secret
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $devHubNs := index .ManagedClusterLabels "autoshift.io/dev-hub-instance-namespace" | default "{{ $instanceNs }}" {{ "hub}}" }}
+            {{ "{{-" }} $ns := "{{ "{{hub" }} $devHubNs {{ "hub}}" }}" {{ "}}" }}
+            {{`{{`}} $clusterUID := (lookup "v1" "Namespace" "" "kube-system" | default dict).metadata.uid | default "fallback" {{`}}`}}
+            {{`{{`}} $backendSecret := printf "%s-rhdh-backend" $clusterUID | sha256sum {{`}}`}}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: tssc-developer-hub-backend-secret
+                  namespace: '{{ "{{" }} $ns {{ "}}" }}'
+                type: Opaque
+                data:
+                  secret: '{{ "{{" }} $backendSecret | b64enc {{ "}}" }}'
     # ── Environment Secret ─────────────────────────────────────────────────────
     # Assembles env vars from integration secrets via spoke-side lookups.
     # All ${VAR} references in the app-config resolve from these values.
@@ -330,6 +610,13 @@ spec:
             {{ "{{-" }} $ghHost := index $ghData "host" | default "github.com" | b64dec {{ "}}" }}
             {{ "{{-" }} $ghToken := index $ghData "token" | default "" | b64dec {{ "}}" }}
             {{ "{{-" }} $ghOrg := index $ghData "org" | default "" | b64dec {{ "}}" }}
+            {{ "{{-" }} $azureData := (lookup "v1" "Secret" "tssc-integrations" "tssc-azure-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $jenkinsData := (lookup "v1" "Secret" "tssc-integrations" "tssc-jenkins-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $bbData := (lookup "v1" "Secret" "tssc-integrations" "tssc-bitbucket-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $nexusData := (lookup "v1" "Secret" "tssc-integrations" "tssc-nexus-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $quayData := (lookup "v1" "Secret" "tssc-integrations" "tssc-quay-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $artifactoryData := (lookup "v1" "Secret" "tssc-integrations" "tssc-artifactory-integration" | default dict).data | default dict {{ "}}" }}
+            {{ "{{-" }} $k8sData := (lookup "v1" "Secret" "tssc-integrations" "tssc-k8s-integration" | default dict).data | default dict {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -358,6 +645,20 @@ spec:
                   GITHUB_HOST: '{{ "{{" }} $ghHost {{ "}}" }}'
                   GITHUB_TOKEN: '{{ "{{" }} $ghToken {{ "}}" }}'
                   GITHUB_ORG: '{{ "{{" }} $ghOrg {{ "}}" }}'
+                  K8S_SERVICEACCOUNT_TOKEN: '{{ "{{" }} index $k8sData "token" | default "" | b64dec {{ "}}" }}'
+                  AZURE_HOST: '{{ "{{" }} index $azureData "host" | default "" | b64dec {{ "}}" }}'
+                  AZURE_ORG: '{{ "{{" }} index $azureData "organization" | default "" | b64dec {{ "}}" }}'
+                  AZURE_TOKEN: '{{ "{{" }} index $azureData "token" | default "" | b64dec {{ "}}" }}'
+                  JENKINS_BASEURL: '{{ "{{" }} index $jenkinsData "baseUrl" | default "" | b64dec {{ "}}" }}'
+                  JENKINS_USERNAME: '{{ "{{" }} index $jenkinsData "username" | default "" | b64dec {{ "}}" }}'
+                  JENKINS_TOKEN: '{{ "{{" }} index $jenkinsData "token" | default "" | b64dec {{ "}}" }}'
+                  BITBUCKET_APP_PASSWORD: '{{ "{{" }} index $bbData "appPassword" | default "" | b64dec {{ "}}" }}'
+                  BITBUCKET_USERNAME: '{{ "{{" }} index $bbData "username" | default "" | b64dec {{ "}}" }}'
+                  NEXUS_URL: '{{ "{{" }} index $nexusData "url" | default "" | b64dec {{ "}}" }}'
+                  QUAY_URL: '{{ "{{" }} index $quayData "url" | default "" | b64dec {{ "}}" }}'
+                  QUAY_API_TOKEN: '{{ "{{" }} index $quayData "token" | default "" | b64dec {{ "}}" }}'
+                  ARTIFACTORY_URL: '{{ "{{" }} index $artifactoryData "url" | default "" | b64dec {{ "}}" }}'
+                  ARTIFACTORY_API_TOKEN: '{{ "{{" }} index $artifactoryData "token" | default "" | b64dec {{ "}}" }}'
     # ── Backstage Instance ─────────────────────────────────────────────────────
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
