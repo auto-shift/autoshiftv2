@@ -1,15 +1,15 @@
 {{- $managedHubs := dict }}
-{{- $selfManagedHubs := dict }}
+{{- $selfManagedHub := dict }}
 {{- range $k, $v := $.Values.hubClusterSets  }}
   {{-  if eq ((index $v.labels "self-managed") | default "false")  "false" }}
     {{- $_ := set $managedHubs $k $k }}
   {{- else }}
-    {{- $_ := set $selfManagedHubs $k $k }}
+    {{- $_ := set $selfManagedHub $k $k }}
   {{- end }}
 {{- end }}
 {{- $policyNamespace := $.Values.policy_namespace }}
 {{- $targets := list }}
-{{- if not (empty $selfManagedHubs) }}
+{{- if not (empty $selfManagedHub) }}
   {{- $targets = append $targets "selfManagedHub" }}
 {{- end }}
 {{- if not (empty $managedHubs) }}
@@ -146,7 +146,7 @@ spec:
       operator: Exists
 ---
   {{- end }}
-  {{- if (eq $target "selfManagedHubs") }}
+  {{- if (eq $target "selfManagedHub") }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -155,10 +155,10 @@ metadata:
   namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
-  {{- if (empty $selfManagedHubs) }}
+  {{- if (empty $selfManagedHub) }}
     - {{ $.Values.selfManagedHubSet }}
   {{- else }}
-  {{- range $selfManagedHub, $_ := $selfManagedHubs }}
+  {{- range $selfManagedHub, $_ := $selfManagedHub }}
     - {{ $selfManagedHub }}
   {{- end }}
   {{- end }}
