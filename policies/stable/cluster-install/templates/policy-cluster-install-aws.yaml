@@ -39,14 +39,15 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates-raw: |
-            {{ "{{" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}owning-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
+            {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
             {{ "{{-" }} range $_, $cm := ($configMaps.items | default list) {{ "}}" }}
             {{ "{{-" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
+            {{ "{{-" }} $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" $clusterName) | default dict {{ "}}" }}
+            {{ "{{-" }} $mcOwningNs := dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc {{ "}}" }}
             {{ "{{-" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
             {{ "{{-" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
             {{ "{{-" }} $platform := (index $ci "platform" | default "baremetal") {{ "}}" }}
-            {{ "{{-" }} if and (eq (index $ci "createCluster" | default "") "true") (eq $platform "aws") {{ "}}" }}
+            {{ "{{-" }} if and (eq (index $ci "createCluster" | default "") "true") (eq $platform "aws") (or (empty $mc) (eq $mcOwningNs $cm.metadata.namespace)) {{ "}}" }}
             {{ "{{-" }} $baseDomain := (index $ci "baseDomain") {{ "}}" }}
             {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion") {{ "}}" }}
             {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
