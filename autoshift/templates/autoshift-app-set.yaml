@@ -83,17 +83,7 @@ spec:
               - $values/{{ "{{" }} .path.path {{ "}}" }}/values.yaml
               {{- end }}
             valuesObject:
-              {{- $clusterSetSuffix := "" }}
-              {{- if .Values.versionedClusterSets }}
-                {{- $versionTag := "" }}
-                {{- if .Values.autoshiftOciRegistry }}
-                  {{- $versionTag = .Values.autoshiftOciVersion | default "latest" }}
-                {{- else }}
-                  {{- $versionTag = .Values.autoshiftGitBranchTag | default "main" }}
-                {{- end }}
-                {{- /* Sanitize for DNS: replace dots and slashes with dashes, lowercase */ -}}
-                {{- $clusterSetSuffix = printf "-%s" ($versionTag | replace "." "-" | replace "/" "-" | lower) }}
-              {{- end }}
+              {{- $clusterSetSuffix := include "autoshift.clusterSetSuffix" . }}
               gitopsNamespace: {{ .Values.gitopsNamespace }}
               selfManagedHubSet: {{ .Values.selfManagedHubSet }}{{ $clusterSetSuffix }}
               policy_namespace: {{ printf "policies-%s" .Release.Name }}
