@@ -321,14 +321,21 @@ spec:
 	}
 }
 
-func TestResolveSpokeTemplates_LookupMissingReturnsEmpty(t *testing.T) {
-	r, err := NewSpokeResolver(nil)
+// TestResolveSpokeTemplates_LookupResolvesFromTestdata verifies that a spoke
+// template which calls lookup resolves cleanly when the target resource is
+// present in testdata. If this test fails, add a stub YAML to tools/testdata/
+// for the API group being looked up (see tools/testdata/cluster-infrastructure.yaml).
+func TestResolveSpokeTemplates_LookupResolvesFromTestdata(t *testing.T) {
+	testResources, err := LoadTestResources(filepath.Join(repoRoot(t), "tools", "testdata"))
+	if err != nil {
+		t.Fatalf("LoadTestResources: %v", err)
+	}
+
+	r, err := NewSpokeResolver(testResources)
 	if err != nil {
 		t.Fatalf("NewSpokeResolver: %v", err)
 	}
 
-	// A template that looks up a resource that doesn't exist — should produce a
-	// warning but not a hard error, and the document should be present in output.
 	rawYAML := `---
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -356,9 +363,11 @@ spec:
 
 	result := r.ResolveSpokeTemplates(rawYAML)
 
-	// Output should contain the document (possibly with the default value).
-	if result.Resolved == "" {
-		t.Error("expected non-empty Resolved even when lookup fails")
+	if len(result.Errors) > 0 {
+		t.Errorf("spoke resolution errors (add a stub to tools/testdata/ for any missing API group): %v", result.Errors)
+	}
+	if !strings.Contains(result.Resolved, "test-cluster.test.example.com") {
+		t.Errorf("expected baseDomain from testdata stub in resolved output, got:\n%s", result.Resolved)
 	}
 }
 
