@@ -201,6 +201,8 @@ spec:
                 data:
                   install-config.yaml: '{{ "{{" }} $installConfig | toYaml | base64enc {{ "}}" }}'
             {{/* ===== ClusterDeployment ===== */}}
+            {{ "{{-" }} $existingCD := (lookup "hive.openshift.io/v1" "ClusterDeployment" $clusterName $clusterName) | default dict {{ "}}" }}
+            {{ "{{-" }} $alreadyInstalled := (index ($existingCD.spec | default dict) "installed" | default false) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: hive.openshift.io/v1
@@ -219,7 +221,7 @@ spec:
                   controlPlaneConfig:
                     servingCertificates: {}
                   installAttemptsLimit: 1
-                  installed: false
+                  installed: {{ "{{" }} $alreadyInstalled {{ "}}" }}
                   platform:
                     aws:
                       credentialsSecretRef:
