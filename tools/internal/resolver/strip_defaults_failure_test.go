@@ -126,16 +126,10 @@ spec:
 		for _, e := range errs {
 			if strings.Contains(e, "<no value>") {
 				foundGap = true
-				t.Logf("gap correctly detected: %s", e)
 			}
 		}
-		if !foundGap {
-			// Also check raw output for <no value> in case validateYAML
-			// didn't run (e.g. spoke resolution errored before producing output).
-			if strings.Contains(combined, "<no value>") {
-				t.Logf("gap detected in raw output (validateYAML skipped due to spoke error)")
-				foundGap = true
-			}
+		if !foundGap && strings.Contains(combined, "<no value>") {
+			foundGap = true
 		}
 		if !foundGap {
 			t.Error("expected gap to be detected (<no value> or validation error) but test passed cleanly — stripStringDefaults is not working")
@@ -161,10 +155,7 @@ spec:
 		hasNoValue := strings.Contains(result.Resolved, "<no value>")
 		hasValidationErr := len(errs) > 0
 
-		if hasNoValue || hasValidationErr {
-			t.Logf("NOTE: even without stripping, gap was detected — default may already be absent")
-		} else {
-			t.Logf("confirmed: without stripping, missing key silently uses fallback (no gap detected)")
+		if !hasNoValue && !hasValidationErr {
 			if !strings.Contains(result.Resolved, "platform: baremetal") {
 				t.Error("expected fallback 'baremetal' in unstripped output")
 			}

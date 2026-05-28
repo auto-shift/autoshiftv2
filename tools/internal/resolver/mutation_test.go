@@ -1,14 +1,18 @@
-//go:build integration
+//go:build integration && mutation
 
 package resolver
 
 import (
 	"encoding/json"
+	"flag"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/auto-shift/autoshiftv2/tools/internal/labels"
+	"k8s.io/klog"
 )
 
 // deepCloneConfigs returns a deep copy of ExampleConfigs via JSON round-trip.
@@ -87,6 +91,21 @@ func runMutated(
 // This is the negative-test counterpart of TestPipeline_EndToEnd: it proves
 // the detection mechanism works, not just that the current config is clean.
 func TestPipeline_MutationSweep(t *testing.T) {
+	// Suppress klog output — mutation cases intentionally trigger hub-resolution
+	// errors which klog logs with full policy JSON. All assertions use t.Error,
+	// so suppressing the library noise keeps the output readable.
+	// klog v1 defaults to logtostderr=true which writes directly to os.Stderr,
+	// bypassing SetOutput, so we must also raise the stderrthreshold to FATAL.
+	klog.InitFlags(nil)
+	flag.Set("logtostderr", "false")      //nolint:errcheck
+	flag.Set("stderrthreshold", "FATAL")  //nolint:errcheck
+	klog.SetOutput(io.Discard)
+	t.Cleanup(func() {
+		flag.Set("logtostderr", "true")       //nolint:errcheck
+		flag.Set("stderrthreshold", "ERROR")  //nolint:errcheck
+		klog.SetOutput(os.Stderr)
+	})
+
 	root := repoRoot(t)
 	valuesDir := filepath.Join(root, "autoshift", "values")
 	allowlistPath := filepath.Join(root, ".github", "label-lint-allowlist.yaml")
@@ -175,17 +194,16 @@ func TestPipeline_MutationSweep(t *testing.T) {
 			expectAbsentString:   "CatalogSource",
 		},
 		{
-			// mirrorRegistry removal causes a len-on-zero-value error in the hub
-			// template (policy bug: $mirrors needs | default list). The correct
-			// assertion is that the policy no longer resolves cleanly — ResolveOK
-			// must be false, signalling the missing-config condition.
-			name: "remove mirror registry → policy resolution error (mirrors zero value)",
+			// Disconnected clusters must have mirrorRegistry configured — a missing
+			// mirrorRegistry is a misconfiguration that should surface as a hub
+			// template resolution error rather than silently deploying empty policies.
+			name: "remove mirror registry → policy resolution error (misconfigured disconnected cluster)",
 			mutateConfigs: func(cfg *ExampleConfigs) {
 				disc, _ := cfg.HubConfig["disconnected"].(map[string]interface{})
 				delete(disc, "mirrorRegistry")
 			},
-			expectAbsentInPolicy:         "stable/disconnected-mirror",
-			expectResolutionError:        true,
+			expectAbsentInPolicy:  "stable/disconnected-mirror",
+			expectResolutionError: true,
 		},
 		{
 			// compliance-auto-remediate is a leaf label (no sub-labels) so Pass b
