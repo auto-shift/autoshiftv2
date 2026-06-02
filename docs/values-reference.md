@@ -13,7 +13,7 @@ autoshift/values/
     hub-minimal.yaml                 # Hub clusterset — minimal (GitOps + ACM only)
     hub-baremetal-sno.yaml           # Hub clusterset — baremetal single-node
     hub-baremetal-compact.yaml       # Hub clusterset — baremetal compact (3 node)
-    hubofhubs.yaml                   # Hub-of-hubs clusterset + selfManagedHubSet override
+    hubofhubs.yaml                   # Hub-of-hubs clusterset
     hub1.yaml                        # Spoke hub (managed by hub-of-hubs)
     hub2.yaml                        # Spoke hub (managed by hub-of-hubs)
     managed.yaml                     # Managed spoke clusterset — full enterprise
@@ -31,8 +31,6 @@ Helm **deep-merges** multiple `-f` value files in order. Each clusterset file de
 # managed.yaml defines managedClusterSets.managed
 # Result: both .hubClusterSets.hub and .managedClusterSets.managed exist
 ```
-
-For scalar values like `selfManagedHubSet`, later files override earlier ones (last-file-wins). This lets profile files like `hubofhubs.yaml` override defaults from `global.yaml`.
 
 ### Precedence
 

@@ -64,9 +64,6 @@ spec:
         # Automatically append version to clusterset names
         versionedClusterSets: true
 
-        # Base names - will become hub-0-0-1, managed-0-0-1
-        selfManagedHubSet: hub
-
         hubClusterSets:
           hub:
             labels:
@@ -152,9 +149,6 @@ spec:
 
         # Automatically append version to clusterset names
         versionedClusterSets: true
-
-        # Same base names - will become hub-0-0-2, managed-0-0-2
-        selfManagedHubSet: hub
 
         hubClusterSets:
           hub:
