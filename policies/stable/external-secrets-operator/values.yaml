@@ -11,7 +11,34 @@ externalSecretsOperator:
   operatorGroupName: external-secrets-operator-operator-group
   # targetNamespaces: # Optional: specify target namespaces for namespace-scoped operators
   #   - external-secrets-operator
-  
+  # secret-reader ServiceAccount (created by policy-external-secrets-operator-secret-reader.yaml):
+  # a read-only identity other AutoShift components use to consume the Secrets ESO
+  # provisions. Created in `namespace` above; granted read on Secrets in the namespaces
+  # from config.externalSecretsOperator.secretReaderNamespaces + config.defaultSecretsNamespace.
+  secretReaderName: secret-reader
+
+# Internal lookup table used by policy-external-secrets-operator-stores.yaml.
+# Maps an authSecretConfig.fromRef token -> [providerKey, ...path under
+# spec.provider.<provider>.auth to the auth ref]. This is NOT per-cluster config:
+# edit it only to teach the policy about a new auth ref. Multi-field nested creds
+# (vault iam/gcp) are intentionally omitted — provision those Secrets out of band.
+internal:
+  authRefPaths:
+    # Vault provider
+    vaultToken: [vault, tokenSecretRef]
+    vaultAppRoleSecretId: [vault, appRole, secretRef]
+    vaultAppRoleRoleId: [vault, appRole, roleRef]
+    vaultLdap: [vault, ldap, secretRef]
+    vaultUserPass: [vault, userPass, secretRef]
+    vaultJwt: [vault, jwt, secretRef]
+    vaultKubernetes: [vault, kubernetes, secretRef]
+    vaultCert: [vault, cert, secretRef]
+    vaultCertClient: [vault, cert, clientCert]
+    # Kubernetes provider
+    kubernetesToken: [kubernetes, token, bearerToken]
+    kubernetesCertClient: [kubernetes, cert, clientCert]
+    kubernetesCertKey: [kubernetes, cert, clientKey]
+
 # hubClusterSets:
 #   hub:
 #     labels:
