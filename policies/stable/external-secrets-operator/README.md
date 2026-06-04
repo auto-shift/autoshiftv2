@@ -961,6 +961,107 @@ are read from `config.eso.hubBootstrap` by the hub trust policy, defaulting to t
   one-`evalInterval` window where the spoke trusts the stale leaf and reads fail closed; the
   operator-managed fallback is rotation-clean. Point `hubCASource*` at a stable custom CA to avoid it.
 
+### Trust modes (`config.eso.hubBootstrap.mode`)
+
+The bootstrap supports three ways to establish the **client identity** the spoke presents to the
+hub. The mode selects *who mints the client cert* and *what the hub `APIServer.spec.clientCA`
+trusts*; the serving-CA / server-trust half is identical across modes. Pick **one mode per hub** —
+`spec.clientCA` is a single field, so deployments sharing a hub must agree.
+
+| Mode | Client cert | Hub `clientCA` trusts | RBAC subject | Hub policy |
+|---|---|---|---|---|
+| `selfSigned` *(default)* | hub mints per-cluster cert, copies to spoke | hub-minted self-signed CA | derived CN `<prefix>.<cluster>.<baseDomain>` | `…-hub-bootstrap-trust` |
+| `externalCA` | **spoke** mints its own cert via a user-provided issuer (key never leaves the spoke) | a shared **external** CA bundle | same derived CN (both sides compute it from `.ManagedClusterName`) | `…-hub-bootstrap-trust-external` |
+| `externalCAReuseServingCert` | **spoke reuses its apiserver serving cert** (no cert minted) | the same external CA bundle | the cluster's registered apiserver **host** (discovered from `ManagedCluster.spec.managedClusterClientConfigs[].url`) | `…-hub-bootstrap-trust-external` |
+
+The three cert-creation paths — what mints the client cert, what the hub `clientCA` trusts, and
+what the per-cluster RBAC binds to:
+
+```mermaid
+flowchart TB
+  classDef mint fill:#e3f2fd,stroke:#1565c0,color:#0d2c54;
+  classDef ext  fill:#e8f5e9,stroke:#2e7d32,color:#14361b;
+  classDef wire fill:#fff3e0,stroke:#e65100,color:#4a2500;
+  classDef rbac fill:#f3e5f5,stroke:#6a1b9a,color:#2e0a3d;
+  classDef dec  fill:#fffde7,stroke:#f9a825,color:#4a3b00;
+
+  MODE{"config.eso.hubBootstrap.mode"}:::dec
+
+  subgraph M1["1 · selfSigned — hub-internal CA · policy hub-bootstrap-trust"]
+    direction TB
+    A1["ClusterIssuer hub-bootstrap-selfsigned"]:::mint
+    A2["Certificate hub-bootstrap-ca (isCA)<br/>the bootstrap root — long-lived, hub-internal key"]:::mint
+    A3["ClusterIssuer hub-bootstrap-ca-issuer"]:::mint
+    A4["HUB mints per-cluster Certificate<br/>CN = prefix.cluster.baseDomain · in policy ns"]:::mint
+    A5["COPY cert+key → spoke ESO ns (hub-bootstrap-client)"]:::mint
+    AW["hub APIServer.spec.clientCA ← hub-minted CA ca.crt"]:::wire
+    AR["per-cluster RBAC subject = derived CN"]:::rbac
+    A1 -->|signs| A2 -->|backs| A3 -->|issues| A4 -->|copied| A5
+    A2 -->|ca.crt| AW
+    A4 --> AR
+  end
+
+  subgraph M2["2 · externalCA — dedicated certs from a shared external CA · policy hub-bootstrap-trust-external"]
+    direction TB
+    B0["EXTERNAL CA (out of band)"]:::ext
+    B1["user-provided spoke ClusterIssuer<br/>spokeIssuer, chained to the external CA"]:::ext
+    B2["SPOKE mints its OWN Certificate<br/>CN = prefix.cluster.baseDomain · key never leaves the spoke"]:::mint
+    BW["hub APIServer.spec.clientCA ← external CA bundle (static CM)"]:::wire
+    BR["HUB per-cluster RBAC subject = derived CN<br/>(matches the spoke-minted cert automatically)"]:::rbac
+    B0 -->|chains to| B1 -->|issues on spoke| B2
+    B0 -->|ca-bundle.crt| BW
+    B2 -. identical derivation .-> BR
+  end
+
+  subgraph M3["3 · externalCAReuseServingCert — reuse spoke apiserver serving cert · policy hub-bootstrap-trust-external"]
+    direction TB
+    C0["EXTERNAL CA (out of band)<br/>already signed the spoke's apiserver serving cert"]:::ext
+    C1["spoke apiserver SERVING cert+key @ openshift-config<br/>discovered via APIServer namedCertificates"]:::mint
+    C2["COPY serving cert+key → spoke ESO ns (hub-bootstrap-client)<br/>WARNING replicates the apiserver private key"]:::mint
+    CW["hub APIServer.spec.clientCA ← external CA bundle (static CM)"]:::wire
+    CR["HUB per-cluster RBAC subject = discovered apiserver host<br/>MUST equal the serving cert Subject CN · serving cert MUST carry clientAuth EKU"]:::rbac
+    C0 -->|signs| C1 -->|reused as client cert, copied| C2
+    C0 -->|ca-bundle.crt| CW
+    C1 -. host from ManagedCluster clientConfig url .-> CR
+  end
+
+  MODE -->|selfSigned| M1
+  MODE -->|externalCA| M2
+  MODE -->|externalCAReuseServingCert| M3
+```
+
+In both external modes the hub mints **no CA and no client certs** — it only materializes the
+configured external CA bundle into the `openshift-config` clientCA ConfigMap and creates the
+per-cluster RBAC. Config (per-deployment, under `config.eso.hubBootstrap`):
+
+```yaml
+# externalCA — spoke mints its own cert; chart values supply the defaults.
+mode: externalCA
+baseDomain: eso.hub.example.com     # REQUIRED: spoke-derived CN + hub RBAC both use it
+spokeIssuer:                        # REQUIRED: user-provisioned issuer chained to the external CA
+  name: shared-ca-issuer
+  kind: ClusterIssuer               # ClusterIssuer | Issuer
+  group: cert-manager.io
+externalClientCA:                   # REQUIRED: the external CA bundle the hub apiserver trusts
+  namespace: openshift-config
+  name: external-shared-ca
+  key: ca-bundle.crt
+```
+
+> **`externalCAReuseServingCert` is a last-resort mode with a real security blast radius.** It
+> copies the spoke's apiserver serving cert **including its private key** into the ESO namespace to
+> reuse as the client cert. Only enable it when a customer categorically cannot mint or be issued a
+> dedicated client cert. Two **preconditions the policy cannot verify** (if unmet, auth fails
+> silently — at the TLS handshake or because RBAC never matches):
+> 1. **EKU** — the serving cert must carry `clientAuth` (or `anyExtendedKeyUsage`) in addition to
+>    `serverAuth`. A `serverAuth`-only cert is rejected by the hub apiserver's mTLS handshake.
+> 2. **Identity** — the hub binds RBAC to the cluster's registered apiserver host, and the
+>    kube-apiserver maps a client cert to its Subject CN, so the serving cert's **Subject CN must
+>    equal that host**. A cert that carries the host only in SANs (generic/empty CN) will not match.
+>
+> It needs only `mode` + `externalClientCA` (no `baseDomain`/`spokeIssuer` — the identity is the
+> discovered host).
+
 ## Reading provisioned Secrets (`secret-reader`)
 
 The Secrets ESO provisions are consumed by other AutoShift components. Rather than each

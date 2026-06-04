@@ -19,6 +19,27 @@ metadata:
     autoshift.io/cluster-tenancy-namespace: policies-autoshift
 spec:
   hubAcceptsClient: true
+  # Registered apiserver URL. In externalCAReuseServingCert mode the hub trust policy derives the
+  # client identity (RBAC subject) from this URL's host — it must equal the serving cert Subject CN.
+  # Host here matches the namedCertificates names[0] in cluster-openshift-resources.yaml.
+  managedClusterClientConfigs:
+    - url: 'https://api.test-cluster.test.example.com:6443'
+---
+# External CA bundle the hub apiserver clientCA trusts in the externalCA / externalCAReuseServingCert
+# modes (config.eso.hubBootstrap.externalClientCA.name). The trust-external policy reads this on the
+# hub and materializes it into the openshift-config clientCA ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: external-shared-ca
+  namespace: openshift-config
+data:
+  ca-bundle.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIBpTCCAUugAwIBAgIUfakecert003000000000000030fakeexternalcaFAKE03
+    Mao0GCCqGSM49BAMCMA0xCzAJBgNVBAYTAlVTMB4XDTIwMDQxNjAwMDAwMFoXDDI1
+    fakeexternalcadatafakeexternalcadatafakeexternalcadatafakeextern00
+    -----END CERTIFICATE-----
 ---
 # Fake hub-minted client cert for THIS cluster (per-cluster: <prefix>-client-<managedClusterName>),
 # produced on the hub by policy-external-secrets-operator-hub-bootstrap-trust (cert-manager Certificate

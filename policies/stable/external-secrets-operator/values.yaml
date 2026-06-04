@@ -38,10 +38,53 @@ externalSecretsOperator:
   hubServer: ''                              # default hub apiserver URL (e.g. https://api.hub.example.com:6443)
   hubBootstrapStorePrefix: hub-bootstrap     # names the store + the minted/copied Secrets/ConfigMaps
   hubBootstrapClientCAConfigMap: ''          # openshift-config CM the hub apiserver clientCA points at (default <prefix>-client-ca)
+  # ---- Trust mode -------------------------------------------------------------------------------
+  # Selects WHO mints the client cert the spoke authenticates with and WHAT the hub apiserver
+  # clientCA trusts. Per-deployment override: config.eso.hubBootstrap.mode. Pick ONE mode per hub:
+  # APIServer.spec.clientCA is a single field, so deployments sharing a hub must agree on the mode.
+  #   selfSigned (default) — the hub mints a self-signed CA (cert-manager) + one client cert per
+  #       cluster (CN derived) and copies each to its spoke; hub clientCA <- that minted CA. Fully
+  #       self-contained, no external PKI. Handled by policy ...-hub-bootstrap-trust.
+  #   externalCA — both clusters chain to a shared EXTERNAL CA. The SPOKE mints its own client cert
+  #       via a user-provided ClusterIssuer (key never leaves the spoke; CN derived the SAME way from
+  #       .ManagedClusterName so it matches the hub RBAC); hub clientCA <- the external CA bundle
+  #       (static, below). No hub-minted CA. Handled by policy ...-hub-bootstrap-trust-external.
+  #   externalCAReuseServingCert — externalCA, but instead of minting a client cert the spoke REUSES
+  #       its existing apiserver SERVING cert (+key) as the client cert. SECURITY BLAST RADIUS: this
+  #       replicates the apiserver private key into the ESO namespace — only enable when a customer
+  #       explicitly cannot mint/issue a dedicated client cert. PRECONDITIONS (the policy cannot
+  #       verify these; if unmet, client auth fails at the TLS layer or RBAC never matches):
+  #         1. EKU: the serving cert MUST carry clientAuth (or anyExtendedKeyUsage) in addition to
+  #            serverAuth — a serverAuth-only cert is REJECTED by the hub apiserver's mTLS handshake.
+  #         2. IDENTITY: the hub binds RBAC to the cluster's registered apiserver host
+  #            (ManagedCluster spec.managedClusterClientConfigs[].url host). The kube-apiserver maps a
+  #            client cert to its Subject CN, so the serving cert's Subject CN MUST equal that host.
+  #            If the cert puts the host only in SANs with a generic/empty CN, RBAC will not match.
+  hubBootstrapMode: selfSigned               # selfSigned | externalCA | externalCAReuseServingCert
+  # External CA bundle the hub apiserver clientCA trusts (externalCA / externalCAReuseServingCert).
+  # The trust policy reads this ConfigMap on the hub at runtime and materializes it into the
+  # openshift-config clientCA ConfigMap above. REQUIRED in both external modes. Per-deployment
+  # overrides under config.eso.hubBootstrap.externalClientCA.{namespace,name,key}.
+  hubBootstrapExternalClientCANamespace: openshift-config  # namespace of the external CA bundle CM
+  hubBootstrapExternalClientCAName: ''                     # name of the external CA bundle CM (REQUIRED in external modes)
+  hubBootstrapExternalClientCAKey: ca-bundle.crt           # key in that CM holding the PEM bundle
+  # Spoke ClusterIssuer the spoke uses to mint its own client cert (externalCA mode only). Must be
+  # user-provided (a precondition) and chained to the shared external CA. Per-deployment overrides
+  # under config.eso.hubBootstrap.spokeIssuer.{name,kind,group}.
+  hubBootstrapSpokeIssuerName: ''            # ClusterIssuer/Issuer name (REQUIRED in externalCA mode)
+  hubBootstrapSpokeIssuerKind: ClusterIssuer # ClusterIssuer or Issuer
+  hubBootstrapSpokeIssuerGroup: cert-manager.io
   # Cert tuning DEFAULTS. The actual per-deployment values are read by the hub trust policy from
   # config.eso.hubBootstrap.{certCNPrefix,certDuration,certRenewBefore} (rendered-config-driven);
   # these only apply when that config omits them.
-  hubBootstrapCertCNPrefix: autoshift-eso-client  # client cert CN = <prefix>-<namespace>
+  hubBootstrapCertCNPrefix: autoshift-eso-client  # client cert CN prefix; full CN = <prefix>.<managedClusterName>.<baseDomain>
+  hubBootstrapCertBaseDomain: ''             # client cert CN base domain (FQDN tail); REQUIRED when the hub-bootstrap
+                                             # trust flow is in use. CN = <prefix>.<managedClusterName>.<baseDomain>, capped at
+                                             # 63 chars: the managedClusterName segment is TRUNCATED to whatever budget the
+                                             # prefix + baseDomain leave (61 minus their lengths, the 2 dots counted). Per-cluster
+                                             # override: config.eso.hubBootstrap.baseDomain. KNOWN LIMITATION: if prefix+baseDomain
+                                             # leave no room the policy FAILS; and two clusters whose names share the surviving
+                                             # truncation budget would collide — the trust policy detects that and FAILS loudly.
   hubBootstrapCertDuration: 720h             # cert-manager Certificate duration for client certs (default 30d)
   hubBootstrapCertRenewBefore: 480h          # cert-manager renewBefore window (default 20d)
   certManagerResourceNamespace: cert-manager # cert-manager "cluster resource namespace" (CA Secret lives here)

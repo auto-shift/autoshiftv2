@@ -402,6 +402,37 @@ hubClusterSets:
         hubBootstrap:
           hubServer: 'https://api.hub.example.com:6443'  # hub apiserver URL
           storeName: hub-bootstrap                   # ClusterSecretStore name created on the spoke
+          # Trust mode — WHO mints the client cert + WHAT the hub clientCA trusts. Default selfSigned
+          # (shown below). Pick ONE mode per hub (APIServer.spec.clientCA is a single field). See the
+          # chart values.yaml hubBootstrapMode for the full description + the externalCAReuseServingCert
+          # security blast radius + EKU/CN preconditions.
+          # mode: selfSigned   # selfSigned (default) | externalCA | externalCAReuseServingCert
+          #
+          # --- externalCA: spoke mints its own cert via a user-provided issuer chained to a shared
+          #     external CA; hub clientCA <- that external CA bundle. Requires baseDomain (the spoke
+          #     derives the same CN), spokeIssuer (precondition: customer provisions it), and the
+          #     externalClientCA bundle the hub should trust. Example:
+          #   mode: externalCA
+          #   spokeIssuer:
+          #     name: shared-ca-issuer       # user-provided ClusterIssuer/Issuer chained to the external CA
+          #     kind: ClusterIssuer          # ClusterIssuer or Issuer
+          #     group: cert-manager.io
+          #   externalClientCA:
+          #     namespace: openshift-config  # where the external CA bundle ConfigMap lives
+          #     name: external-shared-ca     # the external CA bundle the hub apiserver clientCA trusts
+          #     key: ca-bundle.crt
+          #
+          # --- externalCAReuseServingCert: the spoke REUSES its existing apiserver serving cert (+key)
+          #     as the client cert (no cert minted). SECURITY BLAST RADIUS — replicates the apiserver
+          #     private key into the ESO namespace; only use when the customer cannot issue a dedicated
+          #     client cert. PRECONDITIONS: serving cert must carry clientAuth EKU, and its Subject CN
+          #     must equal the cluster's registered apiserver host. Needs only externalClientCA (above);
+          #     no baseDomain/spokeIssuer (identity is the discovered host). Example:
+          #   mode: externalCAReuseServingCert
+          #   externalClientCA:
+          #     namespace: openshift-config
+          #     name: external-shared-ca
+          #     key: ca-bundle.crt
           # Hub-side PKI tuning, read by policy-external-secrets-operator-hub-bootstrap-trust on the
           # hub (defaults come from the chart values.yaml; set here to tune per deployment).
           certCNPrefix: autoshift-eso-client         # client cert CN prefix
