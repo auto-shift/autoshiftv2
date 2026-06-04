@@ -35,7 +35,15 @@ externalSecretsOperator:
   # ours (no chasing a Red-Hat-managed signer). The only cost is a one-time kube-apiserver rollout
   # when clientCA is first set. Multi-deployment safe: the CA / issuers / clientCA ConfigMap have
   # stable names, so every deployment declares the same shared CA (idempotent).
-  hubServer: ''                              # default hub apiserver URL (e.g. https://api.hub.example.com:6443)
+  hubServer: ''                              # hub apiserver URL (e.g. https://api.hub.example.com:6443). Required
+                                             # unless hubBootstrapDeriveHubUrl (below) is true. Per-cluster override:
+                                             # config.eso.hubBootstrap.hubServer.
+  hubBootstrapDeriveHubUrl: false            # if true AND hubServer is empty, the hub-bootstrap copy policy looks the
+                                             # hub apiserver URL up itself (hub-template lookup of Infrastructure.status.
+                                             # apiServerURL). This REQUIRES granting the hub-template service account read
+                                             # on config.openshift.io/Infrastructure — by enabling this you assert that
+                                             # access exists. Default false: the policy makes no hub lookup and uses
+                                             # hubServer. Per-cluster override: config.eso.hubBootstrap.deriveHubUrl.
   hubBootstrapStorePrefix: hub-bootstrap     # names the store + the minted/copied Secrets/ConfigMaps
   hubBootstrapClientCAConfigMap: ''          # openshift-config CM the hub apiserver clientCA points at (default <prefix>-client-ca)
   # ---- Trust mode -------------------------------------------------------------------------------
@@ -78,8 +86,10 @@ externalSecretsOperator:
   # config.eso.hubBootstrap.{certCNPrefix,certDuration,certRenewBefore} (rendered-config-driven);
   # these only apply when that config omits them.
   hubBootstrapCertCNPrefix: autoshift-eso-client  # client cert CN prefix; full CN = <prefix>.<managedClusterName>.<baseDomain>
-  hubBootstrapCertBaseDomain: ''             # client cert CN base domain (FQDN tail); REQUIRED when the hub-bootstrap
-                                             # trust flow is in use. CN = <prefix>.<managedClusterName>.<baseDomain>, capped at
+  hubBootstrapCertBaseDomain: ''             # client cert CN base domain (FQDN tail). selfSigned: defaults to
+                                             # autoshift.io (origin marker; certs never leave the autoshift trust domain).
+                                             # externalCA: REQUIRED (no default) — the CN must satisfy the customer PKI.
+                                             # CN = <prefix>.<managedClusterName>.<baseDomain>, capped at
                                              # 63 chars: the managedClusterName segment is TRUNCATED to whatever budget the
                                              # prefix + baseDomain leave (61 minus their lengths, the 2 dots counted). Per-cluster
                                              # override: config.eso.hubBootstrap.baseDomain. KNOWN LIMITATION: if prefix+baseDomain
