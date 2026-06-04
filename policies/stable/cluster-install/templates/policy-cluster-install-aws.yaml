@@ -49,7 +49,11 @@ spec:
             {{ "{{-" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
             {{ "{{-" }} $platform := (index $ci "platform" | default "baremetal") {{ "}}" }}
             {{ "{{-" }} if and (eq (index $ci "createCluster" | default "") "true") (eq $platform "aws") (or (empty $mc) (eq $mcOwningNs $cm.metadata.namespace)) {{ "}}" }}
-            {{ "{{-" }} $baseDomain := (index $ci "baseDomain") {{ "}}" }}
+            {{ "{{-" }} $baseDomain := (index $ci "baseDomain" | default "") {{ "}}" }}
+            {{ "{{-" }} if not $baseDomain {{ "}}" }}
+            {{ "{{-" }} $hubDNS := (lookup "config.openshift.io/v1" "DNS" "" "cluster") | default dict {{ "}}" }}
+            {{ "{{-" }} $baseDomain = (splitList "." (dig "spec" "baseDomain" "" $hubDNS) | rest | join ".") {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion") {{ "}}" }}
             {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
             {{ "{{-" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}

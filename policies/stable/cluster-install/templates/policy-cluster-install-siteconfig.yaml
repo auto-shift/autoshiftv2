@@ -55,7 +55,11 @@ spec:
                 {{ "{{-" }} if (eq $workerCount 0) {{ "}}" }}
                   {{ "{{-" }} $workerCount = (sub (len (keys $hosts)) $controlPlaneCount) {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $baseDomain := (index $ci "baseDomain") {{ "}}" }}
+                {{ "{{-" }} $baseDomain := (index $ci "baseDomain" | default "") {{ "}}" }}
+                {{ "{{-" }} if not $baseDomain {{ "}}" }}
+                {{ "{{-" }} $hubDNS := (lookup "config.openshift.io/v1" "DNS" "" "cluster") | default dict {{ "}}" }}
+                {{ "{{-" }} $baseDomain = (splitList "." (dig "spec" "baseDomain" "" $hubDNS) | rest | join ".") {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} $fips := (index $ci "fips" | default false) {{ "}}" }}
                 {{ "{{-" }} $managedClusterSet := (printf "%s{{ $.Values.clusterSetSuffix | default "" }}" (index $config "clusterSet" | default "default")) {{ "}}" }}
                 {{ "{{-" }} $sshPublicKey := (index $ci "sshPublicKey" | default "") {{ "}}" }}
