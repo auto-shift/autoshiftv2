@@ -7,6 +7,107 @@ This policy installs the external-secrets-operator operator using AutoShift patt
 ✅ **Operator Installation**: Ready to deploy  
 🔧 **Configuration**: Requires operator-specific setup (see below)
 
+## Architecture: cross-cluster cert auth flow
+
+For the cluster→cluster bootstrap, an ESO `kubernetes`-provider store on a **spoke** reads
+Secrets straight from the **hub** apiserver over **mutual TLS**. Two independent trust chains
+are minted on the hub and meet at the spoke's store:
+
+- **Client identity (blue)** — the spoke *proves who it is* to the hub. A self-signed
+  bootstrap CA signs one client cert **per AutoShift namespace** (CN scoped, RBAC'd to read
+  Secrets in that namespace only); the CA is wired **additively** into the hub
+  `APIServer.spec.clientCA` so the hub accepts those certs.
+- **Server trust (green)** — the spoke *trusts the cert the hub presents*. The hub's existing
+  serving CA is **discovered** (a matching `namedCertificates` entry if one serves the
+  apiserver host, else the operator-managed signer) and shipped to the spoke as the store's
+  `caProvider`. Nothing about the hub's serving setup is overwritten; no extra DNS is required.
+
+```mermaid
+flowchart TB
+  classDef client fill:#e3f2fd,stroke:#1565c0,color:#0d2c54;
+  classDef serve  fill:#e8f5e9,stroke:#2e7d32,color:#14361b;
+  classDef wire   fill:#fff3e0,stroke:#e65100,color:#4a2500;
+  classDef store  fill:#f3e5f5,stroke:#6a1b9a,color:#2e0a3d;
+
+  subgraph HUB["HUB cluster — placed on hubClusterSets only"]
+    direction TB
+
+    subgraph SIGN["CLIENT-SIGNING CHAIN · policy hub-bootstrap-trust (runtime, cluster-admin)"]
+      direction TB
+      A1["ClusterIssuer hub-bootstrap-selfsigned<br/>selfSigned"]:::client
+      A2["Certificate hub-bootstrap-ca (isCA)<br/>Secret hub-bootstrap-ca @ cert-manager<br/><b>the bootstrap CA — long-lived root</b>"]:::client
+      A3["ClusterIssuer hub-bootstrap-ca-issuer<br/>ca: hub-bootstrap-ca"]:::client
+      A4["PER AutoShift namespace (label createdByAutoshift=true):<br/>Certificate hub-bootstrap-client · CN = certCNPrefix-NS<br/>+ Role/RoleBinding hub-bootstrap-reader<br/>CN gets read on Secrets in THAT ns only"]:::client
+      A1 -->|signs| A2 -->|backs| A3 -->|issues per-ns client cert| A4
+    end
+
+    subgraph WIRE["clientCA wiring (additive — operator signers stay trusted)"]
+      direction TB
+      W1["ConfigMap hub-bootstrap-client-ca @ openshift-config<br/>= CA ca.crt"]:::wire
+      W2["APIServer/cluster · spec.clientCA.name<br/>hub now TRUSTS certs signed by the bootstrap CA"]:::wire
+      W1 --> W2
+    end
+    A2 -->|ca.crt| W1
+
+    subgraph SERVE["SERVING-CA DISCOVERY · policy hub-bootstrap-serving-ca (runtime)"]
+      direction TB
+      S0["lookup APIServer/cluster + Infrastructure/cluster<br/>derive apiServerURL host"]:::serve
+      S1{"namedCertificates entry<br/>whose names match the host?"}:::serve
+      S2["YES → fromSecret openshift-config/NAMEDCERT tls.crt<br/>(leaf+intermediate chain; pins current serving leaf)"]:::serve
+      S3["NO → fromConfigMap openshift-config-managed/<br/>kube-apiserver-server-ca (operator-managed signer)<br/>(rotation-clean default)"]:::serve
+      S4["ConfigMap hub-bootstrap-hub-ca @ policy ns<br/>ca.crt = discovered serving CA"]:::serve
+      S0 --> S1
+      S1 -->|custom cert| S2 --> S4
+      S1 -->|no match| S3 --> S4
+    end
+  end
+
+  subgraph COPY["COPY · policy hub-bootstrap (HUB templates read policy ns → write spoke ESO ns)"]
+    direction TB
+    C1["Secret hub-bootstrap-client @ spoke ESO ns<br/>(client cert+key, from the deployment's policy ns)"]:::client
+    C2["ConfigMap hub-bootstrap-hub-ca @ spoke ESO ns<br/>(serving CA ca.crt)"]:::serve
+  end
+  A4 -. cert/key Secret lives in policy ns .-> C1
+  S4 -->|copied| C2
+
+  subgraph SPOKE["SPOKE cluster — ESO consumes both halves"]
+    direction TB
+    ST["ClusterSecretStore (hub-bootstrap)<br/>provider.kubernetes.server.url = hubServer<br/>caProvider → hub-bootstrap-hub-ca / ca.crt  (SERVER trust)<br/>auth.cert → hub-bootstrap-client tls.crt/tls.key  (CLIENT id)<br/>remoteNamespace = policy ns"]:::store
+    ES["ExternalSecrets → read Secrets from hub through the store"]:::store
+    ST --> ES
+  end
+  C1 -->|auth.cert| ST
+  C2 -->|caProvider| ST
+
+  ST ==>|"presents client cert → validated by spec.clientCA"| W2
+  ST ==>|"verifies hub serving cert ← ca.crt"| S4
+```
+
+> **Serving-cert rotation (named-cert path only).** The named-cert branch ships `tls.crt` —
+> the **serving leaf chain**, not the issuing CA — so the spoke pins the current leaf. When the
+> hub rotates its serving cert the spoke briefly distrusts it, then **self-heals**: the
+> serving-ca policy re-discovers the new cert and the copy policy re-ships it as the store's
+> `caProvider`. Recovery is a **two-hop** chain (serving-ca re-stash → copy re-ship), and each
+> hop's *detection* latency is its **compliant** `evaluationInterval` (default 10m), not the 30s
+> noncompliant one — so the fail-window can be tens of minutes with defaults. During it,
+> already-synced Secrets persist; only refreshes/new pulls error. The **default-signer path has
+> no such window** (it ships the CA bundle, not a leaf). To avoid leaf-pinning with a custom
+> serving cert, point `hubCASource{Namespace,Name,Key}` at a stable CA bundle.
+
+The **generic `server-ca-trust`** policy is the same server-trust pattern, decoupled from the
+bootstrap hub — for a *user-defined* store reading an *arbitrary* remote apiserver. It lands in
+the per-cluster `<ManagedClusterName>` namespace instead of the ESO namespace:
+
+```mermaid
+flowchart LR
+  classDef serve fill:#e8f5e9,stroke:#2e7d32,color:#14361b;
+  classDef store fill:#f3e5f5,stroke:#6a1b9a,color:#2e0a3d;
+  G1["hub ConfigMap (serverCATrust.source)<br/>namespace/name/key = remote serving CA"]:::serve
+  G2["ConfigMap remote-ca @ ManagedClusterName ns<br/>key ca.crt · policy server-ca-trust"]:::serve
+  G3["user ClusterSecretStore/SecretStore · policy stores<br/>caProvider → remote-ca/ca.crt<br/>(namespace auto-filled = ManagedClusterName)"]:::store
+  G1 -->|hub fromConfigMap → copy| G2 -->|caProvider| G3
+```
+
 ## Quick Deploy
 
 ### Test Locally
