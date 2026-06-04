@@ -119,7 +119,16 @@ apiVersion: config.openshift.io/v1
 kind: APIServer
 metadata:
   name: cluster
-spec: {}
+spec:
+  # Custom serving cert for the external apiserver host (matches Infrastructure.status.apiServerURL
+  # in cluster-infrastructure.yaml). policy-external-secrets-operator-hub-bootstrap-serving-ca reads
+  # this at runtime to prefer the named cert's chain over the operator-managed serving CA.
+  servingCerts:
+    namedCertificates:
+      - names:
+          - api.test-cluster.test.example.com
+        servingCertificate:
+          name: hub-serving-cert
 ---
 # Proxy — registers config.openshift.io/v1 Proxy
 apiVersion: config.openshift.io/v1

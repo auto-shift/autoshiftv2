@@ -1,0 +1,72 @@
+---
+# AutoShift policy namespace (tenancy boundary). policy-external-secrets-operator-hub-bootstrap-trust
+# enumerates namespaces carrying this label and issues one client cert + reader RBAC into each.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: policies-autoshift
+  labels:
+    autoshift.io/createdByAutoshift: "true"
+---
+# Fake hub-minted client cert for this deployment (one per policy namespace), produced on the hub
+# by policy-external-secrets-operator-hub-bootstrap-trust (cert-manager Certificate secretName
+# hub-bootstrap-client, in the policy namespace). policy-external-secrets-operator-hub-bootstrap
+# copies it whole into the spoke ESO namespace for the kubernetes-provider store's cert auth.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hub-bootstrap-client
+  namespace: policies-autoshift
+type: kubernetes.io/tls
+data:
+  # tls.crt: fake-hub-bootstrap-client-cert-not-real
+  tls.crt: ZmFrZS1odWItYm9vdHN0cmFwLWNsaWVudC1jZXJ0LW5vdC1yZWFs
+  # tls.key: fake-hub-bootstrap-client-key-not-real
+  tls.key: ZmFrZS1odWItYm9vdHN0cmFwLWNsaWVudC1rZXktbm90LXJlYWw=
+  # ca.crt: fake-hub-bootstrap-ca-not-real
+  ca.crt: ZmFrZS1odWItYm9vdHN0cmFwLWNhLW5vdC1yZWFs
+---
+# Hub serving CA stashed in the policy namespace by policy-external-secrets-operator-hub-bootstrap-serving-ca
+# (resolved at runtime on the hub). policy-external-secrets-operator-hub-bootstrap copies this
+# (hub fromConfigMap on the policy namespace) into the spoke so the store trusts the hub TLS.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hub-bootstrap-hub-ca
+  namespace: policies-autoshift
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIBpTCCAUugAwIBAgIUfakecert001000000000000010fakestashedcaFAKE01
+    Mao0GCCqGSM49BAMCMA0xCzAJBgNVBAYTAlVTMB4XDTIwMDQxNjAwMDAwMFoXDDI1
+    fakestashedcadatafakestashedcadatafakestashedcadatafakestashedca0
+    -----END CERTIFICATE-----
+---
+# Fake custom serving cert (chain in tls.crt) referenced by the APIServer named certificate in
+# cluster-openshift-resources.yaml (which matches Infrastructure.status.apiServerURL host in
+# cluster-infrastructure.yaml). policy-external-secrets-operator-hub-bootstrap-serving-ca resolves
+# this at runtime on the hub and stashes tls.crt into the policy-namespace serving-CA ConfigMap.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hub-serving-cert
+  namespace: openshift-config
+type: kubernetes.io/tls
+data:
+  # tls.crt: fake named serving cert chain (PEM)
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmYWtlTkFNRURjZXJ0MTExc2VydmluZzExMW5hbWVkY2VydDExMWZvcmFwaWh1YmV4YW1wbGUxMTFGQUtFMTEKZmFrZW5hbWVkc2VydmluZ2NlcnRjaGFpbmRhdGFmYWtlbmFtZWRzZXJ2aW5nY2VydGNoYWluZGF0YWZha2VkYXRhMQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
+  tls.key: ZmFrZS1odWItc2VydmluZy1rZXktbm90LXJlYWw=
+---
+# Operator-managed serving-CA bundle — the serving-ca policy's fallback when no named cert matches.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-apiserver-server-ca
+  namespace: openshift-config-managed
+data:
+  ca-bundle.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIBpTCCAUugAwIBAgIUfakecert002000000000000020fakeservingcaFAKE002
+    Mao0GCCqGSM49BAMCMA0xCzAJBgNVBAYTAlVTMB4XDTIwMDQxNjAwMDAwMFoXDDI1
+    fakeservingcadatafakeservingcadatafakeservingcadatafakeservingca00
+    -----END CERTIFICATE-----

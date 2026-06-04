@@ -180,6 +180,248 @@ hubClusterSets:
             - '10.0.0.2'
           search:
             - 'example.com'
+      # Default namespace ESO writes provisioned Secrets into. Top-level config key;
+      # appended to externalSecretsOperator.secretReaderNamespaces for the secret-reader
+      # RBAC (policy-external-secrets-operator-secret-reader).
+      defaultSecretsNamespace: 'app-secrets'
+      # =======================================================================
+      # External Secrets Operator (SecretStore / ClusterSecretStore objects)
+      # Read via rendered-config ConfigMap. List of single-key items keyed by
+      # kind — clusterSecretStore (cluster-scoped) or secretStore (namespaced).
+      # spec is the ESO SecretStoreSpec (authoritative). authSecretConfig (optional)
+      # provisions the Secret an auth ref points at: fromRef names which ref in spec
+      # to mirror, source is the hub Secret to copy the value from.
+      # Two policies read this list: policy-external-secrets-operator-stores
+      # creates the store objects + auth Secrets; ...-cert-auth-rbac creates the
+      # RBAC for kubernetes-provider cert auth (driven by certAuthRBAC below).
+      # =======================================================================
+      externalSecretsOperator:
+        # Namespaces the secret-reader ServiceAccount is granted read on (defaultSecretsNamespace
+        # is appended automatically). Consumed by policy-external-secrets-operator-secret-reader.
+        secretReaderNamespaces:
+          - 'team-a'
+          - 'team-b'
+        # Deliver a remote apiserver's SERVING CA to a consuming cluster so a kubernetes-provider
+        # store can TRUST the remote it reads from (the store's caProvider is the consumer — NOT the
+        # local apiserver). source is a ConfigMap on the HUB holding the CA bundle; it is copied to
+        # the <ManagedClusterName> namespace on the spoke (the per-cluster namespace ACM auto-creates)
+        # under key ca.crt. No apiserver change. Consumed by policy-external-secrets-operator-server-ca-trust.
+        # configMapName must match the paired store's caProvider.name below.
+        serverCATrust:
+          source:
+            namespace: 'eso-trust'        # hub namespace holding the remote serving CA bundle
+            name: eso-client-ca
+            key: ca-bundle.crt
+          configMapName: remote-ca         # destination CM name in the <ManagedClusterName> ns (default remote-ca)
+      eso:
+        secretStores:
+          - clusterSecretStore:
+              name: vault-backend
+              spec:
+                provider:
+                  vault:
+                    server: 'https://vault.example.com:8200'
+                    path: 'secret'
+                    version: 'v2'
+                    auth:
+                      kubernetes:                    # SA-based; no static secret -> no authSecretConfig
+                        mountPath: 'kubernetes'
+                        role: 'eso-reader'
+                        serviceAccountRef:
+                          name: 'external-secrets'
+                          namespace: 'external-secrets-operator'
+          - secretStore:
+              name: vault-backend
+              namespace: 'team-a'
+              # spec is authoritative: the tokenSecretRef below is written normally.
+              # sources maps the component (tokenSecretRef) to its hub source. One keyed
+              # entry -> copy that key into the ref's key (per-component path).
+              authSecretConfig:
+                fromRef: vaultToken
+                sources:
+                  tokenSecretRef: { namespace: 'eso-auth-secrets', name: vault-token, key: token }
+              spec:
+                provider:
+                  vault:
+                    server: 'https://vault.example.com:8200'
+                    path: 'secret'
+                    version: 'v2'
+                    auth:
+                      tokenSecretRef:                # Secret resolves in the store's namespace (team-a)
+                        name: vault-token
+                        key: token
+          - clusterSecretStore:
+              name: vault-approle
+              # Single keyless source: one entry with no `key` -> whole-Secret copy. All
+              # refs the fromRef covers (here only secretRef; roleId is inline) must point
+              # at the same target Secret. The CSS ref must carry .namespace so the Secret
+              # is provisioned in one place.
+              authSecretConfig:
+                fromRef: vaultAppRole
+                sources:                              # no key -> whole Secret (e.g. secret-id)
+                  secretRef: { namespace: 'eso-auth-secrets', name: approle-creds }
+              spec:
+                provider:
+                  vault:
+                    server: 'https://vault.example.com:8200'
+                    path: 'secret'
+                    version: 'v2'
+                    auth:
+                      appRole:
+                        path: 'approle'
+                        roleId: '00000000-1111-2222-3333-444444444444'
+                        secretRef:
+                          name: approle-creds
+                          key: secret-id
+                          namespace: 'external-secrets-operator'   # CSS: where the Secret is provisioned
+          # Vault IAM (AWS): the cred refs nest under auth.iam.secretRef, so each component
+          # path is [secretRef, <ref>]. Both name aws-iam-creds -> merge into one Secret.
+          - clusterSecretStore:
+              name: vault-iam
+              authSecretConfig:
+                fromRef: vaultIam
+                sources:
+                  accessKeyID:     { namespace: 'eso-auth-secrets', name: aws-iam-creds, key: access-key-id }
+                  secretAccessKey: { namespace: 'eso-auth-secrets', name: aws-iam-creds, key: secret-access-key }
+              spec:
+                provider:
+                  vault:
+                    server: 'https://vault.example.com:8200'
+                    path: 'secret'
+                    version: 'v2'
+                    auth:
+                      iam:
+                        path: 'aws'
+                        vaultRole: 'my-vault-aws-role'
+                        region: 'us-east-1'
+                        secretRef:
+                          accessKeyIDSecretRef:     { name: aws-iam-creds, key: access-key-id, namespace: 'external-secrets-operator' }
+                          secretAccessKeySecretRef: { name: aws-iam-creds, key: secret-access-key, namespace: 'external-secrets-operator' }
+          # Kubernetes provider: read native Secrets from a remote cluster's API server.
+          # caProvider.namespace is omitted -> defaults to the <ManagedClusterName> namespace where
+          # server-ca-trust delivers the remote serving CA (set it explicitly to override). name must
+          # match serverCATrust.configMapName above.
+          - clusterSecretStore:
+              name: remote-cluster
+              spec:
+                provider:
+                  kubernetes:
+                    server:
+                      url: 'https://remote-apiserver.example.com:6443'
+                      caProvider:
+                        type: ConfigMap
+                        name: remote-ca
+                        key: ca.crt
+                    remoteNamespace: 'shared-secrets'
+                    auth:
+                      serviceAccount:
+                        name: eso-remote-reader
+                        namespace: 'external-secrets-operator'
+          # Kubernetes provider + cert auth: the policy generates RBAC granting the cert
+          # CN (certAuthRBAC.username) secret access. ClusterSecretStore with no scoping
+          # -> ClusterRole + ClusterRoleBinding (cluster-wide).
+          - clusterSecretStore:
+              name: remote-cert-clusterwide
+              certAuthRBAC:
+                username: 'eso-remote-cert-cn'      # CN of the client cert = RBAC subject
+              spec:
+                provider:
+                  kubernetes:
+                    server:
+                      url: 'https://remote-apiserver.example.com:6443'
+                    remoteNamespace: 'shared-secrets'
+                    auth:
+                      cert:
+                        clientCert:
+                          name: eso-remote-cert
+                          key: tls.crt
+                        clientKey:
+                          name: eso-remote-cert
+                          key: tls.key
+          # ClusterSecretStore scoped via conditions -> ClusterRole + a RoleBinding per
+          # listed namespace (RBAC can't express label selectors, so explicit names only).
+          - clusterSecretStore:
+              name: remote-cert-scoped
+              certAuthRBAC:
+                username: 'eso-scoped-cert-cn'
+              spec:
+                conditions:
+                  - namespaces:
+                      - team-a
+                      - team-b
+                provider:
+                  kubernetes:
+                    server:
+                      url: 'https://remote-apiserver.example.com:6443'
+                    remoteNamespace: 'shared-secrets'
+                    auth:
+                      cert:
+                        clientCert: { name: eso-scoped-cert, key: tls.crt }
+                        clientKey: { name: eso-scoped-cert, key: tls.key }
+          # SecretStore + cert auth. certAuthRBAC -> Role + RoleBinding (cert CN access).
+          # Single keyless source: clientCert + clientKey both name eso-ns-cert, so they
+          # share one target Secret and the whole hub Secret (tls.crt + tls.key) is copied
+          # into it. If the two refs named different Secrets, this would be rejected — use a
+          # per-component `sources` map with keys for that.
+          - secretStore:
+              name: remote-cert-namespaced
+              namespace: 'team-a'
+              certAuthRBAC:
+                username: 'eso-ns-cert-cn'
+                verbs: [create, update, list, delete, get]   # optional override
+              authSecretConfig:
+                fromRef: kubernetesCert
+                sources:                              # no key -> whole Secret (tls.crt + tls.key)
+                  clientCert: { namespace: 'eso-auth-secrets', name: eso-ns-cert-src }
+              spec:
+                provider:
+                  kubernetes:
+                    server:
+                      url: 'https://remote-apiserver.example.com:6443'
+                    remoteNamespace: 'app-secrets'
+                    auth:
+                      cert:
+                        clientCert: { name: eso-ns-cert, key: tls.crt }
+                        clientKey: { name: eso-ns-cert, key: tls.key }
+        # =======================================================================
+        # Cluster->cluster bootstrap: stand the HUB up as a kubernetes-provider
+        # ClusterSecretStore on this spoke, authenticated by a cert-manager-minted,
+        # auto-rotating client cert the hub apiserver trusts. Separate from
+        # secretStores above. Two policies read this:
+        #   policy-external-secrets-operator-hub-bootstrap-trust  (runs on the hub)
+        #     mints, per AutoShift deployment (= per policy namespace), one client cert
+        #     signed by a cert-manager self-signed CA wired into the hub apiserver clientCA
+        #     trust, and grants its CN read on Secrets in that namespace only. No per-cluster
+        #     config — it enumerates the autoshift.io/createdByAutoshift namespaces itself.
+        #   policy-external-secrets-operator-hub-bootstrap        (runs on the spoke)
+        #     copies the client cert + hub serving CA, builds the store, and
+        #     creates the ExternalSecrets below against it.
+        # The cert identity + the namespace it reads are fixed by the deployment, so this
+        # block sets no certCN / remoteNamespace.
+        # =======================================================================
+        hubBootstrap:
+          hubServer: 'https://api.hub.example.com:6443'  # hub apiserver URL
+          storeName: hub-bootstrap                   # ClusterSecretStore name created on the spoke
+          # Hub-side PKI tuning, read by policy-external-secrets-operator-hub-bootstrap-trust on the
+          # hub (defaults come from the chart values.yaml; set here to tune per deployment).
+          certCNPrefix: autoshift-eso-client         # client cert CN = <prefix>-<namespace>
+          certDuration: 720h                         # client cert lifetime (cert-manager rotates it)
+          certRenewBefore: 480h                      # renew window before expiry
+          # The hub apiserver serving CA is resolved on the hub itself by the hub-bootstrap-serving-ca
+          # policy (custom named cert -> operator-managed CA) and stashed in the policy namespace, so
+          # there is no per-cluster serving-CA config here.
+          externalSecrets:                           # pulled from the hub through the bootstrap store
+            - name: app-secrets
+              namespace: 'app-secrets'
+              refreshInterval: 1h
+              target:
+                name: app-secrets
+                creationPolicy: Owner
+              data:
+                - secretKey: db_password
+                  remoteRef:
+                    key: app-db
+                    property: password
     labels:
       # =======================================================================
       # Core Configuration

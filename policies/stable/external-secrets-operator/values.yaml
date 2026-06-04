@@ -17,27 +17,79 @@ externalSecretsOperator:
   # from config.externalSecretsOperator.secretReaderNamespaces + config.defaultSecretsNamespace.
   secretReaderName: secret-reader
 
+  # ---- Cluster->cluster hub bootstrap (policy-external-secrets-operator-hub-bootstrap*.yaml) ----
+  # Stands the hub up as a kubernetes-provider ClusterSecretStore on each spoke, authenticated
+  # with a cert-manager-minted, auto-rotating client cert that the hub apiserver trusts.
+  #
+  # Tenancy: the hub-side policy issues ONE client cert per AutoShift deployment — it enumerates
+  # the policy namespaces labelled autoshift.io/createdByAutoshift: "true" and, into each, mints a
+  # cert with CN "<hubBootstrapCertCNPrefix>-<namespace>" plus a Role/RoleBinding granting that CN
+  # read on Secrets in that namespace ONLY. So a deployment's spokes share one identity that is
+  # isolated to that deployment's namespace and cannot read across tenants. A spoke copies its
+  # cert from its own policy namespace and reads Secrets from that same namespace.
+  #
+  # Trust model: cert-manager mints ONE generic self-signed CA (hub-internal key) and that CA is
+  # wired into the hub apiserver spec.clientCA. This is ADDITIVE — OpenShift merges a custom
+  # clientCA with the operator-managed client signers (csr-signer, admin, kubelet, ...), so existing
+  # client auth keeps working; we just add one more trusted issuer. The CA is long-lived and fully
+  # ours (no chasing a Red-Hat-managed signer). The only cost is a one-time kube-apiserver rollout
+  # when clientCA is first set. Multi-deployment safe: the CA / issuers / clientCA ConfigMap have
+  # stable names, so every deployment declares the same shared CA (idempotent).
+  hubServer: ''                              # default hub apiserver URL (e.g. https://api.hub.example.com:6443)
+  hubBootstrapStorePrefix: hub-bootstrap     # names the store + the minted/copied Secrets/ConfigMaps
+  hubBootstrapClientCAConfigMap: ''          # openshift-config CM the hub apiserver clientCA points at (default <prefix>-client-ca)
+  # Cert tuning DEFAULTS. The actual per-deployment values are read by the hub trust policy from
+  # config.eso.hubBootstrap.{certCNPrefix,certDuration,certRenewBefore} (rendered-config-driven);
+  # these only apply when that config omits them.
+  hubBootstrapCertCNPrefix: autoshift-eso-client  # client cert CN = <prefix>-<namespace>
+  hubBootstrapCertDuration: 720h             # cert-manager Certificate duration for client certs (default 30d)
+  hubBootstrapCertRenewBefore: 480h          # cert-manager renewBefore window (default 20d)
+  certManagerResourceNamespace: cert-manager # cert-manager "cluster resource namespace" (CA Secret lives here)
+  # Hub apiserver serving CA. The hub-bootstrap-serving-ca policy resolves this ON THE HUB at
+  # runtime: if the apiserver serves a custom named cert for its external host it trusts that cert's
+  # chain, otherwise it falls back to the operator-managed serving-CA bundle named by these keys.
+  # It stashes the result in the policy namespace; the copy policy ships it to each spoke.
+  hubCASourceNamespace: openshift-config-managed  # fallback serving-CA ConfigMap namespace
+  hubCASourceName: kube-apiserver-server-ca       # fallback serving-CA ConfigMap name
+  hubCASourceKey: ca-bundle.crt                   # fallback serving-CA ConfigMap key
+
 # Internal lookup table used by policy-external-secrets-operator-stores.yaml.
-# Maps an authSecretConfig.fromRef token -> [providerKey, ...path under
-# spec.provider.<provider>.auth to the auth ref]. This is NOT per-cluster config:
-# edit it only to teach the policy about a new auth ref. Multi-field nested creds
-# (vault iam/gcp) are intentionally omitted — provision those Secrets out of band.
+# Maps an authSecretConfig.fromRef token -> a description of the auth method's Secret refs
+# in spec. This is NOT per-cluster config: edit it only to teach the policy about a new
+# auth method. (vault iam/gcp can be added here once their ref layouts are settled.)
+#
+# Entry fields (dotted-string paths; the stores policy splits them into lists at Helm time):
+#   provider:   the spec.provider.<provider> key (vault, kubernetes, aws, azurekv, ...)
+#   base:       dotted path FROM spec.provider.<provider> to the block the components are
+#               relative to. `auth` is NOT assumed — providers that nest creds under `auth`
+#               put it here (e.g. "auth.cert"); ones that don't (e.g. Azure Key Vault's
+#               authSecretRef) just use a different base. "" means refs sit directly on the
+#               provider block.
+#   components: map of component-name -> dotted path FROM the base block to that
+#               SecretKeySelector. The name is what authSecretConfig.sources keys on; the
+#               path lets a ref be nested under intermediate keys (e.g. vault iam's
+#               secretRef.accessKeyIDSecretRef). authSecretConfig provisions each sourced
+#               component independently, reading the target Secret name/key/namespace from
+#               that component's ref in spec — so components may live in the SAME Secret
+#               (they merge) or DIFFERENT Secrets (each provisioned separately). Optional
+#               components (e.g. appRole roleRef, used only when roleId isn't inline) are
+#               simply left unsourced.
 internal:
   authRefPaths:
-    # Vault provider
-    vaultToken: [vault, tokenSecretRef]
-    vaultAppRoleSecretId: [vault, appRole, secretRef]
-    vaultAppRoleRoleId: [vault, appRole, roleRef]
-    vaultLdap: [vault, ldap, secretRef]
-    vaultUserPass: [vault, userPass, secretRef]
-    vaultJwt: [vault, jwt, secretRef]
-    vaultKubernetes: [vault, kubernetes, secretRef]
-    vaultCert: [vault, cert, secretRef]
-    vaultCertClient: [vault, cert, clientCert]
-    # Kubernetes provider
-    kubernetesToken: [kubernetes, token, bearerToken]
-    kubernetesCertClient: [kubernetes, cert, clientCert]
-    kubernetesCertKey: [kubernetes, cert, clientKey]
+    # Vault provider (creds under auth.<method>)
+    vaultToken:      { provider: vault,      base: auth,            components: { tokenSecretRef: tokenSecretRef } }
+    vaultAppRole:    { provider: vault,      base: auth.appRole,    components: { secretRef: secretRef, roleRef: roleRef } }
+    vaultLdap:       { provider: vault,      base: auth.ldap,       components: { secretRef: secretRef } }
+    vaultUserPass:   { provider: vault,      base: auth.userPass,   components: { secretRef: secretRef } }
+    vaultJwt:        { provider: vault,      base: auth.jwt,        components: { secretRef: secretRef } }
+    vaultKubernetes: { provider: vault,      base: auth.kubernetes, components: { secretRef: secretRef } }
+    vaultCert:       { provider: vault,      base: auth.cert,       components: { clientCert: clientCert, secretRef: secretRef } }
+    # iam/gcp: refs nest under an intermediate key (secretRef.<ref>) — dotted paths handle it.
+    vaultIam:        { provider: vault,      base: auth.iam,        components: { accessKeyID: secretRef.accessKeyIDSecretRef, secretAccessKey: secretRef.secretAccessKeySecretRef, sessionToken: secretRef.sessionTokenSecretRef } }
+    vaultGcp:        { provider: vault,      base: auth.gcp,        components: { secretAccessKey: secretRef.secretAccessKeySecretRef } }
+    # Kubernetes provider (creds under auth.<method>)
+    kubernetesToken: { provider: kubernetes, base: auth.token,      components: { bearerToken: bearerToken } }
+    kubernetesCert:  { provider: kubernetes, base: auth.cert,       components: { clientCert: clientCert, clientKey: clientKey } }
 
 # hubClusterSets:
 #   hub:
