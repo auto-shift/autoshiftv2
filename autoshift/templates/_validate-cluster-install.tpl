@@ -223,9 +223,7 @@ Collects all errors and reports them together.
     {{- end }}
 
     {{/* Required clusterInstall fields */}}
-    {{- if not $ci.baseDomain }}
-      {{- $errors = append $errors (printf "%s: clusterInstall.baseDomain is required" $path) }}
-    {{- end }}
+    {{/* baseDomain is optional — when empty it inherits the hub's base domain (DNS baseDomain minus the hub cluster-name label) */}}
     {{- if not $ci.openshiftVersion }}
       {{- if not $ci.clusterImageSet }}
         {{- $errors = append $errors (printf "%s: clusterInstall.openshiftVersion or clusterImageSet is required" $path) }}
