@@ -1,6 +1,5 @@
 ---
-# AutoShift policy namespace (tenancy boundary). policy-external-secrets-operator-hub-bootstrap-trust
-# enumerates namespaces carrying this label and issues one client cert + reader RBAC into each.
+# AutoShift policy namespace (tenancy boundary).
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -8,14 +7,27 @@ metadata:
   labels:
     autoshift.io/createdByAutoshift: "true"
 ---
-# Fake hub-minted client cert for this deployment (one per policy namespace), produced on the hub
-# by policy-external-secrets-operator-hub-bootstrap-trust (cert-manager Certificate secretName
-# hub-bootstrap-client, in the policy namespace). policy-external-secrets-operator-hub-bootstrap
-# copies it whole into the spoke ESO namespace for the kubernetes-provider store's cert auth.
+# ManagedCluster owned by this deployment: its cluster-tenancy-namespace label == the policy namespace,
+# so policy-external-secrets-operator-hub-bootstrap-trust mints a per-cluster client cert + RoleBinding
+# for it (CN = <prefix>.<truncated lint-cluster>.<baseDomain>). The unlabelled local-cluster fixture in
+# cluster-openshift-resources.yaml is correctly SKIPPED (no tenancy label = not an autoshift cluster).
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: lint-cluster
+  labels:
+    autoshift.io/cluster-tenancy-namespace: policies-autoshift
+spec:
+  hubAcceptsClient: true
+---
+# Fake hub-minted client cert for THIS cluster (per-cluster: <prefix>-client-<managedClusterName>),
+# produced on the hub by policy-external-secrets-operator-hub-bootstrap-trust (cert-manager Certificate
+# in the policy namespace). policy-external-secrets-operator-hub-bootstrap copies it into the spoke ESO
+# namespace under the fixed local name hub-bootstrap-client for the kubernetes-provider store's cert auth.
 apiVersion: v1
 kind: Secret
 metadata:
-  name: hub-bootstrap-client
+  name: hub-bootstrap-client-lint-cluster
   namespace: policies-autoshift
 type: kubernetes.io/tls
 data:
