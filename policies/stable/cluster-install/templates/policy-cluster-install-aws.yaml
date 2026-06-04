@@ -71,6 +71,7 @@ spec:
             {{ "{{-" }} $fips := (index $aws "fips" | default false) {{ "}}" }}
             {{ "{{-" }} $networkType := (index $aws "networkType" | default "OVNKubernetes") {{ "}}" }}
             {{ "{{-" }} $controlPlane := (index $aws "controlPlane" | default dict) {{ "}}" }}
+            {{ "{{-" }} $cpReplicas := (index $controlPlane "replicas" | default 3 | toInt) {{ "}}" }}
             {{ "{{-" }} $cpInstanceType := (index $controlPlane "instanceType" | default "m5.xlarge") {{ "}}" }}
             {{ "{{-" }} $cpRootVolume := (index $controlPlane "rootVolume" | default dict) {{ "}}" }}
             {{ "{{-" }} $cpIops := (index $cpRootVolume "iops" | default 4000 | toInt) {{ "}}" }}
@@ -117,7 +118,7 @@ spec:
                 )
                 "controlPlane" (dict
                     "name" "master"
-                    "replicas" 3
+                    "replicas" $cpReplicas
                     "platform" (dict "aws" (dict
                         "type" $cpInstanceType
                         "rootVolume" (dict "iops" $cpIops "size" $cpSize "type" $cpVolType)
