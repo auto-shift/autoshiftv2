@@ -24,8 +24,29 @@ import (
 const (
 	esoChart           = "policies/stable/external-secrets-operator"
 	trustExternalName  = "policy-eso-hub-bootstrap-trust-external"
+	trustName          = "policy-eso-hub-bootstrap-trust"
 	spokeBootstrapName = "policy-eso-hub-bootstrap"
 )
+
+// selfSigned does not require baseDomain: it defaults to autoshift.io so the minted client-cert CN
+// carries a clear origin marker without forcing the operator to set one. With no baseDomain in the
+// rendered config, the hub trust policy must still mint a per-cluster Certificate whose CN ends in
+// .autoshift.io.
+func TestHubBootstrap_SelfSignedDefaultBaseDomain(t *testing.T) {
+	raw := renderESOChart(t)
+	selected := selectPolicies(t, raw, map[string]bool{trustName: true})
+	seed := seedFor(t, map[string]interface{}{
+		"mode":      "selfSigned",
+		"hubServer": "https://api.hub.example.com:6443",
+		// deliberately NO baseDomain
+	})
+	out := resolveBoth(t, selected, seed)
+
+	wantCN := "autoshift-eso-client.lint-cluster.autoshift.io"
+	if !strings.Contains(out, "commonName: "+wantCN) {
+		t.Errorf("selfSigned: expected minted cert CN to default baseDomain to autoshift.io (%q); not found in:\n%s", wantCN, out)
+	}
+}
 
 // renderESOChart helm-templates the ESO chart with hubClusterSets enabled so the hub-only policy
 // bodies render. Mode-specific behaviour comes from the seeded rendered-config, not from values.
@@ -229,6 +250,58 @@ func TestHubBootstrap_InvalidMode(t *testing.T) {
 	}
 	if !sawMode {
 		t.Errorf("invalidMode: error did not name the bad mode value; got: %v", spoke.Errors)
+	}
+}
+
+// With deriveHubUrl enabled and no explicit hubServer, the copy policy looks the URL up itself via a
+// hub-template Infrastructure lookup; the store URL must come from Infrastructure.status.apiServerURL.
+func TestHubBootstrap_DeriveHubUrl(t *testing.T) {
+	raw := renderESOChart(t)
+	selected := selectPolicies(t, raw, map[string]bool{spokeBootstrapName: true})
+	seed := seedFor(t, map[string]interface{}{
+		"mode":         "selfSigned",
+		"deriveHubUrl": true,
+		// deliberately NO hubServer — the policy must derive it from Infrastructure (testdata fixture)
+		"externalSecrets": []interface{}{
+			map[string]interface{}{"name": "app-secrets", "namespace": "app-secrets"},
+		},
+	})
+	out := resolveBoth(t, selected, seed)
+
+	wantURL := "url: https://api.test-cluster.test.example.com:6443"
+	if !strings.Contains(out, wantURL) {
+		t.Errorf("deriveHubUrl: expected store URL from Infrastructure.status.apiServerURL (%q); not found in:\n%s", wantURL, out)
+	}
+}
+
+// Default (deriveHubUrl off) with no hubServer must fail loudly — the policy makes no hub lookup.
+func TestHubBootstrap_HubServerRequiredWithoutDerive(t *testing.T) {
+	raw := renderESOChart(t)
+	selected := selectPolicies(t, raw, map[string]bool{spokeBootstrapName: true})
+	seed := seedFor(t, map[string]interface{}{
+		"mode": "selfSigned",
+		// no hubServer, deriveHubUrl defaults false
+		"externalSecrets": []interface{}{
+			map[string]interface{}{"name": "app-secrets", "namespace": "app-secrets"},
+		},
+	})
+
+	r, err := NewResolver(seed)
+	if err != nil {
+		t.Fatalf("NewResolver: %v", err)
+	}
+	hub := r.ResolvePolicy(selected, HubContext{ManagedClusterName: "lint-cluster"})
+	if len(hub.Errors) == 0 {
+		t.Fatalf("expected a hub resolution error when hubServer is unset and deriveHubUrl is off, got none\n%s", hub.Resolved)
+	}
+	var sawMsg bool
+	for _, e := range hub.Errors {
+		if strings.Contains(e, "hub apiserver URL unresolved") {
+			sawMsg = true
+		}
+	}
+	if !sawMsg {
+		t.Errorf("expected the unresolved-hubServer fail; got: %v", hub.Errors)
 	}
 }
 
