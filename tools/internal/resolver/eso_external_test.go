@@ -3,6 +3,7 @@
 package resolver
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,8 +131,15 @@ func selectPolicies(t *testing.T, raw string, names map[string]bool) string {
 }
 
 // resolveBoth runs the hub pass then the spoke pass (mirroring the e2e pipeline) and fails on any
-// resolution error, returning the fully-resolved YAML.
+// resolution error, returning the fully-resolved YAML. Uses the default lint-cluster context.
 func resolveBoth(t *testing.T, rawYAML string, seed []unstructured.Unstructured) string {
+	t.Helper()
+	return resolveBothAs(t, rawYAML, seed, "lint-cluster")
+}
+
+// resolveBothAs is resolveBoth with an explicit managed-cluster name, so tests can exercise the
+// per-cluster naming/truncation paths (which key off .ManagedClusterName) with a non-default name.
+func resolveBothAs(t *testing.T, rawYAML string, seed []unstructured.Unstructured, clusterName string) string {
 	t.Helper()
 	r, err := NewResolver(seed)
 	if err != nil {
@@ -141,16 +149,68 @@ func resolveBoth(t *testing.T, rawYAML string, seed []unstructured.Unstructured)
 	if err != nil {
 		t.Fatalf("NewSpokeResolver: %v", err)
 	}
-	hub := r.ResolvePolicy(rawYAML, HubContext{ManagedClusterName: "lint-cluster"})
+	hub := r.ResolvePolicy(rawYAML, HubContext{ManagedClusterName: clusterName})
 	if len(hub.Errors) > 0 {
 		t.Fatalf("hub resolution errors: %v", hub.Errors)
 	}
 	spokeIn := stripStringDefaults(hub.Resolved)
-	spoke := spokeR.ResolveSpokeTemplates(spokeIn, HubContext{ManagedClusterName: "lint-cluster"})
+	spoke := spokeR.ResolveSpokeTemplates(spokeIn, HubContext{ManagedClusterName: clusterName})
 	if len(spoke.Errors) > 0 {
 		t.Fatalf("spoke resolution errors: %v", spoke.Errors)
 	}
 	return spoke.Resolved
+}
+
+// renderedConfigCMNamed is renderedConfigCM for an arbitrary cluster name (the hub reads
+// <clusterName>.rendered-config for cert settings keyed off .ManagedClusterName).
+func renderedConfigCMNamed(t *testing.T, clusterName string, hubBootstrap map[string]interface{}) unstructured.Unstructured {
+	t.Helper()
+	cfgYAML, err := sigsyaml.Marshal(map[string]interface{}{
+		"eso": map[string]interface{}{"hubBootstrap": hubBootstrap},
+	})
+	if err != nil {
+		t.Fatalf("marshal rendered-config: %v", err)
+	}
+	return unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]interface{}{
+			"name":      clusterName + ".rendered-config",
+			"namespace": "policies-autoshift",
+		},
+		"data": map[string]interface{}{"config": string(cfgYAML)},
+	}}
+}
+
+// managedClusterFixture builds an autoshift-owned ManagedCluster (owning-namespace == the policy
+// namespace) so the hub trust policy treats it as eligible and mints a per-cluster client cert.
+func managedClusterFixture(name string) unstructured.Unstructured {
+	return unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "cluster.open-cluster-management.io/v1",
+		"kind":       "ManagedCluster",
+		"metadata": map[string]interface{}{
+			"name":   name,
+			"labels": map[string]interface{}{"autoshift.io/owning-namespace": "policies-autoshift"},
+		},
+		"spec": map[string]interface{}{
+			"hubAcceptsClient": true,
+			"managedClusterClientConfigs": []interface{}{
+				map[string]interface{}{"url": "https://api." + name + ".example.com:6443"},
+			},
+		},
+	}}
+}
+
+// tlsSecretFixture builds a kubernetes.io/tls Secret whose data values are already base64-encoded
+// strings (the API representation), mirroring the testdata client-cert fixtures.
+func tlsSecretFixture(name, namespace string, data map[string]interface{}) unstructured.Unstructured {
+	return unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"type":       "kubernetes.io/tls",
+		"metadata":   map[string]interface{}{"name": name, "namespace": namespace},
+		"data":       data,
+	}}
 }
 
 func seedFor(t *testing.T, hubBootstrap map[string]interface{}) []unstructured.Unstructured {
@@ -341,5 +401,77 @@ func TestHubBootstrap_ExternalCAReuseServingCert(t *testing.T) {
 	// This mode mints nothing — there must be no cert-manager Certificate.
 	if strings.Contains(out, "kind: Certificate") {
 		t.Errorf("reuseServingCert: must not mint a Certificate (it reuses the existing serving cert)")
+	}
+}
+
+// A cluster name longer than the CN budget must be truncated to the SAME segment on both sides:
+// the hub trust policy names the minted client secret <prefix>-client-<seg>, and the spoke copy
+// policy must derive the identical name to find and copy that secret. We seed the hub-minted secret
+// under ONLY the truncated name, so if the spoke derived anything else the copy lookup would miss and
+// spoke resolution would fail — making a clean resolveBoth proof that both sides agree.
+func TestHubBootstrap_LongClusterNameTruncation(t *testing.T) {
+	raw := renderESOChart(t)
+	selected := selectPolicies(t, raw, map[string]bool{
+		trustName:          true,
+		spokeBootstrapName: true,
+	})
+
+	// selfSigned defaults: prefix autoshift-eso-client, baseDomain autoshift.io. CN budget is the room
+	// the prefix + baseDomain (+2 dots) leave under 63 — computed here so the test tracks the policy.
+	const longName = "external-secrets-managed-cluster-alpha" // 38 chars > budget
+	budget := 61 - len("autoshift-eso-client") - len("autoshift.io")
+	seg := longName
+	if len(longName) > budget {
+		seg = longName[:budget]
+	}
+	if seg == longName {
+		t.Fatalf("test cluster name %q (%d chars) is not longer than the CN budget %d — pick a longer name so truncation is actually exercised", longName, len(longName), budget)
+	}
+	wantSecret := "hub-bootstrap-client-" + seg
+	fullSecret := "hub-bootstrap-client-" + longName
+	wantCN := "autoshift-eso-client." + seg + ".autoshift.io"
+
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	certData := b64("trunc-match-cert")
+	clientSecretData := map[string]interface{}{
+		"tls.crt": certData,
+		"tls.key": b64("trunc-match-key"),
+		"ca.crt":  b64("trunc-match-ca"),
+	}
+
+	testdata, err := LoadTestResources(filepath.Join(repoRoot(t), "tools", "testdata"))
+	if err != nil {
+		t.Fatalf("LoadTestResources: %v", err)
+	}
+	seed := append([]unstructured.Unstructured{
+		renderedConfigCMNamed(t, longName, map[string]interface{}{
+			"mode":      "selfSigned",
+			"hubServer": "https://api.hub.example.com:6443",
+			"externalSecrets": []interface{}{
+				map[string]interface{}{"name": "app-secrets", "namespace": "app-secrets"},
+			},
+		}),
+		managedClusterFixture(longName),
+		// hub-minted client secret seeded ONLY under the truncated name
+		tlsSecretFixture(wantSecret, "policies-autoshift", clientSecretData),
+	}, testdata...)
+
+	out := resolveBothAs(t, selected, seed, longName)
+
+	// Hub trust policy: the minted Certificate's CN and secretName use the truncated segment.
+	if !strings.Contains(out, "commonName: "+wantCN) {
+		t.Errorf("expected minted cert CN to use the truncated cluster segment (%q); not found in:\n%s", wantCN, out)
+	}
+	if !strings.Contains(out, "secretName: "+wantSecret) {
+		t.Errorf("expected minted client secret name %q (truncated); not found in:\n%s", wantSecret, out)
+	}
+	// The raw, untruncated cluster name must never appear in a resource name.
+	if strings.Contains(out, fullSecret) {
+		t.Errorf("untruncated client secret name %q must not appear — the segment was not truncated", fullSecret)
+	}
+	// Spoke copy: resolution only succeeds if it derived the same truncated name and found the seeded
+	// secret; the copied data proves the lookup hit (and didn't silently fall through to a default).
+	if !strings.Contains(out, certData) {
+		t.Errorf("expected the copied client cert data (%q) in the spoke output — the copy policy did not match the truncated secret name", certData)
 	}
 }
