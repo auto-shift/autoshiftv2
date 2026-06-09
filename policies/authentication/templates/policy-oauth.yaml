@@ -30,15 +30,12 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates-raw : |
-            # Fetch ldap secret name
-            {{ "{{hub-" }} $cfg := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}" | fromYaml {{ "hub}}" }}
+            {{ "{{hub" }} $cfg := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}" | fromYaml {{ "hub}}" }}
             {{ "{{hub-" }} $ldapConfig := index $cfg `ldap` | default (dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $authConfig := index $cfg `authentication` | default (dict) {{ "hub}}" }}
             {{ "{{hub-" }} $secret := index .ManagedClusterLabels "autoshift.io/ldap-groupsync-secret" | default "{{ .Values.ldap_groupsync_secret }}" {{ "hub}}" }}
-            # Get bindDN
             {{ "{{hub" }} $bindDN := fromSecret (index .ManagedClusterLabels `autoshift.io/auth-secrets-namespace`) $secret "bindDN" {{ "hub}}" }}
-
-            # Add Identity Providers to OAuth object
-            - complianceType: mustonlyhave
+            - complianceType: musthave
               objectDefinition:
                 apiVersion: config.openshift.io/v1
                 kind: OAuth
@@ -46,28 +43,47 @@ spec:
                   name: cluster
                 spec:
                   identityProviders:
-                    - type: LDAP
-                      mappingMethod: claim
-                      name: VA Active Directory
-                      ldap:
-                        attributes:
-                          email: []
-                          id:
-                            - userPrincipalName
-                          name:
-                            - displayName
-                          preferredUsername:
-                            - userPrincipalName
-                        bindDN: {{ "{{hub" }} $bindDN | base64dec | quote {{ "hub}}" }}
-                        bindPassword:
-                          name: ldap-bind-password
-                        ca:
-                          name: ldap-ca
-                        insecure: false
-                        url: '{{ "{{hub" }} index $ldapConfig `url` {{ "hub}}" }}/{{ "{{hub" }} index $ldapConfig `url-search` {{ "hub}}" }}'
-                  tokenConfig:
-                    accessTokenInactivityTimeout: 10m0s
-                    accessTokenMaxAgeSeconds: 28800
+                {{ "{{hub-" }} if not (empty $authConfig) {{ "hub}}" }}
+                  - mappingMethod: add
+                    name: VA-Entra-ID
+                    openID:
+                      claims:
+                        groups:
+                          - groups
+                        name:
+                          - name
+                        preferredUsername:
+                          - preferred_username
+                      clientID: {{ "{{hub" }} $authConfig.entraidClientID {{ "hub}}" }}
+                      clientSecret:
+                        name: entraid-client-secret
+                      extraScopes:
+                        - profile
+                      issuer: {{ "{{hub" }} $authConfig.entraidIssuerURL {{ "hub}}" }}
+                    type: OpenID
+                {{ "{{hub-" }} end {{ "hub}}" }}
+
+                {{ "{{hub-" }} if not (empty $ldapConfig) {{ "hub}}" }}
+                  - type: LDAP
+                    mappingMethod: add
+                    name: VA Active Directory
+                    ldap:
+                      attributes:
+                        email: []
+                        id:
+                          - userPrincipalName
+                        name:
+                          - displayName
+                        preferredUsername:
+                          - userPrincipalName
+                      bindDN: {{ "{{hub" }} $bindDN | base64dec | quote {{ "hub}}" }}
+                      bindPassword:
+                        name: ldap-bind-password
+                      ca:
+                        name: ldap-ca
+                      insecure: false
+                      url: '{{ "{{hub" }} index $ldapConfig `url` {{ "hub}}" }}/{{ "{{hub" }} index $ldapConfig `url-search` {{ "hub}}" }}'
+                {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
