@@ -2,6 +2,7 @@
 # the GitOps Operator.
 #
 # Note that OpenShift 4.18 is required.
+
 {{- if .Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -165,12 +166,14 @@ spec:
                   namespace: {{ .Values.gitops.argoNamespace | default "openshift-gitops"}}
                 spec:
                   clusterSets:
-                  {{- range $clusterSet, $value := .Values.hubClusterSets }}
-                    - {{ $clusterSet }}
-                  {{- end }}
-                  {{- range $clusterSet, $value := .Values.managedClusterSets }}
-                    - {{ $clusterSet }}
-                  {{- end }}
+                  {{ "{{-" }} $managedAutoshiftClusterSetLookupResult := (lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "" "autoshift.io") | default dict {{ "}}" }}
+                  {{ "{{-" }} if not (empty $managedAutoshiftClusterSetLookupResult) {{ "}}" }}
+                    {{ "{{-" }} $managedAutoshiftClusterSet := (index $managedAutoshiftClusterSetLookupResult "items") | default list {{ "}}" }}
+                    {{ "{{-" }} range $index, $cluster := $managedAutoshiftClusterSet | default list {{ "}}" }}
+                      {{ "{{-" }} $clusterSet := (index $cluster "metadata" "name") {{ "}}" }}
+                    - {{ "{{" }} $clusterSet {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
                   tolerations:
                     - key: cluster.open-cluster-management.io/unreachable
                       operator: Exists
@@ -192,28 +195,22 @@ spec:
                     apiVersion: cluster.open-cluster-management.io/v1beta1
                     name: systems-argocd-cluster-placement
                     namespace: {{ .Values.gitops.argoNamespace | default "openshift-gitops"}}
-            {{- range $clusterSet, $value := .Values.managedClusterSets }}
+            {{ "{{-" }} $managedAutoshiftClusterSetLookupResult := (lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "" "autoshift.io") | default dict {{ "}}" }}
+            {{ "{{-" }} if not (empty $managedAutoshiftClusterSetLookupResult) {{ "}}" }}
+              {{ "{{-" }} $managedAutoshiftClusterSet := (index $managedAutoshiftClusterSetLookupResult "items") | default list {{ "}}" }}
+              {{ "{{-" }} range $index, $cluster := $managedAutoshiftClusterSet | default list {{ "}}" }}
+                {{ "{{-" }} $clusterSet := (index $cluster "metadata" "name") {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: cluster.open-cluster-management.io/v1beta2
                 kind: ManagedClusterSetBinding
                 metadata:
-                  name: {{ $clusterSet }}
+                  name: {{ "{{" }} $clusterSet {{ "}}" }}
                   namespace: {{ $.Values.gitops.argoNamespace | default "openshift-gitops"}}
                 spec:
-                  clusterSet: {{ $clusterSet }}
-            {{- end }}
-            {{- range $clusterSet, $value := .Values.hubClusterSets }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: cluster.open-cluster-management.io/v1beta2
-                kind: ManagedClusterSetBinding
-                metadata:
-                  name: {{ $clusterSet }}
-                  namespace: {{ $.Values.gitops.argoNamespace | default "openshift-gitops"}}
-                spec:
-                  clusterSet: {{ $clusterSet }}
-            {{- end }}
+                  clusterSet: {{ "{{" }} $clusterSet {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

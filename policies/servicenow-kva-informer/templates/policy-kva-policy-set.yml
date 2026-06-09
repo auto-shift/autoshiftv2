@@ -1,0 +1,57 @@
+{{- $policyNamespace := $.Values.policy_namespace -}}
+---
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: kva-policies
+  namespace: {{ $policyNamespace }}
+spec:
+  description: Collection of ServiceNow Kubernetes Visibility Agent policies.
+  policies:
+    # This policy only gets applied to hub clusters
+    # and we omit this due to empty placements applying to
+    # all clusters
+{{- if not (empty .Values.hubClusterSets) }}
+    - policy-servicenow-kva-informer
+{{- end }}
+    - policy-servicenow-kva-informer-namespace
+    - policy-servicenow-kva-informer-secret
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policyset-kva
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchLabels:
+            autoshift.io/kva-hub: "true"
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policyset-kva
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: placement-policyset-kva
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: kva-policies
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+...

@@ -1,0 +1,184 @@
+{{- if not (empty .Values.hubClusterSets) }}
+{{- $policyNamespace := $.Values.policy_namespace -}}
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-servicenow-kva-informer
+  namespace: {{ $policyNamespace }}
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-gitops-systems-argocd
+      namespace: {{ $policyNamespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: kva-check-pod-install
+          namespace: {{ $policyNamespace }}
+        spec:
+          remediationAction: inform
+          object-templates-raw: |
+            {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "" "autoshift.io") | default dict {{ "}}" }}
+            {{ "{{-" }} if not (empty $managedClusterLookupResult) {{ "}}" }}
+              {{ "{{-" }} $managedClusters := (index $managedClusterLookupResult "items") | default list {{ "}}" }}
+              {{ "{{-" }} $lastIndex := (sub (len $managedClusters) 1) {{ "}}" }}
+              {{ "{{-" }} range $index, $cluster := $managedClusters | default list {{ "}}" }}
+                {{ "{{-" }} $clusterName := (index $cluster "metadata" "name") {{ "}}" }}
+                {{ "{{-" }} $existingLabels :=  (index $cluster "metadata" "labels") {{ "}}" }}
+                {{ "{{-" }} $kvaLabel := (index $existingLabels "autoshift.io/kva") | default false {{ "}}" }}
+                {{ "{{-" }} if $kvaLabel {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: argoproj.io/v1alpha1
+                kind: Application
+                metadata:
+                  name: {{ "{{" }} $clusterName {{ "}}" }}-kva-informer
+                  namespace: "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace }}" {{ "hub}}" }}"
+                status:
+                  health:
+                    status: "Healthy"
+                {{ "{{" }} end {{ "}}" }}
+              {{ "{{" }} end {{ "}}" }}
+            {{ "{{" }} end {{ "}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: setup-kva-gitops-applications
+          namespace: {{ $policyNamespace }}
+        spec:
+          remediationAction: enforce
+          object-templates-raw: |
+            [
+              {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "" "autoshift.io") | default dict {{ "}}" }}
+              {{ "{{-" }} if not (empty $managedClusterLookupResult) {{ "}}" }}
+                {{ "{{-" }} $managedClusters := (index $managedClusterLookupResult "items") | default list {{ "}}" }}
+                {{ "{{-" }} $lastIndex := (sub (len $managedClusters) 1) {{ "}}" }}
+                {{ "{{-" }} range $index, $cluster := $managedClusters | default list {{ "}}" }}
+                  {{ "{{-" }} $clusterName := (index $cluster "metadata" "name") {{ "}}" }}
+                  {{ "{{-" }} $existingLabels :=  (index $cluster "metadata" "labels") {{ "}}" }}
+                  {{ "{{-" }} $clusterPolicyNamespace := (index $existingLabels "autoshift.io/owning-namespace") | default "{{ $policyNamespace }}" {{ "}}" }}
+                  # Pulling KVA information
+                  {{ "{{-" }} $clusterKvaConfig := (index (fromConfigMap $clusterPolicyNamespace (print $clusterName ".rendered-config") "config" | fromYaml) "kva" | default dict) {{ "}}" }}
+                  {{ "{{-" }} $kvaLabel := (index $existingLabels "autoshift.io/kva") | default false {{ "}}" }}
+                  {{ "{{-" }} $kvaVersion := (index $clusterKvaConfig "version") | default "{{ .Values.kvaInformer.appVersion }}" {{ "}}" }}
+                  {{ "{{-" }} $kvaEula := (index $clusterKvaConfig "eula") | default "{{ .Values.acceptEula }}" {{ "}}" }}
+                  {{ "{{-" }} $kvaInstanceName := (index $clusterKvaConfig "instance-name") | default "{{ .Values.servicenow.instance.name }}" {{ "}}" }}
+                  {{ "{{-" }} $kvaInstanceDomain := (index $clusterKvaConfig "instance-domain") | default "{{ .Values.servicenow.instance.domain }}" {{ "}}" }}
+                  {{ "{{-" }} $kvaReleaseName := (index $clusterKvaConfig "release-name") | default "{{ .Values.kvaInformer.releaseName }}" {{ "}}" }}
+                  {{ "{{-" }} $kvaVirtEnabled := (index $clusterKvaConfig "virt-enabled") | default "{{ .Values.kubevirt.enabled }}" {{ "}}" }}
+                  {{ "{{-" }} $kvaCustomRootCA := (index $clusterKvaConfig "custom-root-ca") | default "{{ .Values.customRootCA.use }}" {{ "}}" }}
+                  {{ "{{-" }} $kvaHelmURL := (index $clusterKvaConfig "helm-url") | default "{{ .Values.kvaInformer.helmURL }}" {{ "}}" }}
+                  {{ "{{-" }} $kvaNamespace := (index $clusterKvaConfig "namespace") | default "{{ .Values.namespace }}" {{ "}}" }}
+                  # Pulling cert information
+                  {{ "{{-" }} $certBundle := (index $existingLabels "autoshift.io/certs") | default false {{ "}}" }}
+                  {{ "{{-" }} $certBundleContent := "" {{ "}}" }}
+                  {{ "{{-" }} if $certBundle {{ "}}" }}
+                    {{ "{{-" }} $certBundleContent = (index (fromConfigMap $clusterPolicyNamespace (print $clusterName ".rendered-config") "config" | fromYaml) "user-ca-bundle") | replace "\n" "\\n" {{ "}}" }}
+                  {{ "{{" }} end {{ "}}" }}
+                  {
+                    "complianceType": "{{ "{{-" }} if $kvaLabel {{ "}}" }}musthave{{ "{{" }} else {{ "}}" }}mustnothave{{ "{{" }} end {{ "}}" }}",
+                    "objectDefinition": {
+                      "apiVersion": "argoproj.io/v1alpha1",
+                      "kind": "Application",
+                      "metadata": {
+                        "name": "{{ "{{" }} $clusterName {{ "}}" }}-kva-informer",
+                        "namespace": "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace }}" {{ "hub}}" }}"
+                      },
+                      "spec": {
+                        "project": "default",
+                        "source": {
+                          "chart": "informer-helm",
+                          "repoURL": "{{ "{{" }} $kvaHelmURL {{ "}}" }}",
+                          "targetRevision": "{{ "{{" }} $kvaVersion {{ "}}" }}",
+                          "helm": {
+                            "releaseName": "{{ "{{" }} $kvaReleaseName {{ "}}" }}",
+                            "valuesObject": {
+                              "acceptEula": "{{ "{{" }} $kvaEula {{ "}}" }}",
+                              "instance": {
+                                "name": "{{ "{{" }} $kvaInstanceName {{ "}}" }}",
+                                "domain": "{{ "{{" }} $kvaInstanceDomain {{ "}}" }}"
+                              },
+                              "customRootCA": {
+                                "use": {{ "{{" }} $kvaCustomRootCA {{ "}}" }},
+                                "certificate": "{{ "{{-" }} if $certBundle {{ "}}" }}{{ "{{" }} $certBundleContent {{ "}}" }}{{ "{{" }} end {{ "}}" }}"
+                              },
+                              "clusterName": "{{ "{{" }} $clusterName {{ "}}" }}",
+                              "openShift": true,
+                              "kubevirt": {
+                                "enabled": {{ "{{" }} $kvaVirtEnabled {{ "}}" }}
+                              }
+                            }
+                          }
+                        },
+                        "destination": {
+                          "name": "{{ "{{" }} $clusterName {{ "}}" }}",
+                          "namespace": "{{ "{{" }} $kvaNamespace {{ "}}" }}"
+                        },
+                        "syncPolicy": {
+                          "automated" : {
+                            "selfHeal": true,
+                            "prune": true
+                          },
+                          "syncOptions": [
+                            "CreateNamespace=true"
+                          ]
+                        }
+                      }
+                    }
+                  }{{ "{{-" }} if ne $lastIndex $index {{ "}}" }},{{ "{{-" }} end {{ "}}" }}
+                {{ "{{" }} end {{ "}}" }}
+              {{ "{{" }} end {{ "}}" }}
+            ]
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-kva-informer
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/kva-hub'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-servicenow-kva-informer
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: placement-policy-kva-informer
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-servicenow-kva-informer
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+  - name: kva-check-pod-install
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+...
+{{- end }}
