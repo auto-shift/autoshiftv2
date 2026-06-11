@@ -266,35 +266,29 @@ The rollup authenticates each workload cluster's agent to the **global hub's**
 Observatorium using a client cert issued by the global hub's observability
 signer. The coalesced secret travels three hops:
 
-```
-GLOBAL HUB                                    INTERMEDIATE HUB
-──────────                                    ────────────────
-open-cluster-management-observability:
-  ├─ observability-…-signer-client-cert  (tls.crt, tls.key)
-  ├─ observability-managed-cluster-certs (ca.crt)
-  └─ observatorium-api Route             (→ observatorium.url)
-        │ policy-global-observability-secrets
-        │ (regular templates resolve locally on the global hub)
-        ▼
-policy namespace:
-  └─ global-observability-secrets  ◄── single source of truth
-        │
-        │ policy-global-observability-prometheus
-        │ hub-template copySecretData
-        │ (resolves on the global hub, which manages the intermediate hub;
-        │  resolved data is baked into the delivered ConfigurationPolicy)
-        ▼
-                                       open-cluster-management-observability:
-                                         └─ global-observability-secrets
-                                               │ listed in PrometheusAgent spec.secrets
-                                               │ MCOA replication
-                                               ▼
-                                       WORKLOAD CLUSTER
-                                       open-cluster-management-addon:
-                                         └─ global-observability-secrets
-                                               mounted at
-                                               /etc/prometheus/secrets/global-observability-secrets/
-                                               {ca.crt, tls.crt, tls.key}
+```mermaid
+graph TB
+    classDef gh fill:#d5e8d4,stroke:#82b366,stroke-width:2px
+    classDef ih fill:#dae8fc,stroke:#6c8ebf,stroke-width:2px
+    classDef wl fill:#fff2cc,stroke:#d6b656,stroke-width:2px
+
+    subgraph GH["GLOBAL HUB"]
+        direction TB
+        src["open-cluster-management-observability<br/>• observability-…-signer-client-cert → tls.crt, tls.key<br/>• observability-managed-cluster-certs → ca.crt<br/>• observatorium-api Route → observatorium.url"]:::gh
+        pol["policy namespace<br/>global-observability-secrets<br/>(single source of truth)"]:::gh
+        src -- "policy-global-observability-secrets<br/>(regular templates resolve locally on global hub)" --> pol
+    end
+
+    subgraph IH["INTERMEDIATE HUB"]
+        ihsec["open-cluster-management-observability<br/>global-observability-secrets"]:::ih
+    end
+
+    subgraph WL["WORKLOAD CLUSTER"]
+        wlsec["open-cluster-management-addon<br/>global-observability-secrets<br/>mounted at /etc/prometheus/secrets/global-observability-secrets/<br/>{ca.crt, tls.crt, tls.key}"]:::wl
+    end
+
+    pol -- "policy-global-observability-prometheus<br/>hub-template copySecretData<br/>(resolves on global hub; data baked into delivered ConfigurationPolicy)" --> ihsec
+    ihsec -- "listed in PrometheusAgent spec.secrets<br/>MCOA replication" --> wlsec
 ```
 
 The injected `remoteWrite.tlsConfig` references those mount paths
