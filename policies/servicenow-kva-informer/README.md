@@ -53,6 +53,11 @@ From `values.yaml`:
 | `namespace` | `kva-informer` | Namespace where KVA is deployed on managed clusters |
 | `acceptEula` | `Y` | Passed to ServiceNow informer chart |
 | `kvaHubSecretNamespace` | `cluster-install-secrets` | Default hub namespace for KVA credentials |
+| `kvaInformer.image.repository` | `docker.io/servicenowdocker/informer` | Default informer image repository passed to chart values |
+| `kvaInformer.image.pullPolicy` | `Always` | Default informer image pull policy passed to chart values |
+| `kvaInformer.image.tag` | `2.7.1` | Default informer image tag passed to chart values |
+| `kvaInformer.image.dsRepository` | `docker.io/servicenowdocker/informer_ds` | Default informer_ds image repository passed to chart values |
+| `kvaInformer.image.dsTag` | `2.7.1` | Default informer_ds image tag passed to chart values |
 | `kvaInformer.releaseName` | `servicenow-kva-informer` | Helm release name inside Argo CD app values |
 | `kvaInformer.helmURL` | ServiceNow helm repo URL | Source repo for `informer-helm` chart |
 | `kvaInformer.appVersion` | `2.7.1` | Chart target revision |
@@ -101,6 +106,11 @@ Several values can be overridden per managed cluster through the `<cluster>.rend
 | `kva.virt-enabled` | `kubevirt.enabled` | `true` |
 | `kva.custom-root-ca` | `customRootCA.use` | `true` |
 | `kva.helm-url` | `kvaInformer.helmURL` | ServiceNow helm repo URL |
+| `kva.image-repo` | `kvaInformer.image.repository` | `docker.io/servicenowdocker/informer` |
+| `kva.pull-policy` | `kvaInformer.image.pullPolicy` | `Always` |
+| `kva.image-tag` | `kvaInformer.image.tag` | `2.7.1` |
+| `kva.ds-repository` | `kvaInformer.image.dsRepository` | `docker.io/servicenowdocker/informer_ds` |
+| `kva.ds-tag` | `kvaInformer.image.dsTag` | `2.7.1` |
 
 The namespace and secret policies also read `kva.namespace` from the rendered-config to determine the target namespace on managed clusters.
 
