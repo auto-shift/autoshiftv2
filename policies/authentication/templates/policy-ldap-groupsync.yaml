@@ -43,8 +43,6 @@ spec:
           object-templates-raw: |
             # Fetch ldap secret name
             {{ "{{hub-" }} $secret := index .ManagedClusterLabels "autoshift.io/ldap-groupsync-secret" | default "{{ .Values.ldap_groupsync_secret }}" {{ "hub}}" }}
-            # Fetch schedule from label or values.yaml
-            {{ "{{hub-" }} $schedule := index .ManagedClusterLabels "autoshift.io/ldap-schedule" | default "{{ .Values.ldap_schedule }}" {{ "hub}}" }}
             # Get bindDN
             {{ "{{hub" }} $bindDN := fromSecret (index .ManagedClusterLabels `autoshift.io/auth-secrets-namespace`) $secret "bindDN" {{ "hub}}" }}
 
@@ -63,6 +61,7 @@ spec:
 
             {{ "{{hub-" }} $ldapConfig := index $cfg `ldap` | default (dict) {{ "hub}}" }}
             {{ "{{hub-" }} $ldapUrl := index $ldapConfig `url` {{ "hub}}" }}
+            {{ "{{hub-" }} $schedule := index $ldapConfig `schedule` | default "{{ .Values.ldap_schedule }}" {{ "hub}}" }}
             {{ "{{hub-" }} $userCaBundle := index $cfg "user-ca-bundle" {{ "hub}}" }}
 
             # Build ldapsyncconfigs
