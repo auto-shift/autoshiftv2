@@ -43,6 +43,8 @@ spec:
           object-templates-raw: |
             # Fetch ldap secret name
             {{ "{{hub-" }} $secret := index .ManagedClusterLabels "autoshift.io/ldap-groupsync-secret" | default "{{ .Values.ldap_groupsync_secret }}" {{ "hub}}" }}
+            # Fetch schedule from label or values.yaml
+            {{ "{{hub-" }} $schedule := index .ManagedClusterLabels "autoshift.io/ldap-schedule" | default "{{ .Values.ldap_schedule }}" {{ "hub}}" }}
             # Get bindDN
             {{ "{{hub" }} $bindDN := fromSecret (index .ManagedClusterLabels `autoshift.io/auth-secrets-namespace`) $secret "bindDN" {{ "hub}}" }}
 
@@ -58,10 +60,15 @@ spec:
             {{ "{{hub-" }} range $item := (index $cfg "cluster-ldap-syncconfigs" | default (list))  {{ "hub}}" }}
               {{ "{{hub-" }} $ldapsyncconfigs = append $ldapsyncconfigs $item {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
+
             {{ "{{hub-" }} $ldapConfig := index $cfg `ldap` | default (dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $ldapUrl := index $ldapConfig `url` {{ "hub}}" }}
+            {{ "{{hub-" }} $userCaBundle := index $cfg "user-ca-bundle" {{ "hub}}" }}
 
             # Build ldapsyncconfigs
             {{ "{{hub-" }} range $index, $ldapsyncconfig := $ldapsyncconfigs {{ "hub}}" }}
+            {{ "{{hub-" }} $groupBaseDN := index $ldapsyncconfig "baseDN" {{ "hub}}" }}
+            {{ "{{hub-" }} $groupFilter := index $ldapsyncconfig "filter" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -73,18 +80,19 @@ spec:
                   ldapsyncconfig.yaml: |
                     kind: LDAPSyncConfig
                     apiVersion: v1
-                    url: {{ "{{hub" }} index $ldapConfig `url` {{ "hub}}" }}
+                    url: {{ "{{hub" }} $ldapUrl {{ "hub}}" }}
                     insecure: false
                     bindDN: {{ "{{hub" }} $bindDN | base64dec | quote {{ "hub}}" }}
+                    schedule: {{ "{{hub" }} $schedule | quote {{ "hub}}" }}
                     bindPassword:
                       file: /etc/ldap/bindPassword
                     ca: /etc/config/ca.crt
                     rfc2307:
                       groupsQuery:
-                        baseDN: {{ "{{hub" }} index $ldapsyncconfig "baseDN" | quote {{ "hub}}" }}
+                        baseDN: {{ "{{hub" }} $groupBaseDN | quote {{ "hub}}" }}
                         scope: sub
                         derefAliases: never
-                        filter: {{ "{{hub" }} index $ldapsyncconfig "filter" | quote {{ "hub}}" }}
+                        filter: {{ "{{hub" }} $groupFilter | quote {{ "hub}}" }}
                         pageSize: 0
                         timeout: 0
                       groupUIDAttribute: dn
@@ -101,7 +109,7 @@ spec:
                       tolerateMemberNotFoundErrors: true
                       tolerateMemberOutOfScopeErrors: true
                   ca.crt: |
-                    {{ "{{hub" }} index $cfg "user-ca-bundle" | autoindent {{ "hub}}" }}
+                    {{ "{{hub" }} $userCaBundle | autoindent {{ "hub}}" }}
 
             - complianceType: musthave
               objectDefinition:
@@ -158,7 +166,7 @@ spec:
                   name: cron-group-sync-{{ "{{hub $index hub}}" }}
                   namespace: {{ .Values.ldap_groupsync_namespace }}
                 spec:
-                  schedule: {{ .Values.ldap_schedule | quote }}
+                  schedule: {{ "{{hub" }} $schedule | quote {{ "hub}}" }}
                   concurrencyPolicy: Forbid
                   successfulJobsHistoryLimit: {{ .Values.ldap_successfulJobsHistoryLimit }}
                   failedJobsHistoryLimit: {{ .Values.ldap_failedJobsHistoryLimit }}
