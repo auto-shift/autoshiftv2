@@ -55,6 +55,7 @@ spec:
             {{ "{{-" }} $baseDomain = (splitList "." (dig "spec" "baseDomain" "" $hubDNS) | rest | join ".") {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion") {{ "}}" }}
+            {{ "{{-" }} $installAttemptsLimit := (index $ci "installAttemptsLimit" | default 3 | toInt) {{ "}}" }}
             {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
             {{ "{{-" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
             {{ "{{-" }} $secretSourceNs := (index $ci "secretSourceNamespace" | default "cluster-install-secrets") {{ "}}" }}
@@ -225,7 +226,7 @@ spec:
                   clusterName: {{ "{{" }} $clusterName {{ "}}" }}
                   controlPlaneConfig:
                     servingCertificates: {}
-                  installAttemptsLimit: 1
+                  installAttemptsLimit: {{ "{{" }} $installAttemptsLimit {{ "}}" }}
                   installed: {{ "{{" }} $alreadyInstalled {{ "}}" }}
                   platform:
                     aws:
