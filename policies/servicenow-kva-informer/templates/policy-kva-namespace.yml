@@ -6,7 +6,7 @@ metadata:
   name: policy-servicenow-kva-informer-namespace
   namespace: {{ $policyNamespace }}
 spec:
-{{ if (($.Values.autoshift).dryRun) }}
+{{- if (($.Values.autoshift).dryRun) }}
   remediationAction: inform
 {{ end }}
   disabled: false
@@ -24,12 +24,13 @@ spec:
             noncompliant: 5m
           object-templates-raw: |
             {{ "{{hub-" }} $kvaConfig := (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | fromYaml) "kva" | default dict) {{ "hub}}" }}
+            {{ "{{" }} $kvaNs := "{{ "{{hub-" }} (index $kvaConfig "namespace" | default "kva-informer") {{ "hub}}" }}" {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: project.openshift.io/v1
                 kind: Project
                 metadata:
-                  name: "{{ "{{hub" }} (index $kvaConfig "namespace" | default "{{ .Values.namespace }}") {{ "hub}}" }}"
+                  name: "{{ "{{" }} $kvaNs {{ "}}" }}"
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
