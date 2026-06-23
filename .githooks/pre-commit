@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Pre-commit checks:
+#   1. Secret scan (gitleaks) — always, if installed
+#   2. Helm lint — when chart files change
+#   3. Policy validation (go test) — when policies/values/tools change:
+#        helm render + hub template resolution + spoke template resolution + label contract
+set -euo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+CHANGED=$(git diff --cached --name-only)
+
+# ── 1. Secret scan ────────────────────────────────────────────────────────────
+if command -v gitleaks &>/dev/null; then
+  echo "pre-commit: scanning for secrets..."
+  gitleaks protect --staged --redact --no-banner -s "$REPO_ROOT" || {
+    echo "pre-commit: gitleaks found potential secrets — commit blocked" >&2
+    exit 1
+  }
+else
+  echo "pre-commit: gitleaks not installed, skipping secret scan" >&2
+  echo "  macOS:  brew install gitleaks" >&2
+  echo "  Linux:  https://github.com/gitleaks/gitleaks/releases" >&2
+fi
+
+# ── 2. Helm lint on changed charts ───────────────────────────────────────────
+if command -v helm &>/dev/null; then
+  declare -A charts_to_lint
+
+  while IFS= read -r f; do
+    case "$f" in
+      autoshift/*)
+        charts_to_lint["$REPO_ROOT/autoshift"]=1
+        ;;
+      policies/*/*)
+        # policies/<category>/<chart>/...  → lint policies/<category>/<chart>
+        chart_dir=$(echo "$f" | cut -d/ -f1-3)
+        if [ -f "$REPO_ROOT/$chart_dir/Chart.yaml" ]; then
+          charts_to_lint["$REPO_ROOT/$chart_dir"]=1
+        fi
+        ;;
+    esac
+  done <<< "$CHANGED"
+
+  if [ ${#charts_to_lint[@]} -gt 0 ]; then
+    echo "pre-commit: linting ${#charts_to_lint[@]} chart(s)..."
+    for chart in "${!charts_to_lint[@]}"; do
+      helm lint "$chart" --quiet || {
+        echo "pre-commit: helm lint failed for $chart" >&2
+        exit 1
+      }
+    done
+  fi
+fi
+
+# ── 3. Policy validation (go test) ───────────────────────────────────────────
+# Runs on any change to policies, values, or tools.
+# Unit tests: label/contract parsing logic.
+# Integration tests: helm render → hub template resolution → spoke template
+#   resolution → label contract check (all charts, all categories).
+if command -v go &>/dev/null && command -v helm &>/dev/null; then
+  needs_lint=false
+  while IFS= read -r f; do
+    case "$f" in
+      policies/*|autoshift/values/*|tools/*)
+        needs_lint=true
+        break
+        ;;
+    esac
+  done <<< "$CHANGED"
+
+  if $needs_lint; then
+    echo "pre-commit: running unit tests..."
+    cd "$REPO_ROOT/tools"
+    go test ./... -count=1
+    echo "pre-commit: running policy validation (helm render + hub/spoke resolution + label contract)..."
+    go test -tags integration ./... -count=1
+  fi
+fi

@@ -8,9 +8,25 @@
 # Requirements:
 #   - oc CLI (for oc image extract)
 #   - jq (for JSON parsing)
-#   - Pull secret configured (~/.docker/config.json or REGISTRY_AUTH_FILE)
+#   - Pull secret file in the repo root (pull-secret.json) or specified via --pull-secret
 
 set -e
+
+# Detect Windows/Git Bash and test symlink capability
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+    _test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.tmp/symlink-test-$$"
+    mkdir -p "$_test_dir"
+    if ! ln -s "$_test_dir" "$_test_dir/test-link" 2>/dev/null; then
+        rm -rf "$_test_dir"
+        echo -e "\033[0;31m[ERROR]\033[0m This script requires 'oc image extract' which creates Linux symlinks." >&2
+        echo -e "\033[0;31m[ERROR]\033[0m Windows requires Developer Mode or admin privileges for symlinks." >&2
+        echo -e "\033[0;31m[ERROR]\033[0m Either enable Developer Mode (Settings > System > For developers) or" >&2
+        echo -e "\033[0;31m[ERROR]\033[0m run this on Mac/Linux/WSL2 instead, then use the output with:" >&2
+        echo -e "\033[0;31m[ERROR]\033[0m   ./scripts/generate-imageset-config.sh --dependencies-file scripts/operator-dependencies.json" >&2
+        exit 1
+    fi
+    rm -rf "$_test_dir"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -35,12 +51,20 @@ success() { echo -e "${GREEN}[OK]${NC} $1" >&2; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
 error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
+# Local temp directory — everything stays in the repo
+LOCAL_TMP="$PROJECT_ROOT/.tmp"
+mkdir -p "$LOCAL_TMP"
+
 # Defaults
-CATALOG="registry.redhat.io/redhat/redhat-operator-index:v4.18"
+CATALOG=""
+CATALOG_OVERRIDE=false
 OPERATORS=""
 SHOW_ALL=false
 OUTPUT_FORMAT="text"
 CACHE_DIR="$PROJECT_ROOT/.cache/catalog-cache"
+RECURSIVE=true
+KNOWN_DEPS_FILE="$SCRIPT_DIR/known-dependencies.json"
+PULL_SECRET=""
 
 usage() {
     cat << EOF
@@ -51,17 +75,26 @@ Extract operator dependencies from an operator catalog index.
 This script requires:
   - oc CLI installed
   - jq installed
-  - Valid pull secret for registry.redhat.io (in ~/.docker/config.json or REGISTRY_AUTH_FILE)
+  - Pull secret file (default: pull-secret.json in repo root, or --pull-secret PATH)
 
 Options:
-  --catalog CATALOG      Catalog image (default: $CATALOG)
+  --catalog CATALOG      Catalog image (overrides auto-detection from openshift-version)
   --operators PKG1,PKG2  Comma-separated list of operators to check
   --all                  Show all operators with dependencies
+  --no-recursive         Disable recursive resolution (recursive is default)
   --json                 Output in JSON format
   --cache-dir DIR        Directory to cache extracted catalog (default: $CACHE_DIR)
   --help                 Show this help
 
+The catalog version is auto-detected from the 'openshift-version' label in your
+values files (e.g., openshift-version: '4.20.12' -> v4.20 catalog). Use --catalog
+to override this.
+
+The script also reads known-dependencies.json for dependencies not declared
+in the catalog (e.g., odf-operator -> odf-dependencies).
+
 Examples:
+  $0 --operators odf-operator --recursive --json
   $0 --operators devspaces,odf-operator
   $0 --all --json
   $0 --catalog registry.redhat.io/redhat/redhat-operator-index:v4.17 --all
@@ -96,6 +129,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --catalog)
             CATALOG="$2"
+            CATALOG_OVERRIDE=true
             shift 2
             ;;
         --operators)
@@ -106,12 +140,20 @@ while [[ $# -gt 0 ]]; do
             SHOW_ALL=true
             shift
             ;;
+        --no-recursive)
+            RECURSIVE=false
+            shift
+            ;;
         --json)
             OUTPUT_FORMAT="json"
             shift
             ;;
         --cache-dir)
             CACHE_DIR="$2"
+            shift 2
+            ;;
+        --pull-secret)
+            PULL_SECRET="$2"
             shift 2
             ;;
         --help|-h)
@@ -133,8 +175,57 @@ if [[ "$SHOW_ALL" == "false" && -z "$OPERATORS" ]]; then
     exit 1
 fi
 
+# Auto-detect pull secret from repo root if not specified
+if [[ -z "$PULL_SECRET" ]]; then
+    for ps_file in "$PROJECT_ROOT/pull-secret.json" "$PROJECT_ROOT/pull-secret.txt"; do
+        if [[ -f "$ps_file" ]]; then
+            PULL_SECRET="$ps_file"
+            break
+        fi
+    done
+fi
+
+# Export pull secret for oc image extract
+if [[ -n "$PULL_SECRET" ]]; then
+    export REGISTRY_AUTH_FILE="$PULL_SECRET"
+elif [[ -z "${REGISTRY_AUTH_FILE:-}" ]]; then
+    error "No pull secret found. Place pull-secret.json in the repo root or use --pull-secret PATH"
+    exit 1
+fi
+
 # Check dependencies
 check_dependencies
+
+# Auto-detect catalog version from openshift-version in values files
+if [[ "$CATALOG_OVERRIDE" == "false" ]]; then
+    OCP_VERSION=""
+    for values_file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
+        [[ -f "$values_file" ]] || continue
+        [[ "$(basename "$values_file")" == _* ]] && continue
+        ver=$(grep -E "^[[:space:]]*openshift-version:" "$values_file" 2>/dev/null | head -1 | \
+              sed "s/.*:[[:space:]]*//" | tr -d "'" | tr -d '"' | xargs)
+        if [[ -n "$ver" ]]; then
+            OCP_VERSION="$ver"
+            break
+        fi
+    done
+
+    if [[ -z "$OCP_VERSION" ]]; then
+        error "No openshift-version found in values files"
+        error "Set 'openshift-version' in your clusterset values file or use --catalog to specify the catalog image"
+        exit 1
+    fi
+
+    # Extract major.minor (e.g., 4.20.12 -> 4.20)
+    CATALOG_VERSION=$(echo "$OCP_VERSION" | grep -oE '^[0-9]+\.[0-9]+')
+    if [[ -z "$CATALOG_VERSION" ]]; then
+        error "Could not parse major.minor from openshift-version: $OCP_VERSION"
+        exit 1
+    fi
+
+    CATALOG="registry.redhat.io/redhat/redhat-operator-index:v${CATALOG_VERSION}"
+    log "Auto-detected catalog from openshift-version $OCP_VERSION: v${CATALOG_VERSION}"
+fi
 
 # Create cache directory
 mkdir -p "$CACHE_DIR"
@@ -158,9 +249,15 @@ if [[ ! -d "$CATALOG_DIR/configs" ]]; then
     # Extract full image and access configs directory
     # Note: extracting /configs directly doesn't work reliably, so we extract root
     # Use --filter-by-os to handle multi-arch manifests (catalog images are linux/amd64 only)
-    if ! oc image extract "$CATALOG" --path /:"$CATALOG_DIR" --confirm --filter-by-os=linux/amd64 2>/dev/null; then
+    # Convert path for Windows compatibility (Git Bash uses /c/... but oc.exe needs C:\...)
+    extract_dest="$CATALOG_DIR"
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        extract_dest=$(cygpath -w "$CATALOG_DIR")
+    fi
+    # MSYS_NO_PATHCONV prevents Git Bash from converting /: path syntax
+    if ! MSYS_NO_PATHCONV=1 oc image extract "$CATALOG" --path "/":"$extract_dest" --confirm --filter-by-os=linux/amd64; then
         error "Failed to extract catalog. Check:"
-        error "  - Pull secret is configured (~/.docker/config.json or REGISTRY_AUTH_FILE)"
+        error "  - Pull secret exists (pull-secret.json in repo root or --pull-secret PATH)"
         error "  - Registry access to $CATALOG"
         error "  - oc CLI is authenticated"
         exit 1
@@ -176,8 +273,8 @@ else
     log "Using cached catalog from $CATALOG_DIR"
 fi
 
-# Function to get dependencies for a package
-get_deps() {
+# Function to get dependencies for a package from catalog
+get_catalog_deps() {
     local pkg="$1"
     local pkg_dir="$CATALOG_DIR/configs/$pkg"
 
@@ -186,18 +283,93 @@ get_deps() {
     fi
 
     local deps=""
-    if [[ -f "$pkg_dir/catalog.json" ]]; then
-        deps=$(cat "$pkg_dir/catalog.json" | jq -r '.properties[]? | select(.type == "olm.package.required") | .value.packageName' 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
-    elif [[ -f "$pkg_dir/catalog.yaml" ]]; then
-        deps=$(grep -A2 "olm.package.required" "$pkg_dir/catalog.yaml" 2>/dev/null | grep "packageName:" | sed 's/.*packageName: //' | sort -u | tr '\n' ',' | sed 's/,$//')
+
+    # Check bundles directory for the latest bundle (individual JSON files per version)
+    if [[ -d "$pkg_dir/bundles" ]]; then
+        local latest_bundle=$(ls "$pkg_dir/bundles/"*.json 2>/dev/null | sort -V | tail -1)
+        if [[ -n "$latest_bundle" && -f "$latest_bundle" ]]; then
+            deps=$(jq -r '.properties[]? | select(.type == "olm.package.required") | .value.packageName' "$latest_bundle" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
+        fi
+    fi
+
+    # Check bundles.json JSONL format (one JSON object per line, used by ACM/MCE)
+    if [[ -z "$deps" && -f "$pkg_dir/bundles.json" ]]; then
+        deps=$(jq -rs '.[-1].properties[]? | select(.type == "olm.package.required") | .value.packageName' "$pkg_dir/bundles.json" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
+    fi
+
+    # Fallback to old catalog.json format
+    if [[ -z "$deps" && -f "$pkg_dir/catalog.json" ]]; then
+        deps=$(jq -r '.properties[]? | select(.type == "olm.package.required") | .value.packageName' "$pkg_dir/catalog.json" 2>/dev/null | sort -u | tr '\n' ',' | sed 's/,$//')
     fi
 
     echo "$deps"
 }
 
+# Function to get known dependencies from JSON file
+get_known_deps() {
+    local pkg="$1"
+
+    if [[ -f "$KNOWN_DEPS_FILE" ]]; then
+        local deps=$(jq -r --arg pkg "$pkg" '.[$pkg] // [] | join(",")' "$KNOWN_DEPS_FILE" 2>/dev/null)
+        echo "$deps"
+    fi
+}
+
+# Function to merge and dedupe dependencies
+merge_deps() {
+    local deps1="$1"
+    local deps2="$2"
+
+    local all_deps=""
+    [[ -n "$deps1" ]] && all_deps="$deps1"
+    [[ -n "$deps2" ]] && all_deps="${all_deps:+$all_deps,}$deps2"
+
+    # Dedupe
+    echo "$all_deps" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//'
+}
+
+# Function to get all dependencies (catalog + known)
+get_deps() {
+    local pkg="$1"
+
+    local catalog_deps=$(get_catalog_deps "$pkg")
+    local known_deps=$(get_known_deps "$pkg")
+
+    merge_deps "$catalog_deps" "$known_deps"
+}
+
 # Collect results using temp file (avoid associative arrays for bash 3.x compatibility)
-RESULTS_FILE=$(mktemp)
-trap "rm -f $RESULTS_FILE" EXIT
+RESULTS_FILE="$LOCAL_TMP/dep-results.$$"
+VISITED_FILE="$LOCAL_TMP/dep-visited.$$"
+trap "rm -f $RESULTS_FILE $VISITED_FILE" EXIT
+
+# Function to recursively resolve dependencies
+resolve_recursive() {
+    local pkg="$1"
+
+    # Skip if already visited
+    if grep -q "^${pkg}$" "$VISITED_FILE" 2>/dev/null; then
+        return
+    fi
+    echo "$pkg" >> "$VISITED_FILE"
+
+    local deps=$(get_deps "$pkg")
+
+    if [[ -n "$deps" ]]; then
+        echo "$pkg|$deps" >> "$RESULTS_FILE"
+
+        # Recurse into each dependency
+        if [[ "$RECURSIVE" == "true" ]]; then
+            IFS=',' read -ra DEP_ARRAY <<< "$deps"
+            for dep in "${DEP_ARRAY[@]}"; do
+                dep=$(echo "$dep" | xargs)  # trim whitespace
+                resolve_recursive "$dep"
+            done
+        fi
+    else
+        echo "$pkg|" >> "$RESULTS_FILE"
+    fi
+}
 
 if [[ "$SHOW_ALL" == "true" ]]; then
     # Check all operators
@@ -209,16 +381,11 @@ if [[ "$SHOW_ALL" == "true" ]]; then
         fi
     done
 else
-    # Check specific operators
+    # Check specific operators (with recursive resolution)
     IFS=',' read -ra PKGS <<< "$OPERATORS"
     for pkg in "${PKGS[@]}"; do
         pkg=$(echo "$pkg" | xargs)  # trim whitespace
-        deps=$(get_deps "$pkg")
-        if [[ -n "$deps" ]]; then
-            echo "$pkg|$deps" >> "$RESULTS_FILE"
-        else
-            echo "$pkg|" >> "$RESULTS_FILE"
-        fi
+        resolve_recursive "$pkg"
     done
 fi
 

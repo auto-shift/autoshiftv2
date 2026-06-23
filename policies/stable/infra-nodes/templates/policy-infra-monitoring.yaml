@@ -1,0 +1,165 @@
+{{ $policyName := "policy-infra-monitoring" }}
+{{ $configMapName := "cluster-monitoring-config" }}
+{{ $configPolicyName := "cluster-infra-monitoring" }}
+{{ $labelPrefix := .Values.infraNodes.labelPrefix | default "autoshift.io/" }}
+{{ $placementName := printf "placement-%s" $policyName }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: {{ not .Values.infraNodes.monitoring.migrate }}
+  dependencies:
+  {{- range .Values.infraNodes.dependencies.install }}
+  - apiVersion: policy.open-cluster-management.io/v1
+    compliance: Compliant
+    kind: Policy
+    name: {{ . }}
+    namespace: {{ $.Values.policy_namespace }}
+    {{- end }}
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: {{ $configPolicyName }}
+        spec:
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: {{ $configMapName }}
+                  namespace: openshift-monitoring
+                data:
+                  config.yaml: |+
+                    alertmanagerMain:
+                      nodeSelector: 
+                        node-role.kubernetes.io/infra: ""
+                      tolerations:
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoSchedule
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoExecute
+                    prometheusK8s:
+                      nodeSelector:
+                        node-role.kubernetes.io/infra: ""
+                      tolerations:
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoSchedule
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoExecute
+                    prometheusOperator:
+                      nodeSelector:
+                        node-role.kubernetes.io/infra: ""
+                      tolerations:
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoSchedule
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoExecute
+                    k8sPrometheusAdapter:
+                      nodeSelector:
+                        node-role.kubernetes.io/infra: ""
+                      tolerations:
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoSchedule
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoExecute
+                    kubeStateMetrics:
+                      nodeSelector:
+                        node-role.kubernetes.io/infra: ""
+                      tolerations:
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoSchedule
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoExecute
+                    telemeterClient:
+                      nodeSelector:
+                        node-role.kubernetes.io/infra: ""
+                      tolerations:
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoSchedule
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoExecute
+                    openshiftStateMetrics:
+                      nodeSelector:
+                        node-role.kubernetes.io/infra: ""
+                      tolerations:
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoSchedule
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoExecute
+                    thanosQuerier:
+                      nodeSelector:
+                        node-role.kubernetes.io/infra: ""
+                      tolerations:
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoSchedule
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoExecute
+                    monitoringPlugin:
+                      nodeSelector:
+                        node-role.kubernetes.io/infra: ""
+                      tolerations:
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoSchedule
+                      - key: node-role.kubernetes.io/infra
+                        effect: NoExecute
+          pruneObjectBehavior: {{ .Values.infraNodes.monitoring.pruneObjectBehavior | default "None" }}
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: {{ printf "%s%s" $labelPrefix "infra-nodes" }}
+              operator: Exists
+            - key: {{ printf "%s%s" $labelPrefix "infra-nodes" }}
+              operator: NotIn
+              values:
+                - "0"
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

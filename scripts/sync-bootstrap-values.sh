@@ -39,7 +39,7 @@ echo ""
 # =============================================================================
 log "Syncing openshift-gitops values..."
 
-GITOPS_POLICY_VALUES="$REPO_ROOT/policies/openshift-gitops/values.yaml"
+GITOPS_POLICY_VALUES="$REPO_ROOT/policies/stable/openshift-gitops/values.yaml"
 GITOPS_BOOTSTRAP_VALUES="$REPO_ROOT/openshift-gitops/values.yaml"
 
 if [ ! -f "$GITOPS_POLICY_VALUES" ]; then
@@ -52,7 +52,7 @@ cat > "$GITOPS_BOOTSTRAP_VALUES" << 'EOF'
 # =============================================================================
 # AUTO-GENERATED - DO NOT EDIT DIRECTLY
 # =============================================================================
-# This file is generated from policies/openshift-gitops/values.yaml
+# This file is generated from policies/stable/openshift-gitops/values.yaml
 # To modify defaults, edit the policy chart values and run:
 #   make sync-values
 # =============================================================================
@@ -74,7 +74,7 @@ secrets: []
 #     sshPrivateKey: ''
 
 # =============================================================================
-# Values synced from policies/openshift-gitops/values.yaml
+# Values synced from policies/stable/openshift-gitops/values.yaml
 # =============================================================================
 EOF
 
@@ -95,7 +95,7 @@ success "Synced openshift-gitops values"
 # =============================================================================
 log "Syncing advanced-cluster-management values..."
 
-ACM_POLICY_VALUES="$REPO_ROOT/policies/advanced-cluster-management/values.yaml"
+ACM_POLICY_VALUES="$REPO_ROOT/policies/stable/advanced-cluster-management/values.yaml"
 ACM_BOOTSTRAP_VALUES="$REPO_ROOT/advanced-cluster-management/values.yaml"
 
 if [ ! -f "$ACM_POLICY_VALUES" ]; then
@@ -107,7 +107,7 @@ cat > "$ACM_BOOTSTRAP_VALUES" << 'EOF'
 # =============================================================================
 # AUTO-GENERATED - DO NOT EDIT DIRECTLY
 # =============================================================================
-# This file is generated from policies/advanced-cluster-management/values.yaml
+# This file is generated from policies/stable/advanced-cluster-management/values.yaml
 # To modify defaults, edit the policy chart values and run:
 #   make sync-values
 # =============================================================================
@@ -120,7 +120,7 @@ ignoreHelmHooks: false
 image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
 
 # =============================================================================
-# Values synced from policies/advanced-cluster-management/values.yaml
+# Values synced from policies/stable/advanced-cluster-management/values.yaml
 # =============================================================================
 
 EOF

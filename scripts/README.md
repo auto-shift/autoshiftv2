@@ -7,8 +7,9 @@ This directory contains utility scripts for AutoShiftv2 policy generation and ma
 | Script | Purpose |
 |--------|---------|
 | `generate-operator-policy.sh` | Generate new operator policies |
+| `generate-policy.sh` | Generate configuration (non-operator) policies |
 | `update-operator-policies.sh` | Regenerate existing policies from template |
-| `generate-imageset-config.sh` | Generate ImageSetConfiguration for oc-mirror |
+| `generate-imageset-config.sh` | Generate ImageSetConfiguration for oc-mirror (auto-resolves dependencies) |
 | `update-operator-channels.sh` | Update operator channels from catalog |
 | `dev-checks.sh` | Run development quality checks (shellcheck, kubeconform) |
 | `sync-bootstrap-values.sh` | Sync bootstrap chart values from policies |
@@ -40,7 +41,7 @@ Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structur
 
 - `--version <version>`: Pin to specific operator version (CSV name, optional)
 - `--namespace-scoped`: Generate a namespace-scoped operator policy (default: cluster-scoped)
-- `--add-to-autoshift`: Automatically add the component to autoshift/values.hub.yaml
+- `--add-to-autoshift`: Automatically add the component to autoshift values files
 - `--values-files <files>`: Comma-separated list of values files to update (e.g., 'hub,sbx')
 - `--show-integration`: Show manual integration instructions
 - `--help`: Display help message
@@ -116,6 +117,87 @@ Each generated policy includes these AutoShift labels in values.yaml:
 
 ---
 
+## 📦 generate-policy.sh
+
+Generate RHACM configuration (non-operator) policies for AutoShiftv2. Use this for policies that configure cluster resources (ConfigurationPolicy) rather than install operators (OperatorPolicy).
+
+### Usage
+
+```bash
+./scripts/generate-policy.sh [policy-name] [options]
+```
+
+Missing required values are prompted interactively.
+
+### Parameters
+
+- `<policy-name>` (positional): Kebab-case name for the policy (e.g., `my-config`, `dns-tolerations`)
+
+### Options
+
+- `--dir DIR`: Policy directory - existing or new (default: prompted)
+- `--target TARGET`: Placement target: `hub`, `spoke`, `both`, `all` (default: prompted)
+- `--label LABEL`: Label predicate key without `autoshift.io/` prefix (default: directory basename; ignored for `hub`/`all` targets)
+- `--dependency POLICY`: Policy dependency name, repeatable (e.g., `--dependency lvm-operator-install`)
+- `--add-to-autoshift`: Add enable label to AutoShift values files (only for `spoke`/`both` targets)
+- `--values-files FILES`: Comma-separated list of values files to update (e.g., `hub,sbx`). Default: all non-example files
+- `--help`: Display help message
+
+### Examples
+
+#### Generate a spoke configuration policy (new directory)
+```bash
+./scripts/generate-policy.sh my-config --dir policies/stable/my-component --target spoke
+```
+
+#### Add a configuration policy to an existing policy directory
+```bash
+./scripts/generate-policy.sh dns-config --dir policies/stable/openshift-dns --target hub
+```
+
+#### Generate with a dependency
+```bash
+./scripts/generate-policy.sh storage-config --dir policies/stable/odf-config --target both --dependency odf-operator-install
+```
+
+#### Generate with AutoShift integration
+```bash
+./scripts/generate-policy.sh my-config --dir policies/stable/my-component --target both --add-to-autoshift
+```
+
+#### Interactive mode (prompts for all values)
+```bash
+./scripts/generate-policy.sh
+```
+
+### Placement Targets
+
+| Target | ClusterSets | Label Selector | Wrapping |
+|--------|-------------|----------------|----------|
+| `hub` | hubClusterSets only | None | `{{- if .Values.hubClusterSets }}` |
+| `spoke` | managedClusterSets only | `autoshift.io/<label>` | None |
+| `both` | hub + managed | `autoshift.io/<label>` | None |
+| `all` | hub + managed | None (all clusters) | None |
+
+### Behavior
+
+- **New directory**: Creates full chart (`Chart.yaml`, `values.yaml`, and policy template)
+- **Existing directory**: Only creates the policy template file; does not modify `Chart.yaml` or `values.yaml`
+
+### Generated Structure (new directory)
+
+```
+policies/<dir-name>/
+├── Chart.yaml                          # Helm chart metadata
+├── values.yaml                         # Minimal values (policy_namespace only)
+└── templates/
+    └── policy-<policy-name>.yaml       # RHACM ConfigurationPolicy
+```
+
+The generated template includes a placeholder ConfigMap that should be replaced with your actual resource definition.
+
+---
+
 ## 🔄 update-operator-policies.sh
 
 Regenerate existing operator policies from the template. Use this when the template has been updated with new features and you want to apply those changes to all existing policies.
@@ -182,9 +264,10 @@ The `scripts/templates/` directory contains templates used by the policy generat
 ### Files
 
 - `Chart.yaml.template`: Helm chart metadata template
-- `values.yaml.template`: Default values with AutoShift labels
+- `values.yaml.template`: Default values with AutoShift labels (operator policies)
+- `values-minimal.yaml.template`: Minimal values for configuration policies
 - `policy-operator-install.yaml.template`: RHACM OperatorPolicy template
-- `policy-namespace-operator-install.yaml.template`: Namespace-scoped operator template
+- `policy-config.yaml.template`: RHACM ConfigurationPolicy template (with placement markers)
 - `README.md.template`: Policy documentation template
 
 ### Template Variables
@@ -218,20 +301,23 @@ Templates use these placeholders:
 ```bash
 # Test policy generation
 ./scripts/generate-operator-policy.sh test-op test-operator --channel stable --namespace test-operator
-helm template policies/test-op/
-rm -rf policies/test-op/
+helm template policies/stable/test-op/
+rm -rf policies/stable/test-op/
 
 # Test with version pinning
 ./scripts/generate-operator-policy.sh test-op test-operator --channel stable --namespace test-operator --version test-operator.v1.0.0
-helm template policies/test-op/
-rm -rf policies/test-op/
+helm template policies/stable/test-op/
+rm -rf policies/stable/test-op/
 
-# Test oc-mirror imageset generation (see oc-mirror/README.md)
-cd oc-mirror
-./generate-imageset-config.sh values.hub.yaml --output test-imageset.yaml
+# Test configuration policy generation
+./scripts/generate-policy.sh test-config --dir policies/stable/test-config --target both
+helm template policies/stable/test-config/
+rm -rf policies/stable/test-config/
+
+# Test imageset generation
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --operators-only --output test-imageset.yaml
 cat test-imageset.yaml
 rm test-imageset.yaml
-cd ..
 ```
 
 ### Common Issues
@@ -249,6 +335,13 @@ cd ..
 
 Generate ImageSetConfiguration YAML for oc-mirror disconnected mirroring.
 
+This script automatically:
+- Discovers all enabled operators from your values files
+- Resolves operator dependencies recursively (e.g., `odf-operator` → `odf-dependencies` → sub-operators)
+- Adds `defaultChannel` for each operator package (required by oc-mirror)
+- Deduplicates cross-catalog dependencies (e.g., certified operators won't be added to the redhat catalog)
+- Generates a complete `ImageSetConfiguration` with `apiVersion: mirror.openshift.io/v2alpha1`
+
 ### Usage
 
 ```bash
@@ -258,19 +351,42 @@ Generate ImageSetConfiguration YAML for oc-mirror disconnected mirroring.
 ### Examples
 
 ```bash
-# Generate for single environment
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --output imageset.yaml
+# Generate for single environment (auto-resolves all dependencies)
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml
 
 # Operators only (skip OpenShift platform)
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml --operators-only -o imageset.yaml
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --operators-only
 
 # Multiple environments (merges channels)
-./scripts/generate-imageset-config.sh autoshift/values.hub.yaml,autoshift/values.sbx.yaml -o imageset.yaml
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml,autoshift/values/clustersets/sbx.yaml
+
+# Custom output file
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --output my-imageset.yaml
+
+# Use pre-generated dependencies (for Windows or offline use)
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --dependencies-file scripts/operator-dependencies.json
 ```
+
+### Features
+
+- **Automatic Dependency Resolution**: Recursively discovers operator dependencies from the Red Hat operator catalog. For example, `odf-operator` automatically includes `odf-dependencies`, which in turn includes `ocs-operator`, `mcg-operator`, etc.
+
+- **Default Channel Inclusion**: oc-mirror requires the default channel for each operator package. The script automatically looks up and includes `defaultChannel` from the catalog cache, supporting `catalog.json`, `channel.json`, and `catalog.yaml` formats.
+
+- **Cross-Catalog Deduplication**: Dependencies that belong to a different catalog (e.g., certified-operators) are not duplicated into the redhat-operators section.
+
+- **Channel Merging**: When using multiple values files with different channels for the same operator, all channels are included.
+
+- **Pull Secret Auto-Detection**: Automatically finds `pull-secret.json` or `pull-secret.txt` in the repo root. Can also be set via the `REGISTRY_AUTH_FILE` environment variable.
 
 ### Requirements
 
-Operators must have `{operator}-subscription-name` labels in values files. See [Developer Guide](../docs/developer-guide.md#autoshift-scripts-and-label-requirements).
+- `oc` CLI installed (for catalog extraction)
+- `jq` installed (for JSON parsing)
+- Pull secret in the repo root (`pull-secret.json` or `pull-secret.txt`) or `REGISTRY_AUTH_FILE` env var
+- Operators must have `{operator}-subscription-name` labels in values files
+
+See [Developer Guide](../docs/developer-guide.md#autoshift-scripts-and-label-requirements).
 
 ---
 
@@ -281,24 +397,37 @@ Update operator channels to latest versions from the Red Hat operator catalog.
 ### Usage
 
 ```bash
-./scripts/update-operator-channels.sh --pull-secret <file> [options]
+./scripts/update-operator-channels.sh [options]
 ```
 
 ### Examples
 
 ```bash
-# Dry run (show what would change)
-./scripts/update-operator-channels.sh --pull-secret ~/.docker/config.json --dry-run
+# Dry run — pull secret auto-detected from repo root
+./scripts/update-operator-channels.sh --dry-run
+
+# Explicit pull secret
+./scripts/update-operator-channels.sh --pull-secret pull-secret.json --dry-run
 
 # Apply updates
-./scripts/update-operator-channels.sh --pull-secret ~/.docker/config.json
+./scripts/update-operator-channels.sh
+
+# Check only (exit 1 if updates available, for CI)
+./scripts/update-operator-channels.sh --check
 ```
+
+### Features
+
+- **Version-aware comparisons**: Only suggests upgrades, never downgrades. If your values file has a newer channel than the catalog, it shows "keeping current channel".
+- **Auto-discovery**: Finds all operators from `{operator}-subscription-name` labels in values files.
+- **Multi-format catalog support**: Reads channels from `catalog.json`, `catalog.yaml`, standalone channel files (`stable-3.16.json`, `channel.json`), and `channels/` subdirectories.
+- **Pull secret auto-detection**: Finds `pull-secret.json` or `pull-secret.txt` in the repo root automatically.
 
 ### Requirements
 
 - `oc` CLI installed
 - `jq` installed
-- Pull secret with access to registry.redhat.io
+- Pull secret in the repo root (`pull-secret.json` or `pull-secret.txt`), `--pull-secret PATH`, or `REGISTRY_AUTH_FILE` env var
 
 ---
 
@@ -403,7 +532,15 @@ Used internally by `make release`.
 
 ## 🔍 get-operator-dependencies.sh
 
-Extract operator dependencies from the Red Hat operator catalog.
+Extract operator dependencies from the Red Hat operator catalog. This script is automatically called by `generate-imageset-config.sh`, but can also be used standalone.
+
+### How It Works
+
+1. Extracts the operator catalog index image to a local cache (`.cache/catalog-cache/`)
+2. Parses bundle metadata to find `olm.package.required` dependencies
+3. Recursively resolves transitive dependencies
+4. Merges in "known dependencies" from `known-dependencies.json` for operators that don't declare dependencies in the catalog (e.g., `odf-operator` → `odf-dependencies`)
+5. Auto-detects catalog version from `openshift-version` in your values files
 
 ### Usage
 
@@ -411,19 +548,82 @@ Extract operator dependencies from the Red Hat operator catalog.
 ./scripts/get-operator-dependencies.sh [options]
 ```
 
+### Options
+
+- `--catalog CATALOG`: Catalog image (overrides auto-detection from `openshift-version`)
+- `--operators PKG1,PKG2`: Comma-separated list of operators to check
+- `--all`: Show all operators with dependencies
+- `--no-recursive`: Disable recursive resolution (recursive is default)
+- `--json`: Output in JSON format
+- `--cache-dir DIR`: Directory to cache extracted catalog
+- `--pull-secret FILE`: Path to pull secret file (default: auto-detect from repo root)
+
 ### Examples
 
 ```bash
-# Check specific operators
-./scripts/get-operator-dependencies.sh --operators devspaces,odf-operator
+# Check specific operators (pull secret auto-detected, catalog version auto-detected)
+./scripts/get-operator-dependencies.sh --operators odf-operator --json
+
+# Check multiple operators
+./scripts/get-operator-dependencies.sh --operators devspaces,odf-operator,rhacs-operator
 
 # Show all operators with dependencies
 ./scripts/get-operator-dependencies.sh --all --json
+
+# Use specific catalog version with explicit pull secret
+./scripts/get-operator-dependencies.sh --catalog registry.redhat.io/redhat/redhat-operator-index:v4.17 --operators odf-operator --pull-secret pull-secret.json
 ```
+
+### Known Dependencies
+
+The file `scripts/known-dependencies.json` contains manual dependencies for operators that don't declare them in the catalog. Currently:
+
+```json
+{
+  "odf-operator": ["odf-dependencies"]
+}
+```
+
+The script will recursively resolve `odf-dependencies` from the catalog to get the full dependency tree.
+
+---
+
+## 🖥️ Platform Compatibility
+
+### Self-Contained — No External Dependencies
+
+All scripts keep temporary files inside the repo under `.tmp/` (gitignored). No script writes to `/tmp/` or any directory outside the repository.
+
+### Pull Secret Handling
+
+Scripts that access the Red Hat registry (`generate-imageset-config.sh`, `get-operator-dependencies.sh`, `update-operator-channels.sh`) share a common pull secret resolution order:
+
+1. `--pull-secret <path>` flag (explicit)
+2. `pull-secret.json` or `pull-secret.txt` in the repo root (auto-detected)
+3. `REGISTRY_AUTH_FILE` environment variable
+
+Place your pull secret in the repo root as `pull-secret.json` and all scripts will find it automatically. The file is gitignored.
+
+### Windows (Git Bash)
+
+Scripts that use `oc image extract` (catalog extraction) require symlink support, which Windows restricts by default. These scripts detect Git Bash and test for symlink capability before running:
+
+- If **Developer Mode** is enabled (Settings > System > For developers), symlinks work and scripts run normally.
+- If symlinks are not available, the script exits with instructions to either enable Developer Mode or run on Mac/Linux/WSL2.
+
+For `generate-imageset-config.sh` on Windows without symlink support, use the `--dependencies-file` flag with the pre-generated `scripts/operator-dependencies.json`:
+
+```bash
+./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --dependencies-file scripts/operator-dependencies.json
+```
+
+### Catalog Version Auto-Detection
+
+Scripts that extract the operator catalog auto-detect the catalog version from the `openshift-version` label in your clusterset values files (e.g., `openshift-version: '4.20.12'` resolves to `v4.20`). Use `--catalog` to override.
 
 ---
 
 ## 📚 See Also
 
 - [AutoShift Developer Guide](../docs/developer-guide.md)
-- [oc-mirror Documentation](../oc-mirror/README.md)
+- [oc-mirror Documentation](https://docs.openshift.com/container-platform/latest/installing/disconnected_install/installing-mirroring-disconnected.html)

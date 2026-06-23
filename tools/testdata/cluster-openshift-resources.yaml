@@ -1,0 +1,248 @@
+# Stubs for OpenShift-specific resource types. Each entry registers the type
+# so that hub and spoke template lookups return "not found" (empty) rather
+# than "API not installed" (hard error). Policy templates guard against empty
+# results with `| default dict` or `if` checks.
+
+---
+# Route — registers route.openshift.io/v1 for hub/spoke lookup
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: stub-route
+  namespace: openshift-gitops
+spec:
+  host: stub.apps.test-cluster.test.example.com
+  to:
+    kind: Service
+    name: stub-service
+---
+# MachineSet — registers machine.openshift.io/v1beta1
+# Contains both AWS and VMware providerSpec fields so infra-nodes-aws,
+# infra-nodes-vmware, storage-nodes-aws, and storage-nodes-vmware all resolve.
+# Name matches the test-cluster-abc12-worker-* prefix that policies search for.
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineSet
+metadata:
+  name: test-cluster-abc12-worker-us-east-2a
+  namespace: openshift-machine-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-cluster: test-cluster-abc12
+      machine.openshift.io/cluster-api-machineset: test-cluster-abc12-worker-us-east-2a
+  template:
+    metadata:
+      labels:
+        machine.openshift.io/cluster-api-cluster: test-cluster-abc12
+        machine.openshift.io/cluster-api-machineset: test-cluster-abc12-worker-us-east-2a
+    spec:
+      providerSpec:
+        value:
+          # AWS fields
+          apiVersion: machine.openshift.io/v1beta1
+          kind: AWSMachineProviderConfig
+          ami:
+            id: ami-fake0000000000001
+          placement:
+            availabilityZone: us-east-2a
+            region: us-east-2
+          instanceType: m5a.4xlarge
+          userDataSecret:
+            name: worker-user-data
+          credentialsSecret:
+            name: aws-cloud-credentials
+          iamInstanceProfile:
+            id: test-cluster-abc12-worker-profile
+          blockDevices:
+            - ebs:
+                encrypted: false
+                iops: 0
+                kmsKey:
+                  arn: ""
+                volumeSize: 120
+                volumeType: gp3
+          securityGroups:
+            - filters:
+                - name: tag:Name
+                  values:
+                    - test-cluster-abc12-worker-sg
+          subnet:
+            filters:
+              - name: tag:Name
+                values:
+                  - test-cluster-abc12-subnet-private-us-east-2a
+          tags:
+            - name: kubernetes.io/cluster/test-cluster-abc12
+              value: owned
+          deviceIndex: 0
+          # VMware fields
+          numCoresPerSocket: 2
+          numCPUs: 4
+          memoryMiB: 16384
+          diskGiB: 120
+          template: rhcos-4.16
+          network:
+            devices:
+              - networkName: VM Network
+          workspace:
+            datacenter: DC1
+            datastore: datastore1
+            folder: /DC1/vm/test-cluster
+            resourcePool: /DC1/host/cluster/Resources
+            server: vcenter.test.example.com
+---
+# IngressController — registers operator.openshift.io/v1
+apiVersion: operator.openshift.io/v1
+kind: IngressController
+metadata:
+  name: default
+  namespace: openshift-ingress-operator
+spec:
+  domain: apps.test-cluster.test.example.com
+  replicas: 2
+---
+# imageregistry Config — registers imageregistry.operator.openshift.io/v1
+apiVersion: imageregistry.operator.openshift.io/v1
+kind: Config
+metadata:
+  name: cluster
+spec:
+  managementState: Managed
+  storage:
+    s3:
+      bucket: image-registry-bucket
+      region: us-east-2
+---
+# APIServer — registers config.openshift.io/v1 APIServer
+apiVersion: config.openshift.io/v1
+kind: APIServer
+metadata:
+  name: cluster
+spec: {}
+---
+# Proxy — registers config.openshift.io/v1 Proxy
+apiVersion: config.openshift.io/v1
+kind: Proxy
+metadata:
+  name: cluster
+spec: {}
+status: {}
+---
+# ClusterVersion — registers config.openshift.io/v1 ClusterVersion
+apiVersion: config.openshift.io/v1
+kind: ClusterVersion
+metadata:
+  name: version
+spec:
+  clusterID: fake-cluster-id-0001
+status:
+  desired:
+    version: 4.16.0
+  history:
+  - state: Completed
+    version: 4.16.0
+---
+# ManagedCluster — registers cluster.open-cluster-management.io/v1
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: local-cluster
+spec:
+  hubAcceptsClient: true
+---
+# Deployment — registers apps/v1 Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stub-deployment
+  namespace: openshift-gitops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stub
+  template:
+    metadata:
+      labels:
+        app: stub
+    spec:
+      containers:
+      - name: stub
+        image: stub:latest
+---
+# StatefulSet — registers apps/v1 StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: stub-statefulset
+  namespace: openshift-gitops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stub
+  template:
+    metadata:
+      labels:
+        app: stub
+    spec:
+      containers:
+      - name: stub
+        image: stub:latest
+---
+# DaemonSet — registers apps/v1 DaemonSet
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: stub-daemonset
+  namespace: openshift-gitops
+spec:
+  selector:
+    matchLabels:
+      app: stub
+  template:
+    metadata:
+      labels:
+        app: stub
+    spec:
+      containers:
+      - name: stub
+        image: stub:latest
+---
+# CNPG Cluster — registers postgresql.cnpg.io/v1 Cluster
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: stub-cluster
+  namespace: gitlab-system
+spec:
+  instances: 1
+---
+# LokiStack — registers logging.openshift.io/v1 LokiStack
+apiVersion: logging.openshift.io/v1
+kind: LokiStack
+metadata:
+  name: stub-lokistack
+  namespace: openshift-logging
+spec:
+  size: 1x.small
+---
+# ClusterLogging — registers logging.openshift.io/v1 ClusterLogging
+apiVersion: logging.openshift.io/v1
+kind: ClusterLogging
+metadata:
+  name: instance
+  namespace: openshift-logging
+spec:
+  managementState: Managed
+---
+# ObjectBucketClaim — registers objectbucket.io/v1alpha1
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: stub-bucket
+  namespace: openshift-logging
+spec:
+  bucketName: stub-bucket
+  storageClassName: openshift-storage.noobaa.io

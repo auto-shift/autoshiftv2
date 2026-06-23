@@ -1,0 +1,87 @@
+# Default values for gitops-dev.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates
+policy_namespace: open-cluster-policies
+teams:
+  dev:
+    gitops_rbac_policies:
+    - 'g, openshift-systems, role:admin'
+    - 'g, openshift-dev-leads, role:admin'
+    - 'g, openshift-developers, role:readonly'
+    # OPTIONAL
+    controller:
+      limits:
+        cpu: 2000m
+        memory: 2048Mi
+      requests:
+        cpu: 250m
+        memory: 1024Mi
+    ha:
+      enabled: false
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 250m
+        memory: 128Mi
+    redis:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 250m
+        memory: 128Mi
+    repo:
+      limits:
+        cpu: 1000m
+        memory: 1024Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi    
+    server:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 125m
+        memory: 128Mi
+    dex:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 250m
+        memory: 128Mi
+  test:
+    gitops_rbac_policies:
+    - 'g, openshift-systems, role:admin'
+# hubClusterSets:
+#   hub:
+#     labels:
+#       test1: 'test'
+# managedClusterSets:
+#   managed:
+#     labels:
+#       test4: 'test'
+
+### AutoShift Labels Documentation
+# The following labels can be set at the cluster or clusterset level to configure this policy:
+#
+# Enable/Disable:
+# gitops-dev<bool>: 'true' or 'false' - Enable developer OpenShift GitOps instances (default: 'false')
+# gitops-dev-team-<team>-cluster-scoped<bool>: 'true' - Add openshift-gitops-<team> to ARGOCD_CLUSTER_CONFIG_NAMESPACES
+#   Auto-discovered from labels via prefix matching by the openshift-gitops policy.
+#
+# Team Configuration:
+# gitops-dev-team-<teamname><String>: 'standalone' or 'hub' - Deploy mode for specific teams
+#                                     - 'standalone': Deploy ArgoCD instance on the cluster
+#                                     - 'hub': Use shared ArgoCD instance from hub cluster
+#
+# Note: Creates dedicated GitOps instances for development teams
+# Teams defined in values.yaml (dev, test) with RBAC policies and resource limits
+# Supports both standalone instances per cluster and shared hub-based deployments
+#
+# Examples:
+# autoshift.io/gitops-dev: 'true'
+# autoshift.io/gitops-dev-team-dev: 'standalone'
+# autoshift.io/gitops-dev-team-test: 'hub'

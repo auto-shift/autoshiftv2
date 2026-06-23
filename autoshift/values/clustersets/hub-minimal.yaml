@@ -1,0 +1,44 @@
+# Minimal AutoShift Configuration
+# This file contains the minimum required configuration for AutoShift
+# Use this as a starting point and add additional features as needed
+#
+# IMPORTANT: Operator Label Requirements
+# For each enabled operator, you must define ALL of these labels:
+#   - {operator}: 'true'                    # Enable the operator
+#   - {operator}-subscription-name: '...'   # OLM package name (required for scripts)
+#   - {operator}-channel: '...'             # Operator channel
+#   - {operator}-source: '...'              # Catalog source (usually redhat-operators)
+#   - {operator}-source-namespace: '...'    # Catalog namespace (usually openshift-marketplace)
+#
+# The subscription-name label is required for:
+#   - generate-imageset-config.sh: Detects operators for disconnected mirroring
+#   - update-operator-channels.sh: Updates operator channels from catalog
+#
+# See docs/developer-guide.md for more details on label requirements.
+
+# Minimum Hub Cluster Configuration
+hubClusterSets:
+  hub:
+    labels:
+      # Required: OpenShift version for image mirroring and compatibility
+      openshift-version: '4.20.12'
+
+      # Required: Indicates this is a self-managed hub cluster
+      self-managed: 'true'
+
+      ### OpenShift GitOps (REQUIRED)
+      # GitOps is required to deploy AutoShift itself
+      gitops: 'true'
+      gitops-subscription-name: openshift-gitops-operator
+      gitops-disable-default-argocd: 'true'
+      gitops-channel: gitops-1.20
+      gitops-source: redhat-operators
+      gitops-source-namespace: openshift-marketplace
+      # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
+
+      ### Advanced Cluster Management (AUTOMATIC)
+      # ACM is automatically installed on all hub clustersets by policy
+      acm-subscription-name: advanced-cluster-management
+      acm-channel: release-2.16
+      acm-source: redhat-operators
+      acm-source-namespace: openshift-marketplace

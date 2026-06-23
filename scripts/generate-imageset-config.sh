@@ -18,11 +18,11 @@
 # No hardcoded operator lists - new operators are auto-discovered when added to AutoShift!
 #
 # Usage: ./generate-imageset-config.sh <values-files> [options]
-# Example: ./generate-imageset-config.sh values.hub.yaml
-# Example: ./generate-imageset-config.sh values.hub.yaml,values.sbx.yaml --openshift-version 4.18
-# Example: ./generate-imageset-config.sh values.hub.yaml --openshift-version 4.18.22
-# Example: ./generate-imageset-config.sh values.hub.yaml --openshift-version 4.18 --min-version 4.18.15 --max-version 4.18.25
-# Example: ./generate-imageset-config.sh values.hub.baremetal-sno.yaml --operators-only
+# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml
+# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml,values/clustersets/sbx.yaml --openshift-version 4.20
+# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml --openshift-version 4.20.12
+# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml --openshift-version 4.20 --min-version 4.20.5 --max-version 4.20.12
+# Example: ./generate-imageset-config.sh values/clustersets/hub-baremetal-sno.yaml --operators-only
 
 set -e
 
@@ -58,14 +58,22 @@ DEPENDENCIES_FILE=""
 # Script directory for relative paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CATALOG_CACHE_DIR="$PROJECT_ROOT/.cache/catalog-cache"
+GET_DEPS_SCRIPT="$SCRIPT_DIR/get-operator-dependencies.sh"
+
+# Local temp directory (avoids /tmp issues on Windows/Git Bash)
+LOCAL_TMP="$PROJECT_ROOT/.tmp"
+mkdir -p "$LOCAL_TMP"
 
 # Temp file for operator mappings (portable alternative to associative arrays)
 MAPPINGS_FILE=""
 
-cleanup_mappings() {
-    [[ -n "$MAPPINGS_FILE" ]] && rm -f "$MAPPINGS_FILE"
+cleanup_temp_files() {
+    [[ -n "$MAPPINGS_FILE" ]] && rm -f "$MAPPINGS_FILE" || true
+    # Only cleanup DEPENDENCIES_FILE if it was auto-generated (not passed via --dependencies-file)
+    [[ -n "$DEPENDENCIES_FILE" && "$DEPENDENCIES_FILE" == "$LOCAL_TMP"/* ]] && rm -f "$DEPENDENCIES_FILE" || true
 }
-trap cleanup_mappings EXIT
+trap cleanup_temp_files EXIT
 
 # ============================================================================
 # DYNAMIC OPERATOR MAPPINGS
@@ -76,10 +84,12 @@ trap cleanup_mappings EXIT
 
 # Build operator mappings dynamically from values files
 build_operator_mappings() {
-    MAPPINGS_FILE=$(mktemp)
+    MAPPINGS_FILE="$LOCAL_TMP/operator-mappings.$$"
 
-    for values_file in "$PROJECT_ROOT"/autoshift/values.*.yaml; do
+    for values_file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
         [[ -f "$values_file" ]] || continue
+        # Skip example files
+        [[ "$(basename "$values_file")" == _* ]] && continue
 
         # Find all *-subscription-name: entries
         grep -oE '[a-z][-a-z0-9]*-subscription-name:[[:space:]]*[^[:space:]]+' "$values_file" 2>/dev/null | \
@@ -91,8 +101,8 @@ build_operator_mappings() {
 
             [[ -z "$label" || -z "$package" ]] && continue
 
-            # Find policy directory by searching for name: {package} in policies/*/values.yaml
-            for policy_values in "$PROJECT_ROOT"/policies/*/values.yaml; do
+            # Find policy directory by searching for name: {package} in policies values files
+            for policy_values in "$PROJECT_ROOT"/policies/stable/*/values.yaml "$PROJECT_ROOT"/policies/certified/*/values.yaml "$PROJECT_ROOT"/policies/community/*/values.yaml; do
                 [[ -f "$policy_values" ]] || continue
                 if grep -qE "^[[:space:]]+name:[[:space:]]*['\"]?${package}['\"]?" "$policy_values" 2>/dev/null; then
                     policy_dir=$(dirname "$policy_values")
@@ -109,6 +119,86 @@ build_operator_mappings() {
     if [[ -f "$MAPPINGS_FILE" ]]; then
         sort -u "$MAPPINGS_FILE" -o "$MAPPINGS_FILE"
     fi
+}
+
+# Resolve dependencies for all operators
+# This calls get-operator-dependencies.sh and stores the result
+resolve_all_dependencies() {
+    local operators_list="$1"
+    local catalog_version="$2"
+
+    if [[ -z "$operators_list" ]]; then
+        return
+    fi
+
+    if [[ ! -x "$GET_DEPS_SCRIPT" ]]; then
+        log_warning "get-operator-dependencies.sh not found or not executable, skipping dependency resolution"
+        return
+    fi
+
+    # Detect Windows/Git Bash — dependency resolution won't work
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        log_warning "Windows/Git Bash detected — cannot resolve dependencies (requires oc image extract with symlinks)"
+        log_warning "Use --dependencies-file scripts/operator-dependencies.json instead"
+        log_warning "Generate the file on Mac/Linux/WSL2: ./scripts/get-operator-dependencies.sh --json > scripts/operator-dependencies.json"
+        return
+    fi
+
+    log_step "Resolving operator dependencies..."
+
+    # Create temp file for dependencies
+    DEPENDENCIES_FILE="$LOCAL_TMP/dependencies.$$.json"
+
+    # Call get-operator-dependencies.sh with all operators
+    local catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${catalog_version}"
+
+    if "$GET_DEPS_SCRIPT" --catalog "$catalog_image" --operators "$operators_list" --json > "$DEPENDENCIES_FILE" 2>/dev/null; then
+        local dep_count=$(jq 'to_entries | map(select(.value | length > 0)) | length' "$DEPENDENCIES_FILE" 2>/dev/null || echo "0")
+        log_success "Resolved dependencies for $dep_count operators with dependencies"
+    else
+        log_warning "Failed to resolve dependencies, continuing without them"
+        rm -f "$DEPENDENCIES_FILE"
+        DEPENDENCIES_FILE=""
+    fi
+}
+
+# Get default channel for an operator from the catalog cache
+get_default_channel() {
+    local operator="$1"
+    local catalog_version="$2"
+    local default_channel=""
+
+    # Find the catalog cache directory for this version
+    local cache_key=""
+    local catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${catalog_version}"
+
+    if command -v md5sum &> /dev/null; then
+        cache_key=$(echo "$catalog_image" | md5sum | cut -d' ' -f1)
+    elif command -v md5 &> /dev/null; then
+        cache_key=$(echo "$catalog_image" | md5)
+    else
+        cache_key=$(echo "$catalog_image" | cksum | cut -d' ' -f1)
+    fi
+
+    local pkg_dir="$CATALOG_CACHE_DIR/$cache_key/configs/$operator"
+
+    if [[ ! -d "$pkg_dir" ]]; then
+        echo ""
+        return
+    fi
+
+    # Check for package.json (split structure)
+    if [[ -f "$pkg_dir/package.json" ]]; then
+        default_channel=$(jq -r '.defaultChannel // empty' "$pkg_dir/package.json" 2>/dev/null)
+    # Check for catalog.json (combined structure)
+    elif [[ -f "$pkg_dir/catalog.json" ]]; then
+        default_channel=$(jq -r 'select(.schema == "olm.package") | .defaultChannel // empty' "$pkg_dir/catalog.json" 2>/dev/null)
+    # Check for catalog.yaml (newer catalog format)
+    elif [[ -f "$pkg_dir/catalog.yaml" ]]; then
+        default_channel=$(grep '^defaultChannel:' "$pkg_dir/catalog.yaml" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' || true)
+    fi
+
+    echo "$default_channel"
 }
 
 # Version parsing function
@@ -155,10 +245,11 @@ usage() {
     echo ""
     echo "Arguments:"
     echo "  values-files          AutoShift values file(s) to process. Can be:"
-    echo "                        - Single file: values.hub.yaml"
-    echo "                        - Multiple files: values.hub.yaml,values.sbx.yaml"
-    echo "                        - Available files: values.hub.yaml, values.sbx.yaml,"
-    echo "                          values.hub.baremetal-sno.yaml, values.huhofhubs.yaml"
+    echo "                        - Single file: values/clustersets/hub.yaml"
+    echo "                        - Multiple files: values/clustersets/hub.yaml,values/clustersets/sbx.yaml"
+    echo "                        - Available files in autoshift/values/clustersets/:"
+    echo "                          hub.yaml, managed.yaml, sbx.yaml, hubofhubs.yaml,"
+    echo "                          hub-baremetal-sno.yaml, hub-baremetal-compact.yaml"
     echo ""
     echo "Options:"
     echo "  --openshift-version VERSION    OpenShift version to mirror (default: $OPENSHIFT_VERSION)"
@@ -178,12 +269,12 @@ usage() {
     echo "  --help                         Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 values.hub.yaml"
-    echo "  $0 values.hub.yaml,values.sbx.yaml --openshift-version 4.17"
-    echo "  $0 values.hub.yaml --openshift-version 4.18.22"
-    echo "  $0 values.hub.yaml --openshift-version 4.18 --min-version 4.18.15 --max-version 4.18.25"
-    echo "  $0 values.hub.baremetal-sno.yaml --operators-only"
-    echo "  $0 values.hub.yaml --output my-imageset.yaml"
+    echo "  $0 values/clustersets/hub.yaml"
+    echo "  $0 values/clustersets/hub.yaml,values/clustersets/sbx.yaml --openshift-version 4.20"
+    echo "  $0 values/clustersets/hub.yaml --openshift-version 4.20.12"
+    echo "  $0 values/clustersets/hub.yaml --openshift-version 4.20 --min-version 4.20.5 --max-version 4.20.12"
+    echo "  $0 values/clustersets/hub-baremetal-sno.yaml --operators-only"
+    echo "  $0 values/clustersets/hub.yaml --output my-imageset.yaml"
     echo ""
     echo "Channel Merging:"
     echo "  When multiple files specify different channels for the same operator,"
@@ -498,7 +589,7 @@ get_policy_file_for_label() {
         echo "$policy_dir/values.yaml"
     else
         # Fallback to direct directory match
-        echo "$PROJECT_ROOT/policies/$label/values.yaml"
+        echo "$PROJECT_ROOT/policies/stable/$label/values.yaml"
     fi
 }
 
@@ -788,11 +879,12 @@ generate_imageset_config() {
     
     log_step "Generating ImageSetConfiguration from ${#values_files_array[@]} file(s): ${values_files_label}..."
 
-    # Start YAML file - v2 format doesn't use apiVersion or metadata
+    # Start YAML file
     cat > "$output_file" << EOF
 # AutoShift Generated ImageSetConfiguration
 # Values files: $values_files_label
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+apiVersion: mirror.openshift.io/v2alpha1
 kind: ImageSetConfiguration
 archiveSize: 4
 mirror:
@@ -826,7 +918,7 @@ EOF
     # Add operators if requested
     if [[ "$INCLUDE_OPERATORS" == "true" ]]; then
         echo "  operators:" >> "$output_file"
-        
+
         # Extract operators from multiple values files (include ACM when processing operators)
         local operators=()
         if [[ ${#values_files_array[@]} -eq 1 ]]; then
@@ -850,7 +942,23 @@ EOF
                 operators+=("$line")
             done < <(extract_and_log_operators_multi "${values_files_array[@]}")
         fi
-        
+
+        # Automatically resolve dependencies for all operators
+        if [[ ${#operators[@]} -gt 0 && -z "$DEPENDENCIES_FILE" ]]; then
+            # Collect all operator package names
+            local all_operator_names=""
+            for operator_info in "${operators[@]}"; do
+                IFS='|' read -r name channels source source_namespace <<< "$operator_info"
+                if [[ -z "$all_operator_names" ]]; then
+                    all_operator_names="$name"
+                else
+                    all_operator_names="$all_operator_names,$name"
+                fi
+            done
+            # Resolve dependencies (this populates DEPENDENCIES_FILE)
+            resolve_all_dependencies "$all_operator_names" "$(get_catalog_version)"
+        fi
+
         if [[ ${#operators[@]} -eq 0 ]]; then
             echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v$OPENSHIFT_VERSION" >> "$output_file"
             echo "    packages: []" >> "$output_file"
@@ -898,26 +1006,39 @@ EOF
                     existing_operators+=" $name "
                 done
 
-                # Check each redhat operator for dependencies
-                for package_info in $redhat_operators; do
-                    [[ -z "$package_info" ]] && continue
-                    IFS='|' read -r name channels <<< "$package_info"
+                # The dependencies JSON contains ALL transitive dependencies as keys
+                # Add all packages from the JSON that aren't already in our list
+                local all_dep_packages
+                all_dep_packages=$(jq -r 'keys[]' "$DEPENDENCIES_FILE" 2>/dev/null)
+                local catalog_ver=$(get_catalog_version)
 
-                    # Get dependencies from JSON file
-                    local deps
-                    deps=$(jq -r --arg pkg "$name" '.[$pkg] // [] | .[]' "$DEPENDENCIES_FILE" 2>/dev/null)
+                for dep in $all_dep_packages; do
+                    [[ -z "$dep" ]] && continue
+                    # Only add if not already in list
+                    if [[ ! "$existing_operators" =~ \ $dep\  ]]; then
+                        # Find which operator required this dependency (for logging)
+                        local required_by
+                        required_by=$(jq -r --arg dep "$dep" 'to_entries[] | select(.value | index($dep)) | .key' "$DEPENDENCIES_FILE" 2>/dev/null | head -1)
+                        [[ -z "$required_by" ]] && required_by="transitive"
 
-                    for dep in $deps; do
-                        [[ -z "$dep" ]] && continue
-                        # Check if dependency is already in the list
-                        if [[ ! "$existing_operators" =~ \ $dep\  ]]; then
-                            # Add dependency with stable channel (most common default)
-                            redhat_operators+="$dep|stable "
-                            existing_operators+=" $dep "
-                            added_deps=$((added_deps + 1))
-                            log_step "Added dependency: $dep (required by $name)"
+                        # Look up the actual default channel from catalog
+                        local dep_channel
+                        dep_channel=$(get_default_channel "$dep" "$catalog_ver")
+                        [[ -z "$dep_channel" ]] && dep_channel="stable"
+
+                        # Check if this dependency is already in certified or community operators
+                        # to avoid adding it to the wrong catalog
+                        if [[ "$certified_operators" =~ "$dep|" ]]; then
+                            log_step "Skipped dependency $dep — already in certified catalog"
+                        elif [[ "$community_operators" =~ "$dep|" ]]; then
+                            log_step "Skipped dependency $dep — already in community catalog"
+                        else
+                            redhat_operators+="$dep|$dep_channel "
+                            log_step "Added dependency: $dep (required by $required_by, channel: $dep_channel)"
                         fi
-                    done
+                        existing_operators+=" $dep "
+                        added_deps=$((added_deps + 1))
+                    fi
                 done
 
                 if [[ $added_deps -gt 0 ]]; then
@@ -927,19 +1048,26 @@ EOF
 
             # Generate redhat-operators catalog if we have operators
             if [[ -n "$redhat_operators" ]]; then
-                echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v$(get_catalog_version)" >> "$output_file"
+                local catalog_ver=$(get_catalog_version)
+                echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v${catalog_ver}" >> "$output_file"
                 echo "    packages:" >> "$output_file"
-                
+
                 for package_info in $redhat_operators; do
                     [[ -z "$package_info" ]] && continue
                     IFS='|' read -r name channels <<< "$package_info"
                     echo "    - name: $name" >> "$output_file"
-                    echo "      channels:" >> "$output_file"
-                    
-                    # Handle multiple channels (comma-separated)
+
+                    # Set defaultChannel to the first specified channel
                     IFS=',' read -ra channels_array <<< "$channels"
+                    local first_channel=$(echo "${channels_array[0]}" | xargs)
+                    if [[ -n "$first_channel" ]]; then
+                        echo "      defaultChannel: $first_channel" >> "$output_file"
+                    fi
+
+                    echo "      channels:" >> "$output_file"
                     for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)  # Strip whitespace
+                        channel=$(echo "$channel" | xargs)
+                        [[ -z "$channel" ]] && continue
                         echo "      - name: $channel" >> "$output_file"
                     done
                 done
@@ -948,19 +1076,26 @@ EOF
             
             # Generate community-operators catalog if we have operators
             if [[ -n "$community_operators" ]]; then
-                echo "  - catalog: registry.redhat.io/redhat/community-operator-index:v$(get_catalog_version)" >> "$output_file"
+                local catalog_ver=$(get_catalog_version)
+                echo "  - catalog: registry.redhat.io/redhat/community-operator-index:v${catalog_ver}" >> "$output_file"
                 echo "    packages:" >> "$output_file"
-                
+
                 for package_info in $community_operators; do
                     [[ -z "$package_info" ]] && continue
                     IFS='|' read -r name channels <<< "$package_info"
                     echo "    - name: $name" >> "$output_file"
-                    echo "      channels:" >> "$output_file"
-                    
-                    # Handle multiple channels (comma-separated)
+
+                    # Set defaultChannel to the first specified channel
                     IFS=',' read -ra channels_array <<< "$channels"
+                    local first_channel=$(echo "${channels_array[0]}" | xargs)
+                    if [[ -n "$first_channel" ]]; then
+                        echo "      defaultChannel: $first_channel" >> "$output_file"
+                    fi
+
+                    echo "      channels:" >> "$output_file"
                     for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)  # Strip whitespace
+                        channel=$(echo "$channel" | xargs)
+                        [[ -z "$channel" ]] && continue
                         echo "      - name: $channel" >> "$output_file"
                     done
                 done
@@ -969,19 +1104,26 @@ EOF
             
             # Generate certified-operators catalog if we have operators
             if [[ -n "$certified_operators" ]]; then
-                echo "  - catalog: registry.redhat.io/redhat/certified-operator-index:v$(get_catalog_version)" >> "$output_file"
+                local catalog_ver=$(get_catalog_version)
+                echo "  - catalog: registry.redhat.io/redhat/certified-operator-index:v${catalog_ver}" >> "$output_file"
                 echo "    packages:" >> "$output_file"
-                
+
                 for package_info in $certified_operators; do
                     [[ -z "$package_info" ]] && continue
                     IFS='|' read -r name channels <<< "$package_info"
                     echo "    - name: $name" >> "$output_file"
-                    echo "      channels:" >> "$output_file"
-                    
-                    # Handle multiple channels (comma-separated)
+
+                    # Set defaultChannel to the first specified channel
                     IFS=',' read -ra channels_array <<< "$channels"
+                    local first_channel=$(echo "${channels_array[0]}" | xargs)
+                    if [[ -n "$first_channel" ]]; then
+                        echo "      defaultChannel: $first_channel" >> "$output_file"
+                    fi
+
+                    echo "      channels:" >> "$output_file"
                     for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)  # Strip whitespace
+                        channel=$(echo "$channel" | xargs)
+                        [[ -z "$channel" ]] && continue
                         echo "      - name: $channel" >> "$output_file"
                     done
                 done
@@ -993,6 +1135,21 @@ EOF
     else
         echo "  operators: []" >> "$output_file"
         log_step "Skipped operators (openshift-only mode)"
+    fi
+
+    # Collect known additional images for enabled operators
+    local KNOWN_IMAGES_FILE="$SCRIPT_DIR/known-additional-images.json"
+    local known_images=()
+    if [[ -f "$KNOWN_IMAGES_FILE" ]]; then
+        for op in "${operators[@]}"; do
+            local op_name="${op%%|*}"
+            local imgs
+            imgs=$(jq -r --arg pkg "$op_name" '.[$pkg] // [] | .[]' "$KNOWN_IMAGES_FILE" 2>/dev/null)
+            while IFS= read -r img; do
+                [[ -z "$img" ]] && continue
+                known_images+=("$img")
+            done <<< "$imgs"
+        done
     fi
 
     # Add AutoShift OCI Helm charts to additionalImages if requested
@@ -1012,13 +1169,17 @@ EOF
 
         if [[ -z "$AUTOSHIFT_VERSION" ]]; then
             log_warning "AutoShift version not specified and could not be determined from Chart.yaml"
-            echo "  additionalImages: []" >> "$output_file"
+            if [[ ${#known_images[@]} -gt 0 ]]; then
+                echo "  additionalImages:" >> "$output_file"
+            else
+                echo "  additionalImages: []" >> "$output_file"
+            fi
         else
             log_step "Adding AutoShift OCI Helm charts from $AUTOSHIFT_REGISTRY (version: $AUTOSHIFT_VERSION)"
 
             # Discover all policy charts
             local policy_charts=()
-            for chart_dir in policies/*/; do
+            for chart_dir in policies/stable/*/ policies/certified/*/ policies/community/*/; do
                 if [[ -f "${chart_dir}Chart.yaml" ]]; then
                     policy_charts+=($(basename "$chart_dir"))
                 fi
@@ -1042,7 +1203,20 @@ EOF
             log_success "Added ${#policy_charts[@]} policy charts + 3 core charts to additionalImages"
         fi
     else
-        echo "  additionalImages: []" >> "$output_file"
+        if [[ ${#known_images[@]} -gt 0 ]]; then
+            echo "  additionalImages:" >> "$output_file"
+        else
+            echo "  additionalImages: []" >> "$output_file"
+        fi
+    fi
+
+    # Append known additional images for enabled operators
+    if [[ ${#known_images[@]} -gt 0 ]]; then
+        echo "    # Operator runtime images not declared in catalog relatedImages" >> "$output_file"
+        for img in "${known_images[@]}"; do
+            echo "    - name: $img" >> "$output_file"
+        done
+        log_success "Added ${#known_images[@]} known additional images"
     fi
 
     # helm section not used - OCI charts go in additionalImages

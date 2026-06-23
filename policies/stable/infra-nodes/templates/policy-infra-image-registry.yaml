@@ -1,0 +1,97 @@
+{{ $policyName := "policy-infra-image-registry" }}
+{{ $configPolicyName := "create-infra-image-registry" }}
+{{ $placementName := printf "placement-%s" $policyName }}
+{{ $labelPrefix := .Values.infraNodes.labelPrefix | default "autoshift.io/" }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: {{ not .Values.infraNodes.imageRegistry.migrate }}
+  dependencies:
+  {{- range .Values.infraNodes.dependencies.install }}
+  - apiVersion: policy.open-cluster-management.io/v1
+    compliance: Compliant
+    kind: Policy
+    name: {{ . }}
+    namespace: {{ $.Values.policy_namespace }}
+  {{- end }}
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: {{ $configPolicyName }}
+        spec:
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: imageregistry.operator.openshift.io/v1
+                kind: Config
+                metadata:
+                  name: cluster
+                spec:
+                  nodeSelector: 
+                    node-role.kubernetes.io/infra: ""
+                  tolerations:
+                  - effect: NoSchedule
+                    key: node-role.kubernetes.io/infra
+                  - effect: NoExecute
+                    key: node-role.kubernetes.io/infra
+          pruneObjectBehavior: {{ .Values.infraNodes.imageRegistry.pruneObjectBehavior | default "None" }}
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: {{ printf "%s%s" $labelPrefix "infra-nodes" }}
+              operator: Exists
+            - key: {{ printf "%s%s" $labelPrefix "infra-nodes" }}
+              operator: NotIn
+              values:
+                - "0"
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

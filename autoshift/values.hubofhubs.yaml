@@ -10,6 +10,29 @@ selfManagedHubSet: hubofhubs
 # Hub Cluster Sets with Feature Flags. Blank will remove
 hubClusterSets:
   hubofhubs:
+    config:
+      autoshift:
+        appName: "autoshift"
+        repoUrl: "https://github.com/auto-shift/autoshiftv2.git"
+        useRepoSecret: false
+        valuesFiles:
+          - deployments/hubofhubs/values.yaml
+          - values/global.yaml
+        argoProject: "default"
+        gitopsNamespace: "openshift-gitops"
+      globalObservability:
+        useAlternateCA: false
+        scrapeInterval: "45s"
+        logLevel: "warn"
+        thanosStorage:
+          source: 
+            accessKeyField: "access-key"
+            secretKeyField: "secret-key"
+            namespace: "policies-autoshift"
+            secretName: "thanos-s3-bucket"
+          bucket: openshift-observability-493595548145-us-east-2-an
+          endpoint:  s3.us-east-2.amazonaws.com
+          insecure: false
     labels:
       self-managed: 'true'
       ### OpenShift Gitops
@@ -24,7 +47,7 @@ hubClusterSets:
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'High'
-      acm-observability: 'true'
+      acm-observability: 'false'
       # acm-enable-provisioning: 'false'
       # acm-provisioning-storage-class: (optional)
       # acm-provisioning-database-size: 10Gi
@@ -49,7 +72,7 @@ hubClusterSets:
       storage-nodes-numcores-per-socket: ''
       storage-nodes-zones: ''
       ### OpenShift Data Foundation
-      odf: 'true'
+      odf: 'false'
       odf-subscription-name: odf-operator
       odf-multi-cloud-gateway: standalone
       odf-noobaa-pvpool: ''
@@ -119,7 +142,8 @@ hubClusterSets:
       quay-source: redhat-operators
       quay-source-namespace: openshift-marketplace
       ### Developer OpenShift Gitops
-      gitops-dev: 'false'
+      gitops-dev: 'true'
+      gitops-dev-team-dev: 'hub'
       ### Loki
       loki: 'true' 
       loki-subscription-name: loki-operator
@@ -142,14 +166,42 @@ hubClusterSets:
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
       ### Compliance Operator Stig Apply
-      compliance: 'true'
+      compliance: 'false'
       compliance-auto-remediate: 'true'
       compliance-subscription-name: compliance-operator
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
+      global-observability: 'true'
   hub1:
+    config:
+      autoshift:
+        targetRevision: feature/global-observability
+        appName: "autoshift2"
+        repoUrl: "https://github.com/auto-shift/autoshiftv2.git"
+        useRepoSecret: false
+        valuesFiles:
+          - deployments/site-hub/values.yaml
+          - values/global.yaml
+        argoProject: "default"
+        gitopsNamespace: "openshift-gitops"
+      globalObservability:
+        useAlternateCA: false
+        scrapeInterval: "45s"
+        logLevel: "warn"
+        thanosStorage:
+          source: 
+            accessKeyField: "access-key"
+            secretKeyField: "secret-key"
+            namespace: "policies-autoshift2"
+            secretName: "thanos-s3-bucket"
+          bucket: openshift-observability2
+          endpoint:  s3.us-east-2.amazonaws.com
+          insecure: false
+    autoshiftRepoUrl: https://github.com/auto-shift/autoshiftv2.git
     labels:
+      policy-namespace: "policies-autoshift2"
+      global-observability: 'true'
       gitops: 'true' # is expected to be installed on all hub clusters
       gitops-subscription-name: openshift-gitops-operator
       gitops-channel: gitops-1.18
@@ -175,7 +227,7 @@ hubClusterSets:
       storage-nodes-numcores-per-socket: ''
       storage-nodes-zones: ''
       ### OpenShift Data Foundation
-      odf: 'true'
+      odf: 'false'
       odf-subscription-name: odf-operator
       odf-multi-cloud-gateway: standalone
       odf-noobaa-pvpool: ''
@@ -197,7 +249,7 @@ hubClusterSets:
       # nmstate-nncp-example-bond1: example-bond
       # nmstate-nncp-example-vlan10: example-vlan10
       ### Advanced Cluster Security
-      acs: 'true'
+      acs: 'false'
       acs-subscription-name: rhacs-operator
       acs-channel: stable
       acs-source: redhat-operators
@@ -209,7 +261,7 @@ hubClusterSets:
       dev-spaces-source: redhat-operators
       dev-spaces-source-namespace: openshift-marketplace
       ### Developer Hub
-      dev-hub: 'true'
+      dev-hub: 'false'
       dev-hub-subscription-name: rhdh
       dev-hub-channel: fast-1.8
       dev-hub-source: redhat-operators
@@ -221,21 +273,21 @@ hubClusterSets:
       pipelines-source: redhat-operators
       pipelines-source-namespace: openshift-marketplace
       ### Trusted Artifact Signer
-      tas: 'true'
+      tas: 'false'
       tas-subscription-name: rhtas-operator
       tas-channel:  stable
       tas-source: redhat-operators
       tas-source-namespace: openshift-marketplace
       ### Quay
-      quay: 'true'
+      quay: 'false'
       quay-subscription-name: quay-operator
       quay-channel: stable-3.15
       quay-source: redhat-operators
       quay-source-namespace: openshift-marketplace
       ### Developer OpenShift Gitops
-      gitops-dev: 'true'
+      gitops-dev: 'false'
       ### Loki
-      loki: 'true' 
+      loki: 'false' 
       loki-subscription-name: loki-operator
       loki-channel: stable-6.4
       loki-source: redhat-operators
@@ -244,7 +296,7 @@ hubClusterSets:
       loki-storageclass: gp3-csi
       loki-lokistack-name: logging-lokistack
       ### OpenShift Logging
-      logging: 'true'
+      logging: 'false'
       logging-subscription-name: cluster-logging
       logging-channel: stable-6.4
       logging-source: redhat-operators
@@ -256,12 +308,26 @@ hubClusterSets:
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
       ### Compliance Operator Stig Apply
-      compliance: 'true'
+      compliance: 'false'
       compliance-auto-remediate: 'true'
       compliance-subscription-name: compliance-operator
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
+      #### Managed Hub autoshift install
+      # git branch to pull from 
+      autoshift-target-revision: "recursive-deployment"
+      # values file to use for the autoshift installation
+      autoshift-values-file: ""
+      # name for th argo project
+      autoshift-argo-project: "default"
+      # namespace for all autoshift applications
+      autoshift-gitops-namespace: "openshift-gitops"
+      autoshift-policy-namespace: ""
+      # set to true to enable automatic autoshift installation
+      autoshift-enable-install: "true" 
+      global-observability: "true"
+
   hub2:
     labels:
       gitops: 'true' # is expected to be installed on all hub clusters
@@ -311,7 +377,7 @@ hubClusterSets:
       # nmstate-nncp-example-bond1: example-bond
       # nmstate-nncp-example-vlan10: example-vlan10
       ### Advanced Cluster Security
-      acs: 'true'
+      acs: 'false'
       acs-subscription-name: rhacs-operator
       acs-channel: stable
       acs-source: redhat-operators

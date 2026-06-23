@@ -1,0 +1,113 @@
+# This policy configures infra node kubelet settings including
+# pod limits, resource reservations, and eviction thresholds.
+# Depends on policy-infra-machineconfigpool to create the infra MCP first.
+#
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-infra-node-config
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-infra-machineconfigpool
+      namespace: '{{ .Values.policy_namespace }}'
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: infra-node-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{-" }} $cores := 0 {{ "}}" }}
+            {{ "{{-" }} range (lookup "v1" "Node" "" "").items {{ "}}" }}
+              {{ "{{-" }} if hasKey .metadata.labels "node-role.kubernetes.io/infra" {{ "}}" }}
+                {{ "{{-" }} if eq $cores 0 {{ "}}" }}
+                  {{ "{{-" }} $cores = (.status.capacity.cpu | toInt) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $maxPods := ("{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/infra-max-pods" | default {{ .Values.infraNodes.nodeConfig.maxPods | default 250 }} {{ "hub}}" }}" | toInt) {{ "}}" }}
+            {{ "{{-" }} $systemReservedMemory := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/infra-system-reserved-memory" | default "{{ .Values.infraNodes.nodeConfig.systemReservedMemory | default "2Gi" }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $systemReservedCpu := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/infra-system-reserved-cpu" | default "{{ .Values.infraNodes.nodeConfig.systemReservedCpu | default "500m" }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $kubeReservedMemory := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/infra-kube-reserved-memory" | default "{{ .Values.infraNodes.nodeConfig.kubeReservedMemory | default "1Gi" }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $kubeReservedCpu := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/infra-kube-reserved-cpu" | default "{{ .Values.infraNodes.nodeConfig.kubeReservedCpu | default "500m" }}" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $evictionMemory := "{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/infra-eviction-memory" | default "{{ .Values.infraNodes.nodeConfig.evictionMemory | default "500Mi" }}" {{ "hub}}" }}" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: machineconfiguration.openshift.io/v1
+                kind: KubeletConfig
+                metadata:
+                  name: infra-node-config
+                spec:
+                  machineConfigPoolSelector:
+                    matchLabels:
+                      pools.operator.machineconfiguration.openshift.io/infra: ""
+                  kubeletConfig:
+                    podsPerCore: {{ "{{" }} add 1 (div $maxPods $cores) {{ "}}" }}
+                    maxPods: {{ "{{" }} $maxPods {{ "}}" }}
+                    systemReserved:
+                      memory: {{ "{{" }} $systemReservedMemory {{ "}}" }}
+                      cpu: {{ "{{" }} $systemReservedCpu {{ "}}" }}
+                    kubeReserved:
+                      memory: {{ "{{" }} $kubeReservedMemory {{ "}}" }}
+                      cpu: {{ "{{" }} $kubeReservedCpu {{ "}}" }}
+                    evictionHard:
+                      memory.available: {{ "{{" }} $evictionMemory {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-infra-node-config
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/infra-node-config'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-infra-node-config
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-infra-node-config
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-infra-node-config
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
