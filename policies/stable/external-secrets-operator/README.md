@@ -34,7 +34,7 @@ flowchart TB
   subgraph HUB["HUB cluster — placed on hubClusterSets only"]
     direction TB
 
-    subgraph SIGN["CLIENT-SIGNING CHAIN · policy hub-bootstrap-trust (runtime, cluster-admin)"]
+    subgraph SIGN["CLIENT-SIGNING CHAIN · policy hub-bootstrap-clientca-selfsigned (runtime, cluster-admin)"]
       direction TB
       A1["ClusterIssuer hub-bootstrap-selfsigned<br/>selfSigned"]:::client
       A2["Certificate hub-bootstrap-ca (isCA)<br/>Secret hub-bootstrap-ca @ cert-manager<br/><b>the bootstrap CA — long-lived root</b>"]:::client
@@ -96,18 +96,20 @@ flowchart TB
 > no such window** (it ships the CA bundle, not a leaf). To avoid leaf-pinning with a custom
 > serving cert, point `hubCASource{Namespace,Name,Key}` at a stable CA bundle.
 
-The **generic `server-ca-trust`** policy is the same server-trust pattern, decoupled from the
-bootstrap hub — for a *user-defined* store reading an *arbitrary* remote apiserver. It lands in
-the per-cluster `<ManagedClusterName>` namespace instead of the ESO namespace:
+The same server-trust pattern, decoupled from the bootstrap hub, is available **per store** for a
+*user-defined* kubernetes store reading an *arbitrary* remote apiserver: add a `caSource` to the
+store and `policy-eso-secret-stores` delivers that CA into the store's own
+`caProvider` ConfigMap in the per-cluster `<ManagedClusterName>` namespace (see
+[Per-store server-CA delivery](#per-store-server-ca-delivery-casource)):
 
 ```mermaid
 flowchart LR
   classDef serve fill:#e8f5e9,stroke:#2e7d32,color:#14361b;
   classDef store fill:#f3e5f5,stroke:#6a1b9a,color:#2e0a3d;
-  G1["hub ConfigMap (serverCATrust.source)<br/>namespace/name/key = remote serving CA"]:::serve
-  G2["ConfigMap remote-ca @ ManagedClusterName ns<br/>key ca.crt · policy server-ca-trust"]:::serve
-  G3["user ClusterSecretStore/SecretStore · policy stores<br/>caProvider → remote-ca/ca.crt<br/>(namespace auto-filled = ManagedClusterName)"]:::store
-  G1 -->|hub fromConfigMap → copy| G2 -->|caProvider| G3
+  G1["hub ConfigMap (store.caSource)<br/>namespace/name/key = remote serving CA"]:::serve
+  G2["ConfigMap caProvider.name @ ManagedClusterName ns<br/>key = caProvider.key · policy stores"]:::serve
+  G3["same store · policy stores<br/>caProvider → caProvider.name/ca.crt<br/>(namespace auto-filled = ManagedClusterName)"]:::store
+  G1 -->|hub fromConfigMap → deliver| G2 -->|caProvider| G3
 ```
 
 ## Quick Deploy
@@ -185,7 +187,7 @@ oc get packagemanifests external-secrets-operator -o jsonpath='{.status.channels
 
 ## Secret Stores (`config.eso.secretStores`)
 
-`policy-external-secrets-operator-stores` creates ESO `SecretStore` /
+`policy-eso-secret-stores` creates ESO `SecretStore` /
 `ClusterSecretStore` objects on each managed cluster from the per-cluster
 rendered-config ConfigMap (read via hub-template `lookup`, the same mechanism the
 `cluster-config-maps` policy uses).
@@ -194,10 +196,9 @@ Three policies are driven from the per-cluster ESO config:
 
 | Policy | Creates |
 |---|---|
-| `policy-external-secrets-operator-stores` | the `SecretStore` / `ClusterSecretStore` objects + their auth `Secret`s (`authSecretConfig`), from `config.eso.secretStores` |
-| `policy-external-secrets-operator-cert-auth-rbac` | the RBAC backing the kubernetes-provider `cert` auth method (`certAuthRBAC`) — see [Kubernetes cert auth RBAC](#kubernetes-cert-auth-rbac-certauthrbac) |
-| `policy-external-secrets-operator-secret-reader` | the `secret-reader` ServiceAccount + RBAC for consuming provisioned Secrets — see [Reading provisioned Secrets](#reading-provisioned-secrets-secret-reader) |
-| `policy-external-secrets-operator-server-ca-trust` | (opt-in) delivers a remote apiserver's serving CA to the consuming cluster for a kubernetes store's `caProvider` — see [Server-CA trust](#server-ca-trust-delivering-the-remote-serving-ca) |
+| `policy-eso-secret-stores` | the `SecretStore` / `ClusterSecretStore` objects + their auth `Secret`s (`authSecretConfig`) + (opt-in) per-store remote serving-CA delivery (`caSource`), from `config.eso.secretStores` |
+| `policy-eso-cert-auth-rbac` | the RBAC backing the kubernetes-provider `cert` auth method (`certAuthRBAC`) — see [Kubernetes cert auth RBAC](#kubernetes-cert-auth-rbac-certauthrbac) |
+| `policy-eso-secret-reader` | the `secret-reader` ServiceAccount + RBAC for consuming provisioned Secrets — see [Reading provisioned Secrets](#reading-provisioned-secrets-secret-reader) |
 
 The first two read `config.eso.secretStores`, below.
 
@@ -229,9 +230,9 @@ not enforce them, so set them correctly in config:
 - For a `ClusterSecretStore`, set an explicit `.namespace` on every auth ref unless
   you want referent (per-consuming-namespace) resolution.
 - For a **kubernetes** provider, an **unset** `provider.kubernetes.server.caProvider.namespace`
-  is auto-filled with the `<ManagedClusterName>` namespace — where
-  `policy-external-secrets-operator-server-ca-trust` delivers the remote serving CA (see
-  [Server-CA trust](#server-ca-trust-delivering-the-remote-serving-ca)). Set it explicitly to override.
+  is auto-filled with the `<ManagedClusterName>` namespace — where the store's own `caSource`
+  delivery lands the remote serving CA (see
+  [Per-store server-CA delivery](#per-store-server-ca-delivery-casource)). Set it explicitly to override.
 
 ### Auth secrets (`authSecretConfig`)
 
@@ -601,7 +602,7 @@ config:
 When a store uses the **kubernetes** provider with **cert** auth
 (`spec.provider.kubernetes.auth.cert`), the apiserver identifies the client by the
 certificate's **CN** (a `User`). A **separate policy**,
-`policy-external-secrets-operator-cert-auth-rbac`, reads the same
+`policy-eso-cert-auth-rbac`, reads the same
 `config.eso.secretStores` list and generates the RBAC that grants that user secret
 access — so the cert can read/write the secrets the store manages. (The
 `...-stores` policy creates the store object; this one creates only the RBAC. Both are
@@ -609,7 +610,7 @@ gated on the `autoshift.io/external-secrets-operator` label.)
 
 This is the **authorization** half. For the apiserver to *accept* the cert in the first
 place, its signing CA must be in the apiserver's client-CA trust bundle — wired hub-only by
-`policy-external-secrets-operator-hub-bootstrap-trust`.
+`policy-eso-hub-bootstrap-clientca-selfsigned`.
 
 Add `certAuthRBAC` (sibling of `spec`) with the CN as `username`. For now the username
 is a literal value (deriving it from the cert programmatically can come later). The
@@ -760,7 +761,7 @@ config:
 
 Authenticate to the remote apiserver with a client certificate. Set
 `certAuthRBAC.username` to the cert's CN; the companion
-`policy-external-secrets-operator-cert-auth-rbac` policy then creates the RBAC: this is
+`policy-eso-cert-auth-rbac` policy then creates the RBAC: this is
 a `ClusterSecretStore` scoped to two namespaces, so a `ClusterRole` plus a `RoleBinding`
 in each of `team-a`/`team-b` are generated (bound to `User: eso-remote-cert-cn`). The
 cert/key Secret can be provisioned with `authSecretConfig` (`fromRef: kubernetesCert`,
@@ -803,47 +804,63 @@ config:
 > cluster-wide (`ClusterRole` + `ClusterRoleBinding`); use a `secretStore` instead for a
 > namespaced `Role` + `RoleBinding`.
 
-## Server-CA trust (delivering the remote serving CA)
+## Per-store server-CA delivery (`caSource`)
 
 For a kubernetes-provider store, ESO must **trust the TLS cert the remote apiserver
 presents** — via `provider.kubernetes.server.caBundle` (inline PEM) or `…server.caProvider`
 (a ConfigMap/Secret ref). That CA is the one that signed the **remote** apiserver's serving
 cert; it has nothing to do with the consuming cluster's own apiserver.
 
-`policy-external-secrets-operator-server-ca-trust` delivers that CA to the **consuming
-cluster** (where the store runs): it copies a CA bundle from a hub ConfigMap into the
-per-cluster namespace ACM auto-creates on each managed cluster — the one named after the
-managed cluster (`<ManagedClusterName>`) — under key `ca.crt`, where the store's `caProvider`
-reads it. It does **not** touch the local apiserver.
+Rather than a separate policy and a hand-matched ConfigMap name, this is **a property of the
+store**: add an optional `caSource` (sibling of `spec`) naming a hub ConfigMap that holds the
+remote serving CA, and `policy-eso-secret-stores` delivers it into the store's
+**own** `caProvider` ConfigMap — same `name`, same `key`, in the per-cluster
+`<ManagedClusterName>` namespace ACM auto-creates — where ESO reads it. It does **not** touch
+the local apiserver.
 
 > This is the **server-trust** half. The client-signing-CA / `APIServer.spec.clientCA` half is
 > a hub-role, single-writer concern handled **hub-only** by
-> `policy-external-secrets-operator-hub-bootstrap-trust` — this policy must never write
+> `policy-eso-hub-bootstrap-clientca-selfsigned` — the stores policy must never write
 > `APIServer/cluster`.
 
 ```yaml
 config:
-  externalSecretsOperator:
-    serverCATrust:
-      source:                         # ConfigMap on the HUB holding the remote serving CA bundle
-        namespace: eso-trust
-        name: eso-client-ca
-        key: ca-bundle.crt
-      configMapName: remote-ca         # destination CM name in the <ManagedClusterName> ns (default: remote-ca)
+  eso:
+    secretStores:
+      - clusterSecretStore:
+          name: remote-cluster
+          caSource:                       # ConfigMap on the HUB holding the remote serving CA bundle
+            namespace: eso-trust
+            name: eso-client-ca
+            key: ca-bundle.crt
+          spec:
+            provider:
+              kubernetes:
+                server:
+                  url: https://remote-apiserver.example.com:6443
+                  caProvider:             # the delivered CA lands here; names always match
+                    type: ConfigMap
+                    name: remote-ca        # dest ConfigMap name in the <ManagedClusterName> ns
+                    key: ca.crt            # dest key the bundle is written under
+                    # namespace omitted -> defaults to <ManagedClusterName>
+                remoteNamespace: shared-secrets
+                auth:
+                  serviceAccount: { name: eso-remote-reader, namespace: external-secrets-operator }
 ```
 
-- **Opt-in:** nothing is created unless `serverCATrust.source` (namespace + name + key)
-  is set — the policy is otherwise a no-op.
-- **No apiserver change:** it only writes a ConfigMap into the `<ManagedClusterName>`
-  namespace — no kube-apiserver rollout. In `dryRun` the parent policy is `inform`.
-- **Pairs with a kubernetes store:** `configMapName` must match the store's `caProvider.name`,
-  and the store should **omit** `caProvider.namespace` so it defaults to the same
-  `<ManagedClusterName>` namespace (the stores policy injects it). ESO's controller already has
-  cluster-wide ConfigMap read, so no extra RBAC is needed.
+- **Opt-in & intrinsic gate:** delivery happens only for a store that is a kubernetes provider
+  **and** carries a `caSource`. No `caSource` → the store is created but you supply the CA
+  yourself (inline `caBundle`, or a pre-existing `caProvider` ConfigMap). A partial `caSource`
+  (some of namespace/name/key) **fails** the template; so does a `caSource` on a store with no
+  `caProvider`, or a non-`ConfigMap` `caProvider`.
+- **No name mismatch:** the destination is the store's own `caProvider` (`name`/`key`/namespace),
+  so there is nothing to keep in sync. ESO's controller already has cluster-wide ConfigMap read,
+  so no extra RBAC is needed.
+- **No apiserver change:** it only writes a ConfigMap into the `<ManagedClusterName>` namespace —
+  no kube-apiserver rollout. In `dryRun` the parent stores policy is `inform`.
 - This is the **server-trust** half; `certAuthRBAC` is the **authorization** half (CN →
   username). The client cert and the remote apiserver's `spec.clientCA` trust are provisioned
   separately (out of band, or via the hub-bootstrap flow).
-- Likely temporary / may move elsewhere later.
 
 ## Cluster→cluster hub bootstrap (`config.eso.hubBootstrap`)
 
@@ -868,7 +885,7 @@ namespace** — deployments can't read across each other.
 
 Three policies cooperate — two run on the hub, one copies to the spokes:
 
-- `policy-external-secrets-operator-hub-bootstrap-trust` runs **on the hub**. cert-manager mints
+- `policy-eso-hub-bootstrap-clientca-selfsigned` runs **on the hub**. cert-manager mints
   **one generic self-signed CA** (its own key, hub-internal), and that CA is wired into the hub
   apiserver `spec.clientCA`. That wiring is **additive** — OpenShift merges a custom `clientCA`
   with the operator-managed client signers (`csr-signer`, admin, kubelet, …), so existing client
@@ -894,7 +911,7 @@ Three policies cooperate — two run on the hub, one copies to the spokes:
     account, and it works for a self-managed hub (acts on `local-cluster`) **and** an intermediate
     hub managed by a self-managed hub (acts on the intermediate hub itself). A hub-side lookup would
     wrongly resolve against the top-level propagating hub.
-- `policy-external-secrets-operator-hub-bootstrap-serving-ca` runs **on the hub** (client→server
+- `policy-eso-hub-bootstrap-serving-ca` runs **on the hub** (client→server
   trust). The store must trust the TLS cert the hub apiserver presents. This policy is **100%
   runtime** — it lands on the hub and the local config-policy-controller (cluster-admin) reads
   `APIServer/cluster spec.servingCerts.namedCertificates` and `Infrastructure/cluster
@@ -908,7 +925,7 @@ Three policies cooperate — two run on the hub, one copies to the spokes:
     reads the policy namespace (which hub templates *are* allowed to read), so the flow composes
     across multiple deployments and the hub → managed-hub → spoke topology (each hub captures its own
     serving CA locally).
-- `policy-external-secrets-operator-hub-bootstrap` is the **copy policy** — placed on hubs and
+- `policy-eso-hub-bootstrap-store` is the **copy policy** — placed on hubs and
   spokes. Both inputs already sit in the policy namespace (the client cert from the trust policy, the
   serving CA from the serving-ca policy), so its hub templates copy **only policy-namespace
   resources** into the ESO namespace — never `openshift-config` or the `APIServer` object. It then
@@ -1000,9 +1017,9 @@ trusts*; the serving-CA / server-trust half is identical across modes. Pick **on
 
 | Mode | Client cert | Hub `clientCA` trusts | RBAC subject | Hub policy |
 |---|---|---|---|---|
-| `selfSigned` *(default)* | hub mints per-cluster cert, copies to spoke | hub-minted self-signed CA | derived CN `<prefix>.<cluster>.<baseDomain>` | `…-hub-bootstrap-trust` |
-| `externalCA` | **spoke** mints its own cert via a user-provided issuer (key never leaves the spoke) | a shared **external** CA bundle | same derived CN (both sides compute it from `.ManagedClusterName`) | `…-hub-bootstrap-trust-external` |
-| `externalCAReuseServingCert` | **spoke reuses its apiserver serving cert** (no cert minted) | the same external CA bundle | the cluster's registered apiserver **host** (discovered from `ManagedCluster.spec.managedClusterClientConfigs[].url`) | `…-hub-bootstrap-trust-external` |
+| `selfSigned` *(default)* | hub mints per-cluster cert, copies to spoke | hub-minted self-signed CA | derived CN `<prefix>.<cluster>.<baseDomain>` | `…-hub-bootstrap-clientca-selfsigned` |
+| `externalCA` | **spoke** mints its own cert via a user-provided issuer (key never leaves the spoke) | a shared **external** CA bundle | same derived CN (both sides compute it from `.ManagedClusterName`) | `…-hub-bootstrap-clientca-external` |
+| `externalCAReuseServingCert` | **spoke reuses its apiserver serving cert** (no cert minted) | the same external CA bundle | the cluster's registered apiserver **host** (discovered from `ManagedCluster.spec.managedClusterClientConfigs[].url`) | `…-hub-bootstrap-clientca-external` |
 
 The three cert-creation paths — what mints the client cert, what the hub `clientCA` trusts, and
 what the per-cluster RBAC binds to:
@@ -1017,7 +1034,7 @@ flowchart TB
 
   MODE{"config.eso.hubBootstrap.mode"}:::dec
 
-  subgraph M1["1 · selfSigned — hub-internal CA · policy hub-bootstrap-trust"]
+  subgraph M1["1 · selfSigned — hub-internal CA · policy hub-bootstrap-clientca-selfsigned"]
     direction TB
     A1["ClusterIssuer hub-bootstrap-selfsigned"]:::mint
     A2["Certificate hub-bootstrap-ca (isCA)<br/>the bootstrap root — long-lived, hub-internal key"]:::mint
@@ -1031,7 +1048,7 @@ flowchart TB
     A4 --> AR
   end
 
-  subgraph M2["2 · externalCA — dedicated certs from a shared external CA · policy hub-bootstrap-trust-external"]
+  subgraph M2["2 · externalCA — dedicated certs from a shared external CA · policy hub-bootstrap-clientca-external"]
     direction TB
     B0["EXTERNAL CA (out of band)"]:::ext
     B1["user-provided spoke ClusterIssuer<br/>spokeIssuer, chained to the external CA"]:::ext
@@ -1043,7 +1060,7 @@ flowchart TB
     B2 -. identical derivation .-> BR
   end
 
-  subgraph M3["3 · externalCAReuseServingCert — reuse spoke apiserver serving cert · policy hub-bootstrap-trust-external"]
+  subgraph M3["3 · externalCAReuseServingCert — reuse spoke apiserver serving cert · policy hub-bootstrap-clientca-external"]
     direction TB
     C0["EXTERNAL CA (out of band)<br/>already signed the spoke's apiserver serving cert"]:::ext
     C1["spoke apiserver SERVING cert+key @ openshift-config<br/>discovered via APIServer namedCertificates"]:::mint
@@ -1179,7 +1196,7 @@ clusters:
 ## Reading provisioned Secrets (`secret-reader`)
 
 The Secrets ESO provisions are consumed by other AutoShift components. Rather than each
-reaching for ESO internals, `policy-external-secrets-operator-secret-reader` creates a
+reaching for ESO internals, `policy-eso-secret-reader` creates a
 single read-only identity — the **`secret-reader` ServiceAccount** (in the ESO operator
 namespace) — and grants it `get`/`list`/`watch` on `secrets` in a configured set of
 namespaces (one `ClusterRole` named `eso-secret-reader` + a `RoleBinding` per namespace).
@@ -1214,21 +1231,21 @@ oc get clustersecretstores                       # Status / Capabilities / Ready
 oc get secretstores -A
 oc describe clustersecretstore <name>             # check Ready condition + reason
 
-# cert-auth RBAC generated by policy-external-secrets-operator-cert-auth-rbac:
+# cert-auth RBAC generated by policy-eso-cert-auth-rbac:
 oc get clusterrole,clusterrolebinding | grep eso-cert-
 oc get role,rolebinding -A | grep eso-cert-
 
-# secret-reader identity + RBAC (policy-external-secrets-operator-secret-reader):
+# secret-reader identity + RBAC (policy-eso-secret-reader):
 oc get serviceaccount secret-reader -n external-secrets-operator
 oc get clusterrole eso-secret-reader
 oc get rolebinding -A | grep eso-secret-reader
 
-# server-CA trust (policy-external-secrets-operator-server-ca-trust), if enabled:
-# the remote serving CA lands in the per-cluster namespace named after the managed cluster
-# (the same namespace ACM replicates policies into on the spoke)
-oc get configmap remote-ca -n <ManagedClusterName>   # e.g. local-cluster
+# per-store server-CA delivery (policy-eso-secret-stores, when a store sets caSource):
+# the remote serving CA lands in the store's caProvider ConfigMap, in the per-cluster namespace
+# named after the managed cluster (the same namespace ACM replicates policies into on the spoke)
+oc get configmap remote-ca -n <ManagedClusterName>   # e.g. local-cluster (= the store's caProvider.name)
 
-# hub bootstrap (policy-external-secrets-operator-hub-bootstrap-trust), on the hub:
+# hub bootstrap (policy-eso-hub-bootstrap-clientca-selfsigned), on the hub:
 oc get clusterissuer hub-bootstrap-selfsigned hub-bootstrap-ca-issuer
 oc get certificate hub-bootstrap-ca -n cert-manager          # the self-signed bootstrap CA
 oc get configmap hub-bootstrap-client-ca -n openshift-config # CA wired into apiserver clientCA
@@ -1236,10 +1253,10 @@ oc get apiserver cluster -o jsonpath='{.spec.clientCA.name}'
 oc get certificate -A | grep hub-bootstrap-client            # one client cert per owned managed cluster (selfSigned)
 oc get role,rolebinding -A | grep hub-bootstrap-reader       # shared reader Role + one RoleBinding per cluster
 
-# hub serving-CA capture (policy-external-secrets-operator-hub-bootstrap-serving-ca), on the hub:
+# hub serving-CA capture (policy-eso-hub-bootstrap-serving-ca), on the hub:
 oc get configmap hub-bootstrap-hub-ca -n <policy-namespace>  # serving CA stashed for the copy policy
 
-# hub bootstrap copy (policy-external-secrets-operator-hub-bootstrap), on each spoke:
+# hub bootstrap copy (policy-eso-hub-bootstrap-store), on each spoke:
 oc get configmap hub-bootstrap-hub-ca -n external-secrets-operator   # serving CA copied in
 oc get secret hub-bootstrap-client -n external-secrets-operator      # client cert copied in
 oc get clustersecretstore hub-bootstrap                              # the bootstrap store
@@ -1264,13 +1281,13 @@ oc explain <CustomResourceName>
 Add operator-specific configuration policies to `templates/` directory.
 
 #### Common Patterns:
-- `policy-external-secrets-operator-config.yaml` - Main configuration
-- `policy-external-secrets-operator-<feature>.yaml` - Feature-specific configs
+- `policy-eso-config.yaml` - Main configuration
+- `policy-eso-<feature>.yaml` - Feature-specific configs
 
 #### Template Structure:
 ```yaml
-{{- $policyName := "policy-external-secrets-operator-config" }}
-{{- $placementName := "placement-policy-external-secrets-operator-config" }}
+{{- $policyName := "policy-eso-config" }}
+{{- $placementName := "placement-policy-eso-config" }}
 
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -1284,7 +1301,7 @@ metadata:
 spec:
   disabled: false
   dependencies:
-    - name: policy-external-secrets-operator-install
+    - name: policy-eso-install
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -1294,7 +1311,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: external-secrets-operator-config
+          name: eso-config
         spec:
           remediationAction: enforce
           severity: high
@@ -1307,7 +1324,7 @@ spec:
                 apiVersion: # Your operator's API version
                 kind: # Your operator's Custom Resource
                 metadata:
-                  name: external-secrets-operator-config
+                  name: eso-config
                   namespace: {{ .Values.externalSecretsOperator.namespace }}
                 spec:
                   # Your operator-specific configuration
@@ -1410,7 +1427,7 @@ For operators that need installation verification:
 ### Policy Not Applied
 1. Check cluster labels: `oc get managedcluster <cluster> --show-labels`
 2. Verify placement: `oc get placement -n open-cluster-policies`
-3. Check policy status: `oc describe policy policy-external-secrets-operator-install`
+3. Check policy status: `oc describe policy policy-eso-install`
 
 ### Operator Installation Issues
 1. Check subscription: `oc get subscription -n external-secrets-operator`

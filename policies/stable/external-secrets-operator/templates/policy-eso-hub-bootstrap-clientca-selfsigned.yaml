@@ -1,7 +1,7 @@
 # Hub-side half of the cluster->cluster ESO bootstrap. This policy is placed ONLY on hub
 # clusters (hubClusterSets) and provisions, PER AUTOSHIFT DEPLOYMENT, a client-cert identity
 # the hub apiserver trusts — so that deployment's spokes can read Secrets from the hub via the
-# kubernetes provider. Its spoke-side companion is policy-external-secrets-operator-hub-bootstrap.yaml.
+# kubernetes provider. Its spoke-side companion is policy-eso-hub-bootstrap-store.yaml.
 #
 # Trust model: cert-manager mints ONE generic self-signed CA (its own key, hub-internal) and that
 # CA is wired into the hub apiserver clientCA trust. This is ADDITIVE — OpenShift merges a custom
@@ -73,7 +73,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-eso-hub-bootstrap-trust
+  name: policy-eso-hub-bootstrap-clientca-selfsigned
   namespace: {{ $policyNamespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -95,7 +95,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: eso-hub-bootstrap-trust
+          name: eso-hub-bootstrap-clientca-selfsigned
         spec:
           remediationAction: enforce
           severity: high
@@ -132,30 +132,30 @@ spec:
             {{ "{{-" }} $eligible := list {{ "}}" }}
             {{ "{{-" }} $seenCNs := dict {{ "}}" }}
             ##### This policy owns the selfSigned mode ONLY. In externalCA / externalCAReuseServingCert #####
-            ##### the hub mints no CA + no client certs — policy ...-hub-bootstrap-trust-external owns those #####
+            ##### the hub mints no CA + no client certs — policy ...-hub-bootstrap-clientca-external owns those #####
             ##### modes (clientCA <- external bundle, per-cluster RBAC only). Leaving $eligible empty below #####
             ##### makes this whole policy a no-op so the two never both write APIServer.spec.clientCA. #####
             {{ "{{-" }} if eq $mode "selfSigned" {{ "}}" }}
-            {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
-              {{ "{{-" }} $mcName := $mc.metadata.name {{ "}}" }}
-              {{ "{{-" }} $tenancyNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
-              {{ "{{-" }} if and (ne $tenancyNs "") (eq $tenancyNs "{{ $policyNamespace }}") {{ "}}" }}
-                ##### baseDomain always set in selfSigned (defaults to autoshift.io), so no empty check here. #####
-                {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}{{ "{{-" }} fail (printf "hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (their combined length must be <= 61); shorten hubBootstrapCertCNPrefix or hubBootstrapCertBaseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-                ##### truncate the cluster-name segment to the budget. substr needs int args, but ACM math (add/ #####
-                ##### sub) yields int64 — convert with int. (sprig "slice" is the LIST slice and rejects strings.) #####
-                {{ "{{-" }} $clusterSeg := $mcName {{ "}}" }}
-                {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (substr 0 (int $cnBudget) $mcName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $certCN := (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
-                {{ "{{-" }} if hasKey $seenCNs $certCN {{ "}}" }}{{ "{{-" }} fail (printf "hub-bootstrap CN collision after truncation: clusters %q and %q both map to CN %q; lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenCNs $certCN) $mcName $certCN) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $seenCNs = set $seenCNs $certCN $mcName {{ "}}" }}
-                {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "cn" $certCN "seg" $clusterSeg) {{ "}}" }}
+              {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
+                {{ "{{-" }} $mcName := $mc.metadata.name {{ "}}" }}
+                {{ "{{-" }} $tenancyNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
+                {{ "{{-" }} if and (ne $tenancyNs "") (eq $tenancyNs "{{ $policyNamespace }}") {{ "}}" }}
+                  ##### baseDomain always set in selfSigned (defaults to autoshift.io), so no empty check here. #####
+                  {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}{{ "{{-" }} fail (printf "hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (their combined length must be <= 61); shorten hubBootstrapCertCNPrefix or hubBootstrapCertBaseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  ##### truncate the cluster-name segment to the budget. substr needs int args, but ACM math (add/ #####
+                  ##### sub) yields int64 — convert with int. (sprig "slice" is the LIST slice and rejects strings.) #####
+                  {{ "{{-" }} $clusterSeg := $mcName {{ "}}" }}
+                  {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (substr 0 (int $cnBudget) $mcName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} $certCN := (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
+                  {{ "{{-" }} if hasKey $seenCNs $certCN {{ "}}" }}{{ "{{-" }} fail (printf "hub-bootstrap CN collision after truncation: clusters %q and %q both map to CN %q; lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenCNs $certCN) $mcName $certCN) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} $seenCNs = set $seenCNs $certCN $mcName {{ "}}" }}
+                  {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "cn" $certCN "seg" $clusterSeg) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} if $eligible {{ "}}" }}
-            ##### ACT (runtime, local config-policy-controller on the cluster that landed this policy) #####
-            ##### one generic self-signed CA (cert-manager) that signs all the client certs #####
+              ##### ACT (runtime, local config-policy-controller on the cluster that landed this policy) #####
+              ##### one generic self-signed CA (cert-manager) that signs all the client certs #####
             - complianceType: musthave
               objectDefinition:
                 apiVersion: cert-manager.io/v1
@@ -193,9 +193,9 @@ spec:
                 spec:
                   ca:
                     secretName: {{ $caName }}
-            ##### WIRE THE CA INTO THE HUB APISERVER clientCA TRUST (additive; operator signers stay trusted) #####
-            {{ "{{-" }} $caBundle := (dig "data" "ca.crt" "" ((lookup "v1" "Secret" "{{ $cmResourceNamespace }}" "{{ $caName }}") | default dict)) {{ "}}" }}
-            {{ "{{-" }} if ne $caBundle "" {{ "}}" }}
+              ##### WIRE THE CA INTO THE HUB APISERVER clientCA TRUST (additive; operator signers stay trusted) #####
+              {{ "{{-" }} $caBundle := (dig "data" "ca.crt" "" ((lookup "v1" "Secret" "{{ $cmResourceNamespace }}" "{{ $caName }}") | default dict)) {{ "}}" }}
+              {{ "{{-" }} if ne $caBundle "" {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -215,8 +215,8 @@ spec:
                 spec:
                   clientCA:
                     name: {{ $clientCAConfigMap }}
-            {{ "{{-" }} end {{ "}}" }}
-            ##### SHARED reader Role in the tenancy namespace (one per namespace; the bindings below are per-cluster) #####
+              {{ "{{-" }} end {{ "}}" }}
+              ##### SHARED reader Role in the tenancy namespace (one per namespace; the bindings below are per-cluster) #####
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
@@ -228,15 +228,15 @@ spec:
                   - apiGroups: [""]
                     resources: ["secrets"]
                     verbs: ["get", "list", "watch"]
-            ##### PER CLUSTER (tenancy boundary = the owning autoshift namespace): one client cert + a binding scoped to its CN #####
-            {{ "{{-" }} range $entry := $eligible {{ "}}" }}
-              {{ "{{-" }} $mcName := (index $entry "name") {{ "}}" }}
-              {{ "{{-" }} $certCN := (index $entry "cn") {{ "}}" }}
-              ##### Secret name reuses the SAME truncated cluster segment as the CN (not the raw cluster name), so #####
-              ##### it can never outgrow its own name limit and the spoke copy policy derives the identical name. #####
-              {{ "{{-" }} $clusterSeg := (index $entry "seg") {{ "}}" }}
-              {{ "{{-" }} $secretName := (printf "%s-%s" "{{ $clientSecret }}" $clusterSeg) {{ "}}" }}
-              {{ "{{-" }} $bindingName := (printf "%s-%s" "{{ $readerRole }}" $mcName) {{ "}}" }}
+              ##### PER CLUSTER (tenancy boundary = the owning autoshift namespace): one client cert + a binding scoped to its CN #####
+              {{ "{{-" }} range $entry := $eligible {{ "}}" }}
+                {{ "{{-" }} $mcName := (index $entry "name") {{ "}}" }}
+                {{ "{{-" }} $certCN := (index $entry "cn") {{ "}}" }}
+                ##### Secret name reuses the SAME truncated cluster segment as the CN (not the raw cluster name), so #####
+                ##### it can never outgrow its own name limit and the spoke copy policy derives the identical name. #####
+                {{ "{{-" }} $clusterSeg := (index $entry "seg") {{ "}}" }}
+                {{ "{{-" }} $secretName := (printf "%s-%s" "{{ $clientSecret }}" $clusterSeg) {{ "}}" }}
+                {{ "{{-" }} $bindingName := (printf "%s-%s" "{{ $readerRole }}" $mcName) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: cert-manager.io/v1
@@ -275,13 +275,13 @@ spec:
                   - kind: User
                     name: {{ "{{" }} $certCN {{ "}}" }}
                     apiGroup: rbac.authorization.k8s.io
-            {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-eso-hub-bootstrap-trust
+  name: placement-policy-eso-hub-bootstrap-clientca-selfsigned
   namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
@@ -305,14 +305,14 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-eso-hub-bootstrap-trust
+  name: placement-policy-eso-hub-bootstrap-clientca-selfsigned
   namespace: {{ $policyNamespace }}
 placementRef:
-  name: placement-policy-eso-hub-bootstrap-trust
+  name: placement-policy-eso-hub-bootstrap-clientca-selfsigned
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-eso-hub-bootstrap-trust
+  - name: policy-eso-hub-bootstrap-clientca-selfsigned
     apiGroup: policy.open-cluster-management.io
     kind: Policy
 {{ end }}

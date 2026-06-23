@@ -11,7 +11,7 @@ externalSecretsOperator:
   operatorGroupName: external-secrets-operator-operator-group
   # targetNamespaces: # Optional: specify target namespaces for namespace-scoped operators
   #   - external-secrets-operator
-  # secret-reader ServiceAccount (created by policy-external-secrets-operator-secret-reader.yaml):
+  # secret-reader ServiceAccount (created by policy-eso-secret-reader.yaml):
   # a read-only identity other AutoShift components use to consume the Secrets ESO
   # provisions. Created in `namespace` above; granted read on Secrets in the namespaces
   # from config.externalSecretsOperator.secretReaderNamespaces + config.defaultSecretsNamespace.
@@ -24,7 +24,7 @@ externalSecretsOperator:
   configWebhookCertCheckInterval: 5m0s       # spec.appConfig.webhookConfig.certificateCheckInterval
   configBitwardenMode: Disabled              # spec.plugins.bitwardenSecretManagerProvider.mode (Disabled | Enabled)
 
-  # ---- Cluster->cluster hub bootstrap (policy-external-secrets-operator-hub-bootstrap*.yaml) ----
+  # ---- Cluster->cluster hub bootstrap (policy-eso-hub-bootstrap-store*.yaml) ----
   # Stands the hub up as a kubernetes-provider ClusterSecretStore on each spoke, authenticated
   # with a cert-manager-minted, auto-rotating client cert that the hub apiserver trusts.
   #
@@ -61,11 +61,11 @@ externalSecretsOperator:
   # APIServer.spec.clientCA is a single field, so deployments sharing a hub must agree on the mode.
   #   selfSigned (default) — the hub mints a self-signed CA (cert-manager) + one client cert per
   #       cluster (CN derived) and copies each to its spoke; hub clientCA <- that minted CA. Fully
-  #       self-contained, no external PKI. Handled by policy ...-hub-bootstrap-trust.
+  #       self-contained, no external PKI. Handled by policy ...-hub-bootstrap-clientca-selfsigned.
   #   externalCA — both clusters chain to a shared EXTERNAL CA. The SPOKE mints its own client cert
   #       via a user-provided ClusterIssuer (key never leaves the spoke; CN derived the SAME way from
   #       .ManagedClusterName so it matches the hub RBAC); hub clientCA <- the external CA bundle
-  #       (static, below). No hub-minted CA. Handled by policy ...-hub-bootstrap-trust-external.
+  #       (static, below). No hub-minted CA. Handled by policy ...-hub-bootstrap-clientca-external.
   #   externalCAReuseServingCert — externalCA, but instead of minting a client cert the spoke REUSES
   #       its existing apiserver SERVING cert (+key) as the client cert. SECURITY BLAST RADIUS: this
   #       replicates the apiserver private key into the ESO namespace — only enable when a customer
@@ -79,7 +79,7 @@ externalSecretsOperator:
   #            If the cert puts the host only in SANs with a generic/empty CN, RBAC will not match.
   hubBootstrapMode: selfSigned               # selfSigned | externalCA | externalCAReuseServingCert
   # External CA bundle the hub apiserver clientCA trusts (externalCA / externalCAReuseServingCert).
-  # The trust policy reads this ConfigMap on the hub at runtime and materializes it into the
+  # The clientca policy reads this ConfigMap on the hub at runtime and materializes it into the
   # openshift-config clientCA ConfigMap above. REQUIRED in both external modes. Per-deployment
   # overrides under config.eso.hubBootstrap.externalClientCA.{namespace,name,key}.
   hubBootstrapExternalClientCANamespace: openshift-config  # namespace of the external CA bundle CM
@@ -91,7 +91,7 @@ externalSecretsOperator:
   hubBootstrapSpokeIssuerName: ''            # ClusterIssuer/Issuer name (REQUIRED in externalCA mode)
   hubBootstrapSpokeIssuerKind: ClusterIssuer # ClusterIssuer or Issuer
   hubBootstrapSpokeIssuerGroup: cert-manager.io
-  # Cert tuning DEFAULTS. The actual per-deployment values are read by the hub trust policy from
+  # Cert tuning DEFAULTS. The actual per-deployment values are read by the hub clientca policy from
   # config.eso.hubBootstrap.{certCNPrefix,certDuration,certRenewBefore} (rendered-config-driven);
   # these only apply when that config omits them.
   hubBootstrapCertCNPrefix: autoshift-eso-client  # client cert CN prefix; full CN = <prefix>.<managedClusterName>.<baseDomain>
@@ -103,7 +103,7 @@ externalSecretsOperator:
                                              # prefix + baseDomain leave (61 minus their lengths, the 2 dots counted). Per-cluster
                                              # override: config.eso.hubBootstrap.baseDomain. KNOWN LIMITATION: if prefix+baseDomain
                                              # leave no room the policy FAILS; and two clusters whose names share the surviving
-                                             # truncation budget would collide — the trust policy detects that and FAILS loudly.
+                                             # truncation budget would collide — the clientca policy detects that and FAILS loudly.
   hubBootstrapCertDuration: 720h             # cert-manager Certificate duration for client certs (default 30d)
   hubBootstrapCertRenewBefore: 480h          # cert-manager renewBefore window (default 20d)
   certManagerResourceNamespace: cert-manager # cert-manager "cluster resource namespace" (CA Secret lives here)
@@ -115,7 +115,7 @@ externalSecretsOperator:
   hubCASourceName: kube-apiserver-server-ca       # fallback serving-CA ConfigMap name
   hubCASourceKey: ca-bundle.crt                   # fallback serving-CA ConfigMap key
 
-# Internal lookup table used by policy-external-secrets-operator-stores.yaml.
+# Internal lookup table used by policy-eso-secret-stores.yaml.
 # Maps an authSecretConfig.fromRef token -> a description of the auth method's Secret refs
 # in spec. This is NOT per-cluster config: edit it only to teach the policy about a new
 # auth method. (vault iam/gcp can be added here once their ref layouts are settled.)
