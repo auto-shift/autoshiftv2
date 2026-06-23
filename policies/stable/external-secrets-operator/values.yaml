@@ -28,12 +28,14 @@ externalSecretsOperator:
   # Stands the hub up as a kubernetes-provider ClusterSecretStore on each spoke, authenticated
   # with a cert-manager-minted, auto-rotating client cert that the hub apiserver trusts.
   #
-  # Tenancy: the hub-side policy issues ONE client cert per AutoShift deployment — it enumerates
-  # the policy namespaces labelled autoshift.io/createdByAutoshift: "true" and, into each, mints a
-  # cert with CN "<hubBootstrapCertCNPrefix>-<namespace>" plus a Role/RoleBinding granting that CN
-  # read on Secrets in that namespace ONLY. So a deployment's spokes share one identity that is
-  # isolated to that deployment's namespace and cannot read across tenants. A spoke copies its
-  # cert from its own policy namespace and reads Secrets from that same namespace.
+  # Tenancy: the hub-side policy issues ONE client cert per owned managed cluster — it enumerates the
+  # hub's ManagedClusters, keeps those whose autoshift.io/owning-namespace label (set by the
+  # cluster-labels policy) == this policy namespace, and into the policy namespace mints, per cluster,
+  # a cert with CN "<hubBootstrapCertCNPrefix>.<managedClusterName>.<hubBootstrapCertBaseDomain>" plus
+  # a per-cluster RoleBinding to a shared reader Role granting that CN read on Secrets in this
+  # namespace ONLY. So every spoke in a deployment has its OWN identity but the same authorization
+  # (this deployment's namespace), and cannot read across tenants. A spoke copies its own per-cluster
+  # cert from the policy namespace and reads Secrets from that same namespace.
   #
   # Trust model: cert-manager mints ONE generic self-signed CA (hub-internal key) and that CA is
   # wired into the hub apiserver spec.clientCA. This is ADDITIVE — OpenShift merges a custom

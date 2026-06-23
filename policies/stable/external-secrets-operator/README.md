@@ -14,9 +14,11 @@ Secrets straight from the **hub** apiserver over **mutual TLS**. Two independent
 are minted on the hub and meet at the spoke's store:
 
 - **Client identity (blue)** — the spoke *proves who it is* to the hub. A self-signed
-  bootstrap CA signs one client cert **per AutoShift namespace** (CN scoped, RBAC'd to read
-  Secrets in that namespace only); the CA is wired **additively** into the hub
-  `APIServer.spec.clientCA` so the hub accepts those certs.
+  bootstrap CA signs one client cert **per managed cluster** owned by this deployment (CN
+  `<certCNPrefix>.<managedClusterName>.<baseDomain>`, RBAC'd to read Secrets in the deployment's
+  policy namespace only); the CA is wired **additively** into the hub `APIServer.spec.clientCA`
+  so the hub accepts those certs. This is the default `selfSigned` mode; the two external-CA
+  modes share the same per-cluster identity contract — see [Trust modes](#trust-modes-configesohubbootstrapmode).
 - **Server trust (green)** — the spoke *trusts the cert the hub presents*. The hub's existing
   serving CA is **discovered** (a matching `namedCertificates` entry if one serves the
   apiserver host, else the operator-managed signer) and shipped to the spoke as the store's
@@ -37,8 +39,8 @@ flowchart TB
       A1["ClusterIssuer hub-bootstrap-selfsigned<br/>selfSigned"]:::client
       A2["Certificate hub-bootstrap-ca (isCA)<br/>Secret hub-bootstrap-ca @ cert-manager<br/><b>the bootstrap CA — long-lived root</b>"]:::client
       A3["ClusterIssuer hub-bootstrap-ca-issuer<br/>ca: hub-bootstrap-ca"]:::client
-      A4["PER AutoShift namespace (label createdByAutoshift=true):<br/>Certificate hub-bootstrap-client · CN = certCNPrefix-NS<br/>+ Role/RoleBinding hub-bootstrap-reader<br/>CN gets read on Secrets in THAT ns only"]:::client
-      A1 -->|signs| A2 -->|backs| A3 -->|issues per-ns client cert| A4
+      A4["PER managed cluster owned by this deployment<br/>(ManagedCluster label autoshift.io/owning-namespace == policy ns):<br/>Certificate hub-bootstrap-client-&lt;cluster&gt; · CN = certCNPrefix.cluster.baseDomain<br/>+ shared Role hub-bootstrap-reader + per-cluster RoleBinding<br/>CN gets read on Secrets in the policy ns only"]:::client
+      A1 -->|signs| A2 -->|backs| A3 -->|issues per-cluster client cert| A4
     end
 
     subgraph WIRE["clientCA wiring (additive — operator signers stay trusted)"]
@@ -845,11 +847,17 @@ config:
 
 ## Cluster→cluster hub bootstrap (`config.eso.hubBootstrap`)
 
-A self-contained way to push Secrets from the hub to a spoke **through ESO**, before the
+A self-contained way to make hub Secrets reachable from a spoke **through ESO**, before the
 spoke has any real `secretStores` configured. It stands the **hub up as a
-`kubernetes`-provider `ClusterSecretStore` on the spoke**, so the spoke's ESO reads native
+`kubernetes`-provider `ClusterSecretStore` on the spoke**, so the spoke's ESO can read native
 Secrets straight off the hub apiserver. The only cross-cluster Secret copy is the client
-cert/key the store authenticates with — everything else is pulled by `ExternalSecret`s.
+cert/key the store authenticates with.
+
+**This policy provisions the store only.** Its job is the bootstrap `ClusterSecretStore` plus
+the auth cert/Secret that store needs — it does **not** create application `ExternalSecret`s.
+Any policy/component that wants Secrets from the hub is a **consumer**: it creates its own
+`ExternalSecret` referencing this store (`kind: ClusterSecretStore`, the store name below). That
+keeps each consumer's Secrets owned by the consumer, not funnelled through the bootstrap config.
 
 This is **separate** from `config.eso.secretStores` above: that feature configures arbitrary
 user-defined stores; this one is an opinionated, fixed-shape bootstrap store.
@@ -866,18 +874,21 @@ Three policies cooperate — two run on the hub, one copies to the spokes:
   with the operator-managed client signers (`csr-signer`, admin, kubelet, …), so existing client
   auth keeps working; we just add one more trusted issuer. The CA is long-lived and fully ours
   (no chasing a Red-Hat-managed signer, no OCP-version coupling). It then enumerates every
-  **AutoShift policy namespace** (those labelled `autoshift.io/createdByAutoshift: "true"` — a
-  cluster-scoped lookup, so it works no matter how many AutoShift deployments share the hub) and,
-  into each, mints an **auto-rotating** client `Certificate` with CN `autoshift-eso-client-<namespace>`
-  (signed by the CA) plus a `Role`+`RoleBinding` granting that CN **read** on Secrets in that
-  namespace only. Depends on cert-manager being installed on the hub
-  (`autoshift.io/cert-manager: 'true'`).
+  **`ManagedCluster`** on the hub and keeps the ones this deployment owns — those whose
+  `autoshift.io/owning-namespace` label (set by the `cluster-labels` policy) equals this policy
+  namespace (a cluster-scoped lookup, so it works no matter how many AutoShift deployments share the
+  hub; a cluster missing the label is skipped). Into the policy namespace it mints, **per eligible
+  cluster**, an **auto-rotating** client `Certificate` with CN
+  `<certCNPrefix>.<managedClusterName>.<baseDomain>` (signed by the CA; the cluster-name segment is
+  truncated so the whole CN fits 63 chars) plus a per-cluster `RoleBinding` to a shared reader `Role`,
+  granting that CN **read** on Secrets in the policy namespace only. Depends on cert-manager being
+  installed on the hub (`autoshift.io/cert-manager: 'true'`).
   - **Hub vs runtime split:** hub templates do **only** rendered-config derivation — they load this
     cluster's `<cluster>.rendered-config` and read the `config.eso.hubBootstrap` cert settings
-    (`certCNPrefix`/`certDuration`/`certRenewBefore`), bridging them to runtime (chart `values.yaml`
-    supplies the defaults). The **namespace enumeration and every action** (CA, issuers, `clientCA`
-    wiring, per-namespace certs/RBAC) are **runtime** templates.
-  - **Least privilege & intermediate-hub safe:** because the namespace lookup and actions are runtime,
+    (`mode`/`certCNPrefix`/`baseDomain`/`certDuration`/`certRenewBefore`), bridging them to runtime
+    (chart `values.yaml` supplies the defaults). The **ManagedCluster enumeration and every action**
+    (CA, issuers, `clientCA` wiring, per-cluster certs/RBAC) are **runtime** templates.
+  - **Least privilege & intermediate-hub safe:** because the ManagedCluster lookup and actions are runtime,
     they run as the *target* cluster's local config-policy-controller (cluster-admin) and resolve
     against the cluster the policy actually landed on — so the propagator needs no privileged service
     account, and it works for a self-managed hub (acts on `local-cluster`) **and** an intermediate
@@ -902,8 +913,9 @@ Three policies cooperate — two run on the hub, one copies to the spokes:
   serving CA from the serving-ca policy), so its hub templates copy **only policy-namespace
   resources** into the ESO namespace — never `openshift-config` or the `APIServer` object. It then
   builds the `ClusterSecretStore` (cert auth) against `hubServer` with `remoteNamespace` = the policy
-  namespace, and creates the `ExternalSecret`s. cert-manager rotates the client cert and the
-  serving-ca policy refreshes the serving CA; this policy re-copies both each evaluation.
+  namespace. It stops there — **no `ExternalSecret`s**; consumers create their own against the store.
+  cert-manager rotates the client cert and the serving-ca policy refreshes the serving CA; this
+  policy re-copies both each evaluation.
 
 ```yaml
 config:
@@ -911,19 +923,33 @@ config:
     hubBootstrap:
       hubServer: https://api.hub:6443        # hub apiserver URL (default: values externalSecretsOperator.hubServer)
       storeName: hub-bootstrap               # ClusterSecretStore name (default: chart hubBootstrapStorePrefix)
-      certCNPrefix: autoshift-eso-client     # client cert CN = <prefix>-<namespace> (hub-trust; default from values)
+      certCNPrefix: autoshift-eso-client     # client cert CN = <prefix>.<managedClusterName>.<baseDomain> (hub-trust; default from values)
+      # baseDomain: eso.hub.example.com      # CN FQDN tail (selfSigned default: autoshift.io; REQUIRED in externalCA)
       certDuration: 720h                     # client cert lifetime (hub-trust; default from values)
       certRenewBefore: 480h                  # renew window (hub-trust; default from values)
       # The hub apiserver serving CA is resolved on the hub by the serving-ca policy (named cert ->
       # operator-managed CA) and stashed in the policy namespace — no per-cluster serving-CA config.
-      externalSecrets:                       # pulled from the hub through the bootstrap store
-        - name: app-secrets
-          namespace: app-secrets             # ExternalSecret namespace (default: ESO namespace)
-          refreshInterval: 1h
-          target: { name: app-secrets, creationPolicy: Owner }
-          data:
-            - secretKey: db_password
-              remoteRef: { key: app-db, property: password }
+```
+
+There is **no `externalSecrets` key** — this policy only provisions the store. To consume Secrets
+from the hub, a consumer creates its own `ExternalSecret` referencing the store by name (the
+`storeName` above, default `hub-bootstrap`):
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: app-secrets
+  namespace: app-secrets
+spec:
+  secretStoreRef:
+    name: hub-bootstrap            # the bootstrap ClusterSecretStore
+    kind: ClusterSecretStore
+  refreshInterval: 1h
+  target: { name: app-secrets, creationPolicy: Owner }
+  data:
+    - secretKey: db_password
+      remoteRef: { key: app-db, property: password }
 ```
 
 The cert identity and the namespace it reads are fixed by the deployment, so the spoke block sets
@@ -932,28 +958,32 @@ are read from `config.eso.hubBootstrap` by the hub trust policy, defaulting to t
 (`hubBootstrapCertCNPrefix`, `hubBootstrapCertDuration`/`RenewBefore` in `values.yaml`).
 
 - **Opt-in / all-or-nothing:** the copy policy is a no-op unless `hubBootstrap` is set (needs
-  at least a `hubServer`); the trust policy is a no-op unless a labelled namespace exists.
-- **Shared identity per deployment:** all of a deployment's spokes authenticate as the same
-  `autoshift-eso-client-<namespace>` user. A cert lifted from one spoke can read everything that
-  identity is granted (its namespace), and hub audit logs can't distinguish which spoke read —
-  the tradeoff for dropping per-spoke certs.
+  at least a `hubServer`); the trust policy is a no-op unless at least one owned `ManagedCluster`
+  (carrying `autoshift.io/owning-namespace` == this policy namespace) exists.
+- **Per-cluster identity, per-deployment authorization:** each spoke authenticates as its own unique
+  CN `<certCNPrefix>.<managedClusterName>.<baseDomain>`, but every cluster in a deployment is bound
+  (via a per-cluster `RoleBinding`) to the **same** reader `Role` in the policy namespace — so they
+  all read the same Secrets (the deployment's namespace) and cannot read across deployments. Distinct
+  CNs mean hub audit logs **can** attribute a read to a specific cluster. A cert lifted from one spoke
+  can still read everything that namespace holds, but only that deployment's namespace.
 - **Cross-cluster ordering** isn't expressible via ACM `dependencies` (same-cluster only).
   The spoke policy simply stays noncompliant and retries until the hub has minted the cert
   and granted RBAC — no manual sequencing needed.
 - **One-time apiserver rollout:** wiring the CA into `APIServer/cluster spec.clientCA` triggers a
   kube-apiserver rollout the first time it's set. The wiring is **additive** (operator-managed
   client signers stay trusted, so kubelets/admin kubeconfig keep working), and the CA is ~10y, so
-  it's effectively a one-time event — adding/removing deployments only changes per-namespace certs,
-  not the CA or `clientCA`. In `dryRun` all three parent policies are `inform`.
+  it's effectively a one-time event — adding/removing clusters or deployments only changes per-cluster
+  certs/RBAC, not the CA or `clientCA`. In `dryRun` all three parent policies are `inform`.
 - **AutoShift owns `APIServer/cluster spec.clientCA`:** that field references exactly **one**
   ConfigMap cluster-wide, and this feature claims it (stable name `<storePrefix>-client-ca`, shared
   idempotently across deployments). If anything else on the hub needs a custom client-CA bundle it
   must merge into the same ConfigMap — two independent custom `clientCA`s cannot coexist.
-- **Policy-namespace label is a hard invariant:** the trust policy mints the client cert only into
-  namespaces labelled `autoshift.io/createdByAutoshift=true`. The policy namespace itself **must**
-  carry that label, or the copy policy never finds `<storePrefix>-client` and the spoke store stays
-  noncompliant indefinitely. AutoShift-created namespaces have it by construction; the copy policy's
-  failure message calls this out explicitly.
+- **Owning-namespace label is a hard invariant:** the trust policy mints a client cert only for
+  `ManagedCluster`s whose `autoshift.io/owning-namespace` label equals this policy namespace. A spoke
+  whose `ManagedCluster` is missing that label (or carries a different value) never gets a cert
+  minted, so the copy policy never finds `<storePrefix>-client-<cluster>` and the spoke store stays
+  noncompliant indefinitely. The `cluster-labels` policy sets the label; the copy policy's failure
+  message calls this out explicitly.
 - **Serving CA is resolved on the hub** by the serving-ca policy (custom named cert for the external
   apiserver host → operator-managed serving-CA bundle), stashed in the policy namespace, then copied
   to spokes. The fallback bundle is `values.yaml` `hubCASource{Namespace,Name,Key}`. **Named-cert
@@ -1062,6 +1092,90 @@ externalClientCA:                   # REQUIRED: the external CA bundle the hub a
 > It needs only `mode` + `externalClientCA` (no `baseDomain`/`spokeIssuer` — the identity is the
 > discovered host).
 
+### Values-file examples — what to put in the AutoShift application (all three modes)
+
+Drop these under a cluster's per-cluster file (`autoshift/values/clusters/<name>.yaml`) as
+`clusters.<cluster-name>.config.eso.hubBootstrap`, or — more commonly — under a clusterset
+(`hubClusterSets.*.config.eso.hubBootstrap` / `managedClusterSets.*.config.eso.hubBootstrap`),
+same keys. The `config.eso.hubBootstrap` block is read on **both** the hub (trust policy) and the
+spokes (copy policy), and `mode` selects `APIServer.spec.clientCA` — a single hub-wide field — so
+**every deployment sharing a hub must agree on the mode**; setting it at clusterset scope keeps hub
+and spokes in lockstep. The per-cluster form below is shown because that's what was asked for.
+
+`hubServer` is mode-independent (the copy policy uses it in every mode); only the
+**client-identity** keys differ between modes, so the three examples are otherwise identical. None
+of them lists `externalSecrets` — this policy provisions the store only; consumers create their own
+`ExternalSecret` against it (see [above](#clustercluster-hub-bootstrap-configesohubbootstrap)).
+
+#### 1. `selfSigned` (default) — hub mints the CA and a per-cluster client cert
+
+No external PKI. Omitting `mode` selects this. `baseDomain` defaults to `autoshift.io` and the cert
+tunables default to the chart values — all four are shown only to make the knobs explicit.
+
+```yaml
+clusters:
+  my-spoke:                                # must match the cluster name in ACM
+    config:
+      eso:
+        hubBootstrap:
+          hubServer: https://api.hub.example.com:6443   # hub apiserver URL (required)
+          mode: selfSigned                              # default; may be omitted
+          # ---- client identity (all optional in selfSigned) ----
+          certCNPrefix: autoshift-eso-client            # CN = <prefix>.<cluster>.<baseDomain>
+          baseDomain: autoshift.io                      # default; origin marker, never leaves the trust domain
+          certDuration: 720h                            # client cert lifetime (default 30d)
+          certRenewBefore: 480h                         # renew window (default 20d)
+```
+
+#### 2. `externalCA` — spoke mints its own cert from a shared external CA
+
+The spoke mints its client cert via a user-provided `spokeIssuer` (the key never leaves the spoke);
+the hub trusts the shared `externalClientCA` bundle. `baseDomain`, `spokeIssuer`, and
+`externalClientCA` are **all required** — both sides derive the same CN
+`<certCNPrefix>.<cluster>.<baseDomain>`, so the hub RBAC matches the spoke-minted cert automatically.
+
+```yaml
+clusters:
+  my-spoke:
+    config:
+      eso:
+        hubBootstrap:
+          hubServer: https://api.hub.example.com:6443
+          mode: externalCA
+          baseDomain: eso.hub.example.com               # REQUIRED: spoke-derived CN + hub RBAC both use it
+          # certCNPrefix: autoshift-eso-client          # optional; defaults to the chart value
+          spokeIssuer:                                  # REQUIRED: user-provisioned, chained to the external CA
+            name: shared-ca-issuer
+            kind: ClusterIssuer                         # ClusterIssuer | Issuer
+            group: cert-manager.io
+          externalClientCA:                             # REQUIRED: the external CA bundle the hub clientCA trusts
+            namespace: openshift-config
+            name: external-shared-ca
+            key: ca-bundle.crt
+```
+
+#### 3. `externalCAReuseServingCert` — spoke reuses its apiserver serving cert
+
+Last-resort mode for when the spoke cannot mint a dedicated client cert: it reuses the apiserver
+**serving cert (and its private key)** as the client cert. Needs only `mode` + `externalClientCA` —
+**no** `baseDomain`/`spokeIssuer`, because the identity is the discovered apiserver host, not a
+derived CN. Read the security blast-radius and the two unverifiable preconditions (EKU, Subject CN ==
+host) in the callout above before enabling.
+
+```yaml
+clusters:
+  my-spoke:
+    config:
+      eso:
+        hubBootstrap:
+          hubServer: https://api.hub.example.com:6443
+          mode: externalCAReuseServingCert
+          externalClientCA:                             # REQUIRED: the external CA that signed the serving cert
+            namespace: openshift-config
+            name: external-shared-ca
+            key: ca-bundle.crt
+```
+
 ## Reading provisioned Secrets (`secret-reader`)
 
 The Secrets ESO provisions are consumed by other AutoShift components. Rather than each
@@ -1119,8 +1233,8 @@ oc get clusterissuer hub-bootstrap-selfsigned hub-bootstrap-ca-issuer
 oc get certificate hub-bootstrap-ca -n cert-manager          # the self-signed bootstrap CA
 oc get configmap hub-bootstrap-client-ca -n openshift-config # CA wired into apiserver clientCA
 oc get apiserver cluster -o jsonpath='{.spec.clientCA.name}'
-oc get certificate -A | grep hub-bootstrap-client            # one client cert per AutoShift policy namespace
-oc get role,rolebinding -A | grep hub-bootstrap-reader       # per-namespace reader RBAC
+oc get certificate -A | grep hub-bootstrap-client            # one client cert per owned managed cluster (selfSigned)
+oc get role,rolebinding -A | grep hub-bootstrap-reader       # shared reader Role + one RoleBinding per cluster
 
 # hub serving-CA capture (policy-external-secrets-operator-hub-bootstrap-serving-ca), on the hub:
 oc get configmap hub-bootstrap-hub-ca -n <policy-namespace>  # serving CA stashed for the copy policy
