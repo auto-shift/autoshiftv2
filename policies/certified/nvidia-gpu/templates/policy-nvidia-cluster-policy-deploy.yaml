@@ -16,7 +16,12 @@ spec:
 {{ end }}
   disabled: false
   dependencies:
-    - name: policy-nvidia-gpu-operator-install
+    - name: policy-nvidia-gpu-license-secret
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-nfd-instance-deploy
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -30,7 +35,9 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
-          object-templates:
+          object-templates-raw: |
+            {{ "{{hub-" }} $configs := index (index (fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "nvidiaGPU" | default list) {{ "hub}}" }}
+            {{ "{{hub-" }} range $nvidia := $configs {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 kind: ClusterPolicy
@@ -39,16 +46,16 @@ spec:
                   name: gpu-cluster-policy
                 spec:
                   operator:
-                    defaultRuntime: crio
                     use_ocp_driver_toolkit: true
-                    initContainer: {}
                   cdi:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.cdi | default "true" {{ "hub}}" }}
+                    nriPluginEnabled: false
                   sandboxWorkloads:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.sandboxWorkloads | default "false" {{ "hub}}" }}
                     defaultWorkload: container
+                    mode: kubevirt
                   driver:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.driver | default "true" {{ "hub}}" }}
                     useNvidiaDriverCRD: false
                     kernelModuleType: auto
                     upgradePolicy:
@@ -72,55 +79,78 @@ spec:
                       name: ''
                     licensingConfig:
                       nlsEnabled: true
-                      secretName: ''
+                      secretName: {{ "{{hub"}} $nvidia.licenseSecretName {{ "hub}}" }}
                     virtualTopology:
                       config: ''
                     kernelModuleConfig:
                       name: ''
                   dcgmExporter:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.dcgmExporter | default "true" {{ "hub}}" }}
                     config:
                       name: ''
                     serviceMonitor:
-                      enabled: true
+                      enabled: {{ "{{hub"}} $nvidia.dcgmExporterServiceMonitor | default "true" {{ "hub}}" }}
                   dcgm:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.dcgm | default "true" {{ "hub}}" }}
                   daemonsets:
                     updateStrategy: RollingUpdate
                     rollingUpdate:
                       maxUnavailable: '1'
                   devicePlugin:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.devicePlugin | default "true" {{ "hub}}" }}
                     config:
                       name: ''
                       default: ''
                     mps:
                       root: /run/nvidia/mps
                   gfd:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.gfd | default "true" {{ "hub}}" }}
                   migManager:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.migManager | default "true" {{ "hub}}" }}
                   nodeStatusExporter:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.nodeStatusExporter | default "true" {{ "hub}}" }}
                   mig:
-                    strategy: single
+                    strategy: {{ "{{hub"}} $nvidia.migsStrategy | default "single" {{ "hub}}" }}
                   toolkit:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.toolkit | default "true" {{ "hub}}" }}
                   validator:
                     plugin:
                       env: []
                   vgpuManager:
-                    enabled: false
+                    enabled: {{ "{{hub"}} $nvidia.vgpuManager | default "false" {{ "hub}}" }}
                   vgpuDeviceManager:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.vgpuDeviceManager | default "true" {{ "hub}}" }}
                   sandboxDevicePlugin:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.sandboxDevicePlugin | default "true" {{ "hub}}" }}
+                  kataSandboxDevicePlugin:
+                    enabled: {{ "{{hub"}} $nvidia.kataSandboxDevicePlugin | default "true" {{ "hub}}" }}
                   vfioManager:
-                    enabled: true
+                    enabled: {{ "{{hub"}} $nvidia.vfioManager | default "true" {{ "hub}}" }}
+                  ccManager:
+                    enabled: {{ "{{hub"}} $nvidia.ccManager | default "true" {{ "hub}}" }}
                   gds:
-                    enabled: false
+                    enabled: {{ "{{hub"}} $nvidia.gds | default "false" {{ "hub}}" }}
                   gdrcopy:
-                    enabled: false
+                    enabled: {{ "{{hub"}} $nvidia.gdrcopy | default "false" {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: nvidia-gpu-deploy-test
+          namespace: {{ .Values.policy_namespace }}
+        spec:
+          remediationAction: inform # will be overridden by remediationAction in parent policy
+          severity: high
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: nvidia.com/v1
+                kind: ClusterPolicy
+                metadata:
+                  name: gpu-cluster-policy
+                status:
+                  state: ready
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
