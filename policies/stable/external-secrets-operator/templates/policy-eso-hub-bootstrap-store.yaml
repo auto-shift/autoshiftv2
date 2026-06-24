@@ -150,15 +150,10 @@ spec:
               ##### In externalCA mode $clusterSeg is REDEFINED (block-scoped) to the cluster's REAL name — the #####
               ##### apiserverurl.openshift.io clusterClaim host label api.<realName>.<base>, NOT .ManagedClusterName #####
               ##### (self-managed hubs are all "local-cluster" and would collide under the shared external CA). #####
-              ##### Derived/truncated identically to the hub clientca-external RBAC subject so the CNs match. The #####
-              ##### outer $clusterSeg (from .ManagedClusterName) is untouched and still names the selfSigned secret. #####
-              {{ "{{hub-" }} $mcObj := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" .ManagedClusterName) | default dict) {{ "hub}}" }}
-              {{ "{{hub-" }} $apiUrl := "" {{ "hub}}" }}
-              {{ "{{hub-" }} range $claim := (dig "status" "clusterClaims" (list) $mcObj) {{ "hub}}" }}
-                {{ "{{hub-" }} if eq (dig "name" "" $claim) "apiserverurl.openshift.io" {{ "hub}}" }}
-                  {{ "{{hub-" }} $apiUrl = (dig "value" "" $claim) {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
+              ##### fromClusterClaim is keyed on the target cluster (.ManagedClusterName), so it returns THIS spoke's #####
+              ##### apiserver URL. Derived/truncated identically to the hub clientca-external RBAC subject so the CNs #####
+              ##### match. The outer $clusterSeg (from .ManagedClusterName) is untouched and still names the selfSigned secret. #####
+              {{ "{{hub-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "hub}}" }}
               {{ "{{hub-" }} if eq $apiUrl "" {{ "hub}}" }}
                 {{ "{{hub-" }} fail (printf "externalCA mode: ManagedCluster %q has no apiserverurl.openshift.io clusterClaim — cannot derive its real cluster name for the client cert CN" .ManagedClusterName) {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
@@ -288,8 +283,8 @@ spec:
                 ##### host and the kube-apiserver maps the presented client cert to its Subject CN, so the cert we reuse #####
                 ##### MUST be the one whose Subject CN is the host (the serving-ca policy matches the same way). Fall #####
                 ##### back to the first entry only when no entry advertises the host in its names. #####
-                {{ "{{-" }} $apiUrlClaim := ((lookup "cluster.open-cluster-management.io/v1alpha1" "ClusterClaim" "" "apiserverurl.openshift.io") | default dict) {{ "}}" }}
-                {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" (dig "spec" "value" "" $apiUrlClaim))) 0) {{ "}}" }}
+                {{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
+                {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
                 {{ "{{-" }} $servingSecretName := "" {{ "}}" }}
                 {{ "{{-" }} range $nc := $namedCerts {{ "}}" }}
                   {{ "{{-" }} if and (eq $servingSecretName "") (has $apiHost ((index $nc "names") | default list)) {{ "}}" }}

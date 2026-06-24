@@ -67,8 +67,8 @@ spec:
             ##### RUNTIME (on the hub itself): resolve the hub apiserver serving CA #####
             ##### prefer a custom named serving cert for the hub's external apiserver host; else the operator-managed CA #####
             {{ "{{-" }} $apiserver := ((lookup "config.openshift.io/v1" "APIServer" "" "cluster") | default dict) {{ "}}" }}
-            {{ "{{-" }} $apiUrlClaim := ((lookup "cluster.open-cluster-management.io/v1alpha1" "ClusterClaim" "" "apiserverurl.openshift.io") | default dict) {{ "}}" }}
-            {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" (dig "spec" "value" "" $apiUrlClaim))) 0) {{ "}}" }}
+            {{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
+            {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
             {{ "{{-" }} $caPEM := "" {{ "}}" }}
             {{ "{{-" }} range $nc := (dig "spec" "servingCerts" "namedCertificates" list $apiserver) {{ "}}" }}
               {{ "{{-" }} if has $apiHost ((index $nc "names") | default list) {{ "}}" }}
