@@ -53,7 +53,7 @@ flowchart TB
 
     subgraph SERVE["SERVING-CA DISCOVERY · policy hub-bootstrap-serving-ca (runtime)"]
       direction TB
-      S0["lookup APIServer/cluster + Infrastructure/cluster<br/>derive apiServerURL host"]:::serve
+      S0["lookup APIServer/cluster + apiserverurl.openshift.io ClusterClaim<br/>derive apiserver host from spec.value"]:::serve
       S1{"namedCertificates entry<br/>whose names match the host?"}:::serve
       S2["YES → fromSecret openshift-config/NAMEDCERT tls.crt<br/>(leaf+intermediate chain; pins current serving leaf)"]:::serve
       S3["NO → fromConfigMap openshift-config-managed/<br/>kube-apiserver-server-ca (operator-managed signer)<br/>(rotation-clean default)"]:::serve
@@ -914,8 +914,8 @@ Three policies cooperate — two run on the hub, one copies to the spokes:
 - `policy-eso-hub-bootstrap-serving-ca` runs **on the hub** (client→server
   trust). The store must trust the TLS cert the hub apiserver presents. This policy is **100%
   runtime** — it lands on the hub and the local config-policy-controller (cluster-admin) reads
-  `APIServer/cluster spec.servingCerts.namedCertificates` and `Infrastructure/cluster
-  status.apiServerURL` *on the cluster itself*; if a named cert serves the external apiserver host
+  `APIServer/cluster spec.servingCerts.namedCertificates` and the `apiserverurl.openshift.io`
+  ClusterClaim (`spec.value`) *on the cluster itself*; if a named cert serves the external apiserver host
   it takes that cert's chain (its `openshift-config` Secret, key `tls.crt`), else it falls back to
   the operator-managed serving CA (`openshift-config-managed/kube-apiserver-server-ca`). It writes
   the result into a **ConfigMap in the policy namespace** (`<storePrefix>-hub-ca`).

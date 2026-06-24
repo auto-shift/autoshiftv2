@@ -15,13 +15,21 @@
 #
 # Tenancy model: an AutoShift deployment is a tenancy boundary = its policy namespace. Each
 # ManagedCluster is labelled (by another policy) autoshift.io/owning-namespace = the
-# namespace of its owning deployment. This policy enumerates the hub's ManagedClusters, keeps the
-# ones whose tenancy label == THIS policy namespace (missing label -> skip: not an autoshift
-# cluster), and issues, PER CLUSTER, into that namespace:
+# namespace of its owning deployment. A cluster belongs to exactly ONE clusterSet, so exactly ONE
+# deployment's copy of this policy ever lands on a given hub — and that single copy serves EVERY
+# ManagedCluster on the hub, INCLUDING clusters owned by other deployments. This policy enumerates
+# the hub's ManagedClusters, keeps every one carrying the tenancy label (missing label -> skip: not
+# an autoshift cluster), and issues, PER CLUSTER, into that cluster's OWN owning namespace (NOT this
+# policy's namespace — the owning deployment's store policy reads the client Secret AND the Secrets
+# it wants from there, so both the identity and its RBAC must land in the owning namespace):
 #   - one client Certificate, CN = "<certCNPrefix>.<managedClusterName>.<baseDomain>" (unique per
 #     cluster; the managedClusterName segment is truncated so the whole CN fits 63 chars), and
-#   - a RoleBinding granting that CN read on Secrets in the tenancy namespace (one shared reader
-#     Role per namespace; one binding per cluster).
+#   - a shared reader Role per owning namespace, plus ONE RoleBinding per owning namespace whose
+#     subjects are every owned cluster's CN (grouped by namespace, not one binding per cluster).
+# The CA, ClusterIssuers, and clientCA wiring stay hub-global (single shared trust domain); only the
+# per-cluster cert + the reader RBAC are tenant-scoped. The trust MODE (selfSigned vs externalCA) is
+# necessarily hub-uniform — it wires the single APIServer.spec.clientCA — so deriving it (and the CN
+# settings) from this hub's rendered config below is correct for every cluster the hub hosts.
 # Per-cluster CN (not per-namespace) so the SAME derivation works for the external-CA variant where
 # the spoke mints its own cert with CN derived from its own .ManagedClusterName — both sides compute
 # the identical CN from ManagedCluster.metadata.name, so the identity contract needs no coordination.
@@ -116,20 +124,23 @@ spec:
             {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
             ##### Reject an unknown mode loudly (a typo'd mode would otherwise silently no-op this policy AND #####
             ##### its external companion, leaving the hub apiserver with no clientCA wired for any cluster). #####
-            {{ "{{-" }} if and (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}{{ "{{-" }} fail (printf "invalid config.eso.hubBootstrap.mode %q (or values hubBootstrapMode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if and (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
+              {{ "{{-" }} fail (printf "invalid config.eso.hubBootstrap.mode %q (or values hubBootstrapMode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $certDuration := `{{ "{{hub" }} $certDuration {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $certRenewBefore := `{{ "{{hub" }} $certRenewBefore {{ "hub}}" }}` {{ "}}" }}
             ##### RUNTIME (on the hub itself): enumerate THIS hub's ManagedClusters, build the eligible set #####
-            ##### A cluster is owned by THIS deployment when its autoshift.io/owning-namespace label #####
-            ##### == this policy namespace. Missing label -> SKIP (treat as a non-autoshift cluster; the eval #####
+            ##### Keep EVERY cluster carrying the autoshift.io/owning-namespace label (any deployment — one #####
+            ##### hub hosts clusters from many). Missing label -> SKIP (treat as a non-autoshift cluster; the eval #####
             ##### interval is deliberately small). CN = <prefix>.<clusterTrunc>.<baseDomain> capped at 63: the #####
             ##### cluster-name segment is truncated to the budget the prefix + baseDomain leave (61 minus their #####
             ##### lengths, the 2 dots counted). Budget exhausted -> fail; truncation collision -> fail (no hash #####
             ##### function exists in ACM templates, so a collision cannot be silently disambiguated). #####
             {{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
             {{ "{{-" }} $eligible := list {{ "}}" }}
+            {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
             {{ "{{-" }} $seenCNs := dict {{ "}}" }}
             ##### This policy owns the selfSigned mode ONLY. In externalCA / externalCAReuseServingCert #####
             ##### the hub mints no CA + no client certs — policy ...-hub-bootstrap-clientca-external owns those #####
@@ -139,17 +150,27 @@ spec:
               {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
                 {{ "{{-" }} $mcName := $mc.metadata.name {{ "}}" }}
                 {{ "{{-" }} $tenancyNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
-                {{ "{{-" }} if and (ne $tenancyNs "") (eq $tenancyNs "{{ $policyNamespace }}") {{ "}}" }}
+                {{ "{{-" }} if ne $tenancyNs "" {{ "}}" }}
                   ##### baseDomain always set in selfSigned (defaults to autoshift.io), so no empty check here. #####
-                  {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}{{ "{{-" }} fail (printf "hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (their combined length must be <= 61); shorten hubBootstrapCertCNPrefix or hubBootstrapCertBaseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}
+                    {{ "{{-" }} fail (printf "hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (their combined length must be <= 61); shorten hubBootstrapCertCNPrefix or hubBootstrapCertBaseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
                   ##### truncate the cluster-name segment to the budget. substr needs int args, but ACM math (add/ #####
-                  ##### sub) yields int64 — convert with int. (sprig "slice" is the LIST slice and rejects strings.) #####
+                  ##### sub) yields int64 — convert with toInt. (sprig "slice" is the LIST slice and rejects strings.) #####
                   {{ "{{-" }} $clusterSeg := $mcName {{ "}}" }}
-                  {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (substr 0 (int $cnBudget) $mcName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}
+                    {{ "{{-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $mcName) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
                   {{ "{{-" }} $certCN := (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
-                  {{ "{{-" }} if hasKey $seenCNs $certCN {{ "}}" }}{{ "{{-" }} fail (printf "hub-bootstrap CN collision after truncation: clusters %q and %q both map to CN %q; lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenCNs $certCN) $mcName $certCN) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if hasKey $seenCNs $certCN {{ "}}" }}
+                    {{ "{{-" }} fail (printf "hub-bootstrap CN collision after truncation: clusters %q and %q both map to CN %q; lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenCNs $certCN) $mcName $certCN) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
                   {{ "{{-" }} $seenCNs = set $seenCNs $certCN $mcName {{ "}}" }}
-                  {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "cn" $certCN "seg" $clusterSeg) {{ "}}" }}
+                  {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "cn" $certCN "seg" $clusterSeg "ns" $tenancyNs) {{ "}}" }}
+                  ##### group CNs by owning namespace for the per-namespace reader Role + RoleBinding below #####
+                  {{ "{{-" }} $nsList := (index $nsIdentities $tenancyNs | default list) {{ "}}" }}
+                  {{ "{{-" }} $nsList = append $nsList $certCN {{ "}}" }}
+                  {{ "{{-" }} $_ := set $nsIdentities $tenancyNs $nsList {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
@@ -216,36 +237,65 @@ spec:
                   clientCA:
                     name: {{ $clientCAConfigMap }}
               {{ "{{-" }} end {{ "}}" }}
-              ##### SHARED reader Role in the tenancy namespace (one per namespace; the bindings below are per-cluster) #####
+              ##### PER OWNING NAMESPACE: one shared reader Role + ONE RoleBinding whose subjects are every #####
+              ##### owned cluster's client CN. The owning deployment's store policy reads its client Secret AND #####
+              ##### the Secrets it wants from THIS namespace, so the identity + RBAC must land here, not in $policyNamespace. #####
+              ##### The RoleBinding is mustonlyhave: its subjects are pinned to EXACTLY the current owners, so a #####
+              ##### cluster that moves to another tenancy namespace is dropped from this binding (no stale access). #####
+              ##### Every tenant-scoped object below carries an autoshift.io/secret-reader-* label so a future cleanup #####
+              ##### pass can list them and delete any whose namespace is no longer a key in $nsIdentities. The hub- #####
+              ##### global CA / issuers / clientCA / APIServer are deliberately NOT labelled (different lifecycle, and #####
+              ##### they do not live in a tenancy namespace, so a namespace-based sweep must never touch them). #####
+              {{ "{{-" }} range $ownerNs, $cns := $nsIdentities {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
                 kind: Role
                 metadata:
                   name: {{ $readerRole }}
-                  namespace: {{ $policyNamespace }}
+                  namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-role: {{ $storePrefix }}
                 rules:
                   - apiGroups: [""]
                     resources: ["secrets"]
                     verbs: ["get", "list", "watch"]
-              ##### PER CLUSTER (tenancy boundary = the owning autoshift namespace): one client cert + a binding scoped to its CN #####
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: {{ $readerRole }}
+                  namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-rolebinding: {{ $storePrefix }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: Role
+                  name: {{ $readerRole }}
+                subjects:
+                  {{ "{{-" }} range $cn := $cns {{ "}}" }}
+                  - kind: User
+                    name: {{ "{{" }} $cn {{ "}}" }}
+                    apiGroup: rbac.authorization.k8s.io
+                  {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              ##### PER CLUSTER: one client cert minted into the cluster's OWN owning namespace (where its owning #####
+              ##### deployment's store policy reads it). Secret name reuses the truncated CN segment, so that store #####
+              ##### derives the identical name. CN uniqueness is enforced hub-wide above ($seenCNs), across namespaces. #####
               {{ "{{-" }} range $entry := $eligible {{ "}}" }}
-                {{ "{{-" }} $mcName := (index $entry "name") {{ "}}" }}
-                {{ "{{-" }} $certCN := (index $entry "cn") {{ "}}" }}
-                ##### Secret name reuses the SAME truncated cluster segment as the CN (not the raw cluster name), so #####
-                ##### it can never outgrow its own name limit and the spoke copy policy derives the identical name. #####
-                {{ "{{-" }} $clusterSeg := (index $entry "seg") {{ "}}" }}
-                {{ "{{-" }} $secretName := (printf "%s-%s" "{{ $clientSecret }}" $clusterSeg) {{ "}}" }}
-                {{ "{{-" }} $bindingName := (printf "%s-%s" "{{ $readerRole }}" $mcName) {{ "}}" }}
+                {{ "{{-" }} $secretName := (printf "%s-%s" "{{ $clientSecret }}" (index $entry "seg")) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: cert-manager.io/v1
                 kind: Certificate
                 metadata:
                   name: {{ "{{" }} $secretName {{ "}}" }}
-                  namespace: {{ $policyNamespace }}
+                  namespace: {{ "{{" }} (index $entry "ns") {{ "}}" }}
+                  labels:
+                    autoshift.io/hub-bootstrap-client-cert: {{ $storePrefix }}
                 spec:
-                  commonName: {{ "{{" }} $certCN {{ "}}" }}
+                  commonName: {{ "{{" }} (index $entry "cn") {{ "}}" }}
                   secretName: {{ "{{" }} $secretName {{ "}}" }}
                   duration: {{ "{{" }} $certDuration {{ "}}" }}
                   renewBefore: {{ "{{" }} $certRenewBefore {{ "}}" }}
@@ -260,21 +310,29 @@ spec:
                     name: {{ $caIssuer }}
                     kind: ClusterIssuer
                     group: cert-manager.io
-            - complianceType: musthave
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### CLEANUP (orphaned RoleBindings): a reader RoleBinding this policy labelled whose namespace no #####
+            ##### longer owns a cluster (not a key in $nsIdentities) is stale — emit a mustNotHave so ACM deletes #####
+            ##### it. Deleting the binding alone revokes access (its Role grants nothing unbound; Role/Cert cleanup #####
+            ##### is left to a future label sweep). Gated on the SAME mode as the enumerate loop above: the inactive #####
+            ##### companion policy has an EMPTY $nsIdentities, so without this gate it would delete every labelled #####
+            ##### binding — including the active policy's. Runs even when $eligible is empty (last cluster left). #####
+            {{ "{{-" }} if eq $mode "selfSigned" {{ "}}" }}
+              {{ "{{-" }} range $rb := ((lookup "rbac.authorization.k8s.io/v1" "RoleBinding" "" "").items | default list) {{ "}}" }}
+                {{ "{{-" }} $rbLabels := (dig "metadata" "labels" (dict) $rb) {{ "}}" }}
+                {{ "{{-" }} if hasKey $rbLabels "autoshift.io/secret-reader-rolebinding" {{ "}}" }}
+                  {{ "{{-" }} $rbNs := (dig "metadata" "namespace" "" $rb) {{ "}}" }}
+                  {{ "{{-" }} if not (hasKey $nsIdentities $rbNs) {{ "}}" }}
+            - complianceType: mustnothave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
                 kind: RoleBinding
                 metadata:
-                  name: {{ "{{" }} $bindingName {{ "}}" }}
-                  namespace: {{ $policyNamespace }}
-                roleRef:
-                  apiGroup: rbac.authorization.k8s.io
-                  kind: Role
-                  name: {{ $readerRole }}
-                subjects:
-                  - kind: User
-                    name: {{ "{{" }} $certCN {{ "}}" }}
-                    apiGroup: rbac.authorization.k8s.io
+                  name: {{ "{{" }} (dig "metadata" "name" "" $rb) {{ "}}" }}
+                  namespace: {{ "{{" }} $rbNs {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
 ---

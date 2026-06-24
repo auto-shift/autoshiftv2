@@ -7,8 +7,10 @@
 #   externalCA — both clusters chain to a SHARED EXTERNAL CA. The hub mints NOTHING: the SPOKE mints
 #     its own client cert via a user-provided ClusterIssuer (handled in the spoke companion), and the
 #     hub apiserver clientCA simply trusts the external CA bundle. Because the spoke derives its CN the
-#     SAME way this policy does (<prefix>.<managedClusterName>.<baseDomain>, truncated to 63), the
-#     per-cluster RBAC subject below matches the cert with no out-of-band coordination.
+#     SAME way this policy does (<prefix>.<realClusterName>.<baseDomain>, truncated to 63, where
+#     realClusterName is the cluster's apiserverurl.openshift.io clusterClaim host label — NOT the OCM
+#     ManagedCluster name, since self-managed hubs all share the name "local-cluster"), the per-cluster
+#     RBAC subject below matches the cert with no out-of-band coordination.
 #   externalCAReuseServingCert — same external-CA trust, but the spoke presents its existing apiserver
 #     SERVING cert as the client cert (no new cert minted anywhere). The hub cannot parse an x509 cert
 #     in a template to learn that cert's Subject, so the RBAC identity is DISCOVERED from the cluster's
@@ -17,12 +19,17 @@
 #     rejects it) and its Subject CN must equal that host (else this RBAC binding never matches). See
 #     values.yaml hubBootstrapMode for the full caveat + the key-replication blast radius.
 #
-# What this policy does, PER ELIGIBLE CLUSTER (tenancy label autoshift.io/owning-namespace ==
-# this policy namespace; missing label -> skip):
+# A cluster belongs to exactly ONE clusterSet, so exactly ONE deployment's copy of this policy lands on
+# a given hub, and that single copy serves EVERY ManagedCluster on the hub (any owning deployment).
+# What this policy does, PER ELIGIBLE CLUSTER (any cluster carrying the autoshift.io/owning-namespace
+# label; missing label -> skip):
 #   - materializes the configured external CA bundle ConfigMap into openshift-config and points the hub
-#     APIServer.spec.clientCA at it (additive; OpenShift merges it with the operator-managed signers),
-#   - creates one shared reader Role in the tenancy namespace + one RoleBinding per cluster whose subject
-#     is that cluster's identity (derived CN for externalCA; discovered apiserver host for the reuse mode).
+#     APIServer.spec.clientCA at it (additive; OpenShift merges it with the operator-managed signers) —
+#     hub-global, created once,
+#   - creates, PER OWNING NAMESPACE, one shared reader Role + ONE RoleBinding whose subjects are every
+#     owned cluster's identity (derived CN for externalCA; discovered apiserver host for the reuse mode).
+#     The RBAC lands in the cluster's OWN owning namespace (NOT this policy's) — that deployment's store
+#     policy reads the Secrets it wants from there.
 # No CA / issuer / Certificate is created here — that is exactly what differs from the selfSigned policy.
 #
 # Hub vs runtime split mirrors the selfSigned policy: hub templates DERIVE values from THIS cluster's
@@ -85,7 +92,9 @@ spec:
             {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
             ##### Reject an unknown mode loudly (a typo'd mode would otherwise silently no-op this policy AND #####
             ##### the selfSigned companion, leaving the hub apiserver with no clientCA wired for any cluster). #####
-            {{ "{{-" }} if and (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}{{ "{{-" }} fail (printf "invalid config.eso.hubBootstrap.mode %q (or values hubBootstrapMode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if and (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
+              {{ "{{-" }} fail (printf "invalid config.eso.hubBootstrap.mode %q (or values hubBootstrapMode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $extCANamespace := `{{ "{{hub" }} $extCANamespace {{ "hub}}" }}` {{ "}}" }}
@@ -95,46 +104,90 @@ spec:
             ##### selfSigned is owned by policy ...-hub-bootstrap-clientca-selfsigned, so leave $eligible empty here. #####
             ##### Identity per cluster = derived CN (externalCA) OR the registered apiserver host (reuse mode). #####
             {{ "{{-" }} $eligible := list {{ "}}" }}
+            {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
             {{ "{{-" }} $seenIds := dict {{ "}}" }}
             {{ "{{-" }} if or (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert") {{ "}}" }}
               {{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
               {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
                 {{ "{{-" }} $mcName := $mc.metadata.name {{ "}}" }}
                 {{ "{{-" }} $tenancyNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
-                {{ "{{-" }} if and (ne $tenancyNs "") (eq $tenancyNs "{{ $policyNamespace }}") {{ "}}" }}
+                {{ "{{-" }} if ne $tenancyNs "" {{ "}}" }}
                   {{ "{{-" }} $identity := "" {{ "}}" }}
                   {{ "{{-" }} if eq $mode "externalCA" {{ "}}" }}
                     ##### externalCA: CN = <prefix>.<clusterTrunc>.<baseDomain>, identical to the selfSigned derivation #####
-                    {{ "{{-" }} if eq $certBaseDomain "" {{ "}}" }}{{ "{{-" }} fail "hubBootstrapCertBaseDomain (or config.eso.hubBootstrap.baseDomain) is required in externalCA mode (the spoke derives the SAME CN, so the hub RBAC must match)" {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}{{ "{{-" }} fail (printf "hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (combined length must be <= 61); shorten the prefix or baseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} $clusterSeg := $mcName {{ "}}" }}
-                    ##### substr needs int args; ACM math yields int64, so convert with int (sprig slice rejects strings). #####
-                    {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (substr 0 (int $cnBudget) $mcName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if eq $certBaseDomain "" {{ "}}" }}
+                      {{ "{{-" }} fail "hubBootstrapCertBaseDomain (or config.eso.hubBootstrap.baseDomain) is required in externalCA mode (the spoke derives the SAME CN, so the hub RBAC must match)" {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}
+                      {{ "{{-" }} fail (printf "hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (combined length must be <= 61); shorten the prefix or baseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    ##### $clusterSeg = the cluster's REAL name (apiserverurl.openshift.io clusterClaim host label #####
+                    ##### api.<realName>.<base>), NOT $mcName — self-managed hubs are ALL named "local-cluster", which #####
+                    ##### would collide into one ambiguous CN under the shared external CA. The clusterClaim value is #####
+                    ##### synced onto the hub's ManagedCluster.status.clusterClaims. The spoke store policy derives the #####
+                    ##### SAME way, so its minted CN matches this RBAC subject. #####
+                    {{ "{{-" }} $apiUrl := "" {{ "}}" }}
+                    {{ "{{-" }} range $claim := (dig "status" "clusterClaims" (list) $mc) {{ "}}" }}
+                      {{ "{{-" }} if eq (dig "name" "" $claim) "apiserverurl.openshift.io" {{ "}}" }}
+                        {{ "{{-" }} $apiUrl = (dig "value" "" $claim) {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if eq $apiUrl "" {{ "}}" }}
+                      {{ "{{-" }} fail (printf "ManagedCluster %q has no apiserverurl.openshift.io clusterClaim — cannot derive its real cluster name for the externalCA client cert CN" $mcName) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
+                    {{ "{{-" }} $hostLabels := (splitList "." $apiHost) {{ "}}" }}
+                    {{ "{{-" }} if lt (len $hostLabels) 2 {{ "}}" }}
+                      {{ "{{-" }} fail (printf "ManagedCluster %q apiserver URL %q is not of the form https://api.<cluster>.<base> — cannot derive the real cluster name" $mcName $apiUrl) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $clusterSeg := (index $hostLabels 1) {{ "}}" }}
+                    ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
+                    {{ "{{-" }} if gt (len $clusterSeg) $cnBudget {{ "}}" }}
+                      {{ "{{-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $clusterSeg) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} $identity = (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
                   {{ "{{-" }} else {{ "}}" }}
                     ##### externalCAReuseServingCert: identity = host of the cluster's registered apiserver URL. #####
                     ##### No urlParse in ACM templates, so split scheme//host:port/path with splitList + index. #####
                     {{ "{{-" }} $clientConfigs := (dig "spec" "managedClusterClientConfigs" (list) $mc) {{ "}}" }}
-                    {{ "{{-" }} if not $clientConfigs {{ "}}" }}{{ "{{-" }} fail (printf "ManagedCluster %q has no spec.managedClusterClientConfigs[].url — cannot derive the client identity for externalCAReuseServingCert mode" $mcName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if not $clientConfigs {{ "}}" }}
+                      {{ "{{-" }} fail (printf "ManagedCluster %q has no spec.managedClusterClientConfigs[].url — cannot derive the client identity for externalCAReuseServingCert mode" $mcName) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} $url := (dig "url" "" (index $clientConfigs 0)) {{ "}}" }}
-                    {{ "{{-" }} if eq $url "" {{ "}}" }}{{ "{{-" }} fail (printf "ManagedCluster %q managedClusterClientConfigs[0].url is empty" $mcName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if eq $url "" {{ "}}" }}
+                      {{ "{{-" }} fail (printf "ManagedCluster %q managedClusterClientConfigs[0].url is empty" $mcName) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} $afterScheme := $url {{ "}}" }}
-                    {{ "{{-" }} if contains "//" $url {{ "}}" }}{{ "{{-" }} $afterScheme = (index (splitList "//" $url) 1) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if contains "//" $url {{ "}}" }}
+                      {{ "{{-" }} $afterScheme = (index (splitList "//" $url) 1) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} $hostport := (index (splitList "/" $afterScheme) 0) {{ "}}" }}
                     {{ "{{-" }} $identity = (index (splitList ":" $hostport) 0) {{ "}}" }}
-                    {{ "{{-" }} if eq $identity "" {{ "}}" }}{{ "{{-" }} fail (printf "could not derive apiserver host from ManagedCluster %q url %q" $mcName $url) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if eq $identity "" {{ "}}" }}
+                      {{ "{{-" }} fail (printf "could not derive apiserver host from ManagedCluster %q url %q" $mcName $url) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
-                  {{ "{{-" }} if hasKey $seenIds $identity {{ "}}" }}{{ "{{-" }} fail (printf "hub-bootstrap-external identity collision: clusters %q and %q both map to identity %q; rename a cluster or (externalCA) lengthen the CN budget" (index $seenIds $identity) $mcName $identity) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if hasKey $seenIds $identity {{ "}}" }}
+                    {{ "{{-" }} fail (printf "hub-bootstrap-external identity collision: clusters %q and %q both map to identity %q; rename a cluster or (externalCA) lengthen the CN budget" (index $seenIds $identity) $mcName $identity) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
                   {{ "{{-" }} $seenIds = set $seenIds $identity $mcName {{ "}}" }}
                   {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "id" $identity) {{ "}}" }}
+                  ##### group identities by owning namespace for the per-namespace reader Role + RoleBinding below #####
+                  {{ "{{-" }} $nsList := (index $nsIdentities $tenancyNs | default list) {{ "}}" }}
+                  {{ "{{-" }} $nsList = append $nsList $identity {{ "}}" }}
+                  {{ "{{-" }} $_ := set $nsIdentities $tenancyNs $nsList {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} if $eligible {{ "}}" }}
               ##### WIRE THE EXTERNAL CA INTO THE HUB APISERVER clientCA (additive; operator signers stay trusted) #####
-              {{ "{{-" }} if eq $extCAName "" {{ "}}" }}{{ "{{-" }} fail "config.eso.hubBootstrap.externalClientCA.name (or values hubBootstrapExternalClientCAName) is required in externalCA / externalCAReuseServingCert mode" {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} if eq $extCAName "" {{ "}}" }}
+                {{ "{{-" }} fail "config.eso.hubBootstrap.externalClientCA.name (or values hubBootstrapExternalClientCAName) is required in externalCA / externalCAReuseServingCert mode" {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} $extBundle := (dig "data" $extCAKey "" ((lookup "v1" "ConfigMap" $extCANamespace $extCAName) | default dict)) {{ "}}" }}
-              {{ "{{-" }} if eq $extBundle "" {{ "}}" }}{{ "{{-" }} fail (printf "external CA bundle ConfigMap %s/%s key %q not found or empty — provide the shared external CA the hub apiserver should trust" $extCANamespace $extCAName $extCAKey) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} if eq $extBundle "" {{ "}}" }}
+                {{ "{{-" }} fail (printf "external CA bundle ConfigMap %s/%s key %q not found or empty — provide the shared external CA the hub apiserver should trust" $extCANamespace $extCAName $extCAKey) {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -154,38 +207,71 @@ spec:
                 spec:
                   clientCA:
                     name: {{ $clientCAConfigMap }}
-              ##### SHARED reader Role in the tenancy namespace (one per namespace; the bindings below are per-cluster) #####
+              ##### PER OWNING NAMESPACE: one shared reader Role + ONE RoleBinding whose subjects are every #####
+              ##### owned cluster's identity. No Certificate is minted here — the spoke presents its own / its #####
+              ##### serving cert; the hub only trusts that identity (CA bundle above) and grants it Secret read. #####
+              ##### RBAC lands in each cluster's OWN owning namespace (where its deployment's store reads Secrets). #####
+              ##### The RoleBinding is mustonlyhave: its subjects are pinned to EXACTLY the current owners, so a #####
+              ##### cluster that moves to another tenancy namespace is dropped from this binding (no stale access). #####
+              ##### Both objects carry an autoshift.io/secret-reader-* label so a future cleanup pass can list them #####
+              ##### and delete any whose namespace is no longer a key in $nsIdentities. The hub-global clientCA / #####
+              ##### APIServer wiring is deliberately NOT labelled (different lifecycle; not in a tenancy namespace). #####
+              {{ "{{-" }} range $ownerNs, $ids := $nsIdentities {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
                 kind: Role
                 metadata:
                   name: {{ $readerRole }}
-                  namespace: {{ $policyNamespace }}
+                  namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-role: {{ $storePrefix }}
                 rules:
                   - apiGroups: [""]
                     resources: ["secrets"]
                     verbs: ["get", "list", "watch"]
-              ##### PER CLUSTER: a RoleBinding scoped to that cluster's identity (no Certificate — nothing is minted here) #####
-              {{ "{{-" }} range $entry := $eligible {{ "}}" }}
-                {{ "{{-" }} $mcName := (index $entry "name") {{ "}}" }}
-                {{ "{{-" }} $identity := (index $entry "id") {{ "}}" }}
-                {{ "{{-" }} $bindingName := (printf "%s-%s" "{{ $readerRole }}" $mcName) {{ "}}" }}
-            - complianceType: musthave
+            - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
                 kind: RoleBinding
                 metadata:
-                  name: {{ "{{" }} $bindingName {{ "}}" }}
-                  namespace: {{ $policyNamespace }}
+                  name: {{ $readerRole }}
+                  namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-rolebinding: {{ $storePrefix }}
                 roleRef:
                   apiGroup: rbac.authorization.k8s.io
                   kind: Role
                   name: {{ $readerRole }}
                 subjects:
+                  {{ "{{-" }} range $id := $ids {{ "}}" }}
                   - kind: User
-                    name: {{ "{{" }} $identity {{ "}}" }}
+                    name: {{ "{{" }} $id {{ "}}" }}
                     apiGroup: rbac.authorization.k8s.io
+                  {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### CLEANUP (orphaned RoleBindings): a reader RoleBinding this policy labelled whose namespace no #####
+            ##### longer owns a cluster (not a key in $nsIdentities) is stale — emit a mustNotHave so ACM deletes #####
+            ##### it. Deleting the binding alone revokes access (its Role grants nothing unbound; Role cleanup is #####
+            ##### left to a future label sweep). Gated on the SAME modes as the enumerate loop above: the inactive #####
+            ##### companion policy has an EMPTY $nsIdentities, so without this gate it would delete every labelled #####
+            ##### binding — including the active policy's. Runs even when $eligible is empty (last cluster left). #####
+            {{ "{{-" }} if or (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert") {{ "}}" }}
+              {{ "{{-" }} range $rb := ((lookup "rbac.authorization.k8s.io/v1" "RoleBinding" "" "").items | default list) {{ "}}" }}
+                {{ "{{-" }} $rbLabels := (dig "metadata" "labels" (dict) $rb) {{ "}}" }}
+                {{ "{{-" }} if hasKey $rbLabels "autoshift.io/secret-reader-rolebinding" {{ "}}" }}
+                  {{ "{{-" }} $rbNs := (dig "metadata" "namespace" "" $rb) {{ "}}" }}
+                  {{ "{{-" }} if not (hasKey $nsIdentities $rbNs) {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: {{ "{{" }} (dig "metadata" "name" "" $rb) {{ "}}" }}
+                  namespace: {{ "{{" }} $rbNs {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
 ---
