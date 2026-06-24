@@ -134,10 +134,13 @@ spec:
             {{ "{{hub-" }} $spokeIssuerName := (index $spokeIssuer "name" | default "{{ $defaultSpokeIssuerName }}") {{ "hub}}" }}
             {{ "{{hub-" }} $spokeIssuerKind := (index $spokeIssuer "kind" | default "{{ $defaultSpokeIssuerKind }}") {{ "hub}}" }}
             {{ "{{hub-" }} $spokeIssuerGroup := (index $spokeIssuer "group" | default "{{ $defaultSpokeIssuerGroup }}") {{ "hub}}" }}
-            ##### Truncated cluster segment — the SAME identifier the hub clientca-selfsigned policy derives for the CN and the #####
-            ##### per-cluster client-secret name. We reuse it (not the raw cluster name) so the copied secret name #####
-            ##### matches the hub side and can never outgrow its name limit. selfSigned baseDomain defaults to #####
-            ##### autoshift.io exactly as the hub clientca-selfsigned policy does, so the truncation budget is identical here. #####
+            ##### selfSigned client-secret COPY NAME segment — the OCM ManagedCluster name, which is the SAME segment #####
+            ##### the hub clientca-selfsigned policy names its per-cluster client SECRET with (storage identity, NOT #####
+            ##### the cert CN — the hub derives the CN from the REAL cluster name, but the secret name keys off the #####
+            ##### OCM name because it is unique per hub and needs no clusterClaim lookup here). We reuse the OCM name #####
+            ##### (not a raw value) with the identical truncation budget so the copied secret name matches the hub #####
+            ##### side and can never outgrow its name limit. selfSigned baseDomain defaults to autoshift.io exactly #####
+            ##### as the hub policy does, so the truncation budget is identical. #####
             {{ "{{hub-" }} $segBaseDomain := (index $hubBootstrap "baseDomain" | default "{{ $selfSignedSegBaseDomain }}") {{ "hub}}" }}
             {{ "{{hub-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $segBaseDomain))) {{ "hub}}" }}
             {{ "{{hub-" }} $clusterSeg := .ManagedClusterName {{ "hub}}" }}

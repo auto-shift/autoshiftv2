@@ -22,8 +22,10 @@
 # an autoshift cluster), and issues, PER CLUSTER, into that cluster's OWN owning namespace (NOT this
 # policy's namespace — the owning deployment's store policy reads the client Secret AND the Secrets
 # it wants from there, so both the identity and its RBAC must land in the owning namespace):
-#   - one client Certificate, CN = "<certCNPrefix>.<managedClusterName>.<baseDomain>" (unique per
-#     cluster; the managedClusterName segment is truncated so the whole CN fits 63 chars), and
+#   - one client Certificate, CN = "<certCNPrefix>.<realClusterName>.<baseDomain>" where realClusterName
+#     is the cluster's apiserverurl.openshift.io clusterClaim host label (api.<realName>.<base>), NOT the
+#     OCM ManagedCluster name (self-managed hubs are all "local-cluster"); the segment is truncated so the
+#     whole CN fits 63 chars and the full real name is added as a SAN, and
 #   - a shared reader Role per owning namespace, plus ONE RoleBinding per owning namespace whose
 #     subjects are every owned cluster's CN (grouped by namespace, not one binding per cluster).
 # The CA + ClusterIssuers stay hub-global (single shared trust domain); only the per-cluster cert + the
@@ -33,8 +35,10 @@
 # necessarily hub-uniform — it wires the single APIServer.spec.clientCA — so deriving it (and the CN
 # settings) from this hub's rendered config below is correct for every cluster the hub hosts.
 # Per-cluster CN (not per-namespace) so the SAME derivation works for the external-CA variant where
-# the spoke mints its own cert with CN derived from its own .ManagedClusterName — both sides compute
-# the identical CN from ManagedCluster.metadata.name, so the identity contract needs no coordination.
+# the spoke mints its own cert with CN derived from its OWN apiserverurl.openshift.io clusterClaim — both
+# sides compute the identical CN from the cluster's REAL name, so the identity contract needs no coordination.
+# The per-cluster client SECRET name, by contrast, keys off the OCM ManagedCluster name (unique per hub,
+# storage-only) so the spoke store copies it without any clusterClaim derivation of its own.
 # Truncation can in principle collide two clusters sharing the surviving budget; ACM templates have
 # no hash function, so the loop DETECTS a collision and fails loudly rather than silently merging
 # identities. A spoke needs no per-cluster wiring: its copy policy reads <prefix>-client-<its name>.
@@ -145,6 +149,7 @@ spec:
             {{ "{{-" }} $eligible := list {{ "}}" }}
             {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
             {{ "{{-" }} $seenCNs := dict {{ "}}" }}
+            {{ "{{-" }} $seenNames := dict {{ "}}" }}
             ##### This policy owns the selfSigned mode ONLY. In externalCA / externalCAReuseServingCert #####
             ##### the hub mints no CA + no client certs — policy ...-hub-bootstrap-clientca-external owns those #####
             ##### modes (clientCA <- external bundle, per-cluster RBAC only). Leaving $eligible empty below #####
@@ -158,18 +163,50 @@ spec:
                   {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}
                     {{ "{{-" }} fail (printf "hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (their combined length must be <= 61); shorten hubBootstrapCertCNPrefix or hubBootstrapCertBaseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
-                  ##### truncate the cluster-name segment to the budget. substr needs int args, but ACM math (add/ #####
-                  ##### sub) yields int64 — convert with toInt. (sprig "slice" is the LIST slice and rejects strings.) #####
-                  {{ "{{-" }} $clusterSeg := $mcName {{ "}}" }}
+                  ##### SECRET-NAME segment (STORAGE, not identity): the OCM ManagedCluster name. It is UNIQUE per #####
+                  ##### hub and available with no lookup, and the secret only ever lives in this hub's namespaces — #####
+                  ##### so the spoke store copies it by this SAME OCM name with no clusterClaim derivation. Truncated #####
+                  ##### to the budget purely so the resource name stays bounded; collision = truncation only. substr #####
+                  ##### needs int args, but ACM math (add/sub) yields int64 — convert with toInt (sprig slice rejects strings). #####
+                  {{ "{{-" }} $nameSeg := $mcName {{ "}}" }}
                   {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}
-                    {{ "{{-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $mcName) {{ "}}" }}
+                    {{ "{{-" }} $nameSeg = (substr 0 (toInt $cnBudget) $mcName) {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
-                  {{ "{{-" }} $certCN := (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
+                  {{ "{{-" }} if hasKey $seenNames $nameSeg {{ "}}" }}
+                    {{ "{{-" }} fail (printf "hub-bootstrap client-secret name collision after truncation: clusters %q and %q both map to secret segment %q; lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenNames $nameSeg) $mcName $nameSeg) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} $seenNames = set $seenNames $nameSeg $mcName {{ "}}" }}
+                  ##### CN segment (IDENTITY / RBAC subject): the cluster's REAL name = the apiserverurl.openshift.io #####
+                  ##### clusterClaim host label (api.<realName>.<base> -> <realName>), NOT $mcName. Self-managed hubs #####
+                  ##### are ALL named "local-cluster", so the OCM name would collide into one ambiguous identity if this #####
+                  ##### signer's CA were ever shared. Byte-identical derivation to the externalCA companion + the spoke #####
+                  ##### store, so the identity contract is uniform across every mode. The full (untruncated) real name #####
+                  ##### is carried as a SAN below so the complete identity survives CN truncation. #####
+                  {{ "{{-" }} $apiUrl := "" {{ "}}" }}
+                  {{ "{{-" }} range $claim := (dig "status" "clusterClaims" (list) $mc) {{ "}}" }}
+                    {{ "{{-" }} if eq (dig "name" "" $claim) "apiserverurl.openshift.io" {{ "}}" }}
+                      {{ "{{-" }} $apiUrl = (dig "value" "" $claim) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if eq $apiUrl "" {{ "}}" }}
+                    {{ "{{-" }} fail (printf "ManagedCluster %q has no apiserverurl.openshift.io clusterClaim — cannot derive its real cluster name for the client cert CN" $mcName) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
+                  {{ "{{-" }} $hostLabels := (splitList "." $apiHost) {{ "}}" }}
+                  {{ "{{-" }} if lt (len $hostLabels) 2 {{ "}}" }}
+                    {{ "{{-" }} fail (printf "ManagedCluster %q apiserver URL %q is not of the form https://api.<cluster>.<base> — cannot derive the real cluster name" $mcName $apiUrl) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} $realName := (index $hostLabels 1) {{ "}}" }}
+                  {{ "{{-" }} $cnSeg := $realName {{ "}}" }}
+                  {{ "{{-" }} if gt (len $realName) $cnBudget {{ "}}" }}
+                    {{ "{{-" }} $cnSeg = (substr 0 (toInt $cnBudget) $realName) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} $certCN := (printf "%s.%s.%s" $certCNPrefix $cnSeg $certBaseDomain) {{ "}}" }}
                   {{ "{{-" }} if hasKey $seenCNs $certCN {{ "}}" }}
                     {{ "{{-" }} fail (printf "hub-bootstrap CN collision after truncation: clusters %q and %q both map to CN %q; lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenCNs $certCN) $mcName $certCN) {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
                   {{ "{{-" }} $seenCNs = set $seenCNs $certCN $mcName {{ "}}" }}
-                  {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "cn" $certCN "seg" $clusterSeg "ns" $tenancyNs) {{ "}}" }}
+                  {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "cn" $certCN "seg" $nameSeg "san" $realName "ns" $tenancyNs) {{ "}}" }}
                   ##### group CNs by owning namespace for the per-namespace reader Role + RoleBinding below #####
                   {{ "{{-" }} $nsList := (index $nsIdentities $tenancyNs | default list) {{ "}}" }}
                   {{ "{{-" }} $nsList = append $nsList $certCN {{ "}}" }}
@@ -282,6 +319,10 @@ spec:
                     autoshift.io/hub-bootstrap-client-cert: {{ $storePrefix }}
                 spec:
                   commonName: {{ "{{" }} (index $entry "cn") {{ "}}" }}
+                  ##### full (untruncated) real cluster name as a SAN so the complete identity is preserved even #####
+                  ##### when the CN's cluster segment was truncated to the 63-char budget #####
+                  dnsNames:
+                    - {{ "{{" }} (index $entry "san") {{ "}}" }}
                   secretName: {{ "{{" }} $secretName {{ "}}" }}
                   duration: {{ "{{" }} $certDuration {{ "}}" }}
                   renewBefore: {{ "{{" }} $certRenewBefore {{ "}}" }}
