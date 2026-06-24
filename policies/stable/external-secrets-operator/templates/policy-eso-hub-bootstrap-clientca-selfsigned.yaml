@@ -26,8 +26,10 @@
 #     cluster; the managedClusterName segment is truncated so the whole CN fits 63 chars), and
 #   - a shared reader Role per owning namespace, plus ONE RoleBinding per owning namespace whose
 #     subjects are every owned cluster's CN (grouped by namespace, not one binding per cluster).
-# The CA, ClusterIssuers, and clientCA wiring stay hub-global (single shared trust domain); only the
-# per-cluster cert + the reader RBAC are tenant-scoped. The trust MODE (selfSigned vs externalCA) is
+# The CA + ClusterIssuers stay hub-global (single shared trust domain); only the per-cluster cert + the
+# reader RBAC are tenant-scoped. Wiring that CA into the hub apiserver spec.clientCA is a SEPARATE,
+# dependent policy (policy-eso-hub-bootstrap-clientca-selfsigned-apiserver) — see the note at the wiring
+# site below for why it cannot share this template. The trust MODE (selfSigned vs externalCA) is
 # necessarily hub-uniform — it wires the single APIServer.spec.clientCA — so deriving it (and the CN
 # settings) from this hub's rendered config below is correct for every cluster the hub hosts.
 # Per-cluster CN (not per-namespace) so the SAME derivation works for the external-CA variant where
@@ -42,7 +44,8 @@
 #     <cluster>.rendered-config ConfigMap (hub-resident, so the propagator can read it) and pull the
 #     hubBootstrap cert settings (CN prefix, duration, renewBefore), then bridge them to runtime.
 #   - RUNTIME templates do everything else: the cluster-state lookup (enumerating THIS hub's
-#     ManagedClusters) AND all actions (CA + issuers, clientCA wiring, per-cluster certs + RBAC).
+#     ManagedClusters) AND all actions (CA + issuers, per-cluster certs + RBAC). The apiserver clientCA
+#     wiring is split into the dependent -apiserver companion policy (see the wiring-site note below).
 #     They run as the target cluster's local config-policy-controller (cluster-admin).
 # Why the ManagedCluster lookup and actions are runtime, not hub: a hub template resolves against the
 # top-level PROPAGATING hub, so it would need a privileged propagator SA and — worse — for an
@@ -67,7 +70,7 @@
   {{- $selfSignedIssuer := (printf "%s-selfsigned" $storePrefix) }}
   {{- $caIssuer := (printf "%s-ca-issuer" $storePrefix) }}
   {{- $caName := (printf "%s-ca" $storePrefix) }}
-  {{- $clientCAConfigMap := ($eso.hubBootstrapClientCAConfigMap | default (printf "%s-client-ca" $storePrefix)) }}
+  {{- /* clientCA ConfigMap name is owned by the companion -apiserver policy, which does the apiserver wiring. */}}
   {{- $cmResourceNamespace := ($eso.certManagerResourceNamespace | default "cert-manager") }}
   {{- /* Cert tuning: these are DEFAULTS only. The actual values are read per-deployment from */}}
   {{- /* config.eso.hubBootstrap via hub templates below (rendered-config-driven, like the siblings). */}}
@@ -214,29 +217,12 @@ spec:
                 spec:
                   ca:
                     secretName: {{ $caName }}
-              ##### WIRE THE CA INTO THE HUB APISERVER clientCA TRUST (additive; operator signers stay trusted) #####
-              {{ "{{-" }} $caBundle := (dig "data" "ca.crt" "" ((lookup "v1" "Secret" "{{ $cmResourceNamespace }}" "{{ $caName }}") | default dict)) {{ "}}" }}
-              {{ "{{-" }} if ne $caBundle "" {{ "}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: ConfigMap
-                metadata:
-                  name: {{ $clientCAConfigMap }}
-                  namespace: openshift-config
-                data:
-                  ca-bundle.crt: |
-                    {{ "{{" }} $caBundle | base64dec | autoindent {{ "}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: config.openshift.io/v1
-                kind: APIServer
-                metadata:
-                  name: cluster
-                spec:
-                  clientCA:
-                    name: {{ $clientCAConfigMap }}
-              {{ "{{-" }} end {{ "}}" }}
+              ##### The hub apiserver clientCA wiring (trusting this CA) lives in the dependent companion policy #####
+              ##### policy-eso-hub-bootstrap-clientca-selfsigned-apiserver. It must NOT be done here: it reads #####
+              ##### this CA's secret via fromSecret, and ACM resolves a template ATOMICALLY — a fromSecret on the #####
+              ##### not-yet-existing CA secret would error and block THIS template, which is the very template #####
+              ##### that mints the CA Certificate that creates the secret (deadlock). As a separate policy gated #####
+              ##### on this one being Compliant, it simply retries until cert-manager has populated the secret. #####
               ##### PER OWNING NAMESPACE: one shared reader Role + ONE RoleBinding whose subjects are every #####
               ##### owned cluster's client CN. The owning deployment's store policy reads its client Secret AND #####
               ##### the Secrets it wants from THIS namespace, so the identity + RBAC must land here, not in $policyNamespace. #####
