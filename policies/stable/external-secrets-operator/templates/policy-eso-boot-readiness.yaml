@@ -18,7 +18,9 @@
 #
 # Mode behaviour (the cert-manager check is itself conditional — selfSigned spokes never run
 # cert-manager, so requiring it everywhere would be wrong):
-#   selfSigned                 -> nothing external to check -> Compliant immediately
+#   selfSigned (plain spoke)   -> consumes a hub-copied secret, mints nothing -> Compliant immediately
+#   selfSigned (self-managed hub) -> the hub mints the CA + client certs with cert-manager, so require
+#                                 cert-manager CSV Succeeded here (detected via autoshift.io/self-managed)
 #   externalCAProvisioned=true -> out-of-band PKI we cannot introspect -> Compliant (explicit skip)
 #   externalCA                 -> cert-manager CSV Succeeded AND the spoke ClusterIssuer/Issuer Ready
 #                                 (gate on the ISSUER, not the ESO client cert: boot-store MINTS that
@@ -81,14 +83,24 @@ spec:
             {{ "{{hub-" }} $issuerName := (index $spokeIssuer "name" | default "{{ $defaultIssuerName }}") {{ "hub}}" }}
             {{ "{{hub-" }} $issuerKind := (index $spokeIssuer "kind" | default "{{ $defaultIssuerKind }}") {{ "hub}}" }}
             {{ "{{hub-" }} $issuerGroup := (index $spokeIssuer "group" | default "{{ $defaultIssuerGroup }}") {{ "hub}}" }}
+            ##### Is THIS cluster the self-managed hub? selfSigned mints its CA + client certs with #####
+            ##### cert-manager ON THE HUB, so the hub needs cert-manager even in selfSigned. Label is #####
+            ##### hub-template-only context, so read it here and bridge the result. #####
+            {{ "{{hub-" }} $selfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
             ##### BRIDGE to the runtime (spoke) side — bools cross as the strings "true"/"false" #####
             {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $oob := `{{ "{{hub" }} $oob {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $issuerName := `{{ "{{hub" }} $issuerName {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $issuerKind := `{{ "{{hub" }} $issuerKind {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $issuerGroup := `{{ "{{hub" }} $issuerGroup {{ "hub}}" }}` {{ "}}" }}
-            ##### ACT (on the spoke): readiness LOOKUPS. selfSigned + out-of-band short-circuit Compliant. #####
-            {{ "{{-" }} if and (ne $mode "selfSigned") (ne $oob "true") {{ "}}" }}
+            {{ "{{-" }} $selfManaged := `{{ "{{hub" }} $selfManaged {{ "hub}}" }}` {{ "}}" }}
+            ##### ACT (on the spoke): readiness LOOKUPS. #####
+            ##### cert-manager is required when an EXTERNAL mode is active on this spoke (not out-of-band), #####
+            ##### OR this is the self-managed HUB in selfSigned (it mints the CA + client certs locally). #####
+            ##### A plain selfSigned SPOKE just consumes a hub-copied secret -> no cert-manager -> Compliant. #####
+            {{ "{{-" }} $externalActive := (and (ne $mode "selfSigned") (ne $oob "true")) {{ "}}" }}
+            {{ "{{-" }} $hubSelfSigned := (and (eq $mode "selfSigned") (eq $selfManaged "true")) {{ "}}" }}
+            {{ "{{-" }} if or $externalActive $hubSelfSigned {{ "}}" }}
               ##### cert-manager operator CSV must be phase=Succeeded. Name carries a version suffix #####
               ##### (cert-manager-operator.vX.Y.Z) so match by prefix; zero matches is ALSO not-ready. #####
               {{ "{{-" }} $csvReady := false {{ "}}" }}
@@ -98,8 +110,12 @@ spec:
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} if not $csvReady {{ "}}" }}
-                {{ "{{-" }} fail (printf "readiness gate: cert-manager-operator CSV in namespace %q is not phase=Succeeded (mode %q needs cert-manager before client-cert auth) — holding bootstrap" "{{ $cmOperatorNs }}" $mode) {{ "}}" }}
+                {{ "{{-" }} fail (printf "readiness gate: cert-manager-operator CSV in namespace %q is not phase=Succeeded (mode %q%s needs cert-manager) — holding bootstrap" "{{ $cmOperatorNs }}" $mode (ternary " on the self-managed hub" "" $hubSelfSigned)) {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### Issuer / serving-cert checks are external-mode-only (selfSigned uses cert-manager's #####
+            ##### built-in selfSigned issuer — nothing external to gate on). #####
+            {{ "{{-" }} if $externalActive {{ "}}" }}
               {{ "{{-" }} if eq $mode "externalCA" {{ "}}" }}
                 ##### externalCA: the spoke ClusterIssuer/Issuer that boot-store mints the client cert with #####
                 ##### must be Ready. Gating on the ISSUER (not the not-yet-minted ESO cert) avoids a deadlock #####
