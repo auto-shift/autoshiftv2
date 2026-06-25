@@ -21,10 +21,7 @@ spec:
         spec:
           remediationAction: enforce
           severity: high
-          object-templates-raw : |
-
-            # Fetch cluster config file
-            {{ "{{hub" }} $configs := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml {{ "hub}}" }}
+          object-templates:
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -34,7 +31,8 @@ spec:
                   namespace: dynatrace
                 data:
                   certs: |
-                    {{ "{{hub" }} index $configs "user-ca-bundle" | autoindent {{ "hub}}" }}
+                    {{ "{{" }} fromConfigMap "openshift-monitoring" "serving-certs-ca-bundle" "service-ca.crt" | autoindent {{ "}}" }}
+                    {{ "{{" }} fromConfigMap "openshift-cnv" "kubevirt-ca" "ca-bundle" | autoindent {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
