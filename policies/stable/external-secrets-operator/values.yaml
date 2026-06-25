@@ -91,6 +91,20 @@ externalSecretsOperator:
   hubBootstrapSpokeIssuerName: ''            # ClusterIssuer/Issuer name (REQUIRED in externalCA mode)
   hubBootstrapSpokeIssuerKind: ClusterIssuer # ClusterIssuer or Issuer
   hubBootstrapSpokeIssuerGroup: cert-manager.io
+  # ---- Readiness gate (policy-eso-boot-readiness) ----------------------------------------------
+  # The boot-readiness policy is a pure precursor: in the external trust modes it asserts the
+  # cert-manager + issuer/serving-cert plumbing is healthy BEFORE the cert-auth bootstrap policies
+  # are allowed to run. The bootstrap policies list it in spec.dependencies, so they stay Pending
+  # (never attempt cert auth against dead infra) until it is Compliant, and self-heal when it
+  # recovers. This is what keeps the system from locking itself out when an external CA / issuer is
+  # broken at the same moment client certs expire.
+  hubBootstrapCertManagerOperatorNamespace: cert-manager-operator  # ns holding the cert-manager-operator CSV (status.phase must be Succeeded)
+  hubBootstrapExternalCAProvisioned: false   # OUT-OF-BAND escape hatch: set true (per-deployment via
+                                             # config.eso.hubBootstrap.externalCAProvisioned) when the external CA /
+                                             # issuer / serving cert is managed entirely outside AutoShift and may not be
+                                             # cert-manager-backed. The readiness gate then SKIPS every cert-manager/issuer
+                                             # check and passes (Compliant). Must be explicit — never defaulted on — because
+                                             # a silent skip re-opens the lockout risk the gate exists to remove.
   # Cert tuning DEFAULTS. The actual per-deployment values are read by the hub clientca policy from
   # config.eso.hubBootstrap.{certCNPrefix,certDuration,certRenewBefore} (rendered-config-driven);
   # these only apply when that config omits them.

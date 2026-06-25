@@ -107,7 +107,6 @@ spec:
             {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
             {{ "{{-" }} $seenIds := dict {{ "}}" }}
             {{ "{{-" }} if or (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert") {{ "}}" }}
-              {{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
               {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
                 {{ "{{-" }} $mcName := $mc.metadata.name {{ "}}" }}
                 {{ "{{-" }} $tenancyNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
@@ -118,6 +117,9 @@ spec:
                     {{ "{{-" }} if eq $certBaseDomain "" {{ "}}" }}
                       {{ "{{-" }} fail "hubBootstrapCertBaseDomain (or config.eso.hubBootstrap.baseDomain) is required in externalCA mode (the spoke derives the SAME CN, so the hub RBAC must match)" {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
+                    ##### CN budget is externalCA-only: the reuse mode discovers its identity from the apiserver #####
+                    ##### host and mints no cert, so there is no CN to size/truncate there. #####
+                    {{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
                     {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}
                       {{ "{{-" }} fail (printf "hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (combined length must be <= 61); shorten the prefix or baseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
