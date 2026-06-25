@@ -1,7 +1,7 @@
 # Spoke-side half of the cluster->cluster ESO bootstrap. Runs ON THE SPOKE and stands the
 # hub up as a kubernetes-provider ClusterSecretStore so the spoke's ESO can read Secrets
 # straight from the hub apiserver. Its companion is
-# policy-eso-hub-bootstrap-clientca-selfsigned.yaml, which (on the hub) mints, per
+# policy-eso-boot-clientca-self.yaml, which (on the hub) mints, per
 # AutoShift deployment (= per policy namespace), the client cert this store authenticates with
 # and grants its CN read access scoped to that namespace.
 #
@@ -12,8 +12,8 @@
 #
 # This is the COPY policy. Both inputs it ships to the spoke already live in the POLICY NAMESPACE
 # on the hub, put there by the two hub-side policies:
-#   - the client cert/key Secret  -> minted by policy-eso-hub-bootstrap-clientca-selfsigned
-#   - the hub serving-CA ConfigMap -> stashed by policy-eso-hub-bootstrap-serving-ca
+#   - the client cert/key Secret  -> minted by policy-eso-boot-clientca-self
+#   - the hub serving-CA ConfigMap -> stashed by policy-eso-boot-serving-ca
 # Hub templates ARE allowed to read the policy namespace, so this policy never touches openshift-config
 # or the APIServer object (which the propagator may not read) — those lookups happen at runtime in the
 # serving-ca policy on the hub itself. This indirection is what lets the flow compose across multiple
@@ -70,7 +70,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-eso-hub-bootstrap-store
+  name: policy-eso-boot-store
   namespace: {{ $policyNamespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -98,7 +98,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: eso-hub-bootstrap-store
+          name: eso-boot-store
         spec:
           remediationAction: enforce
           severity: high
@@ -161,7 +161,7 @@ spec:
                 {{ "{{hub-" }} fail "hub apiserver URL unresolved: set config.eso.hubBootstrap.hubServer (or values externalSecretsOperator.hubServer), or enable deriveHubUrl so this policy derives it from the apiserverurl.openshift.io ClusterClaim" {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
               {{ "{{hub-" }} if eq $servingCASrc "" {{ "hub}}" }}
-                {{ "{{hub-" }} fail (printf "hub serving CA ConfigMap %s/%s not found yet (the hub-bootstrap-serving-ca policy stashes it) — retrying" "{{ $policyNamespace }}" "{{ $servingCAConfigMap }}") {{ "hub}}" }}
+                {{ "{{hub-" }} fail (printf "hub serving CA ConfigMap %s/%s not found yet (the boot-serving-ca policy stashes it) — retrying" "{{ $policyNamespace }}" "{{ $servingCAConfigMap }}") {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
               ##### externalCA preconditions live in the runtime externalCA block (the spoke derives the CN there). #####
               ##### COPY HUB-MINTED CLIENT CERT -> spoke ESO namespace (selfSigned ONLY; external modes produce the #####
@@ -343,7 +343,7 @@ spec:
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-eso-hub-bootstrap-store
+  name: placement-policy-eso-boot-store
   namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
@@ -370,13 +370,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-eso-hub-bootstrap-store
+  name: placement-policy-eso-boot-store
   namespace: {{ $policyNamespace }}
 placementRef:
-  name: placement-policy-eso-hub-bootstrap-store
+  name: placement-policy-eso-boot-store
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-eso-hub-bootstrap-store
+  - name: policy-eso-boot-store
     apiGroup: policy.open-cluster-management.io
     kind: Policy

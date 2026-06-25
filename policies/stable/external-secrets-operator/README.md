@@ -34,7 +34,7 @@ flowchart TB
   subgraph HUB["HUB cluster — placed on hubClusterSets only"]
     direction TB
 
-    subgraph SIGN["CLIENT-SIGNING CHAIN · policy hub-bootstrap-clientca-selfsigned (runtime, cluster-admin)"]
+    subgraph SIGN["CLIENT-SIGNING CHAIN · policy boot-clientca-self (runtime, cluster-admin)"]
       direction TB
       A1["ClusterIssuer hub-bootstrap-selfsigned<br/>selfSigned"]:::client
       A2["Certificate hub-bootstrap-ca (isCA)<br/>Secret hub-bootstrap-ca @ cert-manager<br/><b>the bootstrap CA — long-lived root</b>"]:::client
@@ -51,7 +51,7 @@ flowchart TB
     end
     A2 -->|ca.crt| W1
 
-    subgraph SERVE["SERVING-CA DISCOVERY · policy hub-bootstrap-serving-ca (runtime)"]
+    subgraph SERVE["SERVING-CA DISCOVERY · policy boot-serving-ca (runtime)"]
       direction TB
       S0["lookup APIServer/cluster + apiserverurl.openshift.io ClusterClaim<br/>derive apiserver host from spec.value"]:::serve
       S1{"namedCertificates entry<br/>whose names match the host?"}:::serve
@@ -610,7 +610,7 @@ gated on the `autoshift.io/external-secrets-operator` label.)
 
 This is the **authorization** half. For the apiserver to *accept* the cert in the first
 place, its signing CA must be in the apiserver's client-CA trust bundle — wired hub-only by
-`policy-eso-hub-bootstrap-clientca-selfsigned`.
+`policy-eso-boot-clientca-self`.
 
 Add `certAuthRBAC` (sibling of `spec`) with the CN as `username`. For now the username
 is a literal value (deriving it from the cert programmatically can come later). The
@@ -820,7 +820,7 @@ the local apiserver.
 
 > This is the **server-trust** half. The client-signing-CA / `APIServer.spec.clientCA` half is
 > a hub-role, single-writer concern handled **hub-only** by
-> `policy-eso-hub-bootstrap-clientca-selfsigned` — the stores policy must never write
+> `policy-eso-boot-clientca-self` — the stores policy must never write
 > `APIServer/cluster`.
 
 ```yaml
@@ -885,7 +885,7 @@ namespace** — deployments can't read across each other.
 
 Three policies cooperate — two run on the hub, one copies to the spokes:
 
-- `policy-eso-hub-bootstrap-clientca-selfsigned` runs **on the hub**. cert-manager mints
+- `policy-eso-boot-clientca-self` runs **on the hub**. cert-manager mints
   **one generic self-signed CA** (its own key, hub-internal), and that CA is wired into the hub
   apiserver `spec.clientCA`. That wiring is **additive** — OpenShift merges a custom `clientCA`
   with the operator-managed client signers (`csr-signer`, admin, kubelet, …), so existing client
@@ -911,7 +911,7 @@ Three policies cooperate — two run on the hub, one copies to the spokes:
     account, and it works for a self-managed hub (acts on `local-cluster`) **and** an intermediate
     hub managed by a self-managed hub (acts on the intermediate hub itself). A hub-side lookup would
     wrongly resolve against the top-level propagating hub.
-- `policy-eso-hub-bootstrap-serving-ca` runs **on the hub** (client→server
+- `policy-eso-boot-serving-ca` runs **on the hub** (client→server
   trust). The store must trust the TLS cert the hub apiserver presents. This policy is **100%
   runtime** — it lands on the hub and the local config-policy-controller (cluster-admin) reads
   `APIServer/cluster spec.servingCerts.namedCertificates` and the `apiserverurl.openshift.io`
@@ -925,7 +925,7 @@ Three policies cooperate — two run on the hub, one copies to the spokes:
     reads the policy namespace (which hub templates *are* allowed to read), so the flow composes
     across multiple deployments and the hub → managed-hub → spoke topology (each hub captures its own
     serving CA locally).
-- `policy-eso-hub-bootstrap-store` is the **copy policy** — placed on hubs and
+- `policy-eso-boot-store` is the **copy policy** — placed on hubs and
   spokes. Both inputs already sit in the policy namespace (the client cert from the trust policy, the
   serving CA from the serving-ca policy), so its hub templates copy **only policy-namespace
   resources** into the ESO namespace — never `openshift-config` or the `APIServer` object. It then
@@ -1017,9 +1017,9 @@ trusts*; the serving-CA / server-trust half is identical across modes. Pick **on
 
 | Mode | Client cert | Hub `clientCA` trusts | RBAC subject | Hub policy |
 |---|---|---|---|---|
-| `selfSigned` *(default)* | hub mints per-cluster cert, copies to spoke | hub-minted self-signed CA | derived CN `<prefix>.<cluster>.<baseDomain>` | `…-hub-bootstrap-clientca-selfsigned` |
-| `externalCA` | **spoke** mints its own cert via a user-provided issuer (key never leaves the spoke) | a shared **external** CA bundle | same derived CN (both sides compute it from `.ManagedClusterName`) | `…-hub-bootstrap-clientca-external` |
-| `externalCAReuseServingCert` | **spoke reuses its apiserver serving cert** (no cert minted) | the same external CA bundle | the cluster's registered apiserver **host** (discovered from `ManagedCluster.spec.managedClusterClientConfigs[].url`) | `…-hub-bootstrap-clientca-external` |
+| `selfSigned` *(default)* | hub mints per-cluster cert, copies to spoke | hub-minted self-signed CA | derived CN `<prefix>.<cluster>.<baseDomain>` | `…-boot-clientca-self` |
+| `externalCA` | **spoke** mints its own cert via a user-provided issuer (key never leaves the spoke) | a shared **external** CA bundle | same derived CN (both sides compute it from `.ManagedClusterName`) | `…-boot-clientca-ext` |
+| `externalCAReuseServingCert` | **spoke reuses its apiserver serving cert** (no cert minted) | the same external CA bundle | the cluster's registered apiserver **host** (discovered from `ManagedCluster.spec.managedClusterClientConfigs[].url`) | `…-boot-clientca-ext` |
 
 The three cert-creation paths — what mints the client cert, what the hub `clientCA` trusts, and
 what the per-cluster RBAC binds to:
@@ -1034,7 +1034,7 @@ flowchart TB
 
   MODE{"config.eso.hubBootstrap.mode"}:::dec
 
-  subgraph M1["1 · selfSigned — hub-internal CA · policy hub-bootstrap-clientca-selfsigned"]
+  subgraph M1["1 · selfSigned — hub-internal CA · policy boot-clientca-self"]
     direction TB
     A1["ClusterIssuer hub-bootstrap-selfsigned"]:::mint
     A2["Certificate hub-bootstrap-ca (isCA)<br/>the bootstrap root — long-lived, hub-internal key"]:::mint
@@ -1048,7 +1048,7 @@ flowchart TB
     A4 --> AR
   end
 
-  subgraph M2["2 · externalCA — dedicated certs from a shared external CA · policy hub-bootstrap-clientca-external"]
+  subgraph M2["2 · externalCA — dedicated certs from a shared external CA · policy boot-clientca-ext"]
     direction TB
     B0["EXTERNAL CA (out of band)"]:::ext
     B1["user-provided spoke ClusterIssuer<br/>spokeIssuer, chained to the external CA"]:::ext
@@ -1060,7 +1060,7 @@ flowchart TB
     B2 -. identical derivation .-> BR
   end
 
-  subgraph M3["3 · externalCAReuseServingCert — reuse spoke apiserver serving cert · policy hub-bootstrap-clientca-external"]
+  subgraph M3["3 · externalCAReuseServingCert — reuse spoke apiserver serving cert · policy boot-clientca-ext"]
     direction TB
     C0["EXTERNAL CA (out of band)<br/>already signed the spoke's apiserver serving cert"]:::ext
     C1["spoke apiserver SERVING cert+key @ openshift-config<br/>discovered via APIServer namedCertificates"]:::mint
@@ -1245,7 +1245,7 @@ oc get rolebinding -A | grep eso-secret-reader
 # named after the managed cluster (the same namespace ACM replicates policies into on the spoke)
 oc get configmap remote-ca -n <ManagedClusterName>   # e.g. local-cluster (= the store's caProvider.name)
 
-# hub bootstrap (policy-eso-hub-bootstrap-clientca-selfsigned), on the hub:
+# hub bootstrap (policy-eso-boot-clientca-self), on the hub:
 oc get clusterissuer hub-bootstrap-selfsigned hub-bootstrap-ca-issuer
 oc get certificate hub-bootstrap-ca -n cert-manager          # the self-signed bootstrap CA
 oc get configmap hub-bootstrap-client-ca -n openshift-config # CA wired into apiserver clientCA
@@ -1253,10 +1253,10 @@ oc get apiserver cluster -o jsonpath='{.spec.clientCA.name}'
 oc get certificate -A | grep hub-bootstrap-client            # one client cert per owned managed cluster (selfSigned)
 oc get role,rolebinding -A | grep hub-bootstrap-reader       # shared reader Role + one RoleBinding per cluster
 
-# hub serving-CA capture (policy-eso-hub-bootstrap-serving-ca), on the hub:
+# hub serving-CA capture (policy-eso-boot-serving-ca), on the hub:
 oc get configmap hub-bootstrap-hub-ca -n <policy-namespace>  # serving CA stashed for the copy policy
 
-# hub bootstrap copy (policy-eso-hub-bootstrap-store), on each spoke:
+# hub bootstrap copy (policy-eso-boot-store), on each spoke:
 oc get configmap hub-bootstrap-hub-ca -n external-secrets-operator   # serving CA copied in
 oc get secret hub-bootstrap-client -n external-secrets-operator      # client cert copied in
 oc get clustersecretstore hub-bootstrap                              # the bootstrap store

@@ -1,6 +1,6 @@
 # Serving-CA capture, hub-side. Placed ONLY on hub clusters (hubClusterSets). It resolves the
 # CA that signs the hub apiserver's SERVING cert and stashes it as a ConfigMap in the policy
-# namespace, where the copy policy (policy-eso-hub-bootstrap-store.yaml) can read
+# namespace, where the copy policy (policy-eso-boot-store.yaml) can read
 # it with a hub template and ship it to the spokes. This is the client->server half of the mTLS
 # trust (the spoke's store must trust the cert the hub apiserver presents).
 #
@@ -39,7 +39,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-eso-hub-bootstrap-serving-ca
+  name: policy-eso-boot-serving-ca
   namespace: {{ $policyNamespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -55,7 +55,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: eso-hub-bootstrap-serving-ca
+          name: eso-boot-serving-ca
         spec:
           remediationAction: enforce
           severity: high
@@ -98,7 +98,7 @@ spec:
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-eso-hub-bootstrap-serving-ca
+  name: placement-policy-eso-boot-serving-ca
   namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
@@ -122,14 +122,14 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-eso-hub-bootstrap-serving-ca
+  name: placement-policy-eso-boot-serving-ca
   namespace: {{ $policyNamespace }}
 placementRef:
-  name: placement-policy-eso-hub-bootstrap-serving-ca
+  name: placement-policy-eso-boot-serving-ca
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-eso-hub-bootstrap-serving-ca
+  - name: policy-eso-boot-serving-ca
     apiGroup: policy.open-cluster-management.io
     kind: Policy
 {{ end }}

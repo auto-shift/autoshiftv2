@@ -24,7 +24,7 @@ externalSecretsOperator:
   configWebhookCertCheckInterval: 5m0s       # spec.appConfig.webhookConfig.certificateCheckInterval
   configBitwardenMode: Disabled              # spec.plugins.bitwardenSecretManagerProvider.mode (Disabled | Enabled)
 
-  # ---- Cluster->cluster hub bootstrap (policy-eso-hub-bootstrap-store*.yaml) ----
+  # ---- Cluster->cluster hub bootstrap (policy-eso-boot-store*.yaml) ----
   # Stands the hub up as a kubernetes-provider ClusterSecretStore on each spoke, authenticated
   # with a cert-manager-minted, auto-rotating client cert that the hub apiserver trusts.
   #
@@ -61,11 +61,11 @@ externalSecretsOperator:
   # APIServer.spec.clientCA is a single field, so deployments sharing a hub must agree on the mode.
   #   selfSigned (default) — the hub mints a self-signed CA (cert-manager) + one client cert per
   #       cluster (CN derived) and copies each to its spoke; hub clientCA <- that minted CA. Fully
-  #       self-contained, no external PKI. Handled by policy ...-hub-bootstrap-clientca-selfsigned.
+  #       self-contained, no external PKI. Handled by policy ...-boot-clientca-self.
   #   externalCA — both clusters chain to a shared EXTERNAL CA. The SPOKE mints its own client cert
   #       via a user-provided ClusterIssuer (key never leaves the spoke; CN derived the SAME way from
   #       .ManagedClusterName so it matches the hub RBAC); hub clientCA <- the external CA bundle
-  #       (static, below). No hub-minted CA. Handled by policy ...-hub-bootstrap-clientca-external.
+  #       (static, below). No hub-minted CA. Handled by policy ...-boot-clientca-ext.
   #   externalCAReuseServingCert — externalCA, but instead of minting a client cert the spoke REUSES
   #       its existing apiserver SERVING cert (+key) as the client cert. SECURITY BLAST RADIUS: this
   #       replicates the apiserver private key into the ESO namespace — only enable when a customer
@@ -107,7 +107,7 @@ externalSecretsOperator:
   hubBootstrapCertDuration: 720h             # cert-manager Certificate duration for client certs (default 30d)
   hubBootstrapCertRenewBefore: 480h          # cert-manager renewBefore window (default 20d)
   certManagerResourceNamespace: cert-manager # cert-manager "cluster resource namespace" (CA Secret lives here)
-  # Hub apiserver serving CA. The hub-bootstrap-serving-ca policy resolves this ON THE HUB at
+  # Hub apiserver serving CA. The boot-serving-ca policy resolves this ON THE HUB at
   # runtime: if the apiserver serves a custom named cert for its external host it trusts that cert's
   # chain, otherwise it falls back to the operator-managed serving-CA bundle named by these keys.
   # It stashes the result in the policy namespace; the copy policy ships it to each spoke.

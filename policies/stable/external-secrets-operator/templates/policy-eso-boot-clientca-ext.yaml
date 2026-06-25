@@ -1,5 +1,5 @@
 # Hub-side half of the cluster->cluster ESO bootstrap for the EXTERNAL-CA trust modes. Companion to
-# policy-eso-hub-bootstrap-clientca-selfsigned.yaml (which owns the selfSigned mode); the two
+# policy-eso-boot-clientca-self.yaml (which owns the selfSigned mode); the two
 # are mutually exclusive by config.eso.hubBootstrap.mode so they never both write APIServer.spec.clientCA.
 # Placed ONLY on hub clusters (hubClusterSets).
 #
@@ -53,7 +53,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-eso-hub-bootstrap-clientca-external
+  name: policy-eso-boot-clientca-ext
   namespace: {{ $policyNamespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -69,7 +69,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: eso-hub-bootstrap-clientca-external
+          name: eso-boot-clientca-ext
         spec:
           remediationAction: enforce
           severity: high
@@ -101,7 +101,7 @@ spec:
             {{ "{{-" }} $extCAName := `{{ "{{hub" }} $extCAName {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $extCAKey := `{{ "{{hub" }} $extCAKey {{ "hub}}" }}` {{ "}}" }}
             ##### RUNTIME (on the hub itself): build the eligible set ONLY in the two external modes. #####
-            ##### selfSigned is owned by policy ...-hub-bootstrap-clientca-selfsigned, so leave $eligible empty here. #####
+            ##### selfSigned is owned by policy ...-boot-clientca-self, so leave $eligible empty here. #####
             ##### Identity per cluster = derived CN (externalCA) OR the registered apiserver host (reuse mode). #####
             {{ "{{-" }} $eligible := list {{ "}}" }}
             {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
@@ -278,7 +278,7 @@ spec:
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-eso-hub-bootstrap-clientca-external
+  name: placement-policy-eso-boot-clientca-ext
   namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
@@ -302,14 +302,14 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-eso-hub-bootstrap-clientca-external
+  name: placement-policy-eso-boot-clientca-ext
   namespace: {{ $policyNamespace }}
 placementRef:
-  name: placement-policy-eso-hub-bootstrap-clientca-external
+  name: placement-policy-eso-boot-clientca-ext
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-eso-hub-bootstrap-clientca-external
+  - name: policy-eso-boot-clientca-ext
     apiGroup: policy.open-cluster-management.io
     kind: Policy
 {{ end }}

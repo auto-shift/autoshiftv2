@@ -1,5 +1,5 @@
 # Wires the hub apiserver spec.clientCA to TRUST the self-signed CA minted by
-# policy-eso-hub-bootstrap-clientca-selfsigned (the "mint" policy). Split out from that policy ON
+# policy-eso-boot-clientca-self (the "mint" policy). Split out from that policy ON
 # PURPOSE: it reads the CA's secret via fromSecret, and ACM resolves an object-templates-raw template
 # ATOMICALLY — if fromSecret errored on the not-yet-existing CA secret, it would block the SAME template
 # that mints the CA Certificate that creates the secret (permanent deadlock). As a SEPARATE policy that
@@ -22,7 +22,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-eso-hub-bootstrap-clientca-selfsigned-apiserver
+  name: policy-eso-boot-clientca-self-wire
   namespace: {{ $policyNamespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -36,7 +36,7 @@ spec:
   # Explicit dependency: do not wire (read) the CA before the mint policy has applied the CA Certificate
   # + issuers. fromSecret then retries until cert-manager populates the secret.
   dependencies:
-    - name: policy-eso-hub-bootstrap-clientca-selfsigned
+    - name: policy-eso-boot-clientca-self
       namespace: {{ $policyNamespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -46,7 +46,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: eso-hub-bootstrap-clientca-selfsigned-apiserver
+          name: eso-boot-clientca-self-wire
         spec:
           remediationAction: enforce
           severity: high
@@ -103,7 +103,7 @@ spec:
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-eso-hub-bootstrap-clientca-selfsigned-apiserver
+  name: placement-policy-eso-boot-clientca-self-wire
   namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
@@ -127,14 +127,14 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-eso-hub-bootstrap-clientca-selfsigned-apiserver
+  name: placement-policy-eso-boot-clientca-self-wire
   namespace: {{ $policyNamespace }}
 placementRef:
-  name: placement-policy-eso-hub-bootstrap-clientca-selfsigned-apiserver
+  name: placement-policy-eso-boot-clientca-self-wire
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-eso-hub-bootstrap-clientca-selfsigned-apiserver
+  - name: policy-eso-boot-clientca-self-wire
     apiGroup: policy.open-cluster-management.io
     kind: Policy
 {{ end }}
