@@ -148,7 +148,7 @@ spec:
                       {{ "{{-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $clusterSeg) {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} $identity = (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
-                  {{ "{{-" }} else {{ "}}" }}
+                  {{ "{{-" }} else if eq $mode "externalCAReuseServingCert" {{ "}}" }}
                     ##### externalCAReuseServingCert: identity = host of the cluster's registered apiserver URL. #####
                     ##### No urlParse in ACM templates, so split scheme//host:port/path with splitList + index. #####
                     {{ "{{-" }} $clientConfigs := (dig "spec" "managedClusterClientConfigs" (list) $mc) {{ "}}" }}
@@ -180,16 +180,18 @@ spec:
                   {{ "{{-" }} $_ := set $nsIdentities $tenancyNs $nsList {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
-            {{ "{{-" }} if $eligible {{ "}}" }}
-              ##### WIRE THE EXTERNAL CA INTO THE HUB APISERVER clientCA (additive; operator signers stay trusted) #####
-              {{ "{{-" }} if eq $extCAName "" {{ "}}" }}
-                {{ "{{-" }} fail "config.eso.hubBootstrap.externalClientCA.name (or values hubBootstrapExternalClientCAName) is required in externalCA / externalCAReuseServingCert mode" {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} $extBundle := (fromConfigMap $extCANamespace $extCAName $extCAKey) {{ "}}" }}
-              {{ "{{-" }} if eq $extBundle "" {{ "}}" }}
-                {{ "{{-" }} fail (printf "external CA bundle ConfigMap %s/%s key %q not found or empty — provide the shared external CA the hub apiserver should trust" $extCANamespace $extCAName $extCAKey) {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
+              ##### Wire the CA + per-namespace RBAC only when at least one eligible cluster exists. Nested #####
+              ##### INSIDE the mode guard above so cert/CA wiring can NEVER fire outside the external modes, #####
+              ##### no matter how $eligible is later initialized — here it is purely a non-empty check. #####
+              {{ "{{-" }} if $eligible {{ "}}" }}
+                ##### WIRE THE EXTERNAL CA INTO THE HUB APISERVER clientCA (additive; operator signers stay trusted) #####
+                {{ "{{-" }} if eq $extCAName "" {{ "}}" }}
+                  {{ "{{-" }} fail "config.eso.hubBootstrap.externalClientCA.name (or values hubBootstrapExternalClientCAName) is required in externalCA / externalCAReuseServingCert mode" {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $extBundle := (fromConfigMap $extCANamespace $extCAName $extCAKey) {{ "}}" }}
+                {{ "{{-" }} if eq $extBundle "" {{ "}}" }}
+                  {{ "{{-" }} fail (printf "external CA bundle ConfigMap %s/%s key %q not found or empty — provide the shared external CA the hub apiserver should trust" $extCANamespace $extCAName $extCAKey) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -209,16 +211,16 @@ spec:
                 spec:
                   clientCA:
                     name: {{ $clientCAConfigMap }}
-              ##### PER OWNING NAMESPACE: one shared reader Role + ONE RoleBinding whose subjects are every #####
-              ##### owned cluster's identity. No Certificate is minted here — the spoke presents its own / its #####
-              ##### serving cert; the hub only trusts that identity (CA bundle above) and grants it Secret read. #####
-              ##### RBAC lands in each cluster's OWN owning namespace (where its deployment's store reads Secrets). #####
-              ##### The RoleBinding is mustonlyhave: its subjects are pinned to EXACTLY the current owners, so a #####
-              ##### cluster that moves to another tenancy namespace is dropped from this binding (no stale access). #####
-              ##### Both objects carry an autoshift.io/secret-reader-* label so a future cleanup pass can list them #####
-              ##### and delete any whose namespace is no longer a key in $nsIdentities. The hub-global clientCA / #####
-              ##### APIServer wiring is deliberately NOT labelled (different lifecycle; not in a tenancy namespace). #####
-              {{ "{{-" }} range $ownerNs, $ids := $nsIdentities {{ "}}" }}
+                ##### PER OWNING NAMESPACE: one shared reader Role + ONE RoleBinding whose subjects are every #####
+                ##### owned cluster's identity. No Certificate is minted here — the spoke presents its own / its #####
+                ##### serving cert; the hub only trusts that identity (CA bundle above) and grants it Secret read. #####
+                ##### RBAC lands in each cluster's OWN owning namespace (where its deployment's store reads Secrets). #####
+                ##### The RoleBinding is mustonlyhave: its subjects are pinned to EXACTLY the current owners, so a #####
+                ##### cluster that moves to another tenancy namespace is dropped from this binding (no stale access). #####
+                ##### Both objects carry an autoshift.io/secret-reader-* label so a future cleanup pass can list them #####
+                ##### and delete any whose namespace is no longer a key in $nsIdentities. The hub-global clientCA / #####
+                ##### APIServer wiring is deliberately NOT labelled (different lifecycle; not in a tenancy namespace). #####
+                {{ "{{-" }} range $ownerNs, $ids := $nsIdentities {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
@@ -251,6 +253,7 @@ spec:
                     name: {{ "{{" }} $id {{ "}}" }}
                     apiGroup: rbac.authorization.k8s.io
                   {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             ##### CLEANUP (orphaned RoleBindings): a reader RoleBinding this policy labelled whose namespace no #####
