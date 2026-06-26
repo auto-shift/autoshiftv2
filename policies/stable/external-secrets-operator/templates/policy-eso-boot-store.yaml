@@ -93,11 +93,12 @@ spec:
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
-    # Cert-auth lockout guard: stay Pending until the readiness gate confirms (per external mode)
-    # that cert-manager + the issuer / serving cert are healthy. selfSigned + out-of-band make the
-    # gate Compliant immediately, so this never blocks those paths. The gate runs on the same spoke,
-    # so its compliance is evaluated per-cluster alongside this policy.
-    - name: policy-eso-boot-readiness
+    # Cert-auth lockout guard: stay Pending until the consumer-side readiness gate confirms (per
+    # external mode) that cert-manager + the issuer / serving cert are healthy. selfSigned + out-of-band
+    # make the gate Compliant immediately, so this never blocks those paths. The gate shares this
+    # policy's placement (hub + managed sets — the hub is just another consumer), so its compliance is
+    # evaluated per-cluster alongside this policy.
+    - name: policy-eso-boot-readiness-spoke
       namespace: {{ $policyNamespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant

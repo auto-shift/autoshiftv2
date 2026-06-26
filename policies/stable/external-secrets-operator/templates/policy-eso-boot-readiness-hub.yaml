@@ -1,0 +1,128 @@
+# PRECURSOR READINESS GATE (PROVIDER / hub side) for the cert-based ESO hub bootstrap.
+#
+# Scope: the cluster acting as the bootstrap PROVIDER — the hub that the consumers authenticate to.
+# Placed on hubClusterSets ONLY (identical to the hub-side boot policies it gates). EVERY hub in the
+# set is a minter in selfSigned (top-level or intermediate), so the cert-manager requirement is keyed
+# on PLACEMENT, not on the autoshift.io/self-managed label (which only flags the top hub).
+#
+# The hub's role per mode determines what must be ready:
+#   selfSigned                 -> the hub MINTS the self-signed CA + a client cert per cluster with
+#                                 cert-manager (policy-eso-boot-clientca-self) -> require cert-manager
+#                                 CSV phase=Succeeded.
+#   externalCA / reuse         -> the hub MINTS NOTHING; it only wires the external CA bundle into the
+#                                 apiserver clientCA (policy-eso-boot-clientca-ext). No cert infra to
+#                                 wait on here -> Compliant. (clientca-ext still validates the bundle
+#                                 itself; the consumer-side issuer/serving-cert readiness is gated by
+#                                 policy-eso-boot-readiness-spoke on the consumer.)
+#
+# Contract: pure assertion. Creates NOTHING. Collects every problem then `fail`s ONCE.
+#   ready -> emit no objects -> Compliant ; not ready -> fail with the full list -> NonCompliant.
+# The hub-side boot policies (policy-eso-boot-clientca-self, -clientca-ext, -serving-ca) list this in
+# spec.dependencies, so they stay Pending until it is Compliant and resume when cert-manager recovers.
+#
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $eso := $.Values.externalSecretsOperator }}
+{{- $cmOperatorNs := ($eso.hubBootstrapCertManagerOperatorNamespace | default "cert-manager-operator") }}
+{{- $defaultMode := ($eso.hubBootstrapMode | default "selfSigned") }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-eso-boot-readiness-hub
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: SC System and Communications Protection
+    policy.open-cluster-management.io/controls: SC-12 Cryptographic Key Establishment and Management
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  # Resolve hub templates as the autoshift hub-template SA so the rendered-config ConfigMap read in
+  # the policy namespace succeeds (same as the other boot policies).
+  hubTemplateOptions:
+    serviceAccountName: autoshift-policy-service-account
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: eso-boot-readiness-hub
+        spec:
+          # inform: this policy is a check; it never mutates the cluster. Compliance IS the signal.
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            #Indentation Anchor
+            ##### DERIVE (on the hub): this cluster's bootstrap mode from rendered config #####
+            {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
+            {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ $defaultMode }}") {{ "hub}}" }}
+            ##### BRIDGE to the runtime (hub) side #####
+            {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
+            ##### ACT (on the hub): only selfSigned mints here, so only selfSigned needs cert-manager. #####
+            ##### external modes wire trust without minting -> nothing to wait on -> Compliant. #####
+            {{ "{{-" }} $errors := list {{ "}}" }}
+            {{ "{{-" }} if eq $mode "selfSigned" {{ "}}" }}
+              ##### cert-manager operator CSV must be phase=Succeeded. Name carries a version suffix #####
+              ##### (cert-manager-operator.vX.Y.Z) so match by prefix; zero matches is ALSO not-ready. #####
+              {{ "{{-" }} $csvReady := false {{ "}}" }}
+              {{ "{{-" }} range $csv := ((lookup "operators.coreos.com/v1alpha1" "ClusterServiceVersion" "{{ $cmOperatorNs }}" "").items | default list) {{ "}}" }}
+                {{ "{{-" }} if and (hasPrefix "cert-manager-operator" $csv.metadata.name) (eq (dig "status" "phase" "" $csv) "Succeeded") {{ "}}" }}
+                  {{ "{{-" }} $csvReady = true {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} if not $csvReady {{ "}}" }}
+                {{ "{{-" }} $errors = append $errors (printf "cert-manager-operator CSV in namespace %q is not phase=Succeeded — the hub mints the selfSigned CA + client certs with cert-manager" "{{ $cmOperatorNs }}") {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### SINGLE failure point: emit ALL collected problems at once. Built by hand (not join) to #####
+            ##### stay on ACM's supported template-function set. #####
+            {{ "{{-" }} if $errors {{ "}}" }}
+              {{ "{{-" }} $msg := "" {{ "}}" }}
+              {{ "{{-" }} range $e := $errors {{ "}}" }}
+                {{ "{{-" }} $msg = (printf "%s\n  - %s" $msg $e) {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} fail (printf "readiness gate (provider): %d issue(s) block ESO %q-mode hub bootstrap on this cluster:%s" (len $errors) $mode $msg) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-eso-boot-readiness-hub
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/external-secrets-operator'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-eso-boot-readiness-hub
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: placement-policy-eso-boot-readiness-hub
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-eso-boot-readiness-hub
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

@@ -50,6 +50,15 @@ spec:
   remediationAction: inform
 {{ end }}
   disabled: false
+  # Share the single hub-side precursor with the other hub boot policies. In external modes the gate is
+  # Compliant immediately; in selfSigned it waits for cert-manager (already required for the hub mint),
+  # so capturing the serving CA never races ahead of the rest of the hub bootstrap.
+  dependencies:
+    - name: policy-eso-boot-readiness-hub
+      namespace: {{ $policyNamespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1

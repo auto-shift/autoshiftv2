@@ -1,26 +1,27 @@
-# PRECURSOR READINESS GATE for the cert-based ESO hub bootstrap.
+# PRECURSOR READINESS GATE (CONSUMER / spoke side) for the cert-based ESO hub bootstrap.
 #
-# Purpose: in the external trust modes the spoke authenticates to the hub apiserver with an
-# external-CA-backed client cert. That whole path depends on cert-manager + an issuer (externalCA)
-# or an external-CA-signed apiserver serving cert (externalCAReuseServingCert) being healthy. If a
-# bootstrap policy mints/uses a client cert against dead issuer infra, and that happens to coincide
-# with client certs expiring, the system can lock itself out of self-correction (the ClusterIssuer
-# secrets it would need to repair the issuer cannot be delivered because delivery itself needs the
+# Scope: the cluster acting as a CONSUMER of the bootstrap store — it mints/uses its OWN client cert
+# to authenticate to the hub apiserver (policy-eso-boot-store). As far as ACM is concerned the hub
+# itself is just another consumer once these policies land on it, so this gate is placed on BOTH the
+# hub and managed cluster sets (identical to policy-eso-boot-store). The HUB-as-provider preconditions
+# (minting the selfSigned CA, wiring the apiserver clientCA) live in policy-eso-boot-readiness-hub.
+#
+# Purpose: in the external trust modes the consumer authenticates with an external-CA-backed client
+# cert. That path depends on cert-manager + an issuer (externalCA) or an external-CA-signed apiserver
+# serving cert (externalCAReuseServingCert) being healthy. If boot-store mints/uses a client cert
+# against dead issuer infra while certs expire, the system can lock itself out of self-correction (the
+# ClusterIssuer secrets needed to repair the issuer cannot be delivered because delivery needs the
 # certs). See values.yaml hubBootstrapExternalCAProvisioned.
 #
-# Contract: pure assertion. This policy creates NOTHING. It only `fail`s.
+# Contract: pure assertion. This policy creates NOTHING. It collects every problem then `fail`s ONCE.
 #   everything ready for the configured mode -> emit no objects -> Compliant
-#   anything not ready                       -> fail explicitly  -> NonCompliant (Pending downstream)
-# The bootstrap policies (policy-eso-boot-clientca-ext, policy-eso-boot-store) list this policy in
-# spec.dependencies, so they stay Pending until it is Compliant and resume automatically when the
-# infra recovers. No invariant-checking lives in those policies anymore — they may assume "if I am
-# running, the gate already said go."
+#   anything not ready                       -> fail with the full list -> NonCompliant (Pending downstream)
+# policy-eso-boot-store lists this policy in spec.dependencies, so it stays Pending until Compliant and
+# resumes automatically when the infra recovers. No invariant-checking lives in boot-store anymore.
 #
-# Mode behaviour (the cert-manager check is itself conditional — selfSigned spokes never run
-# cert-manager, so requiring it everywhere would be wrong):
-#   selfSigned (plain spoke)   -> consumes a hub-copied secret, mints nothing -> Compliant immediately
-#   selfSigned (self-managed hub) -> the hub mints the CA + client certs with cert-manager, so require
-#                                 cert-manager CSV Succeeded here (detected via autoshift.io/self-managed)
+# Mode behaviour (cert-manager is conditional — a selfSigned consumer just copies a hub-minted secret
+# and mints nothing, so requiring cert-manager there would be wrong):
+#   selfSigned                 -> consumes a hub-copied secret, mints nothing -> Compliant immediately
 #   externalCAProvisioned=true -> out-of-band PKI we cannot introspect -> Compliant (explicit skip)
 #   externalCA                 -> cert-manager CSV Succeeded AND the spoke ClusterIssuer/Issuer Ready
 #                                 (gate on the ISSUER, not the ESO client cert: boot-store MINTS that
@@ -29,8 +30,8 @@
 #                                 (the one the reuse path copies) exists and is populated
 #
 # Hub vs runtime split mirrors the other boot policies: hub templates DERIVE the per-cluster mode +
-# issuer config from this cluster's rendered config; runtime templates do the readiness LOOKUPS on
-# the spoke (cert-manager + issuer + serving cert all live on the spoke) and `fail` if not ready.
+# issuer config from this cluster's rendered config; runtime templates do the readiness LOOKUPS on the
+# consumer (cert-manager + issuer + serving cert all live there) and `fail` if not ready.
 #
 {{- $policyNamespace := $.Values.policy_namespace }}
 {{- $eso := $.Values.externalSecretsOperator }}
@@ -44,7 +45,7 @@
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
-  name: policy-eso-boot-readiness
+  name: policy-eso-boot-readiness-spoke
   namespace: {{ $policyNamespace }}
   annotations:
     policy.open-cluster-management.io/standards: NIST SP 800-53
@@ -64,7 +65,7 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: eso-boot-readiness
+          name: eso-boot-readiness-spoke
         spec:
           # inform: this policy is a check; it never mutates the cluster. Compliance IS the signal.
           remediationAction: inform
@@ -83,27 +84,19 @@ spec:
             {{ "{{hub-" }} $issuerName := (index $spokeIssuer "name" | default "{{ $defaultIssuerName }}") {{ "hub}}" }}
             {{ "{{hub-" }} $issuerKind := (index $spokeIssuer "kind" | default "{{ $defaultIssuerKind }}") {{ "hub}}" }}
             {{ "{{hub-" }} $issuerGroup := (index $spokeIssuer "group" | default "{{ $defaultIssuerGroup }}") {{ "hub}}" }}
-            ##### Is THIS cluster the self-managed hub? selfSigned mints its CA + client certs with #####
-            ##### cert-manager ON THE HUB, so the hub needs cert-manager even in selfSigned. Label is #####
-            ##### hub-template-only context, so read it here and bridge the result. #####
-            {{ "{{hub-" }} $selfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
-            ##### BRIDGE to the runtime (spoke) side — bools cross as the strings "true"/"false" #####
+            ##### BRIDGE to the runtime (consumer) side — bools cross as the strings "true"/"false" #####
             {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $oob := `{{ "{{hub" }} $oob {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $issuerName := `{{ "{{hub" }} $issuerName {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $issuerKind := `{{ "{{hub" }} $issuerKind {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $issuerGroup := `{{ "{{hub" }} $issuerGroup {{ "hub}}" }}` {{ "}}" }}
-            {{ "{{-" }} $selfManaged := `{{ "{{hub" }} $selfManaged {{ "hub}}" }}` {{ "}}" }}
-            ##### ACT (on the spoke): COLLECT every readiness problem for the desired mode into $errors, then #####
-            ##### fail ONCE at the end with the full list — so a single apply surfaces all issues and we avoid #####
-            ##### a fix-one-fail-next loop. $errors empty -> emit nothing -> Compliant. #####
-            ##### cert-manager is required when an EXTERNAL mode is active on this spoke (not out-of-band), OR #####
-            ##### this is the self-managed HUB in selfSigned (it mints the CA + client certs locally). A plain #####
-            ##### selfSigned SPOKE just consumes a hub-copied secret -> no cert-manager -> Compliant. #####
+            ##### ACT (on the consumer): COLLECT every readiness problem for the desired mode into $errors, #####
+            ##### then fail ONCE at the end with the full list — one apply surfaces all issues, no fix-one- #####
+            ##### fail-next loop. $errors empty -> emit nothing -> Compliant. cert-manager is required only #####
+            ##### when an EXTERNAL mode is active here (not out-of-band); a selfSigned consumer mints nothing. #####
             {{ "{{-" }} $externalActive := (and (ne $mode "selfSigned") (ne $oob "true")) {{ "}}" }}
-            {{ "{{-" }} $hubSelfSigned := (and (eq $mode "selfSigned") (eq $selfManaged "true")) {{ "}}" }}
             {{ "{{-" }} $errors := list {{ "}}" }}
-            {{ "{{-" }} if or $externalActive $hubSelfSigned {{ "}}" }}
+            {{ "{{-" }} if $externalActive {{ "}}" }}
               ##### cert-manager operator CSV must be phase=Succeeded. Name carries a version suffix #####
               ##### (cert-manager-operator.vX.Y.Z) so match by prefix; zero matches is ALSO not-ready. #####
               {{ "{{-" }} $csvReady := false {{ "}}" }}
@@ -113,13 +106,10 @@ spec:
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} if not $csvReady {{ "}}" }}
-                {{ "{{-" }} $errors = append $errors (printf "cert-manager-operator CSV in namespace %q is not phase=Succeeded (mode %q%s needs cert-manager)" "{{ $cmOperatorNs }}" $mode (ternary " on the self-managed hub" "" $hubSelfSigned)) {{ "}}" }}
+                {{ "{{-" }} $errors = append $errors (printf "cert-manager-operator CSV in namespace %q is not phase=Succeeded (mode %q needs cert-manager to mint the client cert)" "{{ $cmOperatorNs }}" $mode) {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
-            ##### Issuer / serving-cert checks are external-mode-only (selfSigned uses cert-manager's #####
-            ##### built-in selfSigned issuer — nothing external to gate on). Each dependent lookup is guarded #####
-            ##### by an else-if on its precondition so a missing input records an error instead of erroring out. #####
-            {{ "{{-" }} if $externalActive {{ "}}" }}
+              ##### Each dependent lookup is guarded by an else-if on its precondition so a missing input #####
+              ##### records an error instead of erroring out the template. #####
               {{ "{{-" }} if eq $mode "externalCA" {{ "}}" }}
                 ##### externalCA: the spoke ClusterIssuer/Issuer that boot-store mints the client cert with #####
                 ##### must be Ready. Gating on the ISSUER (not the not-yet-minted ESO cert) avoids a deadlock #####
@@ -180,13 +170,13 @@ spec:
               {{ "{{-" }} range $e := $errors {{ "}}" }}
                 {{ "{{-" }} $msg = (printf "%s\n  - %s" $msg $e) {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} fail (printf "readiness gate: %d issue(s) block ESO %q-mode bootstrap on this cluster:%s" (len $errors) $mode $msg) {{ "}}" }}
+              {{ "{{-" }} fail (printf "readiness gate (consumer): %d issue(s) block ESO %q-mode bootstrap on this cluster:%s" (len $errors) $mode $msg) {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-eso-boot-readiness
+  name: placement-policy-eso-boot-readiness-spoke
   namespace: {{ $policyNamespace }}
 spec:
   clusterSets:
@@ -213,13 +203,13 @@ spec:
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  name: placement-policy-eso-boot-readiness
+  name: placement-policy-eso-boot-readiness-spoke
   namespace: {{ $policyNamespace }}
 placementRef:
-  name: placement-policy-eso-boot-readiness
+  name: placement-policy-eso-boot-readiness-spoke
   apiGroup: cluster.open-cluster-management.io
   kind: Placement
 subjects:
-  - name: policy-eso-boot-readiness
+  - name: policy-eso-boot-readiness-spoke
     apiGroup: policy.open-cluster-management.io
     kind: Policy

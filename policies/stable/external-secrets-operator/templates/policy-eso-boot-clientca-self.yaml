@@ -100,7 +100,11 @@ spec:
 {{ end }}
   disabled: false
   dependencies:
-    - name: policy-cert-manager-operator-install
+    # The provider readiness gate subsumes the bare cert-manager-install dependency: in selfSigned it
+    # requires the cert-manager CSV to be phase=Succeeded (this policy mints the CA + client certs with
+    # it), and it is the single precursor all hub-side boot policies share. cert-manager is still
+    # installed by its own policy/trigger; this gate just observes that it is healthy first.
+    - name: policy-eso-boot-readiness-hub
       namespace: {{ $policyNamespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
