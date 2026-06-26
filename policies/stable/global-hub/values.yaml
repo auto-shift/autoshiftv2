@@ -1,0 +1,66 @@
+# Default values for global-hub
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+policy_namespace: open-cluster-policies
+globalHub:
+  name: multicluster-global-hub-operator-rh
+  namespace: multicluster-global-hub
+  channel: release-1.8
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  operatorGroupName: global-hub-operator-group
+  targetNamespaces: # Target namespaces for namespace-scoped operators
+    - multicluster-global-hub
+  # MulticlusterGlobalHub operand (CR) defaults
+  availabilityConfig: High           # High (default) or Basic
+  enableMetrics: 'true'              # enable metrics for built-in kafka/postgres
+  installAgentOnLocal: 'true'        # install the Global Hub Agent on the local hub
+  postgresRetention: 18m            # built-in postgres data retention
+  kafkaSpecTopic: gh-spec
+  kafkaStatusTopic: 'gh-status.*'
+  consumerGroupPrefix: ''           # optional Kafka consumer group prefix (empty = operator default)
+  # AMQ Streams (Kafka) is installed and managed by the global hub operator itself.
+  # In disconnected environments the operator needs to be told which mirrored catalog
+  # to pull it from — these drive the strimzi-* annotations on the CR (disconnected only).
+  amqStreamsChannel: amq-streams-3.1.x
+
+# hubClusterSets:
+#   hub:
+#     labels:
+#       test1: 'test'
+# managedClusterSets:
+#   managed:
+#     labels:
+#       test4: 'test'
+
+### AutoShift Labels Documentation
+# The following labels can be set at the cluster or clusterset level to configure this policy:
+#
+# Enable/Disable:
+# global-hub<bool>: 'true' or 'false' - Controls whether global-hub is managed
+#
+# Configuration:
+# global-hub-subscription-name<string>: Operator subscription name (default: 'multicluster-global-hub-operator-rh')
+# global-hub-channel<string>: Operator channel (default: 'release-1.8')
+# global-hub-version<string>: Specific operator version (CSV) to install (optional)
+# global-hub-source<string>: Operator catalog source (default: 'redhat-operators')
+# global-hub-source-namespace<string>: Catalog namespace (default: 'openshift-marketplace')
+#
+# MulticlusterGlobalHub CR (operand) configuration:
+# global-hub-availability-config<string>: 'High' (default) or 'Basic'
+# global-hub-enable-metrics<bool>: 'true' (default) or 'false'
+# global-hub-install-agent-on-local<bool>: 'true' (default) or 'false'
+# global-hub-postgres-retention<string>: built-in postgres retention (default: '18m')
+# global-hub-consumer-group-prefix<string>: optional Kafka consumer group prefix (default: '')
+# global-hub-strimzi-channel<string>: AMQ Streams channel for disconnected mirror (default: 'amq-streams-3.1.x')
+#
+# Managed hub import (set on the managed hub clustersets, e.g. hub1/hub2 — not the global hub):
+# global-hub-deploy-mode<string>: 'default' or 'hosted' - imports that hub as a Global Hub managed hub
+#
+# Examples:
+# autoshift.io/global-hub: 'true'
+# autoshift.io/global-hub-subscription-name: 'multicluster-global-hub-operator-rh'
+# autoshift.io/global-hub-channel: 'release-1.8'
+# autoshift.io/global-hub-version: 'operator-name.v1.x.x'
+# autoshift.io/global-hub-source: 'redhat-operators'
+# autoshift.io/global-hub-source-namespace: 'openshift-marketplace'
