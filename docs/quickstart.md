@@ -201,10 +201,10 @@ Alternatively, you can assign clusters via the ACM Console at **All Clusters > I
 
 ```bash
 # Check ArgoCD Application
-oc get application autoshift -n openshift-gitops
+oc get application.argoproj.io autoshift -n openshift-gitops
 
 # Check individual policy Applications
-oc get applications -n openshift-gitops | grep autoshift
+oc get applications.argoproj.io -n openshift-gitops | grep autoshift
 
 # Check ACM policies
 oc get policies -A
@@ -367,10 +367,10 @@ oc label managedcluster <cluster-name> cluster.open-cluster-management.io/cluste
 
 ```bash
 # Check ArgoCD Application
-oc get application autoshift -n openshift-gitops
+oc get application.argoproj.io autoshift -n openshift-gitops
 
 # Check individual policy Applications
-oc get applications -n openshift-gitops | grep autoshift
+oc get applications.argoproj.io -n openshift-gitops | grep autoshift
 
 # Check ACM policies
 oc get policies -A
@@ -408,8 +408,8 @@ oc describe policy <policy-name> -n open-cluster-policies
 
 ### ArgoCD Application not syncing
 ```bash
-oc get application autoshift -n openshift-gitops -o yaml
-oc describe application autoshift -n openshift-gitops
+oc get application.argoproj.io autoshift -n openshift-gitops -o yaml
+oc describe application.argoproj.io autoshift -n openshift-gitops
 ```
 
 ## Next Steps

@@ -293,7 +293,7 @@ AutoShift also provides an ImageSet generator for mirroring operator images. See
 To upgrade or pin to a specific version, set `targetRevision` on the ArgoCD Application:
 
 ```bash
-oc patch application autoshift -n openshift-gitops \
+oc patch application.argoproj.io autoshift -n openshift-gitops \
   --type=merge \
   -p '{"spec":{"source":{"targetRevision":"X.Y.Z"}}}'
 ```
@@ -340,7 +340,7 @@ oc get applicationset -n openshift-gitops -o yaml
 oc logs -n openshift-gitops deployment/argocd-applicationset-controller --tail=100
 
 # Verify OCI mode is enabled
-oc get application autoshift -n openshift-gitops -o yaml | grep autoshiftOciRegistry
+oc get application.argoproj.io autoshift -n openshift-gitops -o yaml | grep autoshiftOciRegistry
 ```
 
 ### Policy charts not found in registry
@@ -350,7 +350,7 @@ oc get application autoshift -n openshift-gitops -o yaml | grep autoshiftOciRegi
 helm pull oci://quay.io/autoshift/policies/advanced-cluster-security
 
 # Verify all charts are the same version
-oc get applications -n openshift-gitops -o custom-columns=NAME:.metadata.name,REVISION:.spec.source.targetRevision | grep autoshift
+oc get applications.argoproj.io -n openshift-gitops -o custom-columns=NAME:.metadata.name,REVISION:.spec.source.targetRevision | grep autoshift
 ```
 
 ## Support
