@@ -94,12 +94,15 @@ spec:
             {{ "{{-" }} $issuerKind := `{{ "{{hub" }} $issuerKind {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $issuerGroup := `{{ "{{hub" }} $issuerGroup {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $selfManaged := `{{ "{{hub" }} $selfManaged {{ "hub}}" }}` {{ "}}" }}
-            ##### ACT (on the spoke): readiness LOOKUPS. #####
-            ##### cert-manager is required when an EXTERNAL mode is active on this spoke (not out-of-band), #####
-            ##### OR this is the self-managed HUB in selfSigned (it mints the CA + client certs locally). #####
-            ##### A plain selfSigned SPOKE just consumes a hub-copied secret -> no cert-manager -> Compliant. #####
+            ##### ACT (on the spoke): COLLECT every readiness problem for the desired mode into $errors, then #####
+            ##### fail ONCE at the end with the full list — so a single apply surfaces all issues and we avoid #####
+            ##### a fix-one-fail-next loop. $errors empty -> emit nothing -> Compliant. #####
+            ##### cert-manager is required when an EXTERNAL mode is active on this spoke (not out-of-band), OR #####
+            ##### this is the self-managed HUB in selfSigned (it mints the CA + client certs locally). A plain #####
+            ##### selfSigned SPOKE just consumes a hub-copied secret -> no cert-manager -> Compliant. #####
             {{ "{{-" }} $externalActive := (and (ne $mode "selfSigned") (ne $oob "true")) {{ "}}" }}
             {{ "{{-" }} $hubSelfSigned := (and (eq $mode "selfSigned") (eq $selfManaged "true")) {{ "}}" }}
+            {{ "{{-" }} $errors := list {{ "}}" }}
             {{ "{{-" }} if or $externalActive $hubSelfSigned {{ "}}" }}
               ##### cert-manager operator CSV must be phase=Succeeded. Name carries a version suffix #####
               ##### (cert-manager-operator.vX.Y.Z) so match by prefix; zero matches is ALSO not-ready. #####
@@ -110,35 +113,38 @@ spec:
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} if not $csvReady {{ "}}" }}
-                {{ "{{-" }} fail (printf "readiness gate: cert-manager-operator CSV in namespace %q is not phase=Succeeded (mode %q%s needs cert-manager) — holding bootstrap" "{{ $cmOperatorNs }}" $mode (ternary " on the self-managed hub" "" $hubSelfSigned)) {{ "}}" }}
+                {{ "{{-" }} $errors = append $errors (printf "cert-manager-operator CSV in namespace %q is not phase=Succeeded (mode %q%s needs cert-manager)" "{{ $cmOperatorNs }}" $mode (ternary " on the self-managed hub" "" $hubSelfSigned)) {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             ##### Issuer / serving-cert checks are external-mode-only (selfSigned uses cert-manager's #####
-            ##### built-in selfSigned issuer — nothing external to gate on). #####
+            ##### built-in selfSigned issuer — nothing external to gate on). Each dependent lookup is guarded #####
+            ##### by an else-if on its precondition so a missing input records an error instead of erroring out. #####
             {{ "{{-" }} if $externalActive {{ "}}" }}
               {{ "{{-" }} if eq $mode "externalCA" {{ "}}" }}
                 ##### externalCA: the spoke ClusterIssuer/Issuer that boot-store mints the client cert with #####
                 ##### must be Ready. Gating on the ISSUER (not the not-yet-minted ESO cert) avoids a deadlock #####
                 ##### where boot-store waits on this gate while the gate waits on boot-store's own cert. #####
                 {{ "{{-" }} if eq $issuerName "" {{ "}}" }}
-                  {{ "{{-" }} fail "readiness gate: externalCA mode but spokeIssuer.name is unset — cannot verify the issuer the spoke mints its client cert with" {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                ##### ClusterIssuer is cluster-scoped (namespace ""); Issuer lives in the ESO namespace #####
-                ##### where boot-store creates the Certificate. #####
-                {{ "{{-" }} $issuerNs := "" {{ "}}" }}
-                {{ "{{-" }} if ne $issuerKind "ClusterIssuer" {{ "}}" }}{{ "{{-" }} $issuerNs = "{{ $esoNamespace }}" {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $issuer := (lookup (printf "%s/v1" $issuerGroup) $issuerKind $issuerNs $issuerName) {{ "}}" }}
-                {{ "{{-" }} if not $issuer {{ "}}" }}
-                  {{ "{{-" }} fail (printf "readiness gate: %s %q not found (group %s) — the externalCA spoke issuer is not provisioned yet; holding bootstrap" $issuerKind $issuerName $issuerGroup) {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $issuerReady := false {{ "}}" }}
-                {{ "{{-" }} range $c := (dig "status" "conditions" (list) $issuer) {{ "}}" }}
-                  {{ "{{-" }} if and (eq (dig "type" "" $c) "Ready") (eq (dig "status" "" $c) "True") {{ "}}" }}
-                    {{ "{{-" }} $issuerReady = true {{ "}}" }}
+                  {{ "{{-" }} $errors = append $errors "externalCA mode but spokeIssuer.name is unset — cannot verify the issuer the spoke mints its client cert with" {{ "}}" }}
+                {{ "{{-" }} else if ne $issuerName "" {{ "}}" }}
+                  ##### ClusterIssuer is cluster-scoped (namespace ""); Issuer lives in the ESO namespace #####
+                  ##### where boot-store creates the Certificate. #####
+                  {{ "{{-" }} $issuerNs := "" {{ "}}" }}
+                  {{ "{{-" }} if ne $issuerKind "ClusterIssuer" {{ "}}" }}{{ "{{-" }} $issuerNs = "{{ $esoNamespace }}" {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} $issuer := (lookup (printf "%s/v1" $issuerGroup) $issuerKind $issuerNs $issuerName) {{ "}}" }}
+                  {{ "{{-" }} if not $issuer {{ "}}" }}
+                    {{ "{{-" }} $errors = append $errors (printf "%s %q not found (group %s) — the externalCA spoke issuer is not provisioned yet" $issuerKind $issuerName $issuerGroup) {{ "}}" }}
+                  {{ "{{-" }} else if $issuer {{ "}}" }}
+                    {{ "{{-" }} $issuerReady := false {{ "}}" }}
+                    {{ "{{-" }} range $c := (dig "status" "conditions" (list) $issuer) {{ "}}" }}
+                      {{ "{{-" }} if and (eq (dig "type" "" $c) "Ready") (eq (dig "status" "" $c) "True") {{ "}}" }}
+                        {{ "{{-" }} $issuerReady = true {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if not $issuerReady {{ "}}" }}
+                      {{ "{{-" }} $errors = append $errors (printf "%s %q is not Ready (status.conditions[type=Ready] != True) — the spoke cannot mint a client cert against it" $issuerKind $issuerName) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} if not $issuerReady {{ "}}" }}
-                  {{ "{{-" }} fail (printf "readiness gate: %s %q is not Ready (status.conditions[type=Ready] != True) — the spoke cannot mint a client cert against it; holding bootstrap" $issuerKind $issuerName) {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} else if eq $mode "externalCAReuseServingCert" {{ "}}" }}
                 ##### reuse: the apiserver serving cert (signed by the external CA) is the client cert. #####
@@ -146,24 +152,35 @@ spec:
                 ##### host match then first-entry fallback) and assert it exists and carries tls.crt. #####
                 {{ "{{-" }} $namedCerts := (dig "spec" "servingCerts" "namedCertificates" (list) ((lookup "config.openshift.io/v1" "APIServer" "" "cluster") | default dict)) {{ "}}" }}
                 {{ "{{-" }} if not $namedCerts {{ "}}" }}
-                  {{ "{{-" }} fail "readiness gate: externalCAReuseServingCert but APIServer/cluster has no spec.servingCerts.namedCertificates — no external serving cert to reuse yet; holding bootstrap" {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" (fromClusterClaim "apiserverurl.openshift.io"))) 0) {{ "}}" }}
-                {{ "{{-" }} $servingSecretName := "" {{ "}}" }}
-                {{ "{{-" }} range $nc := $namedCerts {{ "}}" }}
-                  {{ "{{-" }} if and (eq $servingSecretName "") (has $apiHost ((index $nc "names") | default list)) {{ "}}" }}
-                    {{ "{{-" }} $servingSecretName = (dig "servingCertificate" "name" "" $nc) {{ "}}" }}
+                  {{ "{{-" }} $errors = append $errors "APIServer/cluster has no spec.servingCerts.namedCertificates — no external serving cert to reuse yet" {{ "}}" }}
+                {{ "{{-" }} else if $namedCerts {{ "}}" }}
+                  {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" (fromClusterClaim "apiserverurl.openshift.io"))) 0) {{ "}}" }}
+                  {{ "{{-" }} $servingSecretName := "" {{ "}}" }}
+                  {{ "{{-" }} range $nc := $namedCerts {{ "}}" }}
+                    {{ "{{-" }} if and (eq $servingSecretName "") (has $apiHost ((index $nc "names") | default list)) {{ "}}" }}
+                      {{ "{{-" }} $servingSecretName = (dig "servingCertificate" "name" "" $nc) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if eq $servingSecretName "" {{ "}}" }}{{ "{{-" }} $servingSecretName = (dig "servingCertificate" "name" "" (index $namedCerts 0)) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if eq $servingSecretName "" {{ "}}" }}
+                    {{ "{{-" }} $errors = append $errors "could not resolve servingCertificate.name from APIServer/cluster namedCertificates" {{ "}}" }}
+                  {{ "{{-" }} else if ne $servingSecretName "" {{ "}}" }}
+                    {{ "{{-" }} $servingSecret := (lookup "v1" "Secret" "openshift-config" $servingSecretName) {{ "}}" }}
+                    {{ "{{-" }} if eq (dig "data" "tls.crt" "" ($servingSecret | default dict)) "" {{ "}}" }}
+                      {{ "{{-" }} $errors = append $errors (printf "apiserver serving cert Secret openshift-config/%q is missing or has no tls.crt — the external-CA serving cert is not materialized yet" $servingSecretName) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} if eq $servingSecretName "" {{ "}}" }}{{ "{{-" }} $servingSecretName = (dig "servingCertificate" "name" "" (index $namedCerts 0)) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} if eq $servingSecretName "" {{ "}}" }}
-                  {{ "{{-" }} fail "readiness gate: externalCAReuseServingCert could not resolve servingCertificate.name from APIServer/cluster namedCertificates; holding bootstrap" {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $servingSecret := (lookup "v1" "Secret" "openshift-config" $servingSecretName) {{ "}}" }}
-                {{ "{{-" }} if eq (dig "data" "tls.crt" "" ($servingSecret | default dict)) "" {{ "}}" }}
-                  {{ "{{-" }} fail (printf "readiness gate: apiserver serving cert Secret openshift-config/%q is missing or has no tls.crt — the external-CA serving cert is not materialized yet; holding bootstrap" $servingSecretName) {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### SINGLE failure point: if anything was collected, emit ALL of it at once so one fix clears the #####
+            ##### gate. Built by hand (not join) to stay on ACM's supported template-function set. #####
+            {{ "{{-" }} if $errors {{ "}}" }}
+              {{ "{{-" }} $msg := "" {{ "}}" }}
+              {{ "{{-" }} range $e := $errors {{ "}}" }}
+                {{ "{{-" }} $msg = (printf "%s\n  - %s" $msg $e) {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} fail (printf "readiness gate: %d issue(s) block ESO %q-mode bootstrap on this cluster:%s" (len $errors) $mode $msg) {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
