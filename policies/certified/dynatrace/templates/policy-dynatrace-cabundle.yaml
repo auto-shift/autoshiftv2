@@ -1,0 +1,80 @@
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-dynatrace-cabundle
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: dynatrace-cabundle
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: cert
+                  namespace: dynatrace
+                data:
+                  certs: |
+                    {{ "{{hub-" }} $configs := index (index (fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "dynatrace" | default dict) {{ "hub}}" }}
+                    {{ "{{" }} fromConfigMap "openshift-monitoring" "serving-certs-ca-bundle" "service-ca.crt" | autoindent {{ "}}" }}
+                    {{ "{{hub-" }} if eq ($configs.virtMetrics | default "false") "true" {{ "hub}}" }}
+                    {{ "{{" }} fromConfigMap "openshift-cnv" "kubevirt-ca" "ca-bundle" | autoindent {{ "}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-dynatrace-cabundle
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/dynatrace'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-dynatrace-cabundle
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-dynatrace-cabundle
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-dynatrace-cabundle
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

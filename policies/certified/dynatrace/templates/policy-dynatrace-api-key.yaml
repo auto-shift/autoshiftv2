@@ -26,12 +26,13 @@ spec:
         kind: ConfigurationPolicy
         metadata:
           name: dynatrace-api-key-secret
-          namespace: policies-autoshift
+          namespace: {{ .Values.policy_namespace }}
         spec:
           remediationAction: enforce # will be overridden by remediationAction in parent policy
           severity: high
           object-templates-raw: |
-            {{ "{{hub" }} $secret := index .ManagedClusterLabels "autoshift.io/dynatrace-api-key-secret" {{ "hub}}" }}
+            {{ "{{hub" }} $configs := index (index (fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "dynatrace" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} range $connections := $configs.connection {{ "hub}}" }}
             - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: v1
@@ -41,8 +42,9 @@ spec:
                   namespace: {{ .Values.dynatrace.namespace }}
                 type: Opaque
                 data:
-                  apiToken: {{ "{{hub" }} fromSecret (index .ManagedClusterLabels `autoshift.io/dynatrace-secrets-namespace`) $secret "apiToken" {{ "hub}}" }}
-                  dataIngestToken: {{ "{{hub" }} fromSecret (index .ManagedClusterLabels `autoshift.io/dynatrace-secrets-namespace`) $secret "dataIngestToken" {{ "hub}}" }}
+                  apiToken: {{ "{{hub" }} fromSecret $connections.secretNamespace $connections.apiTokensSecretName "apiToken" {{ "hub}}" }}
+                  dataIngestToken: {{ "{{hub" }} fromSecret $connections.secretNamespace $connections.apiTokensSecretName "dataIngestToken" {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -61,8 +63,6 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/dynatrace-api-key-secret'
-              operator: Exists
             - key: 'autoshift.io/dynatrace'
               operator: In
               values:

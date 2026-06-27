@@ -1,5 +1,5 @@
-{{- $policyName := "policy-dynatrace-virt-annotations" }}
-{{- $placementName := "placement-policy-dynatrace-virt-annotations" }}
+{{- $policyName := "policy-dynatrace-activegate-sa-token" }}
+{{- $placementName := "placement-policy-dynatrace-active-gate-sa-token" }}
 
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -18,62 +18,27 @@ spec:
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
-    - name: policy-virtualization-operator-install
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
   disabled: false
   policy-templates:
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: policy-dynatrace-kubevirt-pod-annotations
+          name: policy-dynatrace-activegate-sa-create-token
         spec:
           remediationAction: enforce
           severity: low
-          namespaceSelector:
-            include:
-              - openshift-cnv
           object-templates-raw: |
-              {{ "{{" }}- range $pod := (lookup "v1" "Pod" "openshift-cnv" "").items {{ "}}" }}
-              {{ "{{" }}- if $pod.metadata.labels {{ "}}" }}
-              {{ "{{" }}- if index $pod.metadata.labels "prometheus.kubevirt.io" {{ "}}" }}
-              - complianceType: musthave
-                objectDefinition:
-                  apiVersion: v1
-                  kind: Pod
-                  metadata:
-                    name: {{ "{{" }} $pod.metadata.name {{ "}}" }}
-                    namespace: openshift-cnv
-                    annotations:
-                      metrics.dynatrace.com/scrape: "true"
-                      metrics.dynatrace.com/port: "8443"
-                      metrics.dynatrace.com/secure: "true"
-              {{ "{{" }}- end {{ "}}" }}
-              {{ "{{" }}- end {{ "}}" }}
-              {{ "{{" }}- end {{ "}}" }}
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: policy-dynatrace-kubevirt-service-annotations
-        spec:
-          remediationAction: enforce
-          severity: low
-          object-templates: 
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
-                kind: Service
+                kind: Secret
                 metadata:
-                  name: kubevirt-prometheus-metrics
-                  namespace: openshift-cnv
+                  name: dynatrace-activegate-token
+                  namespace: dynatrace
                   annotations:
-                    metrics.dynatrace.com/secure: 'true'
-                    metrics.dynatrace.com/port: '8443'
-                    metrics.dynatrace.com/scrape: 'true'
+                    kubernetes.io/service-account.name: dynatrace-activegate
+                type: kubernetes.io/service-account-token
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -93,10 +58,6 @@ spec:
         labelSelector:
           matchExpressions:
             - key: 'autoshift.io/dynatrace'
-              operator: In
-              values:
-              - 'true'
-            - key: 'autoshift.io/virt'
               operator: In
               values:
               - 'true'

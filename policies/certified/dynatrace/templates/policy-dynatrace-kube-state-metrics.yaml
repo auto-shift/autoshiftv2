@@ -1,5 +1,5 @@
-{{- $policyName := "policy-dynatrace-virt-annotations" }}
-{{- $placementName := "placement-policy-dynatrace-virt-annotations" }}
+{{- $policyName := "policy-dynatrace-kube-state-metrics" }}
+{{- $placementName := "placement-policy-dynatrace-kube-state-metrics" }}
 
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -18,7 +18,7 @@ spec:
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
-    - name: policy-virtualization-operator-install
+    - name: policy-dynatrace-activegate-sa-token
       namespace: {{ .Values.policy_namespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
@@ -29,51 +29,41 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: policy-dynatrace-kubevirt-pod-annotations
+          name: policy-dynatrace-kube-state-metrics
         spec:
           remediationAction: enforce
           severity: low
-          namespaceSelector:
-            include:
-              - openshift-cnv
           object-templates-raw: |
-              {{ "{{" }}- range $pod := (lookup "v1" "Pod" "openshift-cnv" "").items {{ "}}" }}
+              {{ "{{" }}- range $pod := (lookup "v1" "Pod" "openshift-monitoring" "").items {{ "}}" }}
               {{ "{{" }}- if $pod.metadata.labels {{ "}}" }}
-              {{ "{{" }}- if index $pod.metadata.labels "prometheus.kubevirt.io" {{ "}}" }}
+              {{ "{{" }}- if eq (index $pod.metadata.labels "app.kubernetes.io/name") "kube-state-metrics" {{ "}}" }}
               - complianceType: musthave
                 objectDefinition:
                   apiVersion: v1
                   kind: Pod
                   metadata:
                     name: {{ "{{" }} $pod.metadata.name {{ "}}" }}
-                    namespace: openshift-cnv
+                    namespace: openshift-monitoring
                     annotations:
-                      metrics.dynatrace.com/scrape: "true"
-                      metrics.dynatrace.com/port: "8443"
-                      metrics.dynatrace.com/secure: "true"
+                      metrics.dynatrace.com/port: '8443'
+                      metrics.dynatrace.com/secure: 'true'
+                      metrics.dynatrace.com/scrape: 'true'
+                      metrics.dynatrace.com/http.auth: 'secret:dynatrace:dynatrace-activegate-token:token'
               {{ "{{" }}- end {{ "}}" }}
               {{ "{{" }}- end {{ "}}" }}
               {{ "{{" }}- end {{ "}}" }}
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: policy-dynatrace-kubevirt-service-annotations
-        spec:
-          remediationAction: enforce
-          severity: low
-          object-templates: 
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: Service
-                metadata:
-                  name: kubevirt-prometheus-metrics
-                  namespace: openshift-cnv
-                  annotations:
-                    metrics.dynatrace.com/secure: 'true'
-                    metrics.dynatrace.com/port: '8443'
-                    metrics.dynatrace.com/scrape: 'true'
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: v1
+                  kind: Service
+                  metadata:
+                    name: kube-state-metrics
+                    namespace: openshift-monitoring
+                    annotations:
+                      metrics.dynatrace.com/port: '8443'
+                      metrics.dynatrace.com/secure: 'true'
+                      metrics.dynatrace.com/scrape: 'true'
+                      metrics.dynatrace.com/http.auth: "secret:dynatrace:dynatrace-activegate-token:token"
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -93,10 +83,6 @@ spec:
         labelSelector:
           matchExpressions:
             - key: 'autoshift.io/dynatrace'
-              operator: In
-              values:
-              - 'true'
-            - key: 'autoshift.io/virt'
               operator: In
               values:
               - 'true'
