@@ -172,8 +172,9 @@ main() {
     log_info "Regenerating operator policies from template..."
     echo ""
 
-    # Find all operator install policies (matches OperatorPolicy kind in file)
-    for policy_file in "$POLICIES_DIR"/*/templates/policy-*.yaml; do
+    # Find all operator install policies (matches OperatorPolicy kind in file).
+    # Layout: policies/<category>/<operator>/templates/policy-*.yaml
+    for policy_file in "$POLICIES_DIR"/*/*/templates/policy-*.yaml; do
         # Skip if glob matched nothing
         [[ -f "$policy_file" ]] || continue
         # Only process files that contain an OperatorPolicy (i.e., operator install policies)

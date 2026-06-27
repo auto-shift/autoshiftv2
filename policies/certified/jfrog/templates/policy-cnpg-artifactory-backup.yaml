@@ -1,0 +1,212 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-cnpg-artifactory-backup" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-cnpg-artifactory
+      namespace: '{{ $policyNamespace }}'
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name: policy-storage-cluster-test
+      namespace: '{{ $policyNamespace }}'
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cnpg-artifactory-backup-bucket
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: openshift-service-ca
+                  namespace: {{ .Values.jfrog.namespace }}
+                  annotations:
+                    service.beta.openshift.io/inject-cabundle: "true"
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: objectbucket.io/v1alpha1
+                kind: ObjectBucketClaim
+                metadata:
+                  name: artifactory-db-backup
+                  namespace: {{ .Values.jfrog.namespace }}
+                spec:
+                  generateBucketName: artifactory-db-backup
+                  storageClassName: openshift-storage.noobaa.io
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: cnpg-artifactory-backup-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $jfrogCfg := (index $rcmConfig "jfrog" | default dict) {{ "hub}}" }}
+            # Read OBC credentials for the backup bucket
+            {{ "{{-" }} $obcSecret := (lookup "v1" "Secret" "{{ .Values.jfrog.namespace }}" "artifactory-db-backup") | default dict {{ "}}" }}
+            {{ "{{-" }} $obcData := ($obcSecret.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $accessKey := (index $obcData "AWS_ACCESS_KEY_ID" | default "") {{ "}}" }}
+            {{ "{{-" }} $secretKey := (index $obcData "AWS_SECRET_ACCESS_KEY" | default "") {{ "}}" }}
+            {{ "{{-" }} $obcCM := (lookup "v1" "ConfigMap" "{{ .Values.jfrog.namespace }}" "artifactory-db-backup") | default dict {{ "}}" }}
+            {{ "{{-" }} $obcCMData := ($obcCM.data | default dict) {{ "}}" }}
+            {{ "{{-" }} $bucketName := (index $obcCMData "BUCKET_NAME" | default "") {{ "}}" }}
+            {{ "{{-" }} $bucketHost := (index $obcCMData "BUCKET_HOST" | default "") {{ "}}" }}
+            {{ "{{-" }} $bucketPort := (index $obcCMData "BUCKET_PORT" | default "443") {{ "}}" }}
+            {{ "{{-" }} $retention := "{{ "{{hub" }} index $jfrogCfg "dbBackupRetention" | default "30d" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $schedule := "{{ "{{hub" }} index $jfrogCfg "dbBackupSchedule" | default "0 3 * * *" {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} $caCM := (lookup "v1" "ConfigMap" "{{ .Values.jfrog.namespace }}" "openshift-service-ca") | default dict {{ "}}" }}
+            {{ "{{-" }} $caCert := (index ($caCM.data | default dict) "service-ca.crt" | default "") {{ "}}" }}
+            {{ "{{-" }} if and (not (empty $accessKey)) (not (empty $bucketName)) {{ "}}" }}
+            # Create S3 endpoint CA secret for barman (CNPG endpointCA requires a Secret)
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: artifactory-db-backup-ca
+                  namespace: {{ .Values.jfrog.namespace }}
+                type: Opaque
+                stringData:
+                  ca.crt: |
+                    {{ "{{" }} $caCert | autoindent {{ "}}" }}
+            # Create S3 credentials secret for barman
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: artifactory-db-backup-s3-creds
+                  namespace: {{ .Values.jfrog.namespace }}
+                type: Opaque
+                data:
+                  ACCESS_KEY_ID: {{ "{{" }} $accessKey {{ "}}" }}
+                  ACCESS_SECRET_KEY: {{ "{{" }} $secretKey {{ "}}" }}
+            # Patch the CNPG Cluster with backup configuration
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: Cluster
+                metadata:
+                  name: artifactory-db
+                  namespace: {{ .Values.jfrog.namespace }}
+                spec:
+                  backup:
+                    retentionPolicy: {{ "{{" }} $retention {{ "}}" }}
+                    barmanObjectStore:
+                      destinationPath: s3://{{ "{{" }} $bucketName {{ "}}" }}/
+                      endpointURL: https://{{ "{{" }} $bucketHost {{ "}}" }}:{{ "{{" }} $bucketPort {{ "}}" }}
+                      endpointCA:
+                        name: artifactory-db-backup-ca
+                        key: ca.crt
+                      s3Credentials:
+                        accessKeyId:
+                          name: artifactory-db-backup-s3-creds
+                          key: ACCESS_KEY_ID
+                        secretAccessKey:
+                          name: artifactory-db-backup-s3-creds
+                          key: ACCESS_SECRET_KEY
+                      wal:
+                        compression: gzip
+                      data:
+                        compression: gzip
+            # Scheduled base backup
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: postgresql.cnpg.io/v1
+                kind: ScheduledBackup
+                metadata:
+                  name: artifactory-db-scheduled-backup
+                  namespace: {{ .Values.jfrog.namespace }}
+                spec:
+                  schedule: {{ "{{" }} $schedule {{ "}}" }}
+                  backupOwnerReference: cluster
+                  cluster:
+                    name: artifactory-db
+                  method: barmanObjectStore
+                  target: prefer-standby
+                  immediate: true
+            {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/jfrog'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/cloudnative-pg'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/artifactory-db-backups'
+              operator: In
+              values:
+              - 'true'
+            - key: 'autoshift.io/odf'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

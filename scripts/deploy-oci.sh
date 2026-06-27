@@ -279,8 +279,10 @@ elif [ "$METHOD" = "helm" ]; then
     # Check if helm is available
     command -v helm >/dev/null 2>&1 || error "helm is required for Helm deployment"
 
-    # Pull chart to temp directory
-    TEMP_DIR=$(mktemp -d)
+    # Pull chart to temp directory inside repo
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    TEMP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/.tmp/deploy-$$"
+    mkdir -p "$TEMP_DIR"
     trap "rm -rf $TEMP_DIR" EXIT
 
     log "Pulling chart from registry..."

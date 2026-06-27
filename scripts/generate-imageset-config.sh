@@ -61,13 +61,17 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CATALOG_CACHE_DIR="$PROJECT_ROOT/.cache/catalog-cache"
 GET_DEPS_SCRIPT="$SCRIPT_DIR/get-operator-dependencies.sh"
 
+# Local temp directory (avoids /tmp issues on Windows/Git Bash)
+LOCAL_TMP="$PROJECT_ROOT/.tmp"
+mkdir -p "$LOCAL_TMP"
+
 # Temp file for operator mappings (portable alternative to associative arrays)
 MAPPINGS_FILE=""
 
 cleanup_temp_files() {
     [[ -n "$MAPPINGS_FILE" ]] && rm -f "$MAPPINGS_FILE" || true
     # Only cleanup DEPENDENCIES_FILE if it was auto-generated (not passed via --dependencies-file)
-    [[ -n "$DEPENDENCIES_FILE" && "$DEPENDENCIES_FILE" == /tmp/* ]] && rm -f "$DEPENDENCIES_FILE" || true
+    [[ -n "$DEPENDENCIES_FILE" && "$DEPENDENCIES_FILE" == "$LOCAL_TMP"/* ]] && rm -f "$DEPENDENCIES_FILE" || true
 }
 trap cleanup_temp_files EXIT
 
@@ -80,7 +84,7 @@ trap cleanup_temp_files EXIT
 
 # Build operator mappings dynamically from values files
 build_operator_mappings() {
-    MAPPINGS_FILE=$(mktemp)
+    MAPPINGS_FILE="$LOCAL_TMP/operator-mappings.$$"
 
     for values_file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
         [[ -f "$values_file" ]] || continue
@@ -97,8 +101,8 @@ build_operator_mappings() {
 
             [[ -z "$label" || -z "$package" ]] && continue
 
-            # Find policy directory by searching for name: {package} in policies/*/values.yaml
-            for policy_values in "$PROJECT_ROOT"/policies/*/values.yaml; do
+            # Find policy directory by searching for name: {package} in policies values files
+            for policy_values in "$PROJECT_ROOT"/policies/stable/*/values.yaml "$PROJECT_ROOT"/policies/certified/*/values.yaml "$PROJECT_ROOT"/policies/community/*/values.yaml; do
                 [[ -f "$policy_values" ]] || continue
                 if grep -qE "^[[:space:]]+name:[[:space:]]*['\"]?${package}['\"]?" "$policy_values" 2>/dev/null; then
                     policy_dir=$(dirname "$policy_values")
@@ -132,10 +136,18 @@ resolve_all_dependencies() {
         return
     fi
 
+    # Detect Windows/Git Bash — dependency resolution won't work
+    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+        log_warning "Windows/Git Bash detected — cannot resolve dependencies (requires oc image extract with symlinks)"
+        log_warning "Use --dependencies-file scripts/operator-dependencies.json instead"
+        log_warning "Generate the file on Mac/Linux/WSL2: ./scripts/get-operator-dependencies.sh --json > scripts/operator-dependencies.json"
+        return
+    fi
+
     log_step "Resolving operator dependencies..."
 
     # Create temp file for dependencies
-    DEPENDENCIES_FILE=$(mktemp)
+    DEPENDENCIES_FILE="$LOCAL_TMP/dependencies.$$.json"
 
     # Call get-operator-dependencies.sh with all operators
     local catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${catalog_version}"
@@ -181,6 +193,9 @@ get_default_channel() {
     # Check for catalog.json (combined structure)
     elif [[ -f "$pkg_dir/catalog.json" ]]; then
         default_channel=$(jq -r 'select(.schema == "olm.package") | .defaultChannel // empty' "$pkg_dir/catalog.json" 2>/dev/null)
+    # Check for catalog.yaml (newer catalog format)
+    elif [[ -f "$pkg_dir/catalog.yaml" ]]; then
+        default_channel=$(grep '^defaultChannel:' "$pkg_dir/catalog.yaml" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' || true)
     fi
 
     echo "$default_channel"
@@ -574,7 +589,7 @@ get_policy_file_for_label() {
         echo "$policy_dir/values.yaml"
     else
         # Fallback to direct directory match
-        echo "$PROJECT_ROOT/policies/$label/values.yaml"
+        echo "$PROJECT_ROOT/policies/stable/$label/values.yaml"
     fi
 }
 
@@ -864,11 +879,12 @@ generate_imageset_config() {
     
     log_step "Generating ImageSetConfiguration from ${#values_files_array[@]} file(s): ${values_files_label}..."
 
-    # Start YAML file - v2 format doesn't use apiVersion or metadata
+    # Start YAML file
     cat > "$output_file" << EOF
 # AutoShift Generated ImageSetConfiguration
 # Values files: $values_files_label
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+apiVersion: mirror.openshift.io/v2alpha1
 kind: ImageSetConfiguration
 archiveSize: 4
 mirror:
@@ -1010,10 +1026,18 @@ EOF
                         dep_channel=$(get_default_channel "$dep" "$catalog_ver")
                         [[ -z "$dep_channel" ]] && dep_channel="stable"
 
-                        redhat_operators+="$dep|$dep_channel "
+                        # Check if this dependency is already in certified or community operators
+                        # to avoid adding it to the wrong catalog
+                        if [[ "$certified_operators" =~ "$dep|" ]]; then
+                            log_step "Skipped dependency $dep — already in certified catalog"
+                        elif [[ "$community_operators" =~ "$dep|" ]]; then
+                            log_step "Skipped dependency $dep — already in community catalog"
+                        else
+                            redhat_operators+="$dep|$dep_channel "
+                            log_step "Added dependency: $dep (required by $required_by, channel: $dep_channel)"
+                        fi
                         existing_operators+=" $dep "
                         added_deps=$((added_deps + 1))
-                        log_step "Added dependency: $dep (required by $required_by, channel: $dep_channel)"
                     fi
                 done
 
@@ -1032,26 +1056,20 @@ EOF
                     [[ -z "$package_info" ]] && continue
                     IFS='|' read -r name channels <<< "$package_info"
                     echo "    - name: $name" >> "$output_file"
-                    echo "      channels:" >> "$output_file"
 
-                    # Get default channel from catalog cache
-                    local default_channel=$(get_default_channel "$name" "$catalog_ver")
-
-                    # Handle multiple channels (comma-separated) and add default if different
+                    # Set defaultChannel to the first specified channel
                     IFS=',' read -ra channels_array <<< "$channels"
-                    local seen_channels=" "
+                    local first_channel=$(echo "${channels_array[0]}" | xargs)
+                    if [[ -n "$first_channel" ]]; then
+                        echo "      defaultChannel: $first_channel" >> "$output_file"
+                    fi
+
+                    echo "      channels:" >> "$output_file"
                     for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)  # Strip whitespace
+                        channel=$(echo "$channel" | xargs)
                         [[ -z "$channel" ]] && continue
                         echo "      - name: $channel" >> "$output_file"
-                        seen_channels+="$channel "
                     done
-
-                    # Add default channel if not already included
-                    if [[ -n "$default_channel" && "$seen_channels" != *" $default_channel "* ]]; then
-                        echo "      - name: $default_channel" >> "$output_file"
-                        log_step "Added default channel '$default_channel' for $name"
-                    fi
                 done
                 log_step "Added catalog: redhat-operator-index"
             fi
@@ -1066,26 +1084,20 @@ EOF
                     [[ -z "$package_info" ]] && continue
                     IFS='|' read -r name channels <<< "$package_info"
                     echo "    - name: $name" >> "$output_file"
-                    echo "      channels:" >> "$output_file"
 
-                    # Get default channel from catalog cache (community catalog)
-                    local default_channel=$(get_default_channel "$name" "$catalog_ver")
-
-                    # Handle multiple channels (comma-separated) and add default if different
+                    # Set defaultChannel to the first specified channel
                     IFS=',' read -ra channels_array <<< "$channels"
-                    local seen_channels=" "
+                    local first_channel=$(echo "${channels_array[0]}" | xargs)
+                    if [[ -n "$first_channel" ]]; then
+                        echo "      defaultChannel: $first_channel" >> "$output_file"
+                    fi
+
+                    echo "      channels:" >> "$output_file"
                     for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)  # Strip whitespace
+                        channel=$(echo "$channel" | xargs)
                         [[ -z "$channel" ]] && continue
                         echo "      - name: $channel" >> "$output_file"
-                        seen_channels+="$channel "
                     done
-
-                    # Add default channel if not already included
-                    if [[ -n "$default_channel" && "$seen_channels" != *" $default_channel "* ]]; then
-                        echo "      - name: $default_channel" >> "$output_file"
-                        log_step "Added default channel '$default_channel' for $name"
-                    fi
                 done
                 log_step "Added catalog: community-operator-index"
             fi
@@ -1100,26 +1112,20 @@ EOF
                     [[ -z "$package_info" ]] && continue
                     IFS='|' read -r name channels <<< "$package_info"
                     echo "    - name: $name" >> "$output_file"
-                    echo "      channels:" >> "$output_file"
 
-                    # Get default channel from catalog cache (certified catalog)
-                    local default_channel=$(get_default_channel "$name" "$catalog_ver")
-
-                    # Handle multiple channels (comma-separated) and add default if different
+                    # Set defaultChannel to the first specified channel
                     IFS=',' read -ra channels_array <<< "$channels"
-                    local seen_channels=" "
+                    local first_channel=$(echo "${channels_array[0]}" | xargs)
+                    if [[ -n "$first_channel" ]]; then
+                        echo "      defaultChannel: $first_channel" >> "$output_file"
+                    fi
+
+                    echo "      channels:" >> "$output_file"
                     for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)  # Strip whitespace
+                        channel=$(echo "$channel" | xargs)
                         [[ -z "$channel" ]] && continue
                         echo "      - name: $channel" >> "$output_file"
-                        seen_channels+="$channel "
                     done
-
-                    # Add default channel if not already included
-                    if [[ -n "$default_channel" && "$seen_channels" != *" $default_channel "* ]]; then
-                        echo "      - name: $default_channel" >> "$output_file"
-                        log_step "Added default channel '$default_channel' for $name"
-                    fi
                 done
                 log_step "Added catalog: certified-operator-index"
             fi
@@ -1129,6 +1135,21 @@ EOF
     else
         echo "  operators: []" >> "$output_file"
         log_step "Skipped operators (openshift-only mode)"
+    fi
+
+    # Collect known additional images for enabled operators
+    local KNOWN_IMAGES_FILE="$SCRIPT_DIR/known-additional-images.json"
+    local known_images=()
+    if [[ -f "$KNOWN_IMAGES_FILE" ]]; then
+        for op in "${operators[@]}"; do
+            local op_name="${op%%|*}"
+            local imgs
+            imgs=$(jq -r --arg pkg "$op_name" '.[$pkg] // [] | .[]' "$KNOWN_IMAGES_FILE" 2>/dev/null)
+            while IFS= read -r img; do
+                [[ -z "$img" ]] && continue
+                known_images+=("$img")
+            done <<< "$imgs"
+        done
     fi
 
     # Add AutoShift OCI Helm charts to additionalImages if requested
@@ -1148,13 +1169,17 @@ EOF
 
         if [[ -z "$AUTOSHIFT_VERSION" ]]; then
             log_warning "AutoShift version not specified and could not be determined from Chart.yaml"
-            echo "  additionalImages: []" >> "$output_file"
+            if [[ ${#known_images[@]} -gt 0 ]]; then
+                echo "  additionalImages:" >> "$output_file"
+            else
+                echo "  additionalImages: []" >> "$output_file"
+            fi
         else
             log_step "Adding AutoShift OCI Helm charts from $AUTOSHIFT_REGISTRY (version: $AUTOSHIFT_VERSION)"
 
             # Discover all policy charts
             local policy_charts=()
-            for chart_dir in policies/*/; do
+            for chart_dir in policies/stable/*/ policies/certified/*/ policies/community/*/; do
                 if [[ -f "${chart_dir}Chart.yaml" ]]; then
                     policy_charts+=($(basename "$chart_dir"))
                 fi
@@ -1178,7 +1203,20 @@ EOF
             log_success "Added ${#policy_charts[@]} policy charts + 3 core charts to additionalImages"
         fi
     else
-        echo "  additionalImages: []" >> "$output_file"
+        if [[ ${#known_images[@]} -gt 0 ]]; then
+            echo "  additionalImages:" >> "$output_file"
+        else
+            echo "  additionalImages: []" >> "$output_file"
+        fi
+    fi
+
+    # Append known additional images for enabled operators
+    if [[ ${#known_images[@]} -gt 0 ]]; then
+        echo "    # Operator runtime images not declared in catalog relatedImages" >> "$output_file"
+        for img in "${known_images[@]}"; do
+            echo "    - name: $img" >> "$output_file"
+        done
+        log_success "Added ${#known_images[@]} known additional images"
     fi
 
     # helm section not used - OCI charts go in additionalImages
