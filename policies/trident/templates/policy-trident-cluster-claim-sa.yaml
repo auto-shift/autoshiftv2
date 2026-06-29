@@ -1,0 +1,121 @@
+{{- $policyNamespaceLabel := .Values.policyNamespaceLabel | default "autoshift.io/createdByAutoshift=true" -}}
+{{- if not (empty .Values.hubClusterSets) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-trident-cluster-claim-sa
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
+  disabled: false
+  dependencies:
+    - name: policy-trident-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: trident-clusterclaim-reader-sa-create
+          namespace: {{ .Values.policy_namespace }}
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            {{ "{{-" }} $policyNamespaces := (lookup "v1" "Namespace" "" "" "{{ $policyNamespaceLabel }}").items {{ "}}" }}
+            {{ "{{-" }} range $policyNamespaces {{ "}}" }}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: trident-clusterclaim-reader
+                  namespace: {{ "{{" }} .metadata.name {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRole
+                metadata:
+                  name: trident-clusterclaim-reader
+                rules:
+                  - apiGroups:
+                      - cluster.open-cluster-management.io
+                    resources:
+                      - clusterclaims
+                    verbs:
+                      - get
+                      - list
+                      - watch
+                  - apiGroups:
+                      - ""
+                    resources:
+                      - configmaps
+                    verbs:
+                      - get
+                      - list
+                      - watch
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRoleBinding
+                metadata:
+                  name: trident-clusterclaim-reader
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: ClusterRole
+                  name: trident-clusterclaim-reader
+                subjects:
+                {{ "{{-" }} range $policyNamespaces {{ "}}" }}
+                  - kind: ServiceAccount
+                    name: trident-clusterclaim-reader
+                    namespace: {{ "{{" }} .metadata.name {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-trident-cluster-claim-sa
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/trident'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-trident-cluster-claim-sa
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-trident-cluster-claim-sa
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-trident-cluster-claim-sa
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

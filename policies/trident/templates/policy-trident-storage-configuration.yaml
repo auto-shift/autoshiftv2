@@ -11,6 +11,9 @@ spec:
 {{- if (($.Values.autoshift).dryRun) }}
   remediationAction: inform
 {{- end }}
+  hubTemplateOptions:
+    serviceAccountName: trident-clusterclaim-reader
+  disabled: false
   dependencies:
     - name: policy-trident-orchestrator
       namespace: {{ .Values.policy_namespace }}
@@ -33,9 +36,14 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates-raw: |
-          
+
             {{ "{{hub" }} $configs := index (index (fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "trident" | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} range $storage := $configs.storage {{ "hub}}" }}
+            {{ "{{hub-" }} $clusterName := .ManagedClusterName {{ "hub}}" }}
+            {{ "{{hub-" }} $apiUrl := (lookup "cluster.open-cluster-management.io/v1alpha1" "ClusterClaim" "" "apiserverurl.openshift.io").spec.value {{ "hub}}" }}
+            {{ "{{hub-" }} $host := (index ($apiUrl | replace "https://" "" | splitList ":") 0) {{ "hub}}" }}
+            {{ "{{hub-" }} $hubClusterName := (index ($host | splitList ".") 1) {{ "hub}}" }}
+            {{ "{{hub-" }} if not (empty $configs.storage) {{ "hub}}" }}
+              {{ "{{hub-" }} range $storage := $configs.storage {{ "hub}}" }}
             - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: trident.netapp.io/v1
@@ -44,9 +52,14 @@ spec:
                   name: "{{ "{{hub" }} $storage.backendName {{ "hub}}" }}"
                   namespace: trident
                 spec:
-                  debugTraceFlags:
-                    api: true
-                    method: true
+                  {{ "{{hub" }} $defaults := dict {{ "hub}}" }}
+                  {{ "{{hub-" }} if eq ($storage.encryption | default "false") "true" {{ "hub}}" }}
+                    {{ "{{hub" }} $_ := set $defaults "encryption" "true" {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if $defaults {{ "hub}}" }}
+                  defaults:
+                    {{ "{{hub" }} $defaults | toYaml | autoindent {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
                   version: 1
                   backendName: "{{ "{{hub" }} $storage.backendName {{ "hub}}" }}"
                   storageDriverName: "{{ "{{hub" }} $storage.storageDriverName | default "ontap-san" {{ "hub}}" }}"
@@ -56,28 +69,38 @@ spec:
                   trustedCACertificate: {{ "{{" }} fromConfigMap "openshift-config" "user-ca-bundle" "ca-bundle.crt" | base64enc {{ "}}" }}
                   credentials:
                     name: "{{ "{{hub" }} $storage.secretName {{ "hub}}" }}"
-                {{ "{{hub" }}- if eq $storage.useREST "true" {{ "hub}}" }}
+                {{ "{{hub-" }} if eq $storage.useREST "true" {{ "hub}}" }}
                   useREST: true
-                {{ "{{hub" }}- end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if eq ($storage.storagePrefix | default "false") "true" {{ "hub}}" }}
+                  {{ "{{hub-" }} if eq $clusterName "local-cluster" {{ "hub}}" }}
+                  storagePrefix: {{ "{{hub" }} $hubClusterName {{ "hub}}" }}
+                  {{ "{{hub-" }} else {{ "hub}}" }}
+                  storagePrefix: {{ "{{hub" }} $clusterName {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
             - complianceType: mustonlyhave
+              recreateOption: IfRequired
               objectDefinition:
                 apiVersion: storage.k8s.io/v1
                 kind: StorageClass
                 metadata:
-                {{ "{{hub" }}- if eq $storage.defaultStorageClass "true" {{ "hub}}" }}
+                {{ "{{hub-" }} if eq $storage.defaultStorageClass "true" {{ "hub}}" }}
                   annotations:
                     storageclass.kubernetes.io/is-default-class: 'true'
-                {{ "{{hub" }}- end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
                   name: "{{ "{{hub" }} $storage.storageClassName {{ "hub}}" }}"
                 provisioner: csi.trident.netapp.io
                 parameters:
                   backendType: "{{ "{{hub" }} $storage.storageDriverName | default "ontap-san" {{ "hub}}" }}"
                   storagePools: "{{ "{{hub" }} $storage.backendName {{ "hub}}" }}:.*"
                   fsType: "{{ "{{hub" }} $storage.fsType | default "ext4" {{ "hub}}" }}"
-                mountOptions:
-                  - discard
+                {{ "{{hub-" }} if eq ($storage.encryption | default "false") "true" {{ "hub}}" }}
+                  encryption: "true"
+                {{ "{{hub-" }} end {{ "hub}}" }}
                 allowVolumeExpansion: true
-            {{ "{{hub" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
@@ -89,7 +112,8 @@ spec:
           severity: high
           object-templates-raw: |
             {{ "{{hub" }} $configs := index (index (fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "trident" | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} range $storage := $configs.storage {{ "hub}}" }}
+            {{ "{{hub-" }} if not (empty $configs.storage) {{ "hub}}" }}
+              {{ "{{hub-" }} range $storage := $configs.storage {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: trident.netapp.io/v1
@@ -99,7 +123,8 @@ spec:
                   namespace: trident
                 status:
                   phase: Bound
-            {{ "{{hub" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
