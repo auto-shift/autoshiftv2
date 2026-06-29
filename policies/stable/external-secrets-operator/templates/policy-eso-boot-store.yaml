@@ -1,3 +1,252 @@
+{{- /*
+  Single-sourced object-templates body for policy-eso-boot-store.
+  Included TWICE below: once as the live object stream (indent 12), once as the text
+  payload of the debug-render ConfigMap (indent 20). Authored at column 0; the include
+  site applies indentation. Helm-render locals threaded in via the context dict ($ctx).
+*/ -}}
+{{- define "eso.bootBody.bootStore" -}}
+##### DERIVE (on the hub): per-cluster rendered config + the two policy-namespace inputs #####
+{{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+{{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
+{{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ .defaultMode }}") {{ "hub}}" }}
+{{ "{{hub-" }} $hubServer := (index $hubBootstrap "hubServer" | default "{{ .defaultHubServer }}") {{ "hub}}" }}
+##### hubServer resolution: explicit config/value always wins. If it is empty AND deriveHubUrl is on, THIS #####
+##### policy reads the HUB's own apiserverurl.openshift.io ClusterClaim via fromClusterClaim — which (like #####
+##### fromSecret) resolves against the cluster the template executes on, i.e. the hub here. The #####
+##### cluster-scoped ClusterClaim read works because hub templates here resolve as #####
+##### autoshift-policy-service-account (cluster-admin) via hubTemplateOptions. deriveHubUrl defaults OFF, #####
+##### so by default this policy makes NO hub lookup and demands explicit hubServer config. #####
+{{ "{{hub-" }} $deriveHubUrl := (dig "deriveHubUrl" {{ .defaultDeriveHubUrl }} $hubBootstrap) {{ "hub}}" }}
+{{ "{{hub-" }} if and (eq $hubServer "") $deriveHubUrl {{ "hub}}" }}
+  {{ "{{hub-" }} $hubServer = (fromClusterClaim "apiserverurl.openshift.io") {{ "hub}}" }}
+{{ "{{hub-" }} end {{ "hub}}" }}
+{{ "{{hub-" }} $storeName := (index $hubBootstrap "storeName" | default "{{ .storePrefix }}") {{ "hub}}" }}
+##### externalCA-mode mint settings: the CN prefix + baseDomain are bridged to the spoke, which derives #####
+##### its own client cert CN the SAME way as the hub clientca-external policy (from its apiserverurl.openshift.io #####
+##### clusterClaim real name) so it matches the hub RBAC, plus the user-provided spoke issuer. #####
+{{ "{{hub-" }} $clientIdentity := (dig "clientIdentity" (dict) $hubBootstrap) {{ "hub}}" }}
+{{ "{{hub-" }} $certCNPrefix := (index $clientIdentity "certCNPrefix" | default "{{ .defaultCertCNPrefix }}") {{ "hub}}" }}
+{{ "{{hub-" }} $certBaseDomain := (index $clientIdentity "baseDomain" | default "{{ .defaultCertBaseDomain }}") {{ "hub}}" }}
+{{ "{{hub-" }} $certDuration := (index $clientIdentity "certDuration" | default "{{ .defaultCertDuration }}") {{ "hub}}" }}
+{{ "{{hub-" }} $certRenewBefore := (index $clientIdentity "certRenewBefore" | default "{{ .defaultCertRenewBefore }}") {{ "hub}}" }}
+{{ "{{hub-" }} $spokeIssuer := (dig "externalCertAuthority" "certIssuer" (dict) $hubBootstrap) {{ "hub}}" }}
+{{ "{{hub-" }} $spokeIssuerName := (index $spokeIssuer "name" | default "{{ .defaultSpokeIssuerName }}") {{ "hub}}" }}
+{{ "{{hub-" }} $spokeIssuerKind := (index $spokeIssuer "kind" | default "{{ .defaultSpokeIssuerKind }}") {{ "hub}}" }}
+{{ "{{hub-" }} $spokeIssuerGroup := (index $spokeIssuer "group" | default "{{ .defaultSpokeIssuerGroup }}") {{ "hub}}" }}
+##### selfSigned client-secret COPY NAME segment — the OCM ManagedCluster name, which is the SAME segment #####
+##### the hub clientca-selfsigned policy names its per-cluster client SECRET with (storage identity, NOT #####
+##### the cert CN — the hub derives the CN from the REAL cluster name, but the secret name keys off the #####
+##### OCM name because it is unique per hub and needs no clusterClaim lookup here). We reuse the OCM name #####
+##### (not a raw value) with the identical truncation budget so the copied secret name matches the hub #####
+##### side and can never outgrow its name limit. selfSigned baseDomain defaults to autoshift.io exactly #####
+##### as the hub policy does, so the truncation budget is identical. #####
+{{ "{{hub-" }} $segBaseDomain := (index $clientIdentity "baseDomain" | default "{{ .selfSignedSegBaseDomain }}") {{ "hub}}" }}
+{{ "{{hub-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $segBaseDomain))) {{ "hub}}" }}
+{{ "{{hub-" }} $clusterSeg := .ManagedClusterName {{ "hub}}" }}
+##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
+{{ "{{hub-" }} if gt (len .ManagedClusterName) $cnBudget {{ "hub}}" }}
+  {{ "{{hub-" }} $clusterSeg = (substr 0 (toInt $cnBudget) .ManagedClusterName) {{ "hub}}" }}
+{{ "{{hub-" }} end {{ "hub}}" }}
+##### externalCA CN/SAN are NOT derived here: the spoke reads its OWN apiserverurl.openshift.io #####
+##### clusterClaim at runtime and derives them locally (see the runtime externalCA block below), so #####
+##### the hub does no ManagedCluster lookup. We only bridge $certCNPrefix + $certBaseDomain. #####
+{{ "{{hub-" }} $clientSecretName := (printf "%s-%s" "{{ .clientSecret }}" $clusterSeg) {{ "hub}}" }}
+##### Hub serving CA: a PUBLIC CA in a ConfigMap, read with the ACM-aware fromConfigMap helper #####
+##### (resolves against the executing cluster = the hub here; the policy namespace is readable). #####
+{{ "{{hub-" }} $servingCASrc := (fromConfigMap "{{ .policyNamespace }}" "{{ .servingCAConfigMap }}" "ca.crt") {{ "hub}}" }}
+##### COPY THE POLICY-NAMESPACE INPUTS -> spoke ESO namespace (hub templates may read the policy namespace) #####
+{{ "{{hub-" }} if $hubBootstrap {{ "hub}}" }}
+  {{ "{{hub-" }} if eq $hubServer "" {{ "hub}}" }}
+    {{ "{{hub-" }} fail "hub apiserver URL unresolved: set config.eso.hubBootstrap.hubServer (or values externalSecretsOperator.hubServer), or enable deriveHubUrl so this policy derives it from the apiserverurl.openshift.io ClusterClaim" {{ "hub}}" }}
+  {{ "{{hub-" }} end {{ "hub}}" }}
+  {{ "{{hub-" }} if eq $servingCASrc "" {{ "hub}}" }}
+    {{ "{{hub-" }} fail (printf "hub serving CA ConfigMap %s/%s not found yet (the boot-serving-ca policy stashes it) — retrying" "{{ .policyNamespace }}" "{{ .servingCAConfigMap }}") {{ "hub}}" }}
+  {{ "{{hub-" }} end {{ "hub}}" }}
+  ##### externalCA preconditions live in the runtime externalCA block (the spoke derives the CN there). #####
+  ##### COPY HUB-MINTED CLIENT CERT -> spoke ESO namespace (selfSigned ONLY; external modes produce the #####
+  ##### cert ON THE SPOKE at runtime below, so there is no hub-minted secret to copy). #####
+  {{ "{{hub-" }} if eq $mode "selfSigned" {{ "hub}}" }}
+- complianceType: musthave
+  objectDefinition:
+    apiVersion: v1
+    kind: Secret
+    type: kubernetes.io/tls
+    metadata:
+      name: {{ .clientSecret }}
+      namespace: {{ .esoNamespace }}
+    ##### copySecretData is ACM-aware: it ENCRYPTS the cert/key in the propagated policy and naturally #####
+    ##### makes the policy retry until the hub-minted Secret exists (no lookup-based existence guard). #####
+    {{- if .debug }}
+    data: {}  # DEBUG would-copy ALL keys from Secret {{ .policyNamespace }}/{{ "{{hub" }} $clientSecretName {{ "hub}}" }}
+    {{- else }}
+    data: '{{ "{{hub" }} copySecretData "{{ .policyNamespace }}" $clientSecretName {{ "hub}}" }}'
+    {{- end }}
+  {{ "{{hub-" }} end {{ "hub}}" }}
+  ##### COPY HUB SERVING CA -> spoke ESO namespace (so the store trusts the hub TLS) #####
+- complianceType: musthave
+  objectDefinition:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ .servingCAConfigMap }}
+      namespace: {{ .esoNamespace }}
+    data:
+      ca.crt: |
+        {{ "{{hub" }} $servingCASrc | autoindent {{ "hub}}" }}
+{{ "{{hub-" }} end {{ "hub}}" }}
+##### BRIDGE config values to the runtime (spoke) side #####
+{{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
+##### Reject an unknown mode loudly: otherwise every mode arm below is skipped and the store is #####
+##### still created pointing auth.cert at a secret nothing ever mints/copies (silent breakage). #####
+{{ "{{-" }} if and (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
+  {{ "{{-" }} fail (printf "invalid config.eso.hubBootstrap.mode %q (or values hubBootstrapMode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
+{{ "{{-" }} end {{ "}}" }}
+{{ "{{-" }} $hubServer := `{{ "{{hub" }} $hubServer {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
+##### externalCA CN inputs — the spoke derives the full CN/SAN itself from these + its own apiserver URL #####
+{{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $certDuration := `{{ "{{hub" }} $certDuration {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $certRenewBefore := `{{ "{{hub" }} $certRenewBefore {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $spokeIssuerName := `{{ "{{hub" }} $spokeIssuerName {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $spokeIssuerKind := `{{ "{{hub" }} $spokeIssuerKind {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $spokeIssuerGroup := `{{ "{{hub" }} $spokeIssuerGroup {{ "hub}}" }}` {{ "}}" }}
+##### ACT ON THE SPOKE (runtime): build the bootstrap store from bridged config #####
+{{ "{{-" }} if ne $hubServer "" {{ "}}" }}
+  ##### externalCA: mint THIS spoke's client cert locally (key never leaves the spoke) via the #####
+  ##### user-provided issuer, into the same secret name the store reads below. #####
+  {{ "{{-" }} if eq $mode "externalCA" {{ "}}" }}
+    ##### Derive the cert CN/SAN ON THE SPOKE from its OWN apiserverurl.openshift.io clusterClaim. This #####
+    ##### parse + truncation is byte-identical to the hub clientca-external RBAC-subject derivation, so #####
+    ##### the spoke-minted CN equals the hub RBAC subject (no out-of-band coordination). #####
+    {{ "{{-" }} if eq $certBaseDomain "" {{ "}}" }}
+      {{ "{{-" }} fail "eso.hubBootstrap.baseDomain (or values hubBootstrapCertBaseDomain) is required in externalCA mode — the spoke-minted CN and the hub RBAC are both derived from it" {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+    {{ "{{-" }} if eq $spokeIssuerName "" {{ "}}" }}
+      {{ "{{-" }} fail "config.eso.hubBootstrap.externalCertAuthority.certIssuer.name (or values hubBootstrapSpokeIssuerName) is required in externalCA mode — the spoke ClusterIssuer/Issuer (chained to the shared external CA) must be provisioned by the customer" {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+    {{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
+    {{ "{{-" }} if eq $apiUrl "" {{ "}}" }}
+      {{ "{{-" }} fail "externalCA mode: this cluster has no apiserverurl.openshift.io clusterClaim — cannot derive its real cluster name for the client cert CN" {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+    {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
+    {{ "{{-" }} $hostLabels := (splitList "." $apiHost) {{ "}}" }}
+    {{ "{{-" }} if lt (len $hostLabels) 2 {{ "}}" }}
+      {{ "{{-" }} fail (printf "externalCA mode: apiserver URL %q is not of the form https://api.<cluster>.<base>" $apiUrl) {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+    {{ "{{-" }} $realName := (index $hostLabels 1) {{ "}}" }}
+    {{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
+    {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}
+      {{ "{{-" }} fail (printf "externalCA CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (combined length must be <= 61); shorten the prefix or baseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+    ##### full (untruncated) real cluster name as the SAN; truncate ONLY the CN's cluster segment #####
+    {{ "{{-" }} $certSAN := $realName {{ "}}" }}
+    {{ "{{-" }} $clusterSeg := $realName {{ "}}" }}
+    ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
+    {{ "{{-" }} if gt (len $realName) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $realName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+    {{ "{{-" }} $certCN := (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
+- complianceType: musthave
+  objectDefinition:
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: {{ .clientSecret }}
+      namespace: {{ .esoNamespace }}
+    spec:
+      commonName: {{ "{{" }} $certCN {{ "}}" }}
+      ##### full (untruncated) real cluster name as a SAN so the complete identity is preserved even #####
+      ##### when the CN's cluster segment was truncated to the 63-char budget #####
+      dnsNames:
+        - {{ "{{" }} $certSAN {{ "}}" }}
+      secretName: {{ .clientSecret }}
+      duration: {{ "{{" }} $certDuration {{ "}}" }}
+      renewBefore: {{ "{{" }} $certRenewBefore {{ "}}" }}
+      usages:
+        - client auth
+        - digital signature
+        - key encipherment
+      privateKey:
+        algorithm: RSA
+        size: 2048
+      issuerRef:
+        name: {{ "{{" }} $spokeIssuerName {{ "}}" }}
+        kind: {{ "{{" }} $spokeIssuerKind {{ "}}" }}
+        group: {{ "{{" }} $spokeIssuerGroup {{ "}}" }}
+  {{ "{{-" }} end {{ "}}" }}
+  ##### externalCAReuseServingCert: copy THIS spoke's apiserver serving cert (+key) — discovered from #####
+  ##### APIServer.spec.servingCerts.namedCertificates — into the store's client-cert secret. The key #####
+  ##### replication is the documented blast radius of this mode (see values.yaml hubBootstrapMode). #####
+  {{ "{{-" }} if eq $mode "externalCAReuseServingCert" {{ "}}" }}
+    {{ "{{-" }} $apiserver := ((lookup "config.openshift.io/v1" "APIServer" "" "cluster") | default dict) {{ "}}" }}
+    {{ "{{-" }} $namedCerts := (dig "spec" "servingCerts" "namedCertificates" (list) $apiserver) {{ "}}" }}
+    {{ "{{-" }} if not $namedCerts {{ "}}" }}
+      {{ "{{-" }} fail "externalCAReuseServingCert: APIServer/cluster has no spec.servingCerts.namedCertificates — there is no custom serving cert to reuse as the client cert" {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+    ##### Pick the named cert that serves THIS spoke's registered apiserver host: the hub binds RBAC to that #####
+    ##### host and the kube-apiserver maps the presented client cert to its Subject CN, so the cert we reuse #####
+    ##### MUST be the one whose Subject CN is the host (the serving-ca policy matches the same way). Fall #####
+    ##### back to the first entry only when no entry advertises the host in its names. #####
+    {{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
+    {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
+    {{ "{{-" }} $servingSecretName := "" {{ "}}" }}
+    {{ "{{-" }} range $nc := $namedCerts {{ "}}" }}
+      {{ "{{-" }} if and (eq $servingSecretName "") (has $apiHost ((index $nc "names") | default list)) {{ "}}" }}
+        {{ "{{-" }} $servingSecretName = (dig "servingCertificate" "name" "" $nc) {{ "}}" }}
+      {{ "{{-" }} end {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+    {{ "{{-" }} if eq $servingSecretName "" {{ "}}" }}
+      {{ "{{-" }} $servingSecretName = (dig "servingCertificate" "name" "" (index $namedCerts 0)) {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+    {{ "{{-" }} if eq $servingSecretName "" {{ "}}" }}
+      {{ "{{-" }} fail "externalCAReuseServingCert: could not resolve servingCertificate.name from APIServer/cluster namedCertificates (host match and first-entry fallback both empty)" {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+- complianceType: musthave
+  objectDefinition:
+    apiVersion: v1
+    kind: Secret
+    type: kubernetes.io/tls
+    metadata:
+      name: {{ .clientSecret }}
+      namespace: {{ .esoNamespace }}
+    ##### copySecretData (runtime/spoke side) ENCRYPTS the serving cert+key in the propagated policy and #####
+    ##### retries until the Secret exists — no lookup-based existence guard needed. #####
+    {{- if .debug }}
+    data: {}  # DEBUG would-copy ALL keys from Secret openshift-config/{{ "{{" }} $servingSecretName {{ "}}" }}
+    {{- else }}
+    data: '{{ "{{" }} copySecretData "openshift-config" $servingSecretName {{ "}}" }}'
+    {{- end }}
+  {{ "{{-" }} end {{ "}}" }}
+- complianceType: musthave
+  objectDefinition:
+    apiVersion: external-secrets.io/v1
+    kind: ClusterSecretStore
+    metadata:
+      name: {{ "{{" }} $storeName {{ "}}" }}
+    spec:
+      provider:
+        kubernetes:
+          server:
+            url: {{ "{{" }} $hubServer {{ "}}" }}
+            caProvider:
+              type: ConfigMap
+              name: {{ .servingCAConfigMap }}
+              key: ca.crt
+              namespace: {{ .esoNamespace }}
+          remoteNamespace: {{ .policyNamespace }}
+          auth:
+            cert:
+              clientCert:
+                name: {{ .clientSecret }}
+                namespace: {{ .esoNamespace }}
+                key: tls.crt
+              clientKey:
+                name: {{ .clientSecret }}
+                namespace: {{ .esoNamespace }}
+                key: tls.key
+  ##### Consumers create their own ExternalSecrets referencing this store ($storeName, #####
+  ##### kind ClusterSecretStore) — this policy provisions ONLY the store + its auth. #####
+{{ "{{-" }} end {{ "}}" }}
+{{- end -}}
 # Spoke-side half of the cluster->cluster ESO bootstrap. Runs ON THE SPOKE and stands the
 # hub up as a kubernetes-provider ClusterSecretStore so the spoke's ESO can read Secrets
 # straight from the hub apiserver. Its companion is
@@ -67,6 +316,12 @@
 {{- $defaultSpokeIssuerName := ($eso.hubBootstrapSpokeIssuerName | default "") }}
 {{- $defaultSpokeIssuerKind := ($eso.hubBootstrapSpokeIssuerKind | default "ClusterIssuer") }}
 {{- $defaultSpokeIssuerGroup := ($eso.hubBootstrapSpokeIssuerGroup | default "cert-manager.io") }}
+{{- /* Diagnostics run modes (deployment-wide). readinessOnly: suppress this active policy entirely.
+       debugRender: emit only a preview ConfigMap of what this policy WOULD apply (nothing live).
+       debugRender wins, so previews still render under readinessOnly. */ -}}
+{{- $readinessOnly := ($eso.hubBootstrapReadinessOnly | default false) }}
+{{- $debugRender := ($eso.hubBootstrapDebugRender | default false) }}
+{{- $ctx := (dict "policyNamespace" $policyNamespace "esoNamespace" $esoNamespace "storePrefix" $storePrefix "clientSecret" $clientSecret "servingCAConfigMap" $servingCAConfigMap "defaultHubServer" $defaultHubServer "defaultDeriveHubUrl" $defaultDeriveHubUrl "defaultMode" $defaultMode "defaultCertCNPrefix" $defaultCertCNPrefix "defaultCertBaseDomain" $defaultCertBaseDomain "selfSignedSegBaseDomain" $selfSignedSegBaseDomain "defaultCertDuration" $defaultCertDuration "defaultCertRenewBefore" $defaultCertRenewBefore "defaultSpokeIssuerName" $defaultSpokeIssuerName "defaultSpokeIssuerKind" $defaultSpokeIssuerKind "defaultSpokeIssuerGroup" $defaultSpokeIssuerGroup) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -117,238 +372,27 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             #Indentation Anchor
-            ##### DERIVE (on the hub): per-cluster rendered config + the two policy-namespace inputs #####
-            {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
-            {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ $defaultMode }}") {{ "hub}}" }}
-            {{ "{{hub-" }} $hubServer := (index $hubBootstrap "hubServer" | default "{{ $defaultHubServer }}") {{ "hub}}" }}
-            ##### hubServer resolution: explicit config/value always wins. If it is empty AND deriveHubUrl is on, THIS #####
-            ##### policy reads the HUB's own apiserverurl.openshift.io ClusterClaim via fromClusterClaim — which (like #####
-            ##### fromSecret) resolves against the cluster the template executes on, i.e. the hub here. The #####
-            ##### cluster-scoped ClusterClaim read works because hub templates here resolve as #####
-            ##### autoshift-policy-service-account (cluster-admin) via hubTemplateOptions. deriveHubUrl defaults OFF, #####
-            ##### so by default this policy makes NO hub lookup and demands explicit hubServer config. #####
-            {{ "{{hub-" }} $deriveHubUrl := (dig "deriveHubUrl" {{ $defaultDeriveHubUrl }} $hubBootstrap) {{ "hub}}" }}
-            {{ "{{hub-" }} if and (eq $hubServer "") $deriveHubUrl {{ "hub}}" }}
-              {{ "{{hub-" }} $hubServer = (fromClusterClaim "apiserverurl.openshift.io") {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-            {{ "{{hub-" }} $storeName := (index $hubBootstrap "storeName" | default "{{ $storePrefix }}") {{ "hub}}" }}
-            ##### externalCA-mode mint settings: the CN prefix + baseDomain are bridged to the spoke, which derives #####
-            ##### its own client cert CN the SAME way as the hub clientca-external policy (from its apiserverurl.openshift.io #####
-            ##### clusterClaim real name) so it matches the hub RBAC, plus the user-provided spoke issuer. #####
-            {{ "{{hub-" }} $certCNPrefix := (index $hubBootstrap "certCNPrefix" | default "{{ $defaultCertCNPrefix }}") {{ "hub}}" }}
-            {{ "{{hub-" }} $certBaseDomain := (index $hubBootstrap "baseDomain" | default "{{ $defaultCertBaseDomain }}") {{ "hub}}" }}
-            {{ "{{hub-" }} $certDuration := (index $hubBootstrap "certDuration" | default "{{ $defaultCertDuration }}") {{ "hub}}" }}
-            {{ "{{hub-" }} $certRenewBefore := (index $hubBootstrap "certRenewBefore" | default "{{ $defaultCertRenewBefore }}") {{ "hub}}" }}
-            {{ "{{hub-" }} $spokeIssuer := (dig "spokeIssuer" (dict) $hubBootstrap) {{ "hub}}" }}
-            {{ "{{hub-" }} $spokeIssuerName := (index $spokeIssuer "name" | default "{{ $defaultSpokeIssuerName }}") {{ "hub}}" }}
-            {{ "{{hub-" }} $spokeIssuerKind := (index $spokeIssuer "kind" | default "{{ $defaultSpokeIssuerKind }}") {{ "hub}}" }}
-            {{ "{{hub-" }} $spokeIssuerGroup := (index $spokeIssuer "group" | default "{{ $defaultSpokeIssuerGroup }}") {{ "hub}}" }}
-            ##### selfSigned client-secret COPY NAME segment — the OCM ManagedCluster name, which is the SAME segment #####
-            ##### the hub clientca-selfsigned policy names its per-cluster client SECRET with (storage identity, NOT #####
-            ##### the cert CN — the hub derives the CN from the REAL cluster name, but the secret name keys off the #####
-            ##### OCM name because it is unique per hub and needs no clusterClaim lookup here). We reuse the OCM name #####
-            ##### (not a raw value) with the identical truncation budget so the copied secret name matches the hub #####
-            ##### side and can never outgrow its name limit. selfSigned baseDomain defaults to autoshift.io exactly #####
-            ##### as the hub policy does, so the truncation budget is identical. #####
-            {{ "{{hub-" }} $segBaseDomain := (index $hubBootstrap "baseDomain" | default "{{ $selfSignedSegBaseDomain }}") {{ "hub}}" }}
-            {{ "{{hub-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $segBaseDomain))) {{ "hub}}" }}
-            {{ "{{hub-" }} $clusterSeg := .ManagedClusterName {{ "hub}}" }}
-            ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
-            {{ "{{hub-" }} if gt (len .ManagedClusterName) $cnBudget {{ "hub}}" }}
-              {{ "{{hub-" }} $clusterSeg = (substr 0 (toInt $cnBudget) .ManagedClusterName) {{ "hub}}" }}
-            {{ "{{hub-" }} end {{ "hub}}" }}
-            ##### externalCA CN/SAN are NOT derived here: the spoke reads its OWN apiserverurl.openshift.io #####
-            ##### clusterClaim at runtime and derives them locally (see the runtime externalCA block below), so #####
-            ##### the hub does no ManagedCluster lookup. We only bridge $certCNPrefix + $certBaseDomain. #####
-            {{ "{{hub-" }} $clientSecretName := (printf "%s-%s" "{{ $clientSecret }}" $clusterSeg) {{ "hub}}" }}
-            ##### Hub serving CA: a PUBLIC CA in a ConfigMap, read with the ACM-aware fromConfigMap helper #####
-            ##### (resolves against the executing cluster = the hub here; the policy namespace is readable). #####
-            {{ "{{hub-" }} $servingCASrc := (fromConfigMap "{{ $policyNamespace }}" "{{ $servingCAConfigMap }}" "ca.crt") {{ "hub}}" }}
-            ##### COPY THE POLICY-NAMESPACE INPUTS -> spoke ESO namespace (hub templates may read the policy namespace) #####
-            {{ "{{hub-" }} if $hubBootstrap {{ "hub}}" }}
-              {{ "{{hub-" }} if eq $hubServer "" {{ "hub}}" }}
-                {{ "{{hub-" }} fail "hub apiserver URL unresolved: set config.eso.hubBootstrap.hubServer (or values externalSecretsOperator.hubServer), or enable deriveHubUrl so this policy derives it from the apiserverurl.openshift.io ClusterClaim" {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-              {{ "{{hub-" }} if eq $servingCASrc "" {{ "hub}}" }}
-                {{ "{{hub-" }} fail (printf "hub serving CA ConfigMap %s/%s not found yet (the boot-serving-ca policy stashes it) — retrying" "{{ $policyNamespace }}" "{{ $servingCAConfigMap }}") {{ "hub}}" }}
-              {{ "{{hub-" }} end {{ "hub}}" }}
-              ##### externalCA preconditions live in the runtime externalCA block (the spoke derives the CN there). #####
-              ##### COPY HUB-MINTED CLIENT CERT -> spoke ESO namespace (selfSigned ONLY; external modes produce the #####
-              ##### cert ON THE SPOKE at runtime below, so there is no hub-minted secret to copy). #####
-              {{ "{{hub-" }} if eq $mode "selfSigned" {{ "hub}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: Secret
-                type: kubernetes.io/tls
-                metadata:
-                  name: {{ $clientSecret }}
-                  namespace: {{ $esoNamespace }}
-                ##### copySecretData is ACM-aware: it ENCRYPTS the cert/key in the propagated policy and naturally #####
-                ##### makes the policy retry until the hub-minted Secret exists (no lookup-based existence guard). #####
-                data: '{{ "{{hub" }} copySecretData "{{ $policyNamespace }}" $clientSecretName {{ "hub}}" }}'
-              {{ "{{hub-" }} end {{ "hub}}" }}
-              ##### COPY HUB SERVING CA -> spoke ESO namespace (so the store trusts the hub TLS) #####
+            {{ "{{hub-" }} $debugCfg := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $debug := (dig "eso" "hubBootstrap" "diagnostics" "debugRender" {{ $debugRender }} $debugCfg) {{ "hub}}" }}
+            {{ "{{hub-" }} $readinessOnly := (dig "eso" "hubBootstrap" "diagnostics" "readinessOnly" {{ $readinessOnly }} $debugCfg) {{ "hub}}" }}
+            {{ "{{hub-" }} if $debug {{ "hub}}" }}
+            ##### DEBUG RENDER: applies nothing live; captures the full object stream this policy WOULD #####
+            ##### apply (resolved on the target cluster) as text, for inspection. #####
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: ConfigMap
                 metadata:
-                  name: {{ $servingCAConfigMap }}
-                  namespace: {{ $esoNamespace }}
+                  name: eso-boot-store-debug-render
+                  namespace: {{ $policyNamespace }}
+                  labels:
+                    autoshift.io/eso-debug-render: "true"
                 data:
-                  ca.crt: |
-                    {{ "{{hub" }} $servingCASrc | autoindent {{ "hub}}" }}
+                  rendered.yaml: |
+{{ include "eso.bootBody.bootStore" (merge (dict "debug" true) $ctx) | indent 20 }}
+            {{ "{{hub-" }} else if not $readinessOnly {{ "hub}}" }}
+{{ include "eso.bootBody.bootStore" $ctx | indent 12 }}
             {{ "{{hub-" }} end {{ "hub}}" }}
-            ##### BRIDGE config values to the runtime (spoke) side #####
-            {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
-            ##### Reject an unknown mode loudly: otherwise every mode arm below is skipped and the store is #####
-            ##### still created pointing auth.cert at a secret nothing ever mints/copies (silent breakage). #####
-            {{ "{{-" }} if and (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
-              {{ "{{-" }} fail (printf "invalid config.eso.hubBootstrap.mode %q (or values hubBootstrapMode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
-            {{ "{{-" }} $hubServer := `{{ "{{hub" }} $hubServer {{ "hub}}" }}` {{ "}}" }}
-            {{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
-            ##### externalCA CN inputs — the spoke derives the full CN/SAN itself from these + its own apiserver URL #####
-            {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
-            {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
-            {{ "{{-" }} $certDuration := `{{ "{{hub" }} $certDuration {{ "hub}}" }}` {{ "}}" }}
-            {{ "{{-" }} $certRenewBefore := `{{ "{{hub" }} $certRenewBefore {{ "hub}}" }}` {{ "}}" }}
-            {{ "{{-" }} $spokeIssuerName := `{{ "{{hub" }} $spokeIssuerName {{ "hub}}" }}` {{ "}}" }}
-            {{ "{{-" }} $spokeIssuerKind := `{{ "{{hub" }} $spokeIssuerKind {{ "hub}}" }}` {{ "}}" }}
-            {{ "{{-" }} $spokeIssuerGroup := `{{ "{{hub" }} $spokeIssuerGroup {{ "hub}}" }}` {{ "}}" }}
-            ##### ACT ON THE SPOKE (runtime): build the bootstrap store from bridged config #####
-            {{ "{{-" }} if ne $hubServer "" {{ "}}" }}
-              ##### externalCA: mint THIS spoke's client cert locally (key never leaves the spoke) via the #####
-              ##### user-provided issuer, into the same secret name the store reads below. #####
-              {{ "{{-" }} if eq $mode "externalCA" {{ "}}" }}
-                ##### Derive the cert CN/SAN ON THE SPOKE from its OWN apiserverurl.openshift.io clusterClaim. This #####
-                ##### parse + truncation is byte-identical to the hub clientca-external RBAC-subject derivation, so #####
-                ##### the spoke-minted CN equals the hub RBAC subject (no out-of-band coordination). #####
-                {{ "{{-" }} if eq $certBaseDomain "" {{ "}}" }}
-                  {{ "{{-" }} fail "eso.hubBootstrap.baseDomain (or values hubBootstrapCertBaseDomain) is required in externalCA mode — the spoke-minted CN and the hub RBAC are both derived from it" {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} if eq $spokeIssuerName "" {{ "}}" }}
-                  {{ "{{-" }} fail "eso.hubBootstrap.spokeIssuer.name (or values hubBootstrapSpokeIssuerName) is required in externalCA mode — the spoke ClusterIssuer/Issuer (chained to the shared external CA) must be provisioned by the customer" {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
-                {{ "{{-" }} if eq $apiUrl "" {{ "}}" }}
-                  {{ "{{-" }} fail "externalCA mode: this cluster has no apiserverurl.openshift.io clusterClaim — cannot derive its real cluster name for the client cert CN" {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
-                {{ "{{-" }} $hostLabels := (splitList "." $apiHost) {{ "}}" }}
-                {{ "{{-" }} if lt (len $hostLabels) 2 {{ "}}" }}
-                  {{ "{{-" }} fail (printf "externalCA mode: apiserver URL %q is not of the form https://api.<cluster>.<base>" $apiUrl) {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $realName := (index $hostLabels 1) {{ "}}" }}
-                {{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
-                {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}
-                  {{ "{{-" }} fail (printf "externalCA CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (combined length must be <= 61); shorten the prefix or baseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                ##### full (untruncated) real cluster name as the SAN; truncate ONLY the CN's cluster segment #####
-                {{ "{{-" }} $certSAN := $realName {{ "}}" }}
-                {{ "{{-" }} $clusterSeg := $realName {{ "}}" }}
-                ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
-                {{ "{{-" }} if gt (len $realName) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $realName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} $certCN := (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: cert-manager.io/v1
-                kind: Certificate
-                metadata:
-                  name: {{ $clientSecret }}
-                  namespace: {{ $esoNamespace }}
-                spec:
-                  commonName: {{ "{{" }} $certCN {{ "}}" }}
-                  ##### full (untruncated) real cluster name as a SAN so the complete identity is preserved even #####
-                  ##### when the CN's cluster segment was truncated to the 63-char budget #####
-                  dnsNames:
-                    - {{ "{{" }} $certSAN {{ "}}" }}
-                  secretName: {{ $clientSecret }}
-                  duration: {{ "{{" }} $certDuration {{ "}}" }}
-                  renewBefore: {{ "{{" }} $certRenewBefore {{ "}}" }}
-                  usages:
-                    - client auth
-                    - digital signature
-                    - key encipherment
-                  privateKey:
-                    algorithm: RSA
-                    size: 2048
-                  issuerRef:
-                    name: {{ "{{" }} $spokeIssuerName {{ "}}" }}
-                    kind: {{ "{{" }} $spokeIssuerKind {{ "}}" }}
-                    group: {{ "{{" }} $spokeIssuerGroup {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-              ##### externalCAReuseServingCert: copy THIS spoke's apiserver serving cert (+key) — discovered from #####
-              ##### APIServer.spec.servingCerts.namedCertificates — into the store's client-cert secret. The key #####
-              ##### replication is the documented blast radius of this mode (see values.yaml hubBootstrapMode). #####
-              {{ "{{-" }} if eq $mode "externalCAReuseServingCert" {{ "}}" }}
-                {{ "{{-" }} $apiserver := ((lookup "config.openshift.io/v1" "APIServer" "" "cluster") | default dict) {{ "}}" }}
-                {{ "{{-" }} $namedCerts := (dig "spec" "servingCerts" "namedCertificates" (list) $apiserver) {{ "}}" }}
-                {{ "{{-" }} if not $namedCerts {{ "}}" }}
-                  {{ "{{-" }} fail "externalCAReuseServingCert: APIServer/cluster has no spec.servingCerts.namedCertificates — there is no custom serving cert to reuse as the client cert" {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                ##### Pick the named cert that serves THIS spoke's registered apiserver host: the hub binds RBAC to that #####
-                ##### host and the kube-apiserver maps the presented client cert to its Subject CN, so the cert we reuse #####
-                ##### MUST be the one whose Subject CN is the host (the serving-ca policy matches the same way). Fall #####
-                ##### back to the first entry only when no entry advertises the host in its names. #####
-                {{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
-                {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
-                {{ "{{-" }} $servingSecretName := "" {{ "}}" }}
-                {{ "{{-" }} range $nc := $namedCerts {{ "}}" }}
-                  {{ "{{-" }} if and (eq $servingSecretName "") (has $apiHost ((index $nc "names") | default list)) {{ "}}" }}
-                    {{ "{{-" }} $servingSecretName = (dig "servingCertificate" "name" "" $nc) {{ "}}" }}
-                  {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} if eq $servingSecretName "" {{ "}}" }}
-                  {{ "{{-" }} $servingSecretName = (dig "servingCertificate" "name" "" (index $namedCerts 0)) {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-                {{ "{{-" }} if eq $servingSecretName "" {{ "}}" }}
-                  {{ "{{-" }} fail "externalCAReuseServingCert: could not resolve servingCertificate.name from APIServer/cluster namedCertificates (host match and first-entry fallback both empty)" {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: Secret
-                type: kubernetes.io/tls
-                metadata:
-                  name: {{ $clientSecret }}
-                  namespace: {{ $esoNamespace }}
-                ##### copySecretData (runtime/spoke side) ENCRYPTS the serving cert+key in the propagated policy and #####
-                ##### retries until the Secret exists — no lookup-based existence guard needed. #####
-                data: '{{ "{{" }} copySecretData "openshift-config" $servingSecretName {{ "}}" }}'
-              {{ "{{-" }} end {{ "}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: external-secrets.io/v1
-                kind: ClusterSecretStore
-                metadata:
-                  name: {{ "{{" }} $storeName {{ "}}" }}
-                spec:
-                  provider:
-                    kubernetes:
-                      server:
-                        url: {{ "{{" }} $hubServer {{ "}}" }}
-                        caProvider:
-                          type: ConfigMap
-                          name: {{ $servingCAConfigMap }}
-                          key: ca.crt
-                          namespace: {{ $esoNamespace }}
-                      remoteNamespace: {{ $policyNamespace }}
-                      auth:
-                        cert:
-                          clientCert:
-                            name: {{ $clientSecret }}
-                            namespace: {{ $esoNamespace }}
-                            key: tls.crt
-                          clientKey:
-                            name: {{ $clientSecret }}
-                            namespace: {{ $esoNamespace }}
-                            key: tls.key
-              ##### Consumers create their own ExternalSecrets referencing this store ($storeName, #####
-              ##### kind ClusterSecretStore) — this policy provisions ONLY the store + its auth. #####
-            {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

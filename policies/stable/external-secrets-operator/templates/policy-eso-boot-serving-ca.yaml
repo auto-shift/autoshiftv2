@@ -1,3 +1,45 @@
+{{- /*
+  Single-sourced object-templates body for policy-eso-boot-serving-ca.
+  Included TWICE below: once as the live object stream (indent 12), once as the text
+  payload of the debug-render ConfigMap (indent 20). Authored at column 0; the include
+  site applies indentation. Helm-render locals threaded in via the context dict ($ctx).
+*/ -}}
+{{- define "eso.bootBody.servingCa" -}}
+##### RUNTIME (on the hub itself): resolve the hub apiserver serving CA #####
+##### prefer a custom named serving cert for the hub's external apiserver host; else the operator-managed CA #####
+{{ "{{-" }} $apiserver := ((lookup "config.openshift.io/v1" "APIServer" "" "cluster") | default dict) {{ "}}" }}
+{{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
+{{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
+{{ "{{-" }} $caPEM := "" {{ "}}" }}
+{{ "{{-" }} range $nc := (dig "spec" "servingCerts" "namedCertificates" list $apiserver) {{ "}}" }}
+  {{ "{{-" }} if has $apiHost ((index $nc "names") | default list) {{ "}}" }}
+    {{ "{{-" }} $ncSecret := (dig "servingCertificate" "name" "" $nc) {{ "}}" }}
+    {{ "{{-" }} if ne $ncSecret "" {{ "}}" }}
+      {{ "{{-" }} $caPEM = (fromSecret "openshift-config" $ncSecret "tls.crt" | base64dec) {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+  {{ "{{-" }} end {{ "}}" }}
+{{ "{{-" }} end {{ "}}" }}
+{{ "{{-" }} if eq $caPEM "" {{ "}}" }}
+  {{ "{{-" }} $caPEM = (fromConfigMap "{{ .caNamespace }}" "{{ .caName }}" "{{ .caKey }}") {{ "}}" }}
+{{ "{{-" }} end {{ "}}" }}
+##### STASH the serving CA in the policy namespace for the copy policy to read (hub-template-readable) #####
+{{ "{{-" }} if ne $caPEM "" {{ "}}" }}
+- complianceType: musthave
+  objectDefinition:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ .servingCAConfigMap }}
+      namespace: {{ .policyNamespace }}
+    data:
+      ca.crt: |
+        {{- if .debug }}
+        DEBUG would-read serving CA at runtime: named-cert Secret openshift-config/<servingCertificate.name> key tls.crt, else ConfigMap {{ .caNamespace }}/{{ .caName }} key {{ .caKey }}
+        {{- else }}
+        {{ "{{" }} $caPEM | autoindent {{ "}}" }}
+        {{- end }}
+{{ "{{-" }} end {{ "}}" }}
+{{- end -}}
 # Serving-CA capture, hub-side. Placed ONLY on hub clusters (hubClusterSets). It resolves the
 # CA that signs the hub apiserver's SERVING cert and stashes it as a ConfigMap in the policy
 # namespace, where the copy policy (policy-eso-boot-store.yaml) can read
@@ -36,6 +78,12 @@
 {{- $caNamespace := ($eso.hubCASourceNamespace | default "openshift-config-managed") }}
 {{- $caName := ($eso.hubCASourceName | default "kube-apiserver-server-ca") }}
 {{- $caKey := ($eso.hubCASourceKey | default "ca-bundle.crt") }}
+{{- /* Diagnostics run modes (deployment-wide). readinessOnly: suppress this active policy entirely.
+       debugRender: emit only a preview ConfigMap of what this policy WOULD apply (nothing live).
+       debugRender wins, so previews still render under readinessOnly. */ -}}
+{{- $readinessOnly := ($eso.hubBootstrapReadinessOnly | default false) }}
+{{- $debugRender := ($eso.hubBootstrapDebugRender | default false) }}
+{{- $ctx := (dict "policyNamespace" $policyNamespace "servingCAConfigMap" $servingCAConfigMap "caNamespace" $caNamespace "caName" $caName "caKey" $caKey) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -73,36 +121,27 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             #Indentation Anchor
-            ##### RUNTIME (on the hub itself): resolve the hub apiserver serving CA #####
-            ##### prefer a custom named serving cert for the hub's external apiserver host; else the operator-managed CA #####
-            {{ "{{-" }} $apiserver := ((lookup "config.openshift.io/v1" "APIServer" "" "cluster") | default dict) {{ "}}" }}
-            {{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
-            {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
-            {{ "{{-" }} $caPEM := "" {{ "}}" }}
-            {{ "{{-" }} range $nc := (dig "spec" "servingCerts" "namedCertificates" list $apiserver) {{ "}}" }}
-              {{ "{{-" }} if has $apiHost ((index $nc "names") | default list) {{ "}}" }}
-                {{ "{{-" }} $ncSecret := (dig "servingCertificate" "name" "" $nc) {{ "}}" }}
-                {{ "{{-" }} if ne $ncSecret "" {{ "}}" }}
-                  {{ "{{-" }} $caPEM = (fromSecret "openshift-config" $ncSecret "tls.crt" | base64dec) {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
-            {{ "{{-" }} if eq $caPEM "" {{ "}}" }}
-              {{ "{{-" }} $caPEM = (fromConfigMap "{{ $caNamespace }}" "{{ $caName }}" "{{ $caKey }}") {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
-            ##### STASH the serving CA in the policy namespace for the copy policy to read (hub-template-readable) #####
-            {{ "{{-" }} if ne $caPEM "" {{ "}}" }}
+            {{ "{{hub-" }} $debugCfg := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $debug := (dig "eso" "hubBootstrap" "diagnostics" "debugRender" {{ $debugRender }} $debugCfg) {{ "hub}}" }}
+            {{ "{{hub-" }} $readinessOnly := (dig "eso" "hubBootstrap" "diagnostics" "readinessOnly" {{ $readinessOnly }} $debugCfg) {{ "hub}}" }}
+            {{ "{{hub-" }} if $debug {{ "hub}}" }}
+            ##### DEBUG RENDER: applies nothing live; captures the full object stream this policy WOULD #####
+            ##### apply (resolved on the target cluster) as text, for inspection. #####
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: ConfigMap
                 metadata:
-                  name: {{ $servingCAConfigMap }}
+                  name: eso-boot-serving-ca-debug-render
                   namespace: {{ $policyNamespace }}
+                  labels:
+                    autoshift.io/eso-debug-render: "true"
                 data:
-                  ca.crt: |
-                    {{ "{{" }} $caPEM | autoindent {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
+                  rendered.yaml: |
+{{ include "eso.bootBody.servingCa" (merge (dict "debug" true) $ctx) | indent 20 }}
+            {{ "{{hub-" }} else if not $readinessOnly {{ "hub}}" }}
+{{ include "eso.bootBody.servingCa" $ctx | indent 12 }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

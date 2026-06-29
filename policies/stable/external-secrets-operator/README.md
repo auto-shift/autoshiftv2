@@ -938,14 +938,39 @@ Three policies cooperate — two run on the hub, one copies to the spokes:
 config:
   eso:
     hubBootstrap:
+      # ---- connection (all modes, flat) ----
       hubServer: https://api.hub:6443        # hub apiserver URL (default: values externalSecretsOperator.hubServer)
       storeName: hub-bootstrap               # ClusterSecretStore name (default: chart hubBootstrapStorePrefix)
-      certCNPrefix: autoshift-eso-client     # client cert CN = <prefix>.<managedClusterName>.<baseDomain> (hub-trust; default from values)
-      # baseDomain: eso.hub.example.com      # CN FQDN tail (selfSigned default: autoshift.io; REQUIRED in externalCA)
-      certDuration: 720h                     # client cert lifetime (hub-trust; default from values)
-      certRenewBefore: 480h                  # renew window (hub-trust; default from values)
+      mode: selfSigned                       # selfSigned | externalCA | externalCAReuseServingCert
+      # ---- clientIdentity (selfSigned + externalCA; ignored in reuse) ----
+      clientIdentity:
+        certCNPrefix: autoshift-eso-client   # client cert CN = <prefix>.<managedClusterName>.<baseDomain> (default from values)
+        # baseDomain: eso.hub.example.com    # CN FQDN tail (selfSigned default: autoshift.io; REQUIRED in externalCA)
+        certDuration: 720h                   # client cert lifetime (default from values)
+        certRenewBefore: 480h                # renew window (default from values)
+      # ---- externalCertAuthority (externalCA + reuse; omit entirely in selfSigned) ----
+      externalCertAuthority:
+        caTrustBundle:                       # the external CA bundle the hub apiserver clientCA trusts (REQUIRED in external modes)
+          namespace: openshift-config
+          name: external-shared-ca
+          key: ca-bundle.crt
+        certIssuer:                          # cert-manager issuer the spoke mints its client cert with (externalCA only)
+          name: shared-ca-issuer
+          kind: ClusterIssuer                #   ClusterIssuer | Issuer
+          group: cert-manager.io
+        autoshiftProvisioned: true           # true => readiness gate requires the autoshift cert-manager policy Compliant
+                                             #   (per-cluster) + introspects the issuer/serving cert. false => cert-manager is
+                                             #   out-of-band: only verify it is INSTALLED, trust the rest. Default from values.
       # The hub apiserver serving CA is resolved on the hub by the serving-ca policy (named cert ->
       # operator-managed CA) and stashed in the policy namespace — no per-cluster serving-CA config.
+      # ---- diagnostics (per-cluster; each defaults to the chart value of the same name) ----
+      diagnostics:
+        # readinessOnly: true                # the 5 cert boot policies render an EMPTY object stream on this cluster
+        #                                    #   (no-op, Compliant) — only the readiness gates run. Default: values
+        #                                    #   externalSecretsOperator.hubBootstrapReadinessOnly.
+        # debugRender: true                  # each cert boot policy emits a <configpolicy>-debug-render ConfigMap previewing
+        #                                    #   the full object stream it WOULD apply (Secret data redacted to a source
+        #                                    #   descriptor) and applies NOTHING live. Default: hubBootstrapDebugRender.
 ```
 
 There is **no `externalSecrets` key** — this policy only provisions the store. To consume Secrets
@@ -1051,7 +1076,7 @@ flowchart TB
   subgraph M2["2 · externalCA — dedicated certs from a shared external CA · policy boot-clientca-ext"]
     direction TB
     B0["EXTERNAL CA (out of band)"]:::ext
-    B1["user-provided spoke ClusterIssuer<br/>spokeIssuer, chained to the external CA"]:::ext
+    B1["user-provided spoke ClusterIssuer<br/>externalCertAuthority.certIssuer, chained to the external CA"]:::ext
     B2["SPOKE mints its OWN Certificate<br/>CN = prefix.cluster.baseDomain · key never leaves the spoke"]:::mint
     BW["hub APIServer.spec.clientCA ← external CA bundle (static CM)"]:::wire
     BR["HUB per-cluster RBAC subject = derived CN<br/>(matches the spoke-minted cert automatically)"]:::rbac
@@ -1084,15 +1109,18 @@ per-cluster RBAC. Config (per-deployment, under `config.eso.hubBootstrap`):
 ```yaml
 # externalCA — spoke mints its own cert; chart values supply the defaults.
 mode: externalCA
-baseDomain: eso.hub.example.com     # REQUIRED: spoke-derived CN + hub RBAC both use it
-spokeIssuer:                        # REQUIRED: user-provisioned issuer chained to the external CA
-  name: shared-ca-issuer
-  kind: ClusterIssuer               # ClusterIssuer | Issuer
-  group: cert-manager.io
-externalClientCA:                   # REQUIRED: the external CA bundle the hub apiserver trusts
-  namespace: openshift-config
-  name: external-shared-ca
-  key: ca-bundle.crt
+clientIdentity:
+  baseDomain: eso.hub.example.com   # REQUIRED: spoke-derived CN + hub RBAC both use it
+externalCertAuthority:
+  certIssuer:                       # REQUIRED: user-provisioned issuer chained to the external CA
+    name: shared-ca-issuer
+    kind: ClusterIssuer             # ClusterIssuer | Issuer
+    group: cert-manager.io
+  caTrustBundle:                    # REQUIRED: the external CA bundle the hub apiserver trusts
+    namespace: openshift-config
+    name: external-shared-ca
+    key: ca-bundle.crt
+  # autoshiftProvisioned: true      # default; false if cert-manager + issuer are managed out-of-band
 ```
 
 > **`externalCAReuseServingCert` is a last-resort mode with a real security blast radius.** It
@@ -1106,7 +1134,7 @@ externalClientCA:                   # REQUIRED: the external CA bundle the hub a
 >    kube-apiserver maps a client cert to its Subject CN, so the serving cert's **Subject CN must
 >    equal that host**. A cert that carries the host only in SANs (generic/empty CN) will not match.
 >
-> It needs only `mode` + `externalClientCA` (no `baseDomain`/`spokeIssuer` — the identity is the
+> It needs only `mode` + `externalCertAuthority.caTrustBundle` (no `clientIdentity`/`certIssuer` — the identity is the
 > discovered host).
 
 ### Values-file examples — what to put in the AutoShift application (all three modes)
@@ -1138,17 +1166,18 @@ clusters:
           hubServer: https://api.hub.example.com:6443   # hub apiserver URL (required)
           mode: selfSigned                              # default; may be omitted
           # ---- client identity (all optional in selfSigned) ----
-          certCNPrefix: autoshift-eso-client            # CN = <prefix>.<cluster>.<baseDomain>
-          baseDomain: autoshift.io                      # default; origin marker, never leaves the trust domain
-          certDuration: 720h                            # client cert lifetime (default 30d)
-          certRenewBefore: 480h                         # renew window (default 20d)
+          clientIdentity:
+            certCNPrefix: autoshift-eso-client          # CN = <prefix>.<cluster>.<baseDomain>
+            baseDomain: autoshift.io                    # default; origin marker, never leaves the trust domain
+            certDuration: 720h                          # client cert lifetime (default 30d)
+            certRenewBefore: 480h                       # renew window (default 20d)
 ```
 
 #### 2. `externalCA` — spoke mints its own cert from a shared external CA
 
-The spoke mints its client cert via a user-provided `spokeIssuer` (the key never leaves the spoke);
-the hub trusts the shared `externalClientCA` bundle. `baseDomain`, `spokeIssuer`, and
-`externalClientCA` are **all required** — both sides derive the same CN
+The spoke mints its client cert via a user-provided `externalCertAuthority.certIssuer` (the key never
+leaves the spoke); the hub trusts the shared `externalCertAuthority.caTrustBundle`. `clientIdentity.baseDomain`,
+`certIssuer`, and `caTrustBundle` are **all required** — both sides derive the same CN
 `<certCNPrefix>.<cluster>.<baseDomain>`, so the hub RBAC matches the spoke-minted cert automatically.
 
 ```yaml
@@ -1159,25 +1188,28 @@ clusters:
         hubBootstrap:
           hubServer: https://api.hub.example.com:6443
           mode: externalCA
-          baseDomain: eso.hub.example.com               # REQUIRED: spoke-derived CN + hub RBAC both use it
-          # certCNPrefix: autoshift-eso-client          # optional; defaults to the chart value
-          spokeIssuer:                                  # REQUIRED: user-provisioned, chained to the external CA
-            name: shared-ca-issuer
-            kind: ClusterIssuer                         # ClusterIssuer | Issuer
-            group: cert-manager.io
-          externalClientCA:                             # REQUIRED: the external CA bundle the hub clientCA trusts
-            namespace: openshift-config
-            name: external-shared-ca
-            key: ca-bundle.crt
+          clientIdentity:
+            baseDomain: eso.hub.example.com             # REQUIRED: spoke-derived CN + hub RBAC both use it
+            # certCNPrefix: autoshift-eso-client        # optional; defaults to the chart value
+          externalCertAuthority:
+            certIssuer:                                 # REQUIRED: user-provisioned, chained to the external CA
+              name: shared-ca-issuer
+              kind: ClusterIssuer                       # ClusterIssuer | Issuer
+              group: cert-manager.io
+            caTrustBundle:                              # REQUIRED: the external CA bundle the hub clientCA trusts
+              namespace: openshift-config
+              name: external-shared-ca
+              key: ca-bundle.crt
+            # autoshiftProvisioned: true                # default; set false if cert-manager + the issuer are out-of-band
 ```
 
 #### 3. `externalCAReuseServingCert` — spoke reuses its apiserver serving cert
 
 Last-resort mode for when the spoke cannot mint a dedicated client cert: it reuses the apiserver
-**serving cert (and its private key)** as the client cert. Needs only `mode` + `externalClientCA` —
-**no** `baseDomain`/`spokeIssuer`, because the identity is the discovered apiserver host, not a
-derived CN. Read the security blast-radius and the two unverifiable preconditions (EKU, Subject CN ==
-host) in the callout above before enabling.
+**serving cert (and its private key)** as the client cert. Needs only `mode` +
+`externalCertAuthority.caTrustBundle` — **no** `clientIdentity`/`certIssuer`, because the identity is
+the discovered apiserver host, not a derived CN. Read the security blast-radius and the two
+unverifiable preconditions (EKU, Subject CN == host) in the callout above before enabling.
 
 ```yaml
 clusters:
@@ -1187,11 +1219,120 @@ clusters:
         hubBootstrap:
           hubServer: https://api.hub.example.com:6443
           mode: externalCAReuseServingCert
-          externalClientCA:                             # REQUIRED: the external CA that signed the serving cert
-            namespace: openshift-config
-            name: external-shared-ca
-            key: ca-bundle.crt
+          externalCertAuthority:
+            caTrustBundle:                              # REQUIRED: the external CA that signed the serving cert
+              namespace: openshift-config
+              name: external-shared-ca
+              key: ca-bundle.crt
+            # autoshiftProvisioned: true                # default; set false if cert-manager is out-of-band
 ```
+
+### Diagnostics — `readinessOnly` / `debugRender` (per-cluster)
+
+Two **separate, composable** switches for bringing up or debugging the cert bootstrap without letting
+the active (cluster-mutating) boot policies fire. Both are read **per-cluster** from
+`config.eso.hubBootstrap` by a hub template, so one cluster can dry-render or sit readiness-only while
+others apply live — they are *not* hub-wide like `mode`. Each defaults to the chart value of the same
+name (`externalSecretsOperator.hubBootstrap{ReadinessOnly,DebugRender}`), so you can also flip the
+default for a whole deployment and override per cluster/clusterset. They affect only the five cert
+boot policies (`clientca-self`, `clientca-self-wire`, `clientca-ext`, `serving-ca`, `boot-store`); the
+readiness gates and the non-cert policies (`install`, `secret-stores`, `cert-auth-rbac`,
+`secret-reader`) are never touched.
+
+| `debugRender` | `readinessOnly` | what each cert boot policy does on that cluster |
+|:---:|:---:|---|
+| – | – | applies its objects **live** (normal) |
+| ✓ | – | emits its `<configpolicy>-debug-render` preview ConfigMap; **nothing live** |
+| – | ✓ | renders an **empty** object stream (no-op, Compliant); **nothing live** |
+| ✓ | ✓ | preview ConfigMap renders (debug wins for output); nothing live → only the readiness gates run |
+
+- **`debugRender`** previews the *full* object stream the policy would apply, resolved on the target
+  cluster (real `lookup`/`fromConfigMap` values), **except** Secret-sourced data — that is replaced by
+  a `DEBUG would-read/would-copy` source descriptor (namespace/name/key), never the value. The preview
+  lands as ConfigMap `eso-boot-<name>-debug-render` (label `autoshift.io/eso-debug-render: "true"`) in
+  the policy namespace.
+- **`readinessOnly`** makes the policy a no-op (it stays Compliant, so its dependents still proceed).
+  The Policy object still exists — it is *not* absent — which is what lets the per-cluster override work.
+
+#### 4. Debug / test deployment — readiness-only + dry-render
+
+A non-production deployment that validates readiness preconditions and previews exactly what the
+bootstrap *would* apply, **without mutating any cluster** (no CA mint, no `APIServer.spec.clientCA`
+rollout, no store/secret writes). Set both flags at clusterset scope so every cluster in the test
+deployment behaves the same; `hubBootstrap` still needs its normal keys (`hubServer`, `mode`, …) so
+the previews resolve against real config.
+
+```yaml
+# autoshift/values/clustersets/test-eso.yaml  (or hubClusterSets.* / managedClusterSets.*)
+managedClusterSets:
+  test-eso:
+    config:
+      eso:
+        hubBootstrap:
+          hubServer: https://api.hub.example.com:6443   # still required — previews resolve against it
+          mode: selfSigned                              # the mode whose object stream you want to preview
+          # ---- diagnostics: nothing is applied live on these clusters ----
+          diagnostics:
+            readinessOnly: true                         # the 5 cert boot policies render an empty no-op...
+            debugRender: true                           # ...but each still emits its -debug-render preview CM
+```
+
+Inspect a preview on a target cluster:
+
+```bash
+# every boot policy's dry-render, in the policy namespace
+oc get cm -n open-cluster-policies -l autoshift.io/eso-debug-render=true
+
+# the full object stream a given policy would have applied (Secret data shown as a descriptor)
+oc get cm -n open-cluster-policies eso-boot-store-debug-render -o jsonpath='{.data.rendered\.yaml}'
+```
+
+To go live on one cluster while the rest of the test set stays dry, override just that cluster:
+`clusters.<name>.config.eso.hubBootstrap.diagnostics.{readinessOnly: false, debugRender: false}`.
+
+## Boot prerequisites — hub-side RBAC (`bootPrereqs`)
+
+The boot machinery resolves its hub templates as the `autoshift-policy-service-account` ServiceAccount,
+which must be able to read certain hub objects for those templates to succeed. The concrete driver is
+the readiness gates' per-cluster cert-manager-policy compliance check (a hub lookup of
+`policies.policy.open-cluster-management.io` in the policy namespace) — without read access there it
+fails closed and the gate cannot go Compliant. `policy-eso-boot-prereqs` centralizes that RBAC and is
+driven entirely by config, so grants are declared in one place rather than scattered across policies.
+
+This is a **deployment-wide chart value** (`externalSecretsOperator.bootPrereqs`), not per-cluster
+`config.eso` — RBAC prerequisites are fixed infrastructure for a deployment. `bootPrereqs.rbac` is a
+list of grants; each renders to a `Role`+`RoleBinding` (namespaced) or `ClusterRole`+`ClusterRoleBinding`
+(cluster), bound to the grant's ServiceAccount. Set it to `[]` (or omit) to render nothing and skip
+the policy. The structure is intentionally generic so it can later be lifted into a standalone,
+shared policy group that centralizes **all** AutoShift-internal RBAC.
+
+```yaml
+# values overlay (umbrella / chart values), under externalSecretsOperator:
+bootPrereqs:
+  rbac:
+    - name: eso-boot-policy-reader            # base name for the generated Role/RoleBinding
+      serviceAccount:
+        name: autoshift-policy-service-account # subject; namespace defaults to the policy namespace
+        # namespace: open-cluster-policies
+      scope: namespaced                        # namespaced (default) | cluster
+      # namespaces: [open-cluster-policies]     # namespaced scope only; defaults to [ policy namespace ]
+      rules:                                   # standard RBAC policyRules, passed through verbatim
+        - apiGroups: ["policy.open-cluster-management.io"]
+          resources: ["policies"]
+          verbs: ["get", "list", "watch"]
+```
+
+Placement is hub-only (`hubClusterSets`) — these grants back hub-side template resolution. When any
+grant is configured, `policy-eso-boot-readiness-hub` declares a `spec.dependencies` on
+`policy-eso-boot-prereqs` (both are hub-placed, so the same-cluster dependency is valid), keeping the
+hub gate Pending until the RBAC is in place. The consumer gate (`policy-eso-boot-readiness-spoke`) is
+placed on managed sets too where this policy is absent, so it carries no such dependency; its hub
+lookups resolve on the hub where the grant exists.
+
+> Note: `autoshift-policy-service-account` is currently bound to `cluster-admin` cluster-wide, so the
+> Policy read already works without this policy. `bootPrereqs` exists to make the required access
+> **explicit and config-driven** — the foundation for moving AutoShift internals off blanket
+> cluster-admin toward least privilege.
 
 ## Reading provisioned Secrets (`secret-reader`)
 

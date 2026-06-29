@@ -1,3 +1,60 @@
+{{- /*
+  Single-sourced object-templates body for policy-eso-boot-clientca-self-wire.
+  Included TWICE below: once as the live object stream (indent 12), once as the
+  text payload of the debug-render ConfigMap (indent 20). Authored at column 0;
+  the include site applies the indentation. Helm-render locals are threaded in
+  via the context dict ($ctx) so the body resolves them with .field lookups.
+*/ -}}
+{{- define "eso.bootBody.clientcaSelfWire" -}}
+##### DERIVE (hub): the trust mode from THIS cluster's rendered config, then bridge it to runtime #####
+{{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+{{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
+{{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ .defaultMode }}") {{ "hub}}" }}
+{{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
+##### RUNTIME (on the hub): only wire the apiserver clientCA when selfSigned mode is active AND at #####
+##### least one autoshift-labelled ManagedCluster exists — mirrors the mint policy's $eligible gate #####
+##### so the disruptive kube-apiserver rollout only happens when the feature is actually in use. #####
+{{ "{{-" }} $hasEligible := false {{ "}}" }}
+{{ "{{-" }} if eq $mode "selfSigned" {{ "}}" }}
+  {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
+    {{ "{{-" }} if ne (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) "" {{ "}}" }}
+      {{ "{{-" }} $hasEligible = true {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+  {{ "{{-" }} end {{ "}}" }}
+{{ "{{-" }} end {{ "}}" }}
+{{ "{{-" }} if $hasEligible {{ "}}" }}
+  ##### Read the CA cert minted by the dependency policy and materialize it into the openshift-config #####
+  ##### clientCA ConfigMap, then point APIServer.spec.clientCA at it. fromSecret returns "" only if #####
+  ##### the key is empty (never for a populated CA secret); a MISSING secret errors -> NonCompliant -> #####
+  ##### retry, which is exactly the dependency-gated behaviour we want. #####
+  {{ "{{-" }} $caBundle := (fromSecret "{{ .cmResourceNamespace }}" "{{ .caName }}" "ca.crt") {{ "}}" }}
+  {{ "{{-" }} if ne $caBundle "" {{ "}}" }}
+- complianceType: musthave
+  objectDefinition:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ .clientCAConfigMap }}
+      namespace: openshift-config
+    data:
+      ca-bundle.crt: |
+        {{- if .debug }}
+        DEBUG would-read: Secret {{ .cmResourceNamespace }}/{{ .caName }} key ca.crt (base64-decoded into this field)
+        {{- else }}
+        {{ "{{" }} $caBundle | base64dec | autoindent {{ "}}" }}
+        {{- end }}
+- complianceType: musthave
+  objectDefinition:
+    apiVersion: config.openshift.io/v1
+    kind: APIServer
+    metadata:
+      name: cluster
+    spec:
+      clientCA:
+        name: {{ .clientCAConfigMap }}
+  {{ "{{-" }} end {{ "}}" }}
+{{ "{{-" }} end {{ "}}" }}
+{{- end -}}
 # Wires the hub apiserver spec.clientCA to TRUST the self-signed CA minted by
 # policy-eso-boot-clientca-self (the "mint" policy). Split out from that policy ON
 # PURPOSE: it reads the CA's secret via fromSecret, and ACM resolves an object-templates-raw template
@@ -19,6 +76,12 @@
   {{- $clientCAConfigMap := ($eso.hubBootstrapClientCAConfigMap | default (printf "%s-client-ca" $storePrefix)) }}
   {{- $cmResourceNamespace := ($eso.certManagerResourceNamespace | default "cert-manager") }}
   {{- $defaultMode := ($eso.hubBootstrapMode | default "selfSigned") }}
+  {{- /* Diagnostics run modes (deployment-wide). readinessOnly: suppress this active policy entirely.
+         debugRender: emit only a preview ConfigMap of what this policy WOULD apply (and nothing live).
+         debugRender wins, so previews still render under readinessOnly. */ -}}
+  {{- $readinessOnly := ($eso.hubBootstrapReadinessOnly | default false) }}
+  {{- $debugRender := ($eso.hubBootstrapDebugRender | default false) }}
+  {{- $ctx := (dict "policyNamespace" $policyNamespace "caName" $caName "clientCAConfigMap" $clientCAConfigMap "cmResourceNamespace" $cmResourceNamespace "defaultMode" $defaultMode) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -55,50 +118,27 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             #Indentation Anchor
-            ##### DERIVE (hub): the trust mode from THIS cluster's rendered config, then bridge it to runtime #####
-            {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
-            {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ $defaultMode }}") {{ "hub}}" }}
-            {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
-            ##### RUNTIME (on the hub): only wire the apiserver clientCA when selfSigned mode is active AND at #####
-            ##### least one autoshift-labelled ManagedCluster exists — mirrors the mint policy's $eligible gate #####
-            ##### so the disruptive kube-apiserver rollout only happens when the feature is actually in use. #####
-            {{ "{{-" }} $hasEligible := false {{ "}}" }}
-            {{ "{{-" }} if eq $mode "selfSigned" {{ "}}" }}
-              {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
-                {{ "{{-" }} if ne (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) "" {{ "}}" }}
-                  {{ "{{-" }} $hasEligible = true {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
-            {{ "{{-" }} if $hasEligible {{ "}}" }}
-              ##### Read the CA cert minted by the dependency policy and materialize it into the openshift-config #####
-              ##### clientCA ConfigMap, then point APIServer.spec.clientCA at it. fromSecret returns "" only if #####
-              ##### the key is empty (never for a populated CA secret); a MISSING secret errors -> NonCompliant -> #####
-              ##### retry, which is exactly the dependency-gated behaviour we want. #####
-              {{ "{{-" }} $caBundle := (fromSecret "{{ $cmResourceNamespace }}" "{{ $caName }}" "ca.crt") {{ "}}" }}
-              {{ "{{-" }} if ne $caBundle "" {{ "}}" }}
+            {{ "{{hub-" }} $debugCfg := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $debug := (dig "eso" "hubBootstrap" "diagnostics" "debugRender" {{ $debugRender }} $debugCfg) {{ "hub}}" }}
+            {{ "{{hub-" }} $readinessOnly := (dig "eso" "hubBootstrap" "diagnostics" "readinessOnly" {{ $readinessOnly }} $debugCfg) {{ "hub}}" }}
+            {{ "{{hub-" }} if $debug {{ "hub}}" }}
+            ##### DEBUG RENDER: applies nothing live; captures the full object stream this policy WOULD #####
+            ##### apply (resolved on the target cluster) as text, for inspection. #####
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: ConfigMap
                 metadata:
-                  name: {{ $clientCAConfigMap }}
-                  namespace: openshift-config
+                  name: eso-boot-clientca-self-wire-debug-render
+                  namespace: {{ $policyNamespace }}
+                  labels:
+                    autoshift.io/eso-debug-render: "true"
                 data:
-                  ca-bundle.crt: |
-                    {{ "{{" }} $caBundle | base64dec | autoindent {{ "}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: config.openshift.io/v1
-                kind: APIServer
-                metadata:
-                  name: cluster
-                spec:
-                  clientCA:
-                    name: {{ $clientCAConfigMap }}
-              {{ "{{-" }} end {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
+                  rendered.yaml: |
+{{ include "eso.bootBody.clientcaSelfWire" (merge (dict "debug" true) $ctx) | indent 20 }}
+            {{ "{{hub-" }} else if not $readinessOnly {{ "hub}}" }}
+{{ include "eso.bootBody.clientcaSelfWire" $ctx | indent 12 }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

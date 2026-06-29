@@ -1,0 +1,121 @@
+# HUB-SIDE RBAC PREREQUISITES for the ESO boot machinery.
+#
+# Why this exists: the boot policies (and especially the readiness gates) resolve their hub templates
+# as a ServiceAccount — autoshift-policy-service-account — and that SA must be able to read specific
+# hub objects for those templates to succeed. The concrete driver today is the readiness gates'
+# per-cluster cert-manager-policy compliance check (a hub lookup of policies.policy.open-cluster-
+# management.io in the policy namespace); without read access there, that lookup fails closed and the
+# gate cannot go Compliant. Rather than scatter RBAC across the boot policies, this one policy
+# centralizes it and is driven entirely by config (externalSecretsOperator.bootPrereqs.rbac).
+#
+# STRUCTURE — deliberately generic so it can later be lifted out into a standalone, shared policy
+# group that centralizes ALL autoshift-internal RBAC: bootPrereqs.rbac is a list of grants, each a
+# { name, serviceAccount{name,namespace}, scope, namespaces, rules } record. This template loops the
+# list at Helm render time and emits, per grant:
+#   scope: namespaced (default) -> a Role + RoleBinding in each target namespace (default: policy ns)
+#   scope: cluster              -> a ClusterRole + ClusterRoleBinding (cluster-wide)
+# The grant's `rules` are standard RBAC policyRules, passed through verbatim. The objects are fully
+# resolved at render time (no per-cluster templating), so this uses object-templates (not -raw).
+#
+# PLACEMENT: hubClusterSets only — these grants back hub-side template resolution. Managed-cluster
+# RBAC, if ever needed, is a future extension (add a placement selector per grant and split the loop).
+#
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $eso := $.Values.externalSecretsOperator }}
+{{- $rbac := (dig "bootPrereqs" "rbac" (list) $eso) }}
+{{- /* Build the ConfigurationPolicy object list from the grant config. Each grant expands to a
+       Role+RoleBinding per namespace, or a ClusterRole+ClusterRoleBinding, all bound to the grant's
+       ServiceAccount. */ -}}
+{{- $objs := list }}
+{{- range $grant := $rbac }}
+  {{- $name := (required "bootPrereqs.rbac[].name is required" $grant.name) }}
+  {{- $sa := (required (printf "bootPrereqs.rbac[%q].serviceAccount is required" $name) $grant.serviceAccount) }}
+  {{- $saName := (required (printf "bootPrereqs.rbac[%q].serviceAccount.name is required" $name) $sa.name) }}
+  {{- $saNamespace := ($sa.namespace | default $policyNamespace) }}
+  {{- $scope := ($grant.scope | default "namespaced") }}
+  {{- $rules := ($grant.rules | default list) }}
+  {{- $subject := (dict "kind" "ServiceAccount" "name" $saName "namespace" $saNamespace) }}
+  {{- if eq $scope "cluster" }}
+    {{- $cr := (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "ClusterRole" "metadata" (dict "name" $name) "rules" $rules) }}
+    {{- $objs = append $objs (dict "complianceType" "musthave" "objectDefinition" $cr) }}
+    {{- $crb := (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "ClusterRoleBinding" "metadata" (dict "name" $name) "roleRef" (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "ClusterRole" "name" $name) "subjects" (list $subject)) }}
+    {{- $objs = append $objs (dict "complianceType" "musthave" "objectDefinition" $crb) }}
+  {{- else if eq $scope "namespaced" }}
+    {{- $namespaces := ($grant.namespaces | default (list $policyNamespace)) }}
+    {{- range $ns := $namespaces }}
+      {{- $role := (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "Role" "metadata" (dict "name" $name "namespace" $ns) "rules" $rules) }}
+      {{- $objs = append $objs (dict "complianceType" "musthave" "objectDefinition" $role) }}
+      {{- $rb := (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "RoleBinding" "metadata" (dict "name" $name "namespace" $ns) "roleRef" (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "Role" "name" $name) "subjects" (list $subject)) }}
+      {{- $objs = append $objs (dict "complianceType" "musthave" "objectDefinition" $rb) }}
+    {{- end }}
+  {{- else }}
+    {{- fail (printf "bootPrereqs.rbac[%q].scope %q is invalid — must be \"namespaced\" or \"cluster\"" $name $scope) }}
+  {{- end }}
+{{- end }}
+{{- if $objs }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-eso-boot-prereqs
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: AC Access Control
+    policy.open-cluster-management.io/controls: AC-3 Access Enforcement
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: eso-boot-prereqs
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:{{ $objs | toYaml | nindent 12 }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-eso-boot-prereqs
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/external-secrets-operator'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-eso-boot-prereqs
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: placement-policy-eso-boot-prereqs
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-eso-boot-prereqs
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

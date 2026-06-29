@@ -81,13 +81,13 @@ externalSecretsOperator:
   # External CA bundle the hub apiserver clientCA trusts (externalCA / externalCAReuseServingCert).
   # The clientca policy reads this ConfigMap on the hub at runtime and materializes it into the
   # openshift-config clientCA ConfigMap above. REQUIRED in both external modes. Per-deployment
-  # overrides under config.eso.hubBootstrap.externalClientCA.{namespace,name,key}.
+  # overrides under config.eso.hubBootstrap.externalCertAuthority.caTrustBundle.{namespace,name,key}.
   hubBootstrapExternalClientCANamespace: openshift-config  # namespace of the external CA bundle CM
   hubBootstrapExternalClientCAName: ''                     # name of the external CA bundle CM (REQUIRED in external modes)
   hubBootstrapExternalClientCAKey: ca-bundle.crt           # key in that CM holding the PEM bundle
   # Spoke ClusterIssuer the spoke uses to mint its own client cert (externalCA mode only). Must be
   # user-provided (a precondition) and chained to the shared external CA. Per-deployment overrides
-  # under config.eso.hubBootstrap.spokeIssuer.{name,kind,group}.
+  # under config.eso.hubBootstrap.externalCertAuthority.certIssuer.{name,kind,group}.
   hubBootstrapSpokeIssuerName: ''            # ClusterIssuer/Issuer name (REQUIRED in externalCA mode)
   hubBootstrapSpokeIssuerKind: ClusterIssuer # ClusterIssuer or Issuer
   hubBootstrapSpokeIssuerGroup: cert-manager.io
@@ -99,14 +99,52 @@ externalSecretsOperator:
   # recovers. This is what keeps the system from locking itself out when an external CA / issuer is
   # broken at the same moment client certs expire.
   hubBootstrapCertManagerOperatorNamespace: cert-manager-operator  # ns holding the cert-manager-operator CSV (status.phase must be Succeeded)
-  hubBootstrapExternalCAProvisioned: false   # OUT-OF-BAND escape hatch: set true (per-deployment via
-                                             # config.eso.hubBootstrap.externalCAProvisioned) when the external CA /
-                                             # issuer / serving cert is managed entirely outside AutoShift and may not be
-                                             # cert-manager-backed. The readiness gate then SKIPS every cert-manager/issuer
-                                             # check and passes (Compliant). Must be explicit — never defaulted on — because
-                                             # a silent skip re-opens the lockout risk the gate exists to remove.
+  hubBootstrapCertManagerPolicyName: policy-cert-manager  # the autoshift Policy the readiness gates require Compliant
+                                             # (per-cluster) when autoshiftProvisioned=true. Override per customer
+                                             # environment. The gate reads its name here and looks it up in the policy
+                                             # namespace; the hub-template SA must be able to read Policies for this to work.
+  hubBootstrapAutoshiftProvisioned: true     # DEFAULT for per-cluster config.eso.hubBootstrap.externalCertAuthority.autoshiftProvisioned.
+                                             # true  => AutoShift provisions cert-manager: the readiness gate requires the
+                                             #          cert-manager policy (above) Compliant for this cluster AND introspects
+                                             #          the autoshift-managed issuer / serving cert before the bootstrap runs.
+                                             # false => cert-manager (and the external PKI) is provisioned OUT-OF-BAND: the gate
+                                             #          only verifies cert-manager is INSTALLED (operator CSV Succeeded) and
+                                             #          trusts the rest — it does NOT wait on the autoshift policy or introspect
+                                             #          the issuer/serving cert. Use when the external CA/issuer is managed
+                                             #          entirely outside AutoShift and may not be cert-manager-backed/readable.
+  # ---- Bootstrap run modes (diagnostics) -------------------------------------------------------
+  # Two mutually-independent escape valves for bringing up / debugging the cert bootstrap WITHOUT
+  # letting the active (cluster-mutating) boot policies fire. "Active" = the five cert boot policies:
+  # clientca-self, clientca-self-wire, clientca-ext, serving-ca, boot-store. The readiness gates
+  # (readiness-hub/-spoke) and the non-cert policies (install, secret-stores, cert-auth-rbac,
+  # secret-reader) are NEVER suppressed by these. Both modes are decided PER-CLUSTER at ACM propagation
+  # time: each active boot policy reads config.eso.hubBootstrap.{readinessOnly,debugRender} from its
+  # rendered-config via a HUB template and branches accordingly, so one cluster can dry-render or sit
+  # readiness-only while others apply live. The two chart values below are only the DEFAULTS used when a
+  # cluster's (and its clusterSet's) config omits the key. They are SEPARATE, composable switches:
+  #   debugRender   → that policy applies nothing live and instead emits its debug-preview ConfigMap.
+  #   readinessOnly → that policy renders an EMPTY object stream (no-op, Compliant), applying nothing.
+  #   both          → debug wins for output (the preview ConfigMap renders); nothing applies live, so the
+  #                   readiness gates are the only policies doing real work. Branch order in each policy:
+  #                   {{hub if $debug}}<preview>{{else if not $readinessOnly}}<live>{{end}}.
+  hubBootstrapReadinessOnly: false           # DEFAULT for per-cluster config.eso.hubBootstrap.readinessOnly.
+                                             # When effective (per cluster): the five active cert boot policies
+                                             # render an empty object stream — they apply nothing, leaving only the
+                                             # readiness gates to run. Use to validate readiness preconditions go
+                                             # green before standing up the bootstrap. (The Policy objects still
+                                             # exist and report Compliant; they are not absent as in the old
+                                             # Helm-render suppression — that is what makes the per-cluster override
+                                             # possible.)
+  hubBootstrapDebugRender: false             # DEFAULT for per-cluster config.eso.hubBootstrap.debugRender.
+                                             # When effective (per cluster): that policy applies nothing live and
+                                             # instead writes ONE ConfigMap (<configpolicy-name>-debug-render in the
+                                             # policy namespace) whose data.rendered.yaml holds the FULL serialized
+                                             # object stream it WOULD have applied — resolved on the target cluster
+                                             # (same hub/runtime template evaluation), so it reflects real lookups,
+                                             # EXCEPT Secret-sourced data which is replaced by a source descriptor.
+                                             # Wins over readinessOnly for output (you still get the preview).
   # Cert tuning DEFAULTS. The actual per-deployment values are read by the hub clientca policy from
-  # config.eso.hubBootstrap.{certCNPrefix,certDuration,certRenewBefore} (rendered-config-driven);
+  # config.eso.hubBootstrap.clientIdentity.{certCNPrefix,certDuration,certRenewBefore} (rendered-config-driven);
   # these only apply when that config omits them.
   hubBootstrapCertCNPrefix: autoshift-eso-client  # client cert CN prefix; full CN = <prefix>.<managedClusterName>.<baseDomain>
   hubBootstrapCertBaseDomain: ''             # client cert CN base domain (FQDN tail). selfSigned: defaults to
@@ -115,7 +153,7 @@ externalSecretsOperator:
                                              # CN = <prefix>.<managedClusterName>.<baseDomain>, capped at
                                              # 63 chars: the managedClusterName segment is TRUNCATED to whatever budget the
                                              # prefix + baseDomain leave (61 minus their lengths, the 2 dots counted). Per-cluster
-                                             # override: config.eso.hubBootstrap.baseDomain. KNOWN LIMITATION: if prefix+baseDomain
+                                             # override: config.eso.hubBootstrap.clientIdentity.baseDomain. KNOWN LIMITATION: if prefix+baseDomain
                                              # leave no room the policy FAILS; and two clusters whose names share the surviving
                                              # truncation budget would collide — the clientca policy detects that and FAILS loudly.
   hubBootstrapCertDuration: 720h             # cert-manager Certificate duration for client certs (default 30d)
@@ -128,6 +166,35 @@ externalSecretsOperator:
   hubCASourceNamespace: openshift-config-managed  # fallback serving-CA ConfigMap namespace
   hubCASourceName: kube-apiserver-server-ca       # fallback serving-CA ConfigMap name
   hubCASourceKey: ca-bundle.crt                   # fallback serving-CA ConfigMap key
+  # ---- Boot prerequisites: hub-side RBAC for AutoShift internals -------------------------------
+  # policy-eso-boot-prereqs renders this as Role/RoleBinding (namespaced) or ClusterRole/
+  # ClusterRoleBinding (cluster) for each grant. It exists because the boot machinery resolves hub
+  # templates as a ServiceAccount (autoshift-policy-service-account) that must read specific hub
+  # objects — e.g. the readiness gates look up the cert-manager Policy's per-cluster status, which
+  # needs get/list/watch on policies.policy.open-cluster-management.io in the policy namespace.
+  #
+  # STRUCTURE (deliberately generic so this can later be lifted into a standalone, centralized RBAC
+  # policy group for ALL autoshift-internal grants): bootPrereqs.rbac is a LIST of grants. Each grant:
+  #   name            base name for the generated Role/RoleBinding (or ClusterRole/ClusterRoleBinding)
+  #   serviceAccount  { name, namespace } subject bound to the role; namespace defaults to policy ns
+  #   scope           "namespaced" (default) -> Role + RoleBinding per namespace
+  #                   "cluster"              -> ClusterRole + ClusterRoleBinding (cluster-wide)
+  #   namespaces      (namespaced scope only) namespaces to create the Role/RoleBinding in;
+  #                   defaults to [ the policy namespace ]
+  #   rules           standard RBAC policyRules ([]{apiGroups,resources,verbs,...}) verbatim
+  # Set bootPrereqs.rbac to [] (or omit) to render no prereq RBAC and skip the policy entirely.
+  bootPrereqs:
+    rbac:
+      - name: eso-boot-policy-reader
+        serviceAccount:
+          name: autoshift-policy-service-account   # the hub-template SA the boot policies resolve as
+          # namespace: open-cluster-policies        # defaults to policy_namespace
+        scope: namespaced                           # the readiness gates read Policies in the policy ns
+        # namespaces: [open-cluster-policies]        # defaults to [ policy_namespace ]
+        rules:
+          - apiGroups: ["policy.open-cluster-management.io"]
+            resources: ["policies"]
+            verbs: ["get", "list", "watch"]
 
 # Internal lookup table used by policy-eso-secret-stores.yaml.
 # Maps an authSecretConfig.fromRef token -> a description of the auth method's Secret refs

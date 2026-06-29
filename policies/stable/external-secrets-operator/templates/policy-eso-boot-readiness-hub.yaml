@@ -5,6 +5,13 @@
 # set is a minter in selfSigned (top-level or intermediate), so the cert-manager requirement is keyed
 # on PLACEMENT, not on the autoshift.io/self-managed label (which only flags the top hub).
 #
+# managedHubs (hubClusterSets members with self-managed=false): this gate STILL requires cert-manager
+# here — no special-case. In a hub-of-hubs topology a managedHub's hub-side boot policies AND this gate
+# are rendered onto it by the GLOBAL hub's deployment (which also installs cert-manager there), so the
+# gate simply goes NonCompliant until the global deployment provisions cert-manager, then green. The
+# managedHub's OWN deployment must NOT separately render these hub-side policies for itself (same policy
+# names + namespace would collide) — that ownership split is enforced by the deployment values, not here.
+#
 # The hub's role per mode determines what must be ready:
 #   selfSigned                 -> the hub MINTS the self-signed CA + a client cert per cluster with
 #                                 cert-manager (policy-eso-boot-clientca-self) -> require cert-manager
@@ -23,7 +30,13 @@
 {{- $policyNamespace := $.Values.policy_namespace }}
 {{- $eso := $.Values.externalSecretsOperator }}
 {{- $cmOperatorNs := ($eso.hubBootstrapCertManagerOperatorNamespace | default "cert-manager-operator") }}
+{{- $cmPolicyName := ($eso.hubBootstrapCertManagerPolicyName | default "policy-cert-manager") }}
+{{- $defaultAutoshiftProvisioned := ($eso.hubBootstrapAutoshiftProvisioned | default true) }}
 {{- $defaultMode := ($eso.hubBootstrapMode | default "selfSigned") }}
+{{- /* When hub-side prereq RBAC is configured, gate on it: the SA's Policy-read access (used by the
+       cert-manager-policy compliance check below) must exist before this gate evaluates. Both this
+       policy and policy-eso-boot-prereqs are hub-placed, so the same-cluster dependency is valid. */ -}}
+{{- $bootPrereqsRbac := (dig "bootPrereqs" "rbac" (list) $eso) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -38,6 +51,14 @@ spec:
   remediationAction: inform
 {{ end }}
   disabled: false
+{{- if $bootPrereqsRbac }}
+  dependencies:
+    - name: policy-eso-boot-prereqs
+      namespace: {{ $policyNamespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+{{- end }}
   # Resolve hub templates as the autoshift hub-template SA so the rendered-config ConfigMap read in
   # the policy namespace succeeds (same as the other boot policies).
   hubTemplateOptions:
@@ -61,8 +82,21 @@ spec:
             {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
             {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ $defaultMode }}") {{ "hub}}" }}
+            ##### autoshiftProvisioned (default {{ $defaultAutoshiftProvisioned }}): true => the autoshift cert-manager policy must be #####
+            ##### Compliant for THIS cluster (per-cluster status, derived on the hub); false => cert-manager is #####
+            ##### out-of-band, so only the CSV-installed check runs below. selfSigned needs cert-manager either way. #####
+            {{ "{{hub-" }} $autoshiftProvisioned := (dig "externalCertAuthority" "autoshiftProvisioned" {{ $defaultAutoshiftProvisioned }} $hubBootstrap) {{ "hub}}" }}
+            {{ "{{hub-" }} $cmPolCompliant := "" {{ "hub}}" }}
+            {{ "{{hub-" }} if and (eq $mode "selfSigned") $autoshiftProvisioned {{ "hub}}" }}
+              {{ "{{hub-" }} $cmPol := (lookup "policy.open-cluster-management.io/v1" "Policy" "{{ $policyNamespace }}" "{{ $cmPolicyName }}") {{ "hub}}" }}
+              {{ "{{hub-" }} range $st := (dig "status" "status" (list) $cmPol) {{ "hub}}" }}
+                {{ "{{hub-" }} if eq (dig "clustername" "" $st) .ManagedClusterName {{ "hub}}" }}{{ "{{hub-" }} $cmPolCompliant = (dig "compliant" "" $st) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
             ##### BRIDGE to the runtime (hub) side #####
             {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $autoshiftProvisioned := `{{ "{{hub" }} $autoshiftProvisioned {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $cmPolCompliant := `{{ "{{hub" }} $cmPolCompliant {{ "hub}}" }}` {{ "}}" }}
             ##### ACT (on the hub): only selfSigned mints here, so only selfSigned needs cert-manager. #####
             ##### external modes wire trust without minting -> nothing to wait on -> Compliant. #####
             {{ "{{-" }} $errors := list {{ "}}" }}
@@ -77,6 +111,11 @@ spec:
               {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} if not $csvReady {{ "}}" }}
                 {{ "{{-" }} $errors = append $errors (printf "cert-manager-operator CSV in namespace %q is not phase=Succeeded — the hub mints the selfSigned CA + client certs with cert-manager" "{{ $cmOperatorNs }}") {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              ##### autoshiftProvisioned=true: additionally require the autoshift cert-manager policy Compliant for THIS #####
+              ##### cluster. false => skip (cert-manager is provisioned out-of-band; the CSV check above is enough). #####
+              {{ "{{-" }} if and (eq $autoshiftProvisioned "true") (ne $cmPolCompliant "Compliant") {{ "}}" }}
+                {{ "{{-" }} $errors = append $errors (printf "autoshift cert-manager policy %q is not Compliant for this cluster (status=%q) — set config.eso.hubBootstrap.externalCertAuthority.autoshiftProvisioned=false if cert-manager is provisioned out-of-band, or ensure the policy exists and the hub-template SA can read Policies" "{{ $cmPolicyName }}" $cmPolCompliant) {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             ##### SINGLE failure point: emit ALL collected problems at once. Built by hand (not join) to #####
