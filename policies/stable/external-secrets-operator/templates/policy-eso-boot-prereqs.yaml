@@ -52,7 +52,10 @@
     {{- fail (printf "bootPrereqs.rbac[%q].scope %q is invalid — must be \"namespaced\" or \"cluster\"" $name $scope) }}
   {{- end }}
 {{- end }}
-{{- if $objs }}
+{{- /* The Policy ALWAYS renders (even when $objs is empty → object-templates-raw evaluates to an
+       empty list, a Compliant no-op). object-templates-raw tolerates the empty list where structured
+       object-templates would not, so dependents can list policy-eso-boot-prereqs in spec.dependencies
+       unconditionally and rely on it existing + going Compliant regardless of bootPrereqs.rbac. */ -}}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -79,7 +82,7 @@ spec:
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:{{ $objs | toYaml | nindent 12 }}
+          object-templates-raw: |{{ $objs | toYaml | nindent 12 }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
@@ -118,4 +121,3 @@ subjects:
   - name: policy-eso-boot-prereqs
     apiGroup: policy.open-cluster-management.io
     kind: Policy
-{{- end }}

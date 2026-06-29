@@ -99,7 +99,7 @@
 ##### Reject an unknown mode loudly: otherwise every mode arm below is skipped and the store is #####
 ##### still created pointing auth.cert at a secret nothing ever mints/copies (silent breakage). #####
 {{ "{{-" }} if and (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
-  {{ "{{-" }} fail (printf "invalid config.eso.hubBootstrap.mode %q (or values hubBootstrapMode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
+  {{ "{{-" }} fail (printf "invalid config.eso.hubBootstrap.mode %q (or values hubBootstrap.mode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
 {{ "{{-" }} end {{ "}}" }}
 {{ "{{-" }} $hubServer := `{{ "{{hub" }} $hubServer {{ "hub}}" }}` {{ "}}" }}
 {{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
@@ -120,10 +120,10 @@
     ##### parse + truncation is byte-identical to the hub clientca-external RBAC-subject derivation, so #####
     ##### the spoke-minted CN equals the hub RBAC subject (no out-of-band coordination). #####
     {{ "{{-" }} if eq $certBaseDomain "" {{ "}}" }}
-      {{ "{{-" }} fail "eso.hubBootstrap.baseDomain (or values hubBootstrapCertBaseDomain) is required in externalCA mode — the spoke-minted CN and the hub RBAC are both derived from it" {{ "}}" }}
+      {{ "{{-" }} fail "config.eso.hubBootstrap.clientIdentity.baseDomain (or values hubBootstrap.clientIdentity.baseDomain) is required in externalCA mode — the spoke-minted CN and the hub RBAC are both derived from it" {{ "}}" }}
     {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} if eq $spokeIssuerName "" {{ "}}" }}
-      {{ "{{-" }} fail "config.eso.hubBootstrap.externalCertAuthority.certIssuer.name (or values hubBootstrapSpokeIssuerName) is required in externalCA mode — the spoke ClusterIssuer/Issuer (chained to the shared external CA) must be provisioned by the customer" {{ "}}" }}
+      {{ "{{-" }} fail "config.eso.hubBootstrap.externalCertAuthority.certIssuer.name (or values hubBootstrap.externalCertAuthority.certIssuer.name) is required in externalCA mode — the spoke ClusterIssuer/Issuer (chained to the shared external CA) must be provisioned by the customer" {{ "}}" }}
     {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
     {{ "{{-" }} if eq $apiUrl "" {{ "}}" }}
@@ -175,7 +175,7 @@
   {{ "{{-" }} end {{ "}}" }}
   ##### externalCAReuseServingCert: copy THIS spoke's apiserver serving cert (+key) — discovered from #####
   ##### APIServer.spec.servingCerts.namedCertificates — into the store's client-cert secret. The key #####
-  ##### replication is the documented blast radius of this mode (see values.yaml hubBootstrapMode). #####
+  ##### replication is the documented blast radius of this mode (see values.yaml hubBootstrap.mode). #####
   {{ "{{-" }} if eq $mode "externalCAReuseServingCert" {{ "}}" }}
     {{ "{{-" }} $apiserver := ((lookup "config.openshift.io/v1" "APIServer" "" "cluster") | default dict) {{ "}}" }}
     {{ "{{-" }} $namedCerts := (dig "spec" "servingCerts" "namedCertificates" (list) $apiserver) {{ "}}" }}
@@ -290,37 +290,38 @@
 #                     fromClusterClaim of the hub's apiserverurl.openshift.io ClusterClaim. This works because
 #                     the policy resolves hub templates as autoshift-policy-service-account (cluster-admin), set
 #                     in hubTemplateOptions below. Default false: use hubServer config.
-#   storeName       : ClusterSecretStore name (defaults to the chart's hubBootstrapStorePrefix)
+#   storeName       : ClusterSecretStore name (defaults to the chart's hubBootstrap.storePrefix)
 # (No certCN/remoteNamespace: the identity + the namespace it reads are fixed by the deployment.)
 #
 # All-or-nothing: absent config.eso.hubBootstrap -> no-op. Depends on ESO being installed.
 #
 {{- $policyNamespace := $.Values.policy_namespace }}
 {{- $eso := $.Values.externalSecretsOperator }}
+{{- $hb := (default (dict) $eso.hubBootstrap) }}
 {{- $esoNamespace := $eso.namespace }}
-{{- $storePrefix := ($eso.hubBootstrapStorePrefix | default "hub-bootstrap") }}
+{{- $storePrefix := (dig "storePrefix" "" $hb | default "hub-bootstrap") }}
 {{- $clientSecret := (printf "%s-client" $storePrefix) }}
 {{- $servingCAConfigMap := (printf "%s-hub-ca" $storePrefix) }}
-{{- $defaultHubServer := ($eso.hubServer | default "") }}
-{{- $defaultDeriveHubUrl := ($eso.hubBootstrapDeriveHubUrl | default false) }}
-{{- /* Trust mode + the externalCA-mode mint settings (see chart values.yaml hubBootstrapMode). */}}
-{{- $defaultMode := ($eso.hubBootstrapMode | default "selfSigned") }}
-{{- $defaultCertCNPrefix := ($eso.hubBootstrapCertCNPrefix | default "autoshift-eso-client") }}
-{{- $defaultCertBaseDomain := ($eso.hubBootstrapCertBaseDomain | default "") }}
+{{- $defaultHubServer := (dig "hubServer" "" $hb | default "") }}
+{{- $defaultDeriveHubUrl := (dig "deriveHubUrl" "" $hb | default false) }}
+{{- /* Trust mode + the externalCA-mode mint settings (see chart values.yaml hubBootstrap.mode). */}}
+{{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
+{{- $defaultCertCNPrefix := (dig "clientIdentity" "certCNPrefix" "" $hb | default "autoshift-eso-client") }}
+{{- $defaultCertBaseDomain := (dig "clientIdentity" "baseDomain" "" $hb | default "") }}
 {{- /* selfSigned segment-budget default — MUST mirror the hub clientca-selfsigned policy's $defaultCertBaseDomain */}}
-{{- /* (hubBootstrapCertBaseDomain | default "autoshift.io"), or the truncation budget — hence the */}}
+{{- /* (hubBootstrap.clientIdentity.baseDomain default "autoshift.io"), or the truncation budget — hence the */}}
 {{- /* derived clusterSeg and the copied client-secret name — would diverge from the hub side. */}}
-{{- $selfSignedSegBaseDomain := ($eso.hubBootstrapCertBaseDomain | default "autoshift.io") }}
-{{- $defaultCertDuration := ($eso.hubBootstrapCertDuration | default "720h") }}
-{{- $defaultCertRenewBefore := ($eso.hubBootstrapCertRenewBefore | default "480h") }}
-{{- $defaultSpokeIssuerName := ($eso.hubBootstrapSpokeIssuerName | default "") }}
-{{- $defaultSpokeIssuerKind := ($eso.hubBootstrapSpokeIssuerKind | default "ClusterIssuer") }}
-{{- $defaultSpokeIssuerGroup := ($eso.hubBootstrapSpokeIssuerGroup | default "cert-manager.io") }}
+{{- $selfSignedSegBaseDomain := (dig "clientIdentity" "baseDomain" "" $hb | default "autoshift.io") }}
+{{- $defaultCertDuration := (dig "clientIdentity" "certDuration" "" $hb | default "720h") }}
+{{- $defaultCertRenewBefore := (dig "clientIdentity" "certRenewBefore" "" $hb | default "480h") }}
+{{- $defaultSpokeIssuerName := (dig "externalCertAuthority" "certIssuer" "name" "" $hb | default "") }}
+{{- $defaultSpokeIssuerKind := (dig "externalCertAuthority" "certIssuer" "kind" "" $hb | default "ClusterIssuer") }}
+{{- $defaultSpokeIssuerGroup := (dig "externalCertAuthority" "certIssuer" "group" "" $hb | default "cert-manager.io") }}
 {{- /* Diagnostics run modes (deployment-wide). readinessOnly: suppress this active policy entirely.
        debugRender: emit only a preview ConfigMap of what this policy WOULD apply (nothing live).
        debugRender wins, so previews still render under readinessOnly. */ -}}
-{{- $readinessOnly := ($eso.hubBootstrapReadinessOnly | default false) }}
-{{- $debugRender := ($eso.hubBootstrapDebugRender | default false) }}
+{{- $readinessOnly := (dig "diagnostics" "readinessOnly" "" $hb | default false) }}
+{{- $debugRender := (dig "diagnostics" "debugRender" "" $hb | default false) }}
 {{- $ctx := (dict "policyNamespace" $policyNamespace "esoNamespace" $esoNamespace "storePrefix" $storePrefix "clientSecret" $clientSecret "servingCAConfigMap" $servingCAConfigMap "defaultHubServer" $defaultHubServer "defaultDeriveHubUrl" $defaultDeriveHubUrl "defaultMode" $defaultMode "defaultCertCNPrefix" $defaultCertCNPrefix "defaultCertBaseDomain" $defaultCertBaseDomain "selfSignedSegBaseDomain" $selfSignedSegBaseDomain "defaultCertDuration" $defaultCertDuration "defaultCertRenewBefore" $defaultCertRenewBefore "defaultSpokeIssuerName" $defaultSpokeIssuerName "defaultSpokeIssuerKind" $defaultSpokeIssuerKind "defaultSpokeIssuerGroup" $defaultSpokeIssuerGroup) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy

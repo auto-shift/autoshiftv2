@@ -21,7 +21,7 @@
 ##### Reject an unknown mode loudly (a typo'd mode would otherwise silently no-op this policy AND #####
 ##### the selfSigned companion, leaving the hub apiserver with no clientCA wired for any cluster). #####
 {{ "{{-" }} if and (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
-  {{ "{{-" }} fail (printf "invalid config.eso.hubBootstrap.mode %q (or values hubBootstrapMode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
+  {{ "{{-" }} fail (printf "invalid config.eso.hubBootstrap.mode %q (or values hubBootstrap.mode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
 {{ "{{-" }} end {{ "}}" }}
 {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
 {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
@@ -43,7 +43,7 @@
       {{ "{{-" }} if eq $mode "externalCA" {{ "}}" }}
         ##### externalCA: CN = <prefix>.<clusterTrunc>.<baseDomain>, identical to the selfSigned derivation #####
         {{ "{{-" }} if eq $certBaseDomain "" {{ "}}" }}
-          {{ "{{-" }} fail "hubBootstrapCertBaseDomain (or config.eso.hubBootstrap.clientIdentity.baseDomain) is required in externalCA mode (the spoke derives the SAME CN, so the hub RBAC must match)" {{ "}}" }}
+          {{ "{{-" }} fail "config.eso.hubBootstrap.clientIdentity.baseDomain (or values hubBootstrap.clientIdentity.baseDomain) is required in externalCA mode (the spoke derives the SAME CN, so the hub RBAC must match)" {{ "}}" }}
         {{ "{{-" }} end {{ "}}" }}
         ##### CN budget is externalCA-only: the reuse mode discovers its identity from the apiserver #####
         ##### host and mints no cert, so there is no CN to size/truncate there. #####
@@ -114,7 +114,7 @@
   {{ "{{-" }} if $eligible {{ "}}" }}
     ##### WIRE THE EXTERNAL CA INTO THE HUB APISERVER clientCA (additive; operator signers stay trusted) #####
     {{ "{{-" }} if eq $extCAName "" {{ "}}" }}
-      {{ "{{-" }} fail "config.eso.hubBootstrap.externalCertAuthority.caTrustBundle.name (or values hubBootstrapExternalClientCAName) is required in externalCA / externalCAReuseServingCert mode" {{ "}}" }}
+      {{ "{{-" }} fail "config.eso.hubBootstrap.externalCertAuthority.caTrustBundle.name (or values hubBootstrap.externalCertAuthority.caTrustBundle.name) is required in externalCA / externalCAReuseServingCert mode" {{ "}}" }}
     {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} $extBundle := (fromConfigMap $extCANamespace $extCAName $extCAKey) {{ "}}" }}
     {{ "{{-" }} if eq $extBundle "" {{ "}}" }}
@@ -227,7 +227,7 @@
 #     registered apiserver host (ManagedCluster spec.managedClusterClientConfigs[].url host). PRECONDITIONS
 #     (unverifiable here): the serving cert must carry clientAuth EKU (else the hub's mTLS handshake
 #     rejects it) and its Subject CN must equal that host (else this RBAC binding never matches). See
-#     values.yaml hubBootstrapMode for the full caveat + the key-replication blast radius.
+#     values.yaml hubBootstrap.mode for the full caveat + the key-replication blast radius.
 #
 # A cluster belongs to exactly ONE clusterSet, so exactly ONE deployment's copy of this policy lands on
 # a given hub, and that single copy serves EVERY ManagedCluster on the hub (any owning deployment).
@@ -250,21 +250,22 @@
   {{- /* Structural naming — shares the reader Role + clientCA ConfigMap names with the selfSigned policy */}}
   {{- $policyNamespace := $.Values.policy_namespace }}
   {{- $eso := $.Values.externalSecretsOperator }}
-  {{- $storePrefix := ($eso.hubBootstrapStorePrefix | default "hub-bootstrap") }}
+  {{- $hb := (default (dict) $eso.hubBootstrap) }}
+  {{- $storePrefix := (dig "storePrefix" "" $hb | default "hub-bootstrap") }}
   {{- $readerRole := (printf "%s-reader" $storePrefix) }}
-  {{- $clientCAConfigMap := ($eso.hubBootstrapClientCAConfigMap | default (printf "%s-client-ca" $storePrefix)) }}
+  {{- $clientCAConfigMap := (dig "clientCAConfigMap" "" $hb | default (printf "%s-client-ca" $storePrefix)) }}
   {{- /* Cert / mode tuning DEFAULTS — actual values read per-deployment from config.eso.hubBootstrap below. */}}
-  {{- $defaultMode := ($eso.hubBootstrapMode | default "selfSigned") }}
-  {{- $defaultCertCNPrefix := ($eso.hubBootstrapCertCNPrefix | default "autoshift-eso-client") }}
-  {{- $defaultCertBaseDomain := ($eso.hubBootstrapCertBaseDomain | default "") }}
-  {{- $defaultExtCANamespace := ($eso.hubBootstrapExternalClientCANamespace | default "openshift-config") }}
-  {{- $defaultExtCAName := ($eso.hubBootstrapExternalClientCAName | default "") }}
-  {{- $defaultExtCAKey := ($eso.hubBootstrapExternalClientCAKey | default "ca-bundle.crt") }}
+  {{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
+  {{- $defaultCertCNPrefix := (dig "clientIdentity" "certCNPrefix" "" $hb | default "autoshift-eso-client") }}
+  {{- $defaultCertBaseDomain := (dig "clientIdentity" "baseDomain" "" $hb | default "") }}
+  {{- $defaultExtCANamespace := (dig "externalCertAuthority" "caTrustBundle" "namespace" "" $hb | default "openshift-config") }}
+  {{- $defaultExtCAName := (dig "externalCertAuthority" "caTrustBundle" "name" "" $hb | default "") }}
+  {{- $defaultExtCAKey := (dig "externalCertAuthority" "caTrustBundle" "key" "" $hb | default "ca-bundle.crt") }}
   {{- /* Diagnostics run modes (deployment-wide). readinessOnly: suppress this active policy entirely.
          debugRender: emit only a preview ConfigMap of what this policy WOULD apply (nothing live).
          debugRender wins, so previews still render under readinessOnly. */ -}}
-  {{- $readinessOnly := ($eso.hubBootstrapReadinessOnly | default false) }}
-  {{- $debugRender := ($eso.hubBootstrapDebugRender | default false) }}
+  {{- $readinessOnly := (dig "diagnostics" "readinessOnly" "" $hb | default false) }}
+  {{- $debugRender := (dig "diagnostics" "debugRender" "" $hb | default false) }}
   {{- $ctx := (dict "policyNamespace" $policyNamespace "storePrefix" $storePrefix "readerRole" $readerRole "clientCAConfigMap" $clientCAConfigMap "defaultMode" $defaultMode "defaultCertCNPrefix" $defaultCertCNPrefix "defaultCertBaseDomain" $defaultCertBaseDomain "defaultExtCANamespace" $defaultExtCANamespace "defaultExtCAName" $defaultExtCAName "defaultExtCAKey" $defaultExtCAKey) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy

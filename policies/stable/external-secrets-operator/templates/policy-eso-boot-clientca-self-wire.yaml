@@ -71,16 +71,17 @@
 {{- if $.Values.hubClusterSets }}
   {{- $policyNamespace := $.Values.policy_namespace }}
   {{- $eso := $.Values.externalSecretsOperator }}
-  {{- $storePrefix := ($eso.hubBootstrapStorePrefix | default "hub-bootstrap") }}
+  {{- $hb := (default (dict) $eso.hubBootstrap) }}
+  {{- $storePrefix := (dig "storePrefix" "" $hb | default "hub-bootstrap") }}
   {{- $caName := (printf "%s-ca" $storePrefix) }}
-  {{- $clientCAConfigMap := ($eso.hubBootstrapClientCAConfigMap | default (printf "%s-client-ca" $storePrefix)) }}
+  {{- $clientCAConfigMap := (dig "clientCAConfigMap" "" $hb | default (printf "%s-client-ca" $storePrefix)) }}
   {{- $cmResourceNamespace := ($eso.certManagerResourceNamespace | default "cert-manager") }}
-  {{- $defaultMode := ($eso.hubBootstrapMode | default "selfSigned") }}
+  {{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
   {{- /* Diagnostics run modes (deployment-wide). readinessOnly: suppress this active policy entirely.
          debugRender: emit only a preview ConfigMap of what this policy WOULD apply (and nothing live).
          debugRender wins, so previews still render under readinessOnly. */ -}}
-  {{- $readinessOnly := ($eso.hubBootstrapReadinessOnly | default false) }}
-  {{- $debugRender := ($eso.hubBootstrapDebugRender | default false) }}
+  {{- $readinessOnly := (dig "diagnostics" "readinessOnly" "" $hb | default false) }}
+  {{- $debugRender := (dig "diagnostics" "debugRender" "" $hb | default false) }}
   {{- $ctx := (dict "policyNamespace" $policyNamespace "caName" $caName "clientCAConfigMap" $clientCAConfigMap "cmResourceNamespace" $cmResourceNamespace "defaultMode" $defaultMode) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy

@@ -29,14 +29,15 @@
 #
 {{- $policyNamespace := $.Values.policy_namespace }}
 {{- $eso := $.Values.externalSecretsOperator }}
-{{- $cmOperatorNs := ($eso.hubBootstrapCertManagerOperatorNamespace | default "cert-manager-operator") }}
-{{- $cmPolicyName := ($eso.hubBootstrapCertManagerPolicyName | default "policy-cert-manager") }}
-{{- $defaultAutoshiftProvisioned := ($eso.hubBootstrapAutoshiftProvisioned | default true) }}
-{{- $defaultMode := ($eso.hubBootstrapMode | default "selfSigned") }}
-{{- /* When hub-side prereq RBAC is configured, gate on it: the SA's Policy-read access (used by the
-       cert-manager-policy compliance check below) must exist before this gate evaluates. Both this
-       policy and policy-eso-boot-prereqs are hub-placed, so the same-cluster dependency is valid. */ -}}
-{{- $bootPrereqsRbac := (dig "bootPrereqs" "rbac" (list) $eso) }}
+{{- $hb := (default (dict) $eso.hubBootstrap) }}
+{{- $cmOperatorNs := (dig "certManagerOperatorNamespace" "" $hb | default "cert-manager-operator") }}
+{{- $cmPolicyName := (dig "certManagerPolicyName" "" $hb | default "policy-cert-manager") }}
+{{- $defaultAutoshiftProvisioned := (dig "externalCertAuthority" "autoshiftProvisioned" "" $hb | default true) }}
+{{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
+{{- /* Always gate on policy-eso-boot-prereqs: it backs the SA's Policy-read access (used by the
+       cert-manager-policy compliance check below) and now ALWAYS renders (Compliant no-op when
+       bootPrereqs.rbac is empty), so this dependency is unconditional. Both policies are hub-placed,
+       so the same-cluster dependency is valid. */ -}}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -51,14 +52,12 @@ spec:
   remediationAction: inform
 {{ end }}
   disabled: false
-{{- if $bootPrereqsRbac }}
   dependencies:
     - name: policy-eso-boot-prereqs
       namespace: {{ $policyNamespace }}
       apiVersion: policy.open-cluster-management.io/v1
       compliance: Compliant
       kind: Policy
-{{- end }}
   # Resolve hub templates as the autoshift hub-template SA so the rendered-config ConfigMap read in
   # the policy namespace succeeds (same as the other boot policies).
   hubTemplateOptions:

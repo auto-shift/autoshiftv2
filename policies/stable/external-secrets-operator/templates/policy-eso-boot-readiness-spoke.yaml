@@ -12,7 +12,7 @@
 # against dead issuer infra while certs expire, the system can lock itself out of self-correction (the
 # ClusterIssuer secrets needed to repair the issuer cannot be delivered because delivery needs the
 # certs). See config.eso.hubBootstrap.externalCertAuthority.autoshiftProvisioned (values default
-# hubBootstrapAutoshiftProvisioned).
+# hubBootstrap.externalCertAuthority.autoshiftProvisioned).
 #
 # Contract: pure assertion. This policy creates NOTHING. It collects every problem then `fail`s ONCE.
 #   everything ready for the configured mode -> emit no objects -> Compliant
@@ -42,14 +42,15 @@
 #
 {{- $policyNamespace := $.Values.policy_namespace }}
 {{- $eso := $.Values.externalSecretsOperator }}
+{{- $hb := (default (dict) $eso.hubBootstrap) }}
 {{- $esoNamespace := $eso.namespace }}
-{{- $cmOperatorNs := ($eso.hubBootstrapCertManagerOperatorNamespace | default "cert-manager-operator") }}
-{{- $defaultMode := ($eso.hubBootstrapMode | default "selfSigned") }}
-{{- $defaultAutoshiftProvisioned := ($eso.hubBootstrapAutoshiftProvisioned | default true) }}
-{{- $cmPolicyName := ($eso.hubBootstrapCertManagerPolicyName | default "policy-cert-manager") }}
-{{- $defaultIssuerName := ($eso.hubBootstrapSpokeIssuerName | default "") }}
-{{- $defaultIssuerKind := ($eso.hubBootstrapSpokeIssuerKind | default "ClusterIssuer") }}
-{{- $defaultIssuerGroup := ($eso.hubBootstrapSpokeIssuerGroup | default "cert-manager.io") }}
+{{- $cmOperatorNs := (dig "certManagerOperatorNamespace" "" $hb | default "cert-manager-operator") }}
+{{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
+{{- $defaultAutoshiftProvisioned := (dig "externalCertAuthority" "autoshiftProvisioned" "" $hb | default true) }}
+{{- $cmPolicyName := (dig "certManagerPolicyName" "" $hb | default "policy-cert-manager") }}
+{{- $defaultIssuerName := (dig "externalCertAuthority" "certIssuer" "name" "" $hb | default "") }}
+{{- $defaultIssuerKind := (dig "externalCertAuthority" "certIssuer" "kind" "" $hb | default "ClusterIssuer") }}
+{{- $defaultIssuerGroup := (dig "externalCertAuthority" "certIssuer" "group" "" $hb | default "cert-manager.io") }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:

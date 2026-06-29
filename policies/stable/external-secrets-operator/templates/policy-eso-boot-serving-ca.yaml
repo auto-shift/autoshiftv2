@@ -72,7 +72,8 @@
 {{- if $.Values.hubClusterSets }}
 {{- $policyNamespace := $.Values.policy_namespace }}
 {{- $eso := $.Values.externalSecretsOperator }}
-{{- $storePrefix := ($eso.hubBootstrapStorePrefix | default "hub-bootstrap") }}
+{{- $hb := (default (dict) $eso.hubBootstrap) }}
+{{- $storePrefix := (dig "storePrefix" "" $hb | default "hub-bootstrap") }}
 {{- $servingCAConfigMap := (printf "%s-hub-ca" $storePrefix) }}
 {{- /* Fallback serving-CA bundle (operator-managed) used when no custom named cert matches. */}}
 {{- $caNamespace := ($eso.hubCASourceNamespace | default "openshift-config-managed") }}
@@ -81,8 +82,8 @@
 {{- /* Diagnostics run modes (deployment-wide). readinessOnly: suppress this active policy entirely.
        debugRender: emit only a preview ConfigMap of what this policy WOULD apply (nothing live).
        debugRender wins, so previews still render under readinessOnly. */ -}}
-{{- $readinessOnly := ($eso.hubBootstrapReadinessOnly | default false) }}
-{{- $debugRender := ($eso.hubBootstrapDebugRender | default false) }}
+{{- $readinessOnly := (dig "diagnostics" "readinessOnly" "" $hb | default false) }}
+{{- $debugRender := (dig "diagnostics" "debugRender" "" $hb | default false) }}
 {{- $ctx := (dict "policyNamespace" $policyNamespace "servingCAConfigMap" $servingCAConfigMap "caNamespace" $caNamespace "caName" $caName "caKey" $caKey) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy

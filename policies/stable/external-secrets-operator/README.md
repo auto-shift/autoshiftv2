@@ -30,11 +30,15 @@ flowchart TB
   classDef serve  fill:#e8f5e9,stroke:#2e7d32,color:#14361b;
   classDef wire   fill:#fff3e0,stroke:#e65100,color:#4a2500;
   classDef store  fill:#f3e5f5,stroke:#6a1b9a,color:#2e0a3d;
+  classDef gate   fill:#fffde7,stroke:#f9a825,color:#4a3b00;
 
   subgraph HUB["HUB cluster — placed on hubClusterSets only"]
     direction TB
+    G0["⛔ PRECURSOR GATE · policy-eso-boot-readiness-hub Compliant<br/>(← policy-eso-boot-prereqs RBAC — see Boot prerequisites)<br/>holds the hub boot policies Pending via spec.dependencies"]:::gate
+    G0 ==>|gates · spec.dependencies| A1
+    G0 ==>|gates · spec.dependencies| S0
 
-    subgraph SIGN["CLIENT-SIGNING CHAIN · policy boot-clientca-self (runtime, cluster-admin)"]
+    subgraph SIGN["CLIENT-SIGNING CHAIN · policy-eso-boot-clientca-self (runtime, cluster-admin)"]
       direction TB
       A1["ClusterIssuer hub-bootstrap-selfsigned<br/>selfSigned"]:::client
       A2["Certificate hub-bootstrap-ca (isCA)<br/>Secret hub-bootstrap-ca @ cert-manager<br/><b>the bootstrap CA — long-lived root</b>"]:::client
@@ -51,7 +55,7 @@ flowchart TB
     end
     A2 -->|ca.crt| W1
 
-    subgraph SERVE["SERVING-CA DISCOVERY · policy boot-serving-ca (runtime)"]
+    subgraph SERVE["SERVING-CA DISCOVERY · policy-eso-boot-serving-ca (runtime)"]
       direction TB
       S0["lookup APIServer/cluster + apiserverurl.openshift.io ClusterClaim<br/>derive apiserver host from spec.value"]:::serve
       S1{"namedCertificates entry<br/>whose names match the host?"}:::serve
@@ -64,7 +68,7 @@ flowchart TB
     end
   end
 
-  subgraph COPY["COPY · policy hub-bootstrap (HUB templates read policy ns → write spoke ESO ns)"]
+  subgraph COPY["COPY · policy-eso-boot-store (HUB templates read policy ns → write spoke ESO ns)"]
     direction TB
     C1["Secret hub-bootstrap-client @ spoke ESO ns<br/>(client cert+key, from the deployment's policy ns)"]:::client
     C2["ConfigMap hub-bootstrap-hub-ca @ spoke ESO ns<br/>(serving CA ca.crt)"]:::serve
@@ -74,6 +78,8 @@ flowchart TB
 
   subgraph SPOKE["SPOKE cluster — ESO consumes both halves"]
     direction TB
+    GS["⛔ PRECURSOR GATE · policy-eso-boot-readiness-spoke Compliant<br/>holds policy-eso-boot-store Pending via spec.dependencies"]:::gate
+    GS ==>|gates · spec.dependencies| ST
     ST["ClusterSecretStore (hub-bootstrap)<br/>provider.kubernetes.server.url = hubServer<br/>caProvider → hub-bootstrap-hub-ca / ca.crt  (SERVER trust)<br/>auth.cert → hub-bootstrap-client tls.crt/tls.key  (CLIENT id)<br/>remoteNamespace = policy ns"]:::store
     ES["ExternalSecrets → read Secrets from hub through the store"]:::store
     ST --> ES
@@ -107,8 +113,8 @@ flowchart LR
   classDef serve fill:#e8f5e9,stroke:#2e7d32,color:#14361b;
   classDef store fill:#f3e5f5,stroke:#6a1b9a,color:#2e0a3d;
   G1["hub ConfigMap (store.caSource)<br/>namespace/name/key = remote serving CA"]:::serve
-  G2["ConfigMap caProvider.name @ ManagedClusterName ns<br/>key = caProvider.key · policy stores"]:::serve
-  G3["same store · policy stores<br/>caProvider → caProvider.name/ca.crt<br/>(namespace auto-filled = ManagedClusterName)"]:::store
+  G2["ConfigMap caProvider.name @ ManagedClusterName ns<br/>key = caProvider.key · policy-eso-secret-stores"]:::serve
+  G3["same store · policy-eso-secret-stores<br/>caProvider → caProvider.name/ca.crt<br/>(namespace auto-filled = ManagedClusterName)"]:::store
   G1 -->|hub fromConfigMap → deliver| G2 -->|caProvider| G3
 ```
 
@@ -940,7 +946,7 @@ config:
     hubBootstrap:
       # ---- connection (all modes, flat) ----
       hubServer: https://api.hub:6443        # hub apiserver URL (default: values externalSecretsOperator.hubServer)
-      storeName: hub-bootstrap               # ClusterSecretStore name (default: chart hubBootstrapStorePrefix)
+      storeName: hub-bootstrap               # ClusterSecretStore name (default: chart hubBootstrap.storePrefix)
       mode: selfSigned                       # selfSigned | externalCA | externalCAReuseServingCert
       # ---- clientIdentity (selfSigned + externalCA; ignored in reuse) ----
       clientIdentity:
@@ -967,10 +973,10 @@ config:
       diagnostics:
         # readinessOnly: true                # the 5 cert boot policies render an EMPTY object stream on this cluster
         #                                    #   (no-op, Compliant) — only the readiness gates run. Default: values
-        #                                    #   externalSecretsOperator.hubBootstrapReadinessOnly.
+        #                                    #   externalSecretsOperator.hubBootstrap.diagnostics.readinessOnly.
         # debugRender: true                  # each cert boot policy emits a <configpolicy>-debug-render ConfigMap previewing
         #                                    #   the full object stream it WOULD apply (Secret data redacted to a source
-        #                                    #   descriptor) and applies NOTHING live. Default: hubBootstrapDebugRender.
+        #                                    #   descriptor) and applies NOTHING live. Default: hubBootstrap.diagnostics.debugRender.
 ```
 
 There is **no `externalSecrets` key** — this policy only provisions the store. To consume Secrets
@@ -997,7 +1003,7 @@ spec:
 The cert identity and the namespace it reads are fixed by the deployment, so the spoke block sets
 no `certCN`/`remoteNamespace`. The cert tunables (`certCNPrefix`/`certDuration`/`certRenewBefore`)
 are read from `config.eso.hubBootstrap` by the hub trust policy, defaulting to the chart values
-(`hubBootstrapCertCNPrefix`, `hubBootstrapCertDuration`/`RenewBefore` in `values.yaml`).
+(`hubBootstrap.clientIdentity.certCNPrefix`, `certDuration`/`certRenewBefore` in `values.yaml`).
 
 - **Opt-in / all-or-nothing:** the copy policy is a no-op unless `hubBootstrap` is set (needs
   at least a `hubServer`); the trust policy is a no-op unless at least one owned `ManagedCluster`
@@ -1059,7 +1065,7 @@ flowchart TB
 
   MODE{"config.eso.hubBootstrap.mode"}:::dec
 
-  subgraph M1["1 · selfSigned — hub-internal CA · policy boot-clientca-self"]
+  subgraph M1["1 · selfSigned — hub-internal CA · policy-eso-boot-clientca-self"]
     direction TB
     A1["ClusterIssuer hub-bootstrap-selfsigned"]:::mint
     A2["Certificate hub-bootstrap-ca (isCA)<br/>the bootstrap root — long-lived, hub-internal key"]:::mint
@@ -1073,7 +1079,7 @@ flowchart TB
     A4 --> AR
   end
 
-  subgraph M2["2 · externalCA — dedicated certs from a shared external CA · policy boot-clientca-ext"]
+  subgraph M2["2 · externalCA — dedicated certs from a shared external CA · policy-eso-boot-clientca-ext"]
     direction TB
     B0["EXTERNAL CA (out of band)"]:::ext
     B1["user-provided spoke ClusterIssuer<br/>externalCertAuthority.certIssuer, chained to the external CA"]:::ext
@@ -1085,7 +1091,7 @@ flowchart TB
     B2 -. identical derivation .-> BR
   end
 
-  subgraph M3["3 · externalCAReuseServingCert — reuse spoke apiserver serving cert · policy boot-clientca-ext"]
+  subgraph M3["3 · externalCAReuseServingCert — reuse spoke apiserver serving cert · policy-eso-boot-clientca-ext"]
     direction TB
     C0["EXTERNAL CA (out of band)<br/>already signed the spoke's apiserver serving cert"]:::ext
     C1["spoke apiserver SERVING cert+key @ openshift-config<br/>discovered via APIServer namedCertificates"]:::mint
@@ -1302,9 +1308,10 @@ driven entirely by config, so grants are declared in one place rather than scatt
 This is a **deployment-wide chart value** (`externalSecretsOperator.bootPrereqs`), not per-cluster
 `config.eso` — RBAC prerequisites are fixed infrastructure for a deployment. `bootPrereqs.rbac` is a
 list of grants; each renders to a `Role`+`RoleBinding` (namespaced) or `ClusterRole`+`ClusterRoleBinding`
-(cluster), bound to the grant's ServiceAccount. Set it to `[]` (or omit) to render nothing and skip
-the policy. The structure is intentionally generic so it can later be lifted into a standalone,
-shared policy group that centralizes **all** AutoShift-internal RBAC.
+(cluster), bound to the grant's ServiceAccount. Set it to `[]` (or omit) and the policy still renders
+with an **empty** `object-templates-raw` list — a Compliant no-op that creates no RBAC — so dependents
+can always rely on it (see below). The structure is intentionally generic so it can later be lifted
+into a standalone, shared policy group that centralizes **all** AutoShift-internal RBAC.
 
 ```yaml
 # values overlay (umbrella / chart values), under externalSecretsOperator:
@@ -1322,12 +1329,51 @@ bootPrereqs:
           verbs: ["get", "list", "watch"]
 ```
 
-Placement is hub-only (`hubClusterSets`) — these grants back hub-side template resolution. When any
-grant is configured, `policy-eso-boot-readiness-hub` declares a `spec.dependencies` on
-`policy-eso-boot-prereqs` (both are hub-placed, so the same-cluster dependency is valid), keeping the
-hub gate Pending until the RBAC is in place. The consumer gate (`policy-eso-boot-readiness-spoke`) is
-placed on managed sets too where this policy is absent, so it carries no such dependency; its hub
-lookups resolve on the hub where the grant exists.
+Placement is hub-only (`hubClusterSets`) — these grants back hub-side template resolution. Because
+the policy **always renders** (empty `rbac` → Compliant no-op), `policy-eso-boot-readiness-hub`
+declares an **unconditional** `spec.dependencies` on `policy-eso-boot-prereqs` (both are hub-placed,
+so the same-cluster dependency is valid), keeping the hub gate Pending until the RBAC is in place.
+The consumer gate (`policy-eso-boot-readiness-spoke`) is placed on managed sets too where this policy
+is absent, so it carries no such dependency; its hub lookups resolve on the hub where the grant exists.
+
+The full precursor chain — RBAC backs the gates, the gates hold the active boot policies `Pending`
+(via `spec.dependencies`) until their preconditions are `Compliant`:
+
+```mermaid
+flowchart TB
+  classDef gate fill:#fffde7,stroke:#f9a825,color:#4a3b00;
+  classDef rbac fill:#f3e5f5,stroke:#6a1b9a,color:#2e0a3d;
+  classDef boot fill:#e3f2fd,stroke:#1565c0,color:#0d2c54;
+  classDef ext  fill:#e8f5e9,stroke:#2e7d32,color:#14361b;
+
+  subgraph HUBSET["HUB · hubClusterSets"]
+    direction TB
+    PRE["policy-eso-boot-prereqs<br/>hub-side RBAC (bootPrereqs.rbac)<br/>SA can read Policies in policy ns"]:::rbac
+    CMP["policy-cert-manager (autoshift)<br/>checked per-cluster only when<br/>autoshiftProvisioned=true"]:::ext
+    RH["policy-eso-boot-readiness-hub<br/>selfSigned: cert-manager CSV Succeeded (+ cert-manager Policy Compliant)<br/>externalCA / reuse: hub mints nothing → Compliant"]:::gate
+    BCS["policy-eso-boot-clientca-self"]:::boot
+    BCW["policy-eso-boot-clientca-self-wire"]:::boot
+    BCE["policy-eso-boot-clientca-ext"]:::boot
+    BSV["policy-eso-boot-serving-ca"]:::boot
+    PRE -->|"spec.dependencies (unconditional — prereqs always renders)"| RH
+    CMP -. hub lookup of per-cluster status .-> RH
+    RH ==>|spec.dependencies| BCS
+    RH ==>|spec.dependencies| BCE
+    RH ==>|spec.dependencies| BSV
+    BCS ==>|spec.dependencies| BCW
+  end
+
+  subgraph SPOKESET["SPOKE · managedClusterSets"]
+    direction TB
+    RS["policy-eso-boot-readiness-spoke<br/>externalCA / reuse: spoke issuer + serving-cert + cert-manager ready<br/>(+ cert-manager Policy Compliant when autoshiftProvisioned)<br/>selfSigned: nothing to assert → Compliant"]:::gate
+    INST["policy-eso-install"]:::boot
+    BST["policy-eso-boot-store<br/>copies cert + serving CA, builds the ClusterSecretStore"]:::boot
+    RS ==>|spec.dependencies| BST
+    INST ==>|spec.dependencies| BST
+  end
+
+  CMP -.->|"spoke gate runs the SAME Policy lookup on the hub via the prereqs RBAC — ACM deps are same-cluster, so there is no cross-cluster edge between the gates"| RS
+```
 
 > Note: `autoshift-policy-service-account` is currently bound to `cluster-admin` cluster-wide, so the
 > Policy read already works without this policy. `bootPrereqs` exists to make the required access
