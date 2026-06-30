@@ -1,13 +1,14 @@
 {{- /*
   Single-sourced object-templates body for policy-eso-boot-clientca-self-wire.
   Included TWICE below: once as the live object stream (indent 12), once as the
-  text payload of the debug-render ConfigMap (indent 20). Authored at column 0;
-  the include site applies the indentation. Helm-render locals are threaded in
-  via the context dict ($ctx) so the body resolves them with .field lookups.
+  text payload of the debug-render ConfigMap (nindent 20). Include directives are
+  indented; {{- left-trims the source newline+spaces and nindent re-supplies them.
+  Helm-render locals are threaded in via the context dict ($ctx) so the body
+  resolves them with .field lookups.
 */ -}}
 {{- define "eso.bootBody.clientcaSelfWire" -}}
 ##### DERIVE (hub): the trust mode from THIS cluster's rendered config, then bridge it to runtime #####
-{{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+{{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
 {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
 {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ .defaultMode }}") {{ "hub}}" }}
 {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
@@ -119,7 +120,7 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             #Indentation Anchor
-            {{ "{{hub-" }} $debugCfg := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $debugCfg := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $debug := (dig "eso" "hubBootstrap" "diagnostics" "debugRender" {{ $debugRender }} $debugCfg) {{ "hub}}" }}
             {{ "{{hub-" }} $readinessOnly := (dig "eso" "hubBootstrap" "diagnostics" "readinessOnly" {{ $readinessOnly }} $debugCfg) {{ "hub}}" }}
             {{ "{{hub-" }} if $debug {{ "hub}}" }}
@@ -136,9 +137,9 @@ spec:
                     autoshift.io/eso-debug-render: "true"
                 data:
                   rendered.yaml: |
-{{ include "eso.bootBody.clientcaSelfWire" (merge (dict "debug" true) $ctx) | indent 20 }}
+                    {{- include "eso.bootBody.clientcaSelfWire" (merge (dict "debug" true) $ctx) | nindent 20 }}
             {{ "{{hub-" }} else if not $readinessOnly {{ "hub}}" }}
-{{ include "eso.bootBody.clientcaSelfWire" $ctx | indent 12 }}
+            {{- include "eso.bootBody.clientcaSelfWire" $ctx | nindent 12 }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1

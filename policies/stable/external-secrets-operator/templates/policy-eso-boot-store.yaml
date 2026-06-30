@@ -1,12 +1,12 @@
 {{- /*
   Single-sourced object-templates body for policy-eso-boot-store.
   Included TWICE below: once as the live object stream (indent 12), once as the text
-  payload of the debug-render ConfigMap (indent 20). Authored at column 0; the include
-  site applies indentation. Helm-render locals threaded in via the context dict ($ctx).
+  payload of the debug-render ConfigMap (nindent 20). Include directives are indented;
+  {{- left-trims the source newline+spaces and nindent re-supplies them. Helm-render locals threaded in via the context dict ($ctx).
 */ -}}
 {{- define "eso.bootBody.bootStore" -}}
 ##### DERIVE (on the hub): per-cluster rendered config + the two policy-namespace inputs #####
-{{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+{{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
 {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
 {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ .defaultMode }}") {{ "hub}}" }}
 {{ "{{hub-" }} $hubServer := (index $hubBootstrap "hubServer" | default "{{ .defaultHubServer }}") {{ "hub}}" }}
@@ -27,8 +27,15 @@
 {{ "{{hub-" }} $clientIdentity := (dig "clientIdentity" (dict) $hubBootstrap) {{ "hub}}" }}
 {{ "{{hub-" }} $certCNPrefix := (index $clientIdentity "certCNPrefix" | default "{{ .defaultCertCNPrefix }}") {{ "hub}}" }}
 {{ "{{hub-" }} $certBaseDomain := (index $clientIdentity "baseDomain" | default "{{ .defaultCertBaseDomain }}") {{ "hub}}" }}
-{{ "{{hub-" }} $certDuration := (index $clientIdentity "certDuration" | default "{{ .defaultCertDuration }}") {{ "hub}}" }}
-{{ "{{hub-" }} $certRenewBefore := (index $clientIdentity "certRenewBefore" | default "{{ .defaultCertRenewBefore }}") {{ "hub}}" }}
+##### Cert spec fields: explicit per-cluster config wins, else the chart default, else a MODE-BASED default. #####
+##### selfSigned (our own CA honors them verbatim) -> sensible values INCLUDING client auth; external modes #####
+##### -> EMPTY so the issuer (e.g. Venafi) governs validity/keyUsage and is not fought into a re-issue loop. #####
+{{ "{{hub-" }} $ssCertDefaults := (eq $mode "selfSigned") {{ "hub}}" }}
+{{ "{{hub-" }} $certDuration := (index $clientIdentity "certDuration" | default "{{ .defaultCertDuration }}" | default (ternary "720h" "" $ssCertDefaults)) {{ "hub}}" }}
+{{ "{{hub-" }} $certRenewBefore := (index $clientIdentity "certRenewBefore" | default "{{ .defaultCertRenewBefore }}" | default (ternary "480h" "" $ssCertDefaults)) {{ "hub}}" }}
+{{ "{{hub-" }} $certUsages := (index $clientIdentity "certUsages" | default (`{{ .defaultCertUsages | toJson }}` | fromJson) | default (ternary (list "client auth" "digital signature" "key encipherment") (list) $ssCertDefaults)) {{ "hub}}" }}
+{{ "{{hub-" }} $privateKeyAlgorithm := (index $clientIdentity "privateKeyAlgorithm" | default "{{ .defaultPrivateKeyAlgorithm }}" | default (ternary "RSA" "" $ssCertDefaults)) {{ "hub}}" }}
+{{ "{{hub-" }} $privateKeySize := (index $clientIdentity "privateKeySize" | default "{{ .defaultPrivateKeySize }}" | default (ternary "2048" "" $ssCertDefaults)) {{ "hub}}" }}
 {{ "{{hub-" }} $spokeIssuer := (dig "externalCertAuthority" "certIssuer" (dict) $hubBootstrap) {{ "hub}}" }}
 {{ "{{hub-" }} $spokeIssuerName := (index $spokeIssuer "name" | default "{{ .defaultSpokeIssuerName }}") {{ "hub}}" }}
 {{ "{{hub-" }} $spokeIssuerKind := (index $spokeIssuer "kind" | default "{{ .defaultSpokeIssuerKind }}") {{ "hub}}" }}
@@ -42,10 +49,10 @@
 ##### as the hub policy does, so the truncation budget is identical. #####
 {{ "{{hub-" }} $segBaseDomain := (index $clientIdentity "baseDomain" | default "{{ .selfSignedSegBaseDomain }}") {{ "hub}}" }}
 {{ "{{hub-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $segBaseDomain))) {{ "hub}}" }}
-{{ "{{hub-" }} $clusterSeg := .ManagedClusterName {{ "hub}}" }}
+{{ "{{hub-" }} $clusterSeg := $.ManagedClusterName {{ "hub}}" }}
 ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
-{{ "{{hub-" }} if gt (len .ManagedClusterName) $cnBudget {{ "hub}}" }}
-  {{ "{{hub-" }} $clusterSeg = (substr 0 (toInt $cnBudget) .ManagedClusterName) {{ "hub}}" }}
+{{ "{{hub-" }} if gt (len $.ManagedClusterName) $cnBudget {{ "hub}}" }}
+  {{ "{{hub-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $.ManagedClusterName) {{ "hub}}" }}
 {{ "{{hub-" }} end {{ "hub}}" }}
 ##### externalCA CN/SAN are NOT derived here: the spoke reads its OWN apiserverurl.openshift.io #####
 ##### clusterClaim at runtime and derives them locally (see the runtime externalCA block below), so #####
@@ -108,6 +115,9 @@
 {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
 {{ "{{-" }} $certDuration := `{{ "{{hub" }} $certDuration {{ "hub}}" }}` {{ "}}" }}
 {{ "{{-" }} $certRenewBefore := `{{ "{{hub" }} $certRenewBefore {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $certUsages := `{{ "{{hub" }} $certUsages | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+{{ "{{-" }} $privateKeyAlgorithm := `{{ "{{hub" }} $privateKeyAlgorithm {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $privateKeySize := `{{ "{{hub" }} $privateKeySize {{ "hub}}" }}` {{ "}}" }}
 {{ "{{-" }} $spokeIssuerName := `{{ "{{hub" }} $spokeIssuerName {{ "hub}}" }}` {{ "}}" }}
 {{ "{{-" }} $spokeIssuerKind := `{{ "{{hub" }} $spokeIssuerKind {{ "hub}}" }}` {{ "}}" }}
 {{ "{{-" }} $spokeIssuerGroup := `{{ "{{hub" }} $spokeIssuerGroup {{ "hub}}" }}` {{ "}}" }}
@@ -159,15 +169,25 @@
       dnsNames:
         - {{ "{{" }} $certSAN {{ "}}" }}
       secretName: {{ .clientSecret }}
+      {{ "{{-" }} if ne $certDuration "" {{ "}}" }}
       duration: {{ "{{" }} $certDuration {{ "}}" }}
+      {{ "{{-" }} end {{ "}}" }}
+      {{ "{{-" }} if ne $certRenewBefore "" {{ "}}" }}
       renewBefore: {{ "{{" }} $certRenewBefore {{ "}}" }}
+      {{ "{{-" }} end {{ "}}" }}
+      {{ "{{-" }} if $certUsages {{ "}}" }}
       usages:
-        - client auth
-        - digital signature
-        - key encipherment
+      {{ "{{-" }} range $u := $certUsages {{ "}}" }}
+        - {{ "{{" }} $u {{ "}}" }}
+      {{ "{{-" }} end {{ "}}" }}
+      {{ "{{-" }} end {{ "}}" }}
+      {{ "{{-" }} if ne $privateKeyAlgorithm "" {{ "}}" }}
       privateKey:
-        algorithm: RSA
-        size: 2048
+        algorithm: {{ "{{" }} $privateKeyAlgorithm {{ "}}" }}
+        {{ "{{-" }} if ne $privateKeySize "" {{ "}}" }}
+        size: {{ "{{" }} $privateKeySize {{ "}}" }}
+        {{ "{{-" }} end {{ "}}" }}
+      {{ "{{-" }} end {{ "}}" }}
       issuerRef:
         name: {{ "{{" }} $spokeIssuerName {{ "}}" }}
         kind: {{ "{{" }} $spokeIssuerKind {{ "}}" }}
@@ -312,8 +332,14 @@
 {{- /* (hubBootstrap.clientIdentity.baseDomain default "autoshift.io"), or the truncation budget — hence the */}}
 {{- /* derived clusterSeg and the copied client-secret name — would diverge from the hub side. */}}
 {{- $selfSignedSegBaseDomain := (dig "clientIdentity" "baseDomain" "" $hb | default "autoshift.io") }}
-{{- $defaultCertDuration := (dig "clientIdentity" "certDuration" "" $hb | default "720h") }}
-{{- $defaultCertRenewBefore := (dig "clientIdentity" "certRenewBefore" "" $hb | default "480h") }}
+{{- /* Cert spec tuning — DEFAULTS only (per-deployment overrides under config.eso.hubBootstrap.clientIdentity). */}}
+{{- /* All empty by default: each field is emitted on the Certificate ONLY when set, so issuers that enforce */}}
+{{- /* their own validity/keyUsage (Venafi/TPP) are not fought into a perpetual re-issue loop. */}}
+{{- $defaultCertDuration := (dig "clientIdentity" "certDuration" "" $hb) }}
+{{- $defaultCertRenewBefore := (dig "clientIdentity" "certRenewBefore" "" $hb) }}
+{{- $defaultCertUsages := (dig "clientIdentity" "certUsages" (list) $hb) }}
+{{- $defaultPrivateKeyAlgorithm := (dig "clientIdentity" "privateKeyAlgorithm" "" $hb) }}
+{{- $defaultPrivateKeySize := (dig "clientIdentity" "privateKeySize" "" $hb) }}
 {{- $defaultSpokeIssuerName := (dig "externalCertAuthority" "certIssuer" "name" "" $hb | default "") }}
 {{- $defaultSpokeIssuerKind := (dig "externalCertAuthority" "certIssuer" "kind" "" $hb | default "ClusterIssuer") }}
 {{- $defaultSpokeIssuerGroup := (dig "externalCertAuthority" "certIssuer" "group" "" $hb | default "cert-manager.io") }}
@@ -322,7 +348,7 @@
        debugRender wins, so previews still render under readinessOnly. */ -}}
 {{- $readinessOnly := (dig "diagnostics" "readinessOnly" "" $hb | default false) }}
 {{- $debugRender := (dig "diagnostics" "debugRender" "" $hb | default false) }}
-{{- $ctx := (dict "policyNamespace" $policyNamespace "esoNamespace" $esoNamespace "storePrefix" $storePrefix "clientSecret" $clientSecret "servingCAConfigMap" $servingCAConfigMap "defaultHubServer" $defaultHubServer "defaultDeriveHubUrl" $defaultDeriveHubUrl "defaultMode" $defaultMode "defaultCertCNPrefix" $defaultCertCNPrefix "defaultCertBaseDomain" $defaultCertBaseDomain "selfSignedSegBaseDomain" $selfSignedSegBaseDomain "defaultCertDuration" $defaultCertDuration "defaultCertRenewBefore" $defaultCertRenewBefore "defaultSpokeIssuerName" $defaultSpokeIssuerName "defaultSpokeIssuerKind" $defaultSpokeIssuerKind "defaultSpokeIssuerGroup" $defaultSpokeIssuerGroup) }}
+{{- $ctx := (dict "policyNamespace" $policyNamespace "esoNamespace" $esoNamespace "storePrefix" $storePrefix "clientSecret" $clientSecret "servingCAConfigMap" $servingCAConfigMap "defaultHubServer" $defaultHubServer "defaultDeriveHubUrl" $defaultDeriveHubUrl "defaultMode" $defaultMode "defaultCertCNPrefix" $defaultCertCNPrefix "defaultCertBaseDomain" $defaultCertBaseDomain "selfSignedSegBaseDomain" $selfSignedSegBaseDomain "defaultCertDuration" $defaultCertDuration "defaultCertRenewBefore" $defaultCertRenewBefore "defaultCertUsages" $defaultCertUsages "defaultPrivateKeyAlgorithm" $defaultPrivateKeyAlgorithm "defaultPrivateKeySize" $defaultPrivateKeySize "defaultSpokeIssuerName" $defaultSpokeIssuerName "defaultSpokeIssuerKind" $defaultSpokeIssuerKind "defaultSpokeIssuerGroup" $defaultSpokeIssuerGroup) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -373,7 +399,7 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             #Indentation Anchor
-            {{ "{{hub-" }} $debugCfg := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $debugCfg := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $debug := (dig "eso" "hubBootstrap" "diagnostics" "debugRender" {{ $debugRender }} $debugCfg) {{ "hub}}" }}
             {{ "{{hub-" }} $readinessOnly := (dig "eso" "hubBootstrap" "diagnostics" "readinessOnly" {{ $readinessOnly }} $debugCfg) {{ "hub}}" }}
             {{ "{{hub-" }} if $debug {{ "hub}}" }}
@@ -390,9 +416,9 @@ spec:
                     autoshift.io/eso-debug-render: "true"
                 data:
                   rendered.yaml: |
-{{ include "eso.bootBody.bootStore" (merge (dict "debug" true) $ctx) | indent 20 }}
+                    {{- include "eso.bootBody.bootStore" (merge (dict "debug" true) $ctx) | nindent 20 }}
             {{ "{{hub-" }} else if not $readinessOnly {{ "hub}}" }}
-{{ include "eso.bootBody.bootStore" $ctx | indent 12 }}
+            {{- include "eso.bootBody.bootStore" $ctx | nindent 12 }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1

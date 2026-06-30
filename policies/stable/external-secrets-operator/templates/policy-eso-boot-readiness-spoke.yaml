@@ -85,7 +85,7 @@ spec:
           object-templates-raw: |
             #Indentation Anchor
             ##### DERIVE (on the hub): per-cluster mode + issuer config from rendered config #####
-            {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
             {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ $defaultMode }}") {{ "hub}}" }}
             {{ "{{hub-" }} $autoshiftProvisioned := (dig "externalCertAuthority" "autoshiftProvisioned" {{ $defaultAutoshiftProvisioned }} $hubBootstrap) {{ "hub}}" }}
@@ -93,7 +93,7 @@ spec:
             {{ "{{hub-" }} if and (ne $mode "selfSigned") $autoshiftProvisioned {{ "hub}}" }}
               {{ "{{hub-" }} $cmPol := (lookup "policy.open-cluster-management.io/v1" "Policy" "{{ $policyNamespace }}" "{{ $cmPolicyName }}") {{ "hub}}" }}
               {{ "{{hub-" }} range $st := (dig "status" "status" (list) $cmPol) {{ "hub}}" }}
-                {{ "{{hub-" }} if eq (dig "clustername" "" $st) .ManagedClusterName {{ "hub}}" }}{{ "{{hub-" }} $cmPolCompliant = (dig "compliant" "" $st) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if eq (dig "clustername" "" $st) $.ManagedClusterName {{ "hub}}" }}{{ "{{hub-" }} $cmPolCompliant = (dig "compliant" "" $st) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $spokeIssuer := (dig "externalCertAuthority" "certIssuer" (dict) $hubBootstrap) {{ "hub}}" }}

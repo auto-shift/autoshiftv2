@@ -1,8 +1,8 @@
 {{- /*
   Single-sourced object-templates body for policy-eso-boot-serving-ca.
   Included TWICE below: once as the live object stream (indent 12), once as the text
-  payload of the debug-render ConfigMap (indent 20). Authored at column 0; the include
-  site applies indentation. Helm-render locals threaded in via the context dict ($ctx).
+  payload of the debug-render ConfigMap (nindent 20). Include directives are indented;
+  {{- left-trims the source newline+spaces and nindent re-supplies them. Helm-render locals threaded in via the context dict ($ctx).
 */ -}}
 {{- define "eso.bootBody.servingCa" -}}
 ##### RUNTIME (on the hub itself): resolve the hub apiserver serving CA #####
@@ -122,7 +122,7 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             #Indentation Anchor
-            {{ "{{hub-" }} $debugCfg := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $debugCfg := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $debug := (dig "eso" "hubBootstrap" "diagnostics" "debugRender" {{ $debugRender }} $debugCfg) {{ "hub}}" }}
             {{ "{{hub-" }} $readinessOnly := (dig "eso" "hubBootstrap" "diagnostics" "readinessOnly" {{ $readinessOnly }} $debugCfg) {{ "hub}}" }}
             {{ "{{hub-" }} if $debug {{ "hub}}" }}
@@ -139,9 +139,9 @@ spec:
                     autoshift.io/eso-debug-render: "true"
                 data:
                   rendered.yaml: |
-{{ include "eso.bootBody.servingCa" (merge (dict "debug" true) $ctx) | indent 20 }}
+                    {{- include "eso.bootBody.servingCa" (merge (dict "debug" true) $ctx) | nindent 20 }}
             {{ "{{hub-" }} else if not $readinessOnly {{ "hub}}" }}
-{{ include "eso.bootBody.servingCa" $ctx | indent 12 }}
+            {{- include "eso.bootBody.servingCa" $ctx | nindent 12 }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1

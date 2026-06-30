@@ -34,10 +34,10 @@
 {{- $cmPolicyName := (dig "certManagerPolicyName" "" $hb | default "policy-cert-manager") }}
 {{- $defaultAutoshiftProvisioned := (dig "externalCertAuthority" "autoshiftProvisioned" "" $hb | default true) }}
 {{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
-{{- /* Always gate on policy-eso-boot-prereqs: it backs the SA's Policy-read access (used by the
+{{/* Always gate on policy-eso-boot-prereqs: it backs the SA's Policy-read access (used by the
        cert-manager-policy compliance check below) and now ALWAYS renders (Compliant no-op when
        bootPrereqs.rbac is empty), so this dependency is unconditional. Both policies are hub-placed,
-       so the same-cluster dependency is valid. */ -}}
+       so the same-cluster dependency is valid. */}}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -78,7 +78,7 @@ spec:
           object-templates-raw: |
             #Indentation Anchor
             ##### DERIVE (on the hub): this cluster's bootstrap mode from rendered config #####
-            {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
             {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ $defaultMode }}") {{ "hub}}" }}
             ##### autoshiftProvisioned (default {{ $defaultAutoshiftProvisioned }}): true => the autoshift cert-manager policy must be #####
@@ -89,7 +89,7 @@ spec:
             {{ "{{hub-" }} if and (eq $mode "selfSigned") $autoshiftProvisioned {{ "hub}}" }}
               {{ "{{hub-" }} $cmPol := (lookup "policy.open-cluster-management.io/v1" "Policy" "{{ $policyNamespace }}" "{{ $cmPolicyName }}") {{ "hub}}" }}
               {{ "{{hub-" }} range $st := (dig "status" "status" (list) $cmPol) {{ "hub}}" }}
-                {{ "{{hub-" }} if eq (dig "clustername" "" $st) .ManagedClusterName {{ "hub}}" }}{{ "{{hub-" }} $cmPolCompliant = (dig "compliant" "" $st) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if eq (dig "clustername" "" $st) $.ManagedClusterName {{ "hub}}" }}{{ "{{hub-" }} $cmPolCompliant = (dig "compliant" "" $st) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             ##### BRIDGE to the runtime (hub) side #####
