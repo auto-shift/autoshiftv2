@@ -14,9 +14,16 @@
 # certs). See config.eso.hubBootstrap.externalCertAuthority.autoshiftProvisioned (values default
 # hubBootstrap.externalCertAuthority.autoshiftProvisioned).
 #
-# Contract: pure assertion. This policy creates NOTHING. It collects every problem then `fail`s ONCE.
-#   everything ready for the configured mode -> emit no objects -> Compliant
-#   anything not ready                       -> fail with the full list -> NonCompliant (Pending downstream)
+# Contract: this Policy is a GATE, surfaced WITHOUT `fail` (which buries the real reason under the whole
+# policy-rendered-as-a-string in the console and often truncates it off). Two ConfigurationPolicies:
+#   * eso-boot-readiness-spoke-report (enforce) collects every problem into $errors, then — via the shared
+#     eso.boot.statusReport helper — writes a per-policy status ConfigMap (the full list) + a Warning Event
+#     when anything is wrong, and ENFORCE-deletes both when everything is ready (self-clearing).
+#   * eso-boot-readiness-spoke-gate (inform) mustnothave's that status ConfigMap, so IT is the compliance
+#     proxy: NonCompliant exactly while the report CM exists. The inform gate creates nothing itself — the
+#     enforce report owns the objects' lifecycle, which is why the report must clear the CM on recovery.
+#   everything ready  -> report clears CM       -> gate Compliant
+#   anything not ready -> report writes CM+Event -> gate NonCompliant (Pending downstream)
 # policy-eso-boot-store lists this policy in spec.dependencies, so it stays Pending until Compliant and
 # resumes automatically when the infra recovers. No invariant-checking lives in boot-store anymore.
 #
@@ -74,10 +81,12 @@ spec:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy
         metadata:
-          name: eso-boot-readiness-spoke
+          name: eso-boot-readiness-spoke-report
         spec:
-          # inform: this policy is a check; it never mutates the cluster. Compliance IS the signal.
-          remediationAction: inform
+          # enforce: this CP OWNS the status objects — it writes the status ConfigMap + Warning Event when
+          # $errors is non-empty and deletes them when empty. This CP's OWN compliance is NOT the gate
+          # signal (it stays Compliant by successfully reconciling those objects); the inform gate CP below is.
+          remediationAction: enforce
           severity: high
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
@@ -108,7 +117,7 @@ spec:
             {{ "{{-" }} $issuerKind := `{{ "{{hub" }} $issuerKind {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $issuerGroup := `{{ "{{hub" }} $issuerGroup {{ "hub}}" }}` {{ "}}" }}
             ##### ACT (on the consumer): COLLECT every readiness problem for the desired mode into $errors, #####
-            ##### then fail ONCE at the end with the full list — one apply surfaces all issues, no fix-one- #####
+            ##### then surface them ONCE at the end via the status ConfigMap — one apply shows all issues, no #####
             ##### fail-next loop. $errors empty -> emit nothing -> Compliant. cert-manager is required only #####
             ##### when an EXTERNAL mode is active here (not out-of-band); a selfSigned consumer mints nothing. #####
             {{ "{{-" }} $external := (ne $mode "selfSigned") {{ "}}" }}
@@ -187,15 +196,37 @@ spec:
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
-            ##### SINGLE failure point: if anything was collected, emit ALL of it at once so one fix clears the #####
-            ##### gate. Built by hand (not join) to stay on ACM's supported template-function set. #####
-            {{ "{{-" }} if $errors {{ "}}" }}
-              {{ "{{-" }} $msg := "" {{ "}}" }}
-              {{ "{{-" }} range $e := $errors {{ "}}" }}
-                {{ "{{-" }} $msg = (printf "%s\n  - %s" $msg $e) {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} fail (printf "readiness gate (consumer): %d issue(s) block ESO %q-mode bootstrap on this cluster:%s" (len $errors) $mode $msg) {{ "}}" }}
-            {{ "{{-" }} end {{ "}}" }}
+            ##### SURFACE results as DATA (no fail): the eso.boot.statusReport helper emits, AS RUNTIME #####
+            ##### conditionals on $errors, the status ConfigMap (full list) + Warning Event when anything was #####
+            ##### collected, and mustnothave's both when $errors is empty so the signal self-heals. The #####
+            ##### companion inform gate CP below turns that ConfigMap's presence into this Policy's compliance. #####
+            {{- include "eso.boot.statusReport" (dict "policy" "eso-boot-readiness-spoke" "ns" "open-cluster-management-agent-addon") | nindent 12 }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: eso-boot-readiness-spoke-gate
+        spec:
+          # inform GATE: the compliance proxy for the readiness report. It mutates nothing; it merely asserts
+          # the report's status ConfigMap is ABSENT. Present (the report found problems) -> NonCompliant ->
+          # dependents (policy-eso-boot-store) stay Pending. Absent -> Compliant -> the bootstrap proceeds.
+          # No hub/runtime templating here — a static name match against the per-policy status ConfigMap.
+          # The status CM lives in open-cluster-management-agent-addon: it always exists on a managed cluster
+          # (klusterlet addon ns), so the gate can never falsely read Compliant because the CM's namespace
+          # was missing. The enforce report CP writes/clears it in the same namespace.
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-boot-readiness-spoke-status
+                  namespace: open-cluster-management-agent-addon
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

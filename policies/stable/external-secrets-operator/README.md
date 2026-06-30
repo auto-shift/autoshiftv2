@@ -949,11 +949,19 @@ config:
       storeName: hub-bootstrap               # ClusterSecretStore name (default: chart hubBootstrap.storePrefix)
       mode: selfSigned                       # selfSigned | externalCA | externalCAReuseServingCert
       # ---- clientIdentity (selfSigned + externalCA; ignored in reuse) ----
+      # The cert-spec tunables (certDuration / certRenewBefore / certUsages / privateKey*) are EMITTED ON
+      # THE Certificate ONLY WHEN SET. Left unset they fall back to MODE-BASED defaults: selfSigned (our own
+      # CA honors them verbatim) -> sensible values INCLUDING the client-auth usage; externalCA / reuse ->
+      # LEFT UNSET so the external issuer governs validity + keyUsage and is never fought into a perpetual
+      # re-issue loop (see the "external issuers" note below).
       clientIdentity:
         certCNPrefix: autoshift-eso-client   # client cert CN = <prefix>.<managedClusterName>.<baseDomain> (default from values)
         # baseDomain: eso.hub.example.com    # CN FQDN tail (selfSigned default: autoshift.io; REQUIRED in externalCA)
-        certDuration: 720h                   # client cert lifetime (default from values)
-        certRenewBefore: 480h                # renew window (default from values)
+        # certDuration: 720h                 # unset -> selfSigned: 720h; external: omitted (issuer decides)
+        # certRenewBefore: 480h              # unset -> selfSigned: 480h; external: omitted (issuer decides)
+        # certUsages: [client auth, digital signature, key encipherment]  # unset -> selfSigned: this set; external: omitted
+        # privateKeyAlgorithm: RSA           # unset -> selfSigned: RSA; external: omitted (issuer decides)
+        # privateKeySize: 2048               # unset -> selfSigned: 2048; external: omitted (issuer decides)
       # ---- externalCertAuthority (externalCA + reuse; omit entirely in selfSigned) ----
       externalCertAuthority:
         caTrustBundle:                       # the external CA bundle the hub apiserver clientCA trusts (REQUIRED in external modes)
@@ -979,6 +987,16 @@ config:
         #                                    #   descriptor) and applies NOTHING live. Default: hubBootstrap.diagnostics.debugRender.
 ```
 
+> **External issuers (Venafi/TPP, ACME, …) and the cert-spec tunables.** cert-manager compares the
+> X.509 it gets back against the `Certificate` spec; **any field the issuer overrides becomes permanent
+> drift, so cert-manager re-issues every reconcile (~1/min)** — which, against an issuer that notifies on
+> issuance, can blast an org's mailing list. Many enterprise issuers enforce their *own* validity,
+> key usage, and key type. That is why in `externalCA` / `externalCAReuseServingCert` modes the bootstrap
+> requests a **bare** client cert — `dnsNames` + `issuerRef` only — and emits `duration`/`renewBefore`/
+> `usages`/`privateKey` **only if you explicitly set them** under `clientIdentity`. In `selfSigned` mode
+> our own CA honors the spec verbatim, so the mode-based defaults (incl. the `client auth` usage hub mTLS
+> needs) are applied. Only set these fields for an external issuer if you know it won't override them.
+
 There is **no `externalSecrets` key** — this policy only provisions the store. To consume Secrets
 from the hub, a consumer creates its own `ExternalSecret` referencing the store by name (the
 `storeName` above, default `hub-bootstrap`):
@@ -1001,9 +1019,11 @@ spec:
 ```
 
 The cert identity and the namespace it reads are fixed by the deployment, so the spoke block sets
-no `certCN`/`remoteNamespace`. The cert tunables (`certCNPrefix`/`certDuration`/`certRenewBefore`)
-are read from `config.eso.hubBootstrap` by the hub trust policy, defaulting to the chart values
-(`hubBootstrap.clientIdentity.certCNPrefix`, `certDuration`/`certRenewBefore` in `values.yaml`).
+no `certCN`/`remoteNamespace`. `certCNPrefix` is read from `config.eso.hubBootstrap` (default the chart
+value `hubBootstrap.clientIdentity.certCNPrefix`). The remaining cert-spec tunables
+(`certDuration`/`certRenewBefore`/`certUsages`/`privateKey*`) are **emit-only-when-set** with mode-based
+fallbacks — see the external-issuer note above; precedence per field is explicit per-deployment config →
+chart `values.yaml` → mode-based default (selfSigned sensible / external bare).
 
 - **Opt-in / all-or-nothing:** the copy policy is a no-op unless `hubBootstrap` is set (needs
   at least a `hubServer`); the trust policy is a no-op unless at least one owned `ManagedCluster`
@@ -1160,8 +1180,9 @@ of them lists `externalSecrets` — this policy provisions the store only; consu
 
 #### 1. `selfSigned` (default) — hub mints the CA and a per-cluster client cert
 
-No external PKI. Omitting `mode` selects this. `baseDomain` defaults to `autoshift.io` and the cert
-tunables default to the chart values — all four are shown only to make the knobs explicit.
+No external PKI. Omitting `mode` selects this. `baseDomain` defaults to `autoshift.io`. The cert-spec
+tunables are optional and shown only to make the knobs explicit; left unset, selfSigned applies its
+mode-based defaults (720h / 480h / `[client auth, digital signature, key encipherment]` / RSA 2048).
 
 ```yaml
 clusters:
@@ -1175,8 +1196,8 @@ clusters:
           clientIdentity:
             certCNPrefix: autoshift-eso-client          # CN = <prefix>.<cluster>.<baseDomain>
             baseDomain: autoshift.io                    # default; origin marker, never leaves the trust domain
-            certDuration: 720h                          # client cert lifetime (default 30d)
-            certRenewBefore: 480h                       # renew window (default 20d)
+            # certDuration: 720h                        # optional; selfSigned default if unset
+            # certRenewBefore: 480h                     # optional; selfSigned default if unset
 ```
 
 #### 2. `externalCA` — spoke mints its own cert from a shared external CA
@@ -1379,6 +1400,38 @@ flowchart TB
 > Policy read already works without this policy. `bootPrereqs` exists to make the required access
 > **explicit and config-driven** — the foundation for moving AutoShift internals off blanket
 > cluster-admin toward least privilege.
+
+### Precondition failures — where to look (status ConfigMap + gate)
+
+The boot policies never call the template `fail` builtin. `fail` aborts template **processing**, so the
+config-policy-controller reports a `template error` whose envelope embeds the **entire** hub-resolved
+policy (hundreds of lines, twice — in `status` *and* `spec`) with the real reason truncated off the end:
+effectively unreadable in the ACM/OCP console. Instead, every policy that has preconditions is split into
+**two ConfigurationPolicies** that surface problems as **data**:
+
+- **`<name>-report`** (`remediationAction: enforce`) does the real work, collects every problem into a
+  list, and writes a per-policy **status ConfigMap `<name>-status`** in the
+  **`open-cluster-management-agent-addon`** namespace (which always exists on a managed cluster) holding
+  `policy`, `errorCount`, and the full `errors` list. When everything is healthy it **deletes** that
+  ConfigMap (self-clearing). This CP stays Compliant — it just reconciles its objects.
+- **`<name>-gate`** (`remediationAction: inform`) asserts (`mustnothave`) that the status ConfigMap is
+  **absent**. Present (the report found problems) → **NonCompliant** with a short message naming the
+  ConfigMap; absent → Compliant. This gate is the Policy's compliance signal, so anything depending on
+  the Policy via `spec.dependencies` keeps gating exactly as before.
+
+No custom Event is emitted — ACM already fires Events on every policy compliance transition. To read the
+detail:
+
+```bash
+# the Policy shows NonCompliant; the gate's message names the status ConfigMap. Read the full list:
+oc get cm eso-boot-store-status -n open-cluster-management-agent-addon -o yaml
+oc get cm -n open-cluster-management-agent-addon -l autoshift.io/eso-boot-status=true   # all of them
+```
+
+Applies to the readiness gates (`policy-eso-boot-readiness-hub`, `…-readiness-spoke`) and the action
+boot policies (`policy-eso-boot-store`, with the remaining minters being migrated to the same pattern).
+For an action policy the live objects (cert mint, secret copy, the `ClusterSecretStore`) are additionally
+gated on **no** precondition errors, so a bad precondition skips the action instead of half-applying it.
 
 ## Reading provisioned Secrets (`secret-reader`)
 
@@ -1625,6 +1678,16 @@ For operators that need installation verification:
 1. Test locally: `helm template policies/external-secrets-operator/`
 2. Check hub escaping: Look for `{{ "{{hub" }} ... {{ "hub}}" }}` patterns
 3. Validate YAML: `helm lint policies/external-secrets-operator/`
+
+### Boot/readiness policy NonCompliant
+A boot or readiness Policy showing NonCompliant has hit a precondition — the detail is in its **status
+ConfigMap**, not in the policy controller logs (the boot policies no longer use `fail`, so there is no
+`template error` to chase). The gate's compliance message names the ConfigMap; read the full list with:
+```bash
+oc get cm -n open-cluster-management-agent-addon -l autoshift.io/eso-boot-status=true
+oc get cm <policy>-status -n open-cluster-management-agent-addon -o jsonpath='{.data.errors}'
+```
+See [Precondition failures — where to look](#precondition-failures--where-to-look-status-configmap--gate).
 
 ## Resources
 - [Operator Documentation](https://operatorhub.io/operator/external-secrets-operator) - Find your operator details
