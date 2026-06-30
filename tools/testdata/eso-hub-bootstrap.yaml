@@ -8,7 +8,7 @@ metadata:
     autoshift.io/createdByAutoshift: "true"
 ---
 # ManagedCluster owned by this deployment: its owning-namespace label == the policy namespace,
-# so policy-external-secrets-operator-hub-bootstrap-trust mints a per-cluster client cert + RoleBinding
+# so policy-eso-boot-clientca-self mints a per-cluster client cert + RoleBinding
 # for it (CN = <prefix>.<truncated lint-cluster>.<baseDomain>). The unlabelled local-cluster fixture in
 # cluster-openshift-resources.yaml is correctly SKIPPED (no tenancy label = not an autoshift cluster).
 apiVersion: cluster.open-cluster-management.io/v1
@@ -19,14 +19,22 @@ metadata:
     autoshift.io/owning-namespace: policies-autoshift
 spec:
   hubAcceptsClient: true
-  # Registered apiserver URL. In externalCAReuseServingCert mode the hub trust policy derives the
+  # Registered apiserver URL. In externalCAReuseServingCert mode the hub clientca policy derives the
   # client identity (RBAC subject) from this URL's host — it must equal the serving cert Subject CN.
   # Host here matches the namedCertificates names[0] in cluster-openshift-resources.yaml.
   managedClusterClientConfigs:
     - url: 'https://api.test-cluster.test.example.com:6443'
+status:
+  # apiserverurl.openshift.io clusterClaim (synced from the spoke). In externalCA mode BOTH the hub
+  # clientca-external policy and the spoke store policy derive the client cert CN from this URL's REAL
+  # cluster-name label (api.<realName>.<base> -> "test-cluster"), NOT the OCM name "lint-cluster" —
+  # self-managed hubs are all "local-cluster" and would collide under the shared external CA.
+  clusterClaims:
+    - name: apiserverurl.openshift.io
+      value: 'https://api.test-cluster.test.example.com:6443'
 ---
 # External CA bundle the hub apiserver clientCA trusts in the externalCA / externalCAReuseServingCert
-# modes (config.eso.hubBootstrap.externalClientCA.name). The trust-external policy reads this on the
+# modes (config.eso.hubBootstrap.externalClientCA.name). The clientca-external policy reads this on the
 # hub and materializes it into the openshift-config clientCA ConfigMap.
 apiVersion: v1
 kind: ConfigMap
@@ -42,8 +50,8 @@ data:
     -----END CERTIFICATE-----
 ---
 # Fake hub-minted client cert for THIS cluster (per-cluster: <prefix>-client-<managedClusterName>),
-# produced on the hub by policy-external-secrets-operator-hub-bootstrap-trust (cert-manager Certificate
-# in the policy namespace). policy-external-secrets-operator-hub-bootstrap copies it into the spoke ESO
+# produced on the hub by policy-eso-boot-clientca-self (cert-manager Certificate
+# in the policy namespace). policy-eso-boot-store copies it into the spoke ESO
 # namespace under the fixed local name hub-bootstrap-client for the kubernetes-provider store's cert auth.
 apiVersion: v1
 kind: Secret
@@ -59,8 +67,8 @@ data:
   # ca.crt: fake-hub-bootstrap-ca-not-real
   ca.crt: ZmFrZS1odWItYm9vdHN0cmFwLWNhLW5vdC1yZWFs
 ---
-# Hub serving CA stashed in the policy namespace by policy-external-secrets-operator-hub-bootstrap-serving-ca
-# (resolved at runtime on the hub). policy-external-secrets-operator-hub-bootstrap copies this
+# Hub serving CA stashed in the policy namespace by policy-eso-boot-serving-ca
+# (resolved at runtime on the hub). policy-eso-boot-store copies this
 # (hub fromConfigMap on the policy namespace) into the spoke so the store trusts the hub TLS.
 apiVersion: v1
 kind: ConfigMap
@@ -77,7 +85,7 @@ data:
 ---
 # Fake custom serving cert (chain in tls.crt) referenced by the APIServer named certificate in
 # cluster-openshift-resources.yaml (which matches Infrastructure.status.apiServerURL host in
-# cluster-infrastructure.yaml). policy-external-secrets-operator-hub-bootstrap-serving-ca resolves
+# cluster-infrastructure.yaml). policy-eso-boot-serving-ca resolves
 # this at runtime on the hub and stashes tls.crt into the policy-namespace serving-CA ConfigMap.
 apiVersion: v1
 kind: Secret
@@ -103,3 +111,38 @@ data:
     Mao0GCCqGSM49BAMCMA0xCzAJBgNVBAYTAlVTMB4XDTIwMDQxNjAwMDAwMFoXDDI1
     fakeservingcadatafakeservingcadatafakeservingcadatafakeservingca00
     -----END CERTIFICATE-----
+---
+# A generic, UNLABELLED RoleBinding on the hub. Two purposes: (1) registers the RoleBinding GVK so the
+# clientca policies' orphan-cleanup `lookup RoleBinding` resolves (a real cluster always has RBAC
+# installed; the offline resolver only knows GVKs present in the seed); (2) acts as a control — the
+# cleanup must SKIP it because it lacks the autoshift.io/secret-reader-rolebinding label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: unrelated-rolebinding
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: some-other-role
+subjects:
+  - kind: User
+    name: someone@example.com
+    apiGroup: rbac.authorization.k8s.io
+---
+# Self-signed CA secret that cert-manager mints from the hub-bootstrap-ca Certificate created by the
+# clientca-selfsigned MINT policy. The dependent policy-eso-boot-clientca-self-wire
+# reads ca.crt via fromSecret and materializes it (base64-decoded) into the openshift-config clientCA
+# ConfigMap, then points APIServer.spec.clientCA at it. ca.crt decodes to a recognizable marker PEM.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hub-bootstrap-ca
+  namespace: cert-manager
+type: kubernetes.io/tls
+data:
+  # ca.crt PEM -> "-----BEGIN CERTIFICATE-----\nfakehubbootstrapcaforclientcawiring\n-----END CERTIFICATE-----"
+  ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCmZha2VodWJib290c3RyYXBjYWZvcmNsaWVudGNhd2lyaW5nCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCmZha2VodWJib290c3RyYXBjYWZvcmNsaWVudGNhd2lyaW5nCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+  # tls.key: fake-hub-bootstrap-ca-key-not-real
+  tls.key: ZmFrZS1odWItYm9vdHN0cmFwLWNhLWtleS1ub3QtcmVhbA==

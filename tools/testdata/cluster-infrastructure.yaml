@@ -51,3 +51,14 @@ status:
     - defaultHostname: console-openshift-console.apps.test-cluster.test.example.com
       name: console
       namespace: openshift-console
+---
+# The apiserver URL is read from this ClusterClaim (spec.value), not config.openshift.io/Infrastructure
+# — the ESO hub-bootstrap policies look it up via `lookup ClusterClaim apiserverurl.openshift.io` on the
+# cluster the template runs on. Value mirrors Infrastructure.status.apiServerURL above so the host/URL
+# assertions (deriveHubUrl, externalCAReuseServingCert, serving-ca named-cert match) are unchanged.
+apiVersion: cluster.open-cluster-management.io/v1alpha1
+kind: ClusterClaim
+metadata:
+  name: apiserverurl.openshift.io
+spec:
+  value: https://api.test-cluster.test.example.com:6443
