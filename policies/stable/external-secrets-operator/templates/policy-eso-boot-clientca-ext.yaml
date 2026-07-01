@@ -18,10 +18,13 @@
 {{ "{{hub-" }} $extCAKey := (index $extCA "key" | default "{{ .defaultExtCAKey }}") {{ "hub}}" }}
 ##### BRIDGE the derived settings to the runtime side #####
 {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
-##### Reject an unknown mode loudly (a typo'd mode would otherwise silently no-op this policy AND #####
-##### the selfSigned companion, leaving the hub apiserver with no clientCA wired for any cluster). #####
+##### Collect precondition problems into $errors (no `fail`, which buries the reason under the whole #####
+##### policy string); surfaced via the status ConfigMap + inform gate below. #####
+{{ "{{-" }} $errors := list {{ "}}" }}
+##### Reject an unknown mode (a typo'd mode would otherwise silently no-op this policy AND the selfSigned #####
+##### companion, leaving the hub apiserver with no clientCA wired for any cluster). #####
 {{ "{{-" }} if and (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
-  {{ "{{-" }} fail (printf "invalid config.eso.hubBootstrap.mode %q (or values hubBootstrap.mode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
+  {{ "{{-" }} $errors = append $errors (printf "[spoke] invalid config.eso.hubBootstrap.mode %q (or values hubBootstrap.mode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
 {{ "{{-" }} end {{ "}}" }}
 {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
 {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
@@ -39,17 +42,24 @@
     {{ "{{-" }} $mcName := $mc.metadata.name {{ "}}" }}
     {{ "{{-" }} $tenancyNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
     {{ "{{-" }} if ne $tenancyNs "" {{ "}}" }}
+      ##### Per cluster: collect any problem into $errors WITHOUT aborting (so every bad cluster is reported #####
+      ##### at once) and only register a cluster that derives cleanly. $clusterOk tracks whether THIS cluster #####
+      ##### is usable; ANY error blocks the whole action below (all-or-nothing, as the previous `fail` did). #####
+      ##### Each derivation step is guarded on $clusterOk so a crash-prone index never runs after a failure. #####
       {{ "{{-" }} $identity := "" {{ "}}" }}
+      {{ "{{-" }} $clusterOk := true {{ "}}" }}
       {{ "{{-" }} if eq $mode "externalCA" {{ "}}" }}
         ##### externalCA: CN = <prefix>.<clusterTrunc>.<baseDomain>, identical to the selfSigned derivation #####
         {{ "{{-" }} if eq $certBaseDomain "" {{ "}}" }}
-          {{ "{{-" }} fail "config.eso.hubBootstrap.clientIdentity.baseDomain (or values hubBootstrap.clientIdentity.baseDomain) is required in externalCA mode (the spoke derives the SAME CN, so the hub RBAC must match)" {{ "}}" }}
+          {{ "{{-" }} $errors = append $errors "[spoke] config.eso.hubBootstrap.clientIdentity.baseDomain (or values hubBootstrap.clientIdentity.baseDomain) is required in externalCA mode (the spoke derives the SAME CN, so the hub RBAC must match)" {{ "}}" }}
+          {{ "{{-" }} $clusterOk = false {{ "}}" }}
         {{ "{{-" }} end {{ "}}" }}
         ##### CN budget is externalCA-only: the reuse mode discovers its identity from the apiserver #####
         ##### host and mints no cert, so there is no CN to size/truncate there. #####
         {{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
-        {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}
-          {{ "{{-" }} fail (printf "hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (combined length must be <= 61); shorten the prefix or baseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
+        {{ "{{-" }} if and $clusterOk (lt $cnBudget 1) {{ "}}" }}
+          {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (combined length must be <= 61); shorten the prefix or baseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
+          {{ "{{-" }} $clusterOk = false {{ "}}" }}
         {{ "{{-" }} end {{ "}}" }}
         ##### $clusterSeg = the cluster's REAL name (apiserverurl.openshift.io clusterClaim host label #####
         ##### api.<realName>.<base>), NOT $mcName — self-managed hubs are ALL named "local-cluster", which #####
@@ -57,69 +67,85 @@
         ##### synced onto the hub's ManagedCluster.status.clusterClaims. The spoke store policy derives the #####
         ##### SAME way, so its minted CN matches this RBAC subject. #####
         {{ "{{-" }} $apiUrl := "" {{ "}}" }}
-        {{ "{{-" }} range $claim := (dig "status" "clusterClaims" (list) $mc) {{ "}}" }}
-          {{ "{{-" }} if eq (dig "name" "" $claim) "apiserverurl.openshift.io" {{ "}}" }}
-            {{ "{{-" }} $apiUrl = (dig "value" "" $claim) {{ "}}" }}
+        {{ "{{-" }} if $clusterOk {{ "}}" }}
+          {{ "{{-" }} range $claim := (dig "status" "clusterClaims" (list) $mc) {{ "}}" }}
+            {{ "{{-" }} if eq (dig "name" "" $claim) "apiserverurl.openshift.io" {{ "}}" }}{{ "{{-" }} $apiUrl = (dig "value" "" $claim) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+          {{ "{{-" }} end {{ "}}" }}
+          {{ "{{-" }} if eq $apiUrl "" {{ "}}" }}
+            {{ "{{-" }} $errors = append $errors (printf "[spoke] ManagedCluster %q has no apiserverurl.openshift.io clusterClaim — cannot derive its real cluster name for the externalCA client cert CN" $mcName) {{ "}}" }}
+            {{ "{{-" }} $clusterOk = false {{ "}}" }}
           {{ "{{-" }} end {{ "}}" }}
         {{ "{{-" }} end {{ "}}" }}
-        {{ "{{-" }} if eq $apiUrl "" {{ "}}" }}
-          {{ "{{-" }} fail (printf "ManagedCluster %q has no apiserverurl.openshift.io clusterClaim — cannot derive its real cluster name for the externalCA client cert CN" $mcName) {{ "}}" }}
+        {{ "{{-" }} if $clusterOk {{ "}}" }}
+          {{ "{{-" }} $hostLabels := (splitList "." (index (splitList ":" (replace "https://" "" $apiUrl)) 0)) {{ "}}" }}
+          {{ "{{-" }} if lt (len $hostLabels) 2 {{ "}}" }}
+            {{ "{{-" }} $errors = append $errors (printf "[spoke] ManagedCluster %q apiserver URL %q is not of the form https://api.<cluster>.<base> — cannot derive the real cluster name" $mcName $apiUrl) {{ "}}" }}
+            {{ "{{-" }} $clusterOk = false {{ "}}" }}
+          {{ "{{-" }} else {{ "}}" }}
+            {{ "{{-" }} $clusterSeg := (index $hostLabels 1) {{ "}}" }}
+            ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
+            {{ "{{-" }} if gt (len $clusterSeg) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $clusterSeg) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $identity = (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
+          {{ "{{-" }} end {{ "}}" }}
         {{ "{{-" }} end {{ "}}" }}
-        {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
-        {{ "{{-" }} $hostLabels := (splitList "." $apiHost) {{ "}}" }}
-        {{ "{{-" }} if lt (len $hostLabels) 2 {{ "}}" }}
-          {{ "{{-" }} fail (printf "ManagedCluster %q apiserver URL %q is not of the form https://api.<cluster>.<base> — cannot derive the real cluster name" $mcName $apiUrl) {{ "}}" }}
-        {{ "{{-" }} end {{ "}}" }}
-        {{ "{{-" }} $clusterSeg := (index $hostLabels 1) {{ "}}" }}
-        ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
-        {{ "{{-" }} if gt (len $clusterSeg) $cnBudget {{ "}}" }}
-          {{ "{{-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $clusterSeg) {{ "}}" }}
-        {{ "{{-" }} end {{ "}}" }}
-        {{ "{{-" }} $identity = (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
       {{ "{{-" }} else if eq $mode "externalCAReuseServingCert" {{ "}}" }}
         ##### externalCAReuseServingCert: identity = host of the cluster's registered apiserver URL. #####
         ##### No urlParse in ACM templates, so split scheme//host:port/path with splitList + index. #####
         {{ "{{-" }} $clientConfigs := (dig "spec" "managedClusterClientConfigs" (list) $mc) {{ "}}" }}
         {{ "{{-" }} if not $clientConfigs {{ "}}" }}
-          {{ "{{-" }} fail (printf "ManagedCluster %q has no spec.managedClusterClientConfigs[].url — cannot derive the client identity for externalCAReuseServingCert mode" $mcName) {{ "}}" }}
+          {{ "{{-" }} $errors = append $errors (printf "[spoke] ManagedCluster %q has no spec.managedClusterClientConfigs[].url — cannot derive the client identity for externalCAReuseServingCert mode" $mcName) {{ "}}" }}
+          {{ "{{-" }} $clusterOk = false {{ "}}" }}
         {{ "{{-" }} end {{ "}}" }}
-        {{ "{{-" }} $url := (dig "url" "" (index $clientConfigs 0)) {{ "}}" }}
-        {{ "{{-" }} if eq $url "" {{ "}}" }}
-          {{ "{{-" }} fail (printf "ManagedCluster %q managedClusterClientConfigs[0].url is empty" $mcName) {{ "}}" }}
-        {{ "{{-" }} end {{ "}}" }}
-        {{ "{{-" }} $afterScheme := $url {{ "}}" }}
-        {{ "{{-" }} if contains "//" $url {{ "}}" }}
-          {{ "{{-" }} $afterScheme = (index (splitList "//" $url) 1) {{ "}}" }}
-        {{ "{{-" }} end {{ "}}" }}
-        {{ "{{-" }} $hostport := (index (splitList "/" $afterScheme) 0) {{ "}}" }}
-        {{ "{{-" }} $identity = (index (splitList ":" $hostport) 0) {{ "}}" }}
-        {{ "{{-" }} if eq $identity "" {{ "}}" }}
-          {{ "{{-" }} fail (printf "could not derive apiserver host from ManagedCluster %q url %q" $mcName $url) {{ "}}" }}
+        {{ "{{-" }} if $clusterOk {{ "}}" }}
+          {{ "{{-" }} $url := (dig "url" "" (index $clientConfigs 0)) {{ "}}" }}
+          {{ "{{-" }} if eq $url "" {{ "}}" }}
+            {{ "{{-" }} $errors = append $errors (printf "[spoke] ManagedCluster %q managedClusterClientConfigs[0].url is empty" $mcName) {{ "}}" }}
+            {{ "{{-" }} $clusterOk = false {{ "}}" }}
+          {{ "{{-" }} else {{ "}}" }}
+            {{ "{{-" }} $afterScheme := $url {{ "}}" }}
+            {{ "{{-" }} if contains "//" $url {{ "}}" }}{{ "{{-" }} $afterScheme = (index (splitList "//" $url) 1) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $hostport := (index (splitList "/" $afterScheme) 0) {{ "}}" }}
+            {{ "{{-" }} $identity = (index (splitList ":" $hostport) 0) {{ "}}" }}
+            {{ "{{-" }} if eq $identity "" {{ "}}" }}
+              {{ "{{-" }} $errors = append $errors (printf "[spoke] could not derive apiserver host from ManagedCluster %q url %q" $mcName $url) {{ "}}" }}
+              {{ "{{-" }} $clusterOk = false {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+          {{ "{{-" }} end {{ "}}" }}
         {{ "{{-" }} end {{ "}}" }}
       {{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} if hasKey $seenIds $identity {{ "}}" }}
-        {{ "{{-" }} fail (printf "hub-bootstrap-external identity collision: clusters %q and %q both map to identity %q; rename a cluster or (externalCA) lengthen the CN budget" (index $seenIds $identity) $mcName $identity) {{ "}}" }}
+      {{ "{{-" }} if and $clusterOk (hasKey $seenIds $identity) {{ "}}" }}
+        {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap-external identity collision: clusters %q and %q both map to identity %q; rename a cluster or (externalCA) lengthen the CN budget" (index $seenIds $identity) $mcName $identity) {{ "}}" }}
+        {{ "{{-" }} $clusterOk = false {{ "}}" }}
       {{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} $seenIds = set $seenIds $identity $mcName {{ "}}" }}
-      {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "id" $identity) {{ "}}" }}
-      ##### group identities by owning namespace for the per-namespace reader Role + RoleBinding below #####
-      {{ "{{-" }} $nsList := (index $nsIdentities $tenancyNs | default list) {{ "}}" }}
-      {{ "{{-" }} $nsList = append $nsList $identity {{ "}}" }}
-      {{ "{{-" }} $_ := set $nsIdentities $tenancyNs $nsList {{ "}}" }}
+      ##### register + enqueue only a fully-valid cluster; an errored cluster is skipped and the action is #####
+      ##### blocked wholesale by `not $errors` below regardless. #####
+      {{ "{{-" }} if $clusterOk {{ "}}" }}
+        {{ "{{-" }} $seenIds = set $seenIds $identity $mcName {{ "}}" }}
+        {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "id" $identity) {{ "}}" }}
+        ##### group identities by owning namespace for the per-namespace reader Role + RoleBinding below #####
+        {{ "{{-" }} $nsList := (index $nsIdentities $tenancyNs | default list) {{ "}}" }}
+        {{ "{{-" }} $nsList = append $nsList $identity {{ "}}" }}
+        {{ "{{-" }} $_ := set $nsIdentities $tenancyNs $nsList {{ "}}" }}
+      {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} end {{ "}}" }}
   {{ "{{-" }} end {{ "}}" }}
   ##### Wire the CA + per-namespace RBAC only when at least one eligible cluster exists. Nested #####
   ##### INSIDE the mode guard above so cert/CA wiring can NEVER fire outside the external modes, #####
   ##### no matter how $eligible is later initialized — here it is purely a non-empty check. #####
   {{ "{{-" }} if $eligible {{ "}}" }}
-    ##### WIRE THE EXTERNAL CA INTO THE HUB APISERVER clientCA (additive; operator signers stay trusted) #####
+    ##### WIRE THE EXTERNAL CA INTO THE HUB APISERVER clientCA (additive; operator signers stay trusted). #####
+    ##### The bundle checks append to $errors; the wiring objects below emit ONLY when $errors stays empty. #####
     {{ "{{-" }} if eq $extCAName "" {{ "}}" }}
-      {{ "{{-" }} fail "config.eso.hubBootstrap.externalCertAuthority.caTrustBundle.name (or values hubBootstrap.externalCertAuthority.caTrustBundle.name) is required in externalCA / externalCAReuseServingCert mode" {{ "}}" }}
+      {{ "{{-" }} $errors = append $errors "[spoke] config.eso.hubBootstrap.externalCertAuthority.caTrustBundle.name (or values hubBootstrap.externalCertAuthority.caTrustBundle.name) is required in externalCA / externalCAReuseServingCert mode" {{ "}}" }}
     {{ "{{-" }} end {{ "}}" }}
-    {{ "{{-" }} $extBundle := (fromConfigMap $extCANamespace $extCAName $extCAKey) {{ "}}" }}
-    {{ "{{-" }} if eq $extBundle "" {{ "}}" }}
-      {{ "{{-" }} fail (printf "external CA bundle ConfigMap %s/%s key %q not found or empty — provide the shared external CA the hub apiserver should trust" $extCANamespace $extCAName $extCAKey) {{ "}}" }}
+    {{ "{{-" }} $extBundle := "" {{ "}}" }}
+    {{ "{{-" }} if not $errors {{ "}}" }}
+      {{ "{{-" }} $extBundle = (fromConfigMap $extCANamespace $extCAName $extCAKey) {{ "}}" }}
+      {{ "{{-" }} if eq $extBundle "" {{ "}}" }}
+        {{ "{{-" }} $errors = append $errors (printf "[spoke] external CA bundle ConfigMap %s/%s key %q not found or empty — provide the shared external CA the hub apiserver should trust" $extCANamespace $extCAName $extCAKey) {{ "}}" }}
+      {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} end {{ "}}" }}
+    {{ "{{-" }} if not $errors {{ "}}" }}
 - complianceType: musthave
   objectDefinition:
     apiVersion: v1
@@ -182,6 +208,7 @@
         apiGroup: rbac.authorization.k8s.io
       {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} end {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
   {{ "{{-" }} end {{ "}}" }}
 {{ "{{-" }} end {{ "}}" }}
 ##### CLEANUP (orphaned RoleBindings): a reader RoleBinding this policy labelled whose namespace no #####
@@ -189,8 +216,10 @@
 ##### it. Deleting the binding alone revokes access (its Role grants nothing unbound; Role cleanup is #####
 ##### left to a future label sweep). Gated on the SAME modes as the enumerate loop above: the inactive #####
 ##### companion policy has an EMPTY $nsIdentities, so without this gate it would delete every labelled #####
-##### binding — including the active policy's. Runs even when $eligible is empty (last cluster left). #####
-{{ "{{-" }} if or (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert") {{ "}}" }}
+##### binding — including the active policy's. Runs even when $eligible is empty (last cluster left), but #####
+##### NOT when $errors is non-empty: a derivation error can drop a live cluster from $nsIdentities, and #####
+##### deleting its binding on a transient error would revoke access — skip cleanup until the error clears. #####
+{{ "{{-" }} if and (or (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert")) (not $errors) {{ "}}" }}
   {{ "{{-" }} range $rb := ((lookup "rbac.authorization.k8s.io/v1" "RoleBinding" "" "").items | default list) {{ "}}" }}
     {{ "{{-" }} $rbLabels := (dig "metadata" "labels" (dict) $rb) {{ "}}" }}
     {{ "{{-" }} if hasKey $rbLabels "autoshift.io/secret-reader-rolebinding" {{ "}}" }}
@@ -207,6 +236,10 @@
     {{ "{{-" }} end {{ "}}" }}
   {{ "{{-" }} end {{ "}}" }}
 {{ "{{-" }} end {{ "}}" }}
+##### SURFACE precondition results as DATA (no fail): the helper writes the eso-boot-clientca-ext-status #####
+##### ConfigMap (full list) when $errors is non-empty and mustnothave-clears it when empty. The companion #####
+##### inform gate CP turns that ConfigMap's presence into this Policy's compliance for dependents. #####
+{{- include "eso.boot.statusReport" (dict "policy" "eso-boot-clientca-ext" "ns" "open-cluster-management-agent-addon") | nindent 0 }}
 {{- end -}}
 # Hub-side half of the cluster->cluster ESO bootstrap for the EXTERNAL-CA trust modes. Companion to
 # policy-eso-boot-clientca-self.yaml (which owns the selfSigned mode); the two
@@ -325,6 +358,30 @@ spec:
             {{ "{{hub-" }} else if not $readinessOnly {{ "hub}}" }}
             {{- include "eso.bootBody.clientcaExt" $ctx | nindent 12 }}
             {{ "{{hub-" }} end {{ "hub}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: eso-boot-clientca-ext-gate
+        spec:
+          # inform GATE: the compliance proxy for the external-CA wiring policy's precondition report. It
+          # mutates nothing; it asserts the report's status ConfigMap is ABSENT. Present (the enforce body
+          # collected a precondition error) -> NonCompliant, so dependents stay Pending. Absent -> Compliant.
+          # The status CM lives in open-cluster-management-agent-addon (always present on the hub's
+          # klusterlet), so the gate can never falsely read Compliant because the namespace was missing.
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-boot-clientca-ext-status
+                  namespace: open-cluster-management-agent-addon
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

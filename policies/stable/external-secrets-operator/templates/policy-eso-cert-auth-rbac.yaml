@@ -46,6 +46,11 @@ spec:
             ##### LOAD PER-CLUSTER RENDERED CONFIG #####
             {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $secretStores := (dig "eso" "secretStores" (list) $clusterConfig) {{ "hub}}" }}
+            ##### Collect hub-template precondition problems into $hubErrors (no `fail`, which buries the reason #####
+            ##### under the whole policy string). Each is tagged [hub] (originating template layer) and bridged #####
+            ##### to a runtime $errors below, surfaced via the status ConfigMap + inform gate. Per-store skip: a #####
+            ##### misconfigured store is recorded and skipped; the other stores' RBAC is still provisioned. #####
+            {{ "{{hub-" }} $hubErrors := list {{ "hub}}" }}
             {{ "{{hub-" }} range $storeItem := $secretStores {{ "hub}}" }}
               ##### RESOLVE STORE KIND: secretStore / clusterSecretStore #####
               {{ "{{hub-" }} $storeKind := "" {{ "hub}}" }}
@@ -65,8 +70,10 @@ spec:
                 {{ "{{hub-" }} $certAuthRBAC := (index $store "certAuthRBAC" | default dict) {{ "hub}}" }}
                 {{ "{{hub-" }} $username := (index $certAuthRBAC "username" | default "") {{ "hub}}" }}
                 {{ "{{hub-" }} if eq $username "" {{ "hub}}" }}
-                  {{ "{{hub-" }} fail (printf "store %q: spec.provider.kubernetes.auth.cert requires certAuthRBAC.username (the cert CN to bind secret RBAC to)" $storeName) {{ "hub}}" }}
-                {{ "{{hub-" }} end {{ "hub}}" }}
+                  ##### Missing username: record the problem (tagged [hub]) and SKIP this store's RBAC — a #####
+                  ##### binding with an empty subject would be meaningless. Other stores are unaffected. #####
+                  {{ "{{hub-" }} $hubErrors = append $hubErrors (printf "[hub] store %q: spec.provider.kubernetes.auth.cert requires certAuthRBAC.username (the cert CN to bind secret RBAC to)" $storeName) {{ "hub}}" }}
+                {{ "{{hub-" }} else {{ "hub}}" }}
                 {{ "{{hub-" }} $verbs := (index $certAuthRBAC "verbs" | default (list "create" "update" "list" "delete")) {{ "hub}}" }}
                 {{ "{{hub-" }} $rbacNamespaces := (index $certAuthRBAC "namespaces" | default list) {{ "hub}}" }}
                 {{ "{{hub-" }} if not $rbacNamespaces {{ "hub}}" }}
@@ -155,8 +162,39 @@ spec:
                     apiGroup: rbac.authorization.k8s.io
                 {{ "{{hub-" }} end {{ "hub}}" }}
                 {{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} end {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
+            ##### BRIDGE the hub-collected problems to a runtime $errors and SURFACE them as DATA (no fail): #####
+            ##### the helper writes the eso-cert-auth-rbac-status ConfigMap (full list) when non-empty and #####
+            ##### mustnothave-clears it when empty. The companion inform gate CP turns its presence into this #####
+            ##### Policy's compliance. #####
+            {{ "{{-" }} $errors := `{{ "{{hub" }} $hubErrors | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+            {{- include "eso.boot.statusReport" (dict "policy" "eso-cert-auth-rbac" "ns" "open-cluster-management-agent-addon") | nindent 12 }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: eso-cert-auth-rbac-gate
+        spec:
+          # inform GATE: the compliance proxy for the per-store RBAC report. It mutates nothing; it asserts
+          # the report's status ConfigMap is ABSENT. Present (a store failed validation) -> NonCompliant;
+          # absent -> Compliant. Valid stores' RBAC is still provisioned by the enforce report (per-store
+          # skip), so this gate flags "some store is misconfigured" without blocking the healthy ones. The
+          # status CM lives in open-cluster-management-agent-addon (always present on hub + spoke).
+          remediationAction: inform
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-cert-auth-rbac-status
+                  namespace: open-cluster-management-agent-addon
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
