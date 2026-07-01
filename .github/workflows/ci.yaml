@@ -83,7 +83,12 @@ jobs:
           fi
 
           POLICY_COUNT=$(wc -l < autoshift/files/policy-list.txt | tr -d ' ')
-          EXPECTED=$(find policies -maxdepth 3 -name Chart.yaml | wc -l | tr -d ' ')
+          # cluster-labels and cluster-config-maps are deployed as dedicated Applications
+          # (full label/config data), not via the ApplicationSet list, so they are excluded
+          # from policy-list.txt. Keep this in sync with DEDICATED_APP_NAMES in the Makefile.
+          EXPECTED=$(find policies -maxdepth 3 -name Chart.yaml \
+            -not -path 'policies/*/cluster-labels/*' \
+            -not -path 'policies/*/cluster-config-maps/*' | wc -l | tr -d ' ')
 
           echo "policy-list.txt contains $POLICY_COUNT entries"
           echo "Expected $EXPECTED policies"
