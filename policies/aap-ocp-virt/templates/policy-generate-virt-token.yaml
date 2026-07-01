@@ -30,90 +30,91 @@ spec:
                 apiVersion: batch/v1
                 kind: Job
                 metadata:
-                 name: oc-token-init-job
-                 namespace: {{ .Values.virt_ns }}
+                  name: oc-token-init-job
+                  namespace: {{ .Values.virt_ns }}
                 spec:
-                 template:
-                   spec:
-                     serviceAccountName: oc-runner-virt
-                     containers:
-                       - name: oc
-                         image: {{ .Values.oc_cli_image }}
-                         resources:
-                           requests:
-                             cpu: 100m
-                             memory: 128Mi
-                           limits:
-                             cpu: 500m
-                             memory: 256Mi
-                         command: ["/bin/bash", "-c"]
-                         args:
-                           - |
-                             if ! oc get secret aap-sa-virt-token -n {{ .Values.virt_ns }} &> /dev/null; then
-                               echo "Secret does not exist, creating."
-                               TOKEN=$(oc create token aap-virt-sa -n {{ .Values.virt_ns }} --duration=$(( {{ "{{hub" }} $expiryDays {{ "hub}}" }} * 24))h)
-                               oc create secret generic aap-sa-virt-token -n {{ .Values.virt_ns }} --from-literal=token=$TOKEN
-                               echo "Token created successfully."
-                             else
-                               echo "Secret already exists, no action needed."
-                             fi
-                     restartPolicy: Never
+                  template:
+                    spec:
+                      serviceAccountName: oc-runner-virt
+                      containers:
+                        - name: oc
+                          image: {{ .Values.oc_cli_image }}
+                          resources:
+                            requests:
+                              cpu: 100m
+                              memory: 128Mi
+                            limits:
+                              cpu: 500m
+                              memory: 256Mi
+                          command: ["/bin/bash", "-c"]
+                          args:
+                            - |
+                              set -e
+                              if ! oc get secret aap-sa-virt-token -n {{ .Values.virt_ns }} &> /dev/null; then
+                                echo "Secret does not exist, creating."
+                                TOKEN=$(oc create token aap-virt-sa -n {{ .Values.virt_ns }} --duration=$(( {{ "{{hub" }} $expiryDays {{ "hub}}" }} * 24))h)
+                                oc create secret generic aap-sa-virt-token -n {{ .Values.virt_ns }} --from-literal=token=$TOKEN
+                                echo "Token created successfully."
+                              else
+                                echo "Secret already exists, no action needed."
+                              fi
+                      restartPolicy: Never
             - complianceType: musthave
               objectDefinition:
                 apiVersion: batch/v1
                 kind: CronJob
                 metadata:
-                 name: oc-token-refresh-cronjob
-                 namespace: {{ .Values.virt_ns }}
+                  name: oc-token-refresh-cronjob
+                  namespace: {{ .Values.virt_ns }}
                 spec:
-                 schedule: "{{ "{{hub" }} $schedule {{ "hub}}" }}"
-                 jobTemplate:
-                   spec:
-                     template:
-                       spec:
-                         serviceAccountName: oc-runner-virt
-                         containers:
-                           - name: oc
-                             image: {{ .Values.oc_cli_image }}
-                             resources:
-                               requests:
-                                 cpu: 100m
-                                 memory: 128Mi
-                               limits:
-                                 cpu: 500m
-                                 memory: 256Mi
-                             command: ["/bin/bash", "-c"]
-                             args:
-                               - |
-                                 if ! oc get secret aap-sa-virt-token -n {{ .Values.virt_ns }} &> /dev/null; then
-                                   echo "Secret does not exist, creating."
-                                   TOKEN=$(oc create token aap-virt-sa -n {{ .Values.virt_ns }} --duration=$(( {{ "{{hub" }} $expiryDays {{ "hub}}" }} * 24))h)
-                                   oc create secret generic aap-sa-virt-token -n {{ .Values.virt_ns }} --from-literal=token=$TOKEN
-                                   echo "Token created successfully."
-                                   exit 0
-                                 fi
-                                 echo "Secret exists, checking expiry."
-                                 TOKEN_VAL=$(oc get secret aap-sa-virt-token -n {{ .Values.virt_ns }} -o jsonpath='{.data.token}' | base64 -d)
-                                 PAYLOAD=$(echo "$TOKEN_VAL" | cut -d'.' -f2)
-                                 LEN=${#PAYLOAD}
-                                 PAD=$((4 - LEN % 4))
-                                 [ $PAD -ne 4 ] && PAYLOAD="${PAYLOAD}$(printf '=%.0s' $(seq 1 $PAD))"
-                                 EXP=$(echo "$PAYLOAD" | tr -- '-_' '+/' | base64 -d 2>/dev/null | grep -o '"exp":[0-9]*' | grep -o '[0-9]*$')
-                                 NOW=$(date +%s)
-                                 THRESHOLD=$((NOW + {{ "{{hub" }} $thresholdDays {{ "hub}}" }} * 24 * 3600))
-                                 DAYS_REMAINING=$(( (EXP - NOW) / 86400 ))
-                                 EXP_DATE=$(date -d "@$EXP" '+%Y-%m-%d %H:%M:%S UTC')
-                                 echo "Token expires: $EXP_DATE ($DAYS_REMAINING days remaining)"
-                                 if [ "$EXP" -le "$THRESHOLD" ]; then
-                                   echo "Token expires within {{ "{{hub" }} $thresholdDays {{ "hub}}" }} days, renewing."
-                                   oc delete secret aap-sa-virt-token -n {{ .Values.virt_ns }}
-                                   TOKEN=$(oc create token aap-virt-sa -n {{ .Values.virt_ns }} --duration=$(( {{ "{{hub" }} $expiryDays {{ "hub}}" }} * 24))h)
-                                   oc create secret generic aap-sa-virt-token -n {{ .Values.virt_ns }} --from-literal=token=$TOKEN
-                                   echo "Token renewed successfully."
-                                 else
-                                   echo "Token is valid for more than {{ "{{hub" }} $thresholdDays {{ "hub}}" }} days, no action needed."
-                                 fi
-                         restartPolicy: Never
+                  schedule: "{{ "{{hub" }} $schedule {{ "hub}}" }}"
+                  jobTemplate:
+                    spec:
+                      template:
+                        spec:
+                          serviceAccountName: oc-runner-virt
+                          containers:
+                            - name: oc
+                              image: {{ .Values.oc_cli_image }}
+                              resources:
+                                requests:
+                                  cpu: 100m
+                                  memory: 128Mi
+                                limits:
+                                  cpu: 500m
+                                  memory: 256Mi
+                              command: ["/bin/bash", "-c"]
+                              args:
+                                - |
+                                  set -e
+                                  if ! oc get secret aap-sa-virt-token -n {{ .Values.virt_ns }} &> /dev/null; then
+                                    echo "Secret does not exist, creating."
+                                    TOKEN=$(oc create token aap-virt-sa -n {{ .Values.virt_ns }} --duration=$(( {{ "{{hub" }} $expiryDays {{ "hub}}" }} * 24))h)
+                                    oc create secret generic aap-sa-virt-token -n {{ .Values.virt_ns }} --from-literal=token=$TOKEN
+                                    echo "Token created successfully."
+                                    exit 0
+                                  fi
+                                  echo "Secret exists, checking expiry."
+                                  TOKEN_VAL=$(oc get secret aap-sa-virt-token -n {{ .Values.virt_ns }} -o jsonpath='{.data.token}' | base64 -d)
+                                  PAYLOAD=$(echo "$TOKEN_VAL" | cut -d'.' -f2)
+                                  LEN=${#PAYLOAD}
+                                  PAD=$((4 - LEN % 4))
+                                  [ $PAD -ne 4 ] && PAYLOAD="${PAYLOAD}$(printf '=%.0s' $(seq 1 $PAD))"
+                                  EXP=$(echo "$PAYLOAD" | tr -- '-_' '+/' | base64 -d 2>/dev/null | grep -o '"exp":[0-9]*' | grep -o '[0-9]*$')
+                                  NOW=$(date +%s)
+                                  THRESHOLD=$((NOW + {{ "{{hub" }} $thresholdDays {{ "hub}}" }} * 24 * 3600))
+                                  DAYS_REMAINING=$(( (EXP - NOW) / 86400 ))
+                                  EXP_DATE=$(date -d "@$EXP" '+%Y-%m-%d %H:%M:%S UTC')
+                                  echo "Token expires: $EXP_DATE ($DAYS_REMAINING days remaining)"
+                                  if [ "$EXP" -le "$THRESHOLD" ]; then
+                                    echo "Token expires within {{ "{{hub" }} $thresholdDays {{ "hub}}" }} days, renewing."
+                                    TOKEN=$(oc create token aap-virt-sa -n {{ .Values.virt_ns }} --duration=$(( {{ "{{hub" }} $expiryDays {{ "hub}}" }} * 24))h)
+                                    oc create secret generic aap-sa-virt-token -n {{ .Values.virt_ns }} --from-literal=token=$TOKEN --dry-run=client -o yaml | oc apply -f -
+                                    echo "Token renewed successfully."
+                                  else
+                                    echo "Token is valid for more than {{ "{{hub" }} $thresholdDays {{ "hub}}" }} days, no action needed."
+                                  fi
+                          restartPolicy: Never
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
