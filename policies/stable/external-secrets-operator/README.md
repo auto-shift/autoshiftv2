@@ -1428,10 +1428,50 @@ oc get cm eso-boot-store-status -n open-cluster-management-agent-addon -o yaml
 oc get cm -n open-cluster-management-agent-addon -l autoshift.io/eso-boot-status=true   # all of them
 ```
 
-Applies to the readiness gates (`policy-eso-boot-readiness-hub`, `…-readiness-spoke`) and the action
-boot policies (`policy-eso-boot-store`, with the remaining minters being migrated to the same pattern).
+Applies to every policy with preconditions: the readiness gates (`policy-eso-boot-readiness-hub`,
+`…-readiness-spoke`), the action boot policies (`policy-eso-boot-store`, `…-clientca-self`,
+`…-clientca-ext`), and the store policies (`policy-eso-cert-auth-rbac`, `policy-eso-secret-stores`).
 For an action policy the live objects (cert mint, secret copy, the `ClusterSecretStore`) are additionally
 gated on **no** precondition errors, so a bad precondition skips the action instead of half-applying it.
+
+Two failure semantics, matched to what the policy provisions:
+
+- **All-or-nothing** for policies that mint a **single shared object** — `policy-eso-boot-store` (one
+  store), `…-clientca-self`/`…-clientca-ext` (one CA / clientCA). One bad input blocks the whole mint (a
+  half-built shared object is incoherent), exactly as the old `fail`-aborts-everything did.
+- **Per-store skip** for policies whose resources are **independent per store** —
+  `policy-eso-secret-stores` and `policy-eso-cert-auth-rbac`. A misconfigured store is recorded and
+  **skipped**; every other store still provisions. The Policy goes NonCompliant (its status ConfigMap
+  exists) even though most objects are healthy — so "NonCompliant" here means *some* store is broken, not
+  that nothing provisioned. Read the status ConfigMap to see which. This is deliberate: in a shared
+  dev/test/prod hub, one team breaking their store must not stop the workloads pulling from the others.
+
+#### Per-store status format (`policy-eso-secret-stores`)
+
+`policy-eso-secret-stores` provisions many independent stores, so its status ConfigMap keys the problems
+**by store then by templating layer** — `errors.<storename>.[hub|spoke]` — instead of the flat list the
+other policies use. The store name and the side that produced the error are top-level structural keys, so
+you can see at a glance *which* store failed and *which* layer (hub-side hub-template resolution vs
+spoke-side runtime resolution) surfaced it. `storeCount` replaces `errorCount` (number of errored stores):
+
+```yaml
+# oc get cm eso-secret-stores-status -n open-cluster-management-agent-addon -o yaml
+data:
+  policy: eso-secret-stores
+  storeCount: "2"
+  errors: |
+    vault-backend:
+      hub:
+        - caProvider.name is required to deliver caSource
+    remote-cluster:
+      hub:
+        - unsupported authSecretConfig.fromRef "foo"
+```
+
+```bash
+# just the structured error map:
+oc get cm eso-secret-stores-status -n open-cluster-management-agent-addon -o jsonpath='{.data.errors}'
+```
 
 ## Reading provisioned Secrets (`secret-reader`)
 
@@ -1687,7 +1727,9 @@ ConfigMap**, not in the policy controller logs (the boot policies no longer use 
 oc get cm -n open-cluster-management-agent-addon -l autoshift.io/eso-boot-status=true
 oc get cm <policy>-status -n open-cluster-management-agent-addon -o jsonpath='{.data.errors}'
 ```
-See [Precondition failures — where to look](#precondition-failures--where-to-look-status-configmap--gate).
+Most policies write a flat `errors` list; the per-store store policies (`policy-eso-secret-stores`) key it
+`errors.<storename>.[hub|spoke]` and go NonCompliant when *any* store is broken while still provisioning
+the healthy ones. See [Precondition failures — where to look](#precondition-failures--where-to-look-status-configmap--gate).
 
 ## Resources
 - [Operator Documentation](https://operatorhub.io/operator/external-secrets-operator) - Find your operator details

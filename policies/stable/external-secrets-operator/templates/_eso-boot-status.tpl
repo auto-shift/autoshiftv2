@@ -52,3 +52,66 @@
       namespace: {{ $ns }}
 {{ "{{-" }} end {{ "}}" }}
 {{- end -}}
+
+{{- /*
+  eso.boot.statusReportPerStore — structured variant of eso.boot.statusReport for the per-store
+  policies (secret-stores). Same two-branch mustonlyhave/mustnothave CM lifecycle, but the errors
+  are keyed BY STORE and then BY TEMPLATE LAYER instead of a flat list:
+
+      errors: |
+        vault-backend:
+          hub:
+            - caProvider.name is required to deliver caSource
+        remote-cluster:
+          hub:
+            - unsupported authSecretConfig.fromRef "foo"
+
+  so a diagnostician sees at a glance WHICH store failed and on WHICH side (hub vs spoke) it was
+  produced — the store name and side are top-level structural keys, not buried in the message text
+  (the flat helper's `[hub]`/`[spoke]` string prefix). This is the prod fault-isolation contract:
+  a broken store is the only thing reported broken; the healthy stores are provisioned regardless.
+
+  Caller contract: $storeErrors (a dict keyed storeName -> dict keyed side ("hub"/"spoke") -> list of
+  message strings) must be in scope at the include site (runtime template var). Pass:
+    (dict "policy" "<configurationpolicy-name>" "ns" "<policy namespace>")
+*/ -}}
+{{- define "eso.boot.statusReportPerStore" -}}
+{{- $policy := .policy -}}
+{{- $ns := .ns -}}
+{{ "{{-" }} if $storeErrors {{ "}}" }}
+##### PER-STORE PRECONDITION REPORT (replaces fail): errors.<store>.[hub|spoke] — store + layer are #####
+##### structural keys so the console shows which store, and which side, produced each problem. #####
+- complianceType: mustonlyhave
+  objectDefinition:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ $policy }}-status
+      namespace: {{ $ns }}
+      labels:
+        autoshift.io/eso-boot-status: "true"
+        autoshift.io/eso-boot-policy: {{ $policy }}
+    data:
+      policy: {{ $policy }}
+      storeCount: {{ "{{" }} $storeErrors | len | quote {{ "}}" }}
+      errors: |
+        {{ "{{-" }} range $storeName, $sides := $storeErrors {{ "}}" }}
+        {{ "{{" }} $storeName {{ "}}" }}:
+        {{ "{{-" }} range $side, $msgs := $sides {{ "}}" }}
+          {{ "{{" }} $side {{ "}}" }}:
+        {{ "{{-" }} range $m := $msgs {{ "}}" }}
+            - {{ "{{" }} $m {{ "}}" }}
+        {{ "{{-" }} end {{ "}}" }}
+        {{ "{{-" }} end {{ "}}" }}
+        {{ "{{-" }} end {{ "}}" }}
+{{ "{{-" }} else {{ "}}" }}
+##### No precondition errors on any store: clear any stale status ConfigMap so the signal self-heals. #####
+- complianceType: mustnothave
+  objectDefinition:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ $policy }}-status
+      namespace: {{ $ns }}
+{{ "{{-" }} end {{ "}}" }}
+{{- end -}}
