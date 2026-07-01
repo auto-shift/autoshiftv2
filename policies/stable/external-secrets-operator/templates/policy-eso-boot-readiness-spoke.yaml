@@ -28,20 +28,21 @@
 # resumes automatically when the infra recovers. No invariant-checking lives in boot-store anymore.
 #
 # Mode behaviour (cert-manager is conditional — a selfSigned consumer just copies a hub-minted secret
-# and mints nothing, so requiring cert-manager there would be wrong). In every EXTERNAL mode the gate
-# ALWAYS verifies cert-manager is INSTALLED (operator CSV Succeeded); autoshiftProvisioned then decides
-# whether to ALSO wait on the autoshift cert-manager policy + introspect the issuer/serving cert:
+# and mints nothing, so requiring cert-manager there would be wrong). In an EXTERNAL mode, HOW the gate
+# proves cert-manager is ready depends on autoshiftProvisioned — and when it is true the gate NEVER reads
+# the cert-manager operator CSV, so the ESO config does not need to know the cert-manager namespace:
 #   selfSigned                 -> consumes a hub-copied secret, mints nothing -> Compliant immediately
-#   external + autoshiftProvisioned=false -> OUT-OF-BAND PKI: only the cert-manager-INSTALLED (CSV) check
-#                                 applies; the policy-compliance + issuer/serving-cert checks are skipped
+#   external + autoshiftProvisioned=false -> OUT-OF-BAND PKI: the autoshift cert-manager policy may not
+#                                 exist, so the ONLY cert-manager check is the operator CSV (Succeeded) in
+#                                 $cmOperatorNs; the policy-compliance + issuer/serving-cert checks are skipped
 #   externalCA (autoshiftProvisioned=true)
-#                              -> cert-manager CSV Succeeded AND the autoshift cert-manager policy Compliant
-#                                 (per-cluster) AND the spoke ClusterIssuer/Issuer Ready (gate on the
-#                                 ISSUER, not the ESO client cert: boot-store MINTS that cert AFTER this
-#                                 gate, so depending on it would deadlock)
+#                              -> the autoshift cert-manager policy Compliant for this cluster (which itself
+#                                 proves cert-manager is installed — NO direct CSV read) AND the spoke
+#                                 ClusterIssuer/Issuer Ready (gate on the ISSUER, not the ESO client cert:
+#                                 boot-store MINTS that cert AFTER this gate, so depending on it would deadlock)
 #   externalCAReuseServingCert (autoshiftProvisioned=true)
-#                              -> cert-manager CSV Succeeded AND the cert-manager policy Compliant AND the
-#                                 apiserver serving cert Secret (the one the reuse path copies) populated
+#                              -> the autoshift cert-manager policy Compliant AND the apiserver serving cert
+#                                 Secret (the one the reuse path copies) populated
 #
 # Hub vs runtime split mirrors the other boot policies: hub templates DERIVE the per-cluster mode +
 # issuer config from this cluster's rendered config; runtime templates do the readiness LOOKUPS on the
@@ -123,22 +124,27 @@ spec:
             {{ "{{-" }} $external := (ne $mode "selfSigned") {{ "}}" }}
             {{ "{{-" }} $errors := list {{ "}}" }}
             {{ "{{-" }} if $external {{ "}}" }}
-              ##### cert-manager operator CSV must be phase=Succeeded. Name carries a version suffix #####
-              ##### (cert-manager-operator.vX.Y.Z) so match by prefix; zero matches is ALSO not-ready. #####
-              {{ "{{-" }} $csvReady := false {{ "}}" }}
-              {{ "{{-" }} range $csv := ((lookup "operators.coreos.com/v1alpha1" "ClusterServiceVersion" "{{ $cmOperatorNs }}" "").items | default list) {{ "}}" }}
-                {{ "{{-" }} if and (hasPrefix "cert-manager-operator" $csv.metadata.name) (eq (dig "status" "phase" "" $csv) "Succeeded") {{ "}}" }}
-                  {{ "{{-" }} $csvReady = true {{ "}}" }}
+              ##### cert-manager readiness source depends on autoshiftProvisioned: #####
+              ##### true  -> the autoshift cert-manager POLICY being Compliant for THIS cluster IS the proof #####
+              #####          cert-manager is installed + healthy, so we do NOT read the operator CSV — the ESO #####
+              #####          config never needs to know the cert-manager operator namespace. #####
+              ##### false -> out-of-band PKI: no autoshift policy to lean on, so fall back to reading the operator #####
+              #####          CSV (phase=Succeeded) directly. Name carries a version suffix (cert-manager-operator. #####
+              #####          vX.Y.Z) so match by prefix; zero matches is ALSO not-ready. #####
+              {{ "{{-" }} if eq $autoshiftProvisioned "true" {{ "}}" }}
+                {{ "{{-" }} if ne $cmPolCompliant "Compliant" {{ "}}" }}
+                  {{ "{{-" }} $errors = append $errors (printf "[spoke] autoshift cert-manager policy %q is not Compliant for this cluster (status=%q) — set config.eso.hubBootstrap.externalCertAuthority.autoshiftProvisioned=false if cert-manager is provisioned out-of-band, or ensure the policy exists and the hub-template SA can read Policies" "{{ $cmPolicyName }}" $cmPolCompliant) {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} if not $csvReady {{ "}}" }}
-                {{ "{{-" }} $errors = append $errors (printf "[spoke] cert-manager-operator CSV in namespace %q is not phase=Succeeded (mode %q needs cert-manager to mint the client cert)" "{{ $cmOperatorNs }}" $mode) {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-              ##### autoshiftProvisioned=true: require the autoshift cert-manager policy Compliant for THIS cluster, #####
-              ##### then introspect the autoshift-managed issuer / serving cert below. false => out-of-band PKI: #####
-              ##### trust it; only the cert-manager-installed (CSV) check above applies. #####
-              {{ "{{-" }} if and (eq $autoshiftProvisioned "true") (ne $cmPolCompliant "Compliant") {{ "}}" }}
-                {{ "{{-" }} $errors = append $errors (printf "[spoke] autoshift cert-manager policy %q is not Compliant for this cluster (status=%q) — set config.eso.hubBootstrap.externalCertAuthority.autoshiftProvisioned=false if cert-manager is provisioned out-of-band, or ensure the policy exists and the hub-template SA can read Policies" "{{ $cmPolicyName }}" $cmPolCompliant) {{ "}}" }}
+              {{ "{{-" }} else {{ "}}" }}
+                {{ "{{-" }} $csvReady := false {{ "}}" }}
+                {{ "{{-" }} range $csv := ((lookup "operators.coreos.com/v1alpha1" "ClusterServiceVersion" "{{ $cmOperatorNs }}" "").items | default list) {{ "}}" }}
+                  {{ "{{-" }} if and (hasPrefix "cert-manager-operator" $csv.metadata.name) (eq (dig "status" "phase" "" $csv) "Succeeded") {{ "}}" }}
+                    {{ "{{-" }} $csvReady = true {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} if not $csvReady {{ "}}" }}
+                  {{ "{{-" }} $errors = append $errors (printf "[spoke] cert-manager-operator CSV in namespace %q is not phase=Succeeded (mode %q needs cert-manager to mint the client cert)" "{{ $cmOperatorNs }}" $mode) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
               ##### Each dependent lookup is guarded by an else-if on its precondition so a missing input #####
               ##### records an error instead of erroring out the template. The issuer/serving-cert checks run only #####
