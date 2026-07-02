@@ -7,7 +7,7 @@ Deploys and manages the ServiceNow Kubernetes Visibility Agent (KVA) Informer.
 This chart defines ACM governance resources that:
 
 - Create the target namespace for KVA on clusters labeled `autoshift.io/kva=true`
-- Replicate a per-cluster ServiceNow credential secret from a local source namespace into the KVA target namespace on each managed cluster
+- Replicate a ServiceNow credential secret from a hub-cluster source namespace into the KVA target namespace on each managed cluster
 - Create one Argo CD `Application` per discovered managed cluster for the `informer-helm` chart
 - Enforce `musthave` or `mustnothave` for each generated application based on cluster labels
 - Validate that generated KVA Argo CD applications report healthy status
@@ -17,7 +17,7 @@ This chart defines ACM governance resources that:
 | Template | Resource(s) | Purpose |
 | --- | --- | --- |
 | `templates/policy-kva-namespace.yml` | `Policy`, `Placement`, `PlacementBinding` | Ensures the KVA namespace exists where `autoshift.io/kva=true` |
-| `templates/policy-kva-secret.yml` | `Policy`, `Placement`, `PlacementBinding` | Copies KVA credentials from a local source namespace into the managed cluster KVA namespace |
+| `templates/policy-kva-secret.yml` | `Policy`, `Placement`, `PlacementBinding` | Copies KVA credentials from a hub source namespace into the managed cluster KVA namespace |
 | `templates/policy-kva-application.yml` | `Policy`, `Placement`, `PlacementBinding` | Creates/updates KVA Argo CD applications based on cluster labels and checks app health (only rendered when `hubClusterSets` is configured) |
 | `templates/policy-kva-policy-set.yml` | `PolicySet` (`kva-policies`), `Placement`, `PlacementBinding` | Groups all KVA policies under the `kva-policies` PolicySet |
 
@@ -50,7 +50,7 @@ From `values.yaml`:
 | `gitopsNamespace` | `openshift-gitops` | Default namespace for Argo CD `Application` resources (overridden by `autoshift.io/gitops-namespace` label) |
 | `namespace` | `kva-informer` | Namespace where KVA is deployed on managed clusters |
 | `acceptEula` | `Y` | Passed to ServiceNow informer chart |
-| `kvaHubSecretNamespace` | `cluster-install-secrets` | Default source namespace for KVA credentials on each managed cluster |
+| `kvaHubSecretNamespace` | `cluster-install-secrets` | Default source namespace on the hub cluster for KVA credentials replicated to managed clusters |
 | `kvaInformer.image.repository` | `docker.io/servicenowdocker/informer` | Default informer image repository passed to chart values |
 | `kvaInformer.image.pullPolicy` | `Always` | Default informer image pull policy passed to chart values |
 | `kvaInformer.image.tag` | `2.7.1` | Default informer image tag passed to chart values |
@@ -72,7 +72,7 @@ The KVA application policy depends on:
 
 ## Prerequisites
 
-- KVA credential secret exists on each managed cluster in `kvaHubSecretNamespace` (or `kva.secret-namespace` override from rendered-config), containing:
+- KVA credential secret exists on the hub cluster in `kvaHubSecretNamespace` (or `kva.secret-namespace` override from rendered-config), containing:
   - `.user`
   - `.password`
 
@@ -109,10 +109,11 @@ Several values can be overridden per managed cluster through the `<cluster>.rend
 | `kva.image-tag` | `kvaInformer.image.tag` | `2.7.1` |
 | `kva.ds-repository` | `kvaInformer.image.dsRepository` | `docker.io/servicenowdocker/informer_ds` |
 | `kva.ds-tag` | `kvaInformer.image.dsTag` | `2.7.1` |
-| `kva.secret-name` | local source secret name for replication in secret policy | `k8s-informer-cred-<servicenow.instance.name>` |
-| `kva.secret-namespace` | local source secret namespace for replication in secret policy | `cluster-install-secrets` |
+| `kva.secret-name` | hub source secret name used by the secret replication policy | `k8s-informer-cred-<servicenow.instance.name>` |
+| `kva.secret-namespace` | hub source secret namespace used by the secret replication policy | `cluster-install-secrets` |
 
 The namespace and secret policies also read `kva.namespace` from the rendered-config to determine the target namespace on managed clusters.
+The secret policy resolves `kva.secret-name` and `kva.secret-namespace` using hub templates, then reads `.user` and `.password` from that hub secret and writes those values into the target secret on each matching managed cluster.
 
 ## Quick validation
 
