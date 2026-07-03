@@ -198,15 +198,16 @@ oc get packagemanifests external-secrets-operator -o jsonpath='{.status.channels
 rendered-config ConfigMap (read via hub-template `lookup`, the same mechanism the
 `cluster-config-maps` policy uses).
 
-Three policies are driven from the per-cluster ESO config:
+Four policies are driven from the per-cluster ESO config:
 
 | Policy | Creates |
 |---|---|
-| `policy-eso-secret-stores` | the `SecretStore` / `ClusterSecretStore` objects + their auth `Secret`s (`authSecretConfig`) + (opt-in) per-store remote serving-CA delivery (`caSource`), from `config.eso.secretStores` |
+| `policy-eso-secret-stores` | the `SecretStore` / `ClusterSecretStore` objects + the spoke-side auth `ExternalSecret`s (`authSecretConfig`, pulled from the hub via the bootstrap store) + (opt-in) per-store remote serving-CA delivery (`caSource`), from `config.eso.secretStores` |
+| `policy-eso-hub-secrets` | (hubs only) the **hub-side** `ExternalSecret`s that materialize each `authSecretConfig` credential with an `external` origin into the owning cluster's namespace on the hub, so the spoke can pull it. One hub-resident copy serves every owned cluster across all deployments — see [Auth secrets](#auth-secrets-authsecretconfig) |
 | `policy-eso-cert-auth-rbac` | the RBAC backing the kubernetes-provider `cert` auth method (`certAuthRBAC`) — see [Kubernetes cert auth RBAC](#kubernetes-cert-auth-rbac-certauthrbac) |
 | `policy-eso-secret-reader` | the `secret-reader` ServiceAccount + RBAC for consuming provisioned Secrets — see [Reading provisioned Secrets](#reading-provisioned-secrets-secret-reader) |
 
-The first two read `config.eso.secretStores`, below.
+The first three read `config.eso.secretStores`, below.
 
 `config.eso.secretStores` is a **list of single-key items**. The key selects the
 object kind; the rendered manifest differs by kind:
@@ -247,18 +248,38 @@ client cert/key, a bearer token, cloud creds, ...). `authSecretConfig` — an op
 key sibling to `spec` on any store item — provisions those Secret(s) so you don't have to
 manage them separately.
 
+**How they're delivered: ESO is the transport (two hops), not a cross-cluster copy.** The
+spoke's ESO materializes each auth Secret by pulling the value from the **hub** through the
+**hub-bootstrap `ClusterSecretStore`** (see [hub bootstrap](#clustercluster-hub-bootstrap-configesohubbootstrap)).
+So for each store credential there are two ExternalSecrets:
+
+1. **hub side** (`policy-eso-hub-secrets`, placed on hubs) — *only when the source has an
+   `external` block*. Pulls the value from your own external secret manager into a Secret
+   named `hubSecretName` in your deployment's policy namespace on the hub (its clusters'
+   owning namespace = the bootstrap store's `remoteNamespace`). One hub-resident copy does
+   this for every owned cluster across all deployments. Omit `external` and the Secret is
+   assumed already present there (native).
+2. **spoke side** (`policy-eso-secret-stores`) — an ExternalSecret against the hub-bootstrap
+   store pulls `hubSecretName` from the hub into the local auth Secret your `spec` references.
+
+The only hub→spoke *copy* left anywhere in the chart is the bootstrap client cert.
+
 **`spec` is authoritative.** You write the auth refs in `spec` the normal ESO way; you do
 **not** restate Secret names/keys/namespaces anywhere else. `authSecretConfig` names the
-method (`fromRef`) and supplies the one new fact per ref — where on the **hub** the value
-comes from. Each auth method is a set of **components** (its `SecretKeySelector` sub-keys);
-`sources` maps a component to its hub source:
+method (`fromRef`) and, per component (its `SecretKeySelector` sub-keys), a `sources` entry
+saying which hub Secret backs it — and, if not already on the hub, where to fetch it from:
 
 ```yaml
 authSecretConfig:
   fromRef: kubernetesCert    # the auth method (see table); its components are clientCert, clientKey
+  refreshInterval: 1h        # optional; how often the spoke ExternalSecret re-pulls (default 1h)
   sources:
-    clientCert: { namespace: eso-auth-secrets, name: eso-cert-src, key: tls.crt }
-    clientKey:  { namespace: eso-auth-secrets, name: eso-cert-src, key: tls.key }
+    clientCert:
+      hubSecretName: eso-cert-src   # Secret in the hub policy ns (bootstrap remoteRef.key)
+      key: tls.crt                  # property within it -> the ref's key
+    clientKey:
+      hubSecretName: eso-cert-src
+      key: tls.key
 spec:
   provider:
     kubernetes:
@@ -269,47 +290,61 @@ spec:
 ```
 
 For each sourced component the policy reads that component's ref out of `spec` (its
-`name`/`key`/`namespace`), then creates the Secret it points at with the value copied from
-the source. No `spec` mutation, nothing to keep in sync.
+`name`/`key`/`namespace`) for the **target** Secret, and builds a spoke ExternalSecret data
+entry `{secretKey: ref.key, remoteRef: {key: hubSecretName, property: source.key}}`. No
+`spec` mutation, nothing to keep in sync.
+
+**Materializing the hub Secret from an external SM (`external`).** Add an `external` block to
+a source and `policy-eso-hub-secrets` provisions `hubSecretName` on the hub for you:
+
+```yaml
+sources:
+  tokenSecretRef:
+    hubSecretName: vault-token
+    key: token
+    external:
+      storeRef: { name: hub-vault, kind: ClusterSecretStore }  # a store that EXISTS ON THE HUB
+      remoteRef: { key: secret/data/eso/vault-token, property: token }
+```
+
+`external.storeRef` must name a store that already exists **on the hub** (e.g. a `vault`
+`ClusterSecretStore` you defined via this deployment's own `secretStores`, or a pre-existing
+one). `remoteRef` supports `key` (required), `property`, and `version`.
 
 **`sources` is one map; the policy branches on it** (a single invariant keeps source→target
 unambiguous):
 
-- **One entry, no `key` → whole-Secret copy.** When the method's refs all live in **one**
-  Secret, give a single keyless entry and the entire hub Secret is copied verbatim (all
-  keys) into that one shared target:
+- **One entry, no `key` → whole-Secret pull.** When the method's refs all live in **one**
+  Secret, give a single keyless entry and the whole hub Secret is extracted (all keys) into
+  that one shared target:
   ```yaml
   authSecretConfig:
     fromRef: kubernetesCert
     sources:
-      clientCert: { namespace: eso-auth-secrets, name: eso-cert-src }   # no key -> whole Secret
+      clientCert: { hubSecretName: eso-cert-src }   # no key -> whole Secret (dataFrom.extract)
   # cert's clientCert + clientKey both name eso-cert -> one Secret gets tls.crt + tls.key
   ```
-  This is **rejected** if the method's refs point at *different* Secrets — there'd be no way
-  to route the bytes — give one keyed entry per component instead.
+  This is **rejected** if the method's refs point at *different* Secrets — give one keyed
+  entry per component instead.
 
 - **Everything else → per-component, each entry WITH a `key`.** One entry per component;
-  `source.key` -> that component's target key. Use it for distinct keys and/or different
-  Secrets:
+  `source.key` -> the property pulled for that component's target key. Use it for distinct
+  keys and/or different Secrets:
   ```yaml
   authSecretConfig:
     fromRef: kubernetesCert
     sources:
-      clientCert: { namespace: hub, name: cert-a, key: tls.crt }   # -> Secret cert-a
-      clientKey:  { namespace: hub, name: key-b,  key: tls.key }   # -> Secret key-b
+      clientCert: { hubSecretName: cert-a, key: tls.crt }   # -> Secret cert-a
+      clientKey:  { hubSecretName: key-b,  key: tls.key }   # -> Secret key-b
   ```
   A keyless entry that is **not** the lone source is rejected.
 
-So the only keyless (whole-Secret) copy is a *single* source over refs that share one
-Secret; everything else is per-key. That makes "two keyless sources with no way to pair
-them to targets" unrepresentable.
-
 **Grouping & where each Secret lands.** Components are grouped by the target Secret their
-refs name — same Secret → **merge** (several keys in one Secret); different Secrets →
-**separate** Secrets. Provide sources only for the components you want; optional ones (e.g.
-appRole `roleRef` when `roleId` is inline) are left unsourced.
+refs name — same Secret → **merge** (several keys in one ExternalSecret); different Secrets →
+**separate** ExternalSecrets. Provide sources only for the components you want; optional ones
+(e.g. appRole `roleRef` when `roleId` is inline) are left unsourced.
 
-**Where each Secret is created:**
+**Where each ExternalSecret (and its Secret) is created:**
 - `SecretStore` → the store's own namespace (ESO resolves auth refs there; the ref's
   `.namespace` is ignored).
 - `ClusterSecretStore` → the ref's `.namespace`, which is therefore **required** (a CSS
@@ -317,19 +352,23 @@ appRole `roleRef` when `roleId` is inline) are left unsourced.
   yourself).
 
 Other notes:
-- With a per-component `key`, `source.key` and the spec ref's `key` may differ — the value
-  is copied, the target key is taken from the spec ref. Whole-copy preserves source key names.
+- With a per-component `key`, `source.key` (the hub property) and the spec ref's `key` (the
+  local target key) may differ. Whole-copy preserves source key names.
 - Omit `authSecretConfig` for methods that need no static Secret (Vault `kubernetes` auth
   via `serviceAccountRef`, or the Kubernetes provider's `serviceAccount` auth — ESO mints
   the token).
-- Each source Secret must exist on the hub and the policy must have RBAC to read it;
-  otherwise the hub `fromSecret`/`lookup` fails the template.
+- A native `hubSecretName` (no `external`) must already exist in the hub policy namespace.
+  With `external`, `policy-eso-hub-secrets` materializes it — that store must be reachable
+  on the hub or its hub ExternalSecret sits NotReady (and the spoke pull waits).
 
 #### Supported `fromRef` values
 
-`fromRef` selects the auth **method**; `sources` keys are its **components**. The template
-**fails** on an unknown `fromRef` or component, a provider not in `spec.provider`, or a
-sourced component whose ref isn't set in `spec`.
+`fromRef` selects the auth **method**; `sources` keys are its **components**. An unknown
+`fromRef` or component, a provider not in `spec.provider`, a sourced component whose ref
+isn't set in `spec`, or a source missing `hubSecretName` **records the store's problem and
+skips just that store** (per-store skip, surfaced via the status ConfigMap + gate — see
+[Precondition failures](#precondition-failures--where-to-look-status-configmap--gate)); every
+other store still provisions.
 
 | `fromRef` | `base` (under `spec.provider.<provider>`) | components |
 |---|---|---|
@@ -396,8 +435,8 @@ config:
 ```
 
 A namespaced equivalent (`SecretStore`) drops cross-namespace fields. The
-`tokenSecretRef` is written normally in `spec`; `authSecretConfig` just provisions the
-Secret it points at from a hub source:
+`tokenSecretRef` is written normally in `spec`; `authSecretConfig` provisions the Secret it
+points at by pulling it from the hub (through the bootstrap store):
 
 ```yaml
       - secretStore:
@@ -407,9 +446,9 @@ Secret it points at from a hub source:
             fromRef: vaultToken                # mirror spec.provider.vault.auth.tokenSecretRef
             sources:
               tokenSecretRef:
-                namespace: 'eso-auth-secrets'  # hub namespace holding the token
-                name: vault-token
-                key: token
+                hubSecretName: vault-token     # Secret in the hub policy ns the bootstrap store serves
+                key: token                     # property within it
+                # external: {storeRef, remoteRef}  # add to materialize vault-token on the hub from an SM
           spec:
             provider:
               vault:
@@ -667,15 +706,18 @@ Notes:
 Complete `config.eso.secretStores` blocks you can drop into a clusterset
 (`hubClusterSets.*.config` / `managedClusterSets.*.config`) or per-cluster
 (`clusters/<name>.yaml`) config. Examples 1–2 write the auth ref in `spec` normally and
-use `authSecretConfig` (`fromRef` + `sources`) to provision the Secret it points at from
-the hub. Example 3 shows cert auth, where `certAuthRBAC` drives the separate RBAC policy.
+use `authSecretConfig` (`fromRef` + `sources`) to provision the Secret it points at by
+pulling it from the hub through the bootstrap store. Example 3 shows cert auth, where
+`certAuthRBAC` drives the separate RBAC policy. Example 4 is the end-to-end two-hop: a root
+store on the hub sourced from a single manual seed, feeding `external` spoke stores.
 
 #### 1. Kubernetes provider + `authSecretConfig` (bearer-token auth)
 
 Read native `Secret`s from a remote cluster's API server, authenticating with a bearer
 token. The `token.bearerToken` ref is written in `spec`; `fromRef: kubernetesToken`
-tells the policy to provision *that* Secret, copying the value from a hub Secret. Since
-this is a `ClusterSecretStore`, the ref carries `.namespace` (where the Secret is created).
+tells the policy to provision *that* Secret, pulling the value from a hub Secret through
+the bootstrap store. Since this is a `ClusterSecretStore`, the ref carries `.namespace`
+(where the ExternalSecret + Secret are created).
 
 ```yaml
 config:
@@ -685,10 +727,9 @@ config:
           name: remote-cluster
           authSecretConfig:
             fromRef: kubernetesToken               # mirror spec.provider.kubernetes.auth.token.bearerToken
-            sources:                               # existing Secret on the HUB to copy from
+            sources:                               # hub Secret the bootstrap store serves
               bearerToken:
-                namespace: eso-auth-secrets
-                name: remote-reader-token
+                hubSecretName: remote-reader-token
                 key: token
           spec:
             provider:
@@ -710,18 +751,19 @@ config:
 ```
 
 > The remote apiserver's bearer token (a long-lived SA token, or a kubeconfig token)
-> must already exist as the `remote-reader-token` Secret on the **hub** in
-> `eso-auth-secrets`, and the identity it represents needs `get`/`list` on Secrets in
-> `remoteNamespace` on the **remote** cluster. The `remote-ca` ConfigMap is an
-> out-of-band prerequisite. `KubernetesAuth` accepts exactly one of
-> `serviceAccount`/`cert`/`token`, so don't combine this with another method.
+> must exist as the `remote-reader-token` Secret in the **hub** policy namespace (place it
+> there natively, or add an `external` block so `policy-eso-hub-secrets` materializes it),
+> and the identity it represents needs `get`/`list` on Secrets in `remoteNamespace` on the
+> **remote** cluster. The `remote-ca` ConfigMap is an out-of-band prerequisite.
+> `KubernetesAuth` accepts exactly one of `serviceAccount`/`cert`/`token`, so don't combine
+> this with another method.
 
 #### 2. Vault provider with OIDC (`jwt`) authentication
 
 Vault's OIDC/JWT auth method verifies a JWT and returns a Vault token. Here a static JWT
 lives in a hub Secret; the `jwt.secretRef` is written in `spec`, and `fromRef: vaultJwt`
-provisions that Secret on the managed cluster from the hub source. The OIDC backend is
-mounted at `oidc` (set `path` to your actual mount).
+provisions that Secret on the managed cluster by pulling it from the hub. The OIDC backend
+is mounted at `oidc` (set `path` to your actual mount).
 
 ```yaml
 config:
@@ -731,10 +773,9 @@ config:
           name: vault-oidc
           authSecretConfig:
             fromRef: vaultJwt                      # mirror spec.provider.vault.auth.jwt.secretRef
-            sources:                               # existing Secret on the HUB to copy from
+            sources:                               # hub Secret the bootstrap store serves
               secretRef:
-                namespace: eso-auth-secrets
-                name: vault-oidc-jwt
+                hubSecretName: vault-oidc-jwt
                 key: jwt
           spec:
             provider:
@@ -810,7 +851,117 @@ config:
 > cluster-wide (`ClusterRole` + `ClusterRoleBinding`); use a `secretStore` instead for a
 > namespaced `Role` + `RoleBinding`.
 
-## Per-store server-CA delivery (`caSource`)
+#### 4. End-to-end two-hop — root store on the hub + `external`-sourced spoke stores
+
+The full pattern that lets **one manual secret** on the global hub bootstrap every spoke's
+stores. A root `ClusterSecretStore` on the self-managed hub authenticates to Vault with a
+manually-placed seed; `policy-eso-hub-secrets` then uses that root store to materialize each
+spoke store's credential on the hub, and the mTLS bootstrap store fans them out to the spokes.
+Nothing about the root store is special — it's an ordinary store entry whose auth source has
+**no `external`** block (native), so its credential is the one thing you provide by hand.
+
+**(a) The one manual seed** — a plain Secret in the **policy namespace** on the hub. This is
+the *only* credential you create by hand; everything else derives from it. The identity it
+represents needs read access in Vault to every path the root store will fetch below.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hub-vault-seed              # == the native hubSecretName referenced in (b)
+  namespace: open-cluster-policies  # the policy namespace (the bootstrap store's remoteNamespace)
+type: Opaque
+stringData:
+  token: s.rootVaultTokenXXXXXXXX   # or an AppRole secret-id, etc.
+```
+
+**(b) The root store — hub only.** Put this in the **self-managed hub's** config
+(`clusters/local-cluster.yaml`, or a clusterset only the hub belongs to). Its auth source is
+**native** (no `external`): the seed above is pulled into the store's auth Secret through the
+hub's *own* bootstrap store — the hub is just another bootstrap consumer, so this needs no
+special path.
+
+```yaml
+config:
+  eso:
+    secretStores:
+      - clusterSecretStore:
+          name: hub-vault                          # referenced by external.storeRef in (c)
+          authSecretConfig:
+            fromRef: vaultToken
+            sources:
+              tokenSecretRef:
+                hubSecretName: hub-vault-seed       # native — NO external -> you place it (a)
+                key: token
+          spec:
+            provider:
+              vault:
+                server: https://vault.example.com:8200
+                path: secret
+                version: v2
+                auth:
+                  tokenSecretRef:                   # store reads its token from here (hub ESO ns)
+                    name: hub-vault-token
+                    key: token
+                    namespace: external-secrets-operator   # CSS auth ref needs a namespace
+```
+
+**(c) The spoke stores — `external`-sourced.** Put this in the spokes' clusterset/cluster
+config. Each store's credential is declared with an `external` block pointing at the root
+`hub-vault` store; `policy-eso-hub-secrets` (on the hub) fetches it from Vault into
+`hubSecretName` in the policy namespace, and each spoke pulls it via its bootstrap store.
+
+```yaml
+config:
+  eso:
+    secretStores:
+      - clusterSecretStore:
+          name: app-vault
+          authSecretConfig:
+            fromRef: vaultToken
+            sources:
+              tokenSecretRef:
+                hubSecretName: app-vault-token      # materialized on the hub by hub-secrets
+                key: token
+                external:                           # pull it on the hub FROM the root store
+                  storeRef: { name: hub-vault, kind: ClusterSecretStore }
+                  remoteRef: { key: secret/data/apps/app-vault, property: token }
+          spec:
+            provider:
+              vault:
+                server: https://vault.example.com:8200
+                path: secret
+                version: v2
+                auth:
+                  tokenSecretRef:
+                    name: app-vault-token
+                    key: token
+                    namespace: external-secrets-operator
+```
+
+What happens, in order (each step self-heals until its input exists):
+
+1. You place `hub-vault-seed` in the policy namespace (a).
+2. On the hub, `policy-eso-secret-stores` pulls the seed through the hub's bootstrap store
+   into `hub-vault-token` (hub ESO ns); the `hub-vault` `ClusterSecretStore` (b) goes Ready.
+3. `policy-eso-hub-secrets` (hub) uses `hub-vault` to fetch each spoke credential from Vault
+   into `app-vault-token` in the policy namespace.
+4. On each spoke, `policy-eso-secret-stores` pulls `app-vault-token` through *its* bootstrap
+   store into the local `app-vault-token` Secret; the spoke's `app-vault` store goes Ready.
+
+> `hub-vault` must land on the hub (its config lives in the hub's clusterset/cluster config,
+> and the hub carries `autoshift.io/external-secrets-operator: 'true'`). The seed is the root
+> of trust — scope its Vault policy tightly and rotate it. Same `server` is shown for brevity;
+> the root and per-app stores can point at different Vaults or different token scopes.
+>
+> **Nothing special-cases `hub-vault`.** It's an ordinary store whose auth source has no
+> `external` — that's the only thing that makes it a "root." Because it's a *cluster-scoped*
+> `ClusterSecretStore`, every deployment's configs on that hub can name it in `external.storeRef`,
+> and the single hub-resident `policy-eso-hub-secrets` (which serves *all* owned clusters, emitting
+> into each cluster's owning namespace) will pull through it. So one such store + one seed can
+> bootstrap **every deployment on the hub**. If you'd rather isolate a tenant, give it its own
+> root store + seed — the policy treats that identically, no code path differs. The trade-off is
+> the usual one: a shared root store means its Vault identity spans every tenant that pulls from it.
 
 For a kubernetes-provider store, ESO must **trust the TLS cert the remote apiserver
 presents** — via `provider.kubernetes.server.caBundle` (inline PEM) or `…server.caProvider`
@@ -1430,7 +1581,8 @@ oc get cm -n open-cluster-management-agent-addon -l autoshift.io/eso-boot-status
 
 Applies to every policy with preconditions: the readiness gates (`policy-eso-boot-readiness-hub`,
 `…-readiness-spoke`), the action boot policies (`policy-eso-boot-store`, `…-clientca-self`,
-`…-clientca-ext`), and the store policies (`policy-eso-cert-auth-rbac`, `policy-eso-secret-stores`).
+`…-clientca-ext`), and the store policies (`policy-eso-cert-auth-rbac`, `policy-eso-secret-stores`,
+`policy-eso-hub-secrets`).
 For an action policy the live objects (cert mint, secret copy, the `ClusterSecretStore`) are additionally
 gated on **no** precondition errors, so a bad precondition skips the action instead of half-applying it.
 
@@ -1440,11 +1592,12 @@ Two failure semantics, matched to what the policy provisions:
   store), `…-clientca-self`/`…-clientca-ext` (one CA / clientCA). One bad input blocks the whole mint (a
   half-built shared object is incoherent), exactly as the old `fail`-aborts-everything did.
 - **Per-store skip** for policies whose resources are **independent per store** —
-  `policy-eso-secret-stores` and `policy-eso-cert-auth-rbac`. A misconfigured store is recorded and
-  **skipped**; every other store still provisions. The Policy goes NonCompliant (its status ConfigMap
-  exists) even though most objects are healthy — so "NonCompliant" here means *some* store is broken, not
-  that nothing provisioned. Read the status ConfigMap to see which. This is deliberate: in a shared
-  dev/test/prod hub, one team breaking their store must not stop the workloads pulling from the others.
+  `policy-eso-secret-stores`, `policy-eso-cert-auth-rbac`, and `policy-eso-hub-secrets` (per *credential*).
+  A misconfigured store/credential is recorded and **skipped**; every other one still provisions. The
+  Policy goes NonCompliant (its status ConfigMap exists) even though most objects are healthy — so
+  "NonCompliant" here means *some* store is broken, not that nothing provisioned. Read the status
+  ConfigMap to see which. This is deliberate: in a shared dev/test/prod hub, one team breaking their
+  store must not stop the workloads pulling from the others.
 
 #### Per-store status format (`policy-eso-secret-stores`)
 
