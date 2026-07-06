@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -102,6 +103,49 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	t.Logf("hub config keys: %d, cluster-install config keys: %d, bare labels: %d",
 		len(configs.HubConfig), len(configs.ClusterInstallConfig), len(configs.BareLabels))
 
+	// Managed (spoke) cluster profiles: same rich label set as the hub, but
+	// self-managed is 'false' and the node-provider labels are pinned to each
+	// install platform. The pipeline resolves every chart against all of these in
+	// addition to the primary hub context, so:
+	//   - hub-only and managed-only policies are each exercised against a cluster
+	//     of the matching clusterset type (self-managed true vs false), and
+	//   - each install platform's cluster is run through the full policy set.
+	//
+	// One managed profile per install platform, driven entirely by
+	// configs.ClusterInstallExtra (one entry per _example-cluster-install-*.yaml,
+	// keyed by clusterInstall.platform) — so a new example file automatically
+	// adds a new profile. Each profile's ManagedClusterName points at that
+	// platform's rendered-config ("<primary>-<platform>.rendered-config", named
+	// by GenerateSyntheticConfigMaps), so policies that read per-cluster config
+	// via `fromConfigMap (print .ManagedClusterName ".rendered-config")` resolve
+	// against that install's config.
+	managedProfile := func(provider, clusterName string) HubContext {
+		lbls := make(map[string]string, len(syntheticLabels)+4)
+		for k, v := range syntheticLabels {
+			lbls[k] = v
+		}
+		lbls["autoshift.io/self-managed"] = "false"
+		lbls["autoshift.io/worker-nodes-provider"] = provider
+		lbls["autoshift.io/infra-nodes-provider"] = provider
+		lbls["autoshift.io/storage-nodes-provider"] = provider
+		return HubContext{
+			ManagedClusterName:   clusterName,
+			ManagedClusterLabels: lbls,
+		}
+	}
+	installPlatforms := make([]string, 0, len(configs.ClusterInstallExtra))
+	for p := range configs.ClusterInstallExtra {
+		installPlatforms = append(installPlatforms, p)
+	}
+	sort.Strings(installPlatforms)
+	extraCtxs := make([]NamedContext, 0, len(installPlatforms))
+	for _, p := range installPlatforms {
+		extraCtxs = append(extraCtxs, NamedContext{
+			Name: "managed-" + p,
+			Ctx:  managedProfile(p, ctx.ManagedClusterName+"-"+p),
+		})
+	}
+
 	// 4. Generate synthetic ConfigMaps and load testdata.
 	syntheticCMs, err := GenerateSyntheticConfigMaps(configs, ctx.ManagedClusterName, "policies-autoshift")
 	if err != nil {
@@ -126,7 +170,7 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	}
 
 	// 6. Run the full pipeline.
-	consumed, results, err := RunPipeline(policiesDir, ctx, r, spokeR, declared, configs, testdataDir)
+	consumed, results, err := RunPipeline(policiesDir, ctx, extraCtxs, r, spokeR, declared, configs, testdataDir)
 	if err != nil {
 		t.Fatalf("RunPipeline: %v", err)
 	}
@@ -157,8 +201,15 @@ func TestPipeline_EndToEnd(t *testing.T) {
 		}
 	}
 
+	// yamlHint points a developer at the template that produced an invalid
+	// resolved document. The Kind/name in the error (e.g. Policy/policy-foo)
+	// matches the template file policies/<policy>/templates/policy-foo.yaml.
+	yamlHint := func(policy string) string {
+		return fmt.Sprintf("hint: the Kind/name above identifies the source document — inspect policies/%s/templates/; a <no value> means a config key the template reads is missing from the relevant _example*.yaml, or a lookup returned nothing (add a tools/testdata/ stub)", policy)
+	}
+
 	resultsByPolicy := make(map[string]ChartResult, len(results))
-	var helmFailures, emptyCharts, hubErrCharts, warnCharts, cleanCharts int
+	var helmFailures, emptyCharts, hubErrCharts, warnCharts, cleanCharts, managedErrCharts, yamlErrCharts int
 	for _, res := range results {
 		resultsByPolicy[res.Policy] = res
 		if res.Err != nil {
@@ -180,6 +231,39 @@ func TestPipeline_EndToEnd(t *testing.T) {
 			warnCharts++
 		} else {
 			cleanCharts++
+		}
+		// YAML validity of the fully-resolved primary output — hard failure even
+		// though hub/spoke resolution succeeded, so a template that resolves
+		// cleanly but emits malformed YAML or a <no value> leak can't pass.
+		if len(res.YAMLErrors) > 0 {
+			for _, w := range res.YAMLErrors {
+				t.Errorf("FAIL  %s: invalid resolved YAML: %s\n\t       %s", res.Policy, w, yamlHint(res.Policy))
+			}
+			yamlErrCharts++
+		}
+		// Managed-clusterset profiles (self-managed: 'false', one per install
+		// platform) — same hard-fail treatment as the hub context, so a
+		// hub-template branch that only runs on managed/spoke clusters (or only
+		// for a given install platform) can't crash undetected.
+		for _, ec := range extraCtxs {
+			cr := res.ExtraResults[ec.Name]
+			if !cr.ResolveOK {
+				for _, w := range cr.ResolveWarns {
+					t.Errorf("FAIL  %s [%s]: hub resolution error: %s\n\t       %s", res.Policy, ec.Name, w, resolutionHint(w))
+				}
+				managedErrCharts++
+			} else if len(cr.SpokeWarns) > 0 {
+				for _, w := range cr.SpokeWarns {
+					t.Errorf("FAIL  %s [%s]: spoke resolution error: %s\n\t       %s", res.Policy, ec.Name, w, resolutionHint(w))
+				}
+				managedErrCharts++
+			}
+			if len(cr.YAMLErrors) > 0 {
+				for _, w := range cr.YAMLErrors {
+					t.Errorf("FAIL  %s [%s]: invalid resolved YAML: %s\n\t       %s", res.Policy, ec.Name, w, yamlHint(res.Policy))
+				}
+				yamlErrCharts++
+			}
 		}
 	}
 
@@ -235,6 +319,19 @@ func TestPipeline_EndToEnd(t *testing.T) {
 		}
 	}
 
+	// cluster-install: every platform's install policy body must resolve, not
+	// just the merge-winning platform. GenerateSyntheticConfigMaps emits one
+	// rendered-config ConfigMap per platform (baremetal + each _example-cluster-
+	// install-<platform>.yaml), so all three bodies fire in this single run.
+	// Each marker below is unique to one platform's output — if a platform's
+	// example file or testdata is missing, its marker disappears and CI fails.
+	assertContains("stable/cluster-install", "start_assisted_install",
+		"baremetal path must render (BareMetalHost customDeploy) — _example-cluster-install-baremetal.yaml")
+	assertContains("stable/cluster-install", "-aws-creds",
+		"aws path must render (AWS credentials Secret) — _example-cluster-install-aws.yaml + aws-creds testdata")
+	assertContains("stable/cluster-install", "-vsphere-creds",
+		"vmware path must render (vSphere credentials Secret) — _example-cluster-install-vmware.yaml + vsphere-creds testdata")
+
 	// disconnected-mirror: all four catalog source types must render when
 	// config.disconnected is populated in the hub example.
 	assertContains("stable/disconnected-mirror", "CatalogSource",
@@ -247,12 +344,29 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	assertContains("stable/user-workload-monitoring", "storage:",
 		"config.uwm.prometheus.storage must be set in hub example config")
 
-	t.Logf("\nACM resolution: %d clean, %d spoke errors, %d hub errors, %d helm failures (%d total)",
-		cleanCharts, warnCharts, hubErrCharts, helmFailures, len(results))
+	// Multi-profile coverage: acm-mch-install emits `disableHubSelfManagement`
+	// only when the cluster's self-managed label is 'false'. The hub context
+	// (self-managed: 'true') must NOT emit it, and every managed profile
+	// (self-managed: 'false') MUST — this proves each extra resolution pass runs
+	// and genuinely flips clusterset-identity branches. If a managed pass stopped
+	// running or reused hub labels, one of these fails.
+	if res, ok := resultsByPolicy["stable/advanced-cluster-management"]; ok && res.Err == nil {
+		if strings.Contains(res.ResolvedYAML, "disableHubSelfManagement") {
+			t.Errorf("output assertion FAIL  stable/advanced-cluster-management: hub context (self-managed:'true') must NOT emit disableHubSelfManagement")
+		}
+		for _, ec := range extraCtxs {
+			if !strings.Contains(res.ExtraResults[ec.Name].ResolvedYAML, "disableHubSelfManagement: true") {
+				t.Errorf("output assertion FAIL  stable/advanced-cluster-management [%s]: managed profile (self-managed:'false') must emit disableHubSelfManagement: true\n  reason: this profile's resolution pass not exercising the self-managed:'false' branch", ec.Name)
+			}
+		}
+	}
 
-	if helmFailures > 0 || emptyCharts > 0 || hubErrCharts > 0 || warnCharts > 0 {
-		t.Errorf("%d chart(s) failed helm template, %d rendered empty, %d hub resolution errors, %d spoke resolution errors",
-			helmFailures, emptyCharts, hubErrCharts, warnCharts)
+	t.Logf("\nACM resolution: %d clean, %d spoke errors, %d hub errors, %d errors across %d managed profiles, %d invalid-YAML, %d helm failures (%d charts × %d profiles)",
+		cleanCharts, warnCharts, hubErrCharts, managedErrCharts, len(extraCtxs), yamlErrCharts, helmFailures, len(results), len(extraCtxs)+1)
+
+	if helmFailures > 0 || emptyCharts > 0 || hubErrCharts > 0 || warnCharts > 0 || managedErrCharts > 0 || yamlErrCharts > 0 {
+		t.Errorf("%d chart(s) failed helm template, %d rendered empty, %d hub resolution errors, %d spoke resolution errors, %d managed-clusterset resolution errors, %d invalid resolved YAML",
+			helmFailures, emptyCharts, hubErrCharts, warnCharts, managedErrCharts, yamlErrCharts)
 	}
 
 	// 8. Check the label contract.
@@ -296,4 +410,3 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	t.Logf("label contract: %d OK, %d missing, %d orphaned",
 		len(report.OK), len(report.Missing), len(report.Orphaned))
 }
-

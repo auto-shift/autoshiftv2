@@ -12,9 +12,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	fakediscovery "k8s.io/client-go/discovery/fake"
 	fakedynamic "k8s.io/client-go/dynamic/fake"
 	fakeclientset "k8s.io/client-go/kubernetes/fake"
-	fakediscovery "k8s.io/client-go/discovery/fake"
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
@@ -233,7 +233,7 @@ func (r *Resolver) ResolvePolicy(rawYAML string, ctx HubContext) ResolvePolicyRe
 	}
 
 	return ResolvePolicyResult{
-		Resolved: strings.Join(resolved, "---\n"),
+		Resolved: joinYAMLDocuments(resolved),
 		Errors:   errs,
 	}
 }
@@ -344,7 +344,7 @@ func (r *Resolver) ResolveSpokeTemplates(rawYAML string, ctx ...HubContext) Reso
 	}
 
 	return ResolvePolicyResult{
-		Resolved: strings.Join(resolved, "---\n"),
+		Resolved: joinYAMLDocuments(resolved),
 		Errors:   errs,
 	}
 }
@@ -368,6 +368,19 @@ func nestedString(obj map[string]interface{}, keys ...string) (string, bool) {
 		current = next
 	}
 	return "", false
+}
+
+// joinYAMLDocuments reassembles resolved documents into a multi-document YAML
+// string. Each document is trimmed of trailing newlines and joined with a
+// standalone "---" separator line, so a document that doesn't end in a newline
+// (e.g. a template with no trailing newline) can't concatenate with the next
+// document's separator (producing `value---` and invalid YAML).
+func joinYAMLDocuments(docs []string) string {
+	trimmed := make([]string, len(docs))
+	for i, d := range docs {
+		trimmed[i] = strings.TrimRight(d, "\n")
+	}
+	return strings.Join(trimmed, "\n---\n") + "\n"
 }
 
 // splitYAMLDocuments splits a multi-document YAML string on `---` boundaries.

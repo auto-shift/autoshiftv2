@@ -1,0 +1,196 @@
+# ==============================================================================
+# vSphere Cluster Install Example - Provision a VMware vSphere Cluster via Hive
+# ==============================================================================
+# Copy this file and rename it after your cluster (e.g., my-vsphere-cluster.yaml).
+# Add it to the ArgoCD Application valueFiles to deploy.
+#
+# Usage in ArgoCD Application:
+#   valueFiles:
+#     - values/global.yaml
+#     - values/clustersets/hub.yaml
+#     - values/clustersets/managed.yaml
+#     - values/clusters/my-vsphere-cluster.yaml    # <-- this file
+#
+# Prerequisites:
+#   - Hub clusterset must have: cluster-install: 'true'
+#   - Source secret must exist (see below)
+#   - DNS records for api.<cluster>.<baseDomain> and *.apps.<cluster>.<baseDomain>
+#     resolving to the apiVIP / ingressVIP
+#   - vCenter account with the required privileges
+#     (see https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_vsphere)
+#
+# Generate SSH keys (ECDSA or RSA required for FIPS, NOT ed25519):
+#   ssh-keygen -t ecdsa -b 521 -N '' -f ~/.ssh/ocp-cluster
+#
+# Create the source secret (single secret pattern, matches ACM GUI):
+#   oc create namespace cluster-install-secrets
+#   oc create secret generic vsphere-creds \
+#     -n cluster-install-secrets \
+#     --from-literal=username='administrator@vsphere.local' \
+#     --from-literal=password='<vcenter-password>' \
+#     --from-file=cacert=/path/to/vcenter-ca.pem \
+#     --from-file=ssh-publickey=$HOME/.ssh/ocp-cluster.pub \
+#     --from-file=pullSecret=$HOME/pull-secret.json
+#
+# See docs/cluster-install.md for the full guide.
+# ==============================================================================
+
+clusters:
+  my-vsphere-cluster:
+    config:
+      clusterSet: managed
+
+      # =====================================================================
+      # Networking — SDN configuration
+      # =====================================================================
+      networking:
+        clusterNetwork:
+          cidr: 10.128.0.0/14
+          hostPrefix: 23
+        machineNetwork:
+          cidr: 10.0.0.0/24
+        serviceNetwork:
+          - 172.30.0.0/16
+
+      # =====================================================================
+      # Cluster Install — install-specific config
+      # =====================================================================
+      clusterInstall:
+        createCluster: 'true'
+        platform: vmware
+        baseDomain: example.com
+        openshiftVersion: '4.20.16'
+        # cpuArch: x86_64                           # default: x86_64
+        openshiftChannel: stable                     # ClusterImageSet channel label
+        # clusterImageSet: ''                        # optional, overrides openshiftVersion
+
+        # --- Secrets ---
+        pullSecretRef:                               # reference to pull secret
+          name: 'vsphere-creds'                      # secret name
+          key: 'pullSecret'                          # key in secret (default: .dockerconfigjson)
+          namespace: 'cluster-install-secrets'
+        secretSourceNamespace: 'cluster-install-secrets'
+
+        # --- Cluster Management ---
+        # klusterletAddons:
+        #   - applicationManager
+        #   - certPolicyController
+        #   - policyController
+        #   - searchCollector
+
+      # =====================================================================
+      # vSphere — platform-specific config
+      # =====================================================================
+      vsphere:
+        credentialRef: 'vsphere-creds'               # secret with username + password (vCenter)
+        certificatesRef:                             # secret + key holding the vCenter CA bundle
+          name: 'vsphere-creds'
+          key: 'cacert'
+          namespace: 'cluster-install-secrets'
+        sshKeyRef:                                   # reads ssh-publickey from secret for install-config
+          name: 'vsphere-creds'
+          key: 'ssh-publickey'
+          namespace: 'cluster-install-secrets'
+        # sshPublicKey: 'ssh-ecdsa AAAAE2...'        # OR inline public key instead of sshKeyRef
+        fips: false                                   # default: false (requires ECDSA or RSA keys)
+        networkType: OVNKubernetes                    # default: OVNKubernetes
+
+        # --- Virtual IPs ---
+        apiVIPs:
+          - 10.0.0.100
+        ingressVIPs:
+          - 10.0.0.101
+
+        # --- vCenter connection ---
+        vcenter:
+          server: vcenter.example.com
+          port: 443                                   # default: 443
+          datacenters:
+            - Datacenter
+
+        # --- Failure Domains (region/zone topology) ---
+        failureDomains:
+          - name: generated-failure-domain
+            region: generated-region
+            zone: generated-zone
+            server: vcenter.example.com               # optional, defaults to vcenter.server
+            topology:
+              computeCluster: /Datacenter/host/Cluster
+              datacenter: Datacenter
+              datastore: /Datacenter/datastore/datastore1
+              networks:
+                - VM_Network
+              resourcePool: /Datacenter/host/Cluster/Resources
+              # folder: /Datacenter/vm/openshift        # optional
+
+        # --- Control Plane sizing ---
+        controlPlane:
+          replicas: 3
+          coresPerSocket: 2
+          cpus: 4
+          memoryMB: 16384
+          osDisk:
+            diskSizeGB: 120
+
+        # --- Worker sizing ---
+        workers:
+          replicas: 3
+          coresPerSocket: 2
+          cpus: 8
+          memoryMB: 24576
+          osDisk:
+            diskSizeGB: 120
+
+        # --- Static IP hosts (OPTIONAL — omit for DHCP, the default) ---
+        # By DEFAULT nodes use DHCP: leave this block out entirely and NO
+        # bootstrap entry is needed (recommended). Add `hosts` ONLY to assign
+        # static IPs; then you MUST list exactly one bootstrap host plus one per
+        # control-plane and compute node — count = 1 + controlPlane.replicas +
+        # workers.replicas — and every ipAddrs must be within machineNetwork.
+        # The bootstrap VM is temporary; its IP is released once install finishes.
+        # role: bootstrap | control-plane | compute
+        # hosts:
+        #   - role: bootstrap          # required for static IP (temporary VM)
+        #     networkDevice:
+        #       gateway: 10.0.0.1
+        #       ipAddrs:
+        #         - 10.0.0.105/24
+        #       nameservers:
+        #         - 10.0.0.53
+        #         - 10.0.0.54
+        #   - role: control-plane      # repeat per control-plane node (e.g. .200-.202)
+        #     networkDevice:
+        #       gateway: 10.0.0.1
+        #       ipAddrs:
+        #         - 10.0.0.200/24
+        #       nameservers:
+        #         - 10.0.0.53
+        #         - 10.0.0.54
+        #   - role: compute            # repeat per compute node (e.g. .203-.205)
+        #     networkDevice:
+        #       gateway: 10.0.0.1
+        #       ipAddrs:
+        #         - 10.0.0.203/24
+        #       nameservers:
+        #         - 10.0.0.53
+        #         - 10.0.0.54
+
+      # =====================================================================
+      # Disconnected — optional, same as AWS/baremetal
+      # =====================================================================
+      # For disconnected vSphere installs, the install-config automatically
+      # includes imageDigestSources and additionalTrustBundle from this config.
+      # disconnected:
+      #   mirrorRegistry:
+      #     host: 'mirror.example.com:5000'
+      #     path: 'ocp'
+      #     caRef:                                   # reference a ConfigMap with the CA
+      #       name: 'cluster-ca-bundle'
+      #       key: 'ca-bundle.crt'
+      #       namespace: 'cluster-install-secrets'
+      #     mirrors:
+      #       - source: quay.io/openshift-release-dev/ocp-release
+      #         mirror: openshift/release-images
+      #       - source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+      #         mirror: openshift/release
+      #       - source: registry.redhat.io           # no mirror = host/path

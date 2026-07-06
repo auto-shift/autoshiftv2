@@ -92,6 +92,85 @@ spec:
             resourcePool: /DC1/host/cluster/Resources
             server: vcenter.test.example.com
 ---
+# Second worker MachineSet — represents a SECOND vSphere failure domain (DC2).
+# The vmware node policies iterate every worker MachineSet (one per failure
+# domain), so this exercises the multi-failure-domain path: infra/storage-vmware
+# must emit a MachineSet per failure domain, copying each one's workspace.
+# Kept hybrid (AWS placement + VMware workspace) so the AWS/test node policies —
+# which pick a single worker MachineSet and still read placement.availabilityZone
+# — resolve regardless of which one they select.
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineSet
+metadata:
+  name: test-cluster-abc12-worker-us-east-2b
+  namespace: openshift-machine-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-cluster: test-cluster-abc12
+      machine.openshift.io/cluster-api-machineset: test-cluster-abc12-worker-us-east-2b
+  template:
+    metadata:
+      labels:
+        machine.openshift.io/cluster-api-cluster: test-cluster-abc12
+        machine.openshift.io/cluster-api-machineset: test-cluster-abc12-worker-us-east-2b
+    spec:
+      providerSpec:
+        value:
+          # AWS fields
+          apiVersion: machine.openshift.io/v1beta1
+          kind: AWSMachineProviderConfig
+          ami:
+            id: ami-fake0000000000002
+          placement:
+            availabilityZone: us-east-2b
+            region: us-east-2
+          instanceType: m5a.4xlarge
+          userDataSecret:
+            name: worker-user-data
+          credentialsSecret:
+            name: aws-cloud-credentials
+          iamInstanceProfile:
+            id: test-cluster-abc12-worker-profile
+          blockDevices:
+            - ebs:
+                encrypted: false
+                iops: 0
+                kmsKey:
+                  arn: ""
+                volumeSize: 120
+                volumeType: gp3
+          securityGroups:
+            - filters:
+                - name: tag:Name
+                  values:
+                    - test-cluster-abc12-worker-sg
+          subnet:
+            filters:
+              - name: tag:Name
+                values:
+                  - test-cluster-abc12-subnet-private-us-east-2b
+          tags:
+            - name: kubernetes.io/cluster/test-cluster-abc12
+              value: owned
+          deviceIndex: 0
+          # VMware fields — SECOND failure domain (DC2)
+          numCoresPerSocket: 2
+          numCPUs: 4
+          memoryMiB: 16384
+          diskGiB: 120
+          template: rhcos-4.16
+          network:
+            devices:
+              - networkName: VM Network
+          workspace:
+            datacenter: DC2
+            datastore: datastore2
+            folder: /DC2/vm/test-cluster
+            resourcePool: /DC2/host/cluster/Resources
+            server: vcenter.test.example.com
+---
 # IngressController — registers operator.openshift.io/v1
 apiVersion: operator.openshift.io/v1
 kind: IngressController

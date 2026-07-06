@@ -20,18 +20,13 @@ spec:
           name: create-storage-nodes-vmware
         spec:
           object-templates-raw: |
-              {{ "{{-" }} /* Specify the parameters needed to create the MachineSet  */ {{ "-}}" }}
+              {{ "{{-" }} /* vSphere creates one worker MachineSet per failure domain; clone each into a storage MachineSet that copies its workspace/network/template, so storage nodes land in the same failure domain(s) as the workers — works for one or many domains. */ {{ "-}}" }}
               {{ "{{-" }} $machineset_role := "storage" {{ "}}" }}
-              {{ "{{-" }} $zones_from_labels := list {{ "{{hub" }} range $label, $labelvalue := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub" }} if $label | hasPrefix "autoshift.io/storage-nodes-zone" {{ "hub}}" }}"{{ "{{hub" }} $labelvalue {{ "hub}}" }}"{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }} {{ "}}" }}
               {{ "{{-" }} $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName {{ "}}" }}
-              {{ "{{-" }} $worker_ms := dict {{ "}}" }}
               {{ "{{-" }} range (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items {{ "}}" }}
                 {{ "{{-" }} if hasPrefix (printf "%s-worker" $infrastructure_id) .metadata.name {{ "}}" }}
-                  {{ "{{-" }} $worker_ms = . {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} end {{ "}}" }}
-              {{ "{{-" }} /* Generate the MachineSet for each zone as specified  */ {{ "-}}" }}
-              {{ "{{-" }} range $zone := ternary (list $worker_ms.spec.template.spec.providerSpec.value.placement.availabilityZone ) $zones_from_labels (eq 0 (len $zones_from_labels)) {{ "}}" }}
+                  {{ "{{-" }} $worker_ms := . {{ "}}" }}
+                  {{ "{{-" }} $zone := trimPrefix (printf "%s-worker-" $infrastructure_id) $worker_ms.metadata.name {{ "}}" }}
               - complianceType: musthave
                 objectDefinition:
                   apiVersion: machine.openshift.io/v1beta1
@@ -87,6 +82,7 @@ spec:
                               server: {{ "{{" }} $worker_ms.spec.template.spec.providerSpec.value.workspace.server {{ "}}" }}
                             template: {{ "{{" }} $worker_ms.spec.template.spec.providerSpec.value.template {{ "}}" }}
                             apiVersion: machine.openshift.io/v1beta1
+                {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
           pruneObjectBehavior: None
           remediationAction: enforce

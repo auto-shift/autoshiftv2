@@ -22,6 +22,15 @@ type ExampleConfigs struct {
 	// ClusterInstallConfig: config from _example-cluster-install*.yaml files,
 	// cluster name remapped to the lint cluster name.
 	ClusterInstallConfig map[string]interface{}
+	// ClusterInstallExtra: one entry per cluster-install example file, keyed by
+	// its clusterInstall.platform (e.g. "baremetal", "aws", "vmware"). The merged
+	// ClusterInstallConfig only carries a single clusterInstall.platform (the
+	// last file merged wins), so it can only ever exercise one platform's install
+	// policy body. Each entry here becomes its own synthetic rendered-config
+	// ConfigMap so every platform's install policy body is resolved in one run,
+	// independent of file read order. New example files are picked up
+	// automatically.
+	ClusterInstallExtra map[string]map[string]interface{}
 }
 
 // ExtractExampleConfigs reads the authoritative example files and returns
@@ -104,6 +113,7 @@ func ExtractExampleConfigs(valuesDir string) (*ExampleConfigs, error) {
 	}
 
 	merged := map[string]interface{}{}
+	extra := map[string]map[string]interface{}{}
 	for _, entry := range clEntries {
 		name := entry.Name()
 		if !strings.HasPrefix(name, "_example-cluster-install") || !strings.HasSuffix(name, ".yaml") {
@@ -125,6 +135,19 @@ func ExtractExampleConfigs(valuesDir string) (*ExampleConfigs, error) {
 			for _, clusterVal := range clusters {
 				if cluster, ok := clusterVal.(map[string]interface{}); ok {
 					if clCfg, ok := cluster["config"].(map[string]interface{}); ok {
+						// Capture EVERY platform (including baremetal) as its own
+						// config BEFORE merging, so GenerateSyntheticConfigMaps can
+						// emit a dedicated rendered-config ConfigMap per platform and
+						// each platform's install policy body is exercised. Keyed by
+						// clusterInstall.platform, so it's driven entirely by the
+						// example files — adding a new _example-cluster-install-*.yaml
+						// with a new platform is picked up automatically, and no
+						// platform depends on file read order.
+						//
+						// A deep copy is required: deepMergeYAML aliases nested maps
+						// by reference into `merged`, so a later file's merge would
+						// otherwise mutate this file's clusterInstall block.
+						extra[clusterInstallPlatform(clCfg)] = deepCopyMap(clCfg)
 						deepMergeYAML(merged, clCfg)
 					}
 				}
@@ -136,8 +159,51 @@ func ExtractExampleConfigs(valuesDir string) (*ExampleConfigs, error) {
 	if len(merged) > 0 {
 		cfg.ClusterInstallConfig = merged
 	}
+	if len(extra) > 0 {
+		cfg.ClusterInstallExtra = extra
+	}
 
 	return cfg, nil
+}
+
+// deepCopyMap returns a deep copy of a JSON-compatible config map. Used to
+// snapshot a per-platform cluster-install config before deepMergeYAML aliases
+// its nested maps into the merged config.
+func deepCopyMap(src map[string]interface{}) map[string]interface{} {
+	dst := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		dst[k] = deepCopyValue(v)
+	}
+	return dst
+}
+
+func deepCopyValue(v interface{}) interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		return deepCopyMap(t)
+	case []interface{}:
+		out := make([]interface{}, len(t))
+		for i, e := range t {
+			out[i] = deepCopyValue(e)
+		}
+		return out
+	default:
+		return t
+	}
+}
+
+// clusterInstallPlatform returns the clusterInstall.platform value from a
+// cluster-install config block, defaulting to "baremetal" when unset — matching
+// the default the install policies apply.
+func clusterInstallPlatform(clCfg map[string]interface{}) string {
+	ci, ok := clCfg["clusterInstall"].(map[string]interface{})
+	if !ok {
+		return "baremetal"
+	}
+	if p, ok := ci["platform"].(string); ok && p != "" {
+		return p
+	}
+	return "baremetal"
 }
 
 // WriteTestValues creates a temporary values file that provides the
@@ -171,8 +237,20 @@ func WriteTestValues(tmpDir, clusterName string, cfg *ExampleConfigs) (string, e
 		hubEntry["config"] = hubConfig
 	}
 
+	// Managed clusterset carries the same rich label set as the hub, but with
+	// self-managed flipped to 'false' — a real managed/spoke clusterset is not
+	// self-managed. This exercises helm-render branches that key off
+	// managedClusterSets.*.labels.self-managed, and pairs with the managed
+	// resolution context (self-managed: 'false' ManagedClusterLabels) that the
+	// e2e pipeline resolves against.
+	managedLabels := make(map[string]interface{}, len(hubLabels)+1)
+	for k, v := range hubLabels {
+		managedLabels[k] = v
+	}
+	managedLabels["self-managed"] = "false"
+
 	managedEntry := map[string]interface{}{
-		"labels": hubLabels, // hub is source of truth for managed clusters too
+		"labels": managedLabels,
 	}
 	if hubConfig != nil {
 		managedEntry["config"] = hubConfig

@@ -4,6 +4,7 @@ This guide covers provisioning OpenShift clusters using AutoShift's cluster-inst
 
 - **Baremetal** — ACM Assisted Installer + SiteConfig operator
 - **AWS** — Hive ClusterDeployment + IPI installer
+- **vSphere** — Hive ClusterDeployment + IPI installer (VMware)
 
 ## Overview
 
@@ -18,6 +19,9 @@ AutoShift provisions clusters through ACM policies that chain together. The `pla
 
 **AWS (`platform: aws`):**
 3. **policy-cluster-install-aws** - Creates Secrets, ClusterDeployment, MachinePool, and ManagedCluster for Hive IPI install
+
+**vSphere (`platform: vmware`):**
+3. **policy-cluster-install-vmware** - Creates Secrets (vCenter creds, CA, pull secret, install-config), ClusterDeployment, MachinePool, and ManagedCluster for Hive IPI install
 
 Each policy depends on the previous one being Compliant before it runs.
 
@@ -259,7 +263,7 @@ Install-specific configuration. The `createCluster: 'true'` flag triggers provis
 ```yaml
 clusterInstall:
   createCluster: 'true'              # Required - triggers provisioning
-  platform: baremetal                 # 'baremetal' (default) or 'aws'
+  platform: baremetal                 # 'baremetal' (default), 'aws', or 'vmware'
   baseDomain: example.com
   openshiftVersion: '4.20.12'
   cpuArch: x86_64                    # default: x86_64
@@ -411,7 +415,7 @@ oc create secret generic default-bmc-cred \
 # Pull secret (from Red Hat console download)
 oc create secret generic default-pull-secret \
   -n cluster-install-secrets \
-  --from-file=.dockerconfigjson=~/pull-secret.json \
+  --from-file=.dockerconfigjson=$HOME/pull-secret.json \
   --type=kubernetes.io/dockerconfigjson
 
 # SSH key
@@ -437,8 +441,9 @@ oc get secret,configmap -n cluster-install-secrets
 
 Copy the appropriate example file and rename it after your cluster:
 
-- **Baremetal**: `cp autoshift/values/clusters/_example-cluster-install.yaml autoshift/values/clusters/my-cluster.yaml`
+- **Baremetal**: `cp autoshift/values/clusters/_example-cluster-install-baremetal.yaml autoshift/values/clusters/my-cluster.yaml`
 - **AWS**: `cp autoshift/values/clusters/_example-cluster-install-aws.yaml autoshift/values/clusters/my-aws-cluster.yaml`
+- **vSphere**: `cp autoshift/values/clusters/_example-cluster-install-vmware.yaml autoshift/values/clusters/my-vsphere-cluster.yaml`
 
 The example files are fully commented with all available options. Edit the copy to match your environment — at minimum you need:
 
@@ -454,7 +459,7 @@ clusters:
         # ... per-host BMC, MAC, interfaces (see example file)
       clusterInstall:
         createCluster: 'true'
-        platform: baremetal              # or 'aws'
+        platform: baremetal              # or 'aws' / 'vmware'
         baseDomain: example.com
         openshiftVersion: '4.20.12'
         controlPlaneAgents: 3            # 1 = SNO
@@ -467,6 +472,92 @@ clusters:
 ```
 
 See the [Configuration Structure](#configuration-structure) sections above for field details.
+
+#### vSphere specifics
+
+vSphere uses the Hive IPI flow (same as AWS). All vCenter connection details live under a `vsphere:` config block, and credentials are supplied through a single source secret. The policy renders the vCenter username/password from that secret into the install-config Secret (required by `openshift-install`; Hive does not inject vSphere credentials at provision time) and also copies the secret into the cluster namespace as `credentialsSecretRef`, which Hive uses for deprovision and day-2 operations.
+
+Create the single source secret (matches the ACM console pattern):
+
+```bash
+oc create namespace cluster-install-secrets
+oc create secret generic vsphere-creds \
+  -n cluster-install-secrets \
+  --from-literal=username='administrator@vsphere.local' \
+  --from-literal=password='<vcenter-password>' \
+  --from-file=cacert=/path/to/vcenter-ca.pem \
+  --from-file=ssh-publickey=$HOME/.ssh/ocp-cluster.pub \
+  --from-file=pullSecret=$HOME/pull-secret.json
+```
+
+Minimum cluster config:
+
+```yaml
+# autoshift/values/clusters/my-vsphere-cluster.yaml
+clusters:
+  my-vsphere-cluster:
+    config:
+      clusterSet: managed
+      networking:
+        clusterNetwork: { cidr: 10.128.0.0/14, hostPrefix: 23 }
+        machineNetwork: { cidr: 10.0.0.0/24 }
+        serviceNetwork: [172.30.0.0/16]
+      clusterInstall:
+        createCluster: 'true'
+        platform: vmware
+        baseDomain: example.com
+        openshiftVersion: '4.20.16'
+        pullSecretRef: { name: vsphere-creds, key: pullSecret, namespace: cluster-install-secrets }
+        secretSourceNamespace: cluster-install-secrets
+      vsphere:
+        credentialRef: vsphere-creds
+        certificatesRef: { name: vsphere-creds, key: cacert }
+        sshKeyRef: { name: vsphere-creds, key: ssh-publickey }
+        apiVIPs: [10.0.0.100]
+        ingressVIPs: [10.0.0.101]
+        vcenter:
+          server: vcenter.example.com
+          datacenters: [Datacenter]
+        failureDomains:
+          - name: generated-failure-domain
+            region: generated-region
+            zone: generated-zone
+            topology:
+              computeCluster: /Datacenter/host/Cluster
+              datacenter: Datacenter
+              datastore: /Datacenter/datastore/datastore1
+              networks: [VM_Network]
+              resourcePool: /Datacenter/host/Cluster/Resources
+        controlPlane: { replicas: 3, cpus: 4, coresPerSocket: 2, memoryMB: 16384, osDisk: { diskSizeGB: 120 } }
+        workers:      { replicas: 3, cpus: 8, coresPerSocket: 2, memoryMB: 24576, osDisk: { diskSizeGB: 120 } }
+```
+
+**Networking — DHCP (default) or static IP:**
+
+By default, nodes get their addresses via **DHCP** — omit the `vsphere.hosts` block entirely and **no bootstrap host is needed**. This is the recommended path (the minimum config above is DHCP).
+
+To assign **static IPs** instead, add a `vsphere.hosts` list; each entry has a `role` (`bootstrap`, `control-plane`, or `compute`) and a `networkDevice` (`gateway`, `ipAddrs`, `nameservers`). Rules:
+
+- **A `bootstrap` host is required.** The bootstrap VM is temporary (destroyed once install finishes, its IP released), but with no DHCP it still needs a static IP *during* installation.
+- The list must contain **exactly** `1` bootstrap + `controlPlane.replicas` control-plane + `workers.replicas` compute entries (e.g. `1 + 3 + 3 = 7`).
+- Every `ipAddrs` value must fall within `networking.machineNetwork`.
+- Omitting the bootstrap host or mismatching the counts makes `openshift-install` fail validation.
+
+See `_example-cluster-install-vmware.yaml` for a complete (commented) static-IP example.
+
+**`vsphere` field reference:**
+
+| Field | Required | Notes |
+|---|---|---|
+| `credentialRef` | yes | Source secret with `username` + `password` (vCenter) |
+| `certificatesRef` | yes | `{name, key[, namespace]}` — vCenter CA bundle → `certificatesSecretRef` |
+| `sshKeyRef` **or** `sshPublicKey` | yes (one) | SSH public key rendered into the install-config |
+| `apiVIPs` / `ingressVIPs` | yes | API and Ingress virtual IPs (within `machineNetwork`) |
+| `vcenter` | yes | `server`, `port` (default 443), `datacenters` |
+| `failureDomains[]` | yes | `name`, `region`, `zone`, `server`, and `topology` (`computeCluster`, `datacenter`, `datastore`, `networks`, `resourcePool`, optional `folder`) |
+| `controlPlane` / `workers` | no | `replicas`, `cpus`, `coresPerSocket`, `memoryMB`, `osDisk.diskSizeGB` |
+| `hosts[]` | no | Static IPs (see above); **omit for DHCP** |
+| `fips` / `networkType` | no | default `false` / `OVNKubernetes` |
 
 ### Step 4: Add the Values File to ArgoCD
 
@@ -822,7 +913,7 @@ oc create secret generic aws-creds \
   --from-literal=aws_secret_access_key=<secret> \
   --from-file=ssh-privatekey=$HOME/.ssh/ocp-cluster \
   --from-file=ssh-publickey=$HOME/.ssh/ocp-cluster.pub \
-  --from-file=pullSecret=~/pull-secret.json \
+  --from-file=pullSecret=$HOME/pull-secret.json \
   --from-literal=baseDomain=example.com
 ```
 
@@ -856,7 +947,7 @@ oc create secret generic ssh-private-key \
 # Pull secret
 oc create secret generic default-pull-secret \
   -n cluster-install-secrets \
-  --from-file=.dockerconfigjson=~/pull-secret.json \
+  --from-file=.dockerconfigjson=$HOME/pull-secret.json \
   --type=kubernetes.io/dockerconfigjson
 ```
 
@@ -864,7 +955,7 @@ oc create secret generic default-pull-secret \
 
 ### AWS Disconnected Installation
 
-For disconnected AWS installs, add the `disconnected` config block. The disconnected config structure is the same as baremetal — see the [disconnected](#disconnected) section above for all fields. Both example files ([baremetal](../autoshift/values/clusters/_example-cluster-install.yaml), [AWS](../autoshift/values/clusters/_example-cluster-install-aws.yaml)) include a commented-out disconnected block ready to uncomment.
+For disconnected AWS installs, add the `disconnected` config block. The disconnected config structure is the same as baremetal — see the [disconnected](#disconnected) section above for all fields. Both example files ([baremetal](../autoshift/values/clusters/_example-cluster-install-baremetal.yaml), [AWS](../autoshift/values/clusters/_example-cluster-install-aws.yaml)) include a commented-out disconnected block ready to uncomment.
 
 The install-config automatically includes `imageDigestSources` and `additionalTrustBundle` when mirrors are configured.
 
