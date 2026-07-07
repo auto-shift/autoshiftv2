@@ -10,6 +10,7 @@ Complete documentation for AutoShift - Infrastructure as Code for OpenShift usin
 
 ### Configuration
 - **[Values Reference](values-reference.md)** - All cluster labels and configuration options
+- **[Hub-of-Hubs Topology](hub-of-hubs.md)** - Multi-tier (global hub) deployments: how AutoShift stacks per-hub and which tier manages what
 - **[Workload Partitioning](workload-partitioning.md)** - CPU isolation, PerformanceProfile sizing, NUMA topology
 
 ### Release & Operations
@@ -49,6 +50,7 @@ AutoShift uses a three-phase deployment model:
 - **Labels**: Configured in values files only, propagated to clusters by the cluster-labels policy
 - **OCI Mode**: Deploy all components from OCI registries (no Git dependency)
 - **Git Mode**: Deploy from Git repository with auto-discovery under `policies/{stable,certified,community}/*`
+- **Hub-of-Hubs**: A global hub manages other hubs; each hub runs its own AutoShift instance and only manages clusters its own ACM sees — see [Hub-of-Hubs Topology](hub-of-hubs.md)
 
 ### Minimum Requirements
 All hub clusters must have:
