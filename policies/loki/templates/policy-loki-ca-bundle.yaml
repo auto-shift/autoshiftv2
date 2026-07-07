@@ -24,8 +24,9 @@ spec:
           object-templates-raw : |
 
             # Fetch cluster config file
-            {{ "{{hub-" }} if index .ManagedClusterLabels "autoshift.io/user-ca-bundle" {{ "hub}}" }}
-            {{ "{{hub" }} $configs := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml {{ "hub}}" }}
+            {{ "{{hub" }} $cfg := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}" | fromYaml {{ "hub}}" }}
+            {{ "{{hub-" }} $userCABundle := index $cfg `user-ca-bundle` | default "" {{ "hub}}" }}
+            {{ "{{hub-" }} if $userCABundle {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -35,7 +36,7 @@ spec:
                   namespace: {{ .Values.loki.lokistackNamespace }}
                 data:
                   ca.crt: |
-                    {{ "{{hub" }} index $configs "user-ca-bundle" | autoindent {{ "hub}}" }}
+                    {{ "{{hub" }} $userCABundle | autoindent {{ "hub}}" }}
             {{ "{{hub- end hub}}"}}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1

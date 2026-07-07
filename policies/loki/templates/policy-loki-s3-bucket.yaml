@@ -35,7 +35,10 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: | 
-            {{ "{{hub" }} $secret := index .ManagedClusterLabels "autoshift.io/loki-s3-secret-name" {{ "hub}}" }}
+            {{ "{{hub" }} $cfg := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}" | fromYaml {{ "hub}}" }}
+            {{ "{{hub-" }} $lokiConfig := index $cfg `loki` | default (dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $secret := index $lokiConfig `secretName` | default "" {{ "hub}}" }}
+            {{ "{{hub-" }} $secretNamespace := index $lokiConfig `secretsNamespace` | default "" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
@@ -45,11 +48,11 @@ spec:
                   namespace: {{ .Values.loki.lokistackNamespace }}
                 type: Opaque
                 data:
-                  access_key_id: {{ "{{hub" }} fromSecret (index .ManagedClusterLabels `autoshift.io/loki-s3-secrets-namespace`) $secret "access_key_id" {{ "hub}}" }}
-                  access_key_secret: {{ "{{hub" }} fromSecret (index .ManagedClusterLabels `autoshift.io/loki-s3-secrets-namespace`) $secret "access_key_secret" {{ "hub}}" }}
-                  bucketnames: {{ "{{hub" }} fromSecret (index .ManagedClusterLabels `autoshift.io/loki-s3-secrets-namespace`) $secret "bucketnames" {{ "hub}}" }}
-                  endpoint: {{ "{{hub" }} fromSecret (index .ManagedClusterLabels `autoshift.io/loki-s3-secrets-namespace`) $secret "endpoint" {{ "hub}}" }}
-                  region: {{ "{{hub" }} fromSecret (index .ManagedClusterLabels `autoshift.io/loki-s3-secrets-namespace`) $secret "region" {{ "hub}}" }}
+                  access_key_id: {{ "{{hub" }} fromSecret $secretNamespace $secret "access_key_id" {{ "hub}}" }}
+                  access_key_secret: {{ "{{hub" }} fromSecret $secretNamespace $secret "access_key_secret" {{ "hub}}" }}
+                  bucketnames: {{ "{{hub" }} fromSecret $secretNamespace $secret "bucketnames" {{ "hub}}" }}
+                  endpoint: {{ "{{hub" }} fromSecret $secretNamespace $secret "endpoint" {{ "hub}}" }}
+                  region: {{ "{{hub" }} fromSecret $secretNamespace $secret "region" {{ "hub}}" }}
 
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1

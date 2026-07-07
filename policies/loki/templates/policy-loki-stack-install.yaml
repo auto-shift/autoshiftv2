@@ -43,7 +43,12 @@ spec:
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
+          object-templates-raw: |
+            {{ "{{hub" }} $cfg := fromConfigMap "{{ $.Values.policy_namespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}" | fromYaml {{ "hub}}" }}
+            {{ "{{hub-" }} $lokiConfig := index $cfg `loki` | default (dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $lokiStorageClass := index $lokiConfig `storageClass` | default "{{ .Values.loki.storageClass }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $lokiSize := index $lokiConfig `size` | default "{{ .Values.loki.size }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $lokiRetentionDays := index $lokiConfig `retentionDays` | default {{ .Values.loki.retentionDays }} {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: loki.grafana.com/v1
@@ -61,12 +66,12 @@ spec:
                         perStreamRateLimit: 25
                         perStreamRateLimitBurst: 100
                       retention:
-                        days: 30
+                        days: {{ "{{hub" }} $lokiRetentionDays {{ "hub}}" }}
                       queries:
                         queryTimeout: 3m
                   managementState: Managed
-                  storageClassName: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-storageclass" | default "{{ .Values.loki.storageClass }}" {{ "hub}}" }}'
-                  size: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/loki-size" | default "{{ .Values.loki.size }}" {{ "hub}}" }}'
+                  storageClassName: '{{ "{{hub" }} $lokiStorageClass {{ "hub}}" }}'
+                  size: '{{ "{{hub" }} $lokiSize {{ "hub}}" }}'
                   storage:
                     schemas:
                       - effectiveDate: '2024-09-22'
