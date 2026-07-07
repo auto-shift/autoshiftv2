@@ -279,7 +279,7 @@ git commit -m "Add my-component operator with configuration"
 git push
 
 # Monitor deployment in ArgoCD
-oc get applications -n openshift-gitops | grep my-component
+oc get applications.argoproj.io -n openshift-gitops | grep my-component
 ```
 
 ## 📚 Policy Development Guide
@@ -519,7 +519,7 @@ oc get policies -A | grep my-component
 oc describe policy policy-my-component-operator-install -n policies-autoshift
 
 # View ArgoCD sync status
-oc get applications -n openshift-gitops my-component -o yaml
+oc get applications.argoproj.io -n openshift-gitops my-component -o yaml
 ```
 
 ### Working with Disconnected Environments
@@ -737,7 +737,7 @@ oc get policyreports -A
 | Policy not applying to cluster | Check cluster labels: `oc get managedcluster $CLUSTER_NAME -o yaml` |
 | Operator installation failing | Check OperatorPolicy status: `oc describe operatorpolicy OPERATOR_POLICY_NAME -n $CLUSTER_NAME` |
 | Template rendering errors | Check policy status: `oc describe policy POLICY_NAME -n policies-autoshift` |
-| ArgoCD sync failures | Check application status: `oc get applications -n openshift-gitops POLICY_NAME -o yaml` |
+| ArgoCD sync failures | Check application status: `oc get applications.argoproj.io -n openshift-gitops POLICY_NAME -o yaml` |
 | Policy stuck in NonCompliant | Check OperatorPolicy or ConfigurationPolicy status (see debug commands) |
 | Configuration not applied | Check ConfigurationPolicy status: `oc describe configurationpolicy CONFIG_POLICY_NAME -n $CLUSTER_NAME` |
 | Hub template processing issues | View policy propagator logs (see debug commands) |
@@ -767,10 +767,10 @@ oc describe configurationpolicy CONFIG_POLICY_NAME -n $CLUSTER_NAME
 oc describe policy POLICY_NAME -n policies-autoshift
 
 # 4. Check ArgoCD application status
-oc get applications -n openshift-gitops
+oc get applications.argoproj.io -n openshift-gitops
 
 # 5. View specific ArgoCD application details
-oc get application autoshift-POLICY_NAME -n openshift-gitops -o yaml
+oc get application.argoproj.io autoshift-POLICY_NAME -n openshift-gitops -o yaml
 
 # 6. Check cluster labels (hub template variables)
 oc get managedcluster $CLUSTER_NAME -o yaml

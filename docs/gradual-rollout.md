@@ -109,7 +109,7 @@ oc label managedcluster spoke-cluster-3 cluster.open-cluster-management.io/clust
 
 ```bash
 # Check Application synced
-oc get application autoshift-0-0-1 -n openshift-gitops
+oc get application.argoproj.io autoshift-0-0-1 -n openshift-gitops
 
 # Check policy namespace (uses ArgoCD app name)
 oc get namespace policies-autoshift-0-0-1
@@ -219,7 +219,7 @@ oc get managedclusters -l cluster.open-cluster-management.io/clusterset=managed-
 # Should return empty
 
 # Delete old AutoShift deployment
-oc delete application autoshift-0-0-1 -n openshift-gitops
+oc delete application.argoproj.io autoshift-0-0-1 -n openshift-gitops
 
 # Clustersets will be cleaned up with the application, or manually:
 oc delete managedclusterset hub-0-0-1 managed-0-0-1
