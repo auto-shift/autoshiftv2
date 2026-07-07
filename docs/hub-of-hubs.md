@@ -220,7 +220,7 @@ sequenceDiagram
     Note right of HoH: values: global.yaml + hubofhubs.yaml + hub1.yaml
 
     Note over HoH,H1: HoH prepares AND configures hub1 (it manages it)
-    HoH->>H1: provision/import hub1; install GitOps + ACM on it
+    HoH->>H1: provision/import hub1, install GitOps + ACM on it
     HoH->>H1: place hub1's operator/day-2/upgrade policies on it
 
     Note over Admin,H1AS: Tier 2 — a SEPARATE bootstrap on hub1
