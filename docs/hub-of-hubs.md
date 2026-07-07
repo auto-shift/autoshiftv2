@@ -328,7 +328,6 @@ Now set `acs: 'true'` for **hub1**:
 
 ## See also
 
-- [CLAUDE.md](../CLAUDE.md) — label flow, cluster-labels mechanics, ApplicationSet value flow
 - [cluster-install.md](cluster-install.md) — provisioning and `owning-namespace` ownership filtering
 - [values-reference.md](values-reference.md) — full label/values reference
 - Example value files: `autoshift/values/clustersets/hubofhubs.yaml`, `hub1.yaml`, `hub2.yaml`, `managed.yaml`
