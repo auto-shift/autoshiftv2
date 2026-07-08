@@ -9,6 +9,9 @@
 {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
 {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
 {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ .defaultMode }}") {{ "hub}}" }}
+##### teardown: EXPLICIT opt-in decommission flag — a positive flag, never inferred from config #####
+##### absence, so a transient rendered-config read miss can never trigger a teardown. #####
+{{ "{{hub-" }} $teardown := (dig "teardown" {{ .defaultTeardown }} $hubBootstrap) {{ "hub}}" }}
 {{ "{{hub-" }} $clientIdentity := (dig "clientIdentity" (dict) $hubBootstrap) {{ "hub}}" }}
 {{ "{{hub-" }} $certCNPrefix := (index $clientIdentity "certCNPrefix" | default "{{ .defaultCertCNPrefix }}") {{ "hub}}" }}
 {{ "{{hub-" }} $certBaseDomain := (index $clientIdentity "baseDomain" | default "{{ .defaultCertBaseDomain }}") {{ "hub}}" }}
@@ -18,12 +21,14 @@
 {{ "{{hub-" }} $extCAKey := (index $extCA "key" | default "{{ .defaultExtCAKey }}") {{ "hub}}" }}
 ##### BRIDGE the derived settings to the runtime side #####
 {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
 ##### Collect precondition problems into $errors (no `fail`, which buries the reason under the whole #####
 ##### policy string); surfaced via the status ConfigMap + inform gate below. #####
 {{ "{{-" }} $errors := list {{ "}}" }}
 ##### Reject an unknown mode (a typo'd mode would otherwise silently no-op this policy AND the selfSigned #####
-##### companion, leaving the hub apiserver with no clientCA wired for any cluster). #####
-{{ "{{-" }} if and (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
+##### companion, leaving the hub apiserver with no clientCA wired for any cluster). Skipped on teardown: #####
+##### the sweeps below are mode-independent then, and a mode typo must not block decommissioning. #####
+{{ "{{-" }} if and (ne $teardown "1") (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
   {{ "{{-" }} $errors = append $errors (printf "[spoke] invalid config.eso.hubBootstrap.mode %q (or values hubBootstrap.mode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
 {{ "{{-" }} end {{ "}}" }}
 {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
@@ -37,7 +42,9 @@
 {{ "{{-" }} $eligible := list {{ "}}" }}
 {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
 {{ "{{-" }} $seenIds := dict {{ "}}" }}
-{{ "{{-" }} if or (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert") {{ "}}" }}
+##### On teardown, skip enumeration entirely: $eligible/$nsIdentities stay empty, so the wiring never #####
+##### fires and the RBAC sweep below treats ALL labelled objects as stale. #####
+{{ "{{-" }} if and (or (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert")) (ne $teardown "1") {{ "}}" }}
   {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
     {{ "{{-" }} $mcName := $mc.metadata.name {{ "}}" }}
     {{ "{{-" }} $tenancyNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
@@ -171,8 +178,8 @@
     ##### RBAC lands in each cluster's OWN owning namespace (where its deployment's store reads Secrets). #####
     ##### The RoleBinding is mustonlyhave: its subjects are pinned to EXACTLY the current owners, so a #####
     ##### cluster that moves to another tenancy namespace is dropped from this binding (no stale access). #####
-    ##### Both objects carry an autoshift.io/secret-reader-* label so a future cleanup pass can list them #####
-    ##### and delete any whose namespace is no longer a key in $nsIdentities. The hub-global clientCA / #####
+    ##### Both objects carry an autoshift.io/secret-reader-* label; the cleanup sweep below lists them #####
+    ##### and deletes any whose namespace is no longer a key in $nsIdentities. The hub-global clientCA / #####
     ##### APIServer wiring is deliberately NOT labelled (different lifecycle; not in a tenancy namespace). #####
     {{ "{{-" }} range $ownerNs, $ids := $nsIdentities {{ "}}" }}
 - complianceType: musthave
@@ -211,15 +218,40 @@
     {{ "{{-" }} end {{ "}}" }}
   {{ "{{-" }} end {{ "}}" }}
 {{ "{{-" }} end {{ "}}" }}
-##### CLEANUP (orphaned RoleBindings): a reader RoleBinding this policy labelled whose namespace no #####
-##### longer owns a cluster (not a key in $nsIdentities) is stale — emit a mustNotHave so ACM deletes #####
-##### it. Deleting the binding alone revokes access (its Role grants nothing unbound; Role cleanup is #####
-##### left to a future label sweep). Gated on the SAME modes as the enumerate loop above: the inactive #####
-##### companion policy has an EMPTY $nsIdentities, so without this gate it would delete every labelled #####
-##### binding — including the active policy's. Runs even when $eligible is empty (last cluster left), but #####
-##### NOT when $errors is non-empty: a derivation error can drop a live cluster from $nsIdentities, and #####
-##### deleting its binding on a transient error would revoke access — skip cleanup until the error clears. #####
-{{ "{{-" }} if and (or (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert")) (not $errors) {{ "}}" }}
+##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): unwire the hub apiserver clientCA and #####
+##### remove the shared clientCA ConfigMap. Ordered: the APIServer pointer is emptied BEFORE the #####
+##### ConfigMap is deleted so the apiserver operator never sees a dangling reference. Emitted by BOTH #####
+##### this policy and the selfSigned wire companion (identical objects — idempotent), so teardown #####
+##### converges regardless of which mode was active. Unsetting clientCA is the documented disruptive #####
+##### kube-apiserver rollout. #####
+{{ "{{-" }} if eq $teardown "1" {{ "}}" }}
+- complianceType: musthave
+  objectDefinition:
+    apiVersion: config.openshift.io/v1
+    kind: APIServer
+    metadata:
+      name: cluster
+    spec:
+      clientCA:
+        name: ""
+- complianceType: mustnothave
+  objectDefinition:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ .clientCAConfigMap }}
+      namespace: openshift-config
+{{ "{{-" }} end {{ "}}" }}
+##### CLEANUP (orphaned reader RBAC): a reader RoleBinding or Role this policy labelled whose namespace #####
+##### no longer owns a cluster (not a key in $nsIdentities THIS evaluation) is stale — emit a mustNotHave #####
+##### so ACM deletes it. Each kind is swept independently by its OWN label, so a half-deleted pair (Role #####
+##### without binding or vice versa) still converges. Gated on the SAME modes as the enumerate loop above: #####
+##### the inactive companion policy has an EMPTY $nsIdentities, so without this gate it would delete #####
+##### every labelled object — including the active policy's. Runs even when $eligible is empty (last #####
+##### cluster left), but NOT when $errors is non-empty: a derivation error can drop a live cluster from #####
+##### $nsIdentities, and deleting its RBAC on a transient error would revoke access — skip cleanup until #####
+##### the error clears. On teardown, mode-independent: everything labelled is stale. #####
+{{ "{{-" }} if and (or (eq $teardown "1") (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert")) (not $errors) {{ "}}" }}
   {{ "{{-" }} range $rb := ((lookup "rbac.authorization.k8s.io/v1" "RoleBinding" "" "").items | default list) {{ "}}" }}
     {{ "{{-" }} $rbLabels := (dig "metadata" "labels" (dict) $rb) {{ "}}" }}
     {{ "{{-" }} if hasKey $rbLabels "autoshift.io/secret-reader-rolebinding" {{ "}}" }}
@@ -232,6 +264,21 @@
     metadata:
       name: {{ "{{" }} (dig "metadata" "name" "" $rb) {{ "}}" }}
       namespace: {{ "{{" }} $rbNs {{ "}}" }}
+      {{ "{{-" }} end {{ "}}" }}
+    {{ "{{-" }} end {{ "}}" }}
+  {{ "{{-" }} end {{ "}}" }}
+  {{ "{{-" }} range $role := ((lookup "rbac.authorization.k8s.io/v1" "Role" "" "").items | default list) {{ "}}" }}
+    {{ "{{-" }} $roleLabels := (dig "metadata" "labels" (dict) $role) {{ "}}" }}
+    {{ "{{-" }} if hasKey $roleLabels "autoshift.io/secret-reader-role" {{ "}}" }}
+      {{ "{{-" }} $roleNs := (dig "metadata" "namespace" "" $role) {{ "}}" }}
+      {{ "{{-" }} if not (hasKey $nsIdentities $roleNs) {{ "}}" }}
+- complianceType: mustnothave
+  objectDefinition:
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: {{ "{{" }} (dig "metadata" "name" "" $role) {{ "}}" }}
+      namespace: {{ "{{" }} $roleNs {{ "}}" }}
       {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} end {{ "}}" }}
   {{ "{{-" }} end {{ "}}" }}
@@ -289,6 +336,8 @@
   {{- $clientCAConfigMap := (dig "clientCAConfigMap" "" $hb | default (printf "%s-client-ca" $storePrefix)) }}
   {{- /* Cert / mode tuning DEFAULTS — actual values read per-deployment from config.eso.hubBootstrap below. */}}
   {{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
+  {{- /* Explicit decommission flag (config.eso.hubBootstrap.teardown / values hubBootstrap.teardown). */}}
+  {{- $defaultTeardown := (dig "teardown" "" $hb | default false) }}
   {{- $defaultCertCNPrefix := (dig "clientIdentity" "certCNPrefix" "" $hb | default "autoshift-eso-client") }}
   {{- $defaultCertBaseDomain := (dig "clientIdentity" "baseDomain" "" $hb | default "") }}
   {{- $defaultExtCANamespace := (dig "externalCertAuthority" "caTrustBundle" "namespace" "" $hb | default "openshift-config") }}
@@ -299,7 +348,7 @@
          debugRender wins, so previews still render under readinessOnly. */ -}}
   {{- $readinessOnly := (dig "diagnostics" "readinessOnly" "" $hb | default false) }}
   {{- $debugRender := (dig "diagnostics" "debugRender" "" $hb | default false) }}
-  {{- $ctx := (dict "policyNamespace" $policyNamespace "storePrefix" $storePrefix "readerRole" $readerRole "clientCAConfigMap" $clientCAConfigMap "defaultMode" $defaultMode "defaultCertCNPrefix" $defaultCertCNPrefix "defaultCertBaseDomain" $defaultCertBaseDomain "defaultExtCANamespace" $defaultExtCANamespace "defaultExtCAName" $defaultExtCAName "defaultExtCAKey" $defaultExtCAKey) }}
+  {{- $ctx := (dict "policyNamespace" $policyNamespace "storePrefix" $storePrefix "readerRole" $readerRole "clientCAConfigMap" $clientCAConfigMap "defaultMode" $defaultMode "defaultTeardown" $defaultTeardown "defaultCertCNPrefix" $defaultCertCNPrefix "defaultCertBaseDomain" $defaultCertBaseDomain "defaultExtCANamespace" $defaultExtCANamespace "defaultExtCAName" $defaultExtCAName "defaultExtCAKey" $defaultExtCAKey) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -355,8 +404,18 @@ spec:
                 data:
                   rendered.yaml: |
                     {{- include "eso.bootBody.clientcaExt" $ctx | nindent 20 }}
-            {{ "{{hub-" }} else if not $readinessOnly {{ "hub}}" }}
+            {{ "{{hub-" }} else {{ "hub}}" }}
+            ##### debugRender OFF: clear any stale preview ConfigMap left by a previous debug run #####
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-boot-clientca-ext-debug-render
+                  namespace: {{ $policyNamespace }}
+            {{ "{{hub-" }} if not $readinessOnly {{ "hub}}" }}
             {{- include "eso.bootBody.clientcaExt" $ctx | nindent 12 }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1

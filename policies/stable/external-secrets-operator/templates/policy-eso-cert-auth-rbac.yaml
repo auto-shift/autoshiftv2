@@ -15,6 +15,9 @@
 # certAuthRBAC.username is required for a kubernetes cert-auth store (fails otherwise).
 #
 {{- $policyNamespace := $.Values.policy_namespace }}
+{{- /* Prune-removed-stores default. hasKey (not dig|default) so an explicit values-level `false` survives. */}}
+{{- $pruneDefault := true }}
+{{- if hasKey $.Values.externalSecretsOperator "pruneRemovedStores" }}{{- $pruneDefault = $.Values.externalSecretsOperator.pruneRemovedStores }}{{- end }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -51,18 +54,29 @@ spec:
             ##### to a runtime $errors below, surfaced via the status ConfigMap + inform gate. Per-store skip: a #####
             ##### misconfigured store is recorded and skipped; the other stores' RBAC is still provisioned. #####
             {{ "{{hub-" }} $hubErrors := list {{ "hub}}" }}
+            ##### PRUNE (removed-store strand): every RBAC object emitted below is labelled with the prune #####
+            ##### decision baked at emission (store `prune`, else config.eso.pruneRemovedStores, else chart #####
+            ##### default); $expectedRBAC collects what THIS render wants and the runtime sweep at the #####
+            ##### bottom deletes labelled leftovers. #####
+            {{ "{{hub-" }} $prunePolicy := (dig "eso" "pruneRemovedStores" {{ $pruneDefault }} $clusterConfig) {{ "hub}}" }}
+            {{ "{{hub-" }} $expectedRBAC := dict {{ "hub}}" }}
             {{ "{{hub-" }} range $storeItem := $secretStores {{ "hub}}" }}
-              ##### RESOLVE STORE KIND: secretStore / clusterSecretStore #####
+              ##### RESOLVE STORE KIND: secretStore / clusterSecretStore. `default dict` guards: a null #####
+              ##### list item / empty kind body would otherwise crash hasKey/index and abort the whole #####
+              ##### hub template (the fail-envelope failure mode). #####
+              {{ "{{hub-" }} $storeItem = ($storeItem | default dict) {{ "hub}}" }}
               {{ "{{hub-" }} $storeKind := "" {{ "hub}}" }}
               {{ "{{hub-" }} $store := dict {{ "hub}}" }}
               {{ "{{hub-" }} if hasKey $storeItem "clusterSecretStore" {{ "hub}}" }}
                 {{ "{{hub-" }} $storeKind = "ClusterSecretStore" {{ "hub}}" }}
-                {{ "{{hub-" }} $store = (index $storeItem "clusterSecretStore") {{ "hub}}" }}
+                {{ "{{hub-" }} $store = (index $storeItem "clusterSecretStore" | default dict) {{ "hub}}" }}
               {{ "{{hub-" }} else if hasKey $storeItem "secretStore" {{ "hub}}" }}
                 {{ "{{hub-" }} $storeKind = "SecretStore" {{ "hub}}" }}
-                {{ "{{hub-" }} $store = (index $storeItem "secretStore") {{ "hub}}" }}
+                {{ "{{hub-" }} $store = (index $storeItem "secretStore" | default dict) {{ "hub}}" }}
               {{ "{{hub-" }} end {{ "hub}}" }}
               {{ "{{hub-" }} $storeName := (index $store "name" | default "<unnamed>") {{ "hub}}" }}
+              {{ "{{hub-" }} $storePrune := $prunePolicy {{ "hub}}" }}
+              {{ "{{hub-" }} if hasKey $store "prune" {{ "hub}}" }}{{ "{{hub-" }} $storePrune = (index $store "prune") {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
               {{ "{{hub-" }} $spec := (index $store "spec" | default dict) {{ "hub}}" }}
               ##### RBAC: kubernetes provider + cert auth -> grant the cert CN secret access #####
               {{ "{{hub-" }} $kubernetesProvider := (dig "provider" "kubernetes" (dict) $spec) {{ "hub}}" }}
@@ -82,24 +96,29 @@ spec:
                     {{ "{{hub-" }} $rbacNamespaces = (ternary (list $remoteNamespace) (list (index $store "namespace")) (ne $remoteNamespace "")) {{ "hub}}" }}
                   {{ "{{hub-" }} else if eq $storeKind "ClusterSecretStore" {{ "hub}}" }}
                     {{ "{{hub-" }} range $condition := (index $spec "conditions" | default list) {{ "hub}}" }}
-                      {{ "{{hub-" }} $rbacNamespaces = (concat $rbacNamespaces (index $condition "namespaces" | default list)) {{ "hub}}" }}
+                      {{ "{{hub-" }} $rbacNamespaces = (concat $rbacNamespaces (index ($condition | default dict) "namespaces" | default list)) {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                 {{ "{{hub-" }} end {{ "hub}}" }}
                 {{ "{{hub-" }} $roleName := (printf "eso-cert-%s-%s" (lower $storeKind) $storeName) {{ "hub}}" }}
                 {{ "{{hub-" }} if eq $storeKind "ClusterSecretStore" {{ "hub}}" }}
+                {{ "{{hub-" }} $_ := set $expectedRBAC (printf "ClusterRole||%s" $roleName) true {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
                 kind: ClusterRole
                 metadata:
                   name: {{ "{{hub" }} $roleName {{ "hub}}" }}
+                  labels:
+                    autoshift.io/eso-cert-auth-rbac: "true"
+                    autoshift.io/eso-prune: {{ "{{hub" }} $storePrune | quote {{ "hub}}" }}
                 rules:
                   - apiGroups: [""]
                     resources: ["secrets"]
                     verbs: {{ "{{hub" }} $verbs | toJson {{ "hub}}" }}
                   {{ "{{hub-" }} if $rbacNamespaces {{ "hub}}" }}
                   {{ "{{hub-" }} range $namespace := $rbacNamespaces {{ "hub}}" }}
+                  {{ "{{hub-" }} $_ := set $expectedRBAC (printf "RoleBinding|%s|%s" $namespace $roleName) true {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
@@ -107,6 +126,9 @@ spec:
                 metadata:
                   name: {{ "{{hub" }} $roleName {{ "hub}}" }}
                   namespace: {{ "{{hub" }} $namespace {{ "hub}}" }}
+                  labels:
+                    autoshift.io/eso-cert-auth-rbac: "true"
+                    autoshift.io/eso-prune: {{ "{{hub" }} $storePrune | quote {{ "hub}}" }}
                 roleRef:
                   apiGroup: rbac.authorization.k8s.io
                   kind: ClusterRole
@@ -116,13 +138,20 @@ spec:
                     name: {{ "{{hub" }} $username {{ "hub}}" }}
                     apiGroup: rbac.authorization.k8s.io
                   {{ "{{hub-" }} end {{ "hub}}" }}
-                  {{ "{{hub-" }} else if eq $storeKind "SecretStore" {{ "hub}}" }}
+                  ##### no namespaces -> CLUSTER-WIDE grant. Plain `else`: this arm is already CSS-only, and #####
+                  ##### the previous `else if eq $storeKind "SecretStore"` was unreachable there — cluster-wide #####
+                  ##### stores got a ClusterRole with NO binding (silent zero access for the cert CN). #####
+                  {{ "{{hub-" }} else {{ "hub}}" }}
+                  {{ "{{hub-" }} $_ := set $expectedRBAC (printf "ClusterRoleBinding||%s" $roleName) true {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
                 kind: ClusterRoleBinding
                 metadata:
                   name: {{ "{{hub" }} $roleName {{ "hub}}" }}
+                  labels:
+                    autoshift.io/eso-cert-auth-rbac: "true"
+                    autoshift.io/eso-prune: {{ "{{hub" }} $storePrune | quote {{ "hub}}" }}
                 roleRef:
                   apiGroup: rbac.authorization.k8s.io
                   kind: ClusterRole
@@ -134,6 +163,8 @@ spec:
                   {{ "{{hub-" }} end {{ "hub}}" }}
                 {{ "{{hub-" }} else if eq $storeKind "SecretStore" {{ "hub}}" }}
                 {{ "{{hub-" }} range $namespace := $rbacNamespaces {{ "hub}}" }}
+                {{ "{{hub-" }} $_ := set $expectedRBAC (printf "Role|%s|%s" $namespace $roleName) true {{ "hub}}" }}
+                {{ "{{hub-" }} $_ := set $expectedRBAC (printf "RoleBinding|%s|%s" $namespace $roleName) true {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
@@ -141,6 +172,9 @@ spec:
                 metadata:
                   name: {{ "{{hub" }} $roleName {{ "hub}}" }}
                   namespace: {{ "{{hub" }} $namespace {{ "hub}}" }}
+                  labels:
+                    autoshift.io/eso-cert-auth-rbac: "true"
+                    autoshift.io/eso-prune: {{ "{{hub" }} $storePrune | quote {{ "hub}}" }}
                 rules:
                   - apiGroups: [""]
                     resources: ["secrets"]
@@ -152,6 +186,9 @@ spec:
                 metadata:
                   name: {{ "{{hub" }} $roleName {{ "hub}}" }}
                   namespace: {{ "{{hub" }} $namespace {{ "hub}}" }}
+                  labels:
+                    autoshift.io/eso-cert-auth-rbac: "true"
+                    autoshift.io/eso-prune: {{ "{{hub" }} $storePrune | quote {{ "hub}}" }}
                 roleRef:
                   apiGroup: rbac.authorization.k8s.io
                   kind: Role
@@ -170,6 +207,67 @@ spec:
             ##### mustnothave-clears it when empty. The companion inform gate CP turns its presence into this #####
             ##### Policy's compliance. #####
             {{ "{{-" }} $errors := `{{ "{{hub" }} $hubErrors | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+            ##### SWEEP removed stores' RBAC (runtime): diff labelled live RBAC against what THIS render #####
+            ##### wants; delete leftovers whose eso-prune label (baked at emission) says "true". Disabled #####
+            ##### when any store errored (its config is being fixed — do not delete its live RBAC) and when #####
+            ##### the rendered config could not be read (a transient miss must never prune). RBAC kinds are #####
+            ##### core — no CRD guard needed. #####
+            {{ "{{-" }} $expectedRBAC := `{{ "{{hub" }} $expectedRBAC | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+            {{ "{{-" }} $sweepOn := `{{ "{{hub" }} if and $clusterConfig (not $hubErrors) {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} if eq $sweepOn "1" {{ "}}" }}
+              {{ "{{-" }} range $obj := ((lookup "rbac.authorization.k8s.io/v1" "ClusterRole" "" "").items | default list) {{ "}}" }}
+                {{ "{{-" }} $objLabels := (dig "metadata" "labels" (dict) $obj) {{ "}}" }}
+                {{ "{{-" }} $objName := (dig "metadata" "name" "" $obj) {{ "}}" }}
+                {{ "{{-" }} if and (hasKey $objLabels "autoshift.io/eso-cert-auth-rbac") (eq (index $objLabels "autoshift.io/eso-prune" | default "true") "true") (not (hasKey $expectedRBAC (printf "ClusterRole||%s" $objName))) {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRole
+                metadata:
+                  name: {{ "{{" }} $objName {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} range $obj := ((lookup "rbac.authorization.k8s.io/v1" "ClusterRoleBinding" "" "").items | default list) {{ "}}" }}
+                {{ "{{-" }} $objLabels := (dig "metadata" "labels" (dict) $obj) {{ "}}" }}
+                {{ "{{-" }} $objName := (dig "metadata" "name" "" $obj) {{ "}}" }}
+                {{ "{{-" }} if and (hasKey $objLabels "autoshift.io/eso-cert-auth-rbac") (eq (index $objLabels "autoshift.io/eso-prune" | default "true") "true") (not (hasKey $expectedRBAC (printf "ClusterRoleBinding||%s" $objName))) {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRoleBinding
+                metadata:
+                  name: {{ "{{" }} $objName {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} range $obj := ((lookup "rbac.authorization.k8s.io/v1" "Role" "" "").items | default list) {{ "}}" }}
+                {{ "{{-" }} $objLabels := (dig "metadata" "labels" (dict) $obj) {{ "}}" }}
+                {{ "{{-" }} $objName := (dig "metadata" "name" "" $obj) {{ "}}" }}
+                {{ "{{-" }} $objNs := (dig "metadata" "namespace" "" $obj) {{ "}}" }}
+                {{ "{{-" }} if and (hasKey $objLabels "autoshift.io/eso-cert-auth-rbac") (eq (index $objLabels "autoshift.io/eso-prune" | default "true") "true") (not (hasKey $expectedRBAC (printf "Role|%s|%s" $objNs $objName))) {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: Role
+                metadata:
+                  name: {{ "{{" }} $objName {{ "}}" }}
+                  namespace: {{ "{{" }} $objNs {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} range $obj := ((lookup "rbac.authorization.k8s.io/v1" "RoleBinding" "" "").items | default list) {{ "}}" }}
+                {{ "{{-" }} $objLabels := (dig "metadata" "labels" (dict) $obj) {{ "}}" }}
+                {{ "{{-" }} $objName := (dig "metadata" "name" "" $obj) {{ "}}" }}
+                {{ "{{-" }} $objNs := (dig "metadata" "namespace" "" $obj) {{ "}}" }}
+                {{ "{{-" }} if and (hasKey $objLabels "autoshift.io/eso-cert-auth-rbac") (eq (index $objLabels "autoshift.io/eso-prune" | default "true") "true") (not (hasKey $expectedRBAC (printf "RoleBinding|%s|%s" $objNs $objName))) {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: {{ "{{" }} $objName {{ "}}" }}
+                  namespace: {{ "{{" }} $objNs {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{- include "eso.boot.statusReport" (dict "policy" "eso-cert-auth-rbac" "ns" "open-cluster-management-agent-addon") | nindent 12 }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1

@@ -11,12 +11,39 @@
 {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
 {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
 {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ .defaultMode }}") {{ "hub}}" }}
+##### teardown: EXPLICIT opt-in decommission flag — a positive flag, never inferred from config #####
+##### absence, so a transient rendered-config read miss can never trigger a teardown. #####
+{{ "{{hub-" }} $teardown := (dig "teardown" {{ .defaultTeardown }} $hubBootstrap) {{ "hub}}" }}
 {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
+##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): unwire the hub apiserver clientCA and #####
+##### remove the shared clientCA ConfigMap. Ordered: the APIServer pointer is emptied BEFORE the #####
+##### ConfigMap is deleted so the apiserver operator never sees a dangling reference. Emitted by BOTH #####
+##### this policy and the external companion (identical objects — idempotent), so teardown converges #####
+##### regardless of which mode was active. Unsetting clientCA is the documented disruptive rollout. #####
+{{ "{{-" }} if eq $teardown "1" {{ "}}" }}
+- complianceType: musthave
+  objectDefinition:
+    apiVersion: config.openshift.io/v1
+    kind: APIServer
+    metadata:
+      name: cluster
+    spec:
+      clientCA:
+        name: ""
+- complianceType: mustnothave
+  objectDefinition:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ .clientCAConfigMap }}
+      namespace: openshift-config
+{{ "{{-" }} end {{ "}}" }}
 ##### RUNTIME (on the hub): only wire the apiserver clientCA when selfSigned mode is active AND at #####
 ##### least one autoshift-labelled ManagedCluster exists — mirrors the mint policy's $eligible gate #####
 ##### so the disruptive kube-apiserver rollout only happens when the feature is actually in use. #####
 {{ "{{-" }} $hasEligible := false {{ "}}" }}
-{{ "{{-" }} if eq $mode "selfSigned" {{ "}}" }}
+{{ "{{-" }} if and (eq $mode "selfSigned") (ne $teardown "1") {{ "}}" }}
   {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
     {{ "{{-" }} if ne (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) "" {{ "}}" }}
       {{ "{{-" }} $hasEligible = true {{ "}}" }}
@@ -78,12 +105,14 @@
   {{- $clientCAConfigMap := (dig "clientCAConfigMap" "" $hb | default (printf "%s-client-ca" $storePrefix)) }}
   {{- $cmResourceNamespace := ($eso.certManagerResourceNamespace | default "cert-manager") }}
   {{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
+  {{- /* Explicit decommission flag (config.eso.hubBootstrap.teardown / values hubBootstrap.teardown). */}}
+  {{- $defaultTeardown := (dig "teardown" "" $hb | default false) }}
   {{- /* Diagnostics run modes (deployment-wide). readinessOnly: suppress this active policy entirely.
          debugRender: emit only a preview ConfigMap of what this policy WOULD apply (and nothing live).
          debugRender wins, so previews still render under readinessOnly. */ -}}
   {{- $readinessOnly := (dig "diagnostics" "readinessOnly" "" $hb | default false) }}
   {{- $debugRender := (dig "diagnostics" "debugRender" "" $hb | default false) }}
-  {{- $ctx := (dict "policyNamespace" $policyNamespace "caName" $caName "clientCAConfigMap" $clientCAConfigMap "cmResourceNamespace" $cmResourceNamespace "defaultMode" $defaultMode) }}
+  {{- $ctx := (dict "policyNamespace" $policyNamespace "caName" $caName "clientCAConfigMap" $clientCAConfigMap "cmResourceNamespace" $cmResourceNamespace "defaultMode" $defaultMode "defaultTeardown" $defaultTeardown) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -138,8 +167,18 @@ spec:
                 data:
                   rendered.yaml: |
                     {{- include "eso.bootBody.clientcaSelfWire" (merge (dict "debug" true) $ctx) | nindent 20 }}
-            {{ "{{hub-" }} else if not $readinessOnly {{ "hub}}" }}
+            {{ "{{hub-" }} else {{ "hub}}" }}
+            ##### debugRender OFF: clear any stale preview ConfigMap left by a previous debug run #####
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-boot-clientca-self-wire-debug-render
+                  namespace: {{ $policyNamespace }}
+            {{ "{{hub-" }} if not $readinessOnly {{ "hub}}" }}
             {{- include "eso.bootBody.clientcaSelfWire" $ctx | nindent 12 }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1

@@ -9,6 +9,10 @@
 {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
 {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
 {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ .defaultMode }}") {{ "hub}}" }}
+##### teardown: EXPLICIT opt-in decommission flag. Deliberately a positive flag (not config absence): #####
+##### a transient rendered-config read miss makes $hubBootstrap empty -> $active off -> no-op, and can #####
+##### therefore never trigger a teardown. #####
+{{ "{{hub-" }} $teardown := (dig "teardown" {{ .defaultTeardown }} $hubBootstrap) {{ "hub}}" }}
 {{ "{{hub-" }} $hubServer := (index $hubBootstrap "hubServer" | default "{{ .defaultHubServer }}") {{ "hub}}" }}
 ##### hubServer resolution: explicit config/value always wins. If it is empty AND deriveHubUrl is on, THIS #####
 ##### policy reads the HUB's own apiserverurl.openshift.io ClusterClaim via fromClusterClaim — which (like #####
@@ -66,7 +70,9 @@
 ##### bridge below can read it) instead of `fail` — `fail` aborts propagation and buries the reason under #####
 ##### the whole policy string. They are bridged into the runtime $errors and surfaced via the status CM. #####
 {{ "{{hub-" }} $hubErrors := list {{ "hub}}" }}
-{{ "{{hub-" }} if $hubBootstrap {{ "hub}}" }}
+##### On teardown, skip the copies AND the hub precondition checks: the serving-CA stash is being #####
+##### deleted by its own policy, and reporting it missing would block the runtime teardown below. #####
+{{ "{{hub-" }} if and $hubBootstrap (not $teardown) {{ "hub}}" }}
   {{ "{{hub-" }} if eq $hubServer "" {{ "hub}}" }}
     {{ "{{hub-" }} $hubErrors = append $hubErrors "[hub] hub apiserver URL unresolved: set config.eso.hubBootstrap.hubServer (or values externalSecretsOperator.hubServer), or enable deriveHubUrl so this policy derives it from the apiserverurl.openshift.io ClusterClaim" {{ "hub}}" }}
   {{ "{{hub-" }} end {{ "hub}}" }}
@@ -115,6 +121,7 @@
 ##### $active flag: act/report ONLY when hubBootstrap is configured — absent config is a silent no-op. #####
 {{ "{{-" }} $errors := `{{ "{{hub" }} $hubErrors | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
 {{ "{{-" }} $active := `{{ "{{hub" }} if $hubBootstrap {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
+{{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
 {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
 {{ "{{-" }} $hubServer := `{{ "{{hub" }} $hubServer {{ "hub}}" }}` {{ "}}" }}
 {{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
@@ -131,7 +138,41 @@
 {{ "{{-" }} $spokeIssuerGroup := `{{ "{{hub" }} $spokeIssuerGroup {{ "hub}}" }}` {{ "}}" }}
 ##### ACT ON THE SPOKE (runtime): build the bootstrap store from bridged config — only when active, and #####
 ##### only the live objects are gated on $errors staying empty (problems surface via the status CM + gate). #####
-{{ "{{-" }} if eq $active "1" {{ "}}" }}
+{{ "{{-" }} if and (eq $active "1") (eq $teardown "1") {{ "}}" }}
+  ##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): remove everything this policy created on #####
+  ##### the spoke. Consumers' ExternalSecrets referencing the store go NotReady — that is the point of #####
+  ##### decommissioning; run teardown only after consumers are migrated. The stale-Certificate removal #####
+  ##### is CRD-guarded exactly like the mode-switch sweep below. #####
+- complianceType: mustnothave
+  objectDefinition:
+    apiVersion: external-secrets.io/v1
+    kind: ClusterSecretStore
+    metadata:
+      name: {{ "{{" }} $storeName {{ "}}" }}
+- complianceType: mustnothave
+  objectDefinition:
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: {{ .clientSecret }}
+      namespace: {{ .esoNamespace }}
+- complianceType: mustnothave
+  objectDefinition:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ .servingCAConfigMap }}
+      namespace: {{ .esoNamespace }}
+  {{ "{{-" }} if (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "certificates.cert-manager.io") {{ "}}" }}
+- complianceType: mustnothave
+  objectDefinition:
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: {{ .clientSecret }}
+      namespace: {{ .esoNamespace }}
+  {{ "{{-" }} end {{ "}}" }}
+{{ "{{-" }} else if eq $active "1" {{ "}}" }}
   ##### Reject an unknown mode: otherwise every mode arm is skipped and the store would still point #####
   ##### auth.cert at a secret nothing ever mints/copies (silent breakage). #####
   {{ "{{-" }} if and (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
@@ -267,6 +308,25 @@
     {{- end }}
     {{ "{{-" }} end {{ "}}" }}
   {{ "{{-" }} end {{ "}}" }}
+  ##### CLEANUP (stale externalCA Certificate): when the mode is NOT externalCA, a Certificate left by a #####
+  ##### previous externalCA run keeps renewing and REWRITING the client secret this mode's copy enforces #####
+  ##### — a live fight that flaps auth every renewal. mustnothave it. The secret itself is NOT removed: #####
+  ##### it is the copy target the active mode overwrites. Guarded by a CRD lookup because a spoke that #####
+  ##### never ran externalCA may have no cert-manager, and a mustnothave on an unregistered kind errors #####
+  ##### the whole template (the CRD kind itself is always registered, so this probe is safe). Skipped #####
+  ##### while $errors is non-empty: mode comes from the same bridge as everything else, and cleanup on #####
+  ##### a half-derived pass should wait until the pass is healthy (matches the RoleBinding-sweep rule). #####
+  {{ "{{-" }} if and (or (eq $mode "selfSigned") (eq $mode "externalCAReuseServingCert")) (not $errors) {{ "}}" }}
+    {{ "{{-" }} if (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "certificates.cert-manager.io") {{ "}}" }}
+- complianceType: mustnothave
+  objectDefinition:
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: {{ .clientSecret }}
+      namespace: {{ .esoNamespace }}
+    {{ "{{-" }} end {{ "}}" }}
+  {{ "{{-" }} end {{ "}}" }}
   ##### The store itself is created only when NO precondition error was collected — otherwise it would #####
   ##### wire auth.cert at a client secret that nothing minted/copied this pass. #####
   {{ "{{-" }} if not $errors {{ "}}" }}
@@ -365,6 +425,8 @@
 {{- $defaultDeriveHubUrl := (dig "deriveHubUrl" "" $hb | default false) }}
 {{- /* Trust mode + the externalCA-mode mint settings (see chart values.yaml hubBootstrap.mode). */}}
 {{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
+{{- /* Explicit decommission flag (config.eso.hubBootstrap.teardown / values hubBootstrap.teardown). */}}
+{{- $defaultTeardown := (dig "teardown" "" $hb | default false) }}
 {{- $defaultCertCNPrefix := (dig "clientIdentity" "certCNPrefix" "" $hb | default "autoshift-eso-client") }}
 {{- $defaultCertBaseDomain := (dig "clientIdentity" "baseDomain" "" $hb | default "") }}
 {{- /* selfSigned segment-budget default — MUST mirror the hub clientca-selfsigned policy's $defaultCertBaseDomain */}}
@@ -387,7 +449,7 @@
        debugRender wins, so previews still render under readinessOnly. */ -}}
 {{- $readinessOnly := (dig "diagnostics" "readinessOnly" "" $hb | default false) }}
 {{- $debugRender := (dig "diagnostics" "debugRender" "" $hb | default false) }}
-{{- $ctx := (dict "policyNamespace" $policyNamespace "esoNamespace" $esoNamespace "storePrefix" $storePrefix "clientSecret" $clientSecret "servingCAConfigMap" $servingCAConfigMap "defaultHubServer" $defaultHubServer "defaultDeriveHubUrl" $defaultDeriveHubUrl "defaultMode" $defaultMode "defaultCertCNPrefix" $defaultCertCNPrefix "defaultCertBaseDomain" $defaultCertBaseDomain "selfSignedSegBaseDomain" $selfSignedSegBaseDomain "defaultCertDuration" $defaultCertDuration "defaultCertRenewBefore" $defaultCertRenewBefore "defaultCertUsages" $defaultCertUsages "defaultPrivateKeyAlgorithm" $defaultPrivateKeyAlgorithm "defaultPrivateKeySize" $defaultPrivateKeySize "defaultSpokeIssuerName" $defaultSpokeIssuerName "defaultSpokeIssuerKind" $defaultSpokeIssuerKind "defaultSpokeIssuerGroup" $defaultSpokeIssuerGroup) }}
+{{- $ctx := (dict "policyNamespace" $policyNamespace "esoNamespace" $esoNamespace "storePrefix" $storePrefix "clientSecret" $clientSecret "servingCAConfigMap" $servingCAConfigMap "defaultHubServer" $defaultHubServer "defaultDeriveHubUrl" $defaultDeriveHubUrl "defaultMode" $defaultMode "defaultTeardown" $defaultTeardown "defaultCertCNPrefix" $defaultCertCNPrefix "defaultCertBaseDomain" $defaultCertBaseDomain "selfSignedSegBaseDomain" $selfSignedSegBaseDomain "defaultCertDuration" $defaultCertDuration "defaultCertRenewBefore" $defaultCertRenewBefore "defaultCertUsages" $defaultCertUsages "defaultPrivateKeyAlgorithm" $defaultPrivateKeyAlgorithm "defaultPrivateKeySize" $defaultPrivateKeySize "defaultSpokeIssuerName" $defaultSpokeIssuerName "defaultSpokeIssuerKind" $defaultSpokeIssuerKind "defaultSpokeIssuerGroup" $defaultSpokeIssuerGroup) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -456,8 +518,18 @@ spec:
                 data:
                   rendered.yaml: |
                     {{- include "eso.bootBody.bootStore" (merge (dict "debug" true) $ctx) | nindent 20 }}
-            {{ "{{hub-" }} else if not $readinessOnly {{ "hub}}" }}
+            {{ "{{hub-" }} else {{ "hub}}" }}
+            ##### debugRender OFF: clear any stale preview ConfigMap left by a previous debug run #####
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-boot-store-debug-render
+                  namespace: {{ $policyNamespace }}
+            {{ "{{hub-" }} if not $readinessOnly {{ "hub}}" }}
             {{- include "eso.bootBody.bootStore" $ctx | nindent 12 }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1

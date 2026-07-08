@@ -166,6 +166,11 @@ New policies are automatically discovered by the ApplicationSet. In Git mode, th
 
 ## Configuration
 
+Full key-by-key tables for every chart value, runtime config key, and label live in
+[CONFIG-REFERENCE.md](CONFIG-REFERENCE.md); the underlying mechanisms (bootstrap store, trust
+modes, two-hop credential transport, gates, cleanup) are described in
+[mechanics.md](mechanics.md); the sections below explain configuration in context.
+
 ### Namespace Scope
 This operator is configured as:
 - **Cluster-scoped**: Manages resources across all namespaces (default)
@@ -220,6 +225,9 @@ object kind; the rendered manifest differs by kind:
 Each item has `name` (and `namespace` for `secretStore`), a `spec` (the ESO
 `SecretStoreSpec`, rendered verbatim), and an optional `authSecretConfig` (provisions
 the auth Secret the store references — see [Auth secrets](#auth-secrets-authsecretconfig)).
+An item that is missing these — no recognized kind key, no `name`, or a `secretStore`
+without a `namespace` — is a per-store precondition error (recorded and skipped; the
+other stores still provision).
 The provider is independent of the kind — any provider can be used under either kind.
 Set this where the config lives (`hubClusterSets.*.config` /
 `managedClusterSets.*.config` / per-cluster `clusters/<name>.yaml` config) — never as a
@@ -240,6 +248,50 @@ not enforce them, so set them correctly in config:
   is auto-filled with the `<ManagedClusterName>` namespace — where the store's own `caSource`
   delivery lands the remote serving CA (see
   [Per-store server-CA delivery](#per-store-server-ca-delivery-casource)). Set it explicitly to override.
+
+### Removing a store — pruning (`pruneRemovedStores` / per-store `prune`)
+
+When a store entry is **removed from config**, everything it created is pruned by default: the
+`ClusterSecretStore`/`SecretStore` itself, its spoke auth ExternalSecrets (**and their target
+Secrets** — `creationPolicy: Owner` garbage-collects them), its hub-side credential
+ExternalSecrets (`policy-eso-hub-secrets`), its delivered-CA ConfigMap, and its cert-auth RBAC
+(`policy-eso-cert-auth-rbac`). Two knobs control this:
+
+```yaml
+config:
+  eso:
+    pruneRemovedStores: true      # deployment-wide default (chart default: true;
+                                  # values-level: externalSecretsOperator.pruneRemovedStores)
+    secretStores:
+      - clusterSecretStore:
+          name: vault-backend
+          prune: false            # per-store override — this store's objects survive removal
+          spec: ...
+```
+
+How it works: every emitted object is stamped with `autoshift.io/eso-prune: "true"|"false"`
+(next to an ownership label — `autoshift.io/eso-store`, `…/eso-store-auth`, `…/eso-store-ca`,
+`…/eso-hub-secret`, `…/eso-cert-auth-rbac`). The decision is **baked at emission time** because by
+the time the sweep runs, the config entry is gone — the live object's label is the record of
+intent. Each policy then diffs the labeled live objects against what the current render wants and
+`mustnothave`s the leftovers whose label says `"true"`.
+
+Consequences of the label-baking design:
+
+- Flipping `pruneRemovedStores` **after** removing a store does nothing — its objects already
+  carry the old decision. Relabel (`oc label ... autoshift.io/eso-prune=true --overwrite`) or
+  delete manually.
+- Stores that legitimately **share a target auth Secret** (identical signature) should agree on
+  `prune`, or the shared ExternalSecret's label follows whichever store applied last (hub-side
+  credentials AND the flag across declarers: any store wanting retention wins).
+- If you take over a **delivered-CA ConfigMap** manually (drop `caSource`, keep `caProvider`),
+  remove its `autoshift.io/*` labels first — otherwise the sweep treats it as a removed store's
+  leftover.
+
+Safety gates: sweeps are disabled whenever the policy reports **any** store error (a
+declared-but-misconfigured store must never lose its live objects while you fix its config) and
+when the rendered config could not be read at all (a transient miss must never prune a working
+fleet). Unlabeled objects (created manually or by anything else) are never candidates.
 
 ### Auth secrets (`authSecretConfig`)
 
@@ -309,7 +361,20 @@ sources:
 
 `external.storeRef` must name a store that already exists **on the hub** (e.g. a `vault`
 `ClusterSecretStore` you defined via this deployment's own `secretStores`, or a pre-existing
-one). `remoteRef` supports `key` (required), `property`, and `version`.
+one). `remoteRef` supports `key` (required), `property`, and `version` (all rendered as
+strings, so a numeric-looking `version: 2` is safe).
+
+`external` is detected by **presence**: an empty or half-filled `external:` block is a loud
+per-credential error in the `eso-hub-secrets-status` ConfigMap, never a silent fallback to
+native. Only omitting (or misspelling) the `external` key itself means native.
+
+`policy-eso-hub-secrets` resolves everything at **runtime on the hub**: it lists
+`ManagedCluster`s and reads each owned cluster's `<name>.rendered-config` ConfigMap from that
+cluster's owning namespace. The hub's config-policy-controller service account must be allowed
+those reads — if the policy sits Compliant but emits nothing (no ExternalSecrets, no status
+ConfigMap), check for lookup RBAC denials in the policy status and grant the reads via
+[`bootPrereqs.rbac`](#boot-prerequisites--hub-side-rbac-bootprereqs) rather than widening the
+policy itself.
 
 **`sources` is one map; the policy branches on it** (a single invariant keeps source→target
 unambiguous):
@@ -343,6 +408,15 @@ unambiguous):
 refs name — same Secret → **merge** (several keys in one ExternalSecret); different Secrets →
 **separate** ExternalSecrets. Provide sources only for the components you want; optional ones
 (e.g. appRole `roleRef` when `roleId` is inline) are left unsourced.
+
+**Target conflicts are precondition errors** (recorded in the status ConfigMap; the offending
+store is skipped, the others still provision):
+- two components writing the **same key** of one target Secret (silent last-write-wins would
+  be miserable to debug);
+- two **stores** claiming the same target Secret with *different* sources or
+  `refreshInterval` — the two ExternalSecrets would fight over one Secret. Identical claims
+  are fine (the rendered ExternalSecrets are the same object), so stores that genuinely share
+  one credential can each declare it.
 
 **Where each ExternalSecret (and its Secret) is created:**
 - `SecretStore` → the store's own namespace (ESO resolves auth refs there; the ref's
@@ -1008,8 +1082,10 @@ config:
 - **Opt-in & intrinsic gate:** delivery happens only for a store that is a kubernetes provider
   **and** carries a `caSource`. No `caSource` → the store is created but you supply the CA
   yourself (inline `caBundle`, or a pre-existing `caProvider` ConfigMap). A partial `caSource`
-  (some of namespace/name/key) **fails** the template; so does a `caSource` on a store with no
-  `caProvider`, or a non-`ConfigMap` `caProvider`.
+  (some of namespace/name/key), a `caSource` on a store with no `caProvider`, or a
+  non-`ConfigMap` `caProvider` is a **per-store precondition error**: that store is recorded in
+  the status ConfigMap and skipped while the others still provision (see
+  [Precondition failures](#precondition-failures--where-to-look-status-configmap--gate)).
 - **No name mismatch:** the destination is the store's own `caProvider` (`name`/`key`/namespace),
   so there is nothing to keep in sync. ESO's controller already has cluster-wide ConfigMap read,
   so no extra RBAC is needed.
@@ -1314,6 +1390,141 @@ externalCertAuthority:
 > It needs only `mode` + `externalCertAuthority.caTrustBundle` (no `clientIdentity`/`certIssuer` — the identity is the
 > discovered host).
 
+### Mode switches — what gets cleaned up automatically
+
+Switching `mode` on a live hub converges without manual steps; the policies sweep the previous
+mode's cert-manager objects rather than leaving them to renew (and fight the new mode) forever:
+
+- **Leaving `externalCA`** (spoke side, `policy-eso-boot-store`): the spoke-minted `Certificate`
+  `<prefix>-client` is deleted — otherwise cert-manager would keep renewing it and **rewriting the
+  client secret the new mode's copy enforces**, flapping auth on every renewal. The secret itself
+  is kept: it is the copy target the new mode overwrites.
+- **Leaving `selfSigned`** (hub side, `policy-eso-boot-clientca-self`): the two `ClusterIssuer`s,
+  the CA `Certificate` **and its CA `Secret`**, and every per-cluster client `Certificate` (labeled
+  `autoshift.io/hub-bootstrap-client-cert`) plus its generated `Secret` are deleted. The clientCA
+  ConfigMap and `APIServer.spec.clientCA` are **not** removed — the new mode's wiring policy
+  overwrites the same ConfigMap in place.
+- **A departed cluster** (owning-namespace label removed / cluster deleted) has its client
+  `Certificate` + `Secret` swept in `selfSigned` even without a mode switch (its RoleBinding
+  subject was already dropped by `mustonlyhave`; this removes the renewing cert too).
+- **An orphaned owning namespace** (no clusters left in it this evaluation) has its labeled reader
+  `Role` (`autoshift.io/secret-reader-role`) and `RoleBinding` (`…-rolebinding`) swept by the
+  active mode's clientca policy — each kind independently by its own label, diffed against the
+  namespaces the current render wants, so a half-deleted pair still converges.
+
+All cert-manager sweeps are guarded by a CRD-existence lookup, so a cluster that never had
+cert-manager installed (e.g. a `selfSigned`-mode spoke) renders cleanly. One consequence: if
+cert-manager is **uninstalled before** a mode switch, the orphaned cert `Secret`s can no longer be
+discovered through their `Certificate`s — delete them manually by label:
+`oc delete secret,certificate -A -l autoshift.io/hub-bootstrap-client-cert`. Sweeps are also
+skipped while the policy's status ConfigMap reports precondition errors, so a transient derivation
+failure can never revoke a live cluster's cert.
+
+### Decommissioning — `teardown: true`
+
+Simply **removing** `config.eso.hubBootstrap` (or unlabeling the last cluster) is deliberately a
+no-op: unsetting `APIServer.spec.clientCA` is a disruptive apiserver rollout, and a transient
+rendered-config read miss must never dismantle a working fleet. To actually decommission, set the
+explicit flag:
+
+```yaml
+config:
+  eso:
+    hubBootstrap:
+      teardown: true   # (or values-level externalSecretsOperator.hubBootstrap.teardown)
+```
+
+Every boot policy then switches from provisioning to removal:
+
+- **spoke** (`boot-store`): the `ClusterSecretStore`, the `<prefix>-client` Secret, the
+  `<prefix>-hub-ca` ConfigMap, and (CRD-guarded) the spoke-minted Certificate.
+- **hub mint** (`clientca-self`): the full estate — CA Certificate + Secret, both ClusterIssuers,
+  every labeled client Certificate + Secret, and all labeled reader Roles/RoleBindings.
+- **hub wiring** (`clientca-self-wire` + `clientca-ext`, both — idempotent): `APIServer.spec.clientCA`
+  is set back to `""` **before** the `<prefix>-client-ca` ConfigMap is deleted (no dangling
+  reference). The clientCA unset is the same disruptive kube-apiserver rollout as first enablement.
+- **hub capture** (`serving-ca`): the stashed `<prefix>-hub-ca` ConfigMap in the policy namespace.
+
+Teardown is mode-independent (it even works with a typo'd `mode`). Sequence: migrate or remove the
+consumers' ExternalSecrets first (they go NotReady the moment the store is deleted); in the external
+modes run teardown **before** dismantling the external PKI (the spoke readiness gate still checks
+the issuer/serving cert, and a NonCompliant gate holds `boot-store` Pending — including its
+teardown). Once everything reports Compliant, delete the `hubBootstrap` block (and the ESO label if
+retiring the cluster from the feature).
+
+### Cleanup reference — every automatic removal in one place
+
+The chart never relies on ACM `pruneObjectBehavior`; every removal is an explicit, label-driven
+`mustnothave` sweep in the policy that created the object. This table consolidates them — each row
+links to the section with the full mechanics:
+
+| Trigger | Removed automatically | Policy |
+|---|---|---|
+| store entry removed from `config.eso.secretStores` (its `eso-prune` label says `"true"`) | the `ClusterSecretStore`/`SecretStore` itself; its spoke auth `ExternalSecret`s **and their target Secrets** (`creationPolicy: Owner` garbage-collects them); its delivered-CA ConfigMap | `policy-eso-secret-stores` — [pruning](#removing-a-store--pruning-pruneremovedstores--per-store-prune) |
+| *(same trigger)* | its hub-side credential `ExternalSecret`s — prune is ANDed across declaring stores, so any store wanting retention wins | `policy-eso-hub-secrets` |
+| *(same trigger)* | its cert-auth RBAC (`ClusterRole`/`ClusterRoleBinding`/`Role`/`RoleBinding`) | `policy-eso-cert-auth-rbac` |
+| mode switch **leaving `externalCA`** | the spoke-minted `Certificate` `<prefix>-client` (its Secret is kept — the new mode's copy target) | `policy-eso-boot-store` — [mode switches](#mode-switches--what-gets-cleaned-up-automatically) |
+| mode switch **leaving `selfSigned`** | the hub mint estate: both ClusterIssuers, the CA `Certificate` + `Secret`, every labeled client `Certificate` + generated `Secret` | `policy-eso-boot-clientca-self` |
+| a cluster **departs the deployment** (`selfSigned`) | that cluster's client `Certificate` + generated `Secret` | `policy-eso-boot-clientca-self` |
+| an owning namespace has **no clusters left** this evaluation | its labeled reader `Role` + `RoleBinding` (each kind swept independently, so half-deleted pairs converge) | the active mode's clientca policy |
+| `diagnostics.debugRender` switched **off** | that policy's `<configpolicy>-debug-render` preview ConfigMap | every cert boot policy — [diagnostics](#diagnostics--readinessonly--debugrender-per-cluster) |
+| all preconditions healthy | the policy's `<name>-status` ConfigMap (self-clearing) | every policy with preconditions — [status ConfigMap](#precondition-failures--where-to-look-status-configmap--gate) |
+| `hubBootstrap.teardown: true` | the full bootstrap estate, incl. `APIServer.spec.clientCA` set back to `""` | all five cert boot policies — [decommissioning](#decommissioning--teardown-true) |
+
+Deliberate **non-removals** (all safety-motivated):
+
+- **Removing `config.eso.hubBootstrap` is a no-op** — decommission requires the explicit
+  `teardown: true` flag, so a transient rendered-config read miss can never dismantle a fleet.
+- **Flipping `pruneRemovedStores` after a store is already gone does nothing** — the decision was
+  baked into the live objects' `eso-prune` label at emission. Relabel or delete manually.
+- **Leaving `selfSigned` does not remove the clientCA ConfigMap or unset `APIServer.spec.clientCA`** —
+  the new mode's wiring overwrites the same ConfigMap in place (no apiserver rollout). Only
+  `teardown` unsets the field.
+- **Unlabeled objects are never sweep candidates** — anything created manually or by another tool is
+  invisible to every sweep.
+
+Safety gates common to all sweeps: a sweep is skipped while its policy reports **any** precondition
+/ store error (a transient derivation failure or a store being fixed must never lose live objects
+or revoke a live cert), and when the per-cluster rendered config could not be read at all.
+
+#### Chart-managed labels
+
+Every object the chart may later need to find again is labeled at creation. Useful for auditing
+what the chart owns, and for manual cleanup when automation can't run (e.g. cert-manager
+uninstalled before a mode switch):
+
+| Label | Value | On |
+|---|---|---|
+| `autoshift.io/eso-store` | `"true"` | `ClusterSecretStore` / `SecretStore` objects from `config.eso.secretStores` |
+| `autoshift.io/eso-store-auth` | `"true"` | spoke auth `ExternalSecret`s (`authSecretConfig`) |
+| `autoshift.io/eso-store-ca` | `"true"` | delivered-CA ConfigMaps (`caSource`) |
+| `autoshift.io/eso-hub-secret` | `"true"` | hub-side credential `ExternalSecret`s (`policy-eso-hub-secrets`) |
+| `autoshift.io/eso-cert-auth-rbac` | `"true"` | RBAC from `certAuthRBAC` (all four kinds) |
+| `autoshift.io/eso-prune` | `"true"` / `"false"` | all of the above — the prune decision, baked at emission |
+| `autoshift.io/hub-bootstrap-client-cert` | `<storePrefix>` | hub-minted client `Certificate`s **and** their generated `Secret`s |
+| `autoshift.io/secret-reader-role` | `<storePrefix>` | the shared reader `Role` per owning namespace |
+| `autoshift.io/secret-reader-rolebinding` | `<storePrefix>` | the per-cluster reader `RoleBinding`s |
+| `autoshift.io/eso-debug-render` | `"true"` | debug-preview ConfigMaps (`diagnostics.debugRender`) |
+| `autoshift.io/eso-boot-status` | `"true"` | per-policy status ConfigMaps (+ `autoshift.io/eso-boot-policy: <policy>`) |
+
+```bash
+# audit everything the store policies own on a cluster (and each object's baked prune decision)
+oc get clustersecretstore,secretstore,externalsecret,configmap -A \
+  -l autoshift.io/eso-prune -o custom-columns='KIND:.kind,NS:.metadata.namespace,NAME:.metadata.name,PRUNE:.metadata.labels.autoshift\.io/eso-prune'
+oc get clusterrole,clusterrolebinding,role,rolebinding -A -l autoshift.io/eso-cert-auth-rbac
+
+# hub bootstrap estate (hub)
+oc get certificate,secret -A -l autoshift.io/hub-bootstrap-client-cert
+oc get role -A -l autoshift.io/secret-reader-role
+oc get rolebinding -A -l autoshift.io/secret-reader-rolebinding
+
+# change a removed store's baked prune decision (the sweep honors the new value next evaluation)
+oc label clustersecretstore <name> autoshift.io/eso-prune=true --overwrite
+
+# manual fallback when cert-manager was uninstalled before a mode switch (sweep can't discover these)
+oc delete secret,certificate -A -l autoshift.io/hub-bootstrap-client-cert
+```
+
 ### Values-file examples — what to put in the AutoShift application (all three modes)
 
 Drop these under a cluster's per-cluster file (`autoshift/values/clusters/<name>.yaml`) as
@@ -1421,14 +1632,15 @@ readiness gates and the non-cert policies (`install`, `secret-stores`, `cert-aut
 |:---:|:---:|---|
 | – | – | applies its objects **live** (normal) |
 | ✓ | – | emits its `<configpolicy>-debug-render` preview ConfigMap; **nothing live** |
-| – | ✓ | renders an **empty** object stream (no-op, Compliant); **nothing live** |
+| – | ✓ | applies nothing (only the preview-CM clear renders — no-op, Compliant); **nothing live** |
 | ✓ | ✓ | preview ConfigMap renders (debug wins for output); nothing live → only the readiness gates run |
 
 - **`debugRender`** previews the *full* object stream the policy would apply, resolved on the target
   cluster (real `lookup`/`fromConfigMap` values), **except** Secret-sourced data — that is replaced by
   a `DEBUG would-read/would-copy` source descriptor (namespace/name/key), never the value. The preview
   lands as ConfigMap `eso-boot-<name>-debug-render` (label `autoshift.io/eso-debug-render: "true"`) in
-  the policy namespace.
+  the policy namespace. Switching `debugRender` back **off** clears the preview ConfigMap
+  automatically (the policy `mustnothave`s it whenever debug is inactive).
 - **`readinessOnly`** makes the policy a no-op (it stays Compliant, so its dependents still proceed).
   The Policy object still exists — it is *not* absent — which is what lets the per-cluster override work.
 
@@ -1560,7 +1772,9 @@ policy (hundreds of lines, twice — in `status` *and* `spec`) with the real rea
 effectively unreadable in the ACM/OCP console. Instead, every policy that has preconditions is split into
 **two ConfigurationPolicies** that surface problems as **data**:
 
-- **`<name>-report`** (`remediationAction: enforce`) does the real work, collects every problem into a
+- the **report CP** (`remediationAction: enforce`) — the policy's action CP itself (e.g. `eso-boot-store`;
+  only the readiness policies, which have no other action, name theirs `<name>-report`) — does the real
+  work, collects every problem into a
   list, and writes a per-policy **status ConfigMap `<name>-status`** in the
   **`open-cluster-management-agent-addon`** namespace (which always exists on a managed cluster) holding
   `policy`, `errorCount`, and the full `errors` list. When everything is healthy it **deletes** that
@@ -1578,6 +1792,11 @@ detail:
 oc get cm eso-boot-store-status -n open-cluster-management-agent-addon -o yaml
 oc get cm -n open-cluster-management-agent-addon -l autoshift.io/eso-boot-status=true   # all of them
 ```
+
+Each message in a flat `errors` list carries a `[hub]`/`[spoke]` prefix naming the **templating layer**
+that produced it — hub-template resolution vs runtime resolution on the managed cluster — **not** which
+cluster it ran on. A hub-placed all-runtime policy like `policy-eso-hub-secrets` therefore tags its
+errors `[spoke]` even though they evaluate on the hub (the hub is the managed cluster there).
 
 Applies to every policy with preconditions: the readiness gates (`policy-eso-boot-readiness-hub`,
 `…-readiness-spoke`), the action boot policies (`policy-eso-boot-store`, `…-clientca-self`,
@@ -1693,6 +1912,10 @@ oc get configmap hub-bootstrap-hub-ca -n <policy-namespace>  # serving CA stashe
 oc get configmap hub-bootstrap-hub-ca -n external-secrets-operator   # serving CA copied in
 oc get secret hub-bootstrap-client -n external-secrets-operator      # client cert copied in
 oc get clustersecretstore hub-bootstrap                              # the bootstrap store
+
+# everything the store policies own, with each object's baked prune decision — see
+# "Cleanup reference — chart-managed labels" for the full label table:
+oc get clustersecretstore,secretstore,externalsecret,configmap -A -l autoshift.io/eso-prune
 ```
 
 ## Next Steps: Configuration
