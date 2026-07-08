@@ -11,6 +11,19 @@ externalSecretsOperator:
   operatorGroupName: external-secrets-operator-operator-group
   # targetNamespaces: # Optional: specify target namespaces for namespace-scoped operators
   #   - external-secrets-operator
+  # ---- prune removed stores -----------------------------------------------------------------------
+  # When a store entry is REMOVED from config.eso.secretStores, should the objects it created (the
+  # ClusterSecretStore/SecretStore itself, its auth ExternalSecrets on spoke + hub, its delivered-CA
+  # ConfigMap, its cert-auth RBAC) be deleted? Every emitted object is stamped with an
+  # autoshift.io/eso-prune: "true"|"false" label capturing the decision AT EMISSION TIME — the config
+  # entry is gone by the time the sweep runs, so the live object's label is the record of intent.
+  # Per-store override: secretStores[].{clusterSecretStore|secretStore}.prune. Deployment override:
+  # config.eso.pruneRemovedStores. Sweeps are skipped while the policy reports any store error (a
+  # misconfigured store must never get its live objects deleted) and when the rendered config could
+  # not be read. Flipping this AFTER removing a store does nothing — the label was already baked;
+  # relabel or delete manually then (oc label / oc delete).
+  # NOTE: pruning an auth ExternalSecret garbage-collects its target Secret too (creationPolicy: Owner).
+  pruneRemovedStores: true
   # secret-reader ServiceAccount (created by policy-eso-secret-reader.yaml):
   # a read-only identity other AutoShift components use to consume the Secrets ESO
   # provisions. Created in `namespace` above; granted read on Secrets in the namespaces
@@ -65,6 +78,19 @@ externalSecretsOperator:
     # pull each store's credential from the hub through THIS bootstrap store. Per-store override:
     # config.eso.secretStores[].authSecretConfig.refreshInterval.
     authSecretRefreshInterval: 1h
+    # ---- teardown (explicit decommission) ---------------------------------------------------------
+    # Set true to DECOMMISSION the hub bootstrap: every boot policy switches from provisioning to
+    # removal — spoke store + client secret + serving-CA copy, hub mint estate (CA, issuers, client
+    # certs + their secrets), reader RBAC, the clientCA ConfigMap, and APIServer.spec.clientCA is set
+    # back to "" (a disruptive kube-apiserver rollout, same as first enablement). Deliberately an
+    # explicit positive flag: simply REMOVING config.eso.hubBootstrap is a no-op (a transient
+    # rendered-config read miss must never dismantle a working fleet). Sequence: migrate/stop the
+    # consumers' ExternalSecrets first (they go NotReady when the store is deleted), set teardown: true,
+    # wait for the boot policies to go Compliant, then remove the hubBootstrap block and the ESO label.
+    # In the external modes, run teardown BEFORE dismantling the external PKI: the spoke readiness gate
+    # still checks the issuer/serving cert, and a NonCompliant gate holds the store policy Pending.
+    # Per-deployment override: config.eso.hubBootstrap.teardown.
+    teardown: false
     # ---- Trust mode -----------------------------------------------------------------------------
     # Selects WHO mints the client cert the spoke authenticates with and WHAT the hub apiserver
     # clientCA trusts. Per-deployment override: config.eso.hubBootstrap.mode. Pick ONE mode per hub:
@@ -152,10 +178,12 @@ externalSecretsOperator:
     # or sit readiness-only while others apply live. The two values below are only the DEFAULTS used when
     # a cluster's (and its clusterSet's) config omits the key. They are SEPARATE, composable switches:
     #   debugRender   → that policy applies nothing live and instead emits its debug-preview ConfigMap.
-    #   readinessOnly → that policy renders an EMPTY object stream (no-op, Compliant), applying nothing.
+    #                   When switched back OFF, the policy mustnothave-clears its preview ConfigMap.
+    #   readinessOnly → that policy applies nothing (only the preview-ConfigMap clear renders — no-op,
+    #                   Compliant).
     #   both          → debug wins for output (the preview ConfigMap renders); nothing applies live, so the
     #                   readiness gates are the only policies doing real work. Branch order in each policy:
-    #                   {{hub if $debug}}<preview>{{else if not $readinessOnly}}<live>{{end}}.
+    #                   {{hub if $debug}}<preview>{{else}}<clear preview CM>{{if not $readinessOnly}}<live>{{end}}{{end}}.
     diagnostics:
       readinessOnly: false                   # DEFAULT for per-cluster config.eso.hubBootstrap.diagnostics.readinessOnly.
                                              # When effective (per cluster): the five active cert boot policies

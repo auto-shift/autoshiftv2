@@ -2080,6 +2080,10 @@ For operators that need installation verification:
 
 ## Troubleshooting
 
+The full diagnosis manual — system invariants, symptom→cause runbooks with expected outputs,
+the end-to-end mTLS probe, and a staged validation pipeline (human- and agent-executable) —
+is [troubleshooting.md](troubleshooting.md). The quick checks below cover the basics.
+
 ### Policy Not Applied
 1. Check cluster labels: `oc get managedcluster <cluster> --show-labels`
 2. Verify placement: `oc get placement -n open-cluster-policies`
