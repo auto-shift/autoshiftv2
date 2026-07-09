@@ -60,7 +60,7 @@ chart-only) can be overridden per deployment/cluster under `config.eso.hubBootst
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `hubServer` | string | `''` | Hub apiserver URL (e.g. `https://api.hub.example.com:6443`). Required unless `deriveHubUrl` is true. Runtime override: `config.eso.hubBootstrap.hubServer`. |
-| `deriveHubUrl` | bool | `false` | If true AND `hubServer` is empty, the copy policy looks the hub apiserver URL up itself (hub-template lookup of the `apiserverurl.openshift.io` ClusterClaim). Runtime override: `config.eso.hubBootstrap.deriveHubUrl`. |
+| `deriveHubUrl` | bool | `false` | If true AND `hubServer` is empty, the copy policy looks the hub apiserver URL up itself (hub-template lookup of the `apiserverurl.openshift.io` ClusterClaim on the **immediate propagating hub**). Prefer this over a static `hubServer` in multi-hop (global-hub → spoke-hub → leaf) topologies — each cluster resolves the hub that minted its cert. Runtime override: `config.eso.hubBootstrap.deriveHubUrl`. |
 | `storePrefix` | string | `hub-bootstrap` | Names everything the bootstrap mints/copies: store (default), `<prefix>-client` Secret, `<prefix>-hub-ca` ConfigMap, `<prefix>-reader` Role, `<prefix>-ca` / issuers, `<prefix>-client-ca` ConfigMap. Chart-only (the spoke store *name* alone can be overridden at runtime via `config.eso.hubBootstrap.storeName`). |
 | `clientCAConfigMap` | string | `''` → `<storePrefix>-client-ca` | Name of the `openshift-config` ConfigMap `APIServer.spec.clientCA` points at. Chart-only. |
 | `authSecretRefreshInterval` | duration | `1h` | Default `refreshInterval` for the store-auth ExternalSecrets `policy-eso-secret-stores` emits (credential pulls through the bootstrap store). Per-store override: `secretStores[].authSecretConfig.refreshInterval`. Chart-only. |
@@ -205,7 +205,7 @@ Each list item is a single-key map naming the kind:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `namespace` | string | — (required) | Hub namespace holding the remote serving-CA bundle ConfigMap. |
+| `namespace` | string | — (required) | Hub namespace holding the remote serving-CA bundle ConfigMap. Read on the **immediate propagating hub** — in multi-hop topologies a leaf's `caSource` CM must exist on its spoke-hub. |
 | `name` | string | — (required) | ConfigMap name. |
 | `key` | string | — (required) | Key holding the PEM bundle. Delivered to the ConfigMap the store's `spec…caProvider` names; `caProvider.namespace` unset defaults to the `<ManagedClusterName>` namespace where the CA is delivered. |
 
@@ -241,7 +241,7 @@ from the ref **in `spec`** — never repeated here.
 |---|---|---|---|
 | `hubSecretName` | string | — (required) | Secret in the hub policy namespace the spoke pulls (the bootstrap store's `remoteRef.key`). Components may share one hub Secret (entries merge) or use different ones. |
 | `key` | string | unset | Property within the hub Secret → the ref's key. **Omit for a whole-Secret pull** (`dataFrom.extract`) — then all refs the `fromRef` covers must point at the same target Secret. |
-| `external` | map | unset | Have `policy-eso-hub-secrets` (hubs only) materialize the hub Secret from an external store first. Omit when the Secret is already in the hub policy namespace (native/seeded). |
+| `external` | map | unset | Have `policy-eso-hub-secrets` (hubs only) materialize the hub Secret from an external store first. Omit when the Secret is already in the hub policy namespace (native/seeded) — natively-declared seeds are **verified** (existence + declared `key`; names only, never values) and a missing one is reported as **`pending`** (not an error) in `eso-hub-secrets-status`: chained stores whose seed is produced by another store's flow converge over subsequent evaluations, blocking nothing meanwhile. |
 
 ### `sources.<component>.external`
 

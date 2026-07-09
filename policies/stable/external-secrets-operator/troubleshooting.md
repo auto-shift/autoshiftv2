@@ -274,6 +274,14 @@ Symptom: auth ES on the spoke NotReady with "secret not found" on its remoteRef.
 hops backwards:
 
 ```bash
+# hop 0 [hub] — the policy checks native seeds itself. Two severities in eso-hub-secrets-status:
+oc get cm eso-hub-secrets-status -n $ADDON_NS -o jsonpath='{.data.pending}'   # WAITING, self-heals
+oc get cm eso-hub-secrets-status -n $ADDON_NS -o jsonpath='{.data.errors}'    # real misconfig
+# expect: NotFound. `pending` entries ('Secret "x" not found ... yet — waiting') are normal for
+# CHAINED stores — the seed is produced by another store's flow and clears on a later evaluation;
+# only act on one that persists (then create/fix the seed). Pending blocks nothing (stores still
+# created, sweep still runs); only `errors` entries suspend the sweep.
+
 # hop 2 input [hub]: does the hub credential Secret exist in $POLICY_NS?
 oc get secret <hubSecretName> -n $POLICY_NS
 # missing + source has `external:` -> hop 1 problem; missing + native -> the manual seed was never created.

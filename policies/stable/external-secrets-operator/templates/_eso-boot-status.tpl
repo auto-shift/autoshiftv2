@@ -17,11 +17,18 @@
 
   Caller contract: $errors (a list) must be in scope at the include site (runtime template var). Pass:
     (dict "policy" "<configurationpolicy-name>" "ns" "<policy namespace>")
+  Optional: pass "withPending" true when the caller ALSO maintains a $pending list (runtime var) of
+  WAITING conditions — declared inputs that don't exist YET but are expected to converge on later
+  evaluations (e.g. chained store credentials). Pending entries are reported under separate
+  `pending`/`pendingCount` keys and keep the gate NonCompliant until they clear, but callers must NOT
+  treat them as errors (no action skip, no sweep suspension). Only set withPending when $pending is
+  defined at the include site — the helper references it unconditionally when the flag is on.
 */ -}}
 {{- define "eso.boot.statusReport" -}}
 {{- $policy := .policy -}}
 {{- $ns := .ns -}}
-{{ "{{-" }} if $errors {{ "}}" }}
+{{- $withPending := (.withPending | default false) -}}
+{{ "{{-" }} if {{ if $withPending }}(or $errors $pending){{ else }}$errors{{ end }} {{ "}}" }}
 ##### PRECONDITION REPORT (replaces fail): full detail in a ConfigMap. ACM emits its own compliance #####
 ##### Events, so this carries the DETAIL only; the inform gate CP turns its presence into NonCompliant. #####
 - complianceType: mustonlyhave
@@ -41,6 +48,13 @@
         {{ "{{-" }} range $e := $errors {{ "}}" }}
         - {{ "{{" }} $e {{ "}}" }}
         {{ "{{-" }} end {{ "}}" }}
+{{- if $withPending }}
+      pendingCount: {{ "{{" }} $pending | len | quote {{ "}}" }}
+      pending: |
+        {{ "{{-" }} range $p := $pending {{ "}}" }}
+        - {{ "{{" }} $p {{ "}}" }}
+        {{ "{{-" }} end {{ "}}" }}
+{{- end }}
 {{ "{{-" }} else {{ "}}" }}
 ##### No precondition errors: clear any stale status ConfigMap so the signal self-heals. #####
 - complianceType: mustnothave

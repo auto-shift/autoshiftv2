@@ -434,6 +434,18 @@ Other notes:
 - A native `hubSecretName` (no `external`) must already exist in the hub policy namespace.
   With `external`, `policy-eso-hub-secrets` materializes it — that store must be reachable
   on the hub or its hub ExternalSecret sits NotReady (and the spoke pull waits).
+- Native seeds are **verified, and a missing one is PENDING, not an error**:
+  `policy-eso-hub-secrets` checks each natively-declared Secret exists in the owning
+  namespace (and carries the declared `key`) and reports gaps by name under a separate
+  `pending` key in its status ConfigMap (`eso-hub-secrets-status`) — so a forgotten seed
+  surfaces there, not as a NotReady spoke ExternalSecret an hour later. Pending is
+  deliberately soft: it never skips other credentials, never blocks store creation, and never
+  suspends the removed-credential sweep — only real config errors do that. This is what makes
+  **chained stores** converge: when store B's auth Secret is produced by store A's flow, B's
+  seed is simply pending on early evaluations and clears once A syncs — each evaluation more
+  stores come up. A native name that this policy itself materializes (an `external`
+  declaration elsewhere targets the same Secret) is exempt from the check entirely. The check
+  reads existence and key names only; Secret values are never rendered anywhere.
 
 #### Supported `fromRef` values
 
@@ -1089,6 +1101,10 @@ config:
 - **No name mismatch:** the destination is the store's own `caProvider` (`name`/`key`/namespace),
   so there is nothing to keep in sync. ESO's controller already has cluster-wide ConfigMap read,
   so no extra RBAC is needed.
+- **Multi-hop topologies:** the source ConfigMap is read by a hub template on the
+  **immediate propagator** — the hub whose ACM places this policy on the store's cluster. In
+  a global-hub → spoke-hub → leaf tree, a leaf's `caSource` CM must therefore exist on the
+  **spoke-hub**, not (only) the global hub.
 - **No apiserver change:** it only writes a ConfigMap into the `<ManagedClusterName>` namespace —
   no kube-apiserver rollout. In `dryRun` the parent stores policy is `inform`.
 - This is the **server-trust** half; `certAuthRBAC` is the **authorization** half (CN →
@@ -1173,6 +1189,11 @@ config:
     hubBootstrap:
       # ---- connection (all modes, flat) ----
       hubServer: https://api.hub:6443        # hub apiserver URL (default: values externalSecretsOperator.hubServer)
+      # deriveHubUrl: true                   # OR look it up from the propagating hub's apiserverurl ClusterClaim.
+      #                                      # Multi-hop (global hub -> spoke-hub -> leaf): PREFER this over a static
+      #                                      # hubServer — it resolves each cluster's IMMEDIATE hub (the one that
+      #                                      # minted its cert), while one shared hubServer value would wrongly point
+      #                                      # every level at the same apiserver.
       storeName: hub-bootstrap               # ClusterSecretStore name (default: chart hubBootstrap.storePrefix)
       mode: selfSigned                       # selfSigned | externalCA | externalCAReuseServingCert
       # ---- clientIdentity (selfSigned + externalCA; ignored in reuse) ----

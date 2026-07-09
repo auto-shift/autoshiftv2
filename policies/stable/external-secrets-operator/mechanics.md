@@ -57,10 +57,42 @@ Why it matters here:
 - **Per-cluster branching** — because decisions are hub-derived per cluster, one cluster can
   sit in `debugRender` while its neighbors apply live, from the same chart render.
 
-Corollary: **templates never `lookup` a Secret.** A Secret lookup would serialize plaintext
-into the resolved policy envelope (visible in the hub console/etcd). Secret material moves
-only via ACM's `fromSecret`/`copySecretData` (encrypted in the envelope) or — for everything
-in this chart's store machinery — via ESO itself (§4).
+Corollary: **templates never render Secret data.** A hub-template Secret lookup would
+serialize plaintext into the resolved policy envelope (visible in the hub console/etcd).
+Secret material moves only via ACM's `fromSecret`/`copySecretData` (encrypted in the
+envelope) or — for everything in this chart's store machinery — via ESO itself (§4). The one
+sanctioned exception: a **runtime** lookup used purely for existence/key checks (the native
+seed verification in `policy-eso-hub-secrets`), which renders booleans and names, never
+values.
+
+### Multi-hop topology contract (global hub → spoke-hub → leaf)
+
+"Hub templates" resolve on the **immediate propagator** — whichever hub's ACM holds the root
+Policy — not on some fixed global hub. The AutoShift `cluster-labels` /
+`cluster-config-maps` policies are themselves hub-placed runtime policies that materialize,
+**on every hub**, the ManagedCluster labels and `<cluster>.rendered-config` ConfigMaps for
+that hub's own clusters. That yields the general architecture rule this chart follows:
+
+> **Anything that must materialize hub objects consumed by other policies does RUNTIME
+> lookups for its materialization inputs.** Then every resource a policy's naive hub-template
+> lookup expects is created locally by another policy, regardless of whether the hub is
+> self-managed or itself managed by another hub — the policy contract is identical at every
+> level of the tree.
+
+Locality of every hub-template input in this chart, on an arbitrary propagating hub:
+
+| Hub-layer input | Read by | Guaranteed local by |
+|---|---|---|
+| `<cluster>.rendered-config` CM | all store/boot policies | `policy-cluster-configs` (runtime, hub-placed) |
+| `$PREFIX-hub-ca` CM | boot-store | `policy-eso-boot-serving-ca` (runtime, lands on each hub) |
+| `$PREFIX-client-<cluster>` Secret | boot-store | `policy-eso-boot-clientca-self` (runtime — each hub mints for **its own** ManagedClusters) |
+| cert-manager Policy status | readiness gates | each hub carrying the root policy set |
+| `apiserverurl` ClusterClaim (`deriveHubUrl`) | boot-store | intrinsic — resolves the **immediate** hub, which is exactly the hub that minted this cluster's cert; prefer it over a static `hubServer` in multi-hop |
+| `caSource` CA bundle CM | secret-stores | **operator-provided** — must exist on the immediate propagator of that store's cluster |
+
+Credential materialization (`policy-eso-hub-secrets`, §4) is likewise hub-placed + runtime:
+each hub sweeps **its own** clusters' rendered-configs and materializes their credentials in
+its own owning namespaces — self-managed hubs and spoke-hubs behave identically.
 
 ---
 
@@ -201,6 +233,16 @@ Mechanics that make it hands-off:
   same rule applies to any root store: its own credential must be native (a manually seeded
   hub Secret), which is exactly the "root store" pattern — one seeded store on the hub feeds
   every other store's credentials.
+- **Native seeds are verified — missing means *pending*, not error.** For sources without
+  `external`, `policy-eso-hub-secrets` checks the declared Secret exists in the owning
+  namespace (and carries the declared `key`) — existence and key names only, never values —
+  and reports gaps under a separate `pending` key in its status ConfigMap. Pending keeps the
+  gate NonCompliant (visibility) but has **no blast radius**: other credentials still
+  materialize, stores are still created, the sweep still runs. That is the chaining contract:
+  a store whose auth Secret is produced by *another store's* flow starts pending and clears
+  once the upstream syncs, so successive evaluations bring up successive layers of stores.
+  Names this policy itself materializes are exempt (their ExternalSecret Ready condition is
+  the signal).
 - **GC on prune.** Auth ExternalSecrets use `creationPolicy: Owner`, so pruning the
   ExternalSecret garbage-collects the credential Secret it created.
 
@@ -247,6 +289,10 @@ flowchart LR
 
 - The **gate** is the Policy's compliance signal, so `spec.dependencies` chains keep working
   unchanged. No custom Events — ACM already fires them on every compliance transition.
+- The status CM can carry a second severity: **`pending`** (with `pendingCount`) — declared
+  inputs that don't exist *yet* but are expected to converge (currently: native seeds,
+  hub-secrets). Pending keeps the gate NonCompliant for visibility but callers never treat it
+  as an error — no action skip, no sweep suspension.
 - Error messages carry a `[hub]`/`[spoke]` prefix naming the **templating layer** that
   produced them (hub-template vs runtime resolution), not the cluster.
 - **Two failure semantics**, matched to what the policy provisions:
