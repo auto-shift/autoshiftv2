@@ -140,7 +140,7 @@ open-cluster-management   multiclusterhub   Running      6m28s   2.13.2         
 > The previously installed OpenShift GitOps and ACM will be controlled by AutoShift after it is installed for version upgrading
 
 > [!TIP]
-> **Just developing or demoing?** Skip the ArgoCD Application below and install AutoShift with `helm` straight from your working copy — edit a values file and re-apply, no commit/push/ArgoCD sync required. See [Alternative (development): Deploy directly with Helm](#alternative-development-deploy-directly-with-helm) just below.
+> **Just developing or demoing?** Skip the ArgoCD Application below and install AutoShift with `helm` straight from your working copy. Edit a values file and re-apply, no commit/push/ArgoCD sync required. See [Alternative (development): Deploy directly with Helm](#alternative-development-deploy-directly-with-helm) just below.
 
 Update your values file with desired feature flags and repo url as defined in the [Autoshift Cluster Labels Values Reference](values-reference.md).
 
