@@ -3,6 +3,7 @@
 package resolver
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/auto-shift/autoshiftv2/tools/internal/labels"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // lookupRe extracts the arguments from a lookup call in an error message:
@@ -332,6 +334,67 @@ func TestPipeline_EndToEnd(t *testing.T) {
 	assertContains("stable/cluster-install", "-vsphere-creds",
 		"vmware path must render (vSphere credentials Secret) — _example-cluster-install-vmware.yaml + vsphere-creds testdata")
 
+	// ---- Generic install-config invariants (platform-agnostic) -------------
+	// The cluster-install policy renders one base64-encoded install-config
+	// Secret per example file (keyed lint-cluster-<variant>). Decode them all
+	// and assert invariants that must hold for EVERY platform, so adding a new
+	// _example-cluster-install-<platform>.yaml is exercised here for free —
+	// coverage and content checks are driven entirely by the example files.
+	if res, ok := resultsByPolicy["stable/cluster-install"]; ok && res.Err == nil {
+		installConfigs := decodeInstallConfigs(t, res.ResolvedYAML)
+		if len(installConfigs) == 0 {
+			t.Errorf("output assertion FAIL  stable/cluster-install: no install-config.yaml Secret rendered")
+		}
+
+		// Not every platform emits an install-config: IPI platforms (aws,
+		// vmware) render a Hive install-config Secret, while agent-based
+		// baremetal provisions via BareMetalHost customDeploy with none. So the
+		// per-variant existence check applies only to examples that declare a
+		// static-host list under a platform section (the IPI static-IP pattern):
+		// those MUST produce an install-config, and that host block MUST render —
+		// guarding against the whole hosts branch silently dropping out. The
+		// null/empty invariants below still run over every install-config that
+		// exists, whatever platform produced it.
+		variants, err := clusterInstallExampleVariants(root)
+		if err != nil {
+			t.Fatalf("read cluster-install examples: %v", err)
+		}
+		for _, v := range variants {
+			if !v.hasHosts {
+				continue
+			}
+			cluster := "lint-cluster-" + v.name
+			ic, ok := installConfigs[cluster]
+			if !ok {
+				t.Errorf("output assertion FAIL  stable/cluster-install: _example-cluster-install-%s.yaml declares static hosts but produced no install-config (expected cluster %q)\n  reason: the example's platform body did not resolve through the pipeline", v.name, cluster)
+				continue
+			}
+			if !strings.Contains(ic, "hosts:") {
+				t.Errorf("output assertion FAIL  stable/cluster-install: _example-cluster-install-%s.yaml declares static hosts but its install-config has no hosts block\n  reason: the static-IP host branch did not render", v.name)
+			}
+		}
+
+		// Invariant for every platform: a missing optional field must be OMITTED,
+		// never emitted as `key: null` (how the vmware static-IP gateway /
+		// nameservers bug manifested) or as an empty identifier string. Build the
+		// object with only the keys that are set. `pullSecret: ""` is the sole
+		// legitimately-empty field, so we scan for null scalars generically and
+		// keep a small, extensible denylist for empty identifiers.
+		bannedEmpty := []string{"failureDomain: \"\""}
+		for cluster, ic := range installConfigs {
+			for i, line := range strings.Split(ic, "\n") {
+				if strings.HasSuffix(strings.TrimRight(line, " \t"), ": null") {
+					t.Errorf("output assertion FAIL  stable/cluster-install: install-config for %s line %d emits a null scalar:\n    %s\n  reason: build the object with only the keys that are set, never emit `key: null`", cluster, i+1, strings.TrimSpace(line))
+				}
+			}
+			for _, bad := range bannedEmpty {
+				if strings.Contains(ic, bad) {
+					t.Errorf("output assertion FAIL  stable/cluster-install: install-config for %s contains %q\n  reason: omit optional identifiers when unset — an empty string matches nothing", cluster, bad)
+				}
+			}
+		}
+	}
+
 	// disconnected-mirror: all four catalog source types must render when
 	// config.disconnected is populated in the hub example.
 	assertContains("stable/disconnected-mirror", "CatalogSource",
@@ -409,4 +472,133 @@ func TestPipeline_EndToEnd(t *testing.T) {
 
 	t.Logf("label contract: %d OK, %d missing, %d orphaned",
 		len(report.OK), len(report.Missing), len(report.Orphaned))
+}
+
+// TestAutoshiftChart_ClusterInstallExamples renders the top-level autoshift/
+// chart against every autoshift/values/clusters/_example-cluster-install-*.yaml
+// profile. Unlike TestPipeline_EndToEnd — which renders individual policies/*
+// charts — this exercises templates that live ONLY in the autoshift/ chart,
+// most importantly autoshift/templates/_validate-cluster-install.tpl (invoked
+// at autoshift-app-set.yaml:1). That validator gates cluster provisioning by
+// platform, and a platform (e.g. vmware) missing from its $validPlatforms list
+// makes `helm template ./autoshift` fail at render time — a failure the policy-
+// only pipeline test cannot see. Every _example-cluster-install-*.yaml must
+// render clean here.
+func TestAutoshiftChart_ClusterInstallExamples(t *testing.T) {
+	root := repoRoot(t)
+	chartDir := filepath.Join(root, "autoshift")
+	globalValues := filepath.Join(root, "autoshift", "values", "global.yaml")
+	hubValues := filepath.Join(root, "autoshift", "values", "clustersets", "hub.yaml")
+
+	examples, err := filepath.Glob(filepath.Join(root, "autoshift", "values", "clusters", "_example-cluster-install-*.yaml"))
+	if err != nil {
+		t.Fatalf("glob cluster-install examples: %v", err)
+	}
+	if len(examples) == 0 {
+		t.Fatal("no _example-cluster-install-*.yaml files found — expected at least one per supported platform")
+	}
+
+	for _, example := range examples {
+		example := example
+		name := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(example), "_example-cluster-install-"), ".yaml")
+		t.Run(name, func(t *testing.T) {
+			if _, err := HelmTemplate(chartDir, globalValues, hubValues, example); err != nil {
+				t.Errorf("autoshift chart failed to render with %s.\n"+
+					"  This example passes the policy-level pipeline test but fails the autoshift/ chart —\n"+
+					"  most likely autoshift/templates/_validate-cluster-install.tpl rejects this platform's\n"+
+					"  config (e.g. platform missing from $validPlatforms, or an unhandled required field).\n"+
+					"  error: %v", filepath.Base(example), err)
+			}
+		})
+	}
+}
+
+// decodeInstallConfigs extracts every base64-encoded install-config.yaml Secret
+// value from the resolved cluster-install output, decodes it, and returns a map
+// of cluster name (install-config metadata.name) → decoded install-config YAML.
+// The install-config is stored base64-encoded inside a Secret, so its contents
+// are invisible to plain string assertions on the resolved policy YAML.
+func decodeInstallConfigs(t *testing.T, resolvedYAML string) map[string]string {
+	t.Helper()
+	re := regexp.MustCompile(`install-config\.yaml: '([A-Za-z0-9+/=]+)'`)
+	out := map[string]string{}
+	for _, m := range re.FindAllStringSubmatch(resolvedYAML, -1) {
+		decoded, err := base64.StdEncoding.DecodeString(m[1])
+		if err != nil {
+			t.Errorf("install-config.yaml is not valid base64: %v", err)
+			continue
+		}
+		var meta struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		}
+		if err := sigsyaml.Unmarshal(decoded, &meta); err != nil {
+			t.Errorf("decoded install-config is not valid YAML: %v", err)
+			continue
+		}
+		name := meta.Metadata.Name
+		if name == "" {
+			name = fmt.Sprintf("unnamed-%d", len(out))
+		}
+		out[name] = string(decoded)
+	}
+	return out
+}
+
+// clusterInstallVariant describes one _example-cluster-install-*.yaml file.
+type clusterInstallVariant struct {
+	name     string // the part after "_example-cluster-install-" (matches installVariant)
+	hasHosts bool   // declares a non-empty static-host list under config.<platform>.hosts
+}
+
+// clusterInstallExampleVariants enumerates the _example-cluster-install-*.yaml
+// files and, for each, derives its variant key and whether it declares static
+// hosts. Driven entirely by the files so a new platform example is picked up
+// automatically — no per-platform code here.
+func clusterInstallExampleVariants(root string) ([]clusterInstallVariant, error) {
+	dir := filepath.Join(root, "autoshift", "values", "clusters")
+	matches, err := filepath.Glob(filepath.Join(dir, "_example-cluster-install-*.yaml"))
+	if err != nil {
+		return nil, err
+	}
+	var out []clusterInstallVariant
+	for _, path := range matches {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		var parsed map[string]interface{}
+		if err := sigsyaml.Unmarshal(data, &parsed); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", filepath.Base(path), err)
+		}
+		out = append(out, clusterInstallVariant{
+			name:     installVariant(filepath.Base(path)),
+			hasHosts: exampleDeclaresPlatformHosts(parsed),
+		})
+	}
+	return out, nil
+}
+
+// exampleDeclaresPlatformHosts reports whether any cluster in the parsed example
+// declares a non-empty static-host list under config.<platform>.hosts (the
+// IPI static-IP pattern, e.g. config.vsphere.hosts). It intentionally does NOT
+// match baremetal's config.hosts (a hostname-keyed map, not a platform-section
+// list), which does not map into an install-config hosts block.
+func exampleDeclaresPlatformHosts(parsed map[string]interface{}) bool {
+	clusters, _ := parsed["clusters"].(map[string]interface{})
+	for _, cv := range clusters {
+		cluster, _ := cv.(map[string]interface{})
+		cfg, _ := cluster["config"].(map[string]interface{})
+		for _, sectionVal := range cfg {
+			section, ok := sectionVal.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if hosts, ok := section["hosts"].([]interface{}); ok && len(hosts) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }

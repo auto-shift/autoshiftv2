@@ -23,13 +23,13 @@ type ExampleConfigs struct {
 	// cluster name remapped to the lint cluster name.
 	ClusterInstallConfig map[string]interface{}
 	// ClusterInstallExtra: one entry per cluster-install example file, keyed by
-	// its clusterInstall.platform (e.g. "baremetal", "aws", "vmware"). The merged
-	// ClusterInstallConfig only carries a single clusterInstall.platform (the
-	// last file merged wins), so it can only ever exercise one platform's install
-	// policy body. Each entry here becomes its own synthetic rendered-config
-	// ConfigMap so every platform's install policy body is resolved in one run,
-	// independent of file read order. New example files are picked up
-	// automatically.
+	// its filename variant (e.g. "baremetal", "aws", "vmware", "vmware-static";
+	// see installVariant). The merged ClusterInstallConfig only carries a single
+	// clusterInstall.platform (the last file merged wins), so it can only ever
+	// exercise one platform's install policy body. Each entry here becomes its
+	// own synthetic rendered-config ConfigMap so every example's install policy
+	// body is resolved in one run, independent of file read order — including two
+	// files that share a platform. New example files are picked up automatically.
 	ClusterInstallExtra map[string]map[string]interface{}
 }
 
@@ -135,19 +135,20 @@ func ExtractExampleConfigs(valuesDir string) (*ExampleConfigs, error) {
 			for _, clusterVal := range clusters {
 				if cluster, ok := clusterVal.(map[string]interface{}); ok {
 					if clCfg, ok := cluster["config"].(map[string]interface{}); ok {
-						// Capture EVERY platform (including baremetal) as its own
+						// Capture EVERY example file as its own
 						// config BEFORE merging, so GenerateSyntheticConfigMaps can
-						// emit a dedicated rendered-config ConfigMap per platform and
-						// each platform's install policy body is exercised. Keyed by
-						// clusterInstall.platform, so it's driven entirely by the
-						// example files — adding a new _example-cluster-install-*.yaml
-						// with a new platform is picked up automatically, and no
-						// platform depends on file read order.
+						// emit a dedicated rendered-config ConfigMap per file and
+						// each example's install policy body is exercised. Keyed by
+						// the file's variant, not clusterInstall.platform (two files can
+						// share a platform, e.g. vmware DHCP + vmware static-IP, and
+						// keying by platform would collide). Driven entirely by the
+						// example files — a new _example-cluster-install-*.yaml is
+						// picked up automatically, independent of file read order.
 						//
 						// A deep copy is required: deepMergeYAML aliases nested maps
 						// by reference into `merged`, so a later file's merge would
 						// otherwise mutate this file's clusterInstall block.
-						extra[clusterInstallPlatform(clCfg)] = deepCopyMap(clCfg)
+						extra[installVariant(name)] = deepCopyMap(clCfg)
 						deepMergeYAML(merged, clCfg)
 					}
 				}
@@ -192,18 +193,18 @@ func deepCopyValue(v interface{}) interface{} {
 	}
 }
 
-// clusterInstallPlatform returns the clusterInstall.platform value from a
-// cluster-install config block, defaulting to "baremetal" when unset — matching
-// the default the install policies apply.
-func clusterInstallPlatform(clCfg map[string]interface{}) string {
-	ci, ok := clCfg["clusterInstall"].(map[string]interface{})
-	if !ok {
-		return "baremetal"
+// installVariant derives a unique key for a cluster-install example from its
+// filename: the part after "_example-cluster-install-" with the ".yaml" suffix
+// removed (e.g. "vmware", "vmware-static", "aws", "baremetal"). Used to give
+// each example file its own rendered-config ConfigMap so every install policy
+// body resolves — including two files that share a platform.
+func installVariant(fileName string) string {
+	v := strings.TrimSuffix(fileName, ".yaml")
+	v = strings.TrimPrefix(v, "_example-cluster-install-")
+	if v == "" || v == "_example-cluster-install" {
+		return "default"
 	}
-	if p, ok := ci["platform"].(string); ok && p != "" {
-		return p
-	}
-	return "baremetal"
+	return v
 }
 
 // WriteTestValues creates a temporary values file that provides the

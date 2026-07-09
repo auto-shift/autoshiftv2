@@ -153,15 +153,20 @@ spec:
             {{ "{{-" }} $hostList := list {{ "}}" }}
             {{ "{{-" }} range $_, $h := $hosts {{ "}}" }}
             {{ "{{-" }} $nd := (index $h "networkDevice" | default dict) {{ "}}" }}
-            {{ "{{-" }} $hostList = append $hostList (dict
-                "role" (index $h "role")
-                "failureDomain" (index $h "failureDomain" | default "")
-                "networkDevice" (dict
-                    "gateway" (index $nd "gateway")
-                    "ipAddrs" (index $nd "ipAddrs")
-                    "nameservers" (index $nd "nameservers")
-                )
-            ) {{ "}}" }}
+            {{- /* build networkDevice with only the keys that are set — a missing gateway/nameservers would otherwise render as null and break install-config */ -}}
+            {{ "{{-" }} $ndOut := (dict "ipAddrs" (index $nd "ipAddrs")) {{ "}}" }}
+            {{ "{{-" }} if (index $nd "gateway") {{ "}}" }}
+            {{ "{{-" }} $_ := set $ndOut "gateway" (index $nd "gateway") {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if (index $nd "nameservers") {{ "}}" }}
+            {{ "{{-" }} $_ := set $ndOut "nameservers" (index $nd "nameservers") {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $hostOut := (dict "role" (index $h "role") "networkDevice" $ndOut) {{ "}}" }}
+            {{- /* emit failureDomain only when set — an empty string matches no defined failure domain */ -}}
+            {{ "{{-" }} if (index $h "failureDomain") {{ "}}" }}
+            {{ "{{-" }} $_ := set $hostOut "failureDomain" (index $h "failureDomain") {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $hostList = append $hostList $hostOut {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} $_ := set $vspherePlatform "hosts" $hostList {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
