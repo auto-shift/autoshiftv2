@@ -304,7 +304,10 @@ oc get cm -n open-cluster-policies eso-boot-store-debug-render -o jsonpath='{.da
 ### Verify the bootstrap (all modes)
 
 ```bash
-# on the hub: boot policies Compliant? (readiness gates first, then the actives)
+# on the hub: rollup by intent group first (install / boot-hub / boot-spoke / stores / ...)
+oc get policysets -n open-cluster-policies | grep eso
+
+# then the individual boot policies (readiness gates first, then the actives)
 oc get policies -n open-cluster-policies | grep eso-boot
 
 # on a spoke: store exists and is Ready
@@ -336,6 +339,25 @@ authoritative, exactly as ESO documents it. The interesting part is credentials:
 The canonical pattern — one manually-seeded **root store** on the hub feeds every other
 store's credentials:
 
+How the two halves of a store entry join up:
+
+- **`spec` declares the DESTINATION.** You write the store exactly as ESO documents it, auth
+  ref included. The policy reads the target Secret's `name`/`key`/`namespace` *from that ref*
+  — `authSecretConfig` never repeats them, so they can't drift.
+- **`fromRef` names the auth method**, which tells the policy *where in `spec` that method
+  keeps its Secret refs* (via the chart-internal `internal.authRefPaths` table — e.g.
+  `vaultToken` → `spec.provider.vault.auth.tokenSecretRef`). It's declared rather than
+  auto-detected because a spec is full of ref-shaped fields that must NOT be provisioned
+  (caProviders, TLS refs, serviceAccountRefs) — `fromRef` states which refs this policy owns.
+- **`sources` is keyed by the method's component names** (from the same table) because a
+  method can have several independent refs, each needing its own source: `vaultToken` has just
+  one (`tokenSecretRef`), but `kubernetesCert` has `clientCert` + `clientKey`, `vaultIam` has
+  `accessKeyID` + `secretAccessKey`. Each entry supplies only the SOURCE side:
+  `hubSecretName` (+ `key`) in the hub policy namespace.
+- From each source→ref pair the policy emits one spoke `ExternalSecret` against the bootstrap
+  store, and spoke ESO performs the copy:
+  `<hubSecretName>.data.<sources key>` → `<ref name>.data.<ref key>` in the ref's namespace.
+
 ```yaml
 managedClusterSets:
   managed:
@@ -347,11 +369,16 @@ managedClusterSets:
           - clusterSecretStore:
               name: hub-vault
               authSecretConfig:
-                fromRef: vaultToken
+                fromRef: vaultToken                   # auth method = vault token auth; tells the policy
+                                                      # the ref to provision lives at
+                                                      # spec.provider.vault.auth.tokenSecretRef
                 sources:
-                  tokenSecretRef:
-                    hubSecretName: hub-vault-seed     # seed this once: the deadlock guard —
-                    key: token                        # a store can't transport its own credential
+                  tokenSecretRef:                     # <- component name from the vaultToken method
+                                                      #    (its only one; cert methods have two)
+                    hubSecretName: hub-vault-seed     # SOURCE: Secret in the hub policy namespace.
+                    key: token                        # SOURCE property within it.
+                                                      # Seed it once by hand: the deadlock guard —
+                                                      # a store can't transport its own credential.
               spec:
                 provider:
                   vault:
@@ -359,10 +386,13 @@ managedClusterSets:
                     path: 'secret'
                     version: 'v2'
                     auth:
-                      tokenSecretRef:
-                        name: hub-vault-token
-                        key: token
+                      tokenSecretRef:                 # DESTINATION: the policy reads name/key/namespace
+                        name: hub-vault-token         # from THIS ref and provisions exactly that Secret.
+                        key: token                    # Net effect, performed by spoke ESO through the
                         namespace: 'external-secrets-operator'
+                                                      # bootstrap store:
+                                                      #   hub-vault-seed.data.token (hub policy ns)
+                                                      #     -> hub-vault-token.data.token (this ns)
           # Team store: its token is materialized on the hub FROM the root store (hop 1),
           # then delivered to the spoke through the bootstrap store (hop 2).
           - secretStore:
@@ -372,10 +402,10 @@ managedClusterSets:
                 fromRef: vaultToken
                 sources:
                   tokenSecretRef:
-                    hubSecretName: team-a-vault-token
-                    key: token
-                    external:                          # hop 1: pull onto the hub first
-                      storeRef: { name: hub-vault, kind: ClusterSecretStore }
+                    hubSecretName: team-a-vault-token  # SOURCE on the hub — but this one doesn't exist
+                    key: token                         # until hop 1 creates it:
+                    external:                          # hop 1: policy-eso-hub-secrets pulls it onto the
+                      storeRef: { name: hub-vault, kind: ClusterSecretStore }   # hub VIA the root store
                       remoteRef: { key: 'secret/data/eso/team-a-token', property: token }
               spec:
                 provider:
@@ -384,9 +414,10 @@ managedClusterSets:
                     path: 'secret'
                     version: 'v2'
                     auth:
-                      tokenSecretRef:
-                        name: vault-token              # provisioned in team-a automatically
-                        key: token
+                      tokenSecretRef:                  # DESTINATION (SecretStore: no .namespace — the
+                        name: vault-token              # store's own namespace, team-a, is used):
+                        key: token                     #   team-a-vault-token.data.token (hub)
+                                                       #     -> vault-token.data.token (team-a)
 ```
 
 Seed the root credential once, on the hub:

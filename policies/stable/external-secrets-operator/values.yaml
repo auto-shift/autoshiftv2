@@ -167,7 +167,7 @@ externalSecretsOperator:
     # recovers. This is what keeps the system from locking itself out when an external CA / issuer is
     # broken at the same moment client certs expire. (These two are chart-only — no runtime override.)
     certManagerOperatorNamespace: cert-manager-operator  # ns holding the cert-manager-operator CSV (status.phase must be Succeeded)
-    certManagerPolicyName: policy-cert-manager  # the autoshift Policy the readiness gates require Compliant
+    certManagerPolicyName: policy-cert-manager-install  # the autoshift Policy the readiness gates require Compliant
                                              # (per-cluster) when autoshiftProvisioned=true. Override per customer
                                              # environment. The gate reads its name here and looks it up in the policy
                                              # namespace; the hub-template SA must be able to read Policies for this to work.
@@ -267,19 +267,68 @@ externalSecretsOperator:
 internal:
   authRefPaths:
     # Vault provider (creds under auth.<method>)
-    vaultToken:      { provider: vault,      base: auth,            components: { tokenSecretRef: tokenSecretRef } }
-    vaultAppRole:    { provider: vault,      base: auth.appRole,    components: { secretRef: secretRef, roleRef: roleRef } }
-    vaultLdap:       { provider: vault,      base: auth.ldap,       components: { secretRef: secretRef } }
-    vaultUserPass:   { provider: vault,      base: auth.userPass,   components: { secretRef: secretRef } }
-    vaultJwt:        { provider: vault,      base: auth.jwt,        components: { secretRef: secretRef } }
-    vaultKubernetes: { provider: vault,      base: auth.kubernetes, components: { secretRef: secretRef } }
-    vaultCert:       { provider: vault,      base: auth.cert,       components: { clientCert: clientCert, secretRef: secretRef } }
+    vaultToken:
+      provider: vault
+      base: auth
+      components:
+        tokenSecretRef: tokenSecretRef
+    vaultAppRole:
+      provider: vault
+      base: auth.appRole
+      components:
+        secretRef: secretRef
+        roleRef: roleRef
+    vaultLdap:
+      provider: vault
+      base: auth.ldap
+      components:
+        secretRef: secretRef
+    vaultUserPass:
+      provider: vault
+      base: auth.userPass
+      components:
+        secretRef: secretRef
+    vaultJwt:
+      provider: vault
+      base: auth.jwt
+      components:
+        secretRef: secretRef
+    vaultKubernetes:
+      provider: vault
+      base: auth.kubernetes
+      components:
+        secretRef: secretRef
+    vaultCert:
+      provider: vault
+      base: auth.cert
+      components:
+        clientCert: clientCert
+        secretRef: secretRef
     # iam/gcp: refs nest under an intermediate key (secretRef.<ref>) — dotted paths handle it.
-    vaultIam:        { provider: vault,      base: auth.iam,        components: { accessKeyID: secretRef.accessKeyIDSecretRef, secretAccessKey: secretRef.secretAccessKeySecretRef, sessionToken: secretRef.sessionTokenSecretRef } }
-    vaultGcp:        { provider: vault,      base: auth.gcp,        components: { secretAccessKey: secretRef.secretAccessKeySecretRef } }
+    vaultIam:
+      provider: vault
+      base: auth.iam
+      components:
+        accessKeyID: secretRef.accessKeyIDSecretRef
+        secretAccessKey: secretRef.secretAccessKeySecretRef
+        sessionToken: secretRef.sessionTokenSecretRef
+    vaultGcp:
+      provider: vault
+      base: auth.gcp
+      components:
+        secretAccessKey: secretRef.secretAccessKeySecretRef
     # Kubernetes provider (creds under auth.<method>)
-    kubernetesToken: { provider: kubernetes, base: auth.token,      components: { bearerToken: bearerToken } }
-    kubernetesCert:  { provider: kubernetes, base: auth.cert,       components: { clientCert: clientCert, clientKey: clientKey } }
+    kubernetesToken:
+      provider: kubernetes
+      base: auth.token
+      components:
+        bearerToken: bearerToken
+    kubernetesCert:
+      provider: kubernetes
+      base: auth.cert
+      components:
+        clientCert: clientCert
+        clientKey: clientKey
 
 # hubClusterSets:
 #   hub:

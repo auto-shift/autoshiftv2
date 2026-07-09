@@ -1,0 +1,330 @@
+# PolicySets for External Secrets Operator
+#
+# All placement for this chart lives HERE: policies are grouped by shared intent + placement
+# into PolicySets, and each PolicySet is bound to one Placement. The policy files themselves
+# carry no Placement/PlacementBinding. Every placement uses the same predicate
+# (autoshift.io/external-secrets-operator=true); the groups differ only in clusterSets
+# (hubs-only vs hubs+managed) and in what the member policies do:
+#
+#   policyset-eso-install        (all clusters)  operator install + ExternalSecretsConfig
+#   policyset-eso-secret-stores  (all clusters)  user stores + their auth transport + cert RBAC
+#   policyset-eso-secret-reader  (all clusters)  read-only consumption ServiceAccount/RBAC
+#   policyset-eso-boot-spoke     (all clusters)  spoke half of the hub bootstrap (gate + store)
+#   policyset-eso-boot-hub       (hubs only)     hub half of the hub bootstrap (prereqs, gate,
+#                                                CA mint/wire, serving-CA discovery)
+#   policyset-eso-hub-secrets    (hubs only)     hop-1 credential materialization on the hub
+#
+##### OPERATOR INSTALL — all placed clusters #####
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: policyset-eso-install
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  description: External Secrets Operator installation - operator subscription and the ExternalSecretsConfig CR that deploys the controller pods
+  policies:
+    - policy-eso-install
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-eso-install
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/external-secrets-operator'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-eso-install
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-eso-install
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policyset-eso-install
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+---
+##### USER SECRET STORES — all placed clusters #####
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: policyset-eso-secret-stores
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  description: User-declared secret stores - store objects, their auth-credential transport, and kubernetes-provider cert-auth RBAC
+  policies:
+    - policy-eso-secret-stores
+    - policy-eso-cert-auth-rbac
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-eso-secret-stores
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/external-secrets-operator'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-eso-secret-stores
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-eso-secret-stores
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policyset-eso-secret-stores
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+---
+##### SECRET CONSUMPTION — all placed clusters #####
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: policyset-eso-secret-reader
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  description: Read-only secret-reader ServiceAccount and RBAC that AutoShift components use to consume ESO-provisioned Secrets
+  policies:
+    - policy-eso-secret-reader
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-eso-secret-reader
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/external-secrets-operator'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-eso-secret-reader
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-eso-secret-reader
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policyset-eso-secret-reader
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+---
+##### HUB BOOTSTRAP, SPOKE HALF — all placed clusters (hubs get a store too) #####
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: policyset-eso-boot-spoke
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  description: Spoke half of the cluster-to-cluster hub bootstrap - per-mode readiness gate plus the hub-bootstrap ClusterSecretStore build (client cert + serving CA copy)
+  policies:
+    - policy-eso-boot-readiness-spoke
+    - policy-eso-boot-store
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-eso-boot-spoke
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/external-secrets-operator'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-eso-boot-spoke
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-eso-boot-spoke
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policyset-eso-boot-spoke
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+{{- if .Values.hubClusterSets }}
+---
+##### HUB BOOTSTRAP, HUB HALF — hub clusters only #####
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: policyset-eso-boot-hub
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  description: Hub half of the cluster-to-cluster hub bootstrap - hub-template RBAC prereqs, readiness gate, client CA mint/wire (per trust mode), and serving-CA discovery
+  policies:
+    - policy-eso-boot-prereqs
+    - policy-eso-boot-readiness-hub
+    - policy-eso-boot-serving-ca
+    - policy-eso-boot-clientca-self
+    - policy-eso-boot-clientca-self-wire
+    - policy-eso-boot-clientca-ext
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-eso-boot-hub
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/external-secrets-operator'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-eso-boot-hub
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-eso-boot-hub
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policyset-eso-boot-hub
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+---
+##### HUB CREDENTIAL MATERIALIZATION — hub clusters only #####
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: policyset-eso-hub-secrets
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  description: Hop 1 of the two-hop credential transport - materialize external-origin store credentials on the hub and verify native seeds for the owned clusters
+  policies:
+    - policy-eso-hub-secrets
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-eso-hub-secrets
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/external-secrets-operator'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-eso-hub-secrets
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-eso-hub-secrets
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policyset-eso-hub-secrets
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+{{- end }}

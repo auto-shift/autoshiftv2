@@ -45,12 +45,14 @@
        cert-manager-policy compliance check below) and now ALWAYS renders (Compliant no-op when
        bootPrereqs.rbac is empty), so this dependency is unconditional. Both policies are hub-placed,
        so the same-cluster dependency is valid. */}}
+{{- if $.Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
   name: policy-eso-boot-readiness-hub
   namespace: {{ $policyNamespace }}
   annotations:
+    policy.open-cluster-management.io/description: 'Readiness gate for the hub-side boot policies - assert cert-manager, issuer, and serving-cert health per trust mode before the active boot policies may run.'
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: SC System and Communications Protection
     policy.open-cluster-management.io/controls: SC-12 Cryptographic Key Establishment and Management
@@ -154,41 +156,4 @@ spec:
                 metadata:
                   name: eso-boot-readiness-hub-status
                   namespace: open-cluster-management-agent-addon
----
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: placement-policy-eso-boot-readiness-hub
-  namespace: {{ $policyNamespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/external-secrets-operator'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: placement-policy-eso-boot-readiness-hub
-  namespace: {{ $policyNamespace }}
-placementRef:
-  name: placement-policy-eso-boot-readiness-hub
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: policy-eso-boot-readiness-hub
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
+{{ end }}

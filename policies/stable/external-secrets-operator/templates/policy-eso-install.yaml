@@ -1,5 +1,4 @@
 {{- $policyName := "policy-eso-install" }}
-{{- $placementName := "placement-policy-eso-install" }}
 
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -7,6 +6,7 @@ metadata:
   name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
+    policy.open-cluster-management.io/description: 'Install the External Secrets Operator (namespace, OperatorGroup, subscription) and the ExternalSecretsConfig CR that deploys the controller pods.'
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
@@ -99,44 +99,3 @@ spec:
                   plugins:
                     bitwardenSecretManagerProvider:
                       mode: {{ .Values.externalSecretsOperator.configBitwardenMode | default "Disabled" }}
----
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/external-secrets-operator'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-placementRef:
-  name: {{ $placementName }}
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: {{ $policyName }}
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy

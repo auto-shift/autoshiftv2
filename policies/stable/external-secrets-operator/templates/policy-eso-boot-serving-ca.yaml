@@ -110,6 +110,7 @@ metadata:
   name: policy-eso-boot-serving-ca
   namespace: {{ $policyNamespace }}
   annotations:
+    policy.open-cluster-management.io/description: 'Discover the hub apiserver serving CA at runtime (custom named cert or operator-managed bundle) and stash it in the policy namespace for delivery to spokes.'
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: SC System and Communications Protection
     policy.open-cluster-management.io/controls: SC-17 Public Key Infrastructure Certificates
@@ -172,42 +173,4 @@ spec:
             {{- include "eso.bootBody.servingCa" $ctx | nindent 12 }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
----
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: placement-policy-eso-boot-serving-ca
-  namespace: {{ $policyNamespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/external-secrets-operator'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: placement-policy-eso-boot-serving-ca
-  namespace: {{ $policyNamespace }}
-placementRef:
-  name: placement-policy-eso-boot-serving-ca
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: policy-eso-boot-serving-ca
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
 {{ end }}

@@ -513,6 +513,7 @@ metadata:
   name: policy-eso-boot-clientca-self
   namespace: {{ $policyNamespace }}
   annotations:
+    policy.open-cluster-management.io/description: 'selfSigned mode - mint the bootstrap CA and a per-ManagedCluster client cert (CN prefix.cluster.baseDomain) plus reader RBAC in the policy namespace.'
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: SC System and Communications Protection
     policy.open-cluster-management.io/controls: SC-17 Public Key Infrastructure Certificates
@@ -600,42 +601,4 @@ spec:
                 metadata:
                   name: eso-boot-clientca-self-status
                   namespace: open-cluster-management-agent-addon
----
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: placement-policy-eso-boot-clientca-self
-  namespace: {{ $policyNamespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/external-secrets-operator'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: placement-policy-eso-boot-clientca-self
-  namespace: {{ $policyNamespace }}
-placementRef:
-  name: placement-policy-eso-boot-clientca-self
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: policy-eso-boot-clientca-self
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
 {{ end }}

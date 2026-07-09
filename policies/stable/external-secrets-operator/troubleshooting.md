@@ -108,6 +108,12 @@ Ownership labels for all of these: README → *Cleanup reference — chart-manag
 oc get policy -n $CLUSTER
 # expect: every $POLICY_NS.policy-eso-* row Compliant. NonCompliant rows -> R1. Pending -> I3/R2.
 
+# [hub] 1b — rollup by intent group: policies are grouped into PolicySets
+# (policyset-eso-{install,secret-stores,secret-reader,boot-hub,boot-spoke,hub-secrets}):
+oc get policyset -n $POLICY_NS
+# expect: every policyset-eso-* Compliant. A NonCompliant set names the broken intent group;
+# list its members (spec.policies) and drill in with command 1.
+
 # [spoke] 2 — the chart's error channel. THE single most informative command in this doc:
 oc get cm -n $ADDON_NS -l autoshift.io/eso-boot-status=true
 # expect: No resources found.   Any hit: read it ->

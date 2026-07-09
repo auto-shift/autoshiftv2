@@ -355,6 +355,7 @@ metadata:
   name: policy-eso-boot-clientca-ext
   namespace: {{ $policyNamespace }}
   annotations:
+    policy.open-cluster-management.io/description: 'External trust modes - materialize the external CA bundle into the apiserver clientCA ConfigMap and create reader RBAC for the spoke-derived cert CNs (no minting).'
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: SC System and Communications Protection
     policy.open-cluster-management.io/controls: SC-17 Public Key Infrastructure Certificates
@@ -441,42 +442,4 @@ spec:
                 metadata:
                   name: eso-boot-clientca-ext-status
                   namespace: open-cluster-management-agent-addon
----
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: placement-policy-eso-boot-clientca-ext
-  namespace: {{ $policyNamespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/external-secrets-operator'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: placement-policy-eso-boot-clientca-ext
-  namespace: {{ $policyNamespace }}
-placementRef:
-  name: placement-policy-eso-boot-clientca-ext
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: policy-eso-boot-clientca-ext
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
 {{ end }}

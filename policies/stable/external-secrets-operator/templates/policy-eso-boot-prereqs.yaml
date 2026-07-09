@@ -52,16 +52,20 @@
     {{- fail (printf "bootPrereqs.rbac[%q].scope %q is invalid — must be \"namespaced\" or \"cluster\"" $name $scope) }}
   {{- end }}
 {{- end }}
-{{/* The Policy ALWAYS renders (even when $objs is empty → object-templates-raw evaluates to an
-       empty list, a Compliant no-op). object-templates-raw tolerates the empty list where structured
-       object-templates would not, so dependents can list policy-eso-boot-prereqs in spec.dependencies
-       unconditionally and rely on it existing + going Compliant regardless of bootPrereqs.rbac. */}}
+{{/* The Policy always renders when hubClusterSets exist (even when $objs is empty →
+       object-templates-raw evaluates to an empty list, a Compliant no-op). object-templates-raw
+       tolerates the empty list where structured object-templates would not, so hub-side dependents
+       can list policy-eso-boot-prereqs in spec.dependencies unconditionally and rely on it existing
+       + going Compliant regardless of bootPrereqs.rbac. The hubClusterSets gate matches every
+       dependent (all hub-only) and policyset-eso-boot-hub membership. */}}
+{{- if $.Values.hubClusterSets }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
   name: policy-eso-boot-prereqs
   namespace: {{ $policyNamespace }}
   annotations:
+    policy.open-cluster-management.io/description: 'Hub-side RBAC for AutoShift internals - grant the hub-template ServiceAccount the reads the ESO boot policies need (config-driven bootPrereqs.rbac grant list).'
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: AC Access Control
     policy.open-cluster-management.io/controls: AC-3 Access Enforcement
@@ -83,41 +87,4 @@ spec:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |{{ $objs | toYaml | nindent 12 }}
----
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: placement-policy-eso-boot-prereqs
-  namespace: {{ $policyNamespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/external-secrets-operator'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: placement-policy-eso-boot-prereqs
-  namespace: {{ $policyNamespace }}
-placementRef:
-  name: placement-policy-eso-boot-prereqs
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: policy-eso-boot-prereqs
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
+{{ end }}

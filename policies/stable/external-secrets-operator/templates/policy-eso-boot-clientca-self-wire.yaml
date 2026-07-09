@@ -119,6 +119,7 @@ metadata:
   name: policy-eso-boot-clientca-self-wire
   namespace: {{ $policyNamespace }}
   annotations:
+    policy.open-cluster-management.io/description: 'selfSigned mode - wire the minted bootstrap CA into APIServer.spec.clientCA (additive; one kube-apiserver rollout on first set).'
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: SC System and Communications Protection
     policy.open-cluster-management.io/controls: SC-17 Public Key Infrastructure Certificates
@@ -180,42 +181,4 @@ spec:
             {{- include "eso.bootBody.clientcaSelfWire" $ctx | nindent 12 }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
----
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: placement-policy-eso-boot-clientca-self-wire
-  namespace: {{ $policyNamespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/external-secrets-operator'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: placement-policy-eso-boot-clientca-self-wire
-  namespace: {{ $policyNamespace }}
-placementRef:
-  name: placement-policy-eso-boot-clientca-self-wire
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: policy-eso-boot-clientca-self-wire
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
 {{ end }}

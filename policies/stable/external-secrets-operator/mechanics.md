@@ -6,19 +6,25 @@ variable tables live in [CONFIG-REFERENCE.md](CONFIG-REFERENCE.md).
 
 ## Policy inventory
 
-| Policy | Runs on | Job |
-|---|---|---|
-| `policy-eso-install` | all placed clusters | Operator Subscription/OperatorGroup + the `ExternalSecretsConfig` CR (the operator deploys no pods until that CR exists). |
-| `policy-eso-secret-stores` | all placed clusters | User-defined `SecretStore`/`ClusterSecretStore` objects from `config.eso.secretStores`, plus the spoke-side auth `ExternalSecret`s and delivered-CA ConfigMaps. |
-| `policy-eso-hub-secrets` | hubs only | Materializes external-origin store credentials **onto the hub** (hop 1 of the two-hop transport). |
-| `policy-eso-cert-auth-rbac` | all placed clusters | RBAC granting a store's client-cert CN Secret access (`certAuthRBAC`). |
-| `policy-eso-secret-reader` | all placed clusters | Read-only ServiceAccount other AutoShift components use to consume ESO-provisioned Secrets. |
-| `policy-eso-boot-prereqs` | hubs | Hub-side RBAC the hub-template ServiceAccount needs (config-driven grant list). |
-| `policy-eso-boot-readiness-hub` / `-spoke` | hubs / spokes | Precursor gates — assert cert-manager/issuer/serving-cert health before the active boot policies may run. |
-| `policy-eso-boot-clientca-self` (+ `-self-wire`) | hubs | selfSigned mode: mint the bootstrap CA, per-cluster client certs, reader RBAC; wire `APIServer.spec.clientCA`. |
-| `policy-eso-boot-clientca-ext` | hubs | External modes: materialize the external CA bundle into the clientCA ConfigMap + reader RBAC (no minting). |
-| `policy-eso-boot-serving-ca` | hubs | Discover the hub apiserver's serving CA and stash it in the policy namespace. |
-| `policy-eso-boot-store` | hubs + spokes | Copy the client cert + serving CA to the cluster and build the bootstrap `ClusterSecretStore`. |
+| Policy | PolicySet | Runs on | Job |
+|---|---|---|---|
+| `policy-eso-install` | `policyset-eso-install` | all placed clusters | Operator Subscription/OperatorGroup + the `ExternalSecretsConfig` CR (the operator deploys no pods until that CR exists). |
+| `policy-eso-secret-stores` | `policyset-eso-secret-stores` | all placed clusters | User-defined `SecretStore`/`ClusterSecretStore` objects from `config.eso.secretStores`, plus the spoke-side auth `ExternalSecret`s and delivered-CA ConfigMaps. |
+| `policy-eso-hub-secrets` | `policyset-eso-hub-secrets` | hubs only | Materializes external-origin store credentials **onto the hub** (hop 1 of the two-hop transport). |
+| `policy-eso-cert-auth-rbac` | `policyset-eso-secret-stores` | all placed clusters | RBAC granting a store's client-cert CN Secret access (`certAuthRBAC`). |
+| `policy-eso-secret-reader` | `policyset-eso-secret-reader` | all placed clusters | Read-only ServiceAccount other AutoShift components use to consume ESO-provisioned Secrets. |
+| `policy-eso-boot-prereqs` | `policyset-eso-boot-hub` | hubs | Hub-side RBAC the hub-template ServiceAccount needs (config-driven grant list). |
+| `policy-eso-boot-readiness-hub` / `-spoke` | `policyset-eso-boot-hub` / `-spoke` | hubs / spokes | Precursor gates — assert cert-manager/issuer/serving-cert health before the active boot policies may run. |
+| `policy-eso-boot-clientca-self` (+ `-self-wire`) | `policyset-eso-boot-hub` | hubs | selfSigned mode: mint the bootstrap CA, per-cluster client certs, reader RBAC; wire `APIServer.spec.clientCA`. |
+| `policy-eso-boot-clientca-ext` | `policyset-eso-boot-hub` | hubs | External modes: materialize the external CA bundle into the clientCA ConfigMap + reader RBAC (no minting). |
+| `policy-eso-boot-serving-ca` | `policyset-eso-boot-hub` | hubs | Discover the hub apiserver's serving CA and stash it in the policy namespace. |
+| `policy-eso-boot-store` | `policyset-eso-boot-spoke` | hubs + spokes | Copy the client cert + serving CA to the cluster and build the bootstrap `ClusterSecretStore`. |
+
+Placement is defined once per PolicySet in `templates/policysets.yaml` — policies are grouped
+by shared intent + placement, each group bound to a single Placement (hub-only groups render
+only when `hubClusterSets` exist). Individual policy files carry no Placement/PlacementBinding.
+Every Policy also carries a `policy.open-cluster-management.io/description` annotation, and
+each PolicySet a `spec.description`, so both surfaces are self-describing in the ACM console.
 
 ---
 

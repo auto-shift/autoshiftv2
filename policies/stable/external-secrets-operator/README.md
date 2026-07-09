@@ -3,6 +3,9 @@
 ## Overview
 This policy installs the external-secrets-operator operator using AutoShift patterns.
 
+New here? Start with [quickstart.md](quickstart.md) — paste-ready values-file examples for
+each bootstrap trust mode, from empty deployment to consumed secrets.
+
 ## Status
 ✅ **Operator Installation**: Ready to deploy  
 🔧 **Configuration**: Requires operator-specific setup (see below)
@@ -1962,9 +1965,16 @@ Add operator-specific configuration policies to `templates/` directory.
 - `policy-eso-<feature>.yaml` - Feature-specific configs
 
 #### Template Structure:
+
+Policy files carry **no Placement/PlacementBinding** — all placement lives in
+`templates/policysets.yaml`, where policies are grouped by shared intent + placement into
+PolicySets and each PolicySet is bound to one Placement. A new policy therefore needs two
+things: the Policy itself (with a `description` annotation), and a membership line in an
+existing PolicySet — or a new PolicySet + Placement + PlacementBinding block in
+`policysets.yaml` if it doesn't share intent + placement with any existing group.
+
 ```yaml
 {{- $policyName := "policy-eso-config" }}
-{{- $placementName := "placement-policy-eso-config" }}
 
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -1972,6 +1982,7 @@ metadata:
   name: {{ $policyName }}
   namespace: {{ .Values.policy_namespace }}
   annotations:
+    policy.open-cluster-management.io/description: 'One line - what this policy provisions and where.'
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: CM Configuration Management
     policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
@@ -2008,48 +2019,17 @@ spec:
                   # Use dynamic labels when needed:
                   # setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/external-secrets-operator-setting" | default "default-value" {{ "hub}}" }}'
           pruneObjectBehavior: None
----
-# Use same placement as operator install or create specific targeting
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
+```
+
+Then add the policy to the matching group in `templates/policysets.yaml` (see that file's
+header comment for each group's intent + placement):
+
+```yaml
 spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/external-secrets-operator'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-placementRef:
-  name: {{ $placementName }}
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: {{ $policyName }}
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
+  policies:
+    - policy-eso-secret-stores
+    - policy-eso-cert-auth-rbac
+    - policy-eso-config          # <- new member
 ```
 
 ### 3. Reference Examples
