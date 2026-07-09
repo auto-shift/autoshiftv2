@@ -1,0 +1,17 @@
+{{- $policyName := "managed-hub-autoshift" }}
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $placementName := printf "%s-%s" "placement" $policyName }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autoshift-repo-urls
+  namespace: {{ $policyNamespace }}
+data:
+{{- range $clusterSetName, $clusterSet := $.Values.hubClusterSets }}
+  {{- $repoUrl := (index $clusterSet "autoshiftRepoUrl" | default $.Values.autoshiftGitRepo | default "") }}
+  {{- if ne $repoUrl "" }}
+  {{ $clusterSetName }}: {{ $repoUrl }}
+  {{- end }}
+{{- end }}
+
