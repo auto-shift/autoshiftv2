@@ -2,6 +2,9 @@
 
 This guide walks through a complete AutoShift installation from start to finish.
 
+> [!TIP]
+> **Just want to try AutoShift or see how a values change behaves?** There is a fast, local-only path that installs AutoShift with `helm` from your working copy — edit a values file and re-apply, no commit/push/ArgoCD sync required. It is for **development and demos, not production**. See [Alternative (development): Deploy directly with Helm](#alternative-development-deploy-directly-with-helm).
+
 ## Prerequisites
 
 * A Red Hat OpenShift cluster at 4.20+ to act as the **hub** cluster
@@ -179,6 +182,45 @@ spec:
       selfHeal: true
 EOF
 ```
+
+#### Alternative (development): Deploy directly with Helm
+
+> [!WARNING]
+> This path is for **development and demos only, not production**. It installs the AutoShift ApplicationSet with `helm` from your local working copy instead of creating the `autoshift` ArgoCD Application. Production deployments should use the ArgoCD Application above so that AutoShift is self-managed and reconciled by GitOps.
+
+Instead of pointing an ArgoCD Application at values files committed in Git, you can render the `autoshift` chart directly against your **local** values files. This lets you edit a values file and re-apply immediately — no commit, push, or ArgoCD sync round-trip — which is the fastest way to see how a values change behaves.
+
+Run this from the **root of your clone**:
+
+```console
+helm upgrade --install autoshift ./autoshift \
+  -n openshift-gitops \
+  -f autoshift/values/global.yaml \
+  -f autoshift/values/clustersets/hub.yaml \
+  -f autoshift/values/clustersets/managed.yaml
+```
+
+Add any per-cluster override files the same way (for example `-f autoshift/values/clusters/my-cluster.yaml`). To iterate, edit a values file and re-run the same command — Helm re-renders the ApplicationSet with your new values.
+
+> [!IMPORTANT]
+> Only **values** are read locally. The ApplicationSet still pulls the policy **charts** from Git (`autoshiftGitRepo` / `autoshiftGitBranchTag`, default `auto-shift/autoshiftv2` @ `main`). So local edits to *values files* take effect on the next `helm upgrade`, but edits to *policy templates* only apply after you push them and point the chart at that branch:
+> ```console
+> helm upgrade --install autoshift ./autoshift -n openshift-gitops \
+>   --set autoshiftGitRepo=https://github.com/<you>/autoshiftv2.git \
+>   --set autoshiftGitBranchTag=<your-branch> \
+>   -f autoshift/values/global.yaml \
+>   -f autoshift/values/clustersets/hub.yaml \
+>   -f autoshift/values/clustersets/managed.yaml
+> ```
+
+Because Helm owns the ApplicationSet in this mode, there is **no** `autoshift` ArgoCD Application — so `oc get application.argoproj.io autoshift` (used in Step 6) will not exist. Verify with the ApplicationSet and the generated per-policy Applications instead:
+
+```console
+oc get applicationset autoshift-policies -n openshift-gitops
+oc get applications.argoproj.io -n openshift-gitops
+```
+
+To remove it: `helm uninstall autoshift -n openshift-gitops`.
 
 ### Step 5: Assign Clusters to ClusterSets
 
