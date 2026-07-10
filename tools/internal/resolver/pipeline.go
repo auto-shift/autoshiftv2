@@ -69,13 +69,15 @@ func HelmTemplate(chartDir string, extraValuesFiles ...string) (string, error) {
 	return string(out), nil
 }
 
-// KustomizeBuild renders a PolicyGenerator policy directory exactly as the
+// KustomizeBuild renders a PolicyGenerator policy directory the same way the
 // repo-server CMP does: substitute the per-deployment ${...} placeholders, then
-// run `kustomize build --enable-alpha-plugins`. Test values mirror a non-dryRun
-// deployment (REMEDIATION=enforce) so object-templates render in enforce mode.
+// run `kustomize build` with the same flags as the CMP. Test values mirror a
+// non-dryRun deployment (REMEDIATION=enforce) so object-templates render in
+// enforce mode.
 //
-// Requires `kustomize` (or $KUSTOMIZE_BIN) on PATH and the PolicyGenerator plugin
-// staged under $KUSTOMIZE_PLUGIN_HOME (see `make install-policy-generator`).
+// The kustomize binary and PolicyGenerator plugin come from (in order):
+// $KUSTOMIZE_BIN / $KUSTOMIZE_PLUGIN_HOME, then the repo-local .tools/ that
+// `make install-policy-generator` stages, then `kustomize` on PATH.
 func KustomizeBuild(policyDir string) (string, error) {
 	repl := strings.NewReplacer(
 		"${POLICY_NAMESPACE}", "policies-autoshift",
@@ -96,16 +98,65 @@ func KustomizeBuild(policyDir string) (string, error) {
 		return "", fmt.Errorf("stage kustomize dir: %w", err)
 	}
 
-	bin := os.Getenv("KUSTOMIZE_BIN")
-	if bin == "" {
-		bin = "kustomize"
+	bin, pluginHome := resolveKustomizeTools(policyDir)
+	// Match the flags the repo-server CMP uses so the tested render == the deployed one.
+	cmd := exec.Command(bin, "build", "--enable-alpha-plugins", "--enable-helm",
+		"--load-restrictor", "LoadRestrictionsNone", work)
+	cmd.Env = os.Environ()
+	if pluginHome != "" {
+		cmd.Env = append(cmd.Env, "KUSTOMIZE_PLUGIN_HOME="+pluginHome)
 	}
-	cmd := exec.Command(bin, "build", "--enable-alpha-plugins", work)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if strings.Contains(err.Error(), "executable file not found") {
+			return "", fmt.Errorf("kustomize not found for %s — run `make install-policy-generator` "+
+				"(stages kustomize + the PolicyGenerator plugin into .tools/): %w", policyDir, err)
+		}
 		return "", fmt.Errorf("kustomize build %s: %w\n%s", policyDir, err, out)
 	}
 	return string(out), nil
+}
+
+// resolveKustomizeTools picks the kustomize binary and plugin home, preferring
+// explicit env vars, then the repo-local .tools/ from `make install-policy-generator`
+// (found by walking up from policyDir), then `kustomize` on PATH.
+func resolveKustomizeTools(policyDir string) (bin, pluginHome string) {
+	bin = os.Getenv("KUSTOMIZE_BIN")
+	pluginHome = os.Getenv("KUSTOMIZE_PLUGIN_HOME")
+	if bin != "" && pluginHome != "" {
+		return bin, pluginHome
+	}
+	for dir := policyDir; ; {
+		if bin == "" {
+			if cand := filepath.Join(dir, ".tools", "kustomize"); isFile(cand) {
+				bin = cand
+			}
+		}
+		if pluginHome == "" {
+			if cand := filepath.Join(dir, ".tools", "kustomize-plugin"); isDir(cand) {
+				pluginHome = cand
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir || (bin != "" && pluginHome != "") {
+			break
+		}
+		dir = parent
+	}
+	if bin == "" {
+		bin = "kustomize"
+	}
+	return bin, pluginHome
+}
+
+func isFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
+func isDir(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
 
 // copyDirSubst copies src to dst, applying repl to the contents of every file.
