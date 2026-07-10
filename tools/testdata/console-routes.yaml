@@ -1,0 +1,62 @@
+---
+# Fake Routes so console-link / configure policies that resolve a URL via
+# `lookup "route.openshift.io/v1" "Route" ...).spec.host` don't leak <no value>.
+# These Routes exist on the managed/hub cluster at runtime; stub them here.
+#
+# ansible-automation-platform console link (policy-aap-console-link)
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: aap
+  namespace: ansible-automation-platform
+spec:
+  host: aap.apps.example.com
+---
+# quay registry route (policy-quay-configure) — ns from quay.enterpriseNamespace
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: registry-quay
+  namespace: quay-enterprise
+spec:
+  host: registry-quay.apps.example.com
+---
+# system gitops console link (policy-system-gitops-console-link)
+# ns = gitopsNamespace (openshift-gitops), name = gitops.argoName + "-server"
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: infra-gitops-server
+  namespace: openshift-gitops
+spec:
+  host: infra-gitops-server.apps.example.com
+---
+# gitops-dev per-team argo route (policy-gitops-<team>-console-link / -link-standalone)
+# ns = openshift-gitops-<team>, name = argocd-dev-server. Teams: dev, test.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: argocd-dev-server
+  namespace: openshift-gitops-dev
+spec:
+  host: argocd-dev-server.apps.example.com
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: argocd-dev-server
+  namespace: openshift-gitops-test
+spec:
+  host: argocd-dev-server.apps.example.com
+---
+# Storage nodes (policy-storage-nodes-baremetal) — looked up by name from
+# autoshift.io/storage-nodes-node-* labels (node-1, node-2). Cluster-scoped.
+apiVersion: v1
+kind: Node
+metadata:
+  name: node-1
+---
+apiVersion: v1
+kind: Node
+metadata:
+  name: node-2

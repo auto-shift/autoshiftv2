@@ -9,9 +9,26 @@ import (
 	"strings"
 
 	"github.com/auto-shift/autoshiftv2/tools/internal/labels"
-	sigsyaml "sigs.k8s.io/yaml"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	sigsyaml "sigs.k8s.io/yaml"
 )
+
+// NamedContext pairs a cluster resolution context with a short profile name
+// (e.g. "managed-vmware") used in diagnostics and per-profile assertions.
+type NamedContext struct {
+	Name string
+	Ctx  HubContext
+}
+
+// ContextResult holds the resolution outcome for one chart against one extra
+// cluster profile.
+type ContextResult struct {
+	ResolveOK    bool
+	ResolveWarns []string
+	SpokeWarns   []string
+	YAMLErrors   []string // malformed YAML / <no value> in the fully-resolved output
+	ResolvedYAML string
+}
 
 // ChartResult holds the outcome for one policy chart.
 type ChartResult struct {
@@ -21,9 +38,17 @@ type ChartResult struct {
 	ResolveOK    bool     // all Policy documents resolved without error
 	ResolveWarns []string // per-document resolution warnings (e.g. lookup failures)
 	SpokeWarns   []string // warnings from the spoke-side second pass
+	YAMLErrors   []string // malformed YAML / <no value> in the fully-resolved primary output
 	EmptyLabels  []string // label keys that resolved to empty string
 	Err          error    // fatal error (helm template failed or zero docs rendered)
 	ResolvedYAML string   // final multi-doc YAML after hub+spoke resolution (for output assertions)
+
+	// ExtraResults holds resolution outcomes for each additional cluster profile
+	// passed to RunPipeline (e.g. managed-baremetal, managed-aws, managed-vmware),
+	// keyed by profile name. Same rendered YAML and seed resources as the primary
+	// pass — only .ManagedClusterLabels differ. Empty when no extra contexts were
+	// supplied.
+	ExtraResults map[string]ContextResult
 }
 
 // HelmTemplate runs `helm template <name> <chartDir>` and returns the raw
@@ -58,6 +83,7 @@ func HelmTemplate(chartDir string, extraValuesFiles ...string) (string, error) {
 func RunPipeline(
 	policiesDir string,
 	ctx HubContext,
+	extraCtxs []NamedContext,
 	r *Resolver,
 	spokeR *Resolver,
 	declared map[string]*labels.Declared,
@@ -119,6 +145,38 @@ func RunPipeline(
 
 	keysByPolicy := map[string]map[string]bool{}
 	var results []ChartResult
+
+	// resolvePasses runs the two-stage resolution for one chart's rendered YAML
+	// against a given cluster context: pass 1 resolves hub templates
+	// ({{hub ... hub}}), pass 2 resolves spoke templates ({{ ... }}). Returns
+	// (hubResolveOK, hubErrors, spokeErrors, resolvedYAML). Called once for the
+	// primary context and, when managedCtx is set, once for the managed context.
+	resolvePasses := func(rawYAML string, c HubContext) (bool, []string, []string, string) {
+		var resolveWarns, spokeWarns []string
+		resolveOK := false
+
+		hubResult := r.ResolvePolicy(rawYAML, c)
+		if len(hubResult.Errors) == 0 {
+			resolveOK = true
+		} else {
+			resolveWarns = hubResult.Errors
+		}
+
+		// Strip string defaults first so any config key the template consumes but
+		// the example file doesn't declare produces "<no value>" in the output
+		// rather than silently falling back to a hardcoded string.
+		spokeInput := stripStringDefaults(hubResult.Resolved)
+		if spokeR != nil && strings.Contains(spokeInput, "{{") {
+			spokeResult := spokeR.ResolveSpokeTemplates(spokeInput, c)
+			if len(spokeResult.Errors) > 0 {
+				spokeWarns = spokeResult.Errors
+			}
+			if spokeResult.Resolved != "" {
+				spokeInput = spokeResult.Resolved
+			}
+		}
+		return resolveOK, resolveWarns, spokeWarns, spokeInput
+	}
 
 	for _, chart := range charts {
 		result := ChartResult{
@@ -218,27 +276,26 @@ func RunPipeline(
 		}
 		keysByPolicy[chart.policy] = consumed
 
-		// 4. Hub template resolution (pass 1).
-		hubResult := r.ResolvePolicy(rawYAML, ctx)
-		if len(hubResult.Errors) == 0 {
-			result.ResolveOK = true
-		} else {
-			result.ResolveWarns = hubResult.Errors
-		}
+		// 4-5. Resolve hub + spoke templates against the primary (hub,
+		// self-managed) context.
+		var spokeInput string
+		result.ResolveOK, result.ResolveWarns, result.SpokeWarns, spokeInput = resolvePasses(rawYAML, ctx)
 
-		// 5. Spoke-side resolution (pass 2).
-		// Strip string defaults first so any config key the template consumes
-		// but the example file doesn't declare produces "<no value>" in the
-		// output rather than silently falling back to a hardcoded string.
-		spokeInput := stripStringDefaults(hubResult.Resolved)
-		if spokeR != nil && strings.Contains(spokeInput, "{{") {
-			spokeResult := spokeR.ResolveSpokeTemplates(spokeInput, ctx)
-			if len(spokeResult.Errors) > 0 {
-				result.SpokeWarns = spokeResult.Errors
-			}
-			// Use the spoke-resolved output for YAML validation where possible.
-			if spokeResult.Resolved != "" {
-				spokeInput = spokeResult.Resolved
+		// 5b. Resolve against each additional cluster profile (managed spokes,
+		// one per install platform). Same rendered YAML and seed resources — only
+		// .ManagedClusterLabels differ — so hub templates that branch on
+		// clusterset identity / provider get every profile's branch exercised.
+		if len(extraCtxs) > 0 {
+			result.ExtraResults = make(map[string]ContextResult, len(extraCtxs))
+			for _, ec := range extraCtxs {
+				ok, rw, sw, out := resolvePasses(rawYAML, ec.Ctx)
+				result.ExtraResults[ec.Name] = ContextResult{
+					ResolveOK:    ok,
+					ResolveWarns: rw,
+					SpokeWarns:   sw,
+					YAMLErrors:   validateYAML(out),
+					ResolvedYAML: out,
+				}
 			}
 		}
 
@@ -266,13 +323,11 @@ func RunPipeline(
 			}
 		}
 
-		// 7. Validate YAML on fully-resolved documents.
-		yamlErrors := validateYAML(spokeInput)
-		if len(yamlErrors) > 0 {
-			for _, e := range yamlErrors {
-				result.ResolveWarns = append(result.ResolveWarns, "invalid YAML in rendered output: "+e)
-			}
-		}
+		// 7. Validate YAML on fully-resolved documents (primary context; extra
+		// contexts are validated inline in step 5b). These are surfaced as their
+		// own hard failures (result.YAMLErrors), independent of hub ResolveOK, so
+		// malformed YAML / <no value> on an otherwise-clean chart still fails CI.
+		result.YAMLErrors = validateYAML(spokeInput)
 
 		// 8. Track empty-string label substitutions for diagnostics.
 		if result.ResolveOK {
@@ -433,23 +488,56 @@ func validateYAML(multiDocYAML string) []string {
 		if strings.Contains(doc, "{{") {
 			continue
 		}
+		// id names the offending document by its Kind/name so a developer can go
+		// straight to the source: a resolved Policy "policy-<x>" maps to the
+		// template policies/<chart>/templates/policy-<x>.yaml.
+		id := docIdentity(doc, i)
 		// "<no value>" in output means a template consumed a config key that
 		// was absent from the example file (its | default "..." was stripped).
 		if strings.Contains(doc, "<no value>") {
 			for j, line := range strings.Split(doc, "\n") {
 				if strings.Contains(line, "<no value>") {
 					errs = append(errs, fmt.Sprintf(
-						"document %d line %d: <no value> — config key consumed by template is missing from example file: %s",
-						i+1, j+1, strings.TrimSpace(line)))
+						"%s line %d: <no value> — a config key the template reads is missing from the relevant _example*.yaml, or a lookup returned nothing (add a tools/testdata/ stub): %s",
+						id, j+1, strings.TrimSpace(line)))
 				}
 			}
 		}
 		var obj interface{}
 		if err := sigsyaml.Unmarshal([]byte(doc), &obj); err != nil {
-			errs = append(errs, fmt.Sprintf("document %d: %v", i+1, err))
+			errs = append(errs, fmt.Sprintf("%s: malformed YAML: %v", id, err))
 		}
 	}
 	return errs
+}
+
+// docIdentity returns a short "Kind/name (document N)" label for a resolved
+// YAML document, scanned leniently so it still works when the document is
+// malformed deeper down. Falls back to "document N" when kind/name aren't found.
+func docIdentity(doc string, idx int) string {
+	var kind, name string
+	for _, line := range strings.Split(doc, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if kind == "" && strings.HasPrefix(trimmed, "kind:") {
+			kind = strings.TrimSpace(strings.TrimPrefix(trimmed, "kind:"))
+		}
+		// Top-level metadata.name sits at two-space indent; deeper `name:` fields
+		// (inside object-templates-raw, refs, etc.) are more indented.
+		if name == "" && strings.HasPrefix(line, "  name:") {
+			name = strings.TrimSpace(strings.TrimPrefix(trimmed, "name:"))
+		}
+		if kind != "" && name != "" {
+			break
+		}
+	}
+	switch {
+	case kind != "" && name != "":
+		return fmt.Sprintf("%s/%s (document %d)", kind, name, idx+1)
+	case kind != "":
+		return fmt.Sprintf("%s (document %d)", kind, idx+1)
+	default:
+		return fmt.Sprintf("document %d", idx+1)
+	}
 }
 
 // stripStringDefaults removes | default "..." and | default '...' from

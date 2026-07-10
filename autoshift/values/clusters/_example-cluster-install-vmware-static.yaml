@@ -1,0 +1,177 @@
+# ==============================================================================
+# vSphere Cluster Install Example — STATIC IP variant (Hive IPI)
+# ==============================================================================
+# Same as _example-cluster-install-vmware.yaml but assigns static IPs to every
+# node instead of using DHCP (the default). Copy this file and rename it after
+# your cluster (e.g., my-vsphere-cluster.yaml), then add it to the ArgoCD
+# Application valueFiles to deploy.
+#
+# When to use static IPs:
+#   - No DHCP on the machine network, or you need deterministic node addresses.
+#
+# Static-IP host rules (enforced at render time by the cluster-install validator):
+#   - You MUST list exactly one bootstrap host plus one per control-plane and one
+#     per compute node — count = 1 + controlPlane.replicas + workers.replicas.
+#     With the sizing below (3 + 3) that is 7 host entries.
+#   - Each host needs a networkDevice with ipAddrs (CIDR), gateway, nameservers.
+#   - Every ipAddrs value must fall within networking.machineNetwork.cidr.
+#   - The bootstrap VM is temporary; its IP is released once install finishes.
+#
+# Prerequisites and the source secret are identical to the DHCP example — see
+# _example-cluster-install-vmware.yaml and docs/cluster-install.md.
+# ==============================================================================
+
+clusters:
+  my-vsphere-static:
+    config:
+      clusterSet: managed
+
+      # =====================================================================
+      # Networking — SDN configuration
+      # =====================================================================
+      networking:
+        clusterNetwork:
+          cidr: 10.128.0.0/14
+          hostPrefix: 23
+        machineNetwork:
+          cidr: 10.0.0.0/24
+        serviceNetwork:
+          - 172.30.0.0/16
+
+      # =====================================================================
+      # Cluster Install — install-specific config
+      # =====================================================================
+      clusterInstall:
+        createCluster: 'true'
+        platform: vmware
+        baseDomain: example.com
+        openshiftVersion: '4.20.16'
+        openshiftChannel: stable
+        pullSecretRef:
+          name: 'vsphere-creds'
+          key: 'pullSecret'
+          namespace: 'cluster-install-secrets'
+        secretSourceNamespace: 'cluster-install-secrets'
+
+      # =====================================================================
+      # vSphere — platform-specific config
+      # =====================================================================
+      vsphere:
+        credentialRef: 'vsphere-creds'
+        certificatesRef:
+          name: 'vsphere-creds'
+          key: 'cacert'
+          namespace: 'cluster-install-secrets'
+        sshKeyRef:
+          name: 'vsphere-creds'
+          key: 'ssh-publickey'
+          namespace: 'cluster-install-secrets'
+        fips: false
+        networkType: OVNKubernetes
+
+        # --- Virtual IPs ---
+        apiVIPs:
+          - 10.0.0.100
+        ingressVIPs:
+          - 10.0.0.101
+
+        # --- vCenter connection ---
+        vcenter:
+          server: vcenter.example.com
+          port: 443
+          datacenters:
+            - Datacenter
+
+        # --- Failure Domains (region/zone topology) ---
+        failureDomains:
+          - name: generated-failure-domain
+            region: generated-region
+            zone: generated-zone
+            server: vcenter.example.com
+            topology:
+              computeCluster: /Datacenter/host/Cluster
+              datacenter: Datacenter
+              datastore: /Datacenter/datastore/datastore1
+              networks:
+                - VM_Network
+              resourcePool: /Datacenter/host/Cluster/Resources
+
+        # --- Control Plane sizing ---
+        controlPlane:
+          replicas: 3
+          coresPerSocket: 2
+          cpus: 4
+          memoryMB: 16384
+          osDisk:
+            diskSizeGB: 120
+
+        # --- Worker sizing ---
+        workers:
+          replicas: 3
+          coresPerSocket: 2
+          cpus: 8
+          memoryMB: 24576
+          osDisk:
+            diskSizeGB: 120
+
+        # --- Static IP hosts ---
+        # Count = 1 bootstrap + 3 control-plane + 3 compute = 7 entries.
+        # An optional per-host `failureDomain:` pins a node to a named failure
+        # domain (omit it for a single-failure-domain cluster).
+        hosts:
+          - role: bootstrap
+            networkDevice:
+              gateway: 10.0.0.1
+              ipAddrs:
+                - 10.0.0.105/24
+              nameservers:
+                - 10.0.0.53
+                - 10.0.0.54
+          - role: control-plane
+            networkDevice:
+              gateway: 10.0.0.1
+              ipAddrs:
+                - 10.0.0.200/24
+              nameservers:
+                - 10.0.0.53
+                - 10.0.0.54
+          - role: control-plane
+            networkDevice:
+              gateway: 10.0.0.1
+              ipAddrs:
+                - 10.0.0.201/24
+              nameservers:
+                - 10.0.0.53
+                - 10.0.0.54
+          - role: control-plane
+            networkDevice:
+              gateway: 10.0.0.1
+              ipAddrs:
+                - 10.0.0.202/24
+              nameservers:
+                - 10.0.0.53
+                - 10.0.0.54
+          - role: compute
+            networkDevice:
+              gateway: 10.0.0.1
+              ipAddrs:
+                - 10.0.0.203/24
+              nameservers:
+                - 10.0.0.53
+                - 10.0.0.54
+          - role: compute
+            networkDevice:
+              gateway: 10.0.0.1
+              ipAddrs:
+                - 10.0.0.204/24
+              nameservers:
+                - 10.0.0.53
+                - 10.0.0.54
+          - role: compute
+            networkDevice:
+              gateway: 10.0.0.1
+              ipAddrs:
+                - 10.0.0.205/24
+              nameservers:
+                - 10.0.0.53
+                - 10.0.0.54
