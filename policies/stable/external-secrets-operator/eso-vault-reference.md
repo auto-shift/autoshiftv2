@@ -1,1 +1,0 @@
-/Users/johnharmon/Documents/Obsidian Vault/eso-vault-reference.md
