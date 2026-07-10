@@ -2,11 +2,12 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: PolicyGenerator
 metadata:
   name: nmstate
-# Each policy's manifests[].path is a DIRECTORY (manifests/<policy>/): drop a new manifest into
-# the right subdir and it is picked up automatically — no edit to this file needed. Only edit
-# this file to change the policy graph (names, dependencies, per-policy remediation). Keep
-# placement.yaml at the dir root, NOT inside manifests/ (a Placement in a wildcarded dir would be
-# wrapped into the Policy as a managed object).
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status/compliance); ALWAYS remediationAction: inform
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a wildcard:
+# drop a file in, no config edit). Keep placement.yaml at the dir root, NOT inside a wildcarded dir (a
+# Placement in a wildcarded dir would be wrapped into the Policy as a managed object).
 placementBindingDefaults:
   name: binding-policy-nmstate
 policyDefaults:
@@ -28,6 +29,7 @@ policyDefaults:
     placementPath: placement.yaml
 policies:
   # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  #    2 manifests -> a directory (wildcard).
   - name: policy-nmstate-operator-install
     manifests:
       - path: manifests/operator-install
@@ -36,19 +38,18 @@ policies:
     dependencies:
       - name: policy-nmstate-operator-install
     manifests:
-      - path: manifests/nmstate
-  # 3) Webhook readiness gate — its own always-inform policy. A status can only be observed,
-  #    so it must NOT inherit an enforce root (PG's root remediationAction overrides inner templates).
-  - name: policy-nmstate-webhook
+      - path: manifests/nmstate-cr.yaml
+  # 3) Webhook readiness gate — a test/ assertion, so ALWAYS inform (a status can only be observed).
+  - name: policy-nmstate-test
     remediationAction: inform
     dependencies:
       - name: policy-nmstate-operator-install
     manifests:
-      - path: manifests/webhook
-  # 4) NNCP generation. Waits on both the CR and the webhook being ready.
+      - path: test/webhook-ready.yaml
+  # 4) NNCP generation. Waits on both the CR and the readiness test.
   - name: policy-nmstate-nncp
     dependencies:
       - name: policy-nmstate
-      - name: policy-nmstate-webhook
+      - name: policy-nmstate-test
     manifests:
-      - path: manifests/nncp
+      - path: manifests/nncp.yaml
