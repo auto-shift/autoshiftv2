@@ -22,91 +22,103 @@ spec:
       - name: {{ . }}
       {{- end }}
       {{- end }}
+    template:
+      metadata:
+        name: '{{ .Release.Name }}-{{"{{"}} .name {{"}}"}}'
+      spec:
+        sources:
+        - repoURL: {{ (.Values.autoshiftValues).repoUrl | default .Values.autoshiftGitRepo }}
+          targetRevision: {{ (.Values.autoshiftValues).targetRevision | default .Values.autoshiftGitBranchTag }}
+          ref: values
+        - path: .
+          repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
+          targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
+          helm:
+            valueFiles:
+              - $values/policies/{{ "{{" }} .name {{ "}}" }}/values.yaml
+            valuesObject:
+              {{- include "autoshift.policyValuesObject" . | nindent 14 }}
   {{- else }}
-  # Git mode - discover policies from Git repository
+  # Git mode - discover policies from Git repository by MARKER FILE (hybrid Helm + Kustomize).
+  #   dir with kustomization.yaml            -> PolicyGenerator via the repo-server CMP plugin
+  #   dir with Chart.yaml (no kustomization) -> Helm source (backwards compatible)
+  # A migrated policy drops Chart.yaml, so each dir matches exactly one generator.
   - git:
       repoURL: {{ .Values.autoshiftGitRepo }}
       revision: {{ .Values.autoshiftGitBranchTag }}
-      directories:
-      - path: 'policies/stable/*'
-      - path: 'policies/certified/*'
-      - path: 'policies/community/*'
-      - path: 'policies/stable/cluster-config-maps'
+      files:
+      - path: 'policies/stable/*/kustomization.yaml'
+      - path: 'policies/certified/*/kustomization.yaml'
+      - path: 'policies/community/*/kustomization.yaml'
+      {{- if .Values.excludePolicies }}
+      {{- range .Values.excludePolicies }}
+      - path: 'policies/*/{{ . }}/kustomization.yaml'
         exclude: true
-      - path: 'policies/stable/cluster-labels'
+      {{- end }}
+      {{- end }}
+    template:
+      metadata:
+        name: '{{ .Release.Name }}-{{"{{"}} .path.basename {{"}}"}}'
+      spec:
+        sources:
+        - path: '{{"{{"}} .path.path {{"}}"}}'
+          repoURL: {{ .Values.autoshiftGitRepo }}
+          targetRevision: {{ .Values.autoshiftGitBranchTag }}
+          plugin:
+            name: policy-generator
+            env:
+            - name: POLICY_NAMESPACE
+              value: {{ printf "policies-%s" .Release.Name }}
+            # inform when autoshift.dryRun, else enforce
+            - name: REMEDIATION
+              value: {{ if ((.Values.autoshift).dryRun) }}inform{{ else }}enforce{{ end }}
+            - name: EVAL_COMPLIANT
+              value: '{{ (((.Values.autoshift).evaluationInterval).compliant) | default "10m" }}'
+            - name: EVAL_NONCOMPLIANT
+              value: '{{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}'
+  - git:
+      repoURL: {{ .Values.autoshiftGitRepo }}
+      revision: {{ .Values.autoshiftGitBranchTag }}
+      files:
+      - path: 'policies/stable/*/Chart.yaml'
+      - path: 'policies/certified/*/Chart.yaml'
+      - path: 'policies/community/*/Chart.yaml'
+      # Config generators are deployed by dedicated handling, not this ApplicationSet.
+      - path: 'policies/stable/cluster-config-maps/Chart.yaml'
         exclude: true
-      - path: 'policies/certified'
-        exclude: true
-      - path: 'policies/community'
-        exclude: true
-      - path: 'policies/stable'
+      - path: 'policies/stable/cluster-labels/Chart.yaml'
         exclude: true
       {{- if .Values.excludePolicies }}
       {{- range .Values.excludePolicies }}
-      - path: 'policies/*/{{ . }}'
+      - path: 'policies/*/{{ . }}/Chart.yaml'
         exclude: true
       {{- end }}
       {{- end }}
+    template:
+      metadata:
+        name: '{{ .Release.Name }}-{{"{{"}} .path.basename {{"}}"}}'
+      spec:
+        sources:
+        - repoURL: {{ (.Values.autoshiftValues).repoUrl | default .Values.autoshiftGitRepo }}
+          targetRevision: {{ (.Values.autoshiftValues).targetRevision | default .Values.autoshiftGitBranchTag }}
+          ref: values
+        - path: '{{"{{"}} .path.path {{"}}"}}'
+          repoURL: {{ .Values.autoshiftGitRepo }}
+          targetRevision: {{ .Values.autoshiftGitBranchTag }}
+          helm:
+            valueFiles:
+              - $values/{{ "{{" }} .path.path {{ "}}" }}/values.yaml
+            valuesObject:
+              {{- include "autoshift.policyValuesObject" . | nindent 14 }}
   {{- end }}
   template:
     metadata:
-      {{- if .Values.autoshiftOciRegistry }}
-      name: '{{ .Release.Name }}-{{"{{"}} .name {{"}}"}}'
-      {{- else }}
-      name: '{{ .Release.Name }}-{{"{{"}} .path.basename {{"}}"}}'
-      {{- end }}
       labels:
         app: "{{ .Release.Name }}-policies"
         velero.io/exclude-from-backup: "true"
     spec:
       project: default
       revisionHistoryLimit: {{ .Values.revisionHistoryLimit | default 3 }}
-      sources: 
-        - repoURL: {{ (.Values.autoshiftValues).repoUrl | default .Values.autoshiftGitRepo }}
-          targetRevision: {{ (.Values.autoshiftValues).targetRevision | default .Values.autoshiftGitBranchTag }}
-          ref: values
-        {{- if .Values.autoshiftOciRegistry }}
-        - path: .
-          repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
-          targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
-        {{- else }}
-        # Git mode - use path in Git repository
-        - path: '{{"{{"}} .path.path {{"}}"}}'
-          repoURL: {{ .Values.autoshiftGitRepo }}
-          targetRevision: {{ .Values.autoshiftGitBranchTag }}
-        {{- end }}
-          helm:
-            valueFiles:
-              {{- if .Values.autoshiftOciRegistry }}
-              - $values/policies/{{ "{{" }} .name {{ "}}" }}/values.yaml
-              {{- else }}
-              - $values/{{ "{{" }} .path.path {{ "}}" }}/values.yaml
-              {{- end }}
-            valuesObject:
-              {{- $clusterSetSuffix := include "autoshift.clusterSetSuffix" . }}
-              gitopsNamespace: {{ .Values.gitopsNamespace }}
-              policy_namespace: {{ printf "policies-%s" .Release.Name }}
-              clusterSetSuffix: {{ $clusterSetSuffix }}
-              autoshift:
-                dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
-                evaluationInterval:
-                  compliant: {{ (((.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-                  noncompliant: {{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-              {{- if .Values.hubClusterSets }}
-              hubClusterSets:
-              {{-  range $cluster, $clustervalue := .Values.hubClusterSets }}
-                {{ $cluster }}{{ $clusterSetSuffix }}:
-                  labels:
-                    self-managed: '{{ index $clustervalue.labels "self-managed" | default "true" }}'
-              {{- end }}
-              {{- end }}
-              {{- if .Values.managedClusterSets }}
-              managedClusterSets:
-              {{-  range $cluster, $clustervalue := .Values.managedClusterSets }}
-                {{ $cluster }}{{ $clusterSetSuffix }}:
-                  labels: {}
-              {{- end }}
-              {{- end }}
       ignoreDifferences:
       - group: "apps"
         kind: "Project"

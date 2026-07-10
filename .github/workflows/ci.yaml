@@ -107,6 +107,11 @@ jobs:
   validate-policies:
     name: Validate policy rendering and config (ACM resolver)
     runs-on: ubuntu-latest
+    env:
+      # PolicyGenerator toolchain for rendering kustomize/PolicyGenerator policies.
+      # Populated by `make install-policy-generator` (repo-local .tools/).
+      KUSTOMIZE_BIN: ${{ github.workspace }}/.tools/kustomize
+      KUSTOMIZE_PLUGIN_HOME: ${{ github.workspace }}/.tools/kustomize-plugin
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -117,6 +122,9 @@ jobs:
           go-version-file: tools/go.mod
           cache: true
           cache-dependency-path: tools/go.sum
+
+      - name: Install kustomize + PolicyGenerator plugin
+        run: make install-policy-generator
 
       - name: Validate policy name lengths
         run: |

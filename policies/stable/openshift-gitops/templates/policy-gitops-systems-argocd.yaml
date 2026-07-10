@@ -2,6 +2,16 @@
 # the GitOps Operator.
 #
 {{- if .Values.hubClusterSets }}
+{{- /* PolicyGenerator CMP: reuse the ACM + repo-server images cached on the cluster; fall back to values. */}}
+{{- $pg := (.Values.gitops.policyGenerator) }}
+{{- $acmImage := ($pg).subscriptionImage }}
+{{- $argoImage := ($pg).sidecarImage }}
+{{- if ($pg).enabled }}
+{{- $acmDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "multicluster-operators-hub-subscription") }}
+{{- if $acmDep }}{{- $acmImage = (index $acmDep.spec.template.spec.containers 0).image }}{{- end }}
+{{- $argoDep := (lookup "apps/v1" "Deployment" .Values.gitops.argoNamespace (printf "%s-repo-server" .Values.gitops.argoName)) }}
+{{- if $argoDep }}{{- $argoImage = (index $argoDep.spec.template.spec.containers 0).image }}{{- end }}
+{{- end }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -104,6 +114,11 @@ spec:
                       enabled: true
                   monitoring:
                     enabled: false
+                  {{- if ($pg).enabled }}
+                  kustomizeBuildOptions: --enable-helm --helm-command /usr/local/bin/helm --enable-alpha-plugins --load-restrictor LoadRestrictionsNone
+                  applicationInstanceLabelKey: argocd.argoproj.io/instance
+                  resourceTrackingMethod: annotation+label
+                  {{- end }}
                   sso:
                     dex:
                       resources:
@@ -131,6 +146,74 @@ spec:
                       requests:
                         cpu: {{ ((.Values.gitops.repo).requests).cpu | default "250m" }}
                         memory: {{ ((.Values.gitops.repo).requests).memory | default "256Mi" }}
+                    {{- if ($pg).enabled }}
+                    env:
+                      - name: POLICY_GEN_ENABLE_HELM
+                        value: "true"
+                    initContainers:
+                      # Binary path inside the ACM image varies by version; search known locations.
+                      - name: policy-generator-install
+                        image: {{ $acmImage }}
+                        command: [/bin/sh, -c]
+                        args:
+                          - |
+                            set -e
+                            for src in \
+                              /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator/PolicyGenerator \
+                              /policy-generator/PolicyGenerator \
+                              /policy-generator/PolicyGenerator-rhel8 \
+                              /policy-generator/PolicyGenerator-not-fips-compliant; do
+                              if [ -f "$src" ]; then
+                                cp "$src" /policy-generator-tmp/PolicyGenerator
+                                chmod +x /policy-generator-tmp/PolicyGenerator
+                                exit 0
+                              fi
+                            done
+                            echo "PolicyGenerator binary not found in ACM image" >&2
+                            exit 1
+                        volumeMounts:
+                          - name: policy-generator
+                            mountPath: /policy-generator-tmp
+                    sidecarContainers:
+                      - name: policy-generator
+                        command: [/var/run/argocd/argocd-cmp-server]
+                        image: {{ $argoImage }}
+                        securityContext:
+                          runAsNonRoot: true
+                        volumeMounts:
+                          - name: var-files
+                            mountPath: /var/run/argocd
+                          - name: plugins
+                            mountPath: /home/argocd/cmp-server/plugins
+                          - name: policy-generator-cmp-config
+                            mountPath: /home/argocd/cmp-server/config/plugin.yaml
+                            subPath: plugin.yaml
+                          - name: cmp-tmp
+                            mountPath: /tmp
+                          - name: policy-generator
+                            mountPath: /policy-generator
+                    volumeMounts:
+                      - name: policy-generator
+                        mountPath: /.config/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+                      {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default "{{ .Values.gitops.repo.cluster_ca_bundle }}") "true" {{ "hub}}" }}
+                      - name: user-ca-bundle
+                        mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+                        subPath: ca-bundle.crt
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    volumes:
+                      - name: policy-generator
+                        emptyDir: {}
+                      - name: policy-generator-cmp-config
+                        configMap:
+                          name: policy-generator-cmp-plugin
+                      - name: cmp-tmp
+                        emptyDir: {}
+                      {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default "{{ .Values.gitops.repo.cluster_ca_bundle }}") "true" {{ "hub}}" }}
+                      - name: user-ca-bundle
+                        configMap:
+                          name: user-ca-bundle
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{- else }}
                     {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default "{{ .Values.gitops.repo.cluster_ca_bundle }}") "true" {{ "hub}}" }}
                     volumeMounts:
                       - name: user-ca-bundle
@@ -141,6 +224,7 @@ spec:
                         configMap:
                           name: user-ca-bundle
                     {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{- end }}
                   ha:
                     resources:
                       limits:

@@ -1,0 +1,55 @@
+{{- if (.Values.gitops.policyGenerator).enabled }}
+# ConfigManagementPlugin config for the PolicyGenerator CMP sidecar (see the repo
+# sidecarContainers in argo-cd.yaml). The sidecar mounts this at
+# /home/argocd/cmp-server/config/plugin.yaml.
+#
+# Mechanics mirror the proven feature/policy-generator branch:
+#   discover -> only dirs containing policy-generator-config.yaml match this plugin
+#   init     -> copy the PG binary (staged into the shared /policy-generator volume by the
+#               repo initContainer) into the sidecar's kustomize plugin home
+#   generate -> substitute the per-deployment ${...} placeholders, then kustomize build
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: policy-generator-cmp-plugin
+  namespace: {{ .Values.gitops.argoNamespace }}
+data:
+  plugin.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      # Sidecar CMP registered name. Must match spec.source.plugin.name in the ApplicationSet.
+      # Do NOT add spec.version — that would register it as `policy-generator-<version>`.
+      name: policy-generator
+    spec:
+      discover:
+        find:
+          glob: "**/policy-generator-config.yaml"
+      init:
+        command: [/bin/sh, -c]
+        args:
+          - |
+            set -eu
+            dest="${HOME}/.config/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator"
+            mkdir -p "$dest"
+            cp /policy-generator/PolicyGenerator "$dest/PolicyGenerator"
+            chmod +x "$dest/PolicyGenerator"
+      generate:
+        command: [/bin/sh, -c]
+        args:
+          - |
+            set -eu
+            # ArgoCD may or may not prefix plugin.env with ARGOCD_ENV_ depending on version.
+            # Read both, so per-deployment values are correct for every deployment (not just the
+            # one whose namespace happens to equal the fallback).
+            export POLICY_NAMESPACE="${ARGOCD_ENV_POLICY_NAMESPACE:-${POLICY_NAMESPACE:-policies-autoshift}}"
+            export REMEDIATION="${ARGOCD_ENV_REMEDIATION:-${REMEDIATION:-enforce}}"
+            export EVAL_COMPLIANT="${ARGOCD_ENV_EVAL_COMPLIANT:-${EVAL_COMPLIANT:-10m}}"
+            export EVAL_NONCOMPLIANT="${ARGOCD_ENV_EVAL_NONCOMPLIANT:-${EVAL_NONCOMPLIANT:-30s}}"
+            # Restrict substitution to these exact tokens so hub-template $vars ($base, $cm, ...)
+            # inside manifests/ are never touched.
+            find . -type f -name '*.yaml' | while read -r f; do
+              envsubst '${POLICY_NAMESPACE} ${REMEDIATION} ${EVAL_COMPLIANT} ${EVAL_NONCOMPLIANT}' < "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+            done
+            kustomize build --enable-alpha-plugins --enable-helm .
+{{- end }}

@@ -77,6 +77,17 @@ gitops:
     requests:
       cpu: 250m
       memory: 256Mi
+  # PolicyGenerator ConfigManagementPlugin (CMP) for rendering kustomize/PolicyGenerator
+  # policies in the hub repo-server. Required for policies migrated off Helm. Adds an init
+  # container (stages the PG binary from the ACM subscription image) and a CMP sidecar that
+  # runs `kustomize build --enable-alpha-plugins` after substituting the per-deployment
+  # ${...} placeholders. See openshift-gitops/templates/argo-cd.yaml.
+  # NOTE: also declared in policies/stable/openshift-gitops/values.yaml (the sync-values
+  # source of truth); added here directly to keep this change focused.
+  policyGenerator:
+    enabled: true
+    subscriptionImage: registry.redhat.io/rhacm2/multicluster-operators-subscription-rhel9:v2.16
+    sidecarImage: registry.redhat.io/openshift-gitops-1/argocd-rhel9:latest
   server:
     limits:
       cpu: 500m

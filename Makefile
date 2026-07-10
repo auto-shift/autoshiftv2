@@ -14,6 +14,14 @@ INCLUDE_MIRROR ?= true
 CHARTS_DIR := .helm-charts
 ARTIFACTS_DIR := release-artifacts
 
+# PolicyGenerator toolchain (for rendering kustomize/PolicyGenerator policies).
+# Installed into a repo-local .tools/ dir by `make install-policy-generator`.
+KUSTOMIZE_VERSION ?= v5.8.1
+POLICY_GENERATOR_VERSION ?= latest
+TOOLS_DIR := $(CURDIR)/.tools
+KUSTOMIZE_PLUGIN_HOME ?= $(TOOLS_DIR)/kustomize-plugin
+PG_PLUGIN_DIR := $(KUSTOMIZE_PLUGIN_HOME)/policy.open-cluster-management.io/v1/policygenerator
+
 # Colors for output
 GREEN := \033[0;32m
 YELLOW := \033[1;33m
@@ -48,6 +56,19 @@ validate: ## Validate that required tools are installed
 	@command -v yq >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) yq is required but not installed. Install: brew install yq\n"; exit 1; }
 	@command -v git >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) git is required but not installed\n"; exit 1; }
 	@printf "$(GREEN)✓$(NC) All required tools are installed\n"
+
+.PHONY: install-policy-generator
+install-policy-generator: ## Install kustomize + ACM PolicyGenerator plugin (repo-local .tools/) for rendering kustomize policies
+	@printf "$(BLUE)[INFO]$(NC) Installing kustomize $(KUSTOMIZE_VERSION) and PolicyGenerator $(POLICY_GENERATOR_VERSION) into $(TOOLS_DIR)...\n"
+	@command -v go >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) go is required but not installed\n"; exit 1; }
+	GOBIN=$(TOOLS_DIR) go install sigs.k8s.io/kustomize/kustomize/v5@$(KUSTOMIZE_VERSION)
+	GOBIN=$(TOOLS_DIR) go install open-cluster-management.io/policy-generator-plugin/cmd/PolicyGenerator@$(POLICY_GENERATOR_VERSION)
+	mkdir -p "$(PG_PLUGIN_DIR)"
+	cp "$(TOOLS_DIR)/PolicyGenerator" "$(PG_PLUGIN_DIR)/PolicyGenerator"
+	chmod +x "$(PG_PLUGIN_DIR)/PolicyGenerator"
+	@printf "$(GREEN)✓$(NC) Installed. Before running policy tests, export:\n"
+	@printf "    export KUSTOMIZE_BIN=$(TOOLS_DIR)/kustomize\n"
+	@printf "    export KUSTOMIZE_PLUGIN_HOME=$(KUSTOMIZE_PLUGIN_HOME)\n"
 
 .PHONY: lint
 lint: ## Lint all Helm charts

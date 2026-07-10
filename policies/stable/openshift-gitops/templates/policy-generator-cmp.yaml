@@ -1,0 +1,44 @@
+{{- if and .Values.hubClusterSets (.Values.gitops.policyGenerator).enabled }}
+# ConfigManagementPlugin config for the PolicyGenerator CMP sidecar. Deployed by this policy chart
+# (an ArgoCD Application with selfHeal) so it is continuously reconciled — day-2 self-healing to
+# match the sidecar enforced on the ArgoCD CR by policy-gitops-systems-argocd.yaml.
+# The bootstrap openshift-gitops chart ships an identical copy for day-0 (before this app syncs).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: policy-generator-cmp-plugin
+  namespace: {{ .Values.gitops.argoNamespace }}
+data:
+  plugin.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: policy-generator
+    spec:
+      discover:
+        find:
+          glob: "**/policy-generator-config.yaml"
+      init:
+        command: [/bin/sh, -c]
+        args:
+          - |
+            set -eu
+            dest="${HOME}/.config/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator"
+            mkdir -p "$dest"
+            cp /policy-generator/PolicyGenerator "$dest/PolicyGenerator"
+            chmod +x "$dest/PolicyGenerator"
+      generate:
+        command: [/bin/sh, -c]
+        args:
+          - |
+            set -eu
+            # ArgoCD may or may not prefix plugin.env with ARGOCD_ENV_ depending on version; read both.
+            export POLICY_NAMESPACE="${ARGOCD_ENV_POLICY_NAMESPACE:-${POLICY_NAMESPACE:-policies-autoshift}}"
+            export REMEDIATION="${ARGOCD_ENV_REMEDIATION:-${REMEDIATION:-enforce}}"
+            export EVAL_COMPLIANT="${ARGOCD_ENV_EVAL_COMPLIANT:-${EVAL_COMPLIANT:-10m}}"
+            export EVAL_NONCOMPLIANT="${ARGOCD_ENV_EVAL_NONCOMPLIANT:-${EVAL_NONCOMPLIANT:-30s}}"
+            find . -type f -name '*.yaml' | while read -r f; do
+              envsubst '${POLICY_NAMESPACE} ${REMEDIATION} ${EVAL_COMPLIANT} ${EVAL_NONCOMPLIANT}' < "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+            done
+            kustomize build --enable-alpha-plugins --enable-helm .
+{{- end }}

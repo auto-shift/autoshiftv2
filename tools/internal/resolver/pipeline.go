@@ -69,6 +69,64 @@ func HelmTemplate(chartDir string, extraValuesFiles ...string) (string, error) {
 	return string(out), nil
 }
 
+// KustomizeBuild renders a PolicyGenerator policy directory exactly as the
+// repo-server CMP does: substitute the per-deployment ${...} placeholders, then
+// run `kustomize build --enable-alpha-plugins`. Test values mirror a non-dryRun
+// deployment (REMEDIATION=enforce) so object-templates render in enforce mode.
+//
+// Requires `kustomize` (or $KUSTOMIZE_BIN) on PATH and the PolicyGenerator plugin
+// staged under $KUSTOMIZE_PLUGIN_HOME (see `make install-policy-generator`).
+func KustomizeBuild(policyDir string) (string, error) {
+	repl := strings.NewReplacer(
+		"${POLICY_NAMESPACE}", "policies-autoshift",
+		"${REMEDIATION}", "enforce",
+		"${EVAL_COMPLIANT}", "10m",
+		"${EVAL_NONCOMPLIANT}", "30s",
+	)
+	work, err := os.MkdirTemp("", "autoshift-kustomize-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(work)
+
+	// Copy the policy dir, substituting placeholders in every file. The exact
+	// ${...} tokens never appear in manifests (whose hub templates use $var), so
+	// substituting broadly is safe — mirrors an envsubst restricted to these vars.
+	if err := copyDirSubst(policyDir, work, repl); err != nil {
+		return "", fmt.Errorf("stage kustomize dir: %w", err)
+	}
+
+	bin := os.Getenv("KUSTOMIZE_BIN")
+	if bin == "" {
+		bin = "kustomize"
+	}
+	cmd := exec.Command(bin, "build", "--enable-alpha-plugins", work)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("kustomize build %s: %w\n%s", policyDir, err, out)
+	}
+	return string(out), nil
+}
+
+// copyDirSubst copies src to dst, applying repl to the contents of every file.
+func copyDirSubst(src, dst string, repl *strings.Replacer) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, path)
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, []byte(repl.Replace(string(data))), 0o644)
+	})
+}
+
 // RunPipeline processes all policy charts under policiesDir:
 //
 //  1. Generates synthetic ConfigMaps from example file configs and pre-seeds
@@ -184,19 +242,30 @@ func RunPipeline(
 			ChartDir: chart.dir,
 		}
 
-		// 1. Prepare chart for rendering (activate .example files if present).
-		renderDir, cleanup, err := prepareChartForRender(chart.dir, tmpDir)
-		if err != nil {
-			result.Err = fmt.Errorf("prepare chart: %w", err)
-			results = append(results, result)
-			continue
-		}
-		rawYAML, err := HelmTemplate(renderDir, testValuesPath)
-		cleanup()
-		if err != nil {
-			result.Err = err
-			results = append(results, result)
-			continue
+		// 1. Render the policy — kustomize+PolicyGenerator or Helm, per marker file.
+		var rawYAML string
+		if chart.kind == "kustomize" {
+			rawYAML, err = KustomizeBuild(chart.dir)
+			if err != nil {
+				result.Err = err
+				results = append(results, result)
+				continue
+			}
+		} else {
+			// Prepare chart for rendering (activate .example files if present).
+			renderDir, cleanup, perr := prepareChartForRender(chart.dir, tmpDir)
+			if perr != nil {
+				result.Err = fmt.Errorf("prepare chart: %w", perr)
+				results = append(results, result)
+				continue
+			}
+			rawYAML, err = HelmTemplate(renderDir, testValuesPath)
+			cleanup()
+			if err != nil {
+				result.Err = err
+				results = append(results, result)
+				continue
+			}
 		}
 		result.HelmOK = true
 
@@ -236,6 +305,7 @@ func RunPipeline(
 			`hasPrefix "autoshift.io/`,
 			`key: 'autoshift.io/`,
 			`key: "autoshift.io/`,
+			`key: autoshift.io/`, // unquoted: kustomize/PolicyGenerator placement predicates
 		} {
 			remaining := rawYAML
 			for {
@@ -591,10 +661,16 @@ func stripStringDefaults(s string) string {
 type chartInfo struct {
 	policy string // "stable/cert-manager"
 	dir    string // absolute path to chart directory
+	kind   string // "helm" (Chart.yaml) or "kustomize" (policy-generator-config.yaml)
 }
 
-// discoverCharts finds all Chart.yaml files under policiesDir at the expected
-// depth: <category>/<chart>/Chart.yaml.
+// discoverCharts finds all policy directories under policiesDir at the expected
+// depth <category>/<chart>, discriminated by MARKER FILE (matching the hybrid
+// ApplicationSet):
+//   - policy-generator-config.yaml -> PolicyGenerator/kustomize policy
+//   - Chart.yaml                   -> Helm policy
+//
+// A migrated policy drops Chart.yaml, so each dir yields exactly one entry.
 func discoverCharts(policiesDir string) ([]chartInfo, error) {
 	var charts []chartInfo
 
@@ -602,7 +678,16 @@ func discoverCharts(policiesDir string) ([]chartInfo, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || d.Name() != "Chart.yaml" {
+		if d.IsDir() {
+			return nil
+		}
+		var kind string
+		switch d.Name() {
+		case "policy-generator-config.yaml":
+			kind = "kustomize"
+		case "Chart.yaml":
+			kind = "helm"
+		default:
 			return nil
 		}
 
@@ -618,6 +703,7 @@ func discoverCharts(policiesDir string) ([]chartInfo, error) {
 		charts = append(charts, chartInfo{
 			policy: parts[0] + "/" + parts[1],
 			dir:    filepath.Dir(path),
+			kind:   kind,
 		})
 		return nil
 	})
