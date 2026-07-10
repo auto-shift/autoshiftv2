@@ -267,7 +267,7 @@ EOF
         log "✓ ArgoCD Application created"
         echo ""
         log "Monitor deployment:"
-        echo "  oc get application ${RELEASE_NAME} -n ${NAMESPACE} -w"
+        echo "  oc get application.argoproj.io ${RELEASE_NAME} -n ${NAMESPACE} -w"
         echo ""
         log "View in ArgoCD UI:"
         echo "  oc get route argocd-server -n ${NAMESPACE}"
@@ -318,7 +318,7 @@ elif [ "$METHOD" = "helm" ]; then
         echo "  helm status ${RELEASE_NAME} -n ${NAMESPACE}"
         echo ""
         log "Verify deployment:"
-        echo "  oc get applications -n ${NAMESPACE}"
+        echo "  oc get applications.argoproj.io -n ${NAMESPACE}"
         echo "  oc get policies -A"
     fi
 fi

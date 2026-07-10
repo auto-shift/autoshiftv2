@@ -25,6 +25,10 @@ NC := \033[0m
 BOOTSTRAP_CHARTS := $(shell find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" -exec dirname {} \;)
 POLICY_CHARTS := $(shell find policies -maxdepth 3 -name Chart.yaml -exec dirname {} \;)
 POLICY_NAMES := $(notdir $(POLICY_CHARTS))
+# Charts deployed as dedicated Applications (full label/config data), NOT via the ApplicationSet list.
+# Still packaged/pushed to OCI, but must be kept out of policy-list.txt to avoid a duplicate Application.
+DEDICATED_APP_NAMES := cluster-labels cluster-config-maps
+POLICY_LIST_NAMES := $(filter-out $(DEDICATED_APP_NAMES),$(POLICY_NAMES))
 
 .PHONY: discover
 discover: ## Discover all charts in the repository
@@ -96,10 +100,11 @@ sync-values: ## Sync bootstrap chart values from policy charts
 
 .PHONY: generate-policy-list
 generate-policy-list: ## Generate policy-list.txt for OCI mode
-	@printf "$(BLUE)[INFO]$(NC) Generating policy-list.txt with $(words $(POLICY_NAMES)) policies...\n"
+	@printf "$(BLUE)[INFO]$(NC) Generating policy-list.txt with $(words $(POLICY_LIST_NAMES)) policies...\n"
 	@mkdir -p autoshift/files
-	@$(foreach policy,$(POLICY_NAMES),echo "$(policy)" >> autoshift/files/policy-list.txt;)
-	@printf "$(GREEN)✓$(NC) Generated policy-list.txt with $(words $(POLICY_NAMES)) policies\n"
+	@rm -f autoshift/files/policy-list.txt
+	@$(foreach policy,$(POLICY_LIST_NAMES),echo "$(policy)" >> autoshift/files/policy-list.txt;)
+	@printf "$(GREEN)✓$(NC) Generated policy-list.txt with $(words $(POLICY_LIST_NAMES)) policies\n"
 
 .PHONY: package-charts
 package-charts: ## Package all Helm charts

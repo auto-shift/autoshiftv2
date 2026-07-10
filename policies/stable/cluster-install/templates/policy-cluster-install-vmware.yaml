@@ -40,13 +40,15 @@ spec:
           severity: high
           object-templates-raw: |
             {{ "{{" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
+            {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
             {{ "{{-" }} range $_, $cm := ($configMaps.items | default list) {{ "}}" }}
             {{ "{{-" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
+            {{ "{{-" }} $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" $clusterName) | default dict {{ "}}" }}
+            {{ "{{-" }} $mcOwningNs := dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc {{ "}}" }}
             {{ "{{-" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
             {{ "{{-" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
             {{ "{{-" }} $platform := (index $ci "platform" | default "baremetal") {{ "}}" }}
-            {{ "{{-" }} if and (eq (index $ci "createCluster" | default "") "true") (eq $platform "vmware") (not (empty (index $config "vsphere"))) {{ "}}" }}
+            {{ "{{-" }} if and (eq (index $ci "createCluster" | default "") "true") (eq $platform "vmware") (not (empty (index $config "vsphere"))) (or (empty $mc) (eq $mcOwningNs $cm.metadata.namespace)) {{ "}}" }}
             {{ "{{-" }} $baseDomain := (index $ci "baseDomain") {{ "}}" }}
             {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion") {{ "}}" }}
             {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
@@ -297,6 +299,9 @@ spec:
                 data:
                   install-config.yaml: '{{ "{{" }} $installConfig | toYaml | base64enc {{ "}}" }}'
             {{/* ===== ClusterDeployment ===== */}}
+            {{- /* preserve Hive's installed flag: once install completes Hive sets spec.installed=true, so read it back rather than clobbering it to false on every policy re-evaluation */ -}}
+            {{ "{{-" }} $existingCD := (lookup "hive.openshift.io/v1" "ClusterDeployment" $clusterName $clusterName) | default dict {{ "}}" }}
+            {{ "{{-" }} $alreadyInstalled := (index ($existingCD.spec | default dict) "installed" | default false) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: hive.openshift.io/v1
@@ -314,7 +319,7 @@ spec:
                   controlPlaneConfig:
                     servingCertificates: {}
                   installAttemptsLimit: 1
-                  installed: false
+                  installed: {{ "{{" }} $alreadyInstalled {{ "}}" }}
                   platform:
                     vsphere:
                       vCenter: {{ "{{" }} $vcServer {{ "}}" }}

@@ -47,6 +47,16 @@ func splitAPIVersion(apiVersion string) (group, version string) {
 	return "", apiVersion
 }
 
+// toRuntimeObjects converts a slice of unstructured resources to runtime.Object
+// pointers for seeding a fake dynamic client.
+func toRuntimeObjects(resources []unstructured.Unstructured) []runtime.Object {
+	objs := make([]runtime.Object, 0, len(resources))
+	for i := range resources {
+		objs = append(objs, resources[i].DeepCopy())
+	}
+	return objs
+}
+
 // buildRegistryFromResources derives the GVR→ListKind map and APIResourceList
 // from a set of unstructured objects. Adding a YAML stub to testdata/ is
 // sufficient to register that type — no code changes required.
@@ -119,7 +129,13 @@ func NewResolver(localResources []unstructured.Unstructured) (*Resolver, error) 
 	listKinds, apiLists := buildRegistryFromResources(localResources)
 
 	scheme := runtime.NewScheme()
-	dynClient := fakedynamic.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
+	// Seed the fake dynamic client with the resources too (not just
+	// WithLocalResources). The local-resource lookup path matches namespace
+	// exactly, so an all-namespaces list (lookup ... "" "" <label>, used by the
+	// multi-deployment cluster-install policies) never matches a namespaced
+	// resource there and falls through to the dynamic client — which must hold
+	// the objects for that cross-namespace list to resolve.
+	dynClient := fakedynamic.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, toRuntimeObjects(localResources)...)
 	fakeClientset := fakeclientset.NewSimpleClientset()
 
 	if fakeDisc, ok := fakeClientset.Discovery().(*fakediscovery.FakeDiscovery); ok {
@@ -250,7 +266,13 @@ func NewSpokeResolver(localResources []unstructured.Unstructured) (*Resolver, er
 	listKinds, apiLists := buildRegistryFromResources(localResources)
 
 	scheme := runtime.NewScheme()
-	dynClient := fakedynamic.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
+	// Seed the fake dynamic client with the resources too (not just
+	// WithLocalResources). The local-resource lookup path matches namespace
+	// exactly, so an all-namespaces list (lookup ... "" "" <label>, used by the
+	// multi-deployment cluster-install policies) never matches a namespaced
+	// resource there and falls through to the dynamic client — which must hold
+	// the objects for that cross-namespace list to resolve.
+	dynClient := fakedynamic.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, toRuntimeObjects(localResources)...)
 	fakeClientset := fakeclientset.NewSimpleClientset()
 
 	if fakeDisc, ok := fakeClientset.Discovery().(*fakediscovery.FakeDiscovery); ok {

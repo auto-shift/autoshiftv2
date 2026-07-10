@@ -305,7 +305,7 @@ echo ""
 
 log "Monitoring sync status..."
 sleep 5
-oc get application ${APP_NAME} -n ${GITOPS_NAMESPACE}
+oc get application.argoproj.io ${APP_NAME} -n ${GITOPS_NAMESPACE}
 
 echo ""
 log "========================================="
@@ -313,9 +313,9 @@ log "AutoShift installation initiated!"
 log "========================================="
 echo ""
 log "Monitor deployment:"
-echo "  oc get application ${APP_NAME} -n ${GITOPS_NAMESPACE} -w"
+echo "  oc get application.argoproj.io ${APP_NAME} -n ${GITOPS_NAMESPACE} -w"
 echo "  oc get applicationset -n ${GITOPS_NAMESPACE}"
-echo "  oc get applications -n ${GITOPS_NAMESPACE} | grep ${APP_NAME}"
+echo "  oc get applications.argoproj.io -n ${GITOPS_NAMESPACE} | grep ${APP_NAME}"
 echo ""
 log "View policies:"
 echo "  oc get policies -A"
@@ -506,13 +506,13 @@ EOF
 
 ```bash
 # Check AutoShift Application
-oc get application autoshift -n openshift-gitops
+oc get application.argoproj.io autoshift -n openshift-gitops
 
 # Check ApplicationSet (deploying policy charts)
 oc get applicationset -n openshift-gitops
 
 # Check individual policy Applications
-oc get applications -n openshift-gitops | grep autoshift
+oc get applications.argoproj.io -n openshift-gitops | grep autoshift
 
 # Verify ACM policies are created
 oc get policies -A
@@ -665,7 +665,7 @@ oc label managedcluster spoke-1 cluster.open-cluster-management.io/clusterset=ma
 
 # After validation, migrate remaining clusters
 # Then delete old version
-oc delete application autoshift-1-0-0 -n openshift-gitops
+oc delete application.argoproj.io autoshift-1-0-0 -n openshift-gitops
 ```
 
 See [Gradual Rollout Guide](https://github.com/auto-shift/autoshiftv2/blob/main/docs/gradual-rollout.md) for detailed instructions.
@@ -745,7 +745,7 @@ oc describe mch multiclusterhub -n open-cluster-management
 
 ```bash
 # Check Application sync status
-oc get application autoshift -n openshift-gitops -o yaml
+oc get application.argoproj.io autoshift -n openshift-gitops -o yaml
 
 # Check ApplicationSet status
 oc get applicationset -n openshift-gitops -o yaml
@@ -788,7 +788,7 @@ GUIDE_VERSION
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
 
 # Upgrade AutoShift Application
-oc patch application autoshift -n openshift-gitops \
+oc patch application.argoproj.io autoshift -n openshift-gitops \
   --type=merge \
   -p '{"spec":{"source":{"targetRevision":"<NEW_VERSION>"}}}'
 ```

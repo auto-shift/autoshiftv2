@@ -1,6 +1,7 @@
 {{- $policyNamespace := $.Values.policy_namespace }}
 {{- $policyName := "policy-cluster-install-aws" }}
 {{- $placementName := (printf "placement-%s" $policyName) }}
+{{- if not (empty $.Values.hubClusterSets) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -39,16 +40,22 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates-raw: |
-            {{ "{{" }} $policyNamespace := "{{ "{{hub" }} (index .ManagedClusterLabels "{{ $.Values.autoshiftLabelPrefix | default "autoshift.io/" }}policy-namespace") | default "{{ $policyNamespace }}" {{ "hub}}" }}" {{ "}}" }}
-            {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" $policyNamespace "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
+            {{ "{{-" }} $configMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/rendered-config-map") | default dict {{ "}}" }}
             {{ "{{-" }} range $_, $cm := ($configMaps.items | default list) {{ "}}" }}
             {{ "{{-" }} $clusterName := (replace ".rendered-config" "" $cm.metadata.name) {{ "}}" }}
+            {{ "{{-" }} $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" $clusterName) | default dict {{ "}}" }}
+            {{ "{{-" }} $mcOwningNs := dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc {{ "}}" }}
             {{ "{{-" }} $config := ($cm.data.config | fromYaml) {{ "}}" }}
             {{ "{{-" }} $ci := (index $config "clusterInstall" | default dict) {{ "}}" }}
             {{ "{{-" }} $platform := (index $ci "platform" | default "baremetal") {{ "}}" }}
-            {{ "{{-" }} if and (eq (index $ci "createCluster" | default "") "true") (eq $platform "aws") (not (empty (index $config "aws"))) {{ "}}" }}
-            {{ "{{-" }} $baseDomain := (index $ci "baseDomain") {{ "}}" }}
+            {{ "{{-" }} if and (eq (index $ci "createCluster" | default "") "true") (eq $platform "aws") (not (empty (index $config "aws"))) (or (empty $mc) (eq $mcOwningNs $cm.metadata.namespace)) {{ "}}" }}
+            {{ "{{-" }} $baseDomain := (index $ci "baseDomain" | default "") {{ "}}" }}
+            {{ "{{-" }} if not $baseDomain {{ "}}" }}
+            {{ "{{-" }} $hubDNS := (lookup "config.openshift.io/v1" "DNS" "" "cluster") | default dict {{ "}}" }}
+            {{ "{{-" }} $baseDomain = (splitList "." (dig "spec" "baseDomain" "" $hubDNS) | rest | join ".") {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} $openshiftVersion := (index $ci "openshiftVersion") {{ "}}" }}
+            {{ "{{-" }} $installAttemptsLimit := (index $ci "installAttemptsLimit" | default 3 | toInt) {{ "}}" }}
             {{ "{{-" }} $cpuArch := (index $ci "cpuArch" | default "x86_64") {{ "}}" }}
             {{ "{{-" }} $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) {{ "}}" }}
             {{ "{{-" }} $secretSourceNs := (index $ci "secretSourceNamespace" | default "cluster-install-secrets") {{ "}}" }}
@@ -70,6 +77,7 @@ spec:
             {{ "{{-" }} $fips := (eq (printf "%v" (index $aws "fips" | default false)) "true") {{ "}}" }}
             {{ "{{-" }} $networkType := (index $aws "networkType" | default "OVNKubernetes") {{ "}}" }}
             {{ "{{-" }} $controlPlane := (index $aws "controlPlane" | default dict) {{ "}}" }}
+            {{ "{{-" }} $cpReplicas := (index $controlPlane "replicas" | default 3 | toInt) {{ "}}" }}
             {{ "{{-" }} $cpInstanceType := (index $controlPlane "instanceType" | default "m5.xlarge") {{ "}}" }}
             {{ "{{-" }} $cpRootVolume := (index $controlPlane "rootVolume" | default dict) {{ "}}" }}
             {{ "{{-" }} $cpIops := (index $cpRootVolume "iops" | default 4000 | toInt) {{ "}}" }}
@@ -116,7 +124,7 @@ spec:
                 )
                 "controlPlane" (dict
                     "name" "master"
-                    "replicas" 3
+                    "replicas" $cpReplicas
                     "platform" (dict "aws" (dict
                         "type" $cpInstanceType
                         "rootVolume" (dict "iops" $cpIops "size" $cpSize "type" $cpVolType)
@@ -207,6 +215,8 @@ spec:
                 data:
                   install-config.yaml: '{{ "{{" }} $installConfig | toYaml | base64enc {{ "}}" }}'
             {{/* ===== ClusterDeployment ===== */}}
+            {{ "{{-" }} $existingCD := (lookup "hive.openshift.io/v1" "ClusterDeployment" $clusterName $clusterName) | default dict {{ "}}" }}
+            {{ "{{-" }} $alreadyInstalled := (index ($existingCD.spec | default dict) "installed" | default false) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: hive.openshift.io/v1
@@ -224,8 +234,8 @@ spec:
                   clusterName: {{ "{{" }} $clusterName {{ "}}" }}
                   controlPlaneConfig:
                     servingCertificates: {}
-                  installAttemptsLimit: 1
-                  installed: false
+                  installAttemptsLimit: {{ "{{" }} $installAttemptsLimit {{ "}}" }}
+                  installed: {{ "{{" }} $alreadyInstalled {{ "}}" }}
                   platform:
                     aws:
                       credentialsSecretRef:
@@ -314,3 +324,4 @@ subjects:
   - name: {{ $policyName }}
     apiGroup: policy.open-cluster-management.io
     kind: Policy
+{{- end }}
