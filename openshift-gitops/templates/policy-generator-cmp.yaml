@@ -25,31 +25,23 @@ data:
       discover:
         find:
           glob: "**/policy-generator-config.yaml"
-      init:
-        command: [/bin/sh, -c]
-        args:
-          - |
-            set -eu
-            dest="${HOME}/.config/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator"
-            mkdir -p "$dest"
-            cp /policy-generator/PolicyGenerator "$dest/PolicyGenerator"
-            chmod +x "$dest/PolicyGenerator"
       generate:
         command: [/bin/sh, -c]
         args:
           - |
             set -eu
-            # ArgoCD may or may not prefix plugin.env with ARGOCD_ENV_ depending on version.
-            # Read both, so per-deployment values are correct for every deployment (not just the
-            # one whose namespace happens to equal the fallback).
-            export POLICY_NAMESPACE="${ARGOCD_ENV_POLICY_NAMESPACE:-${POLICY_NAMESPACE:-policies-autoshift}}"
-            export REMEDIATION="${ARGOCD_ENV_REMEDIATION:-${REMEDIATION:-enforce}}"
-            export EVAL_COMPLIANT="${ARGOCD_ENV_EVAL_COMPLIANT:-${EVAL_COMPLIANT:-10m}}"
-            export EVAL_NONCOMPLIANT="${ARGOCD_ENV_EVAL_NONCOMPLIANT:-${EVAL_NONCOMPLIANT:-30s}}"
-            # Restrict substitution to these exact tokens so hub-template $vars ($base, $cm, ...)
-            # inside manifests/ are never touched.
-            find . -type f -name '*.yaml' | while read -r f; do
-              envsubst '${POLICY_NAMESPACE} ${REMEDIATION} ${EVAL_COMPLIANT} ${EVAL_NONCOMPLIANT}' < "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-            done
-            kustomize build --enable-alpha-plugins --enable-helm .
+            # ArgoCD may or may not prefix plugin.env with ARGOCD_ENV_ depending on version; read both.
+            NS="${ARGOCD_ENV_POLICY_NAMESPACE:-${POLICY_NAMESPACE:-policies-autoshift}}"
+            REM="${ARGOCD_ENV_REMEDIATION:-${REMEDIATION:-enforce}}"
+            EC="${ARGOCD_ENV_EVAL_COMPLIANT:-${EVAL_COMPLIANT:-10m}}"
+            EN="${ARGOCD_ENV_EVAL_NONCOMPLIANT:-${EVAL_NONCOMPLIANT:-30s}}"
+            # sed (envsubst is not in the argocd image), restricted to these exact tokens so
+            # hub-template $vars ($base, $cm, ...) inside manifests/ are never touched.
+            find . -type f -name '*.yaml' -exec sed -i \
+              -e "s|\${POLICY_NAMESPACE}|${NS}|g" \
+              -e "s|\${REMEDIATION}|${REM}|g" \
+              -e "s|\${EVAL_COMPLIANT}|${EC}|g" \
+              -e "s|\${EVAL_NONCOMPLIANT}|${EN}|g" \
+              {} +
+            kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone .
 {{- end }}

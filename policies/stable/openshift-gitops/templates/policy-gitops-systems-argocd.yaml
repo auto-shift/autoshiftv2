@@ -150,6 +150,8 @@ spec:
                     env:
                       - name: POLICY_GEN_ENABLE_HELM
                         value: "true"
+                      - name: KUSTOMIZE_PLUGIN_HOME
+                        value: /etc/kustomize/plugin
                     initContainers:
                       # Binary path inside the ACM image varies by version; search known locations.
                       - name: policy-generator-install
@@ -180,6 +182,9 @@ spec:
                         image: {{ $argoImage }}
                         securityContext:
                           runAsNonRoot: true
+                        env:
+                          - name: KUSTOMIZE_PLUGIN_HOME
+                            value: /etc/kustomize/plugin
                         volumeMounts:
                           - name: var-files
                             mountPath: /var/run/argocd
@@ -191,10 +196,10 @@ spec:
                           - name: cmp-tmp
                             mountPath: /tmp
                           - name: policy-generator
-                            mountPath: /policy-generator
+                            mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
                     volumeMounts:
                       - name: policy-generator
-                        mountPath: /.config/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+                        mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
                       {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default "{{ .Values.gitops.repo.cluster_ca_bundle }}") "true" {{ "hub}}" }}
                       - name: user-ca-bundle
                         mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem

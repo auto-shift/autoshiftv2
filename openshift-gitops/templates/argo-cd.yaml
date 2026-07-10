@@ -68,9 +68,9 @@ spec:
         subPath: ca-bundle.crt
       {{- end }}
       {{- if ($pg).enabled }}
-      # PG binary (staged by the init container) exposed to the repo container's own kustomize.
+      # PG binary (staged by the init container) at the kustomize plugin home.
       - name: policy-generator
-        mountPath: /.config/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+        mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
       {{- end }}
     volumes:
       {{- if $caBundle }}
@@ -93,6 +93,8 @@ spec:
       # Let PolicyGenerator inflate Helm charts referenced as manifest input.
       - name: POLICY_GEN_ENABLE_HELM
         value: "true"
+      - name: KUSTOMIZE_PLUGIN_HOME
+        value: /etc/kustomize/plugin
     initContainers:
       # Copy the PolicyGenerator binary out of the ACM subscription image into the shared volume
       # the CMP sidecar reads. The binary's path inside the image varies by ACM version, so search
@@ -129,6 +131,11 @@ spec:
         image: {{ $argoImage }}
         securityContext:
           runAsNonRoot: true
+        env:
+          # kustomize (run by the CMP) finds the PolicyGenerator plugin here — mounted directly,
+          # so no runtime copy into a (non-writable) $HOME is needed.
+          - name: KUSTOMIZE_PLUGIN_HOME
+            value: /etc/kustomize/plugin
         volumeMounts:
           - name: var-files
             mountPath: /var/run/argocd
@@ -139,9 +146,9 @@ spec:
             subPath: plugin.yaml
           - name: cmp-tmp
             mountPath: /tmp
-          # PolicyGenerator binary from ACM (copied by the init container).
+          # PolicyGenerator binary from ACM (staged by the init container) at the plugin home.
           - name: policy-generator
-            mountPath: /policy-generator
+            mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
     {{- end }}
     resources:
       limits:
