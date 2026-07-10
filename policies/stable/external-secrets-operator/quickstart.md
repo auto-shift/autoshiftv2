@@ -341,9 +341,10 @@ authoritative, exactly as ESO documents it. The interesting part is credentials:
 > `ExternalSecretsConfig` adds a :443 allow for the core controller, so providers on
 > **443** (Vault/cloud endpoints behind standard HTTPS) and **6443** (the hub-bootstrap store)
 > work out of the box. A provider on any *other* port times out (`context deadline exceeded`
-> in the pod, `InvalidProviderConfig` on the store) until you extend the list via the
-> `ExternalSecretsConfig` passthrough — and since lists merge wholesale, re-include the 443
-> rule when you do:
+> in the pod, `InvalidProviderConfig` on the store) until you add an egress entry via the
+> `ExternalSecretsConfig` passthrough. Lists merge **wholesale** — an overriding
+> `networkPolicies` list replaces the chart default's, so restate the 443 rule alongside
+> your addition:
 >
 > ```yaml
 > config:
@@ -351,7 +352,7 @@ authoritative, exactly as ESO documents it. The interesting part is credentials:
 >     externalSecretsConfig:
 >       controllerConfig:
 >         networkPolicies:
->           - name: allow-https-egress          # keep the default's rule
+>           - name: allow-https-egress          # restated: overriding replaces the default list
 >             componentName: ExternalSecretsCoreController
 >             egress:
 >               - ports: [{ protocol: TCP, port: 443 }]

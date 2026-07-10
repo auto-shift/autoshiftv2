@@ -205,13 +205,20 @@ The install policy creates the singleton `ExternalSecretsConfig` CR (name `clust
 the operator deploy the external-secrets pods. Its **spec** is not modeled field-by-field —
 the chart value `externalSecretsOperator.externalSecretsConfig` *is* the default spec,
 verbatim (any CRD field goes there), and `config.eso.externalSecretsConfig` in the AutoShift
-values is a same-shaped override deep-merged over it at ACM propagation time (override wins;
-lists are replaced wholesale, never appended). The rendered config already resolves the
-AutoShift values levels, so setting the key at any level composes naturally.
+values is a same-shaped override deep-merged over it at ACM propagation time (override wins).
+The rendered config already resolves the AutoShift values levels, so setting the key at any
+level composes naturally.
 
 Full precedence, highest first: **cluster (`clusters.<name>.config`) > clusterset
 (`hubClusterSets`/`managedClusterSets.<set>.config`) > AutoShift deployment defaults
 (top-level `config:`) > chart values file.**
+
+**Lists replace wholesale.** sprig `merge` does no listMap-style keyed merging — a list set at
+a higher level replaces the lower level's list entirely, `networkPolicies` included. This is a
+deliberate, honest limitation: emulating the API server's `listType=map` semantics inside the
+templates would be behavior that's hard to see and debug from the config alone. When you
+override `networkPolicies`, restate every entry you still want — including the chart default's
+`allow-https-egress` :443 rule.
 
 Defaults always apply *unless* something above them overrides. One caveat: a **zero value**
 (`0`, `false`, `""`) at one level cannot override a non-zero value from a lower-precedence
@@ -233,20 +240,19 @@ port need an entry of their own:
 #   hubClusterSets.<set>.config:  <- per clusterset
 #   managedClusterSets.<set>.config:
 #   clusters.<name>.config:       <- per cluster (highest precedence)
-# CAUTION: lists merge wholesale — this networkPolicies list REPLACES the chart default's,
-# so re-include the 443 rule when overriding.
 config:
   eso:
     externalSecretsConfig:
       controllerConfig:
+        # overriding networkPolicies REPLACES the chart default's list — restate the 443 rule
         networkPolicies:
-          - name: allow-https-egress                       # re-declared: overriding drops the default
+          - name: allow-https-egress                       # kept from the chart default
             componentName: ExternalSecretsCoreController   # |Webhook|CertController|BitwardenSDKServer
             egress:
               - ports:
                   - protocol: TCP
                     port: 443
-          - name: allow-vault-8200-egress
+          - name: allow-vault-8200-egress                  # the addition that prompted the override
             componentName: ExternalSecretsCoreController
             egress:
               - ports:
