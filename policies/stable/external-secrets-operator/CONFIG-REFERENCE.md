@@ -44,9 +44,7 @@ strings. Durations (`1h`, `720h`, `5m0s`) are Go/cert-manager duration strings.
 | `targetNamespaces` | list(string) | unset | Optional. When set, the OperatorGroup targets these namespaces (namespace-scoped install) instead of all namespaces. |
 | `pruneRemovedStores` | bool | `true` | Deployment default for pruning: when a store entry is **removed** from `config.eso.secretStores`, should everything it created be deleted? Baked onto every emitted object as an `autoshift.io/eso-prune` label **at emission time** — flipping it after removal does nothing (relabel/delete manually). Runtime override: `config.eso.pruneRemovedStores`; per-store override: `secretStores[].…​.prune`. |
 | `secretReaderName` | string | `secret-reader` | Name of the read-only ServiceAccount (in `namespace`) other AutoShift components use to consume ESO-provisioned Secrets. Granted read via `config.externalSecretsOperator.secretReaderNamespaces` + `config.defaultSecretsNamespace`. |
-| `configLogLevel` | int | `1` | `ExternalSecretsConfig` CR `spec.appConfig.logLevel`. |
-| `configWebhookCertCheckInterval` | duration | `5m0s` | `ExternalSecretsConfig` CR `spec.appConfig.webhookConfig.certificateCheckInterval`. |
-| `configBitwardenMode` | string | `Disabled` | `ExternalSecretsConfig` CR `spec.plugins.bitwardenSecretManagerProvider.mode` (`Disabled` \| `Enabled`). |
+| `externalSecretsConfig` | map | `appConfig.logLevel: 1`, `appConfig.webhookConfig.certificateCheckInterval: 5m0s`, `controllerConfig.networkPolicies: [allow-https-egress — core controller :443 out]`, `plugins.bitwardenSecretManagerProvider.mode: Disabled` | The `ExternalSecretsConfig` CR **spec**, verbatim — any CRD field goes here. Runtime override: `config.eso.externalSecretsConfig`, same shape, deep-merged over this (override wins; lists replaced wholesale; zero values — `0`/`false`/`""` — cannot override a non-zero lower-level value). The operator deny-alls operand egress except :6443 + DNS, so the default includes a `networkPolicies` :443 allow for the core controller; providers on other ports need their own entry — and an overriding `networkPolicies` list REPLACES the default one (re-include the 443 rule). |
 | `certManagerResourceNamespace` | string | `cert-manager` | cert-manager "cluster resource namespace" — where the self-signed bootstrap CA Secret lives. Chart-only. |
 | `hubCASourceNamespace` | string | `openshift-config-managed` | Fallback hub serving-CA ConfigMap namespace (used when the hub apiserver serves no custom named cert). Chart-only. |
 | `hubCASourceName` | string | `kube-apiserver-server-ca` | Fallback serving-CA ConfigMap name. Chart-only. |
@@ -178,6 +176,7 @@ values files (per-cluster files may override). Everything here is evaluated **pe
 |---|---|---|---|
 | `pruneRemovedStores` | bool | chart `pruneRemovedStores` (`true`) | Deployment-wide prune default for removed store entries. Baked as the `autoshift.io/eso-prune` label at emission time. Per-store override below. |
 | `secretStores` | list(map) | `[]` | The store list — see next section. |
+| `externalSecretsConfig` | map | unset | Per-cluster `ExternalSecretsConfig` CR **spec** overlay — highest-precedence layer, deep-merged over the chart's `externalSecretsConfig` overlay and the `config*` defaults (this overlay wins; lists replaced wholesale). Zero values (`0`/`false`/`""`) here cannot override a non-zero chart default — set those at chart level. See README *ExternalSecretsConfig passthrough*. |
 | `hubBootstrap` | map | unset | Cluster→cluster bootstrap config — see below. Present ⇒ the boot policies provision the store; **absent ⇒ no-op** (removal never tears anything down; use `teardown: true`). |
 
 ### `config.eso.secretStores[]` — list item wrapper

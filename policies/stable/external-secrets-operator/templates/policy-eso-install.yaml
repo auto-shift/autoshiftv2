@@ -77,12 +77,30 @@ spec:
           # Singleton ExternalSecretsConfig (name: cluster) — without it the operator is installed
           # but deploys NO external-secrets controller/webhook pods. The CRD only exists once the
           # operator reconciles, so this ConfigurationPolicy stays noncompliant (retrying) until then.
+          #
+          # The CR spec = the chart's externalSecretsOperator.externalSecretsConfig value (the
+          # default, baked below as JSON) deep-merged under the per-cluster overlay
+          # config.eso.externalSecretsConfig from the rendered config (hub-template sprig
+          # `merge` — overlay is dst, so it wins; lists replaced wholesale). The rendered config
+          # already resolves cluster > clusterset > deployment defaults, so the full precedence is
+          #   cluster > clusterset > deployment defaults (top-level config:) > chart values.
+          # The final spec is emitted as single-line JSON (valid YAML) — ACM hub templates have
+          # toJson but not toYaml. GOTCHA: a ZERO value (0, false, "") in the overlay cannot
+          # override a non-zero baked default (sprig merge treats dst zeros as empty and fills
+          # them from src) — set such values at the lowest level that needs them.
+          # Use case that motivated this: the operator applies a deny-all egress NetworkPolicy to
+          # the operand (only :6443 + DNS allowed by default), so any store provider NOT on :6443
+          # (e.g. Vault behind a route on :443) needs spec.controllerConfig.networkPolicies egress
+          # rules — see README "ExternalSecretsConfig passthrough".
           remediationAction: enforce
           severity: high
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+{{- $escBase := .Values.externalSecretsOperator.externalSecretsConfig | default dict }}
           object-templates-raw: |
+            {{ "{{hub-" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .Values.policy_namespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $escOverlay := (dig "eso" "externalSecretsConfig" (dict) $clusterConfig) {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: operator.openshift.io/v1alpha1
@@ -91,11 +109,4 @@ spec:
                   name: cluster
                   labels:
                     app: external-secrets-operator
-                spec:
-                  appConfig:
-                    logLevel: {{ .Values.externalSecretsOperator.configLogLevel | default 1 }}
-                    webhookConfig:
-                      certificateCheckInterval: {{ .Values.externalSecretsOperator.configWebhookCertCheckInterval | default "5m0s" }}
-                  plugins:
-                    bitwardenSecretManagerProvider:
-                      mode: {{ .Values.externalSecretsOperator.configBitwardenMode | default "Disabled" }}
+                spec: {{ "{{hub" }} (merge $escOverlay (`{{ $escBase | toJson }}` | fromJson)) | toJson {{ "hub}}" }}

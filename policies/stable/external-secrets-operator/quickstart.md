@@ -336,6 +336,33 @@ authoritative, exactly as ESO documents it. The interesting part is credentials:
   repeat names — the policy introspects the ref in `spec` (`fromRef` names which auth
   method's refs to mirror).
 
+> ⚠️ **Operand egress is NetworkPolicy-restricted.** The operator deny-alls egress from the
+> external-secrets pods, allowing only TCP 6443 and DNS; the chart's default
+> `ExternalSecretsConfig` adds a :443 allow for the core controller, so providers on
+> **443** (Vault/cloud endpoints behind standard HTTPS) and **6443** (the hub-bootstrap store)
+> work out of the box. A provider on any *other* port times out (`context deadline exceeded`
+> in the pod, `InvalidProviderConfig` on the store) until you extend the list via the
+> `ExternalSecretsConfig` passthrough — and since lists merge wholesale, re-include the 443
+> rule when you do:
+>
+> ```yaml
+> config:
+>   eso:
+>     externalSecretsConfig:
+>       controllerConfig:
+>         networkPolicies:
+>           - name: allow-https-egress          # keep the default's rule
+>             componentName: ExternalSecretsCoreController
+>             egress:
+>               - ports: [{ protocol: TCP, port: 443 }]
+>           - name: allow-vault-8200-egress     # your extra port
+>             componentName: ExternalSecretsCoreController
+>             egress:
+>               - ports: [{ protocol: TCP, port: 8200 }]
+> ```
+>
+> Full merge semantics: README → *ExternalSecretsConfig passthrough*.
+
 The canonical pattern — one manually-seeded **root store** on the hub feeds every other
 store's credentials:
 

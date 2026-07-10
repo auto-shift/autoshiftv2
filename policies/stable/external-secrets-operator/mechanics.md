@@ -8,7 +8,7 @@ variable tables live in [CONFIG-REFERENCE.md](CONFIG-REFERENCE.md).
 
 | Policy | PolicySet | Runs on | Job |
 |---|---|---|---|
-| `policy-eso-install` | `policyset-eso-install` | all placed clusters | Operator Subscription/OperatorGroup + the `ExternalSecretsConfig` CR (the operator deploys no pods until that CR exists). |
+| `policy-eso-install` | `policyset-eso-install` | all placed clusters | Operator Subscription/OperatorGroup + the `ExternalSecretsConfig` CR (the operator deploys no pods until that CR exists). CR spec = chart defaults ← chart overlay ← per-cluster `config.eso.externalSecretsConfig` overlay (deep merge, later wins) — e.g. the `controllerConfig.networkPolicies` egress allows required for non-:6443 providers. |
 | `policy-eso-secret-stores` | `policyset-eso-secret-stores` | all placed clusters | User-defined `SecretStore`/`ClusterSecretStore` objects from `config.eso.secretStores`, plus the spoke-side auth `ExternalSecret`s and delivered-CA ConfigMaps. |
 | `policy-eso-hub-secrets` | `policyset-eso-hub-secrets` | hubs only | Materializes external-origin store credentials **onto the hub** (hop 1 of the two-hop transport). |
 | `policy-eso-cert-auth-rbac` | `policyset-eso-secret-stores` | all placed clusters | RBAC granting a store's client-cert CN Secret access (`certAuthRBAC`). |

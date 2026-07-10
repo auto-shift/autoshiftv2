@@ -199,6 +199,68 @@ Find available CSV versions:
 oc get packagemanifests external-secrets-operator -o jsonpath='{.status.channels[*].currentCSV}'
 ```
 
+### ExternalSecretsConfig passthrough (`externalSecretsConfig` / `config.eso.externalSecretsConfig`)
+
+The install policy creates the singleton `ExternalSecretsConfig` CR (name `cluster`) that makes
+the operator deploy the external-secrets pods. Its **spec** is not modeled field-by-field —
+the chart value `externalSecretsOperator.externalSecretsConfig` *is* the default spec,
+verbatim (any CRD field goes there), and `config.eso.externalSecretsConfig` in the AutoShift
+values is a same-shaped override deep-merged over it at ACM propagation time (override wins;
+lists are replaced wholesale, never appended). The rendered config already resolves the
+AutoShift values levels, so setting the key at any level composes naturally.
+
+Full precedence, highest first: **cluster (`clusters.<name>.config`) > clusterset
+(`hubClusterSets`/`managedClusterSets.<set>.config`) > AutoShift deployment defaults
+(top-level `config:`) > chart values file.**
+
+Defaults always apply *unless* something above them overrides. One caveat: a **zero value**
+(`0`, `false`, `""`) at one level cannot override a non-zero value from a lower-precedence
+level (sprig `merge` treats destination zeros as empty and fills them) — set such values at
+the lowest level that needs them instead of zero-overriding above.
+
+**Why this matters — operand egress is deny-all by default.** The OpenShift ESO operator
+applies static NetworkPolicies to the operand namespace: a base `deny-all` plus allows for
+DNS and TCP **6443** only. A store provider on a blocked port fails with
+`context deadline exceeded` in the controller pod and `InvalidProviderConfig` on the store.
+The chart's **default spec therefore includes `allow-https-egress`** — core controller egress
+to TCP **443**, covering the common provider endpoints (Vault routes, AWS/Azure/GCP APIs) —
+and the hub-bootstrap store rides the operator's own :6443 allow. Providers on any *other*
+port need an entry of their own:
+
+```yaml
+# The same block works at every AutoShift values level; set it at the widest scope that fits:
+#   config:                       <- deployment-wide default (top level of the values file)
+#   hubClusterSets.<set>.config:  <- per clusterset
+#   managedClusterSets.<set>.config:
+#   clusters.<name>.config:       <- per cluster (highest precedence)
+# CAUTION: lists merge wholesale — this networkPolicies list REPLACES the chart default's,
+# so re-include the 443 rule when overriding.
+config:
+  eso:
+    externalSecretsConfig:
+      controllerConfig:
+        networkPolicies:
+          - name: allow-https-egress                       # re-declared: overriding drops the default
+            componentName: ExternalSecretsCoreController   # |Webhook|CertController|BitwardenSDKServer
+            egress:
+              - ports:
+                  - protocol: TCP
+                    port: 443
+          - name: allow-vault-8200-egress
+            componentName: ExternalSecretsCoreController
+            egress:
+              - ports:
+                  - protocol: TCP
+                    port: 8200
+                # optionally scope the destination:
+                # to:
+                #   - ipBlock: { cidr: 10.0.0.0/16 }
+        # trustedCABundle: { name: my-ca-bundle, key: ca-bundle.crt }  # outbound-TLS CA (CM in operand ns)
+```
+
+Verify what the operator applied: `oc get networkpolicy -n external-secrets-operator` — the
+`eso-sys-*` policies are the operator's static set; your custom ones appear alongside them.
+
 ## Secret Stores (`config.eso.secretStores`)
 
 `policy-eso-secret-stores` creates ESO `SecretStore` /

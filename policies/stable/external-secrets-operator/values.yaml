@@ -31,11 +31,40 @@ externalSecretsOperator:
   secretReaderName: secret-reader
 
   # ---- ExternalSecretsConfig (singleton CR, name: cluster) -------------------------------------
-  # The operator installs but deploys NO external-secrets pods until this CR exists. The install
-  # policy creates a minimal one; these tune it. (operator.openshift.io/v1alpha1)
-  configLogLevel: 1                          # spec.appConfig.logLevel
-  configWebhookCertCheckInterval: 5m0s       # spec.appConfig.webhookConfig.certificateCheckInterval
-  configBitwardenMode: Disabled              # spec.plugins.bitwardenSecretManagerProvider.mode (Disabled | Enabled)
+  # The operator installs but deploys NO external-secrets pods until this CR exists. The block
+  # below IS the CR's default spec (operator.openshift.io/v1alpha1), verbatim — edit/extend it
+  # freely with any field the CRD supports. Per-cluster override: config.eso.externalSecretsConfig
+  # in the AutoShift values, same shape, deep-merged over this (override wins; lists replaced
+  # wholesale). The rendered config already resolves the AutoShift levels, so full precedence is:
+  #   cluster > clusterset > AutoShift deployment defaults (top-level config:) > this block
+  # GOTCHA: a zero value (0, false, '') at a higher level cannot override a non-zero value from a
+  # lower one (sprig merge limitation) — set such values at the lowest level that needs them.
+  #
+  # controllerConfig.networkPolicies: the operator applies a DENY-ALL egress NetworkPolicy to the
+  # operand pods (its own static allows cover only :6443 + DNS), so any store provider on another
+  # port times out (`context deadline exceeded` in the controller pod, `InvalidProviderConfig` on
+  # the store). The default below therefore also allows the core controller :443 out — the common
+  # provider port (Vault/AWS/Azure/GCP endpoints, OpenShift routes). Providers on other ports need
+  # their own entry. NOTE lists merge WHOLESALE: a networkPolicies list set at a higher level
+  # (config.eso.externalSecretsConfig) REPLACES this one — re-include the 443 rule there if you
+  # still want it.
+  #     trustedCABundle: { name: my-ca-bundle, key: ca-bundle.crt }   # optional outbound-TLS CA
+  externalSecretsConfig:
+    appConfig:
+      logLevel: 1
+      webhookConfig:
+        certificateCheckInterval: 5m0s
+    controllerConfig:
+      networkPolicies:
+        - name: allow-https-egress
+          componentName: ExternalSecretsCoreController   # |Webhook|CertController|BitwardenSDKServer
+          egress:
+            - ports:
+                - protocol: TCP
+                  port: 443
+    plugins:
+      bitwardenSecretManagerProvider:
+        mode: Disabled                       # Disabled | Enabled
 
   # ---- Cluster->cluster hub bootstrap (policy-eso-boot-store*.yaml) ----
   # Stands the hub up as a kubernetes-provider ClusterSecretStore on each spoke, authenticated
