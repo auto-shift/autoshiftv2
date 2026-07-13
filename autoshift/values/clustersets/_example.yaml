@@ -182,41 +182,58 @@ hubClusterSets:
             - 'example.com'
       # Default namespace ESO writes provisioned Secrets into. Top-level config key;
       # appended to externalSecretsOperator.secretReaderNamespaces for the secret-reader
-      # RBAC (policy-external-secrets-operator-secret-reader).
+      # RBAC (policy-eso-secret-reader).
       defaultSecretsNamespace: 'app-secrets'
       # =======================================================================
       # External Secrets Operator (SecretStore / ClusterSecretStore objects)
       # Read via rendered-config ConfigMap. List of single-key items keyed by
       # kind — clusterSecretStore (cluster-scoped) or secretStore (namespaced).
       # spec is the ESO SecretStoreSpec (authoritative). authSecretConfig (optional)
-      # provisions the Secret an auth ref points at: fromRef names which ref in spec
-      # to mirror, source is the hub Secret to copy the value from.
-      # Two policies read this list: policy-external-secrets-operator-stores
-      # creates the store objects + auth Secrets; ...-cert-auth-rbac creates the
-      # RBAC for kubernetes-provider cert auth (driven by certAuthRBAC below).
+      # provisions the Secret an auth ref points at via the TWO-HOP ESO transport:
+      # fromRef names which ref in spec to mirror; each sources entry names the hub
+      # Secret (hubSecretName, in this deployment's policy namespace) the spoke pulls
+      # through its hub-bootstrap store, plus an optional `external` block telling the
+      # hub-side policy to materialize that Secret from an external store first.
+      # Three policies read this list: policy-eso-secret-stores creates the store
+      # objects + the spoke-side auth ExternalSecrets; policy-eso-hub-secrets (hubs)
+      # materializes external-origin credentials on the hub; ...-cert-auth-rbac creates
+      # the RBAC for kubernetes-provider cert auth (driven by certAuthRBAC below).
       # =======================================================================
       externalSecretsOperator:
         # Namespaces the secret-reader ServiceAccount is granted read on (defaultSecretsNamespace
-        # is appended automatically). Consumed by policy-external-secrets-operator-secret-reader.
+        # is appended automatically). Consumed by policy-eso-secret-reader.
         secretReaderNamespaces:
           - 'team-a'
           - 'team-b'
-        # Deliver a remote apiserver's SERVING CA to a consuming cluster so a kubernetes-provider
-        # store can TRUST the remote it reads from (the store's caProvider is the consumer — NOT the
-        # local apiserver). source is a ConfigMap on the HUB holding the CA bundle; it is copied to
-        # the <ManagedClusterName> namespace on the spoke (the per-cluster namespace ACM auto-creates)
-        # under key ca.crt. No apiserver change. Consumed by policy-external-secrets-operator-server-ca-trust.
-        # configMapName must match the paired store's caProvider.name below.
-        serverCATrust:
-          source:
-            namespace: 'eso-trust'        # hub namespace holding the remote serving CA bundle
-            name: eso-client-ca
-            key: ca-bundle.crt
-          configMapName: remote-ca         # destination CM name in the <ManagedClusterName> ns (default remote-ca)
       eso:
+        # pruneRemovedStores: true              # deployment-wide default: objects of a store REMOVED from
+                                                # this list are deleted (baked as an autoshift.io/eso-prune
+                                                # label at emission). Per-store override: `prune` below.
+        # Per-cluster ExternalSecretsConfig CR spec overlay (highest precedence; deep-merged over the
+        # chart values default — this wins; LISTS REPLACE WHOLESALE). The operator deny-alls operand
+        # egress except :6443 + DNS; the CHART DEFAULT already allows the core controller :443 out, so
+        # only providers on other ports need an entry (a provider on a blocked port shows
+        # InvalidProviderConfig + context deadline exceeded) — and an overriding networkPolicies list
+        # REPLACES the default's, so restate the 443 rule. See README "ExternalSecretsConfig passthrough".
+        # externalSecretsConfig:
+        #   controllerConfig:
+        #     networkPolicies:
+        #       - name: allow-https-egress            # restated: overriding replaces the default list
+        #         componentName: ExternalSecretsCoreController
+        #         egress:
+        #           - ports:
+        #               - protocol: TCP
+        #                 port: 443
+        #       - name: allow-vault-8200-egress       # the extra port that needed the override
+        #         componentName: ExternalSecretsCoreController
+        #         egress:
+        #           - ports:
+        #               - protocol: TCP
+        #                 port: 8200
         secretStores:
           - clusterSecretStore:
               name: vault-backend
+              # prune: false                    # keep this store's objects if the entry is ever removed
               spec:
                 provider:
                   vault:
@@ -230,16 +247,50 @@ hubClusterSets:
                         serviceAccountRef:
                           name: 'external-secrets'
                           namespace: 'external-secrets-operator'
+          # Root store (README Full-examples #4): an ORDINARY ClusterSecretStore whose auth
+          # source is NATIVE (no `external`) — its hubSecretName is the one manually-seeded
+          # Secret in the policy namespace. Other stores' external.storeRef point at it and
+          # policy-eso-hub-secrets pulls their credentials through it. Nothing special-cases
+          # it; being cluster-scoped, one such store + one seed can feed every deployment on
+          # the hub.
+          - clusterSecretStore:
+              name: hub-vault
+              authSecretConfig:
+                fromRef: vaultToken
+                sources:
+                  tokenSecretRef:
+                    hubSecretName: hub-vault-seed    # manual seed Secret in the hub policy ns
+                    key: token
+              spec:
+                provider:
+                  vault:
+                    server: 'https://vault.example.com:8200'
+                    path: 'secret'
+                    version: 'v2'
+                    auth:
+                      tokenSecretRef:
+                        name: hub-vault-token
+                        key: token
+                        namespace: 'external-secrets-operator'   # CSS auth ref needs a namespace
           - secretStore:
               name: vault-backend
               namespace: 'team-a'
               # spec is authoritative: the tokenSecretRef below is written normally.
-              # sources maps the component (tokenSecretRef) to its hub source. One keyed
-              # entry -> copy that key into the ref's key (per-component path).
+              # sources maps the component (tokenSecretRef) to its hub source: hubSecretName
+              # is the Secret in the hub policy namespace the bootstrap store serves; key is
+              # the property within it -> the ref's key. The `external` block (optional) has
+              # policy-eso-hub-secrets materialize that hub Secret from an external store
+              # that exists ON THE HUB; omit it when the Secret is already there (native).
               authSecretConfig:
                 fromRef: vaultToken
+                refreshInterval: 1h                      # optional; spoke ExternalSecret re-pull cadence
                 sources:
-                  tokenSecretRef: { namespace: 'eso-auth-secrets', name: vault-token, key: token }
+                  tokenSecretRef:
+                    hubSecretName: vault-token           # Secret in the hub policy ns (bootstrap remoteRef.key)
+                    key: token
+                    external:                            # optional: pull it onto the hub first
+                      storeRef: { name: hub-vault, kind: ClusterSecretStore }
+                      remoteRef: { key: 'secret/data/eso/vault-token', property: token, version: '2' }
               spec:
                 provider:
                   vault:
@@ -252,14 +303,14 @@ hubClusterSets:
                         key: token
           - clusterSecretStore:
               name: vault-approle
-              # Single keyless source: one entry with no `key` -> whole-Secret copy. All
-              # refs the fromRef covers (here only secretRef; roleId is inline) must point
-              # at the same target Secret. The CSS ref must carry .namespace so the Secret
-              # is provisioned in one place.
+              # Single keyless source: one entry with no `key` -> whole-Secret pull
+              # (dataFrom.extract of the hub Secret). All refs the fromRef covers (here only
+              # secretRef; roleId is inline) must point at the same target Secret. The CSS
+              # ref must carry .namespace so the Secret is provisioned in one place.
               authSecretConfig:
                 fromRef: vaultAppRole
                 sources:                              # no key -> whole Secret (e.g. secret-id)
-                  secretRef: { namespace: 'eso-auth-secrets', name: approle-creds }
+                  secretRef: { hubSecretName: approle-creds }   # native: already in the hub policy ns
               spec:
                 provider:
                   vault:
@@ -281,8 +332,8 @@ hubClusterSets:
               authSecretConfig:
                 fromRef: vaultIam
                 sources:
-                  accessKeyID:     { namespace: 'eso-auth-secrets', name: aws-iam-creds, key: access-key-id }
-                  secretAccessKey: { namespace: 'eso-auth-secrets', name: aws-iam-creds, key: secret-access-key }
+                  accessKeyID:     { hubSecretName: aws-iam-creds, key: access-key-id }
+                  secretAccessKey: { hubSecretName: aws-iam-creds, key: secret-access-key }
               spec:
                 provider:
                   vault:
@@ -298,11 +349,17 @@ hubClusterSets:
                           accessKeyIDSecretRef:     { name: aws-iam-creds, key: access-key-id, namespace: 'external-secrets-operator' }
                           secretAccessKeySecretRef: { name: aws-iam-creds, key: secret-access-key, namespace: 'external-secrets-operator' }
           # Kubernetes provider: read native Secrets from a remote cluster's API server.
-          # caProvider.namespace is omitted -> defaults to the <ManagedClusterName> namespace where
-          # server-ca-trust delivers the remote serving CA (set it explicitly to override). name must
-          # match serverCATrust.configMapName above.
+          # caSource (optional) names a hub ConfigMap holding the REMOTE apiserver's serving CA; the
+          # stores policy delivers it into this store's OWN caProvider ConfigMap on the spoke, so the
+          # names always match. caProvider.namespace is omitted -> defaults to the <ManagedClusterName>
+          # namespace where the CA is delivered (set it explicitly to override). Omit caSource to
+          # supply the CA out of band.
           - clusterSecretStore:
               name: remote-cluster
+              caSource:
+                namespace: 'eso-trust'        # hub namespace holding the remote serving CA bundle
+                name: eso-client-ca
+                key: ca-bundle.crt
               spec:
                 provider:
                   kubernetes:
@@ -360,7 +417,7 @@ hubClusterSets:
                         clientKey: { name: eso-scoped-cert, key: tls.key }
           # SecretStore + cert auth. certAuthRBAC -> Role + RoleBinding (cert CN access).
           # Single keyless source: clientCert + clientKey both name eso-ns-cert, so they
-          # share one target Secret and the whole hub Secret (tls.crt + tls.key) is copied
+          # share one target Secret and the whole hub Secret (tls.crt + tls.key) is pulled
           # into it. If the two refs named different Secrets, this would be rejected — use a
           # per-component `sources` map with keys for that.
           - secretStore:
@@ -372,7 +429,7 @@ hubClusterSets:
               authSecretConfig:
                 fromRef: kubernetesCert
                 sources:                              # no key -> whole Secret (tls.crt + tls.key)
-                  clientCert: { namespace: 'eso-auth-secrets', name: eso-ns-cert-src }
+                  clientCert: { hubSecretName: eso-ns-cert-src }
               spec:
                 provider:
                   kubernetes:
@@ -388,19 +445,23 @@ hubClusterSets:
         # ClusterSecretStore on this spoke, authenticated by a cert-manager-minted,
         # auto-rotating client cert the hub apiserver trusts. Separate from
         # secretStores above. Two policies read this:
-        #   policy-external-secrets-operator-hub-bootstrap-trust  (runs on the hub)
-        #     mints, per AutoShift deployment (= per policy namespace), one client cert
-        #     signed by a cert-manager self-signed CA wired into the hub apiserver clientCA
-        #     trust, and grants its CN read on Secrets in that namespace only. No per-cluster
-        #     config — it enumerates the autoshift.io/createdByAutoshift namespaces itself.
-        #   policy-external-secrets-operator-hub-bootstrap        (runs on the spoke)
-        #     copies the client cert + hub serving CA, builds the store, and
-        #     creates the ExternalSecrets below against it.
+        #   policy-eso-boot-clientca-self  (runs on the hub)
+        #     mints, per owned managed cluster, one client cert (CN
+        #     <prefix>.<managedClusterName>.<baseDomain>) signed by a cert-manager self-signed CA
+        #     wired into the hub apiserver clientCA trust, and grants its CN read on Secrets in this
+        #     policy namespace only. No per-cluster config — it enumerates the hub's ManagedClusters
+        #     and keeps those labelled autoshift.io/owning-namespace == this policy namespace.
+        #   policy-eso-boot-store        (runs on the spoke)
+        #     copies the client cert + hub serving CA and builds the store. It creates NO
+        #     ExternalSecrets — consumers create their own against the store (storeName below).
         # The cert identity + the namespace it reads are fixed by the deployment, so this
         # block sets no certCN / remoteNamespace.
         # =======================================================================
         hubBootstrap:
           hubServer: 'https://api.hub.example.com:6443'  # hub apiserver URL
+          # deriveHubUrl: true              # OR omit hubServer and let each cluster resolve its IMMEDIATE hub's
+          #                                 # apiserver from the propagating hub's ClusterClaim — the right choice in
+          #                                 # multi-hop (global hub -> spoke-hub -> leaf) topologies.
           storeName: hub-bootstrap                   # ClusterSecretStore name created on the spoke
           # Trust mode — WHO mints the client cert + WHAT the hub clientCA trusts. Default selfSigned
           # (shown below). Pick ONE mode per hub (APIServer.spec.clientCA is a single field). See the
@@ -409,53 +470,71 @@ hubClusterSets:
           # mode: selfSigned   # selfSigned (default) | externalCA | externalCAReuseServingCert
           #
           # --- externalCA: spoke mints its own cert via a user-provided issuer chained to a shared
-          #     external CA; hub clientCA <- that external CA bundle. Requires baseDomain (the spoke
-          #     derives the same CN), spokeIssuer (precondition: customer provisions it), and the
-          #     externalClientCA bundle the hub should trust. Example:
+          #     external CA; hub clientCA <- that external CA bundle. Requires clientIdentity.baseDomain
+          #     (the spoke derives the same CN), externalCertAuthority.certIssuer (precondition: customer
+          #     provisions it), and the externalCertAuthority.caTrustBundle the hub should trust. Example:
           #   mode: externalCA
-          #   spokeIssuer:
-          #     name: shared-ca-issuer       # user-provided ClusterIssuer/Issuer chained to the external CA
-          #     kind: ClusterIssuer          # ClusterIssuer or Issuer
-          #     group: cert-manager.io
-          #   externalClientCA:
-          #     namespace: openshift-config  # where the external CA bundle ConfigMap lives
-          #     name: external-shared-ca     # the external CA bundle the hub apiserver clientCA trusts
-          #     key: ca-bundle.crt
+          #   externalCertAuthority:
+          #     certIssuer:
+          #       name: shared-ca-issuer       # user-provided ClusterIssuer/Issuer chained to the external CA
+          #       kind: ClusterIssuer          # ClusterIssuer or Issuer
+          #       group: cert-manager.io
+          #     caTrustBundle:
+          #       namespace: openshift-config  # where the external CA bundle ConfigMap lives
+          #       name: external-shared-ca     # the external CA bundle the hub apiserver clientCA trusts
+          #       key: ca-bundle.crt
+          #     # autoshiftProvisioned: true   # default; false => cert-manager + issuer are managed out-of-band
+          #                                    #   (readiness gate only checks cert-manager is INSTALLED, not policy-Compliant)
           #
           # --- externalCAReuseServingCert: the spoke REUSES its existing apiserver serving cert (+key)
           #     as the client cert (no cert minted). SECURITY BLAST RADIUS — replicates the apiserver
           #     private key into the ESO namespace; only use when the customer cannot issue a dedicated
           #     client cert. PRECONDITIONS: serving cert must carry clientAuth EKU, and its Subject CN
-          #     must equal the cluster's registered apiserver host. Needs only externalClientCA (above);
-          #     no baseDomain/spokeIssuer (identity is the discovered host). Example:
+          #     must equal the cluster's registered apiserver host. Needs only externalCertAuthority.caTrustBundle
+          #     (above); no clientIdentity/certIssuer (identity is the discovered host). Example:
           #   mode: externalCAReuseServingCert
-          #   externalClientCA:
-          #     namespace: openshift-config
-          #     name: external-shared-ca
-          #     key: ca-bundle.crt
-          # Hub-side PKI tuning, read by policy-external-secrets-operator-hub-bootstrap-trust on the
+          #   externalCertAuthority:
+          #     caTrustBundle:
+          #       namespace: openshift-config
+          #       name: external-shared-ca
+          #       key: ca-bundle.crt
+          # Hub-side PKI tuning (clientIdentity), read by policy-eso-boot-clientca-self on the
           # hub (defaults come from the chart values.yaml; set here to tune per deployment).
-          certCNPrefix: autoshift-eso-client         # client cert CN prefix
-          baseDomain: eso.hub.example.com            # client cert CN = <prefix>.<managedClusterName>.<baseDomain>,
+          clientIdentity:
+            certCNPrefix: autoshift-eso-client       # client cert CN prefix
+            baseDomain: eso.hub.example.com          # client cert CN = <prefix>.<managedClusterName>.<baseDomain>,
                                                      # capped at 63 chars (managedClusterName truncated to fit). REQUIRED
                                                      # when this flow is in use; the trust policy fails without it.
-          certDuration: 720h                         # client cert lifetime (cert-manager rotates it)
-          certRenewBefore: 480h                      # renew window before expiry
-          # The hub apiserver serving CA is resolved on the hub itself by the hub-bootstrap-serving-ca
+            certDuration: 720h                       # client cert lifetime (cert-manager rotates it)
+            certRenewBefore: 480h                    # renew window before expiry
+          # Per-cluster diagnostics (each defaults to the chart value of the same name):
+          # diagnostics:
+          #   readinessOnly: true   # the cert boot policies render nothing live (no-op) — only readiness gates run
+          #   debugRender: true     # each cert boot policy emits a <policy>-debug-render preview ConfigMap, applies nothing live
+          # The hub apiserver serving CA is resolved on the hub itself by the boot-serving-ca
           # policy (custom named cert -> operator-managed CA) and stashed in the policy namespace, so
           # there is no per-cluster serving-CA config here.
-          externalSecrets:                           # pulled from the hub through the bootstrap store
-            - name: app-secrets
-              namespace: 'app-secrets'
-              refreshInterval: 1h
-              target:
-                name: app-secrets
-                creationPolicy: Owner
-              data:
-                - secretKey: db_password
-                  remoteRef:
-                    key: app-db
-                    property: password
+          #
+          # Decommissioning: simply REMOVING this hubBootstrap block is a deliberate no-op (a transient
+          # config read miss must never dismantle a fleet). To actually tear the bootstrap down —
+          # spoke store + secrets, hub mint estate, reader RBAC, clientCA ConfigMap, and
+          # APIServer.spec.clientCA back to "" (a disruptive apiserver rollout) — set the explicit flag,
+          # wait for the boot policies to go Compliant, THEN remove the block. Migrate/stop consumers'
+          # ExternalSecrets first; in the external modes run teardown BEFORE dismantling the external PKI.
+          # teardown: true
+          #
+          # This block provisions the STORE ONLY. Consumers pull hub Secrets by creating their own
+          # ExternalSecret against it, e.g.:
+          #   apiVersion: external-secrets.io/v1
+          #   kind: ExternalSecret
+          #   metadata: { name: app-secrets, namespace: app-secrets }
+          #   spec:
+          #     secretStoreRef: { name: hub-bootstrap, kind: ClusterSecretStore }  # = storeName above
+          #     refreshInterval: 1h
+          #     target: { name: app-secrets, creationPolicy: Owner }
+          #     data:
+          #       - secretKey: db_password
+          #         remoteRef: { key: app-db, property: password }
     labels:
       # =======================================================================
       # Core Configuration
