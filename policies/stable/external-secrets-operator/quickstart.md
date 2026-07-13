@@ -10,6 +10,7 @@ Deeper material lives elsewhere:
 - [mechanics.md](mechanics.md) — *how* the mechanisms work (templating layers, trust modes, two-hop transport).
 - [CONFIG-REFERENCE.md](CONFIG-REFERENCE.md) — key-by-key tables for every chart value and runtime config key.
 - [troubleshooting.md](troubleshooting.md) — signal sources, triage flow, runbooks.
+- [responsibilities.md](responsibilities.md) — which policy/PolicySet owns which object.
 
 ## What you're deploying
 
@@ -92,6 +93,9 @@ via ServiceAccount — no static credential), you can stop after Step 3 and neve
 bootstrap at all.
 
 ## Step 2 — choose a bootstrap mode
+
+*Background: [mTLS trust modes](mechanics.md#3-mtls-trust-modes) in mechanics.md; full option tables:
+[Trust modes](README.md#trust-modes-configesohubbootstrapmode) in the README.*
 
 The bootstrap's client identity works one of three ways. Concept in one line each:
 
@@ -324,6 +328,10 @@ for the runbooks.
 
 ## Step 3 — add your first user store
 
+*Background: [the two-hop credential transport](mechanics.md#4-authsecretconfig--the-two-hop-credential-transport) in mechanics.md; every store
+option: [Secret Stores](README.md#secret-stores-configesosecretstores) and
+[Auth secrets](README.md#auth-secrets-authsecretconfig) in the README.*
+
 Stores are declared under `config.eso.secretStores` as ordinary ESO `spec`s — the `spec` is
 authoritative, exactly as ESO documents it. The interesting part is credentials:
 
@@ -467,6 +475,8 @@ with full worked examples.
 
 ## Step 4 — consume secrets
 
+*Background: [consuming what ESO provisions](mechanics.md#9-consuming-what-eso-provisions) in mechanics.md.*
+
 The bootstrap store provisions **no** application secrets — consumers own their
 `ExternalSecret`s. Pull any Secret from the hub policy namespace onto a spoke:
 
@@ -487,6 +497,15 @@ Your user stores work the same way with their own `secretStoreRef`. For AutoShif
 that need to *read* ESO-provisioned Secrets, the chart also creates a read-only
 `secret-reader` ServiceAccount scoped to `config.externalSecretsOperator.secretReaderNamespaces`
 plus `config.defaultSecretsNamespace` (see [README](README.md#reading-provisioned-secrets-secret-reader)).
+
+## Responsibilities — who does what
+
+Everything you just deployed is 13 Policies in 6 PolicySets; placement lives entirely in
+`templates/policysets.yaml`. Each policy pairs an *enforce* ConfigurationPolicy (does the
+work) with an *inform gate* (reports why something didn't happen — the gates are what you
+saw in the verify steps above). The ownership map is
+[responsibilities.md](responsibilities.md): the [PolicySet table](responsibilities.md#policysets-templatespolicysetsyaml) for what
+deploys where, the [per-file breakdown](responsibilities.md#per-file-breakdown) for which policy owns which object.
 
 ## Where to go next
 

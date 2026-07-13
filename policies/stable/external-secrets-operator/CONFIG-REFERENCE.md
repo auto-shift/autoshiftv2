@@ -1,7 +1,11 @@
 # Configuration reference
 
-Every variable this chart reads, organized by YAML block. There are three configuration
-surfaces:
+Every variable this chart reads, organized by YAML block. Companion docs: 
+- worked examples in [quickstart.md](quickstart.md) and the [README](README.md); 
+- concepts in [mechanics.md](mechanics.md); 
+- which policy reads which block in [responsibilities.md](responsibilities.md);
+- diagnosis in [troubleshooting.md](troubleshooting.md). 
+There are three configuration surfaces:
 
 1. **Chart values** (`values.yaml`) — deployment-wide defaults, set where the chart is
    installed (the ArgoCD Application / helm invocation). One set per deployment.
@@ -222,6 +226,9 @@ listed namespace.
 
 ### `authSecretConfig`
 
+*Concept walkthrough: [the two-hop credential transport](mechanics.md#4-authsecretconfig--the-two-hop-credential-transport); worked example:
+[Auth secrets](README.md#auth-secrets-authsecretconfig) in the README.*
+
 Provisions each auth-ref target Secret through the two-hop transport: an ExternalSecret on
 the hub optionally materializes the credential from an external store
 (`policy-eso-hub-secrets`), then an ExternalSecret on the spoke pulls it through the
@@ -253,6 +260,10 @@ from the ref **in `spec`** — never repeated here.
 | `remoteRef.version` | string | unset | Remote value version. |
 
 ### `config.eso.hubBootstrap`
+
+*Concept walkthrough: [the bootstrap store](mechanics.md#2-the-bootstrap-store--clustercluster-secret-transport) and [trust modes](mechanics.md#3-mtls-trust-modes);
+worked examples: [hub bootstrap](README.md#clustercluster-hub-bootstrap-configesohubbootstrap)
+in the README.*
 
 Per-deployment/cluster overrides of the chart `hubBootstrap` block (§1) — same structure,
 key for key. Only the keys below differ from or add to the chart surface:

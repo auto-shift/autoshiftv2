@@ -4,6 +4,8 @@ A diagnosis manual for humans **and** agents. It codifies the system's relations
 flow, tells you where truth lives, and provides parameterized command templates with expected
 outputs so runbooks can be executed interactively or from a validation/debugging pipeline.
 Concepts: [mechanics.md](mechanics.md). Keys: [CONFIG-REFERENCE.md](CONFIG-REFERENCE.md).
+Which policy/PolicySet owns a given object: [responsibilities.md](responsibilities.md#per-file-breakdown).
+Setup how-tos: [README.md](README.md) / [quickstart.md](quickstart.md).
 
 ## 0. Execution contract (read first, especially if you are an agent)
 

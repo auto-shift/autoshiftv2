@@ -12,6 +12,8 @@ each bootstrap trust mode, from empty deployment to consumed secrets.
 
 ## Architecture: cross-cluster cert auth flow
 
+*Mechanism deep-dives: [the bootstrap store](mechanics.md#2-the-bootstrap-store--clustercluster-secret-transport) and [mTLS trust modes](mechanics.md#3-mtls-trust-modes) in mechanics.md.*
+
 For the cluster→cluster bootstrap, an ESO `kubernetes`-provider store on a **spoke** reads
 Secrets straight from the **hub** apiserver over **mutual TLS**. Two independent trust chains
 are minted on the hub and meet at the spoke's store:
@@ -121,6 +123,17 @@ flowchart LR
   G1 -->|hub fromConfigMap → deliver| G2 -->|caProvider| G3
 ```
 
+## Responsibilities — which policy owns what
+
+The chart renders 13 Policies grouped into 6 PolicySets; **all placement lives in
+`templates/policysets.yaml`** — the policy files carry none. Most policies pair an *enforce*
+ConfigurationPolicy (does the work, records per-item failures into a status ConfigMap) with an
+*inform gate* (surfaces those failures as NonCompliant detail). The full ownership map lives in
+[responsibilities.md](responsibilities.md):
+
+- [PolicySet table](responsibilities.md#policysets-templatespolicysetsyaml) — what deploys where (hubs-only vs all clusters) and why the six groups exist.
+- [Per-file breakdown](responsibilities.md#per-file-breakdown) — every template file, its Policy, and each ConfigurationPolicy's concrete job; use it to answer "which policy owns that object?".
+
 ## Quick Deploy
 
 ### Test Locally
@@ -172,7 +185,9 @@ New policies are automatically discovered by the ApplicationSet. In Git mode, th
 Full key-by-key tables for every chart value, runtime config key, and label live in
 [CONFIG-REFERENCE.md](CONFIG-REFERENCE.md); the underlying mechanisms (bootstrap store, trust
 modes, two-hop credential transport, gates, cleanup) are described in
-[mechanics.md](mechanics.md); the sections below explain configuration in context.
+[mechanics.md](mechanics.md); a per-PolicySet / per-policy / per-ConfigurationPolicy ownership
+map lives in [responsibilities.md](responsibilities.md); the sections below explain
+configuration in context.
 
 ### Namespace Scope
 This operator is configured as:
@@ -206,6 +221,8 @@ the operator deploy the external-secrets pods. Its **spec** is not modeled field
 the chart value `externalSecretsOperator.externalSecretsConfig` *is* the default spec,
 verbatim (any CRD field goes there), and `config.eso.externalSecretsConfig` in the AutoShift
 values is a same-shaped override deep-merged over it at ACM propagation time (override wins).
+Key summary: the `externalSecretsConfig` rows in
+[CONFIG-REFERENCE.md](CONFIG-REFERENCE.md#externalsecretsoperator).
 The rendered config already resolves the AutoShift values levels, so setting the key at any
 level composes naturally.
 
@@ -272,7 +289,9 @@ Verify what the operator applied: `oc get networkpolicy -n external-secrets-oper
 `policy-eso-secret-stores` creates ESO `SecretStore` /
 `ClusterSecretStore` objects on each managed cluster from the per-cluster
 rendered-config ConfigMap (read via hub-template `lookup`, the same mechanism the
-`cluster-config-maps` policy uses).
+`cluster-config-maps` policy uses). Key-by-key tables for every store field:
+[`config.eso.secretStores[]`](CONFIG-REFERENCE.md#configesosecretstores--list-item-wrapper)
+in CONFIG-REFERENCE.md.
 
 Four policies are driven from the per-cluster ESO config:
 
@@ -322,6 +341,8 @@ not enforce them, so set them correctly in config:
 
 ### Removing a store — pruning (`pruneRemovedStores` / per-store `prune`)
 
+*Sweep mechanics (baked labels, label-driven `mustnothave`): [mechanics.md §8](mechanics.md#8-cleanup--baked-prune-labels-label-driven-sweeps-explicit-teardown).*
+
 When a store entry is **removed from config**, everything it created is pruned by default: the
 `ClusterSecretStore`/`SecretStore` itself, its spoke auth ExternalSecrets (**and their target
 Secrets** — `creationPolicy: Owner` garbage-collects them), its hub-side credential
@@ -365,6 +386,9 @@ when the rendered config could not be read at all (a transient miss must never p
 fleet). Unlabeled objects (created manually or by anything else) are never candidates.
 
 ### Auth secrets (`authSecretConfig`)
+
+*Concept walkthrough: [the two-hop credential transport](mechanics.md#4-authsecretconfig--the-two-hop-credential-transport); key tables:
+[`authSecretConfig`](CONFIG-REFERENCE.md#authsecretconfig) in CONFIG-REFERENCE.md.*
 
 Most auth methods reference a Kubernetes Secret (the Vault token, AppRole SecretID,
 client cert/key, a bearer token, cloud creds, ...). `authSecretConfig` — an optional
@@ -801,6 +825,8 @@ config:
 
 ### Kubernetes cert auth RBAC (`certAuthRBAC`)
 
+*Key tables: [`certAuthRBAC`](CONFIG-REFERENCE.md#certauthrbac) in CONFIG-REFERENCE.md.*
+
 When a store uses the **kubernetes** provider with **cert** auth
 (`spec.provider.kubernetes.auth.cert`), the apiserver identifies the client by the
 certificate's **CN** (a `User`). A **separate policy**,
@@ -1184,6 +1210,9 @@ config:
 
 ## Cluster→cluster hub bootstrap (`config.eso.hubBootstrap`)
 
+*Concept walkthrough: [the bootstrap store](mechanics.md#2-the-bootstrap-store--clustercluster-secret-transport); key tables:
+[`config.eso.hubBootstrap`](CONFIG-REFERENCE.md#configesohubbootstrap) in CONFIG-REFERENCE.md.*
+
 A self-contained way to make hub Secrets reachable from a spoke **through ESO**, before the
 spoke has any real `secretStores` configured. It stands the **hub up as a
 `kubernetes`-provider `ClusterSecretStore` on the spoke**, so the spoke's ESO can read native
@@ -1380,6 +1409,8 @@ chart `values.yaml` → mode-based default (selfSigned sensible / external bare)
 
 ### Trust modes (`config.eso.hubBootstrap.mode`)
 
+*Concept walkthrough: [mTLS trust modes](mechanics.md#3-mtls-trust-modes) in mechanics.md.*
+
 The bootstrap supports three ways to establish the **client identity** the spoke presents to the
 hub. The mode selects *who mints the client cert* and *what the hub `APIServer.spec.clientCA`
 trusts*; the serving-CA / server-trust half is identical across modes. Pick **one mode per hub** —
@@ -1546,6 +1577,8 @@ retiring the cluster from the feature).
 
 ### Cleanup reference — every automatic removal in one place
 
+*Concept walkthrough: [cleanup mechanics](mechanics.md#8-cleanup--baked-prune-labels-label-driven-sweeps-explicit-teardown) in mechanics.md.*
+
 The chart never relies on ACM `pruneObjectBehavior`; every removal is an explicit, label-driven
 `mustnothave` sweep in the policy that created the object. This table consolidates them — each row
 links to the section with the full mechanics:
@@ -1710,6 +1743,9 @@ clusters:
 
 ### Diagnostics — `readinessOnly` / `debugRender` (per-cluster)
 
+*Concept: [diagnostics run modes](mechanics.md#7-diagnostics-run-modes); using them as instruments:
+[troubleshooting.md R9](troubleshooting.md#r9--using-the-diagnostics-toggles-as-instruments).*
+
 Two **separate, composable** switches for bringing up or debugging the cert bootstrap without letting
 the active (cluster-mutating) boot policies fire. Both are read **per-cluster** from
 `config.eso.hubBootstrap` by a hub template, so one cluster can dry-render or sit readiness-only while
@@ -1858,6 +1894,9 @@ flowchart TB
 
 ### Precondition failures — where to look (status ConfigMap + gate)
 
+*Concept: [failure surfacing](mechanics.md#6-failure-surfacing--status-configmap--inform-gate); reading the signals in practice:
+[troubleshooting.md §2](troubleshooting.md#2-signal-sources--where-truth-lives-in-the-order-to-consult-it).*
+
 The boot policies never call the template `fail` builtin. `fail` aborts template **processing**, so the
 config-policy-controller reports a `template error` whose envelope embeds the **entire** hub-resolved
 policy (hundreds of lines, twice — in `status` *and* `spec`) with the real reason truncated off the end:
@@ -1938,6 +1977,8 @@ oc get cm eso-secret-stores-status -n open-cluster-management-agent-addon -o jso
 ```
 
 ## Reading provisioned Secrets (`secret-reader`)
+
+*Concept walkthrough: [consuming what ESO provisions](mechanics.md#9-consuming-what-eso-provisions) in mechanics.md.*
 
 The Secrets ESO provisions are consumed by other AutoShift components. Rather than each
 reaching for ESO internals, `policy-eso-secret-reader` creates a
