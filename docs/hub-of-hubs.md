@@ -310,6 +310,78 @@ Now set `acs: 'true'` for **hub1**:
 
 ---
 
+## Multicluster Global Hub
+
+[Multicluster Global Hub](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/latest/html/multicluster_global_hub/index)
+is a Red Hat ACM component that aggregates policy compliance, cluster inventory, and alerts
+from multiple ACM hubs into one place. It maps directly onto this topology:
+
+| Global Hub term | hub-of-hubs equivalent |
+|---|---|
+| **global hub cluster** (runs the operator, manager, Grafana, Kafka, PostgreSQL) | the **hub-of-hubs** (self-managed hub) |
+| **managed hub** (runs the Global Hub *agent*, reports up) | each **spoke hub** (`hub1`, `hub2`) |
+
+This is distinct from AutoShift's own ownership model. AutoShift decides *which instance
+configures which cluster* (see [Labeling and ownership across tiers](#labeling-and-ownership-across-tiers));
+Global Hub is Red Hat's *observability/aggregation* layer on top. They coexist — Global Hub
+does not change who deploys policies where.
+
+### How AutoShift wires it up
+
+The `global-hub` policy chart (`policies/stable/global-hub/`) is enabled on the
+**self-managed hub** and deploys three policies, all placed by `autoshift.io/global-hub: 'true'`
+and therefore running **on the hub-of-hubs**:
+
+1. `policy-global-hub-operator-install` — installs the operator (depends on
+   `policy-acm-mch-install`; ACM must exist first).
+2. `policy-global-hub-instance` — creates the `MulticlusterGlobalHub` CR. The operator then
+   stands up the manager, Grafana, and its **own built-in AMQ Streams (Kafka) and
+   PostgreSQL** (do not add a separate AMQ Streams policy — the operator owns that
+   subscription).
+3. `policy-global-hub-managed-hubs` — imports spoke hubs (see below).
+
+Enable it on the hub-of-hubs clusterset:
+
+```yaml
+# autoshift/values/clustersets/hubofhubs.yaml
+hubClusterSets:
+  hubofhubs:
+    labels:
+      global-hub: 'true'
+      global-hub-channel: release-1.8
+      global-hub-availability-config: High
+```
+
+### Importing spoke hubs as managed hubs
+
+A spoke hub is imported into Global Hub by labeling its `ManagedCluster` (on the HoH) with
+`global-hub.open-cluster-management.io/deploy-mode`. In AutoShift you express this on the
+spoke hub's **clusterset** in the HoH values:
+
+```yaml
+# autoshift/values/clustersets/hub1.yaml  (loaded by the HoH AutoShift app)
+hubClusterSets:
+  hub1:
+    labels:
+      global-hub-deploy-mode: 'default'   # 'default' or 'hosted'
+```
+
+`cluster-labels` propagates `autoshift.io/global-hub-deploy-mode` onto `hub1`, and
+`policy-global-hub-managed-hubs` (running on the HoH) translates it into the real
+`global-hub.open-cluster-management.io/deploy-mode` label that the Global Hub operator
+watches. The operator then installs the Global Hub agent on that spoke hub.
+
+> Leaf spokes (`spoke1`, `spoke2`) are **not** imported — Global Hub aggregates *hubs*, and
+> the HoH cannot see leaf spokes anyway (they are two boundaries away).
+
+### Disconnected
+
+The operator pulls AMQ Streams from a catalog, so in a mirror you must mirror **both**
+`multicluster-global-hub-operator-rh` and `amq-streams`. When `disconnected-mirror: 'true'`,
+`policy-global-hub-instance` adds Strimzi catalog-source annotations to the CR pointing at
+the mirrored catalog. See [policies/stable/global-hub/README.md](../policies/stable/global-hub/README.md)
+for the full label reference.
+
 ## Common pitfalls
 
 - **Expecting hub1's own AutoShift to configure hub1.** It can't — hub1's ACM doesn't manage
