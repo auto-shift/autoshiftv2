@@ -208,7 +208,9 @@
       {{ "{{-" }} if lt (len $hostLabels) 2 {{ "}}" }}
         {{ "{{-" }} $errors = append $errors (printf "[spoke] externalCA mode: apiserver URL %q is not of the form https://api.<cluster>.<base>" $apiUrl) {{ "}}" }}
       {{ "{{-" }} else {{ "}}" }}
-        {{ "{{-" }} $realName = (index $hostLabels 1) {{ "}}" }}
+        ##### FULL host minus the leading "api." label (api.<cluster>.<domain> -> <cluster>.<domain>) — #####
+        ##### the first label alone collides for clusters installed under the same DNS name in different zones #####
+        {{ "{{-" }} $realName = (join "." (slice $hostLabels 1)) {{ "}}" }}
       {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} if not $errors {{ "}}" }}
@@ -218,11 +220,12 @@
       {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} if not $errors {{ "}}" }}
-      ##### full (untruncated) real cluster name as the SAN; truncate ONLY the CN's cluster segment #####
+      ##### full (untruncated) DNS name (host minus "api.") as the SAN; truncate ONLY the CN's cluster segment #####
       {{ "{{-" }} $certSAN = $realName {{ "}}" }}
       {{ "{{-" }} $clusterSeg = $realName {{ "}}" }}
       ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
-      {{ "{{-" }} if gt (len $realName) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $realName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+      ##### After a mid-label cut, trim trailing "."/"-" so the CN never carries an empty/invalid DNS label. #####
+      {{ "{{-" }} if gt (len $realName) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (trimAll ".-" (substr 0 (toInt $cnBudget) $realName)) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
       {{ "{{-" }} $certCN = (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
     {{ "{{-" }} end {{ "}}" }}
     {{ "{{-" }} if not $errors {{ "}}" }}

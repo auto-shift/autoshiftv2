@@ -1421,7 +1421,7 @@ trusts*; the serving-CA / server-trust half is identical across modes. Pick **on
 | Mode | Client cert | Hub `clientCA` trusts | RBAC subject | Hub policy |
 |---|---|---|---|---|
 | `selfSigned` *(default)* | hub mints per-cluster cert, copies to spoke | hub-minted self-signed CA | derived CN `<prefix>.<cluster>.<baseDomain>` | `…-boot-clientca-self` |
-| `externalCA` | **spoke** mints its own cert via a user-provided issuer (key never leaves the spoke) | a shared **external** CA bundle | same CN shape, segment = DNS name from the apiserver URL (`api.<name>.<base>` → `<name>`; both sides derive it from the `apiserverurl.openshift.io` ClusterClaim) | `…-boot-clientca-ext` |
+| `externalCA` | **spoke** mints its own cert via a user-provided issuer (key never leaves the spoke) | a shared **external** CA bundle | same CN shape, segment = apiserver host minus the leading `api.` label (`api.ocp.zone-a.example.com` → `ocp.zone-a.example.com`; both sides derive it from the `apiserverurl.openshift.io` ClusterClaim — the full remainder, so same-named clusters in different DNS zones stay distinct) | `…-boot-clientca-ext` |
 | `externalCAReuseServingCert` | **spoke reuses its apiserver serving cert** (no cert minted) | the same external CA bundle | the cluster's registered apiserver **host** (discovered from `ManagedCluster.spec.managedClusterClientConfigs[].url`) | `…-boot-clientca-ext` |
 
 The three cert-creation paths — what mints the client cert, what the hub `clientCA` trusts, and

@@ -68,11 +68,14 @@
           {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (combined length must be <= 61); shorten the prefix or baseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
           {{ "{{-" }} $clusterOk = false {{ "}}" }}
         {{ "{{-" }} end {{ "}}" }}
-        ##### $clusterSeg = the cluster's REAL name (apiserverurl.openshift.io clusterClaim host label #####
-        ##### api.<realName>.<base>), NOT $mcName — self-managed hubs are ALL named "local-cluster", which #####
-        ##### would collide into one ambiguous CN under the shared external CA. The clusterClaim value is #####
-        ##### synced onto the hub's ManagedCluster.status.clusterClaims. The spoke store policy derives the #####
-        ##### SAME way, so its minted CN matches this RBAC subject. #####
+        ##### $clusterSeg = the cluster's DNS identity: the FULL apiserver host minus the leading "api." #####
+        ##### label (apiserverurl.openshift.io clusterClaim, api.<cluster>.<domain> -> <cluster>.<domain>). #####
+        ##### NOT $mcName — self-managed hubs are ALL named "local-cluster", which would collide into one #####
+        ##### ambiguous CN under the shared external CA. And NOT just the first host label — two clusters #####
+        ##### installed under the same DNS cluster name in different zones (api.ocp.a.com / api.ocp.b.com) #####
+        ##### collide on the label alone; the rest of the host is what disambiguates them. The clusterClaim #####
+        ##### value is synced onto the hub's ManagedCluster.status.clusterClaims. The spoke store policy #####
+        ##### derives the SAME way, so its minted CN matches this RBAC subject. #####
         {{ "{{-" }} $apiUrl := "" {{ "}}" }}
         {{ "{{-" }} if $clusterOk {{ "}}" }}
           {{ "{{-" }} range $claim := (dig "status" "clusterClaims" (list) $mc) {{ "}}" }}
@@ -89,9 +92,10 @@
             {{ "{{-" }} $errors = append $errors (printf "[spoke] ManagedCluster %q apiserver URL %q is not of the form https://api.<cluster>.<base> — cannot derive the real cluster name" $mcName $apiUrl) {{ "}}" }}
             {{ "{{-" }} $clusterOk = false {{ "}}" }}
           {{ "{{-" }} else {{ "}}" }}
-            {{ "{{-" }} $clusterSeg := (index $hostLabels 1) {{ "}}" }}
+            {{ "{{-" }} $clusterSeg := (join "." (slice $hostLabels 1)) {{ "}}" }}
             ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
-            {{ "{{-" }} if gt (len $clusterSeg) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $clusterSeg) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            ##### After a mid-label cut, trim trailing "."/"-" so the CN never carries an empty/invalid DNS label. #####
+            {{ "{{-" }} if gt (len $clusterSeg) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (trimAll ".-" (substr 0 (toInt $cnBudget) $clusterSeg)) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} $identity = (printf "%s.%s.%s" $certCNPrefix $clusterSeg $certBaseDomain) {{ "}}" }}
           {{ "{{-" }} end {{ "}}" }}
         {{ "{{-" }} end {{ "}}" }}
@@ -297,10 +301,11 @@
 #   externalCA — both clusters chain to a SHARED EXTERNAL CA. The hub mints NOTHING: the SPOKE mints
 #     its own client cert via a user-provided ClusterIssuer (handled in the spoke companion), and the
 #     hub apiserver clientCA simply trusts the external CA bundle. Because the spoke derives its CN the
-#     SAME way this policy does (<prefix>.<realClusterName>.<baseDomain>, truncated to 63, where
-#     realClusterName is the cluster's apiserverurl.openshift.io clusterClaim host label — NOT the OCM
-#     ManagedCluster name, since self-managed hubs all share the name "local-cluster"), the per-cluster
-#     RBAC subject below matches the cert with no out-of-band coordination.
+#     SAME way this policy does (<prefix>.<dnsName>.<baseDomain>, truncated to 63, where dnsName is the
+#     cluster's apiserverurl.openshift.io clusterClaim host minus the leading "api." label — the FULL
+#     remainder, not just the first label, so same-named clusters in different DNS zones stay distinct;
+#     and NOT the OCM ManagedCluster name, since self-managed hubs all share the name "local-cluster"),
+#     the per-cluster RBAC subject below matches the cert with no out-of-band coordination.
 #   externalCAReuseServingCert — same external-CA trust, but the spoke presents its existing apiserver
 #     SERVING cert as the client cert (no new cert minted anywhere). The hub cannot parse an x509 cert
 #     in a template to learn that cert's Subject, so the RBAC identity is DISCOVERED from the cluster's
