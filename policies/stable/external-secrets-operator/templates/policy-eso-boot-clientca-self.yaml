@@ -80,9 +80,12 @@
       ##### no clusterClaim derivation. Truncated to the budget so the CN fits 63 chars (and the resource #####
       ##### name stays bounded); a collision is only ever a truncation artifact. substr needs int args, #####
       ##### but ACM math (add/sub) yields int64 — convert with toInt (sprig slice rejects strings). #####
+      ##### OCM names may contain dots (DNS-1123 subdomain): after a cut, trim trailing "."/"-" so the CN #####
+      ##### never gets an empty label (double dot) and the secret name stays a valid resource name. The #####
+      ##### boot-store copy path applies the IDENTICAL trim so the two computed names always match. #####
       {{ "{{-" }} $clusterOk := true {{ "}}" }}
       {{ "{{-" }} $nameSeg := $mcName {{ "}}" }}
-      {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}{{ "{{-" }} $nameSeg = (substr 0 (toInt $cnBudget) $mcName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+      {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}{{ "{{-" }} $nameSeg = (trimAll ".-" (substr 0 (toInt $cnBudget) $mcName)) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
       {{ "{{-" }} if hasKey $seenNames $nameSeg {{ "}}" }}
         {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap identity collision after truncation: clusters %q and %q both map to segment %q (client-secret name AND cert-CN segment); lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenNames $nameSeg) $mcName $nameSeg) {{ "}}" }}
         {{ "{{-" }} $clusterOk = false {{ "}}" }}

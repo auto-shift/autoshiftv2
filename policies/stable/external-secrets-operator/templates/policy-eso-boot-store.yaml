@@ -55,8 +55,10 @@
 {{ "{{hub-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $segBaseDomain))) {{ "hub}}" }}
 {{ "{{hub-" }} $clusterSeg := $.ManagedClusterName {{ "hub}}" }}
 ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
+##### Trailing "."/"-" trimmed after the cut, IDENTICAL to the hub clientca-self mint, so the computed #####
+##### secret name always matches the hub-side one (and stays a valid resource name). #####
 {{ "{{hub-" }} if gt (len $.ManagedClusterName) $cnBudget {{ "hub}}" }}
-  {{ "{{hub-" }} $clusterSeg = (substr 0 (toInt $cnBudget) $.ManagedClusterName) {{ "hub}}" }}
+  {{ "{{hub-" }} $clusterSeg = (trimAll ".-" (substr 0 (toInt $cnBudget) $.ManagedClusterName)) {{ "hub}}" }}
 {{ "{{hub-" }} end {{ "hub}}" }}
 ##### externalCA CN/SAN are NOT derived here: the spoke reads its OWN apiserverurl.openshift.io #####
 ##### clusterClaim at runtime and derives them locally (see the runtime externalCA block below), so #####

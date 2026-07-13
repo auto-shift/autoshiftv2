@@ -177,7 +177,7 @@ flowchart TB
   M -->|externalCAReuseServingCert| R["Spoke REUSES its apiserver serving cert+key<br/>as the client cert (no minting).<br/>clientCA ← external CA bundle.<br/>⚠ replicates the apiserver private key<br/>into the ESO namespace"]
   S --> CNS["CN = &lt;certCNPrefix&gt;.&lt;managedClusterName&gt;.&lt;baseDomain&gt;<br/>segment = the hub's OCM name for the cluster<br/>(hub owns the signer → its name IS the identity;<br/>unique per hub, so two clusters DNS-named alike stay distinct)"]
   E --> CNE["CN = &lt;certCNPrefix&gt;.&lt;dnsName&gt;.&lt;baseDomain&gt;<br/>segment = apiserver host minus the leading api. label<br/>(api.ocp.zone-a.example.com → ocp.zone-a.example.com) —<br/>must satisfy the outside PKI and stay unambiguous<br/>under a CA shared across hubs"]
-  CNS --> TR["cluster segment truncated to fit 63 chars;<br/>collisions detected → loud failure"]
+  CNS --> TR["cluster segment truncated to fit 63 chars<br/>(trailing . / - trimmed after the cut — never a double dot);<br/>collisions detected → loud failure"]
   CNE --> TR
   R --> ID["identity = the cluster's registered apiserver host<br/>(serving cert Subject CN must equal it;<br/>cert must carry clientAuth EKU)"]
 ```
