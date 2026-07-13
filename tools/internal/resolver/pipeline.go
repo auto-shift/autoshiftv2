@@ -84,6 +84,7 @@ func KustomizeBuild(policyDir string) (string, error) {
 		"${REMEDIATION}", "enforce",
 		"${EVAL_COMPLIANT}", "10m",
 		"${EVAL_NONCOMPLIANT}", "30s",
+		"${CLUSTER_SET_SUFFIX}", "",
 	)
 	work, err := os.MkdirTemp("", "autoshift-kustomize-*")
 	if err != nil {

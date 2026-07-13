@@ -1,0 +1,329 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: policy-cluster-install-vmware
+spec:
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  object-templates-raw: |
+    {{ $policyNamespace := "{{hub (index .ManagedClusterLabels "autoshift.io/policy-namespace") | default "${POLICY_NAMESPACE}" hub}}" }}
+    {{- $configMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/rendered-config-map") | default dict }}
+    {{- range $_, $cm := ($configMaps.items | default list) }}
+    {{- $clusterName := (replace ".rendered-config" "" $cm.metadata.name) }}
+    {{- $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" $clusterName) | default dict }}
+    {{- $mcOwningNs := dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc }}
+    {{- $config := ($cm.data.config | fromYaml) }}
+    {{- $ci := (index $config "clusterInstall" | default dict) }}
+    {{- $platform := (index $ci "platform" | default "baremetal") }}
+    {{- if and (eq (index $ci "createCluster" | default "") "true") (eq $platform "vmware") (not (empty (index $config "vsphere"))) (or (empty $mc) (eq $mcOwningNs $cm.metadata.namespace)) }}
+    {{- $baseDomain := (index $ci "baseDomain") }}
+    {{- $openshiftVersion := (index $ci "openshiftVersion") }}
+    {{- $cpuArch := (index $ci "cpuArch" | default "x86_64") }}
+    {{- $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) }}
+    {{- $secretSourceNs := (index $ci "secretSourceNamespace" | default "cluster-install-secrets") }}
+    {{- $pullSecretRef := (index $ci "pullSecretRef") }}
+    {{- $managedClusterSet := (printf "%s${CLUSTER_SET_SUFFIX}" (index $config "clusterSet" | default "default")) }}
+    {{- $vsphere := (index $config "vsphere" | default dict) }}
+    {{- $credentialRef := (index $vsphere "credentialRef") }}
+    {{- $certRef := (index $vsphere "certificatesRef" | default dict) }}
+    {{- $certRefName := (index $certRef "name" | default $credentialRef) }}
+    {{- $certRefKey := (index $certRef "key" | default "cacert") }}
+    {{- $certRefNs := (index $certRef "namespace" | default $secretSourceNs) }}
+    {{- $sshPublicKey := (index $vsphere "sshPublicKey" | default "") }}
+    {{- $sshKeyRef := (index $vsphere "sshKeyRef" | default dict) }}
+    {{- if not (empty $sshKeyRef) }}
+    {{- $refName := (index $sshKeyRef "name") }}
+    {{- $refKey := (index $sshKeyRef "key" | default "ssh-publickey") }}
+    {{- $refNs := (index $sshKeyRef "namespace" | default $secretSourceNs) }}
+    {{- $sshPublicKey = (fromSecret $refNs $refName $refKey | base64dec) }}
+    {{- end }}{{- $fips := (eq (printf "%v" (index $vsphere "fips" | default false)) "true") }}
+    {{- $networkType := (index $vsphere "networkType" | default "OVNKubernetes") }}
+    {{- $apiVIPs := (index $vsphere "apiVIPs" | default list) }}
+    {{- $ingressVIPs := (index $vsphere "ingressVIPs" | default list) }}
+    {{- $vcenter := (index $vsphere "vcenter" | default dict) }}
+    {{- $vcServer := (index $vcenter "server") }}
+    {{- $vcPort := (index $vcenter "port" | default 443 | toInt) }}
+    {{- $datacenters := (index $vcenter "datacenters" | default list) }}
+    {{- $failureDomains := (index $vsphere "failureDomains" | default list) }}
+    {{- $controlPlane := (index $vsphere "controlPlane" | default dict) }}
+    {{- $cpReplicas := (index $controlPlane "replicas" | default 3 | toInt) }}
+    {{- $cpCores := (index $controlPlane "coresPerSocket" | default 2 | toInt) }}
+    {{- $cpCpus := (index $controlPlane "cpus" | default 4 | toInt) }}
+    {{- $cpMem := (index $controlPlane "memoryMB" | default 16384 | toInt) }}
+    {{- $cpDisk := (index (index $controlPlane "osDisk" | default dict) "diskSizeGB" | default 120 | toInt) }}
+    {{- $workers := (index $vsphere "workers" | default dict) }}
+    {{- $wkReplicas := (index $workers "replicas" | default 3 | toInt) }}
+    {{- $wkCores := (index $workers "coresPerSocket" | default 2 | toInt) }}
+    {{- $wkCpus := (index $workers "cpus" | default 8 | toInt) }}
+    {{- $wkMem := (index $workers "memoryMB" | default 24576 | toInt) }}
+    {{- $wkDisk := (index (index $workers "osDisk" | default dict) "diskSizeGB" | default 120 | toInt) }}
+    {{- $hosts := (index $vsphere "hosts" | default list) }}
+    {{- $networking := (index $config "networking") }}
+    {{- $clusterNetwork := (index $networking "clusterNetwork") }}
+    {{- $machineNetwork := (index $networking "machineNetwork") }}
+    {{- $serviceNetwork := (index $networking "serviceNetwork") }}
+    {{- $disconnected := (index $config "disconnected" | default dict) }}
+    {{- $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) }}
+    {{- $mirrorHost := (index $mirrorReg "host" | default "") }}
+    {{- $mirrorPath := (index $mirrorReg "path" | default "") }}
+    {{- $mirrorUrl := $mirrorHost }}
+    {{- if $mirrorPath }}
+    {{- $mirrorUrl = (printf "%s/%s" $mirrorHost $mirrorPath) }}
+    {{- end }}
+    {{- $mirrors := (index $mirrorReg "mirrors" | default list) }}
+    {{- $caTrustBundle := (index $mirrorReg "ca" | default "") }}
+    {{- $caRef := (index $mirrorReg "caRef" | default dict) }}
+    {{- if not (empty $caRef) }}
+    {{- $caRefNs := (index $caRef "namespace" | default $secretSourceNs) }}
+    {{- $caRefCM := (lookup "v1" "ConfigMap" $caRefNs (index $caRef "name")) | default dict }}
+    {{- $caRefData := (index $caRefCM "data" | default dict) }}
+    {{- $caTrustBundle = (index $caRefData (index $caRef "key") | default $caTrustBundle) }}
+    {{- end }}{{- $fdList := list }}
+    {{- range $_, $fd := $failureDomains }}
+    {{- $topo := (index $fd "topology" | default dict) }}
+    {{- $fdTopo := (dict
+        "computeCluster" (index $topo "computeCluster")
+        "datacenter" (index $topo "datacenter")
+        "datastore" (index $topo "datastore")
+        "networks" (index $topo "networks")
+        "resourcePool" (index $topo "resourcePool")
+    ) }}
+    {{- if (index $topo "folder") }}
+    {{- $_ := set $fdTopo "folder" (index $topo "folder") }}
+    {{- end }}
+    {{- $fdList = append $fdList (dict
+        "name" (index $fd "name")
+        "region" (index $fd "region")
+        "zone" (index $fd "zone")
+        "server" (index $fd "server" | default $vcServer)
+        "topology" $fdTopo
+    ) }}
+    {{- end }}{{- $vcenters := (list (dict
+        "server" $vcServer
+        "port" $vcPort
+        "user" (fromSecret $secretSourceNs $credentialRef "username" | base64dec)
+        "password" (fromSecret $secretSourceNs $credentialRef "password" | base64dec)
+        "datacenters" $datacenters
+    )) }}
+    {{- $vspherePlatform := (dict
+        "apiVIPs" $apiVIPs
+        "ingressVIPs" $ingressVIPs
+        "failureDomains" $fdList
+        "vcenters" $vcenters
+    ) }}{{- if (gt (len $hosts) 0) }}
+    {{- $hostList := list }}
+    {{- range $_, $h := $hosts }}
+    {{- $nd := (index $h "networkDevice" | default dict) }}{{- $ndOut := (dict "ipAddrs" (index $nd "ipAddrs")) }}
+    {{- if (index $nd "gateway") }}
+    {{- $_ := set $ndOut "gateway" (index $nd "gateway") }}
+    {{- end }}
+    {{- if (index $nd "nameservers") }}
+    {{- $_ := set $ndOut "nameservers" (index $nd "nameservers") }}
+    {{- end }}
+    {{- $hostOut := (dict "role" (index $h "role") "networkDevice" $ndOut) }}{{- if (index $h "failureDomain") }}
+    {{- $_ := set $hostOut "failureDomain" (index $h "failureDomain") }}
+    {{- end }}
+    {{- $hostList = append $hostList $hostOut }}
+    {{- end }}
+    {{- $_ := set $vspherePlatform "hosts" $hostList }}
+    {{- end }}{{- $installConfig := (dict
+        "apiVersion" "v1"
+        "metadata" (dict "name" $clusterName)
+        "baseDomain" $baseDomain
+        "networking" (dict
+            "networkType" $networkType
+            "clusterNetwork" (list (dict "cidr" (index $clusterNetwork "cidr") "hostPrefix" (index $clusterNetwork "hostPrefix" | toInt)))
+            "machineNetwork" (list (dict "cidr" (index $machineNetwork "cidr")))
+            "serviceNetwork" $serviceNetwork
+        )
+        "controlPlane" (dict
+            "name" "master"
+            "replicas" $cpReplicas
+            "platform" (dict "vsphere" (dict
+                "coresPerSocket" $cpCores
+                "cpus" $cpCpus
+                "memoryMB" $cpMem
+                "osDisk" (dict "diskSizeGB" $cpDisk)
+            ))
+        )
+        "compute" (list (dict
+            "name" "worker"
+            "replicas" $wkReplicas
+            "platform" (dict "vsphere" (dict
+                "coresPerSocket" $wkCores
+                "cpus" $wkCpus
+                "memoryMB" $wkMem
+                "osDisk" (dict "diskSizeGB" $wkDisk)
+            ))
+        ))
+        "platform" (dict "vsphere" $vspherePlatform)
+        "pullSecret" ""
+        "sshKey" $sshPublicKey
+    ) }}
+    {{- if $fips }}
+    {{- $_ := set $installConfig "fips" true }}
+    {{- end }}
+    {{- if (gt (len $mirrors) 0) }}
+    {{- $imageSources := list }}
+    {{- range $_, $entry := $mirrors }}
+    {{- $source := (index $entry "source") }}
+    {{- $mirrorLoc := (index $entry "mirror" | default "") }}
+    {{- if $mirrorLoc }}
+    {{- $mirrorLoc = (printf "%s/%s" $mirrorHost $mirrorLoc) }}
+    {{- else }}
+    {{- $mirrorLoc = $mirrorUrl }}
+    {{- end }}
+    {{- $imageSources = append $imageSources (dict "source" $source "mirrors" (list $mirrorLoc)) }}
+    {{- end }}
+    {{- $_ := set $installConfig "imageDigestSources" $imageSources }}
+    {{- end }}
+    {{- if $caTrustBundle }}
+    {{- $_ := set $installConfig "additionalTrustBundle" $caTrustBundle }}
+    {{- end }}{{- $fd0 := dict }}
+    {{- if (gt (len $failureDomains) 0) }}
+    {{- $fd0 = (index $failureDomains 0) }}
+    {{- end }}
+    {{- $topo0 := (index $fd0 "topology" | default dict) }}
+    {{- $cdDatacenter := (index $topo0 "datacenter") }}
+    {{- $cdDatastore := (index $topo0 "datastore") }}
+    {{- $cdCluster := (index $topo0 "computeCluster") }}
+    {{- $networks0 := (index $topo0 "networks" | default list) }}
+    {{- $cdNetwork := "" }}
+    {{- if (gt (len $networks0) 0) }}
+    {{- $cdNetwork = (index $networks0 0) }}
+    {{- end }}
+    {{- $cdFolder := (index $topo0 "folder" | default "") }}
+
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: v1
+        kind: Secret
+        type: kubernetes.io/basic-auth
+        metadata:
+          name: {{ $clusterName }}-vsphere-creds
+          namespace: {{ $clusterName }}
+        data:
+          username: {{ fromSecret $secretSourceNs $credentialRef "username" }}
+          password: {{ fromSecret $secretSourceNs $credentialRef "password" }}
+
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: v1
+        kind: Secret
+        type: Opaque
+        metadata:
+          name: {{ $clusterName }}-vsphere-certs
+          namespace: {{ $clusterName }}
+        data:
+          .cacert: {{ fromSecret $certRefNs $certRefName $certRefKey }}
+
+    {{- $psName := "" }}
+    {{- $psKey := ".dockerconfigjson" }}
+    {{- $psNs := $secretSourceNs }}
+    {{- if kindIs "string" $pullSecretRef }}
+    {{- $psName = $pullSecretRef }}
+    {{- else }}
+    {{- $psName = (index $pullSecretRef "name" | default "") }}
+    {{- $psKey = (index $pullSecretRef "key" | default ".dockerconfigjson") }}
+    {{- $psNs = (index $pullSecretRef "namespace" | default $secretSourceNs) }}
+    {{- end }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: v1
+        kind: Secret
+        type: kubernetes.io/dockerconfigjson
+        metadata:
+          name: {{ $clusterName }}-pull-secret
+          namespace: {{ $clusterName }}
+        data:
+          .dockerconfigjson: {{ fromSecret $psNs $psName $psKey }}
+
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: v1
+        kind: Secret
+        type: Opaque
+        metadata:
+          name: {{ $clusterName }}-install-config
+          namespace: {{ $clusterName }}
+        data:
+          install-config.yaml: '{{ $installConfig | toYaml | base64enc }}'
+    {{- $existingCD := (lookup "hive.openshift.io/v1" "ClusterDeployment" $clusterName $clusterName) | default dict }}
+    {{- $alreadyInstalled := (index ($existingCD.spec | default dict) "installed" | default false) }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: hive.openshift.io/v1
+        kind: ClusterDeployment
+        metadata:
+          name: {{ $clusterName }}
+          namespace: {{ $clusterName }}
+          labels:
+            cloud: vSphere
+            vendor: OpenShift
+            cluster.open-cluster-management.io/clusterset: {{ $managedClusterSet }}
+        spec:
+          baseDomain: {{ $baseDomain }}
+          clusterName: {{ $clusterName }}
+          controlPlaneConfig:
+            servingCertificates: {}
+          installAttemptsLimit: 1
+          installed: {{ $alreadyInstalled }}
+          platform:
+            vsphere:
+              vCenter: {{ $vcServer }}
+              datacenter: {{ $cdDatacenter }}
+              defaultDatastore: {{ $cdDatastore }}
+              cluster: {{ $cdCluster }}
+              network: {{ $cdNetwork }}
+            {{- if $cdFolder }}
+              folder: {{ $cdFolder }}
+            {{- end }}
+              credentialsSecretRef:
+                name: {{ $clusterName }}-vsphere-creds
+              certificatesSecretRef:
+                name: {{ $clusterName }}-vsphere-certs
+          provisioning:
+            installConfigSecretRef:
+              name: {{ $clusterName }}-install-config
+            imageSetRef:
+              name: {{ $imageSet }}
+          pullSecretRef:
+            name: {{ $clusterName }}-pull-secret
+
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: hive.openshift.io/v1
+        kind: MachinePool
+        metadata:
+          name: {{ $clusterName }}-worker
+          namespace: {{ $clusterName }}
+        spec:
+          clusterDeploymentRef:
+            name: {{ $clusterName }}
+          name: worker
+          replicas: {{ $wkReplicas }}
+          platform:
+            vsphere:
+              coresPerSocket: {{ $wkCores }}
+              cpus: {{ $wkCpus }}
+              memoryMB: {{ $wkMem }}
+              osDisk:
+                diskSizeGB: {{ $wkDisk }}
+
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: cluster.open-cluster-management.io/v1
+        kind: ManagedCluster
+        metadata:
+          name: {{ $clusterName }}
+          labels:
+            cloud: vSphere
+            vendor: OpenShift
+            cluster.open-cluster-management.io/clusterset: {{ $managedClusterSet }}
+        spec:
+          hubAcceptsClient: true
+    {{- end }}
+    {{- end }}
