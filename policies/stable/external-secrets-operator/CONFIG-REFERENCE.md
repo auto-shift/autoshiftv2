@@ -84,8 +84,8 @@ defaults/policy apply (prevents fighting an external CA's reissue rules).
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `certCNPrefix` | string | `eso-client` | Client cert CN prefix. Full CN = `<prefix>.<managedClusterName>.<baseDomain>`. |
-| `baseDomain` | string | `''` | CN base domain (FQDN tail). `selfSigned`: defaults to `autoshift.io`. `externalCA`: **required** (must satisfy the customer PKI). CN capped at 63 chars — the `managedClusterName` segment is truncated to fit; the policy fails loudly if no budget remains or two truncated names collide. |
+| `certCNPrefix` | string | `eso-client` | Client cert CN prefix. Full CN = `<prefix>.<segment>.<baseDomain>`; the segment is the **OCM ManagedCluster name** in `selfSigned` mode (the hub owns the signer, so its name for the cluster is the identity) and the **DNS name from the apiserver URL** (`api.<name>.<base>` → `<name>`) in the external modes. |
+| `baseDomain` | string | `''` | CN base domain (FQDN tail). `selfSigned`: defaults to `autoshift.io`. `externalCA`: **required** (must satisfy the customer PKI). CN capped at 63 chars — the cluster segment is truncated to fit; the policy fails loudly if no budget remains or two truncated segments collide. |
 | `certDuration` | duration | `720h` (selfSigned) / omit (externalCA) | cert-manager Certificate `duration` for client certs. |
 | `certRenewBefore` | duration | `480h` (selfSigned) / omit (externalCA) | cert-manager `renewBefore` window. |
 | `certUsages` | list(string) | `[client auth, digital signature, key encipherment]` (selfSigned) / omit (externalCA) | Certificate `usages`. If you set it, keep `client auth` — hub mTLS requires it. Not listed in `values.yaml` but settable there and at runtime. |

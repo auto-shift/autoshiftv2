@@ -1245,8 +1245,10 @@ Three policies cooperate — two run on the hub, one copies to the spokes:
   namespace (a cluster-scoped lookup, so it works no matter how many AutoShift deployments share the
   hub; a cluster missing the label is skipped). Into the policy namespace it mints, **per eligible
   cluster**, an **auto-rotating** client `Certificate` with CN
-  `<certCNPrefix>.<managedClusterName>.<baseDomain>` (signed by the CA; the cluster-name segment is
-  truncated so the whole CN fits 63 chars) plus a per-cluster `RoleBinding` to a shared reader `Role`,
+  `<certCNPrefix>.<managedClusterName>.<baseDomain>` — the segment is the hub's **OCM name** for
+  the cluster (the hub owns the signer, so its own name for each cluster is the identity; unique
+  per hub, so two clusters that happen to share a DNS name stay distinct), truncated so the whole
+  CN fits 63 chars with the full name carried as a SAN — plus a per-cluster `RoleBinding` to a shared reader `Role`,
   granting that CN **read** on Secrets in the policy namespace only. Depends on cert-manager being
   installed on the hub (`autoshift.io/cert-manager: 'true'`).
   - **Hub vs runtime split:** hub templates do **only** rendered-config derivation — they load this
@@ -1419,7 +1421,7 @@ trusts*; the serving-CA / server-trust half is identical across modes. Pick **on
 | Mode | Client cert | Hub `clientCA` trusts | RBAC subject | Hub policy |
 |---|---|---|---|---|
 | `selfSigned` *(default)* | hub mints per-cluster cert, copies to spoke | hub-minted self-signed CA | derived CN `<prefix>.<cluster>.<baseDomain>` | `…-boot-clientca-self` |
-| `externalCA` | **spoke** mints its own cert via a user-provided issuer (key never leaves the spoke) | a shared **external** CA bundle | same derived CN (both sides compute it from `.ManagedClusterName`) | `…-boot-clientca-ext` |
+| `externalCA` | **spoke** mints its own cert via a user-provided issuer (key never leaves the spoke) | a shared **external** CA bundle | same CN shape, segment = DNS name from the apiserver URL (`api.<name>.<base>` → `<name>`; both sides derive it from the `apiserverurl.openshift.io` ClusterClaim) | `…-boot-clientca-ext` |
 | `externalCAReuseServingCert` | **spoke reuses its apiserver serving cert** (no cert minted) | the same external CA bundle | the cluster's registered apiserver **host** (discovered from `ManagedCluster.spec.managedClusterClientConfigs[].url`) | `…-boot-clientca-ext` |
 
 The three cert-creation paths — what mints the client cert, what the hub `clientCA` trusts, and

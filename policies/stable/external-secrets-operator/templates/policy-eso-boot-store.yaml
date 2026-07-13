@@ -45,9 +45,9 @@
 {{ "{{hub-" }} $spokeIssuerKind := (index $spokeIssuer "kind" | default "{{ .defaultSpokeIssuerKind }}") {{ "hub}}" }}
 {{ "{{hub-" }} $spokeIssuerGroup := (index $spokeIssuer "group" | default "{{ .defaultSpokeIssuerGroup }}") {{ "hub}}" }}
 ##### selfSigned client-secret COPY NAME segment — the OCM ManagedCluster name, which is the SAME segment #####
-##### the hub clientca-selfsigned policy names its per-cluster client SECRET with (storage identity, NOT #####
-##### the cert CN — the hub derives the CN from the REAL cluster name, but the secret name keys off the #####
-##### OCM name because it is unique per hub and needs no clusterClaim lookup here). We reuse the OCM name #####
+##### the hub clientca-selfsigned policy uses for BOTH its per-cluster client SECRET name and the cert #####
+##### CN (the hub owns the signer, so its own name for the cluster is the identity; unique per hub, no #####
+##### clusterClaim lookup needed on either side). We reuse the OCM name #####
 ##### (not a raw value) with the identical truncation budget so the copied secret name matches the hub #####
 ##### side and can never outgrow its name limit. selfSigned baseDomain defaults to autoshift.io exactly #####
 ##### as the hub policy does, so the truncation budget is identical. #####
@@ -427,7 +427,7 @@
 {{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
 {{- /* Explicit decommission flag (config.eso.hubBootstrap.teardown / values hubBootstrap.teardown). */}}
 {{- $defaultTeardown := (dig "teardown" "" $hb | default false) }}
-{{- $defaultCertCNPrefix := (dig "clientIdentity" "certCNPrefix" "" $hb | default "autoshift-eso-client") }}
+{{- $defaultCertCNPrefix := (dig "clientIdentity" "certCNPrefix" "" $hb | default "eso-client") }}
 {{- $defaultCertBaseDomain := (dig "clientIdentity" "baseDomain" "" $hb | default "") }}
 {{- /* selfSigned segment-budget default — MUST mirror the hub clientca-selfsigned policy's $defaultCertBaseDomain */}}
 {{- /* (hubBootstrap.clientIdentity.baseDomain default "autoshift.io"), or the truncation budget — hence the */}}

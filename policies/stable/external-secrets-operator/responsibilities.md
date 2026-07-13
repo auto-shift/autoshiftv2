@@ -131,7 +131,7 @@ in `selfSigned` mode; renders inert otherwise.
 
 | CP | Responsibility |
 |---|---|
-| `eso-boot-clientca-self` (enforce) | Mint the self-signed bootstrap CA, then for every ManagedCluster carrying an `autoshift.io/owning-namespace` label (across ALL deployments, not just this one): mint a per-cluster client cert (CN = `<prefix>.<cluster>.<baseDomain>`, with the CN-truncation rule) into that cluster's owning namespace, and create the reader Role/RoleBinding there so the CN can read exactly its deployment's secrets. Tenancy is per-owning-namespace by design. Includes cleanup sweeps for departed clusters/certs. |
+| `eso-boot-clientca-self` (enforce) | Mint the self-signed bootstrap CA, then for every ManagedCluster carrying an `autoshift.io/owning-namespace` label (across ALL deployments, not just this one): mint a per-cluster client cert (CN = `<prefix>.<managedClusterName>.<baseDomain>` — the hub's OCM name for the cluster, with the CN-truncation rule; the DNS-derived identity is externalCA-only) into that cluster's owning namespace, and create the reader Role/RoleBinding there so the CN can read exactly its deployment's secrets. Tenancy is per-owning-namespace by design. Includes cleanup sweeps for departed clusters/certs. |
 | `eso-boot-clientca-self-gate` (inform) | Status-ConfigMap gate. |
 
 ### `templates/policy-eso-boot-clientca-self-wire.yaml` *(hub-gated render; define `eso.bootBody.clientcaSelfWire`)*

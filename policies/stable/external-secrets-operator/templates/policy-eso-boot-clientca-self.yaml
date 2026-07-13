@@ -54,7 +54,6 @@
 {{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
 {{ "{{-" }} $eligible := list {{ "}}" }}
 {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
-{{ "{{-" }} $seenCNs := dict {{ "}}" }}
 {{ "{{-" }} $seenNames := dict {{ "}}" }}
 ##### This policy owns the selfSigned mode ONLY. In externalCA / externalCAReuseServingCert #####
 ##### the hub mints no CA + no client certs — policy ...-boot-clientca-ext owns those #####
@@ -76,55 +75,32 @@
       ##### reported at once) and only register + mint a cluster that derives cleanly. $clusterOk tracks #####
       ##### whether THIS cluster is usable; ANY error blocks the whole action below (all-or-nothing, as #####
       ##### the previous `fail` did). Crash-prone index ops are guarded behind their precondition checks. #####
-      ##### SECRET-NAME segment (STORAGE, not identity): the OCM ManagedCluster name. It is UNIQUE per #####
-      ##### hub and available with no lookup, and the secret only ever lives in this hub's namespaces — #####
-      ##### so the spoke store copies it by this SAME OCM name with no clusterClaim derivation. Truncated #####
-      ##### to the budget purely so the resource name stays bounded; collision = truncation only. substr #####
-      ##### needs int args, but ACM math (add/sub) yields int64 — convert with toInt (sprig slice rejects strings). #####
+      ##### SHARED segment (client-secret NAME + cert CN): the OCM ManagedCluster name. It is UNIQUE per #####
+      ##### hub and available with no lookup; the spoke store copies the secret by this SAME OCM name with #####
+      ##### no clusterClaim derivation. Truncated to the budget so the CN fits 63 chars (and the resource #####
+      ##### name stays bounded); a collision is only ever a truncation artifact. substr needs int args, #####
+      ##### but ACM math (add/sub) yields int64 — convert with toInt (sprig slice rejects strings). #####
       {{ "{{-" }} $clusterOk := true {{ "}}" }}
       {{ "{{-" }} $nameSeg := $mcName {{ "}}" }}
       {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}{{ "{{-" }} $nameSeg = (substr 0 (toInt $cnBudget) $mcName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
       {{ "{{-" }} if hasKey $seenNames $nameSeg {{ "}}" }}
-        {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap client-secret name collision after truncation: clusters %q and %q both map to secret segment %q; lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenNames $nameSeg) $mcName $nameSeg) {{ "}}" }}
+        {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap identity collision after truncation: clusters %q and %q both map to segment %q (client-secret name AND cert-CN segment); lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenNames $nameSeg) $mcName $nameSeg) {{ "}}" }}
         {{ "{{-" }} $clusterOk = false {{ "}}" }}
       {{ "{{-" }} end {{ "}}" }}
-      ##### CN segment (IDENTITY / RBAC subject): the cluster's REAL name = the apiserverurl.openshift.io #####
-      ##### clusterClaim host label (api.<realName>.<base> -> <realName>), NOT $mcName. Self-managed hubs #####
-      ##### are ALL named "local-cluster", so the OCM name would collide into one ambiguous identity if this #####
-      ##### signer's CA were ever shared. Byte-identical derivation to the externalCA companion + the spoke #####
-      ##### store, so the identity contract is uniform across every mode. The full (untruncated) real name #####
-      ##### is carried as a SAN below so the complete identity survives CN truncation. #####
-      {{ "{{-" }} $apiUrl := "" {{ "}}" }}
-      {{ "{{-" }} range $claim := (dig "status" "clusterClaims" (list) $mc) {{ "}}" }}
-        {{ "{{-" }} if eq (dig "name" "" $claim) "apiserverurl.openshift.io" {{ "}}" }}{{ "{{-" }} $apiUrl = (dig "value" "" $claim) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} $certCN := "" {{ "}}" }}
-      {{ "{{-" }} $realName := "" {{ "}}" }}
-      {{ "{{-" }} if eq $apiUrl "" {{ "}}" }}
-        {{ "{{-" }} $errors = append $errors (printf "[spoke] ManagedCluster %q has no apiserverurl.openshift.io clusterClaim — cannot derive its real cluster name for the client cert CN" $mcName) {{ "}}" }}
-        {{ "{{-" }} $clusterOk = false {{ "}}" }}
-      {{ "{{-" }} else {{ "}}" }}
-        {{ "{{-" }} $hostLabels := (splitList "." (index (splitList ":" (replace "https://" "" $apiUrl)) 0)) {{ "}}" }}
-        {{ "{{-" }} if lt (len $hostLabels) 2 {{ "}}" }}
-          {{ "{{-" }} $errors = append $errors (printf "[spoke] ManagedCluster %q apiserver URL %q is not of the form https://api.<cluster>.<base> — cannot derive the real cluster name" $mcName $apiUrl) {{ "}}" }}
-          {{ "{{-" }} $clusterOk = false {{ "}}" }}
-        {{ "{{-" }} else {{ "}}" }}
-          {{ "{{-" }} $realName = (index $hostLabels 1) {{ "}}" }}
-          {{ "{{-" }} $cnSeg := $realName {{ "}}" }}
-          {{ "{{-" }} if gt (len $realName) $cnBudget {{ "}}" }}{{ "{{-" }} $cnSeg = (substr 0 (toInt $cnBudget) $realName) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-          {{ "{{-" }} $certCN = (printf "%s.%s.%s" $certCNPrefix $cnSeg $certBaseDomain) {{ "}}" }}
-          {{ "{{-" }} if hasKey $seenCNs $certCN {{ "}}" }}
-            {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap CN collision after truncation: clusters %q and %q both map to CN %q; lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenCNs $certCN) $mcName $certCN) {{ "}}" }}
-            {{ "{{-" }} $clusterOk = false {{ "}}" }}
-          {{ "{{-" }} end {{ "}}" }}
-        {{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
+      ##### CN segment (IDENTITY / RBAC subject): the SAME OCM-name segment. This hub OWNS the self- #####
+      ##### signed signer, so the name the hub knows the cluster by IS the authoritative identity inside #####
+      ##### that trust domain — and OCM names are unique per hub, so distinct clusters can only collide #####
+      ##### through truncation (caught above; two clusters legitimately named the same in DIFFERENT DNS #####
+      ##### zones stay distinct here, unlike a DNS-derived segment). The apiserver-URL "real name" #####
+      ##### derivation is externalCA-only (clientca-ext + boot-store), where the CN must satisfy an #####
+      ##### outside PKI and the CA may be shared across hubs (every self-managed hub is "local-cluster"). #####
+      ##### The full (untruncated) OCM name rides as a SAN below so the identity survives CN truncation. #####
+      {{ "{{-" }} $certCN := (printf "%s.%s.%s" $certCNPrefix $nameSeg $certBaseDomain) {{ "}}" }}
       ##### register + enqueue only a fully-valid cluster (seen* maps stay collision-accurate; an errored #####
       ##### cluster is skipped, and the action is blocked wholesale by `not $errors` below regardless). #####
       {{ "{{-" }} if $clusterOk {{ "}}" }}
         {{ "{{-" }} $seenNames = set $seenNames $nameSeg $mcName {{ "}}" }}
-        {{ "{{-" }} $seenCNs = set $seenCNs $certCN $mcName {{ "}}" }}
-        {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "cn" $certCN "seg" $nameSeg "san" $realName "ns" $tenancyNs) {{ "}}" }}
+        {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "cn" $certCN "seg" $nameSeg "san" $mcName "ns" $tenancyNs) {{ "}}" }}
         ##### group CNs by owning namespace for the per-namespace reader Role + RoleBinding below #####
         {{ "{{-" }} $nsList := (index $nsIdentities $tenancyNs | default list) {{ "}}" }}
         {{ "{{-" }} $nsList = append $nsList $certCN {{ "}}" }}
@@ -227,7 +203,7 @@
   {{ "{{-" }} end {{ "}}" }}
   ##### PER CLUSTER: one client cert minted into the cluster's OWN owning namespace (where its owning #####
   ##### deployment's store policy reads it). Secret name reuses the truncated CN segment, so that store #####
-  ##### derives the identical name. CN uniqueness is enforced hub-wide above ($seenCNs), across namespaces. #####
+  ##### derives the identical name. Segment (and so CN) uniqueness is enforced hub-wide above ($seenNames), across namespaces. #####
   {{ "{{-" }} range $entry := $eligible {{ "}}" }}
     {{ "{{-" }} $secretName := (printf "%s-%s" "{{ .clientSecret }}" (index $entry "seg")) {{ "}}" }}
 - complianceType: musthave
@@ -241,7 +217,7 @@
         autoshift.io/hub-bootstrap-client-cert: {{ .storePrefix }}
     spec:
       commonName: {{ "{{" }} (index $entry "cn") {{ "}}" }}
-      ##### full (untruncated) real cluster name as a SAN so the complete identity is preserved even #####
+      ##### full (untruncated) OCM cluster name as a SAN so the complete identity is preserved even #####
       ##### when the CN's cluster segment was truncated to the 63-char budget #####
       dnsNames:
         - {{ "{{" }} (index $entry "san") {{ "}}" }}
@@ -429,10 +405,11 @@
 # an autoshift cluster), and issues, PER CLUSTER, into that cluster's OWN owning namespace (NOT this
 # policy's namespace — the owning deployment's store policy reads the client Secret AND the Secrets
 # it wants from there, so both the identity and its RBAC must land in the owning namespace):
-#   - one client Certificate, CN = "<certCNPrefix>.<realClusterName>.<baseDomain>" where realClusterName
-#     is the cluster's apiserverurl.openshift.io clusterClaim host label (api.<realName>.<base>), NOT the
-#     OCM ManagedCluster name (self-managed hubs are all "local-cluster"); the segment is truncated so the
-#     whole CN fits 63 chars and the full real name is added as a SAN, and
+#   - one client Certificate, CN = "<certCNPrefix>.<managedClusterName>.<baseDomain>" — the OCM name the
+#     hub knows the cluster by. This hub OWNS the self-signed signer, so its own name for each cluster is
+#     the authoritative identity in that trust domain, and OCM names are unique per hub ("local-cluster"
+#     ambiguity only exists ACROSS hubs, which never share this CA). The segment is truncated so the
+#     whole CN fits 63 chars and the full OCM name is added as a SAN, and
 #   - a shared reader Role per owning namespace, plus ONE RoleBinding per owning namespace whose
 #     subjects are every owned cluster's CN (grouped by namespace, not one binding per cluster).
 # The CA + ClusterIssuers stay hub-global (single shared trust domain); only the per-cluster cert + the
@@ -441,11 +418,11 @@
 # site below for why it cannot share this template. The trust MODE (selfSigned vs externalCA) is
 # necessarily hub-uniform — it wires the single APIServer.spec.clientCA — so deriving it (and the CN
 # settings) from this hub's rendered config below is correct for every cluster the hub hosts.
-# Per-cluster CN (not per-namespace) so the SAME derivation works for the external-CA variant where
-# the spoke mints its own cert with CN derived from its OWN apiserverurl.openshift.io clusterClaim — both
-# sides compute the identical CN from the cluster's REAL name, so the identity contract needs no coordination.
-# The per-cluster client SECRET name, by contrast, keys off the OCM ManagedCluster name (unique per hub,
-# storage-only) so the spoke store copies it without any clusterClaim derivation of its own.
+# The external-CA variant (clientca-ext + the spoke's boot-store mint) derives its CN differently — from
+# the cluster's apiserverurl.openshift.io clusterClaim (api.<realName>.<base>) — because there the CN must
+# satisfy an OUTSIDE PKI and stay unambiguous under a CA that may be shared across hubs (every self-managed
+# hub is "local-cluster"). Here both the client SECRET name and the CN reuse the same OCM-name segment, so
+# the spoke store copies the secret without any clusterClaim derivation of its own.
 # Truncation can in principle collide two clusters sharing the surviving budget; ACM templates have
 # no hash function, so the loop DETECTS a collision and fails loudly rather than silently merging
 # identities. A spoke needs no per-cluster wiring: its copy policy reads <prefix>-client-<its name>.
@@ -489,7 +466,7 @@
   {{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
   {{- /* Explicit decommission flag (config.eso.hubBootstrap.teardown / values hubBootstrap.teardown). */}}
   {{- $defaultTeardown := (dig "teardown" "" $hb | default false) }}
-  {{- $defaultCertCNPrefix := (dig "clientIdentity" "certCNPrefix" "" $hb | default "autoshift-eso-client") }}
+  {{- $defaultCertCNPrefix := (dig "clientIdentity" "certCNPrefix" "" $hb | default "eso-client") }}
   {{- /* selfSigned identity domain has a sensible default (the certs never leave the autoshift trust */}}
   {{- /* domain); externalCA, where the CN must satisfy the customer PKI, leaves this empty + REQUIRED. */}}
   {{- $defaultCertBaseDomain := (dig "clientIdentity" "baseDomain" "" $hb | default "autoshift.io") }}

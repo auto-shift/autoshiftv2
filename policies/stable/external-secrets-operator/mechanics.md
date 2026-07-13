@@ -175,8 +175,10 @@ flowchart TB
   M -->|selfSigned| S["Hub mints self-signed CA (cert-manager)<br/>+ one client cert per cluster,<br/>copies cert to spoke.<br/>clientCA ← minted CA"]
   M -->|externalCA| E["SPOKE mints its own client cert via a<br/>user-provided (Cluster)Issuer chained to a<br/>shared external CA — key never leaves the spoke.<br/>clientCA ← external CA bundle"]
   M -->|externalCAReuseServingCert| R["Spoke REUSES its apiserver serving cert+key<br/>as the client cert (no minting).<br/>clientCA ← external CA bundle.<br/>⚠ replicates the apiserver private key<br/>into the ESO namespace"]
-  S --> CN["same CN contract in all minting modes:<br/>&lt;certCNPrefix&gt;.&lt;managedClusterName&gt;.&lt;baseDomain&gt;<br/>(cluster segment truncated to fit 63 chars;<br/>collisions detected → loud failure)"]
-  E --> CN
+  S --> CNS["CN = &lt;certCNPrefix&gt;.&lt;managedClusterName&gt;.&lt;baseDomain&gt;<br/>segment = the hub's OCM name for the cluster<br/>(hub owns the signer → its name IS the identity;<br/>unique per hub, so two clusters DNS-named alike stay distinct)"]
+  E --> CNE["CN = &lt;certCNPrefix&gt;.&lt;dnsName&gt;.&lt;baseDomain&gt;<br/>segment = DNS name from the apiserver URL<br/>(api.&lt;name&gt;.&lt;base&gt; → &lt;name&gt;) — must satisfy the outside PKI<br/>and stay unambiguous under a CA shared across hubs"]
+  CNS --> TR["cluster segment truncated to fit 63 chars;<br/>collisions detected → loud failure"]
+  CNE --> TR
   R --> ID["identity = the cluster's registered apiserver host<br/>(serving cert Subject CN must equal it;<br/>cert must carry clientAuth EKU)"]
 ```
 
@@ -186,8 +188,12 @@ flowchart TB
   ConfigMap cluster-wide: this feature claims it (stable name `<storePrefix>-client-ca`,
   idempotent across deployments), and one hub must agree on one mode.
 - **Same CN derivation on hub and spoke.** In `externalCA` mode the spoke derives the CN from
-  `$.ManagedClusterName` exactly as the hub derives the RBAC subject, so identity and
-  authorization match without any cert crossing clusters.
+  its own apiserver URL (`api.<name>.<base>` → `<name>`, via the `apiserverurl.openshift.io`
+  ClusterClaim) exactly as the hub derives the RBAC subject from the same claim on the
+  ManagedCluster, so identity and authorization match without any cert crossing clusters. In
+  `selfSigned` mode the segment is instead the **OCM ManagedCluster name** — the hub owns the
+  signer, so the name it registered the cluster under is the identity; the spoke needs no
+  derivation at all (its cert is minted on the hub and copied).
 - **Emit-only-when-set cert fields.** cert-manager re-issues whenever the returned X.509
   drifts from the `Certificate` spec. External issuers (Venafi/TPP, ACME…) often override
   validity/usages/key type — a spec that insists on them causes a permanent re-issue loop
