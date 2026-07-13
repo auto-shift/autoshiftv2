@@ -1303,7 +1303,7 @@ config:
       # LEFT UNSET so the external issuer governs validity + keyUsage and is never fought into a perpetual
       # re-issue loop (see the "external issuers" note below).
       clientIdentity:
-        certCNPrefix: autoshift-eso-client   # client cert CN = <prefix>.<managedClusterName>.<baseDomain> (default from values)
+        certCNPrefix: eso-client   # client cert CN = <prefix>.<managedClusterName>.<baseDomain> (default from values)
         # baseDomain: eso.hub.example.com    # CN FQDN tail (selfSigned default: autoshift.io; REQUIRED in externalCA)
         # certDuration: 720h                 # unset -> selfSigned: 720h; external: omitted (issuer decides)
         # certRenewBefore: 480h              # unset -> selfSigned: 480h; external: omitted (issuer decides)
@@ -1681,7 +1681,7 @@ clusters:
           mode: selfSigned                              # default; may be omitted
           # ---- client identity (all optional in selfSigned) ----
           clientIdentity:
-            certCNPrefix: autoshift-eso-client          # CN = <prefix>.<cluster>.<baseDomain>
+            certCNPrefix: eso-client          # CN = <prefix>.<cluster>.<baseDomain>
             baseDomain: autoshift.io                    # default; origin marker, never leaves the trust domain
             # certDuration: 720h                        # optional; selfSigned default if unset
             # certRenewBefore: 480h                     # optional; selfSigned default if unset
@@ -1704,7 +1704,7 @@ clusters:
           mode: externalCA
           clientIdentity:
             baseDomain: eso.hub.example.com             # REQUIRED: spoke-derived CN + hub RBAC both use it
-            # certCNPrefix: autoshift-eso-client        # optional; defaults to the chart value
+            # certCNPrefix: eso-client        # optional; defaults to the chart value
           externalCertAuthority:
             certIssuer:                                 # REQUIRED: user-provisioned, chained to the external CA
               name: shared-ca-issuer

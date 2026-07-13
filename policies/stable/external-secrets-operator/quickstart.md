@@ -128,7 +128,7 @@ Common to every mode:
 
 **Concept.** cert-manager on the hub mints one self-signed CA and, from it, one client cert
 per owned managed cluster (CN `<certCNPrefix>.<clusterName>.<baseDomain>`, default
-`autoshift-eso-client.<cluster>.autoshift.io`). The CA is wired into the hub apiserver's
+`eso-client.<cluster>.autoshift.io`). The CA is wired into the hub apiserver's
 client trust; each spoke copies *its own* cert and builds the store with it. Rotation is
 continuous — cert-manager renews the cert, the copy policy re-copies it every evaluation.
 Nothing external is required; `autoshift.io` as `baseDomain` is just an origin marker (the
@@ -149,7 +149,7 @@ hubClusterSets:
           # mode: selfSigned            # default; may be omitted
           # storeName: hub-bootstrap    # ClusterSecretStore name created on each spoke (default)
           clientIdentity:
-            baseDomain: autoshift.io    # default; CN = autoshift-eso-client.<cluster>.autoshift.io
+            baseDomain: autoshift.io    # default; CN = eso-client.<cluster>.autoshift.io
             # certDuration: 720h        # optional; mode defaults 720h / 480h are applied if unset
             # certRenewBefore: 480h
     labels:
@@ -217,7 +217,7 @@ hubClusterSets:
           mode: externalCA
           clientIdentity:
             baseDomain: eso.corp.example.com     # REQUIRED — both sides derive the same CN from it
-            # certCNPrefix: autoshift-eso-client # optional; chart default
+            # certCNPrefix: eso-client # optional; chart default
           externalCertAuthority:
             certIssuer:                          # REQUIRED — customer-provisioned on each spoke,
               name: shared-ca-issuer             # chained to the shared external CA

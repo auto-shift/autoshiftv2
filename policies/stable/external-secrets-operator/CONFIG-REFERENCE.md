@@ -84,7 +84,7 @@ defaults/policy apply (prevents fighting an external CA's reissue rules).
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `certCNPrefix` | string | `autoshift-eso-client` | Client cert CN prefix. Full CN = `<prefix>.<managedClusterName>.<baseDomain>`. |
+| `certCNPrefix` | string | `eso-client` | Client cert CN prefix. Full CN = `<prefix>.<managedClusterName>.<baseDomain>`. |
 | `baseDomain` | string | `''` | CN base domain (FQDN tail). `selfSigned`: defaults to `autoshift.io`. `externalCA`: **required** (must satisfy the customer PKI). CN capped at 63 chars — the `managedClusterName` segment is truncated to fit; the policy fails loudly if no budget remains or two truncated names collide. |
 | `certDuration` | duration | `720h` (selfSigned) / omit (externalCA) | cert-manager Certificate `duration` for client certs. |
 | `certRenewBefore` | duration | `480h` (selfSigned) / omit (externalCA) | cert-manager `renewBefore` window. |
