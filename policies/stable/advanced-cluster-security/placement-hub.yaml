@@ -1,13 +1,12 @@
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-acs
+  name: placement-policy-acs-hub
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Shared/both-tier placement: policies that ran on BOTH hub and managed clusters in the old chart
-  # (operator install, console link). Hub-only and managed-only policies use placement-hub.yaml /
-  # placement-managed.yaml instead (they add a self-managed Exists/DoesNotExist predicate to
-  # reproduce the old clusterSets: hubClusterSets / managedClusterSets scoping).
+  # Hub-side ACS (Central + its config). Restores the old clusterSets: hubClusterSets scope:
+  # autoshift.io/self-managed is a hub-only label (managed clusters never carry it), so Exists
+  # selects hub-clusterset members (self-managed hubs AND spoke hubs).
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -16,6 +15,8 @@ spec:
               operator: In
               values:
                 - 'true'
+            - key: 'autoshift.io/self-managed'
+              operator: Exists
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

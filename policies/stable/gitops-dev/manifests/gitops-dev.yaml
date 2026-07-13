@@ -20,6 +20,7 @@ spec:
             {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
             {{hub- $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
             {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
+            {{hub- $isHub := ne (index .ManagedClusterLabels "autoshift.io/self-managed") "" hub}}
             {{hub- $clusterSets := list hub}}
             {{hub- $mcsList := (lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "") | default dict hub}}
             {{hub- range $_, $mcs := ($mcsList.items | default list) hub}}
@@ -36,6 +37,7 @@ spec:
             {{hub- end hub}}
             {{hub- $route := (lookup "route.openshift.io/v1" "Route" (printf "openshift-gitops-%s" $team) "argocd-dev-server") | default dict hub}}
             {{hub- $host := (dig "spec" "host" "" $route) hub}}
+            {{hub- if or (and (eq $mode "hub") $isHub) (and (eq $mode "standalone") (not $isHub)) hub}}
             - complianceType: musthave
               objectDefinition:
                 kind: Namespace
@@ -209,6 +211,7 @@ spec:
                   namespace: openshift-gitops-{{hub $team hub}}
                 spec:
                   clusterSet: {{hub . hub}}
+            {{hub- end hub}}
             {{hub- end hub}}
             {{hub- end hub}}
             {{hub- end hub}}

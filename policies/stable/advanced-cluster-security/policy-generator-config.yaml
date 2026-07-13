@@ -39,8 +39,10 @@ policies:
     remediationAction: ${REMEDIATION}
     manifests:
       - path: manifests/operator-install
-  # 2) Central CR + readiness gate. MIXED: Central enforce, the status check informs.
+  # 2) Central CR + readiness gate. MIXED: Central enforce, the status check informs. HUB-only.
   - name: policy-acs-central
+    placement:
+      placementPath: placement-hub.yaml
     dependencies:
       - name: policy-acs-operator-install
     manifests:
@@ -48,31 +50,39 @@ policies:
         remediationAction: ${REMEDIATION}
       - path: test/central-ready.yaml
         remediationAction: inform
-  # 3) Sync the Central-generated TLS bundles to the hub namespace (hub fromSecret templates need a SA).
+  # 3) Sync the Central-generated TLS bundles to the managed cluster (hub fromSecret needs a SA). MANAGED-only.
   - name: policy-acs-sync-bundle
     remediationAction: ${REMEDIATION}
+    placement:
+      placementPath: placement-managed.yaml
     hubTemplateOptions:
       serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-acs-operator-install
     manifests:
       - path: manifests/sync-bundle.yaml
-  # 4) Declarative auth-provider config for Central.
+  # 4) Declarative auth-provider config for Central. HUB-only.
   - name: policy-acs-declarative-config
     remediationAction: ${REMEDIATION}
+    placement:
+      placementPath: placement-hub.yaml
     dependencies:
       - name: policy-acs-central
     manifests:
       - path: manifests/declarative-config.yaml
-  # 5) Baseline SecurityPolicy CRDs for Central.
+  # 5) Baseline SecurityPolicy CRDs for Central. HUB-only.
   - name: policy-acs-security-policies
     remediationAction: ${REMEDIATION}
+    placement:
+      placementPath: placement-hub.yaml
     dependencies:
       - name: policy-acs-central
     manifests:
       - path: manifests/security-policies.yaml
-  # 6) Cluster init-bundle generation (RBAC + Job) + Job-succeeded gate. MIXED: resources enforce, check informs.
+  # 6) Cluster init-bundle generation (RBAC + Job) + Job-succeeded gate. MIXED: resources enforce, check informs. HUB-only.
   - name: policy-acs-init-bundle
+    placement:
+      placementPath: placement-hub.yaml
     dependencies:
       - name: policy-acs-central
     manifests:
@@ -80,8 +90,10 @@ policies:
         remediationAction: ${REMEDIATION}
       - path: test/init-bundle-ready.yaml
         remediationAction: inform
-  # 7) SecuredCluster on the hub's own local-cluster + readiness gate. MIXED: SecuredCluster enforce, check informs.
+  # 7) SecuredCluster on the hub's own local-cluster + readiness gate. MIXED: SecuredCluster enforce, check informs. HUB-only.
   - name: policy-acs-secured-cluster-hub
+    placement:
+      placementPath: placement-hub.yaml
     dependencies:
       - name: policy-acs-init-bundle
     manifests:
@@ -89,8 +101,10 @@ policies:
         remediationAction: ${REMEDIATION}
       - path: test/secured-cluster-hub-ready.yaml
         remediationAction: inform
-  # 8) SecuredCluster on managed clusters + readiness gate. MIXED: SecuredCluster enforce, check informs.
+  # 8) SecuredCluster on managed clusters + readiness gate. MIXED: SecuredCluster enforce, check informs. MANAGED-only.
   - name: policy-acs-secured-cluster
+    placement:
+      placementPath: placement-managed.yaml
     dependencies:
       - name: policy-acs-sync-bundle
     manifests:
