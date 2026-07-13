@@ -1,0 +1,25 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: cnpg-artifactory-ready
+spec:
+  remediationAction: inform
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+    {{ $cluster := (lookup "postgresql.cnpg.io/v1" "Cluster" "jfrog-system" "artifactory-db") | default dict }}
+    {{ $specInstances := (index (index $cluster "spec" | default dict) "instances" | default 1 | toInt) }}
+    {{ $readyInstances := (index (index $cluster "status" | default dict) "readyInstances" | default 0 | toInt) }}
+    {{ if lt $readyInstances $specInstances }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: postgresql.cnpg.io/v1
+        kind: Cluster
+        metadata:
+          name: artifactory-db
+          namespace: jfrog-system
+        status:
+          readyInstances: {{ $specInstances }}
+    {{ end }}

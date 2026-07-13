@@ -1,0 +1,32 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: lvmcluster-install
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # First-class ConfigurationPolicy: PG passes it through unmodified, so evaluationInterval
+  # is baked here (PG only injects it into raw manifests it wraps itself).
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: lvm.topolvm.io/v1alpha1
+        kind: LVMCluster
+        metadata:
+          name: lvmcluster
+          namespace: openshift-storage
+        spec:
+          storage:
+            deviceClasses:
+              - default: {{hub index .ManagedClusterLabels "autoshift.io/lvm-default" | default "true" hub}}
+                fstype: {{hub index .ManagedClusterLabels "autoshift.io/lvm-fstype" | default "xfs" hub}}
+                name: vg1
+                thinPoolConfig:
+                  chunkSizeCalculationPolicy: Static
+                  metadataSizeCalculationPolicy: Host
+                  sizePercent: '{{hub index .ManagedClusterLabels "autoshift.io/lvm-size-percent" | default 90 | toInt hub}}'
+                  name: thin-pool-1
+                  overprovisionRatio: '{{hub index .ManagedClusterLabels "autoshift.io/lvm-overprovision-ratio" | default 10 | toInt hub}}'

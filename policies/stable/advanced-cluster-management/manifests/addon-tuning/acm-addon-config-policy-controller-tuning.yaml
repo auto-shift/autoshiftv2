@@ -1,0 +1,22 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: acm-addon-config-policy-controller-tuning
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: medium
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  object-templates-raw: |
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: addon.open-cluster-management.io/v1alpha1
+        kind: ManagedClusterAddOn
+        metadata:
+          name: config-policy-controller
+          namespace: '{{hub .ManagedClusterName hub}}'
+          annotations:
+            policy-evaluation-concurrency: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-eval-concurrency" | default "5" hub}}'
+            client-qps: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-client-qps" | default "75" hub}}'
+            client-burst: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-client-burst" | default "100" hub}}'

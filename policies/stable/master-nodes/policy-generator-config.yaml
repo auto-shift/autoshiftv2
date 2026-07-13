@@ -1,0 +1,35 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: master-nodes
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# manifests[].path is a single FILE here; a DIRECTORY would wildcard the whole dir. Only edit this
+# file to change the policy graph itself (names, dependencies, per-policy remediation). Keep
+# placement.yaml OUT of manifests/ (a Placement inside a wildcarded dir would be wrapped into the
+# Policy as a managed object).
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Placement authored by us (placement.yaml at the dir root, full fidelity); PG includes it and
+  # generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-master-node-config
+    manifests:
+      - path: manifests/master-node-config.yaml

@@ -1,0 +1,22 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-storage-nodes-vmware
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: selected via ManagedClusterSetBindings in this namespace + the predicate.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/storage-nodes'
+              operator: Exists
+            - key: 'autoshift.io/storage-nodes-provider'
+              operator: In
+              values:
+                - 'vmware'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

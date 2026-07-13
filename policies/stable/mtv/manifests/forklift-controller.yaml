@@ -1,0 +1,24 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: forklift-controller
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # First-class ConfigurationPolicy: PG passes it through unmodified, so evaluationInterval
+  # is baked here (PG only injects it into raw manifests it wraps itself).
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates:
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: forklift.konveyor.io/v1beta1
+        kind: ForkliftController
+        metadata:
+          name: forklift-controller
+          namespace: openshift-mtv
+        spec:
+          feature_ui_plugin: 'true'
+          feature_validation: 'true'
+          feature_volume_populator: 'true'

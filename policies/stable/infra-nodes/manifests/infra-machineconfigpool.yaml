@@ -1,0 +1,30 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: infra-machineconfigpool
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates:
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: machineconfiguration.openshift.io/v1
+        kind: MachineConfigPool
+        metadata:
+          name: infra
+          labels:
+            pools.operator.machineconfiguration.openshift.io/infra: ""
+        spec:
+          machineConfigSelector:
+            matchExpressions:
+              - key: machineconfiguration.openshift.io/role
+                operator: In
+                values:
+                  - worker
+                  - infra
+          nodeSelector:
+            matchLabels:
+              node-role.kubernetes.io/infra: ""

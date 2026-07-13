@@ -1,0 +1,23 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-infra-nodes
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Shared by the infra-nodes readiness test and the gitops/image-registry/ingress/monitoring
+  # migration policies. No spec.clusterSets: selected via ManagedClusterSetBindings + the predicate.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/infra-nodes'
+              operator: Exists
+            - key: 'autoshift.io/infra-nodes'
+              operator: NotIn
+              values:
+                - '0'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

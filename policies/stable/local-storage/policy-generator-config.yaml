@@ -1,0 +1,39 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: local-storage
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`
+# runs. They live here and in placement.yaml — never in manifests/, whose hub templates contain
+# `$vars` that substitution would clobber.
+placementBindingDefaults:
+  name: binding-policy-local-storage
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # All policies share one hand-authored Placement (predicate autoshift.io/local-storage).
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-local-storage-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) LocalVolumeSet (first-class ConfigurationPolicy). Waits on the operator install and the
+  #    storage-nodes readiness test.
+  - name: policy-local-volume-set
+    dependencies:
+      - name: policy-local-storage-operator-install
+      - name: policy-storage-nodes-test
+    manifests:
+      - path: manifests/local-volume-set.yaml

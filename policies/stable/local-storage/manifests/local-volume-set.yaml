@@ -1,0 +1,37 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: create-volume-set
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  pruneObjectBehavior: None
+  # First-class ConfigurationPolicy: PG passes it through unmodified, so evaluationInterval
+  # is baked here (PG only injects it into raw manifests it wraps itself).
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates:
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: local.storage.openshift.io/v1alpha1
+        kind: LocalVolumeSet
+        metadata:
+          name: nvme-localvolumeset
+          namespace: openshift-local-storage
+        spec:
+          deviceInclusionSpec:
+            deviceTypes:
+              - disk
+            minSize: 200G
+          nodeSelector:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: cluster.ocs.openshift.io/openshift-storage
+                    operator: Exists
+          storageClassName: nvme-storageclass
+          tolerations:
+            - effect: NoSchedule
+              key: node.ocs.openshift.io/storage
+              operator: Exists
+          volumeMode: Block

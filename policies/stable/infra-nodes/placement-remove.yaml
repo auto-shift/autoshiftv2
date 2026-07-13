@@ -1,0 +1,21 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-remove-infra-nodes
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Shared by all remove-infra-* cleanup policies (infra-nodes scaled to 0).
+  # No spec.clusterSets: selected via ManagedClusterSetBindings in this namespace + the predicate.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/infra-nodes'
+              operator: In
+              values:
+                - '0'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

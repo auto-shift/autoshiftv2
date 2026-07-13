@@ -1,0 +1,30 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: jfrog-artifactory-route
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+    {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: route.openshift.io/v1
+        kind: Route
+        metadata:
+          name: artifactory
+          namespace: jfrog-system
+        spec:
+          host: artifactory.{{ $ingressDomain }}
+          to:
+            kind: Service
+            name: openshiftartifactoryha-artifactory-ha-primary
+            weight: 100
+          port:
+            targetPort: 8082
+          tls:
+            termination: edge
+            insecureEdgeTerminationPolicy: Redirect

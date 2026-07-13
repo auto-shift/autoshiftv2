@@ -1,0 +1,35 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: create-worker-nodes-vmware
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  pruneObjectBehavior: None
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+              {{- /* vSphere creates one worker MachineSet per failure domain (its workspace/network/template place the VM in that domain). Patch each with the requested replica count and sizing so every failure domain is covered — works for one or many domains. */ -}}
+              {{- $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName }}
+              {{- range (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items }}
+                {{- if hasPrefix (printf "%s-worker" $infrastructure_id) .metadata.name }}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: machine.openshift.io/v1beta1
+                  kind: MachineSet
+                  metadata:
+                    name: {{ .metadata.name }}
+                    namespace: openshift-machine-api
+                  spec:
+                    deletePolicy: Oldest
+                    replicas: {{hub index .ManagedClusterLabels "autoshift.io/worker-nodes" hub}}
+                    template:
+                      spec:
+                        providerSpec:
+                          value:
+                            numCoresPerSocket: {{hub index .ManagedClusterLabels "autoshift.io/worker-nodes-numcores-per-socket" hub}}
+                            memoryMiB: {{hub index .ManagedClusterLabels "autoshift.io/worker-nodes-memory-mib" hub}}
+                            numCPUs: {{hub index .ManagedClusterLabels "autoshift.io/worker-nodes-numcpu" hub}}
+                {{- end }}
+              {{- end }}

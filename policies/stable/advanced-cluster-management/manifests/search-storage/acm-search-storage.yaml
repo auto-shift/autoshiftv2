@@ -1,0 +1,22 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: acm-search-storage
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: medium
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  object-templates:
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: search.open-cluster-management.io/v1alpha1
+      kind: Search
+      metadata:
+        name: search-v2-operator
+        namespace: open-cluster-management
+      spec:
+        dbStorage:
+          storageClassName: '{{hub index .ManagedClusterLabels "autoshift.io/acm-search-storage-class" | default "ocs-storagecluster-ceph-rbd" hub}}'
+          size: '{{hub index .ManagedClusterLabels "autoshift.io/acm-search-storage-size" | default "100Gi" hub}}'

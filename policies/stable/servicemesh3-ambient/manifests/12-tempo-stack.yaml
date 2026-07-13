@@ -1,0 +1,33 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: servicemesh3-ambient-tempo-stack
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates:
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: tempo.grafana.com/v1alpha1
+        kind: TempoStack
+        metadata:
+          name: tempo-servicemesh
+          namespace: tracing-system
+        spec:
+          storage:
+            secret:
+              name: tempo-s3-secret
+              type: s3
+            tls:
+              enabled: true
+              caName: tempo-s3-ca-bundle
+          storageSize: 10Gi
+          template:
+            queryFrontend:
+              jaegerQuery:
+                enabled: true
+                ingress:
+                  type: route

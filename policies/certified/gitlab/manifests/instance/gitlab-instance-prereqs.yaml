@@ -1,0 +1,42 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: gitlab-instance-prereqs
+spec:
+  remediationAction: inform
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+    {{- $ns := "gitlab-system" }}
+    {{- $dbMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" hub}}" }}
+    {{- $redisMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-redis-mode" | default "managed" hub}}" }}
+    {{- $objStoreMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-object-storage-mode" | default "managed" hub}}" }}
+    {{ if ne $dbMode "bundled" }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: gitlab-db-app
+          namespace: {{ $ns }}
+    {{ end }}
+    {{ if ne $redisMode "bundled" }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: gitlab-redis-password
+          namespace: {{ $ns }}
+    {{ end }}
+    {{ if ne $objStoreMode "bundled" }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: gitlab-objectstorage
+          namespace: {{ $ns }}
+    {{ end }}

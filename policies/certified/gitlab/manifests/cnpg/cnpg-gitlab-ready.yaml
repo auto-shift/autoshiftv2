@@ -1,0 +1,25 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: cnpg-gitlab-ready
+spec:
+  remediationAction: inform
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+    {{ $cluster := (lookup "postgresql.cnpg.io/v1" "Cluster" "gitlab-system" "gitlab-db") | default dict }}
+    {{ $specInstances := (index (index $cluster "spec" | default dict) "instances" | default 1 | toInt) }}
+    {{ $readyInstances := (index (index $cluster "status" | default dict) "readyInstances" | default 0 | toInt) }}
+    {{ if lt $readyInstances $specInstances }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: postgresql.cnpg.io/v1
+        kind: Cluster
+        metadata:
+          name: gitlab-db
+          namespace: gitlab-system
+        status:
+          readyInstances: {{ $specInstances }}
+    {{ end }}

@@ -1,0 +1,106 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: logging-install
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates:
+    - complianceType: musthave
+      objectDefinition:
+        kind: ServiceAccount
+        apiVersion: v1
+        metadata:
+          name: collector
+          namespace: openshift-logging
+    - complianceType: musthave
+      objectDefinition:
+        kind: ClusterRoleBinding
+        apiVersion: rbac.authorization.k8s.io/v1
+        metadata:
+          name: collect-application-logs
+        subjects:
+          - kind: ServiceAccount
+            name: collector
+            namespace: openshift-logging
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: collect-application-logs
+    - complianceType: musthave
+      objectDefinition:
+        kind: ClusterRoleBinding
+        apiVersion: rbac.authorization.k8s.io/v1
+        metadata:
+          name: collect-audit-logs
+        subjects:
+          - kind: ServiceAccount
+            name: collector
+            namespace: openshift-logging
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: collect-audit-logs
+    - complianceType: musthave
+      objectDefinition:
+        kind: ClusterRoleBinding
+        apiVersion: rbac.authorization.k8s.io/v1
+        metadata:
+          name: collect-infrastructure-logs
+        subjects:
+          - kind: ServiceAccount
+            name: collector
+            namespace: openshift-logging
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: collect-infrastructure-logs
+    - complianceType: musthave
+      objectDefinition:
+        kind: ClusterRoleBinding
+        apiVersion: rbac.authorization.k8s.io/v1
+        metadata:
+          name: logging-collector-logs-writer
+        subjects:
+          - kind: ServiceAccount
+            name: collector
+            namespace: openshift-logging
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: logging-collector-logs-writer
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: observability.openshift.io/v1
+        kind: ClusterLogForwarder
+        metadata:
+          name: logging
+          namespace: openshift-logging
+        spec:
+          managementState: Managed
+          outputs:
+            - lokiStack:
+                authentication:
+                  token:
+                    from: serviceAccount
+                target:
+                  name: '{{hub index .ManagedClusterLabels "autoshift.io/loki-lokistack-name" | default "logging-lokistack" hub}}'
+                  namespace: openshift-logging
+              name: '{{hub index .ManagedClusterLabels "autoshift.io/loki-lokistack-name" | default "logging-lokistack" hub}}'
+              tls:
+                ca:
+                  configMapName: openshift-service-ca.crt
+                  key: service-ca.crt
+              type: lokiStack
+          pipelines:
+            - inputRefs:
+                - infrastructure
+                - application
+              name: logs-to-loki
+              outputRefs:
+                - '{{hub index .ManagedClusterLabels "autoshift.io/loki-lokistack-name" | default "logging-lokistack" hub}}'
+          serviceAccount:
+            name: collector

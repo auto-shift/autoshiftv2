@@ -1,0 +1,25 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: policy-ippool-config
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+            {{hub- $ippool_list := list hub}}
+            {{hub- range $label, $labelvalue := .ManagedClusterLabels hub}}
+              {{hub- if $label | hasPrefix "autoshift.io/metallb-ippool" hub}}
+                {{hub- $ippool_list = append $ippool_list $labelvalue hub}}
+              {{hub- end hub}}
+            {{hub- end hub}}
+            {{hub- range $ippool_list hub}}
+              {{hub- $cfg := ((lookup "v1" "ConfigMap" $.PolicyMetadata.namespace (print "ippool-" .)).data) hub}}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                {{hub- if $cfg.adv hub}}
+                    {{hub $cfg.adv | base64dec | autoindent hub}}
+                  {{hub- end hub}}
+                {{hub- end hub}}

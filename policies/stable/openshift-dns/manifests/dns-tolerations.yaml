@@ -1,0 +1,23 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: dns-tolerations
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # First-class ConfigurationPolicy: PG passes it through unmodified, so evaluationInterval
+  # is baked here (PG only injects it into raw manifests it wraps itself).
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates:
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: operator.openshift.io/v1
+        kind: DNS
+        metadata:
+          name: default
+        spec:
+          nodePlacement:
+            tolerations:
+            - operator: Exists

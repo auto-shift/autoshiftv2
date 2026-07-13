@@ -1,0 +1,130 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: infra-nodes
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement-*.yaml — never in manifests/ or test/,
+# whose hub templates contain `$vars` that substitution would clobber.
+#
+# Each policy sets its own placement via placement.placementPath. Two placements are shared by
+# multiple policies (placement-infra-nodes.yaml across the migration policies + readiness test, and
+# placement-remove.yaml across the remove-infra-* cleanup policies), so an explicit
+# placementBindingDefaults.name is required — PG cannot derive one binding name from many policies.
+placementBindingDefaults:
+  name: binding-policy-infra-nodes
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+policies:
+  # ---- Infra MachineConfigPool + kubelet tuning ----
+  - name: policy-infra-machineconfigpool
+    manifests:
+      - path: manifests/infra-machineconfigpool.yaml
+    placement:
+      placementPath: placement-machineconfigpool.yaml
+  - name: policy-infra-node-config
+    manifests:
+      - path: manifests/infra-node-config.yaml
+    placement:
+      placementPath: placement-node-config.yaml
+    dependencies:
+      - name: policy-infra-machineconfigpool
+        compliance: Compliant
+  # ---- Infra MachineSet provisioning (per provider) ----
+  - name: policy-infra-nodes-aws
+    manifests:
+      - path: manifests/create-infra-nodes-aws.yaml
+    placement:
+      placementPath: placement-aws.yaml
+  - name: policy-infra-nodes-vmware
+    manifests:
+      - path: manifests/create-infra-nodes-vmware.yaml
+    placement:
+      placementPath: placement-vmware.yaml
+  # test/ holds an inform-only readiness assertion (a status can only be observed).
+  - name: policy-infra-nodes-test
+    remediationAction: inform
+    manifests:
+      - path: test/check-cluster-infra-nodes.yaml
+    placement:
+      placementPath: placement-infra-nodes.yaml
+  # ---- Migrate platform workloads onto infra nodes (gated on the readiness test) ----
+  - name: policy-infra-gitops
+    manifests:
+      - path: manifests/create-infra-gitops.yaml
+    placement:
+      placementPath: placement-infra-nodes.yaml
+    dependencies:
+      - name: policy-infra-nodes-test
+        compliance: Compliant
+  - name: policy-infra-image-registry
+    manifests:
+      - path: manifests/create-infra-image-registry.yaml
+    placement:
+      placementPath: placement-infra-nodes.yaml
+    dependencies:
+      - name: policy-infra-nodes-test
+        compliance: Compliant
+  - name: policy-infra-ingress
+    manifests:
+      - path: manifests/create-infra-ingress.yaml
+    placement:
+      placementPath: placement-infra-nodes.yaml
+    dependencies:
+      - name: policy-infra-nodes-test
+        compliance: Compliant
+  - name: policy-infra-monitoring
+    manifests:
+      - path: manifests/cluster-infra-monitoring.yaml
+    placement:
+      placementPath: placement-infra-nodes.yaml
+    dependencies:
+      - name: policy-infra-nodes-test
+        compliance: Compliant
+  # ---- Remove infra-node placement (infra-nodes scaled to 0); runs before the MachineSets go ----
+  - name: policy-remove-infra-gitops
+    manifests:
+      - path: manifests/remove-infra-gitops.yaml
+    placement:
+      placementPath: placement-remove.yaml
+  - name: policy-remove-infra-image-registry
+    manifests:
+      - path: manifests/remove-infra-image-registry.yaml
+    placement:
+      placementPath: placement-remove.yaml
+  - name: policy-remove-infra-ingress
+    manifests:
+      - path: manifests/remove-infra-ingress.yaml
+    placement:
+      placementPath: placement-remove.yaml
+  - name: policy-remove-infra-monitoring
+    manifests:
+      - path: manifests/cluster-infra-remove-monitoring.yaml
+    placement:
+      placementPath: placement-remove.yaml
+  - name: policy-remove-infra-nodes
+    manifests:
+      - path: manifests/remove-infra-nodes.yaml
+    placement:
+      placementPath: placement-remove.yaml
+    dependencies:
+      - name: policy-remove-infra-gitops
+        compliance: Compliant
+      - name: policy-remove-infra-image-registry
+        compliance: Compliant
+      - name: policy-remove-infra-ingress
+        compliance: Compliant
+      - name: policy-remove-infra-monitoring
+        compliance: Compliant

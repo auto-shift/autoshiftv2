@@ -1,0 +1,97 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: jfrog-artifactory-instance
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+    {{- $dbSecret := (lookup "v1" "Secret" "jfrog-system" "artifactory-db-app") | default dict }}
+    {{- $dbData := ($dbSecret.data | default dict) }}
+    {{- $dbHost := "artifactory-db-pooler-rw.jfrog-system.svc" }}
+    {{- $dbPort := (index $dbData "port" | default "" | base64dec) }}
+    {{- $dbName := (index $dbData "dbname" | default "" | base64dec) }}
+    {{- $keysSecret := (lookup "v1" "Secret" "jfrog-system" "artifactory-keys") | default dict }}
+    {{- $keysData := ($keysSecret.data | default dict) }}
+    {{- $masterKey := (index $keysData "master-key" | default "" | base64dec) }}
+    {{- $joinKey := (index $keysData "join-key" | default "" | base64dec) }}
+    {{- $licenseSecret := (lookup "v1" "Secret" "jfrog-system" "artifactory-license") }}
+    {{- $adminSecret := (lookup "v1" "Secret" "jfrog-system" "artifactory-admin") | default dict }}
+    {{- $adminData := ($adminSecret.data | default dict) }}
+    {{- $adminPassword := (index $adminData "password" | default "" | base64dec) }}
+    {{- if and (not (empty $dbPort)) (not (empty $dbName)) (not (empty $masterKey)) (not (empty $joinKey)) }}
+    {{- if not (empty $adminPassword) }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: artifactory-admin-creds
+          namespace: jfrog-system
+        type: Opaque
+        stringData:
+          admin-creds: "admin={{ $adminPassword }}"
+    {{- end }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: artifactory-db-pooler-jdbc
+          namespace: jfrog-system
+        type: Opaque
+        stringData:
+          jdbc-uri: "jdbc:postgresql://{{ $dbHost }}:{{ $dbPort }}/{{ $dbName }}"
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: charts.helm.k8s.io/v1
+        kind: OpenshiftArtifactoryHa
+        metadata:
+          name: openshiftartifactoryha
+          namespace: jfrog-system
+        spec:
+          artifactory-ha:
+            artifactory:
+              masterKey: {{ $masterKey }}
+              joinKey: {{ $joinKey }}
+    {{- if $licenseSecret }}
+              license:
+                secret: artifactory-license
+                dataKey: license-key
+    {{- end }}
+    {{- if not (empty $adminPassword) }}
+              admin:
+                secret: artifactory-admin-creds
+                dataKey: admin-creds
+    {{- end }}
+              node:
+                replicaCount: {{hub index .ManagedClusterLabels "autoshift.io/jfrog-node-replicas" | default "1" hub}}
+                waitForPrimaryStartup:
+                  enabled: false
+              persistence:
+                enabled: true
+                size: 200Gi
+            databaseUpgradeReady: true
+            database:
+              type: postgresql
+              driver: org.postgresql.Driver
+              url: jdbc:postgresql://{{ $dbHost }}:{{ $dbPort }}/{{ $dbName }}
+              secrets:
+                user:
+                  name: artifactory-db-app
+                  key: username
+                password:
+                  name: artifactory-db-app
+                  key: password
+                url:
+                  name: artifactory-db-pooler-jdbc
+                  key: jdbc-uri
+            postgresql:
+              enabled: false
+            nginx:
+              enabled: false
+            waitForDatabase: true
+    {{- end }}

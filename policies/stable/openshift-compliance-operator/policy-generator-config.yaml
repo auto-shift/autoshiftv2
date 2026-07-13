@@ -1,0 +1,55 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: openshift-compliance-operator
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a
+# wildcard). Keep placement*.yaml at the dir root, NOT inside a wildcarded manifests dir.
+# Per-deployment scalars (${...}) live here and in placement*.yaml only — never in manifests/,
+# whose hub templates contain $vars that substitution would clobber.
+#
+# NOTE: remediationAction is intentionally NOT set in policyDefaults. policy-stig-scan mixes
+# enforce children with an inform status-check child in a single Policy, so each first-class
+# manifest carries its own remediationAction. The other policies set it at the policy level.
+placementBindingDefaults:
+  name: binding-policy-compliance
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+    - CA Security Assessment and Authorization
+  controls:
+    - CM-2 Baseline Configuration
+    - CA-2 Security Assessments
+  placement:
+    placementPath: placement.yaml
+policies:
+  # Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-compliance-operator-install
+    remediationAction: ${REMEDIATION}
+    manifests:
+      - path: manifests/operator-install
+  # STIG scan setup + run + status gate. MIXED: scan-setting/scan enforce, suite test inform.
+  # No policy-level remediationAction — each manifest sets its own.
+  - name: policy-stig-scan
+    dependencies:
+      - name: policy-compliance-operator-install
+    manifests:
+      - path: manifests/stig-scan
+  # Apply the selected STIG remediations. Own placement predicate (excludes auto-remediate=false).
+  - name: policy-auto-remediate
+    remediationAction: ${REMEDIATION}
+    dependencies:
+      - name: policy-stig-scan
+    placement:
+      placementPath: placement-auto-remediate.yaml
+    manifests:
+      - path: manifests/auto-remediate.yaml

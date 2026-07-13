@@ -1,0 +1,91 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: openshift-data-foundation
+placementBindingDefaults:
+  name: binding-policy-odf
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`.
+# They live only in this file and the placement-*.yaml files — never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a
+# wildcard). Keep placement files at the dir root, NOT inside a wildcarded manifests subdir.
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Default predicate: autoshift.io/odf: 'true'. Policies with a narrower predicate override below.
+  placement:
+    placementPath: placement-odf.yaml
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  #    2 manifests -> a directory (wildcard).
+  - name: policy-odf-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) StorageCluster (standard) + Ceph CSI tolerations. Skips clusters in standalone mode.
+  - name: policy-storage-cluster
+    dependencies:
+      - name: policy-odf-operator-install
+      - name: policy-storage-nodes-test
+        namespace: ${POLICY_NAMESPACE}
+    placement:
+      placementPath: placement-odf-standard.yaml
+    manifests:
+      - path: manifests/storage-cluster
+  # 3) StorageCluster (standalone / NooBaa-only). Only clusters in standalone mode.
+  - name: policy-storage-cluster-standalone
+    dependencies:
+      - name: policy-odf-operator-install
+    placement:
+      placementPath: placement-odf-standalone.yaml
+    manifests:
+      - path: manifests/storage-cluster-standalone.yaml
+  # 4) StorageCluster readiness gate — a test/ assertion, so ALWAYS inform.
+  - name: policy-storage-cluster-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-odf-operator-install
+    manifests:
+      - path: test/storage-cluster-ready.yaml
+  # 5) Default StorageClass selection. Skips standalone mode (no block storage there).
+  - name: policy-default-storageclass
+    dependencies:
+      - name: policy-storage-cluster-test
+    placement:
+      placementPath: placement-odf-standard.yaml
+    manifests:
+      - path: manifests/default-storageclass.yaml
+  # 6) NooBaa PV-pool backing store. Only clusters with odf-noobaa-pvpool: 'true'.
+  - name: policy-noobaa-backing-store
+    dependencies:
+      - name: policy-storage-cluster-test
+    placement:
+      placementPath: placement-odf-noobaa-pvpool.yaml
+    manifests:
+      - path: manifests/noobaa-backing-store.yaml
+  # 7) Suppress the NooBaa PDB-at-limit alert.
+  - name: policy-noobaa-pdb-alert
+    dependencies:
+      - name: policy-odf-operator-install
+    manifests:
+      - path: manifests/noobaa-pdb-alert.yaml
+  # 8) Enable the ODF console plugin.
+  - name: policy-odf-console-plugin
+    dependencies:
+      - name: policy-storage-cluster-test
+    manifests:
+      - path: manifests/odf-console-plugin.yaml

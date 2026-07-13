@@ -1,0 +1,35 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: auto-remediate
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  pruneObjectBehavior: None
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+    {{hub- range (fromConfigMap .PolicyMetadata.namespace "stig-remediation" "ocp4-stig" | trim | split "\n") hub}}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: compliance.openshift.io/v1alpha1
+        kind: ComplianceRemediation
+        metadata:
+          name: {{hub . hub}}
+          namespace: openshift-compliance
+        spec:
+          apply: true
+    {{hub- end hub}}
+
+    {{hub- range (fromConfigMap .PolicyMetadata.namespace "stig-remediation" "rhcos4-stig" | trim | split "\n") hub}}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: compliance.openshift.io/v1alpha1
+        kind: ComplianceRemediation
+        metadata:
+          name: {{hub . hub}}
+          namespace: openshift-compliance
+        spec:
+          apply: true
+    {{hub- end hub}}

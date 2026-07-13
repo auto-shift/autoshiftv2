@@ -1,0 +1,51 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: acm-agentserviceconfig-test
+spec:
+  remediationAction: inform
+  severity: high
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  object-templates:
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: agent-install.openshift.io/v1beta1
+      kind: AgentServiceConfig
+      metadata:
+        name: agent
+      status:
+        conditions:
+        - message: AgentServiceConfig reconcile completed without error.
+          reason: ReconcileSucceeded
+          status: 'True'
+          type: ReconcileCompleted
+        - message: All the deployments managed by Infrastructure-operator are healthy.
+          reason: DeploymentSucceeded
+          status: 'True'
+          type: DeploymentsHealthy
+  - complianceType: musthave
+    objectDefinition:
+      kind: Pod
+      apiVersion: v1
+      metadata:
+        namespace: multicluster-engine
+        labels:
+          app: assisted-image-service
+          statefulset.kubernetes.io/pod-name: assisted-image-service-0
+      status:
+        containerStatuses:
+        - started: true
+          ready: true
+          name: assisted-image-service
+        conditions:
+        - type: PodReadyToStartContainers
+          status: 'True'
+        - type: Initialized
+          status: 'True'
+        - type: Ready
+          status: 'True'
+        - type: ContainersReady
+          status: 'True'
+        phase: Running

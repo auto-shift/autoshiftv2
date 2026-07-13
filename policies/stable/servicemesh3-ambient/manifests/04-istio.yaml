@@ -1,0 +1,40 @@
+# Istio control plane — manages the mesh via xDS APIs
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: servicemesh3-ambient-istio
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates:
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: sailoperator.io/v1
+        kind: Istio
+        metadata:
+          name: default
+        spec:
+          version: '{{hub index .ManagedClusterLabels "autoshift.io/servicemesh3operator-istio-version" | default "v1.28-latest" hub}}'
+          namespace: istio-system
+          profile: ambient
+          updateStrategy:
+            type: InPlace
+          values:
+            meshConfig:
+              enableTracing: true
+              extensionProviders:
+              - name: otel
+                opentelemetry:
+                  port: 4317
+                  service: otel-collector.istio-system.svc.cluster.local
+            global:
+              platform: openshift
+            pilot:
+              trustedZtunnelNamespace: ztunnel
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi

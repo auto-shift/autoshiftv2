@@ -1,0 +1,48 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: master-node-config
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # First-class ConfigurationPolicy: PG passes it through unmodified, so evaluationInterval
+  # is baked here (PG only injects it into raw manifests it wraps itself).
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+            {{- $cores := 0 }}
+            {{- range (lookup "v1" "Node" "" "").items }}
+              {{- if hasKey .metadata.labels "node-role.kubernetes.io/master" }}
+                {{- if eq $cores 0 }}
+                  {{- $cores = (.status.capacity.cpu | toInt) }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+            {{- $maxPods := ("{{hub index .ManagedClusterLabels "autoshift.io/master-max-pods" | default 250 hub}}" | toInt) }}
+            {{- $systemReservedMemory := "{{hub index .ManagedClusterLabels "autoshift.io/master-system-reserved-memory" | default "3Gi" hub}}" }}
+            {{- $systemReservedCpu := "{{hub index .ManagedClusterLabels "autoshift.io/master-system-reserved-cpu" | default "500m" hub}}" }}
+            {{- $kubeReservedMemory := "{{hub index .ManagedClusterLabels "autoshift.io/master-kube-reserved-memory" | default "1536Mi" hub}}" }}
+            {{- $kubeReservedCpu := "{{hub index .ManagedClusterLabels "autoshift.io/master-kube-reserved-cpu" | default "500m" hub}}" }}
+            {{- $evictionMemory := "{{hub index .ManagedClusterLabels "autoshift.io/master-eviction-memory" | default "500Mi" hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: machineconfiguration.openshift.io/v1
+                kind: KubeletConfig
+                metadata:
+                  name: master-node-config
+                spec:
+                  machineConfigPoolSelector:
+                    matchLabels:
+                      pools.operator.machineconfiguration.openshift.io/master: ""
+                  kubeletConfig:
+                    podsPerCore: {{ add 1 (div $maxPods $cores) }}
+                    maxPods: {{ $maxPods }}
+                    systemReserved:
+                      memory: {{ $systemReservedMemory }}
+                      cpu: {{ $systemReservedCpu }}
+                    kubeReserved:
+                      memory: {{ $kubeReservedMemory }}
+                      cpu: {{ $kubeReservedCpu }}
+                    evictionHard:
+                      memory.available: {{ $evictionMemory }}

@@ -1,0 +1,33 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: enable-nvme-tcp-module
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+    {{- range $role := list "master" "worker" }}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: machineconfiguration.openshift.io/v1
+        kind: MachineConfig
+        metadata:
+          name: 99-{{ $role }}-enable-nvme-tcp-module
+          labels:
+            machineconfiguration.openshift.io/role: {{ $role }}
+        spec:
+          config:
+            ignition:
+              version: 3.4.0
+            storage:
+              files:
+                - path: /etc/modules-load.d/nvme-tcp.conf
+                  mode: 420
+                  overwrite: true
+                  contents:
+                    compression: ""
+                    source: data:,nvme-tcp
+    {{- end }}

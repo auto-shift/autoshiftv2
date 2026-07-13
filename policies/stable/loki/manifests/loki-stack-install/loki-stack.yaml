@@ -1,0 +1,43 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: openshift-loki-stack
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates:
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: loki.grafana.com/v1
+        kind: LokiStack
+        metadata:
+          name: '{{hub index .ManagedClusterLabels "autoshift.io/loki-lokistack-name" | default "logging-lokistack" hub}}'
+          namespace: openshift-logging
+        spec:
+          hashRing:
+            type: memberlist
+          limits:
+            global:
+              ingestion:
+                ingestionBurstSize: 16
+                ingestionRate: 8
+              queries:
+                queryTimeout: 3m
+          managementState: Managed
+          storageClassName: '{{hub index .ManagedClusterLabels "autoshift.io/loki-storageclass" | default "gp3-csi" hub}}'
+          size: '{{hub index .ManagedClusterLabels "autoshift.io/loki-size" | default "1x.extra-small" hub}}'
+          storage:
+            schemas:
+              - effectiveDate: '2024-09-22'
+                version: v13
+            tls:
+              caName: openshift-service-ca.crt
+              caKey:  service-ca.crt
+            secret:
+              name: logging-loki-odf
+              type: s3
+          tenants:
+            mode: openshift-logging

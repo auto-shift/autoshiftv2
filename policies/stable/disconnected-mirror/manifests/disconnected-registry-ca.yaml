@@ -1,0 +1,49 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: disconnected-registry-ca-bundle
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # First-class ConfigurationPolicy: PG passes it through unmodified, so evaluationInterval
+  # is baked here (PG only injects it into raw manifests it wraps itself).
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+            {{hub $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+            {{hub $config := (index $cm "data" | default dict) hub}}
+            {{hub $configYaml := (index $config "config" | default "" | fromYaml | default dict) hub}}
+            {{hub $disconnected := (index $configYaml "disconnected" | default dict) hub}}
+            {{hub $mirror := (index $disconnected "mirrorRegistry" | default dict) hub}}
+            {{hub $mirrorHost := (index $mirror "host") hub}}
+            {{hub $ca := (index $mirror "ca" | default "") hub}}
+            {{hub $caRef := (index $mirror "caRef" | default dict) hub}}
+            {{hub if not (empty $caRef) hub}}
+            {{hub $refNs := (index $caRef "namespace" | default .PolicyMetadata.namespace) hub}}
+            {{hub $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict hub}}
+            {{hub $refData := (index $refCM "data" | default dict) hub}}
+            {{hub $ca = (index $refData (index $caRef "key") | default $ca) hub}}
+            {{hub end hub}}
+            {{hub if and (gt (len $mirrorHost) 0) (gt (len $ca) 0) hub}}
+            {{hub $registryKey := (replace ":" ".." $mirrorHost) hub}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: autoshift-registry-ca
+                  namespace: openshift-config
+                data:
+                  {{hub $registryKey hub}}: |
+                    {{hub $ca | autoindent hub}}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: config.openshift.io/v1
+                kind: Image
+                metadata:
+                  name: cluster
+                spec:
+                  additionalTrustedCA:
+                    name: autoshift-registry-ca
+            {{hub end hub}}

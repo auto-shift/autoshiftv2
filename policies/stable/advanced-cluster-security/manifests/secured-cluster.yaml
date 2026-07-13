@@ -1,0 +1,54 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: managed-cluster-security-endpoints
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: platform.stackrox.io/v1alpha1
+        kind: SecuredCluster
+        metadata:
+          namespace: stackrox
+          name: stackrox-secured-cluster-services
+        spec:
+          clusterName: '{{ fromSecret "open-cluster-management-agent" "hub-kubeconfig-secret" "cluster-name" | base64dec }}'
+          auditLogs:
+            collection: Auto
+          centralEndpoint: '{{ fromSecret "stackrox" "sensor-tls" "acs-host" | base64dec }}'
+          {{hub- if eq (index .ManagedClusterLabels "autoshift.io/acs-admission-control" | default "") "true" hub}}
+          admissionControl:
+            listenOnCreates: true
+            listenOnEvents: true
+            listenOnUpdates: true
+          {{hub- else hub}}
+          admissionControl:
+            listenOnCreates: false
+            listenOnEvents: true
+            listenOnUpdates: false
+          {{hub- end hub}}
+          perNode:
+            collector:
+              collection: EBPF
+              imageFlavor: Regular
+            taintToleration: TolerateTaints
+          {{hub- if eq (index .ManagedClusterLabels "autoshift.io/acs-monitoring" | default "true") "true" hub}}
+          monitoring:
+            openshift:
+              enabled: true
+          {{hub- end hub}}
+          {{hub- if (index .ManagedClusterLabels "autoshift.io/acs-network-policies") hub}}
+          network:
+            policies: '{{hub index .ManagedClusterLabels "autoshift.io/acs-network-policies" hub}}'
+          {{hub- end hub}}
+          {{hub- if eq (index .ManagedClusterLabels "autoshift.io/acs-vm-scanning" | default "") "true" hub}}
+          customize:
+            envVars:
+              - name: ROX_VIRTUAL_MACHINES
+                value: "true"
+          {{hub- end hub}}

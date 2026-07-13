@@ -1,0 +1,102 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: gitlab
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   Inform-only readiness/prereq checks are embedded children of their parent Policy with
+#   remediationAction: inform (a status can only be observed, never enforced).
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a
+# wildcard: drop a file in, no config edit). Keep placement*.yaml at the dir root, NOT inside a
+# wildcarded dir (a Placement in a wildcarded dir would be wrapped into the Policy as a managed object).
+#
+# remediationAction is intentionally NOT set in policyDefaults. Uniform policies set it per-policy
+# entry; mixed enforce+inform policies (policy-gitlab-instance, policy-cnpg-gitlab) omit it so each
+# child manifest's own remediationAction is preserved.
+placementBindingDefaults:
+  name: binding-policy-gitlab
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-gitlab-operator-install
+    remediationAction: ${REMEDIATION}
+    manifests:
+      - path: manifests/operator-install
+  # 2) GitLab instance CR (enforce) + prereq/readiness checks (inform). Mixed remediation:
+  #    no per-policy remediationAction, each child manifest sets its own.
+  - name: policy-gitlab-instance
+    dependencies:
+      - name: policy-gitlab-operator-install
+    manifests:
+      - path: manifests/instance
+  # 3) Object storage (NooBaa OBC + S3 connection secrets).
+  - name: policy-gitlab-object-storage
+    remediationAction: ${REMEDIATION}
+    dependencies:
+      - name: policy-gitlab-operator-install
+      - name: policy-storage-cluster-test
+    placement:
+      placementPath: placement-object-storage.yaml
+    manifests:
+      - path: manifests/object-storage
+  # 4) Redis Sentinel HA (managed mode).
+  - name: policy-gitlab-redis
+    remediationAction: ${REMEDIATION}
+    dependencies:
+      - name: policy-gitlab-operator-install
+      - name: policy-gitops-operator-install
+    placement:
+      placementPath: placement-redis.yaml
+    manifests:
+      - path: manifests/redis
+  # 5) ArgoCD integration (repo creds + TLS cert).
+  - name: policy-gitlab-argocd-config
+    remediationAction: ${REMEDIATION}
+    dependencies:
+      - name: policy-gitlab-instance
+    placement:
+      placementPath: placement-argocd.yaml
+    manifests:
+      - path: manifests/argocd-config
+  # 6) CNPG PostgreSQL cluster (enforce) + readiness gate (inform). Mixed remediation.
+  - name: policy-cnpg-gitlab
+    dependencies:
+      - name: policy-cloudnative-pg-operator-install
+      - name: policy-gitlab-operator-install
+    placement:
+      placementPath: placement-cnpg.yaml
+    manifests:
+      - path: manifests/cnpg
+  # 7) CNPG scheduled backups to NooBaa.
+  - name: policy-cnpg-gitlab-backup
+    remediationAction: ${REMEDIATION}
+    dependencies:
+      - name: policy-cnpg-gitlab
+      - name: policy-storage-cluster-test
+    placement:
+      placementPath: placement-backup.yaml
+    manifests:
+      - path: manifests/backup
+  # 8) CNPG PgBouncer poolers (rw + ro). Shares the CNPG placement predicate.
+  - name: policy-cnpg-gitlab-pooler
+    remediationAction: ${REMEDIATION}
+    dependencies:
+      - name: policy-cnpg-gitlab
+    placement:
+      placementPath: placement-cnpg.yaml
+    manifests:
+      - path: manifests/pooler

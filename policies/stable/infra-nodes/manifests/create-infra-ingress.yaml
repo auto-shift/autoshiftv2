@@ -1,0 +1,29 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: create-infra-ingress
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  pruneObjectBehavior: None
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates:
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: operator.openshift.io/v1
+        kind: IngressController
+        metadata:
+          name: default
+          namespace: openshift-ingress-operator
+        spec:
+          nodePlacement:
+            nodeSelector:
+              matchLabels:
+                node-role.kubernetes.io/infra: ''
+            tolerations:
+              - effect: NoSchedule
+                key: node-role.kubernetes.io/infra
+              - effect: NoExecute
+                key: node-role.kubernetes.io/infra

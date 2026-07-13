@@ -1,0 +1,23 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: trident-storage-backend-test
+spec:
+  remediationAction: inform
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+    {{hub $configs := index (index (fromConfigMap .PolicyMetadata.namespace (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "trident" | default dict) hub}}
+    {{hub range $storage := $configs.storage hub}}
+    - complianceType: musthave
+      objectDefinition:
+        apiVersion: trident.netapp.io/v1
+        kind: TridentBackendConfig
+        metadata:
+          name: "{{hub $storage.backendName hub}}"
+          namespace: trident
+        status:
+          phase: Bound
+    {{hub end hub}}

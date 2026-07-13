@@ -1,0 +1,107 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: advanced-cluster-security
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a
+# wildcard: drop a file in, no config edit). Keep placement.yaml at the dir root, NOT inside a
+# wildcarded manifests dir. Per-deployment scalars (${...}) live here and in placement.yaml only —
+# never in manifests/, whose hub templates contain $vars that substitution would clobber.
+#
+# NOTE: remediationAction is intentionally NOT set in policyDefaults. Several policies mix enforce
+# children with an inform status-check child in a single Policy, so those carry a per-manifest
+# remediationAction (requires consolidateManifests: false). The remaining policies set it at the
+# policy level.
+placementBindingDefaults:
+  name: binding-policy-acs
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  severity: high
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+    - CA Security Assessment and Authorization
+  controls:
+    - CM-2 Baseline Configuration
+    - CA-2 Security Assessments
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator install: raw Namespaces (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-acs-operator-install
+    remediationAction: ${REMEDIATION}
+    manifests:
+      - path: manifests/operator-install
+  # 2) Central CR + readiness gate. MIXED: Central enforce, the status check informs.
+  - name: policy-acs-central
+    dependencies:
+      - name: policy-acs-operator-install
+    manifests:
+      - path: manifests/central.yaml
+        remediationAction: ${REMEDIATION}
+      - path: test/central-ready.yaml
+        remediationAction: inform
+  # 3) Sync the Central-generated TLS bundles to the hub namespace (hub fromSecret templates need a SA).
+  - name: policy-acs-sync-bundle
+    remediationAction: ${REMEDIATION}
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-acs-operator-install
+    manifests:
+      - path: manifests/sync-bundle.yaml
+  # 4) Declarative auth-provider config for Central.
+  - name: policy-acs-declarative-config
+    remediationAction: ${REMEDIATION}
+    dependencies:
+      - name: policy-acs-central
+    manifests:
+      - path: manifests/declarative-config.yaml
+  # 5) Baseline SecurityPolicy CRDs for Central.
+  - name: policy-acs-security-policies
+    remediationAction: ${REMEDIATION}
+    dependencies:
+      - name: policy-acs-central
+    manifests:
+      - path: manifests/security-policies.yaml
+  # 6) Cluster init-bundle generation (RBAC + Job) + Job-succeeded gate. MIXED: resources enforce, check informs.
+  - name: policy-acs-init-bundle
+    dependencies:
+      - name: policy-acs-central
+    manifests:
+      - path: manifests/init-bundle
+        remediationAction: ${REMEDIATION}
+      - path: test/init-bundle-ready.yaml
+        remediationAction: inform
+  # 7) SecuredCluster on the hub's own local-cluster + readiness gate. MIXED: SecuredCluster enforce, check informs.
+  - name: policy-acs-secured-cluster-hub
+    dependencies:
+      - name: policy-acs-init-bundle
+    manifests:
+      - path: manifests/secured-cluster-hub.yaml
+        remediationAction: ${REMEDIATION}
+      - path: test/secured-cluster-hub-ready.yaml
+        remediationAction: inform
+  # 8) SecuredCluster on managed clusters + readiness gate. MIXED: SecuredCluster enforce, check informs.
+  - name: policy-acs-secured-cluster
+    dependencies:
+      - name: policy-acs-sync-bundle
+    manifests:
+      - path: manifests/secured-cluster.yaml
+        remediationAction: ${REMEDIATION}
+      - path: test/secured-cluster-ready.yaml
+        remediationAction: inform
+  # 9) Console link to the ACS portal.
+  - name: policy-acs-console-link
+    remediationAction: ${REMEDIATION}
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: manifests/console-link.yaml

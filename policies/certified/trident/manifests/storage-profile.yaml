@@ -1,0 +1,29 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: policy-trident-storage-profile-creation
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+    {{hub $configs := index (index (fromConfigMap .PolicyMetadata.namespace (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "trident" | default dict) hub}}
+    {{hub range $storage := $configs.storage hub}}
+    - complianceType: mustonlyhave
+      objectDefinition:
+        apiVersion: cdi.kubevirt.io/v1beta1
+        kind: StorageProfile
+        metadata:
+        {{hub- if eq $storage.defaultStorageClass "true" hub}}
+          annotations:
+            snapshot.storage.kubernetes.io/is-default-class: "true"
+        {{hub- end hub}}
+          name: "{{hub $storage.storageClassName hub}}"
+        spec:
+          claimPropertySets:
+          - accessModes:
+              - ReadWriteMany
+            volumeMode: Block
+    {{hub- end hub}}

@@ -1,0 +1,21 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-manual-remediations
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: the Placement selects across all ManagedClusterSetBindings in this
+  # namespace (the top autoshift chart binds every clusterset here) filtered by the predicate.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/manual-remediations'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

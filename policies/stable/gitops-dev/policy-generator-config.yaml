@@ -1,0 +1,38 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: gitops-dev
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`
+# runs. They live here and in placement.yaml — never in manifests/, whose hub templates contain
+# `$vars` that substitution would clobber.
+#
+# gitops-dev is a single first-class ConfigurationPolicy (object-templates-raw). It ranges the
+# cluster's gitops-dev-team-<team> labels on the hub, reads each team's ArgoCD spec from the
+# cluster-set-config.<clusterset> ConfigMap (hubClusterSets.<hub>.config.gitops.teams), and stamps
+# the per-team GitOps objects — replacing the old Helm range over .Values.teams. Because it is a
+# first-class manifest, remediationAction + evaluationInterval are baked in the manifest (PG will
+# not inject them); ${REMEDIATION} here drives the root Policy action to match.
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  severity: high
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-gitops-dev
+    remediationAction: ${REMEDIATION}
+    # Hub lookups (cluster-set-config ConfigMap, ManagedClusterSet, Route) need a service account.
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-gitops-operator-install
+    manifests:
+      - path: manifests

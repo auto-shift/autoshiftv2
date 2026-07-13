@@ -1,0 +1,22 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: policy-quota-config
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates:
+    - complianceType: mustonlyhave
+      objectDefinition:
+        apiVersion: v1
+        kind: ResourceQuota
+        metadata:
+          name: metallb-quota
+          namespace: metallb-system
+        spec:
+          hard:
+            cpu: '{{hub index .ManagedClusterLabels "autoshift.io/metallb-quota-cpu" | default "100m" hub}}'
+            memory: '{{hub index .ManagedClusterLabels "autoshift.io/metallb-quota-memory" | default "256Mi" hub}}'

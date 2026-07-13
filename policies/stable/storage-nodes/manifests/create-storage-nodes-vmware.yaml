@@ -1,0 +1,76 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: create-storage-nodes-vmware
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  pruneObjectBehavior: None
+  evaluationInterval:
+    compliant: 10m
+    noncompliant: 30s
+  object-templates-raw: |
+              {{- /* vSphere creates one worker MachineSet per failure domain; clone each into a storage MachineSet that copies its workspace/network/template, so storage nodes land in the same failure domain(s) as the workers — works for one or many domains. */ -}}
+              {{- $machineset_role := "storage" }}
+              {{- $infrastructure_id := (lookup "config.openshift.io/v1" "Infrastructure" "" "cluster").status.infrastructureName }}
+              {{- range (lookup "machine.openshift.io/v1beta1" "MachineSet" "openshift-machine-api" "").items }}
+                {{- if hasPrefix (printf "%s-worker" $infrastructure_id) .metadata.name }}
+                  {{- $worker_ms := . }}
+                  {{- $zone := trimPrefix (printf "%s-worker-" $infrastructure_id) $worker_ms.metadata.name }}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: machine.openshift.io/v1beta1
+                  kind: MachineSet
+                  metadata:
+                    labels:
+                      machine.openshift.io/cluster-api-cluster: {{ $infrastructure_id }}
+                    name: {{ $infrastructure_id }}-{{ $machineset_role }}-{{ $zone }}
+                    namespace: openshift-machine-api
+                  spec:
+                    replicas: {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub}}
+                    selector:
+                      matchLabels:
+                        machine.openshift.io/cluster-api-cluster: {{ $infrastructure_id }}
+                        machine.openshift.io/cluster-api-machineset: {{ $infrastructure_id }}-{{ $machineset_role }}-{{ $zone }}
+                    template:
+                      metadata:
+                        labels:
+                          machine.openshift.io/cluster-api-cluster: {{ $infrastructure_id }}
+                          machine.openshift.io/cluster-api-machine-role: infra
+                          machine.openshift.io/cluster-api-machine-type: infra
+                          machine.openshift.io/cluster-api-machineset: {{ $infrastructure_id }}-{{ $machineset_role }}-{{ $zone }}
+                      spec:
+                        metadata:
+                          labels:
+                            cluster.ocs.openshift.io/openshift-storage: ''
+                            node-role.kubernetes.io/infra: ''
+                            node-role.kubernetes.io/worker: ''
+                        taints:
+                          - effect: NoSchedule
+                            key: node.ocs.openshift.io/storage
+                            value: 'true'
+                        providerSpec:
+                          value:
+                            numCoresPerSocket: {{ "{{hub index .ManagedClusterLabels "autoshift.io/storage-nodes-numcores-per-socket" hub}}" | default $worker_ms.spec.template.spec.providerSpec.value.numCoresPerSocket }}
+                            diskGiB: {{ $worker_ms.spec.template.spec.providerSpec.value.diskGiB }}
+                            snapshot: ''
+                            userDataSecret:
+                              name: {{ $worker_ms.spec.template.spec.providerSpec.value.userDataSecret.name }}
+                            memoryMiB: {{ "{{hub index .ManagedClusterLabels "autoshift.io/storage-nodes-memory-mib" hub}}" | default $worker_ms.spec.template.spec.providerSpec.value.memoryMiB }}
+                            credentialsSecret:
+                              name: {{ $worker_ms.spec.template.spec.providerSpec.value.credentialsSecret.name }}
+                            network:
+                              devices:
+                                - networkName: {{ (index ($worker_ms.spec.template.spec.providerSpec.value.network.devices) 0).networkName }}
+                            numCPUs: {{ "{{hub index .ManagedClusterLabels "autoshift.io/storage-nodes-numcpu" hub}}" | default  $worker_ms.spec.template.spec.providerSpec.value.numCPUs }}
+                            kind: VSphereMachineProviderSpec
+                            workspace:
+                              datacenter: {{ $worker_ms.spec.template.spec.providerSpec.value.workspace.datacenter }}
+                              datastore:  {{ $worker_ms.spec.template.spec.providerSpec.value.workspace.datastore }}
+                              folder:  {{ $worker_ms.spec.template.spec.providerSpec.value.workspace.folder }}
+                              resourcePool: {{ $worker_ms.spec.template.spec.providerSpec.value.workspace.resourcePool }}
+                              server: {{ $worker_ms.spec.template.spec.providerSpec.value.workspace.server }}
+                            template: {{ $worker_ms.spec.template.spec.providerSpec.value.template }}
+                            apiVersion: machine.openshift.io/v1beta1
+                {{- end }}
+              {{- end }}
