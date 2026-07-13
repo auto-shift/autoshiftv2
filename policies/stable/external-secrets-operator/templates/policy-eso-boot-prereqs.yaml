@@ -10,12 +10,17 @@
 #
 # STRUCTURE — deliberately generic so it can later be lifted out into a standalone, shared policy
 # group that centralizes ALL autoshift-internal RBAC: bootPrereqs.rbac is a list of grants, each a
-# { name, serviceAccount{name,namespace}, scope, namespaces, rules } record. This template loops the
-# list at Helm render time and emits, per grant:
+# { name, serviceAccount{name,namespace}, scope, namespaces, rules } record. The grant list is read
+# PER HUB from that hub's rendered config (config.eso.bootPrereqs.rbac), falling back to the
+# chart-baked default, and a HUB template loops it at policy evaluation time, emitting per grant:
 #   scope: namespaced (default) -> a Role + RoleBinding in each target namespace (default: policy ns)
 #   scope: cluster              -> a ClusterRole + ClusterRoleBinding (cluster-wide)
-# The grant's `rules` are standard RBAC policyRules, passed through verbatim. The objects are fully
-# resolved at render time (no per-cluster templating), so this uses object-templates (not -raw).
+# The grant's `rules` are standard RBAC policyRules, passed through verbatim (JSON-inlined — JSON is
+# valid YAML). Chart-provided grants are validated at Helm render time below (fail fast). Grants
+# arriving via a rendered-config override are NOT re-validated: a grant missing name or
+# serviceAccount.name is SKIPPED (emitting a half-formed object would just wedge the CP), and an
+# unknown scope emits nothing. A skipped grant surfaces downstream — the readiness-hub gate's hub
+# lookups fail closed without their RBAC.
 #
 # PLACEMENT: hubClusterSets only — these grants back hub-side template resolution. Managed-cluster
 # RBAC, if ever needed, is a future extension (add a placement selector per grant and split the loop).
@@ -23,36 +28,18 @@
 {{- $policyNamespace := $.Values.policy_namespace }}
 {{- $eso := $.Values.externalSecretsOperator }}
 {{- $rbac := (dig "bootPrereqs" "rbac" (list) $eso) }}
-{{- /* Build the ConfigurationPolicy object list from the grant config. Each grant expands to a
-       Role+RoleBinding per namespace, or a ClusterRole+ClusterRoleBinding, all bound to the grant's
-       ServiceAccount. */ -}}
-{{- $objs := list }}
+{{- /* Validate the chart-baked grants at render time (fail fast). Rendered-config overrides bypass
+       this — see header. */ -}}
 {{- range $grant := $rbac }}
   {{- $name := (required "bootPrereqs.rbac[].name is required" $grant.name) }}
   {{- $sa := (required (printf "bootPrereqs.rbac[%q].serviceAccount is required" $name) $grant.serviceAccount) }}
-  {{- $saName := (required (printf "bootPrereqs.rbac[%q].serviceAccount.name is required" $name) $sa.name) }}
-  {{- $saNamespace := ($sa.namespace | default $policyNamespace) }}
+  {{- $_ := (required (printf "bootPrereqs.rbac[%q].serviceAccount.name is required" $name) $sa.name) }}
   {{- $scope := ($grant.scope | default "namespaced") }}
-  {{- $rules := ($grant.rules | default list) }}
-  {{- $subject := (dict "kind" "ServiceAccount" "name" $saName "namespace" $saNamespace) }}
-  {{- if eq $scope "cluster" }}
-    {{- $cr := (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "ClusterRole" "metadata" (dict "name" $name) "rules" $rules) }}
-    {{- $objs = append $objs (dict "complianceType" "musthave" "objectDefinition" $cr) }}
-    {{- $crb := (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "ClusterRoleBinding" "metadata" (dict "name" $name) "roleRef" (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "ClusterRole" "name" $name) "subjects" (list $subject)) }}
-    {{- $objs = append $objs (dict "complianceType" "musthave" "objectDefinition" $crb) }}
-  {{- else if eq $scope "namespaced" }}
-    {{- $namespaces := ($grant.namespaces | default (list $policyNamespace)) }}
-    {{- range $ns := $namespaces }}
-      {{- $role := (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "Role" "metadata" (dict "name" $name "namespace" $ns) "rules" $rules) }}
-      {{- $objs = append $objs (dict "complianceType" "musthave" "objectDefinition" $role) }}
-      {{- $rb := (dict "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "RoleBinding" "metadata" (dict "name" $name "namespace" $ns) "roleRef" (dict "apiGroup" "rbac.authorization.k8s.io" "kind" "Role" "name" $name) "subjects" (list $subject)) }}
-      {{- $objs = append $objs (dict "complianceType" "musthave" "objectDefinition" $rb) }}
-    {{- end }}
-  {{- else }}
+  {{- if not (has $scope (list "namespaced" "cluster")) }}
     {{- fail (printf "bootPrereqs.rbac[%q].scope %q is invalid — must be \"namespaced\" or \"cluster\"" $name $scope) }}
   {{- end }}
 {{- end }}
-{{/* The Policy always renders when hubClusterSets exist (even when $objs is empty →
+{{/* The Policy always renders when hubClusterSets exist (even when the grant list is empty →
        object-templates-raw evaluates to an empty list, a Compliant no-op). object-templates-raw
        tolerates the empty list where structured object-templates would not, so hub-side dependents
        can list policy-eso-boot-prereqs in spec.dependencies unconditionally and rely on it existing
@@ -86,5 +73,70 @@ spec:
           evaluationInterval:
             compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates-raw: |{{ $objs | toYaml | nindent 12 }}
+          object-templates-raw: |
+            #Indentation Anchor
+            ##### DERIVE (hub): the grant list for THIS hub — its rendered-config override when present, #####
+            ##### else the chart-baked default (JSON-inlined at Helm render; JSON is valid template input). #####
+            {{ "{{hub-" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $baked := (`{"rbac": {{ $rbac | toJson }}}` | fromJson) {{ "hub}}" }}
+            {{ "{{hub-" }} $grants := (dig "eso" "bootPrereqs" "rbac" $baked.rbac $clusterConfig) {{ "hub}}" }}
+            {{ "{{hub-" }} range $grant := $grants {{ "hub}}" }}
+            {{ "{{hub-" }} $name := (dig "name" "" $grant) {{ "hub}}" }}
+            {{ "{{hub-" }} $saName := (dig "serviceAccount" "name" "" $grant) {{ "hub}}" }}
+            {{ "{{hub-" }} $saNamespace := (dig "serviceAccount" "namespace" "{{ $policyNamespace }}" $grant) {{ "hub}}" }}
+            {{ "{{hub-" }} $scope := (dig "scope" "namespaced" $grant) {{ "hub}}" }}
+            {{ "{{hub-" }} $rules := (dig "rules" (list) $grant) {{ "hub}}" }}
+            ##### skip malformed grants (missing name or serviceAccount.name) rather than emit a half-formed object #####
+            {{ "{{hub-" }} if and (ne $name "") (ne $saName "") {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $scope "cluster" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRole
+                metadata:
+                  name: {{ "{{hub" }} $name {{ "hub}}" }}
+                rules: {{ "{{hub" }} $rules | toRawJson {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRoleBinding
+                metadata:
+                  name: {{ "{{hub" }} $name {{ "hub}}" }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: ClusterRole
+                  name: {{ "{{hub" }} $name {{ "hub}}" }}
+                subjects:
+                  - kind: ServiceAccount
+                    name: {{ "{{hub" }} $saName {{ "hub}}" }}
+                    namespace: {{ "{{hub" }} $saNamespace {{ "hub}}" }}
+            {{ "{{hub-" }} else if eq $scope "namespaced" {{ "hub}}" }}
+            {{ "{{hub-" }} range $ns := (dig "namespaces" (list "{{ $policyNamespace }}") $grant) {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: Role
+                metadata:
+                  name: {{ "{{hub" }} $name {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $ns {{ "hub}}" }}
+                rules: {{ "{{hub" }} $rules | toRawJson {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: {{ "{{hub" }} $name {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $ns {{ "hub}}" }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: Role
+                  name: {{ "{{hub" }} $name {{ "hub}}" }}
+                subjects:
+                  - kind: ServiceAccount
+                    name: {{ "{{hub" }} $saName {{ "hub}}" }}
+                    namespace: {{ "{{hub" }} $saNamespace {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
 {{ end }}

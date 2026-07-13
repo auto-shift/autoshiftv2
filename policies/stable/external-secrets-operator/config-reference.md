@@ -123,8 +123,11 @@ policies are never suppressed. Runtime overrides under
 
 Hub-side RBAC scaffold for AutoShift internals (`policy-eso-boot-prereqs`). The hub-template
 ServiceAccount (`autoshift-policy-service-account`) needs these grants — e.g. the readiness
-gates read per-cluster Policy status. Chart-only. Set `rbac: []` (or omit) to render nothing
-and skip the policy.
+gates read per-cluster Policy status. The chart value is the baked default; each hub's
+rendered config can override it at `config.eso.bootPrereqs.rbac` (hub-template expansion, no
+chart re-render needed). An empty list leaves the policy as a Compliant no-op that creates no
+RBAC. Rendered-config grants are not Helm-validated: one missing `name`/`serviceAccount.name`
+or with an unknown `scope` is skipped.
 
 `bootPrereqs.rbac` is a list of grants; each grant:
 

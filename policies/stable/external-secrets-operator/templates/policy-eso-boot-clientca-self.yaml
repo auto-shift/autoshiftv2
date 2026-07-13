@@ -1,389 +1,14 @@
 {{- /*
-  Single-sourced object-templates body for policy-eso-boot-clientca-self.
-  Included TWICE below: once as the live object stream (indent 12), once as the text
-  payload of the debug-render ConfigMap (nindent 20). Include directives are indented;
-  {{- left-trims the source newline+spaces and nindent re-supplies them. Helm-render locals threaded in via the context dict ($ctx).
+  TWIN-COPY STRUCTURE (no Helm defines/includes — the upstream architecture is moving away from
+  Helm, so the object-templates body is duplicated INLINE instead of single-sourced in a define):
+  the body appears TWICE in this file:
+    - live copy:  12-space indent, applied when diagnostics.debugRender is off
+    - debug copy: 20-space indent, embedded as the text payload of the *-debug-render ConfigMap,
+      so the target cluster resolves it and captures what WOULD be applied (nothing goes live)
+  RULE: the two copies MUST stay byte-identical apart from the indentation. Debug/live divergence
+  is handled INSIDE the shared body by hub-template `if $debug` conditionals (secret-material
+  emissions swap to DEBUG placeholder text), never by editing one copy alone.
 */ -}}
-{{- define "eso.bootBody.clientcaSelf" -}}
-##### DERIVE (hub): load THIS cluster's rendered config + its hubBootstrap cert settings #####
-{{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
-{{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
-{{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ .defaultMode }}") {{ "hub}}" }}
-##### teardown: EXPLICIT opt-in decommission flag — a positive flag, never inferred from config #####
-##### absence, so a transient rendered-config read miss can never trigger a teardown. #####
-{{ "{{hub-" }} $teardown := (dig "teardown" {{ .defaultTeardown }} $hubBootstrap) {{ "hub}}" }}
-{{ "{{hub-" }} $clientIdentity := (dig "clientIdentity" (dict) $hubBootstrap) {{ "hub}}" }}
-{{ "{{hub-" }} $certCNPrefix := (index $clientIdentity "certCNPrefix" | default "{{ .defaultCertCNPrefix }}") {{ "hub}}" }}
-{{ "{{hub-" }} $certBaseDomain := (index $clientIdentity "baseDomain" | default "{{ .defaultCertBaseDomain }}") {{ "hub}}" }}
-##### Cert spec fields: explicit per-cluster config wins, else the chart default, else a MODE-BASED default. #####
-##### selfSigned (our own CA honors them verbatim) -> sensible values INCLUDING client auth (required for hub #####
-##### mTLS); external modes -> EMPTY so the issuer governs validity/keyUsage. This policy only mints in #####
-##### selfSigned, so in practice the selfSigned arm always applies here. #####
-{{ "{{hub-" }} $ssCertDefaults := (eq $mode "selfSigned") {{ "hub}}" }}
-{{ "{{hub-" }} $certDuration := (index $clientIdentity "certDuration" | default "{{ .defaultCertDuration }}" | default (ternary "720h" "" $ssCertDefaults)) {{ "hub}}" }}
-{{ "{{hub-" }} $certRenewBefore := (index $clientIdentity "certRenewBefore" | default "{{ .defaultCertRenewBefore }}" | default (ternary "480h" "" $ssCertDefaults)) {{ "hub}}" }}
-{{ "{{hub-" }} $certUsages := (index $clientIdentity "certUsages" | default (`{{ .defaultCertUsages | toJson }}` | fromJson) | default (ternary (list "client auth" "digital signature" "key encipherment") (list) $ssCertDefaults)) {{ "hub}}" }}
-{{ "{{hub-" }} $privateKeyAlgorithm := (index $clientIdentity "privateKeyAlgorithm" | default "{{ .defaultPrivateKeyAlgorithm }}" | default (ternary "RSA" "" $ssCertDefaults)) {{ "hub}}" }}
-{{ "{{hub-" }} $privateKeySize := (index $clientIdentity "privateKeySize" | default "{{ .defaultPrivateKeySize }}" | default (ternary "2048" "" $ssCertDefaults)) {{ "hub}}" }}
-##### BRIDGE the derived cert settings to the runtime side #####
-{{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
-{{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
-##### Collect precondition problems into $errors (no `fail`, which buries the reason under the whole #####
-##### policy string); surfaced via the status ConfigMap + inform gate below. #####
-{{ "{{-" }} $errors := list {{ "}}" }}
-##### Reject an unknown mode (a typo'd mode would otherwise silently no-op this policy AND its external #####
-##### companion, leaving the hub apiserver with no clientCA wired for any cluster). Skipped on teardown: #####
-##### the sweeps below are mode-independent then, and a mode typo must not block decommissioning. #####
-{{ "{{-" }} if and (ne $teardown "1") (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
-  {{ "{{-" }} $errors = append $errors (printf "[spoke] invalid config.eso.hubBootstrap.mode %q (or values hubBootstrap.mode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
-{{ "{{-" }} end {{ "}}" }}
-{{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
-{{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
-{{ "{{-" }} $certDuration := `{{ "{{hub" }} $certDuration {{ "hub}}" }}` {{ "}}" }}
-{{ "{{-" }} $certRenewBefore := `{{ "{{hub" }} $certRenewBefore {{ "hub}}" }}` {{ "}}" }}
-{{ "{{-" }} $certUsages := `{{ "{{hub" }} $certUsages | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
-{{ "{{-" }} $privateKeyAlgorithm := `{{ "{{hub" }} $privateKeyAlgorithm {{ "hub}}" }}` {{ "}}" }}
-{{ "{{-" }} $privateKeySize := `{{ "{{hub" }} $privateKeySize {{ "hub}}" }}` {{ "}}" }}
-##### RUNTIME (on the hub itself): enumerate THIS hub's ManagedClusters, build the eligible set #####
-##### Keep EVERY cluster carrying the autoshift.io/owning-namespace label (any deployment — one #####
-##### hub hosts clusters from many). Missing label -> SKIP (treat as a non-autoshift cluster; the eval #####
-##### interval is deliberately small). CN = <prefix>.<clusterTrunc>.<baseDomain> capped at 63: the #####
-##### cluster-name segment is truncated to the budget the prefix + baseDomain leave (61 minus their #####
-##### lengths, the 2 dots counted). Budget exhausted -> fail; truncation collision -> fail (no hash #####
-##### function exists in ACM templates, so a collision cannot be silently disambiguated). #####
-{{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
-{{ "{{-" }} $eligible := list {{ "}}" }}
-{{ "{{-" }} $nsIdentities := dict {{ "}}" }}
-{{ "{{-" }} $seenNames := dict {{ "}}" }}
-##### This policy owns the selfSigned mode ONLY. In externalCA / externalCAReuseServingCert #####
-##### the hub mints no CA + no client certs — policy ...-boot-clientca-ext owns those #####
-##### modes (clientCA <- external bundle, per-cluster RBAC only). Leaving $eligible empty below #####
-##### makes this whole policy a no-op so the two never both write APIServer.spec.clientCA. #####
-##### On teardown, skip enumeration entirely: $eligible/$nsIdentities stay empty, so the mint block #####
-##### never fires and every sweep below treats ALL labelled objects as stale. #####
-{{ "{{-" }} if and (eq $mode "selfSigned") (ne $teardown "1") {{ "}}" }}
-  ##### CN budget is cluster-independent (prefix + baseDomain only) — check ONCE up front. Exhausted -> #####
-  ##### record it and skip enumeration entirely (no per-cluster segment can be derived). #####
-  {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}
-    {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (their combined length must be <= 61); shorten hubBootstrap.clientIdentity.certCNPrefix or hubBootstrap.clientIdentity.baseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
-  {{ "{{-" }} else {{ "}}" }}
-  {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
-    {{ "{{-" }} $mcName := $mc.metadata.name {{ "}}" }}
-    {{ "{{-" }} $tenancyNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
-    {{ "{{-" }} if ne $tenancyNs "" {{ "}}" }}
-      ##### Per cluster: collect any problem into $errors WITHOUT aborting (so every bad cluster is #####
-      ##### reported at once) and only register + mint a cluster that derives cleanly. $clusterOk tracks #####
-      ##### whether THIS cluster is usable; ANY error blocks the whole action below (all-or-nothing, as #####
-      ##### the previous `fail` did). Crash-prone index ops are guarded behind their precondition checks. #####
-      ##### SHARED segment (client-secret NAME + cert CN): the OCM ManagedCluster name. It is UNIQUE per #####
-      ##### hub and available with no lookup; the spoke store copies the secret by this SAME OCM name with #####
-      ##### no clusterClaim derivation. Truncated to the budget so the CN fits 63 chars (and the resource #####
-      ##### name stays bounded); a collision is only ever a truncation artifact. substr needs int args, #####
-      ##### but ACM math (add/sub) yields int64 — convert with toInt (sprig slice rejects strings). #####
-      ##### OCM names may contain dots (DNS-1123 subdomain): after a cut, trim trailing "."/"-" so the CN #####
-      ##### never gets an empty label (double dot) and the secret name stays a valid resource name. The #####
-      ##### boot-store copy path applies the IDENTICAL trim so the two computed names always match. #####
-      {{ "{{-" }} $clusterOk := true {{ "}}" }}
-      {{ "{{-" }} $nameSeg := $mcName {{ "}}" }}
-      {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}{{ "{{-" }} $nameSeg = (trimAll ".-" (substr 0 (toInt $cnBudget) $mcName)) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} if hasKey $seenNames $nameSeg {{ "}}" }}
-        {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap identity collision after truncation: clusters %q and %q both map to segment %q (client-secret name AND cert-CN segment); lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenNames $nameSeg) $mcName $nameSeg) {{ "}}" }}
-        {{ "{{-" }} $clusterOk = false {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
-      ##### CN segment (IDENTITY / RBAC subject): the SAME OCM-name segment. This hub OWNS the self- #####
-      ##### signed signer, so the name the hub knows the cluster by IS the authoritative identity inside #####
-      ##### that trust domain — and OCM names are unique per hub, so distinct clusters can only collide #####
-      ##### through truncation (caught above; two clusters legitimately named the same in DIFFERENT DNS #####
-      ##### zones stay distinct here, unlike a DNS-derived segment). The apiserver-URL "real name" #####
-      ##### derivation is externalCA-only (clientca-ext + boot-store), where the CN must satisfy an #####
-      ##### outside PKI and the CA may be shared across hubs (every self-managed hub is "local-cluster"). #####
-      ##### The full (untruncated) OCM name rides as a SAN below so the identity survives CN truncation. #####
-      {{ "{{-" }} $certCN := (printf "%s.%s.%s" $certCNPrefix $nameSeg $certBaseDomain) {{ "}}" }}
-      ##### register + enqueue only a fully-valid cluster (seen* maps stay collision-accurate; an errored #####
-      ##### cluster is skipped, and the action is blocked wholesale by `not $errors` below regardless). #####
-      {{ "{{-" }} if $clusterOk {{ "}}" }}
-        {{ "{{-" }} $seenNames = set $seenNames $nameSeg $mcName {{ "}}" }}
-        {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "cn" $certCN "seg" $nameSeg "san" $mcName "ns" $tenancyNs) {{ "}}" }}
-        ##### group CNs by owning namespace for the per-namespace reader Role + RoleBinding below #####
-        {{ "{{-" }} $nsList := (index $nsIdentities $tenancyNs | default list) {{ "}}" }}
-        {{ "{{-" }} $nsList = append $nsList $certCN {{ "}}" }}
-        {{ "{{-" }} $_ := set $nsIdentities $tenancyNs $nsList {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
-    {{ "{{-" }} end {{ "}}" }}
-  {{ "{{-" }} end {{ "}}" }}
-  {{ "{{-" }} end {{ "}}" }}
-{{ "{{-" }} end {{ "}}" }}
-{{ "{{-" }} if and $eligible (not $errors) {{ "}}" }}
-  ##### ACT (runtime, local config-policy-controller on the cluster that landed this policy) — only when #####
-  ##### NO precondition error was collected, so one misconfigured cluster blocks the whole mint (matching #####
-  ##### the previous fail-aborts-everything behavior) and the status ConfigMap reports every problem. #####
-  ##### one generic self-signed CA (cert-manager) that signs all the client certs #####
-- complianceType: musthave
-  objectDefinition:
-    apiVersion: cert-manager.io/v1
-    kind: ClusterIssuer
-    metadata:
-      name: {{ .selfSignedIssuer }}
-    spec:
-      selfSigned: {}
-- complianceType: musthave
-  objectDefinition:
-    apiVersion: cert-manager.io/v1
-    kind: Certificate
-    metadata:
-      name: {{ .caName }}
-      namespace: {{ .cmResourceNamespace }}
-    spec:
-      isCA: true
-      commonName: {{ .caName }}
-      secretName: {{ .caName }}
-      duration: 87600h
-      renewBefore: 720h
-      privateKey:
-        algorithm: RSA
-        size: 4096
-      issuerRef:
-        name: {{ .selfSignedIssuer }}
-        kind: ClusterIssuer
-        group: cert-manager.io
-- complianceType: musthave
-  objectDefinition:
-    apiVersion: cert-manager.io/v1
-    kind: ClusterIssuer
-    metadata:
-      name: {{ .caIssuer }}
-    spec:
-      ca:
-        secretName: {{ .caName }}
-  ##### The hub apiserver clientCA wiring (trusting this CA) lives in the dependent companion policy #####
-  ##### policy-eso-boot-clientca-self-wire. It must NOT be done here: it reads #####
-  ##### this CA's secret via fromSecret, and ACM resolves a template ATOMICALLY — a fromSecret on the #####
-  ##### not-yet-existing CA secret would error and block THIS template, which is the very template #####
-  ##### that mints the CA Certificate that creates the secret (deadlock). As a separate policy gated #####
-  ##### on this one being Compliant, it simply retries until cert-manager has populated the secret. #####
-  ##### PER OWNING NAMESPACE: one shared reader Role + ONE RoleBinding whose subjects are every #####
-  ##### owned cluster's client CN. The owning deployment's store policy reads its client Secret AND #####
-  ##### the Secrets it wants from THIS namespace, so the identity + RBAC must land here, not in $policyNamespace. #####
-  ##### The RoleBinding is mustonlyhave: its subjects are pinned to EXACTLY the current owners, so a #####
-  ##### cluster that moves to another tenancy namespace is dropped from this binding (no stale access). #####
-  ##### Every tenant-scoped object below carries an autoshift.io/secret-reader-* label; the cleanup #####
-  ##### sweep below lists them and deletes any whose namespace is no longer a key in $nsIdentities. The hub- #####
-  ##### global CA / issuers / clientCA / APIServer are deliberately NOT labelled (different lifecycle, and #####
-  ##### they do not live in a tenancy namespace, so a namespace-based sweep must never touch them). #####
-  {{ "{{-" }} range $ownerNs, $cns := $nsIdentities {{ "}}" }}
-- complianceType: musthave
-  objectDefinition:
-    apiVersion: rbac.authorization.k8s.io/v1
-    kind: Role
-    metadata:
-      name: {{ .readerRole }}
-      namespace: {{ "{{" }} $ownerNs {{ "}}" }}
-      labels:
-        autoshift.io/secret-reader-role: {{ .storePrefix }}
-    rules:
-      - apiGroups: [""]
-        resources: ["secrets"]
-        verbs: ["get", "list", "watch"]
-- complianceType: mustonlyhave
-  objectDefinition:
-    apiVersion: rbac.authorization.k8s.io/v1
-    kind: RoleBinding
-    metadata:
-      name: {{ .readerRole }}
-      namespace: {{ "{{" }} $ownerNs {{ "}}" }}
-      labels:
-        autoshift.io/secret-reader-rolebinding: {{ .storePrefix }}
-    roleRef:
-      apiGroup: rbac.authorization.k8s.io
-      kind: Role
-      name: {{ .readerRole }}
-    subjects:
-      {{ "{{-" }} range $cn := $cns {{ "}}" }}
-      - kind: User
-        name: {{ "{{" }} $cn {{ "}}" }}
-        apiGroup: rbac.authorization.k8s.io
-      {{ "{{-" }} end {{ "}}" }}
-  {{ "{{-" }} end {{ "}}" }}
-  ##### PER CLUSTER: one client cert minted into the cluster's OWN owning namespace (where its owning #####
-  ##### deployment's store policy reads it). Secret name reuses the truncated CN segment, so that store #####
-  ##### derives the identical name. Segment (and so CN) uniqueness is enforced hub-wide above ($seenNames), across namespaces. #####
-  {{ "{{-" }} range $entry := $eligible {{ "}}" }}
-    {{ "{{-" }} $secretName := (printf "%s-%s" "{{ .clientSecret }}" (index $entry "seg")) {{ "}}" }}
-- complianceType: musthave
-  objectDefinition:
-    apiVersion: cert-manager.io/v1
-    kind: Certificate
-    metadata:
-      name: {{ "{{" }} $secretName {{ "}}" }}
-      namespace: {{ "{{" }} (index $entry "ns") {{ "}}" }}
-      labels:
-        autoshift.io/hub-bootstrap-client-cert: {{ .storePrefix }}
-    spec:
-      commonName: {{ "{{" }} (index $entry "cn") {{ "}}" }}
-      ##### full (untruncated) OCM cluster name as a SAN so the complete identity is preserved even #####
-      ##### when the CN's cluster segment was truncated to the 63-char budget #####
-      dnsNames:
-        - {{ "{{" }} (index $entry "san") {{ "}}" }}
-      secretName: {{ "{{" }} $secretName {{ "}}" }}
-      ##### cert-manager propagates these labels onto the generated Secret, so the stale-cert sweep #####
-      ##### below (and any manual teardown) can find the Secret even after its Certificate is gone. #####
-      secretTemplate:
-        labels:
-          autoshift.io/hub-bootstrap-client-cert: {{ .storePrefix }}
-      {{ "{{-" }} if ne $certDuration "" {{ "}}" }}
-      duration: {{ "{{" }} $certDuration {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} if ne $certRenewBefore "" {{ "}}" }}
-      renewBefore: {{ "{{" }} $certRenewBefore {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} if $certUsages {{ "}}" }}
-      usages:
-      {{ "{{-" }} range $u := $certUsages {{ "}}" }}
-        - {{ "{{" }} $u {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} if ne $privateKeyAlgorithm "" {{ "}}" }}
-      privateKey:
-        algorithm: {{ "{{" }} $privateKeyAlgorithm {{ "}}" }}
-        {{ "{{-" }} if ne $privateKeySize "" {{ "}}" }}
-        size: {{ "{{" }} $privateKeySize {{ "}}" }}
-        {{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
-      issuerRef:
-        name: {{ .caIssuer }}
-        kind: ClusterIssuer
-        group: cert-manager.io
-  {{ "{{-" }} end {{ "}}" }}
-{{ "{{-" }} end {{ "}}" }}
-##### CLEANUP (orphaned reader RBAC): a reader RoleBinding or Role this policy labelled whose namespace #####
-##### no longer owns a cluster (not a key in $nsIdentities THIS evaluation) is stale — emit a mustNotHave #####
-##### so ACM deletes it. Each kind is swept independently by its OWN label, so a half-deleted pair (Role #####
-##### without binding or vice versa) still converges. Gated on the SAME mode as the enumerate loop above: #####
-##### the inactive companion policy has an EMPTY $nsIdentities, so without this gate it would delete #####
-##### every labelled object — including the active policy's. Runs even when $eligible is empty (last #####
-##### cluster left), but NOT when $errors is non-empty: a derivation error can drop a live cluster from #####
-##### $nsIdentities, and deleting its RBAC on a transient error would revoke access — skip cleanup until #####
-##### the error clears. On teardown, mode-independent: everything labelled is stale. #####
-{{ "{{-" }} if and (or (eq $teardown "1") (eq $mode "selfSigned")) (not $errors) {{ "}}" }}
-  {{ "{{-" }} range $rb := ((lookup "rbac.authorization.k8s.io/v1" "RoleBinding" "" "").items | default list) {{ "}}" }}
-    {{ "{{-" }} $rbLabels := (dig "metadata" "labels" (dict) $rb) {{ "}}" }}
-    {{ "{{-" }} if hasKey $rbLabels "autoshift.io/secret-reader-rolebinding" {{ "}}" }}
-      {{ "{{-" }} $rbNs := (dig "metadata" "namespace" "" $rb) {{ "}}" }}
-      {{ "{{-" }} if not (hasKey $nsIdentities $rbNs) {{ "}}" }}
-- complianceType: mustnothave
-  objectDefinition:
-    apiVersion: rbac.authorization.k8s.io/v1
-    kind: RoleBinding
-    metadata:
-      name: {{ "{{" }} (dig "metadata" "name" "" $rb) {{ "}}" }}
-      namespace: {{ "{{" }} $rbNs {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
-    {{ "{{-" }} end {{ "}}" }}
-  {{ "{{-" }} end {{ "}}" }}
-  {{ "{{-" }} range $role := ((lookup "rbac.authorization.k8s.io/v1" "Role" "" "").items | default list) {{ "}}" }}
-    {{ "{{-" }} $roleLabels := (dig "metadata" "labels" (dict) $role) {{ "}}" }}
-    {{ "{{-" }} if hasKey $roleLabels "autoshift.io/secret-reader-role" {{ "}}" }}
-      {{ "{{-" }} $roleNs := (dig "metadata" "namespace" "" $role) {{ "}}" }}
-      {{ "{{-" }} if not (hasKey $nsIdentities $roleNs) {{ "}}" }}
-- complianceType: mustnothave
-  objectDefinition:
-    apiVersion: rbac.authorization.k8s.io/v1
-    kind: Role
-    metadata:
-      name: {{ "{{" }} (dig "metadata" "name" "" $role) {{ "}}" }}
-      namespace: {{ "{{" }} $roleNs {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
-    {{ "{{-" }} end {{ "}}" }}
-  {{ "{{-" }} end {{ "}}" }}
-{{ "{{-" }} end {{ "}}" }}
-##### CLEANUP (stale client certs): ONLY this policy mints Certificates labelled #####
-##### autoshift.io/hub-bootstrap-client-cert, so any labelled cert not in the CURRENT expected set is #####
-##### stale and cert-manager will renew it forever — sweep it AND its generated Secret (named by #####
-##### spec.secretName; the secretTemplate above also labels the Secret for manual teardown). Two cases #####
-##### fall out of one expected set: in selfSigned the set is exactly $eligible, so a DEPARTED cluster's #####
-##### cert is swept; in the external modes the set is empty, so the WHOLE mint estate is swept (the #####
-##### spoke mints its own cert there; the external companion creates no cert-manager objects, so this #####
-##### can never delete anything the active mode owns). Guarded by a CRD lookup: an external-mode hub #####
-##### may not have cert-manager, and lookup on an unregistered kind errors the whole template (the CRD #####
-##### kind itself is always registered). If cert-manager was UNINSTALLED before a mode switch, the #####
-##### orphaned cert Secrets cannot be discovered here — delete them manually by the label. Skipped #####
-##### while $errors is non-empty: a derivation error can drop a live cluster from $eligible, and #####
-##### sweeping its cert on a transient error would revoke its access (same rule as the binding sweep). #####
-{{ "{{-" }} if and (or (eq $teardown "1") (eq $mode "selfSigned") (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert")) (not $errors) {{ "}}" }}
-  {{ "{{-" }} if (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "certificates.cert-manager.io") {{ "}}" }}
-    {{ "{{-" }} $expectedCerts := dict {{ "}}" }}
-    {{ "{{-" }} range $entry := $eligible {{ "}}" }}
-      {{ "{{-" }} $_ := set $expectedCerts (printf "%s/%s-%s" (index $entry "ns") "{{ .clientSecret }}" (index $entry "seg")) true {{ "}}" }}
-    {{ "{{-" }} end {{ "}}" }}
-    {{ "{{-" }} range $cert := ((lookup "cert-manager.io/v1" "Certificate" "" "").items | default list) {{ "}}" }}
-      {{ "{{-" }} $certLabels := (dig "metadata" "labels" (dict) $cert) {{ "}}" }}
-      {{ "{{-" }} if hasKey $certLabels "autoshift.io/hub-bootstrap-client-cert" {{ "}}" }}
-        {{ "{{-" }} $certNs := (dig "metadata" "namespace" "" $cert) {{ "}}" }}
-        {{ "{{-" }} $certName := (dig "metadata" "name" "" $cert) {{ "}}" }}
-        {{ "{{-" }} if not (hasKey $expectedCerts (printf "%s/%s" $certNs $certName)) {{ "}}" }}
-- complianceType: mustnothave
-  objectDefinition:
-    apiVersion: cert-manager.io/v1
-    kind: Certificate
-    metadata:
-      name: {{ "{{" }} $certName {{ "}}" }}
-      namespace: {{ "{{" }} $certNs {{ "}}" }}
-- complianceType: mustnothave
-  objectDefinition:
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: {{ "{{" }} (dig "spec" "secretName" "" $cert | default $certName) {{ "}}" }}
-      namespace: {{ "{{" }} $certNs {{ "}}" }}
-        {{ "{{-" }} end {{ "}}" }}
-      {{ "{{-" }} end {{ "}}" }}
-    {{ "{{-" }} end {{ "}}" }}
-  {{ "{{-" }} end {{ "}}" }}
-{{ "{{-" }} end {{ "}}" }}
-##### CLEANUP (hub-global mint estate on leaving selfSigned): in the external modes nothing on the hub #####
-##### should be minting — sweep the two ClusterIssuers and the CA Certificate. These have stable #####
-##### chart-derived names and are only ever created by THIS policy's selfSigned arm, so the sweep can #####
-##### never fight the external companion (which creates no cert-manager objects). The CA Secret is a #####
-##### core kind, so its mustnothave needs no CRD guard — it is swept even if cert-manager was already #####
-##### uninstalled (cert-manager does not GC the secrets its Certificates generated). Also runs on #####
-##### teardown (explicit decommission removes the mint estate regardless of mode). #####
-{{ "{{-" }} if and (or (eq $teardown "1") (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert")) (not $errors) {{ "}}" }}
-  {{ "{{-" }} if (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "certificates.cert-manager.io") {{ "}}" }}
-- complianceType: mustnothave
-  objectDefinition:
-    apiVersion: cert-manager.io/v1
-    kind: Certificate
-    metadata:
-      name: {{ .caName }}
-      namespace: {{ .cmResourceNamespace }}
-  {{ "{{-" }} end {{ "}}" }}
-  {{ "{{-" }} if (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "clusterissuers.cert-manager.io") {{ "}}" }}
-- complianceType: mustnothave
-  objectDefinition:
-    apiVersion: cert-manager.io/v1
-    kind: ClusterIssuer
-    metadata:
-      name: {{ .selfSignedIssuer }}
-- complianceType: mustnothave
-  objectDefinition:
-    apiVersion: cert-manager.io/v1
-    kind: ClusterIssuer
-    metadata:
-      name: {{ .caIssuer }}
-  {{ "{{-" }} end {{ "}}" }}
-- complianceType: mustnothave
-  objectDefinition:
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: {{ .caName }}
-      namespace: {{ .cmResourceNamespace }}
-{{ "{{-" }} end {{ "}}" }}
-##### SURFACE precondition results as DATA (no fail): the helper writes the eso-boot-clientca-self-status #####
-##### ConfigMap (full list) when $errors is non-empty and mustnothave-clears it when empty. The companion #####
-##### inform gate CP turns that ConfigMap's presence into this Policy's compliance for dependents. #####
-{{- include "eso.boot.statusReport" (dict "policy" "eso-boot-clientca-self" "ns" "open-cluster-management-agent-addon") | nindent 0 }}
-{{- end -}}
 # Hub-side half of the cluster->cluster ESO bootstrap. This policy is placed ONLY on hub
 # clusters (hubClusterSets) and provisions, PER AUTOSHIFT DEPLOYMENT, a client-cert identity
 # the hub apiserver trusts — so that deployment's spokes can read Secrets from the hub via the
@@ -487,7 +112,6 @@
          debugRender wins, so previews still render under readinessOnly. */ -}}
   {{- $readinessOnly := (dig "diagnostics" "readinessOnly" "" $hb | default false) }}
   {{- $debugRender := (dig "diagnostics" "debugRender" "" $hb | default false) }}
-  {{- $ctx := (dict "policyNamespace" $policyNamespace "storePrefix" $storePrefix "clientSecret" $clientSecret "readerRole" $readerRole "selfSignedIssuer" $selfSignedIssuer "caIssuer" $caIssuer "caName" $caName "cmResourceNamespace" $cmResourceNamespace "defaultMode" $defaultMode "defaultTeardown" $defaultTeardown "defaultCertCNPrefix" $defaultCertCNPrefix "defaultCertBaseDomain" $defaultCertBaseDomain "defaultCertDuration" $defaultCertDuration "defaultCertRenewBefore" $defaultCertRenewBefore "defaultCertUsages" $defaultCertUsages "defaultPrivateKeyAlgorithm" $defaultPrivateKeyAlgorithm "defaultPrivateKeySize" $defaultPrivateKeySize) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -544,7 +168,413 @@ spec:
                     autoshift.io/eso-debug-render: "true"
                 data:
                   rendered.yaml: |
-                    {{- include "eso.bootBody.clientcaSelf" $ctx | nindent 20 }}
+                    ##### DERIVE (hub): load THIS cluster's rendered config + its hubBootstrap cert settings #####
+                    {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+                    {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
+                    {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ $defaultMode }}") {{ "hub}}" }}
+                    ##### teardown: EXPLICIT opt-in decommission flag — a positive flag, never inferred from config #####
+                    ##### absence, so a transient rendered-config read miss can never trigger a teardown. #####
+                    {{ "{{hub-" }} $teardown := (dig "teardown" {{ $defaultTeardown }} $hubBootstrap) {{ "hub}}" }}
+                    {{ "{{hub-" }} $clientIdentity := (dig "clientIdentity" (dict) $hubBootstrap) {{ "hub}}" }}
+                    {{ "{{hub-" }} $certCNPrefix := (index $clientIdentity "certCNPrefix" | default "{{ $defaultCertCNPrefix }}") {{ "hub}}" }}
+                    {{ "{{hub-" }} $certBaseDomain := (index $clientIdentity "baseDomain" | default "{{ $defaultCertBaseDomain }}") {{ "hub}}" }}
+                    ##### Cert spec fields: explicit per-cluster config wins, else the chart default, else a MODE-BASED default. #####
+                    ##### selfSigned (our own CA honors them verbatim) -> sensible values INCLUDING client auth (required for hub #####
+                    ##### mTLS); external modes -> EMPTY so the issuer governs validity/keyUsage. This policy only mints in #####
+                    ##### selfSigned, so in practice the selfSigned arm always applies here. #####
+                    {{ "{{hub-" }} $ssCertDefaults := (eq $mode "selfSigned") {{ "hub}}" }}
+                    {{ "{{hub-" }} $certDuration := (index $clientIdentity "certDuration" | default "{{ $defaultCertDuration }}" | default (ternary "720h" "" $ssCertDefaults)) {{ "hub}}" }}
+                    {{ "{{hub-" }} $certRenewBefore := (index $clientIdentity "certRenewBefore" | default "{{ $defaultCertRenewBefore }}" | default (ternary "480h" "" $ssCertDefaults)) {{ "hub}}" }}
+                    {{ "{{hub-" }} $certUsages := (index $clientIdentity "certUsages" | default (`{{ $defaultCertUsages | toJson }}` | fromJson) | default (ternary (list "client auth" "digital signature" "key encipherment") (list) $ssCertDefaults)) {{ "hub}}" }}
+                    {{ "{{hub-" }} $privateKeyAlgorithm := (index $clientIdentity "privateKeyAlgorithm" | default "{{ $defaultPrivateKeyAlgorithm }}" | default (ternary "RSA" "" $ssCertDefaults)) {{ "hub}}" }}
+                    {{ "{{hub-" }} $privateKeySize := (index $clientIdentity "privateKeySize" | default "{{ $defaultPrivateKeySize }}" | default (ternary "2048" "" $ssCertDefaults)) {{ "hub}}" }}
+                    ##### BRIDGE the derived cert settings to the runtime side #####
+                    {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
+                    ##### Collect precondition problems into $errors (no `fail`, which buries the reason under the whole #####
+                    ##### policy string); surfaced via the status ConfigMap + inform gate below. #####
+                    {{ "{{-" }} $errors := list {{ "}}" }}
+                    ##### Reject an unknown mode (a typo'd mode would otherwise silently no-op this policy AND its external #####
+                    ##### companion, leaving the hub apiserver with no clientCA wired for any cluster). Skipped on teardown: #####
+                    ##### the sweeps below are mode-independent then, and a mode typo must not block decommissioning. #####
+                    {{ "{{-" }} if and (ne $teardown "1") (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
+                      {{ "{{-" }} $errors = append $errors (printf "[spoke] invalid config.eso.hubBootstrap.mode %q (or values hubBootstrap.mode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $certDuration := `{{ "{{hub" }} $certDuration {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $certRenewBefore := `{{ "{{hub" }} $certRenewBefore {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $certUsages := `{{ "{{hub" }} $certUsages | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+                    {{ "{{-" }} $privateKeyAlgorithm := `{{ "{{hub" }} $privateKeyAlgorithm {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $privateKeySize := `{{ "{{hub" }} $privateKeySize {{ "hub}}" }}` {{ "}}" }}
+                    ##### RUNTIME (on the hub itself): enumerate THIS hub's ManagedClusters, build the eligible set #####
+                    ##### Keep EVERY cluster carrying the autoshift.io/owning-namespace label (any deployment — one #####
+                    ##### hub hosts clusters from many). Missing label -> SKIP (treat as a non-autoshift cluster; the eval #####
+                    ##### interval is deliberately small). CN = <prefix>.<clusterTrunc>.<baseDomain> capped at 63: the #####
+                    ##### cluster-name segment is truncated to the budget the prefix + baseDomain leave (61 minus their #####
+                    ##### lengths, the 2 dots counted). Budget exhausted -> fail; truncation collision -> fail (no hash #####
+                    ##### function exists in ACM templates, so a collision cannot be silently disambiguated). #####
+                    {{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
+                    {{ "{{-" }} $eligible := list {{ "}}" }}
+                    {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
+                    {{ "{{-" }} $seenNames := dict {{ "}}" }}
+                    ##### This policy owns the selfSigned mode ONLY. In externalCA / externalCAReuseServingCert #####
+                    ##### the hub mints no CA + no client certs — policy ...-boot-clientca-ext owns those #####
+                    ##### modes (clientCA <- external bundle, per-cluster RBAC only). Leaving $eligible empty below #####
+                    ##### makes this whole policy a no-op so the two never both write APIServer.spec.clientCA. #####
+                    ##### On teardown, skip enumeration entirely: $eligible/$nsIdentities stay empty, so the mint block #####
+                    ##### never fires and every sweep below treats ALL labelled objects as stale. #####
+                    {{ "{{-" }} if and (eq $mode "selfSigned") (ne $teardown "1") {{ "}}" }}
+                      ##### CN budget is cluster-independent (prefix + baseDomain only) — check ONCE up front. Exhausted -> #####
+                      ##### record it and skip enumeration entirely (no per-cluster segment can be derived). #####
+                      {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}
+                        {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (their combined length must be <= 61); shorten hubBootstrap.clientIdentity.certCNPrefix or hubBootstrap.clientIdentity.baseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
+                      {{ "{{-" }} else {{ "}}" }}
+                      {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
+                        {{ "{{-" }} $mcName := $mc.metadata.name {{ "}}" }}
+                        {{ "{{-" }} $tenancyNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
+                        {{ "{{-" }} if ne $tenancyNs "" {{ "}}" }}
+                          ##### Per cluster: collect any problem into $errors WITHOUT aborting (so every bad cluster is #####
+                          ##### reported at once) and only register + mint a cluster that derives cleanly. $clusterOk tracks #####
+                          ##### whether THIS cluster is usable; ANY error blocks the whole action below (all-or-nothing, as #####
+                          ##### the previous `fail` did). Crash-prone index ops are guarded behind their precondition checks. #####
+                          ##### SHARED segment (client-secret NAME + cert CN): the OCM ManagedCluster name. It is UNIQUE per #####
+                          ##### hub and available with no lookup; the spoke store copies the secret by this SAME OCM name with #####
+                          ##### no clusterClaim derivation. Truncated to the budget so the CN fits 63 chars (and the resource #####
+                          ##### name stays bounded); a collision is only ever a truncation artifact. substr needs int args, #####
+                          ##### but ACM math (add/sub) yields int64 — convert with toInt (sprig slice rejects strings). #####
+                          ##### OCM names may contain dots (DNS-1123 subdomain): after a cut, trim trailing "."/"-" so the CN #####
+                          ##### never gets an empty label (double dot) and the secret name stays a valid resource name. The #####
+                          ##### boot-store copy path applies the IDENTICAL trim so the two computed names always match. #####
+                          {{ "{{-" }} $clusterOk := true {{ "}}" }}
+                          {{ "{{-" }} $nameSeg := $mcName {{ "}}" }}
+                          {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}{{ "{{-" }} $nameSeg = (trimAll ".-" (substr 0 (toInt $cnBudget) $mcName)) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} if hasKey $seenNames $nameSeg {{ "}}" }}
+                            {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap identity collision after truncation: clusters %q and %q both map to segment %q (client-secret name AND cert-CN segment); lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenNames $nameSeg) $mcName $nameSeg) {{ "}}" }}
+                            {{ "{{-" }} $clusterOk = false {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                          ##### CN segment (IDENTITY / RBAC subject): the SAME OCM-name segment. This hub OWNS the self- #####
+                          ##### signed signer, so the name the hub knows the cluster by IS the authoritative identity inside #####
+                          ##### that trust domain — and OCM names are unique per hub, so distinct clusters can only collide #####
+                          ##### through truncation (caught above; two clusters legitimately named the same in DIFFERENT DNS #####
+                          ##### zones stay distinct here, unlike a DNS-derived segment). The apiserver-URL "real name" #####
+                          ##### derivation is externalCA-only (clientca-ext + boot-store), where the CN must satisfy an #####
+                          ##### outside PKI and the CA may be shared across hubs (every self-managed hub is "local-cluster"). #####
+                          ##### The full (untruncated) OCM name rides as a SAN below so the identity survives CN truncation. #####
+                          {{ "{{-" }} $certCN := (printf "%s.%s.%s" $certCNPrefix $nameSeg $certBaseDomain) {{ "}}" }}
+                          ##### register + enqueue only a fully-valid cluster (seen* maps stay collision-accurate; an errored #####
+                          ##### cluster is skipped, and the action is blocked wholesale by `not $errors` below regardless). #####
+                          {{ "{{-" }} if $clusterOk {{ "}}" }}
+                            {{ "{{-" }} $seenNames = set $seenNames $nameSeg $mcName {{ "}}" }}
+                            {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "cn" $certCN "seg" $nameSeg "san" $mcName "ns" $tenancyNs) {{ "}}" }}
+                            ##### group CNs by owning namespace for the per-namespace reader Role + RoleBinding below #####
+                            {{ "{{-" }} $nsList := (index $nsIdentities $tenancyNs | default list) {{ "}}" }}
+                            {{ "{{-" }} $nsList = append $nsList $certCN {{ "}}" }}
+                            {{ "{{-" }} $_ := set $nsIdentities $tenancyNs $nsList {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if and $eligible (not $errors) {{ "}}" }}
+                      ##### ACT (runtime, local config-policy-controller on the cluster that landed this policy) — only when #####
+                      ##### NO precondition error was collected, so one misconfigured cluster blocks the whole mint (matching #####
+                      ##### the previous fail-aborts-everything behavior) and the status ConfigMap reports every problem. #####
+                      ##### one generic self-signed CA (cert-manager) that signs all the client certs #####
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: cert-manager.io/v1
+                        kind: ClusterIssuer
+                        metadata:
+                          name: {{ $selfSignedIssuer }}
+                        spec:
+                          selfSigned: {}
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: cert-manager.io/v1
+                        kind: Certificate
+                        metadata:
+                          name: {{ $caName }}
+                          namespace: {{ $cmResourceNamespace }}
+                        spec:
+                          isCA: true
+                          commonName: {{ $caName }}
+                          secretName: {{ $caName }}
+                          duration: 87600h
+                          renewBefore: 720h
+                          privateKey:
+                            algorithm: RSA
+                            size: 4096
+                          issuerRef:
+                            name: {{ $selfSignedIssuer }}
+                            kind: ClusterIssuer
+                            group: cert-manager.io
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: cert-manager.io/v1
+                        kind: ClusterIssuer
+                        metadata:
+                          name: {{ $caIssuer }}
+                        spec:
+                          ca:
+                            secretName: {{ $caName }}
+                      ##### The hub apiserver clientCA wiring (trusting this CA) lives in the dependent companion policy #####
+                      ##### policy-eso-boot-clientca-self-wire. It must NOT be done here: it reads #####
+                      ##### this CA's secret via fromSecret, and ACM resolves a template ATOMICALLY — a fromSecret on the #####
+                      ##### not-yet-existing CA secret would error and block THIS template, which is the very template #####
+                      ##### that mints the CA Certificate that creates the secret (deadlock). As a separate policy gated #####
+                      ##### on this one being Compliant, it simply retries until cert-manager has populated the secret. #####
+                      ##### PER OWNING NAMESPACE: one shared reader Role + ONE RoleBinding whose subjects are every #####
+                      ##### owned cluster's client CN. The owning deployment's store policy reads its client Secret AND #####
+                      ##### the Secrets it wants from THIS namespace, so the identity + RBAC must land here, not in $policyNamespace. #####
+                      ##### The RoleBinding is mustonlyhave: its subjects are pinned to EXACTLY the current owners, so a #####
+                      ##### cluster that moves to another tenancy namespace is dropped from this binding (no stale access). #####
+                      ##### Every tenant-scoped object below carries an autoshift.io/secret-reader-* label; the cleanup #####
+                      ##### sweep below lists them and deletes any whose namespace is no longer a key in $nsIdentities. The hub- #####
+                      ##### global CA / issuers / clientCA / APIServer are deliberately NOT labelled (different lifecycle, and #####
+                      ##### they do not live in a tenancy namespace, so a namespace-based sweep must never touch them). #####
+                      {{ "{{-" }} range $ownerNs, $cns := $nsIdentities {{ "}}" }}
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: rbac.authorization.k8s.io/v1
+                        kind: Role
+                        metadata:
+                          name: {{ $readerRole }}
+                          namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                          labels:
+                            autoshift.io/secret-reader-role: {{ $storePrefix }}
+                        rules:
+                          - apiGroups: [""]
+                            resources: ["secrets"]
+                            verbs: ["get", "list", "watch"]
+                    - complianceType: mustonlyhave
+                      objectDefinition:
+                        apiVersion: rbac.authorization.k8s.io/v1
+                        kind: RoleBinding
+                        metadata:
+                          name: {{ $readerRole }}
+                          namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                          labels:
+                            autoshift.io/secret-reader-rolebinding: {{ $storePrefix }}
+                        roleRef:
+                          apiGroup: rbac.authorization.k8s.io
+                          kind: Role
+                          name: {{ $readerRole }}
+                        subjects:
+                          {{ "{{-" }} range $cn := $cns {{ "}}" }}
+                          - kind: User
+                            name: {{ "{{" }} $cn {{ "}}" }}
+                            apiGroup: rbac.authorization.k8s.io
+                          {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                      ##### PER CLUSTER: one client cert minted into the cluster's OWN owning namespace (where its owning #####
+                      ##### deployment's store policy reads it). Secret name reuses the truncated CN segment, so that store #####
+                      ##### derives the identical name. Segment (and so CN) uniqueness is enforced hub-wide above ($seenNames), across namespaces. #####
+                      {{ "{{-" }} range $entry := $eligible {{ "}}" }}
+                        {{ "{{-" }} $secretName := (printf "%s-%s" "{{ $clientSecret }}" (index $entry "seg")) {{ "}}" }}
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: cert-manager.io/v1
+                        kind: Certificate
+                        metadata:
+                          name: {{ "{{" }} $secretName {{ "}}" }}
+                          namespace: {{ "{{" }} (index $entry "ns") {{ "}}" }}
+                          labels:
+                            autoshift.io/hub-bootstrap-client-cert: {{ $storePrefix }}
+                        spec:
+                          commonName: {{ "{{" }} (index $entry "cn") {{ "}}" }}
+                          ##### full (untruncated) OCM cluster name as a SAN so the complete identity is preserved even #####
+                          ##### when the CN's cluster segment was truncated to the 63-char budget #####
+                          dnsNames:
+                            - {{ "{{" }} (index $entry "san") {{ "}}" }}
+                          secretName: {{ "{{" }} $secretName {{ "}}" }}
+                          ##### cert-manager propagates these labels onto the generated Secret, so the stale-cert sweep #####
+                          ##### below (and any manual teardown) can find the Secret even after its Certificate is gone. #####
+                          secretTemplate:
+                            labels:
+                              autoshift.io/hub-bootstrap-client-cert: {{ $storePrefix }}
+                          {{ "{{-" }} if ne $certDuration "" {{ "}}" }}
+                          duration: {{ "{{" }} $certDuration {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} if ne $certRenewBefore "" {{ "}}" }}
+                          renewBefore: {{ "{{" }} $certRenewBefore {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} if $certUsages {{ "}}" }}
+                          usages:
+                          {{ "{{-" }} range $u := $certUsages {{ "}}" }}
+                            - {{ "{{" }} $u {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} if ne $privateKeyAlgorithm "" {{ "}}" }}
+                          privateKey:
+                            algorithm: {{ "{{" }} $privateKeyAlgorithm {{ "}}" }}
+                            {{ "{{-" }} if ne $privateKeySize "" {{ "}}" }}
+                            size: {{ "{{" }} $privateKeySize {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                          issuerRef:
+                            name: {{ $caIssuer }}
+                            kind: ClusterIssuer
+                            group: cert-manager.io
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    ##### CLEANUP (orphaned reader RBAC): a reader RoleBinding or Role this policy labelled whose namespace #####
+                    ##### no longer owns a cluster (not a key in $nsIdentities THIS evaluation) is stale — emit a mustNotHave #####
+                    ##### so ACM deletes it. Each kind is swept independently by its OWN label, so a half-deleted pair (Role #####
+                    ##### without binding or vice versa) still converges. Gated on the SAME mode as the enumerate loop above: #####
+                    ##### the inactive companion policy has an EMPTY $nsIdentities, so without this gate it would delete #####
+                    ##### every labelled object — including the active policy's. Runs even when $eligible is empty (last #####
+                    ##### cluster left), but NOT when $errors is non-empty: a derivation error can drop a live cluster from #####
+                    ##### $nsIdentities, and deleting its RBAC on a transient error would revoke access — skip cleanup until #####
+                    ##### the error clears. On teardown, mode-independent: everything labelled is stale. #####
+                    {{ "{{-" }} if and (or (eq $teardown "1") (eq $mode "selfSigned")) (not $errors) {{ "}}" }}
+                      {{ "{{-" }} range $rb := ((lookup "rbac.authorization.k8s.io/v1" "RoleBinding" "" "").items | default list) {{ "}}" }}
+                        {{ "{{-" }} $rbLabels := (dig "metadata" "labels" (dict) $rb) {{ "}}" }}
+                        {{ "{{-" }} if hasKey $rbLabels "autoshift.io/secret-reader-rolebinding" {{ "}}" }}
+                          {{ "{{-" }} $rbNs := (dig "metadata" "namespace" "" $rb) {{ "}}" }}
+                          {{ "{{-" }} if not (hasKey $nsIdentities $rbNs) {{ "}}" }}
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: rbac.authorization.k8s.io/v1
+                        kind: RoleBinding
+                        metadata:
+                          name: {{ "{{" }} (dig "metadata" "name" "" $rb) {{ "}}" }}
+                          namespace: {{ "{{" }} $rbNs {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} range $role := ((lookup "rbac.authorization.k8s.io/v1" "Role" "" "").items | default list) {{ "}}" }}
+                        {{ "{{-" }} $roleLabels := (dig "metadata" "labels" (dict) $role) {{ "}}" }}
+                        {{ "{{-" }} if hasKey $roleLabels "autoshift.io/secret-reader-role" {{ "}}" }}
+                          {{ "{{-" }} $roleNs := (dig "metadata" "namespace" "" $role) {{ "}}" }}
+                          {{ "{{-" }} if not (hasKey $nsIdentities $roleNs) {{ "}}" }}
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: rbac.authorization.k8s.io/v1
+                        kind: Role
+                        metadata:
+                          name: {{ "{{" }} (dig "metadata" "name" "" $role) {{ "}}" }}
+                          namespace: {{ "{{" }} $roleNs {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    ##### CLEANUP (stale client certs): ONLY this policy mints Certificates labelled #####
+                    ##### autoshift.io/hub-bootstrap-client-cert, so any labelled cert not in the CURRENT expected set is #####
+                    ##### stale and cert-manager will renew it forever — sweep it AND its generated Secret (named by #####
+                    ##### spec.secretName; the secretTemplate above also labels the Secret for manual teardown). Two cases #####
+                    ##### fall out of one expected set: in selfSigned the set is exactly $eligible, so a DEPARTED cluster's #####
+                    ##### cert is swept; in the external modes the set is empty, so the WHOLE mint estate is swept (the #####
+                    ##### spoke mints its own cert there; the external companion creates no cert-manager objects, so this #####
+                    ##### can never delete anything the active mode owns). Guarded by a CRD lookup: an external-mode hub #####
+                    ##### may not have cert-manager, and lookup on an unregistered kind errors the whole template (the CRD #####
+                    ##### kind itself is always registered). If cert-manager was UNINSTALLED before a mode switch, the #####
+                    ##### orphaned cert Secrets cannot be discovered here — delete them manually by the label. Skipped #####
+                    ##### while $errors is non-empty: a derivation error can drop a live cluster from $eligible, and #####
+                    ##### sweeping its cert on a transient error would revoke its access (same rule as the binding sweep). #####
+                    {{ "{{-" }} if and (or (eq $teardown "1") (eq $mode "selfSigned") (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert")) (not $errors) {{ "}}" }}
+                      {{ "{{-" }} if (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "certificates.cert-manager.io") {{ "}}" }}
+                        {{ "{{-" }} $expectedCerts := dict {{ "}}" }}
+                        {{ "{{-" }} range $entry := $eligible {{ "}}" }}
+                          {{ "{{-" }} $_ := set $expectedCerts (printf "%s/%s-%s" (index $entry "ns") "{{ $clientSecret }}" (index $entry "seg")) true {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} range $cert := ((lookup "cert-manager.io/v1" "Certificate" "" "").items | default list) {{ "}}" }}
+                          {{ "{{-" }} $certLabels := (dig "metadata" "labels" (dict) $cert) {{ "}}" }}
+                          {{ "{{-" }} if hasKey $certLabels "autoshift.io/hub-bootstrap-client-cert" {{ "}}" }}
+                            {{ "{{-" }} $certNs := (dig "metadata" "namespace" "" $cert) {{ "}}" }}
+                            {{ "{{-" }} $certName := (dig "metadata" "name" "" $cert) {{ "}}" }}
+                            {{ "{{-" }} if not (hasKey $expectedCerts (printf "%s/%s" $certNs $certName)) {{ "}}" }}
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: cert-manager.io/v1
+                        kind: Certificate
+                        metadata:
+                          name: {{ "{{" }} $certName {{ "}}" }}
+                          namespace: {{ "{{" }} $certNs {{ "}}" }}
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: v1
+                        kind: Secret
+                        metadata:
+                          name: {{ "{{" }} (dig "spec" "secretName" "" $cert | default $certName) {{ "}}" }}
+                          namespace: {{ "{{" }} $certNs {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    ##### CLEANUP (hub-global mint estate on leaving selfSigned): in the external modes nothing on the hub #####
+                    ##### should be minting — sweep the two ClusterIssuers and the CA Certificate. These have stable #####
+                    ##### chart-derived names and are only ever created by THIS policy's selfSigned arm, so the sweep can #####
+                    ##### never fight the external companion (which creates no cert-manager objects). The CA Secret is a #####
+                    ##### core kind, so its mustnothave needs no CRD guard — it is swept even if cert-manager was already #####
+                    ##### uninstalled (cert-manager does not GC the secrets its Certificates generated). Also runs on #####
+                    ##### teardown (explicit decommission removes the mint estate regardless of mode). #####
+                    {{ "{{-" }} if and (or (eq $teardown "1") (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert")) (not $errors) {{ "}}" }}
+                      {{ "{{-" }} if (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "certificates.cert-manager.io") {{ "}}" }}
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: cert-manager.io/v1
+                        kind: Certificate
+                        metadata:
+                          name: {{ $caName }}
+                          namespace: {{ $cmResourceNamespace }}
+                      {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} if (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "clusterissuers.cert-manager.io") {{ "}}" }}
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: cert-manager.io/v1
+                        kind: ClusterIssuer
+                        metadata:
+                          name: {{ $selfSignedIssuer }}
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: cert-manager.io/v1
+                        kind: ClusterIssuer
+                        metadata:
+                          name: {{ $caIssuer }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: v1
+                        kind: Secret
+                        metadata:
+                          name: {{ $caName }}
+                          namespace: {{ $cmResourceNamespace }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    ##### SURFACE precondition results as DATA (no fail): the helper writes the eso-boot-clientca-self-status #####
+                    ##### ConfigMap (full list) when $errors is non-empty and mustnothave-clears it when empty. The companion #####
+                    ##### inform gate CP turns that ConfigMap's presence into this Policy's compliance for dependents. #####
+                    {{ "{{-" }} if $errors {{ "}}" }}
+                    ##### PRECONDITION REPORT (replaces fail): full detail in a ConfigMap. ACM emits its own compliance #####
+                    ##### Events, so this carries the DETAIL only; the inform gate CP turns its presence into NonCompliant. #####
+                    - complianceType: mustonlyhave
+                      objectDefinition:
+                        apiVersion: v1
+                        kind: ConfigMap
+                        metadata:
+                          name: eso-boot-clientca-self-status
+                          namespace: open-cluster-management-agent-addon
+                          labels:
+                            autoshift.io/eso-boot-status: "true"
+                            autoshift.io/eso-boot-policy: eso-boot-clientca-self
+                        data:
+                          policy: eso-boot-clientca-self
+                          errorCount: {{ "{{" }} $errors | len | quote {{ "}}" }}
+                          errors: |
+                            {{ "{{-" }} range $e := $errors {{ "}}" }}
+                            - {{ "{{" }} $e {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} else {{ "}}" }}
+                    ##### No precondition errors: clear any stale status ConfigMap so the signal self-heals. #####
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: v1
+                        kind: ConfigMap
+                        metadata:
+                          name: eso-boot-clientca-self-status
+                          namespace: open-cluster-management-agent-addon
+                    {{ "{{-" }} end {{ "}}" }}
             {{ "{{hub-" }} else {{ "hub}}" }}
             ##### debugRender OFF: clear any stale preview ConfigMap left by a previous debug run #####
             - complianceType: mustnothave
@@ -555,7 +585,413 @@ spec:
                   name: eso-boot-clientca-self-debug-render
                   namespace: {{ $policyNamespace }}
             {{ "{{hub-" }} if not $readinessOnly {{ "hub}}" }}
-            {{- include "eso.bootBody.clientcaSelf" $ctx | nindent 12 }}
+            ##### DERIVE (hub): load THIS cluster's rendered config + its hubBootstrap cert settings #####
+            {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
+            {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ $defaultMode }}") {{ "hub}}" }}
+            ##### teardown: EXPLICIT opt-in decommission flag — a positive flag, never inferred from config #####
+            ##### absence, so a transient rendered-config read miss can never trigger a teardown. #####
+            {{ "{{hub-" }} $teardown := (dig "teardown" {{ $defaultTeardown }} $hubBootstrap) {{ "hub}}" }}
+            {{ "{{hub-" }} $clientIdentity := (dig "clientIdentity" (dict) $hubBootstrap) {{ "hub}}" }}
+            {{ "{{hub-" }} $certCNPrefix := (index $clientIdentity "certCNPrefix" | default "{{ $defaultCertCNPrefix }}") {{ "hub}}" }}
+            {{ "{{hub-" }} $certBaseDomain := (index $clientIdentity "baseDomain" | default "{{ $defaultCertBaseDomain }}") {{ "hub}}" }}
+            ##### Cert spec fields: explicit per-cluster config wins, else the chart default, else a MODE-BASED default. #####
+            ##### selfSigned (our own CA honors them verbatim) -> sensible values INCLUDING client auth (required for hub #####
+            ##### mTLS); external modes -> EMPTY so the issuer governs validity/keyUsage. This policy only mints in #####
+            ##### selfSigned, so in practice the selfSigned arm always applies here. #####
+            {{ "{{hub-" }} $ssCertDefaults := (eq $mode "selfSigned") {{ "hub}}" }}
+            {{ "{{hub-" }} $certDuration := (index $clientIdentity "certDuration" | default "{{ $defaultCertDuration }}" | default (ternary "720h" "" $ssCertDefaults)) {{ "hub}}" }}
+            {{ "{{hub-" }} $certRenewBefore := (index $clientIdentity "certRenewBefore" | default "{{ $defaultCertRenewBefore }}" | default (ternary "480h" "" $ssCertDefaults)) {{ "hub}}" }}
+            {{ "{{hub-" }} $certUsages := (index $clientIdentity "certUsages" | default (`{{ $defaultCertUsages | toJson }}` | fromJson) | default (ternary (list "client auth" "digital signature" "key encipherment") (list) $ssCertDefaults)) {{ "hub}}" }}
+            {{ "{{hub-" }} $privateKeyAlgorithm := (index $clientIdentity "privateKeyAlgorithm" | default "{{ $defaultPrivateKeyAlgorithm }}" | default (ternary "RSA" "" $ssCertDefaults)) {{ "hub}}" }}
+            {{ "{{hub-" }} $privateKeySize := (index $clientIdentity "privateKeySize" | default "{{ $defaultPrivateKeySize }}" | default (ternary "2048" "" $ssCertDefaults)) {{ "hub}}" }}
+            ##### BRIDGE the derived cert settings to the runtime side #####
+            {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
+            ##### Collect precondition problems into $errors (no `fail`, which buries the reason under the whole #####
+            ##### policy string); surfaced via the status ConfigMap + inform gate below. #####
+            {{ "{{-" }} $errors := list {{ "}}" }}
+            ##### Reject an unknown mode (a typo'd mode would otherwise silently no-op this policy AND its external #####
+            ##### companion, leaving the hub apiserver with no clientCA wired for any cluster). Skipped on teardown: #####
+            ##### the sweeps below are mode-independent then, and a mode typo must not block decommissioning. #####
+            {{ "{{-" }} if and (ne $teardown "1") (ne $mode "selfSigned") (ne $mode "externalCA") (ne $mode "externalCAReuseServingCert") {{ "}}" }}
+              {{ "{{-" }} $errors = append $errors (printf "[spoke] invalid config.eso.hubBootstrap.mode %q (or values hubBootstrap.mode) — must be one of: selfSigned, externalCA, externalCAReuseServingCert" $mode) {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $certDuration := `{{ "{{hub" }} $certDuration {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $certRenewBefore := `{{ "{{hub" }} $certRenewBefore {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $certUsages := `{{ "{{hub" }} $certUsages | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+            {{ "{{-" }} $privateKeyAlgorithm := `{{ "{{hub" }} $privateKeyAlgorithm {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $privateKeySize := `{{ "{{hub" }} $privateKeySize {{ "hub}}" }}` {{ "}}" }}
+            ##### RUNTIME (on the hub itself): enumerate THIS hub's ManagedClusters, build the eligible set #####
+            ##### Keep EVERY cluster carrying the autoshift.io/owning-namespace label (any deployment — one #####
+            ##### hub hosts clusters from many). Missing label -> SKIP (treat as a non-autoshift cluster; the eval #####
+            ##### interval is deliberately small). CN = <prefix>.<clusterTrunc>.<baseDomain> capped at 63: the #####
+            ##### cluster-name segment is truncated to the budget the prefix + baseDomain leave (61 minus their #####
+            ##### lengths, the 2 dots counted). Budget exhausted -> fail; truncation collision -> fail (no hash #####
+            ##### function exists in ACM templates, so a collision cannot be silently disambiguated). #####
+            {{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
+            {{ "{{-" }} $eligible := list {{ "}}" }}
+            {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
+            {{ "{{-" }} $seenNames := dict {{ "}}" }}
+            ##### This policy owns the selfSigned mode ONLY. In externalCA / externalCAReuseServingCert #####
+            ##### the hub mints no CA + no client certs — policy ...-boot-clientca-ext owns those #####
+            ##### modes (clientCA <- external bundle, per-cluster RBAC only). Leaving $eligible empty below #####
+            ##### makes this whole policy a no-op so the two never both write APIServer.spec.clientCA. #####
+            ##### On teardown, skip enumeration entirely: $eligible/$nsIdentities stay empty, so the mint block #####
+            ##### never fires and every sweep below treats ALL labelled objects as stale. #####
+            {{ "{{-" }} if and (eq $mode "selfSigned") (ne $teardown "1") {{ "}}" }}
+              ##### CN budget is cluster-independent (prefix + baseDomain only) — check ONCE up front. Exhausted -> #####
+              ##### record it and skip enumeration entirely (no per-cluster segment can be derived). #####
+              {{ "{{-" }} if lt $cnBudget 1 {{ "}}" }}
+                {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap CN budget exhausted: prefix %q + baseDomain %q leave no room for the cluster name (their combined length must be <= 61); shorten hubBootstrap.clientIdentity.certCNPrefix or hubBootstrap.clientIdentity.baseDomain" $certCNPrefix $certBaseDomain) {{ "}}" }}
+              {{ "{{-" }} else {{ "}}" }}
+              {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
+                {{ "{{-" }} $mcName := $mc.metadata.name {{ "}}" }}
+                {{ "{{-" }} $tenancyNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
+                {{ "{{-" }} if ne $tenancyNs "" {{ "}}" }}
+                  ##### Per cluster: collect any problem into $errors WITHOUT aborting (so every bad cluster is #####
+                  ##### reported at once) and only register + mint a cluster that derives cleanly. $clusterOk tracks #####
+                  ##### whether THIS cluster is usable; ANY error blocks the whole action below (all-or-nothing, as #####
+                  ##### the previous `fail` did). Crash-prone index ops are guarded behind their precondition checks. #####
+                  ##### SHARED segment (client-secret NAME + cert CN): the OCM ManagedCluster name. It is UNIQUE per #####
+                  ##### hub and available with no lookup; the spoke store copies the secret by this SAME OCM name with #####
+                  ##### no clusterClaim derivation. Truncated to the budget so the CN fits 63 chars (and the resource #####
+                  ##### name stays bounded); a collision is only ever a truncation artifact. substr needs int args, #####
+                  ##### but ACM math (add/sub) yields int64 — convert with toInt (sprig slice rejects strings). #####
+                  ##### OCM names may contain dots (DNS-1123 subdomain): after a cut, trim trailing "."/"-" so the CN #####
+                  ##### never gets an empty label (double dot) and the secret name stays a valid resource name. The #####
+                  ##### boot-store copy path applies the IDENTICAL trim so the two computed names always match. #####
+                  {{ "{{-" }} $clusterOk := true {{ "}}" }}
+                  {{ "{{-" }} $nameSeg := $mcName {{ "}}" }}
+                  {{ "{{-" }} if gt (len $mcName) $cnBudget {{ "}}" }}{{ "{{-" }} $nameSeg = (trimAll ".-" (substr 0 (toInt $cnBudget) $mcName)) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if hasKey $seenNames $nameSeg {{ "}}" }}
+                    {{ "{{-" }} $errors = append $errors (printf "[spoke] hub-bootstrap identity collision after truncation: clusters %q and %q both map to segment %q (client-secret name AND cert-CN segment); lengthen the budget (shorter prefix/baseDomain) or rename a cluster" (index $seenNames $nameSeg) $mcName $nameSeg) {{ "}}" }}
+                    {{ "{{-" }} $clusterOk = false {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  ##### CN segment (IDENTITY / RBAC subject): the SAME OCM-name segment. This hub OWNS the self- #####
+                  ##### signed signer, so the name the hub knows the cluster by IS the authoritative identity inside #####
+                  ##### that trust domain — and OCM names are unique per hub, so distinct clusters can only collide #####
+                  ##### through truncation (caught above; two clusters legitimately named the same in DIFFERENT DNS #####
+                  ##### zones stay distinct here, unlike a DNS-derived segment). The apiserver-URL "real name" #####
+                  ##### derivation is externalCA-only (clientca-ext + boot-store), where the CN must satisfy an #####
+                  ##### outside PKI and the CA may be shared across hubs (every self-managed hub is "local-cluster"). #####
+                  ##### The full (untruncated) OCM name rides as a SAN below so the identity survives CN truncation. #####
+                  {{ "{{-" }} $certCN := (printf "%s.%s.%s" $certCNPrefix $nameSeg $certBaseDomain) {{ "}}" }}
+                  ##### register + enqueue only a fully-valid cluster (seen* maps stay collision-accurate; an errored #####
+                  ##### cluster is skipped, and the action is blocked wholesale by `not $errors` below regardless). #####
+                  {{ "{{-" }} if $clusterOk {{ "}}" }}
+                    {{ "{{-" }} $seenNames = set $seenNames $nameSeg $mcName {{ "}}" }}
+                    {{ "{{-" }} $eligible = append $eligible (dict "name" $mcName "cn" $certCN "seg" $nameSeg "san" $mcName "ns" $tenancyNs) {{ "}}" }}
+                    ##### group CNs by owning namespace for the per-namespace reader Role + RoleBinding below #####
+                    {{ "{{-" }} $nsList := (index $nsIdentities $tenancyNs | default list) {{ "}}" }}
+                    {{ "{{-" }} $nsList = append $nsList $certCN {{ "}}" }}
+                    {{ "{{-" }} $_ := set $nsIdentities $tenancyNs $nsList {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if and $eligible (not $errors) {{ "}}" }}
+              ##### ACT (runtime, local config-policy-controller on the cluster that landed this policy) — only when #####
+              ##### NO precondition error was collected, so one misconfigured cluster blocks the whole mint (matching #####
+              ##### the previous fail-aborts-everything behavior) and the status ConfigMap reports every problem. #####
+              ##### one generic self-signed CA (cert-manager) that signs all the client certs #####
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cert-manager.io/v1
+                kind: ClusterIssuer
+                metadata:
+                  name: {{ $selfSignedIssuer }}
+                spec:
+                  selfSigned: {}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cert-manager.io/v1
+                kind: Certificate
+                metadata:
+                  name: {{ $caName }}
+                  namespace: {{ $cmResourceNamespace }}
+                spec:
+                  isCA: true
+                  commonName: {{ $caName }}
+                  secretName: {{ $caName }}
+                  duration: 87600h
+                  renewBefore: 720h
+                  privateKey:
+                    algorithm: RSA
+                    size: 4096
+                  issuerRef:
+                    name: {{ $selfSignedIssuer }}
+                    kind: ClusterIssuer
+                    group: cert-manager.io
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cert-manager.io/v1
+                kind: ClusterIssuer
+                metadata:
+                  name: {{ $caIssuer }}
+                spec:
+                  ca:
+                    secretName: {{ $caName }}
+              ##### The hub apiserver clientCA wiring (trusting this CA) lives in the dependent companion policy #####
+              ##### policy-eso-boot-clientca-self-wire. It must NOT be done here: it reads #####
+              ##### this CA's secret via fromSecret, and ACM resolves a template ATOMICALLY — a fromSecret on the #####
+              ##### not-yet-existing CA secret would error and block THIS template, which is the very template #####
+              ##### that mints the CA Certificate that creates the secret (deadlock). As a separate policy gated #####
+              ##### on this one being Compliant, it simply retries until cert-manager has populated the secret. #####
+              ##### PER OWNING NAMESPACE: one shared reader Role + ONE RoleBinding whose subjects are every #####
+              ##### owned cluster's client CN. The owning deployment's store policy reads its client Secret AND #####
+              ##### the Secrets it wants from THIS namespace, so the identity + RBAC must land here, not in $policyNamespace. #####
+              ##### The RoleBinding is mustonlyhave: its subjects are pinned to EXACTLY the current owners, so a #####
+              ##### cluster that moves to another tenancy namespace is dropped from this binding (no stale access). #####
+              ##### Every tenant-scoped object below carries an autoshift.io/secret-reader-* label; the cleanup #####
+              ##### sweep below lists them and deletes any whose namespace is no longer a key in $nsIdentities. The hub- #####
+              ##### global CA / issuers / clientCA / APIServer are deliberately NOT labelled (different lifecycle, and #####
+              ##### they do not live in a tenancy namespace, so a namespace-based sweep must never touch them). #####
+              {{ "{{-" }} range $ownerNs, $cns := $nsIdentities {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: Role
+                metadata:
+                  name: {{ $readerRole }}
+                  namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-role: {{ $storePrefix }}
+                rules:
+                  - apiGroups: [""]
+                    resources: ["secrets"]
+                    verbs: ["get", "list", "watch"]
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: {{ $readerRole }}
+                  namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-rolebinding: {{ $storePrefix }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: Role
+                  name: {{ $readerRole }}
+                subjects:
+                  {{ "{{-" }} range $cn := $cns {{ "}}" }}
+                  - kind: User
+                    name: {{ "{{" }} $cn {{ "}}" }}
+                    apiGroup: rbac.authorization.k8s.io
+                  {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              ##### PER CLUSTER: one client cert minted into the cluster's OWN owning namespace (where its owning #####
+              ##### deployment's store policy reads it). Secret name reuses the truncated CN segment, so that store #####
+              ##### derives the identical name. Segment (and so CN) uniqueness is enforced hub-wide above ($seenNames), across namespaces. #####
+              {{ "{{-" }} range $entry := $eligible {{ "}}" }}
+                {{ "{{-" }} $secretName := (printf "%s-%s" "{{ $clientSecret }}" (index $entry "seg")) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cert-manager.io/v1
+                kind: Certificate
+                metadata:
+                  name: {{ "{{" }} $secretName {{ "}}" }}
+                  namespace: {{ "{{" }} (index $entry "ns") {{ "}}" }}
+                  labels:
+                    autoshift.io/hub-bootstrap-client-cert: {{ $storePrefix }}
+                spec:
+                  commonName: {{ "{{" }} (index $entry "cn") {{ "}}" }}
+                  ##### full (untruncated) OCM cluster name as a SAN so the complete identity is preserved even #####
+                  ##### when the CN's cluster segment was truncated to the 63-char budget #####
+                  dnsNames:
+                    - {{ "{{" }} (index $entry "san") {{ "}}" }}
+                  secretName: {{ "{{" }} $secretName {{ "}}" }}
+                  ##### cert-manager propagates these labels onto the generated Secret, so the stale-cert sweep #####
+                  ##### below (and any manual teardown) can find the Secret even after its Certificate is gone. #####
+                  secretTemplate:
+                    labels:
+                      autoshift.io/hub-bootstrap-client-cert: {{ $storePrefix }}
+                  {{ "{{-" }} if ne $certDuration "" {{ "}}" }}
+                  duration: {{ "{{" }} $certDuration {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if ne $certRenewBefore "" {{ "}}" }}
+                  renewBefore: {{ "{{" }} $certRenewBefore {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if $certUsages {{ "}}" }}
+                  usages:
+                  {{ "{{-" }} range $u := $certUsages {{ "}}" }}
+                    - {{ "{{" }} $u {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if ne $privateKeyAlgorithm "" {{ "}}" }}
+                  privateKey:
+                    algorithm: {{ "{{" }} $privateKeyAlgorithm {{ "}}" }}
+                    {{ "{{-" }} if ne $privateKeySize "" {{ "}}" }}
+                    size: {{ "{{" }} $privateKeySize {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  issuerRef:
+                    name: {{ $caIssuer }}
+                    kind: ClusterIssuer
+                    group: cert-manager.io
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### CLEANUP (orphaned reader RBAC): a reader RoleBinding or Role this policy labelled whose namespace #####
+            ##### no longer owns a cluster (not a key in $nsIdentities THIS evaluation) is stale — emit a mustNotHave #####
+            ##### so ACM deletes it. Each kind is swept independently by its OWN label, so a half-deleted pair (Role #####
+            ##### without binding or vice versa) still converges. Gated on the SAME mode as the enumerate loop above: #####
+            ##### the inactive companion policy has an EMPTY $nsIdentities, so without this gate it would delete #####
+            ##### every labelled object — including the active policy's. Runs even when $eligible is empty (last #####
+            ##### cluster left), but NOT when $errors is non-empty: a derivation error can drop a live cluster from #####
+            ##### $nsIdentities, and deleting its RBAC on a transient error would revoke access — skip cleanup until #####
+            ##### the error clears. On teardown, mode-independent: everything labelled is stale. #####
+            {{ "{{-" }} if and (or (eq $teardown "1") (eq $mode "selfSigned")) (not $errors) {{ "}}" }}
+              {{ "{{-" }} range $rb := ((lookup "rbac.authorization.k8s.io/v1" "RoleBinding" "" "").items | default list) {{ "}}" }}
+                {{ "{{-" }} $rbLabels := (dig "metadata" "labels" (dict) $rb) {{ "}}" }}
+                {{ "{{-" }} if hasKey $rbLabels "autoshift.io/secret-reader-rolebinding" {{ "}}" }}
+                  {{ "{{-" }} $rbNs := (dig "metadata" "namespace" "" $rb) {{ "}}" }}
+                  {{ "{{-" }} if not (hasKey $nsIdentities $rbNs) {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: {{ "{{" }} (dig "metadata" "name" "" $rb) {{ "}}" }}
+                  namespace: {{ "{{" }} $rbNs {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} range $role := ((lookup "rbac.authorization.k8s.io/v1" "Role" "" "").items | default list) {{ "}}" }}
+                {{ "{{-" }} $roleLabels := (dig "metadata" "labels" (dict) $role) {{ "}}" }}
+                {{ "{{-" }} if hasKey $roleLabels "autoshift.io/secret-reader-role" {{ "}}" }}
+                  {{ "{{-" }} $roleNs := (dig "metadata" "namespace" "" $role) {{ "}}" }}
+                  {{ "{{-" }} if not (hasKey $nsIdentities $roleNs) {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: Role
+                metadata:
+                  name: {{ "{{" }} (dig "metadata" "name" "" $role) {{ "}}" }}
+                  namespace: {{ "{{" }} $roleNs {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### CLEANUP (stale client certs): ONLY this policy mints Certificates labelled #####
+            ##### autoshift.io/hub-bootstrap-client-cert, so any labelled cert not in the CURRENT expected set is #####
+            ##### stale and cert-manager will renew it forever — sweep it AND its generated Secret (named by #####
+            ##### spec.secretName; the secretTemplate above also labels the Secret for manual teardown). Two cases #####
+            ##### fall out of one expected set: in selfSigned the set is exactly $eligible, so a DEPARTED cluster's #####
+            ##### cert is swept; in the external modes the set is empty, so the WHOLE mint estate is swept (the #####
+            ##### spoke mints its own cert there; the external companion creates no cert-manager objects, so this #####
+            ##### can never delete anything the active mode owns). Guarded by a CRD lookup: an external-mode hub #####
+            ##### may not have cert-manager, and lookup on an unregistered kind errors the whole template (the CRD #####
+            ##### kind itself is always registered). If cert-manager was UNINSTALLED before a mode switch, the #####
+            ##### orphaned cert Secrets cannot be discovered here — delete them manually by the label. Skipped #####
+            ##### while $errors is non-empty: a derivation error can drop a live cluster from $eligible, and #####
+            ##### sweeping its cert on a transient error would revoke its access (same rule as the binding sweep). #####
+            {{ "{{-" }} if and (or (eq $teardown "1") (eq $mode "selfSigned") (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert")) (not $errors) {{ "}}" }}
+              {{ "{{-" }} if (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "certificates.cert-manager.io") {{ "}}" }}
+                {{ "{{-" }} $expectedCerts := dict {{ "}}" }}
+                {{ "{{-" }} range $entry := $eligible {{ "}}" }}
+                  {{ "{{-" }} $_ := set $expectedCerts (printf "%s/%s-%s" (index $entry "ns") "{{ $clientSecret }}" (index $entry "seg")) true {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} range $cert := ((lookup "cert-manager.io/v1" "Certificate" "" "").items | default list) {{ "}}" }}
+                  {{ "{{-" }} $certLabels := (dig "metadata" "labels" (dict) $cert) {{ "}}" }}
+                  {{ "{{-" }} if hasKey $certLabels "autoshift.io/hub-bootstrap-client-cert" {{ "}}" }}
+                    {{ "{{-" }} $certNs := (dig "metadata" "namespace" "" $cert) {{ "}}" }}
+                    {{ "{{-" }} $certName := (dig "metadata" "name" "" $cert) {{ "}}" }}
+                    {{ "{{-" }} if not (hasKey $expectedCerts (printf "%s/%s" $certNs $certName)) {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: cert-manager.io/v1
+                kind: Certificate
+                metadata:
+                  name: {{ "{{" }} $certName {{ "}}" }}
+                  namespace: {{ "{{" }} $certNs {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: {{ "{{" }} (dig "spec" "secretName" "" $cert | default $certName) {{ "}}" }}
+                  namespace: {{ "{{" }} $certNs {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### CLEANUP (hub-global mint estate on leaving selfSigned): in the external modes nothing on the hub #####
+            ##### should be minting — sweep the two ClusterIssuers and the CA Certificate. These have stable #####
+            ##### chart-derived names and are only ever created by THIS policy's selfSigned arm, so the sweep can #####
+            ##### never fight the external companion (which creates no cert-manager objects). The CA Secret is a #####
+            ##### core kind, so its mustnothave needs no CRD guard — it is swept even if cert-manager was already #####
+            ##### uninstalled (cert-manager does not GC the secrets its Certificates generated). Also runs on #####
+            ##### teardown (explicit decommission removes the mint estate regardless of mode). #####
+            {{ "{{-" }} if and (or (eq $teardown "1") (eq $mode "externalCA") (eq $mode "externalCAReuseServingCert")) (not $errors) {{ "}}" }}
+              {{ "{{-" }} if (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "certificates.cert-manager.io") {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: cert-manager.io/v1
+                kind: Certificate
+                metadata:
+                  name: {{ $caName }}
+                  namespace: {{ $cmResourceNamespace }}
+              {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} if (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "clusterissuers.cert-manager.io") {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: cert-manager.io/v1
+                kind: ClusterIssuer
+                metadata:
+                  name: {{ $selfSignedIssuer }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: cert-manager.io/v1
+                kind: ClusterIssuer
+                metadata:
+                  name: {{ $caIssuer }}
+              {{ "{{-" }} end {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: {{ $caName }}
+                  namespace: {{ $cmResourceNamespace }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### SURFACE precondition results as DATA (no fail): the helper writes the eso-boot-clientca-self-status #####
+            ##### ConfigMap (full list) when $errors is non-empty and mustnothave-clears it when empty. The companion #####
+            ##### inform gate CP turns that ConfigMap's presence into this Policy's compliance for dependents. #####
+            {{ "{{-" }} if $errors {{ "}}" }}
+            ##### PRECONDITION REPORT (replaces fail): full detail in a ConfigMap. ACM emits its own compliance #####
+            ##### Events, so this carries the DETAIL only; the inform gate CP turns its presence into NonCompliant. #####
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-boot-clientca-self-status
+                  namespace: open-cluster-management-agent-addon
+                  labels:
+                    autoshift.io/eso-boot-status: "true"
+                    autoshift.io/eso-boot-policy: eso-boot-clientca-self
+                data:
+                  policy: eso-boot-clientca-self
+                  errorCount: {{ "{{" }} $errors | len | quote {{ "}}" }}
+                  errors: |
+                    {{ "{{-" }} range $e := $errors {{ "}}" }}
+                    - {{ "{{" }} $e {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} else {{ "}}" }}
+            ##### No precondition errors: clear any stale status ConfigMap so the signal self-heals. #####
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-boot-clientca-self-status
+                  namespace: open-cluster-management-agent-addon
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
     - objectDefinition:

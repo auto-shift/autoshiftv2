@@ -269,7 +269,36 @@ spec:
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
-            {{- include "eso.boot.statusReport" (dict "policy" "eso-cert-auth-rbac" "ns" "open-cluster-management-agent-addon") | nindent 12 }}
+            {{ "{{-" }} if $errors {{ "}}" }}
+            ##### PRECONDITION REPORT (replaces fail): full detail in a ConfigMap. ACM emits its own compliance #####
+            ##### Events, so this carries the DETAIL only; the inform gate CP turns its presence into NonCompliant. #####
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-cert-auth-rbac-status
+                  namespace: open-cluster-management-agent-addon
+                  labels:
+                    autoshift.io/eso-boot-status: "true"
+                    autoshift.io/eso-boot-policy: eso-cert-auth-rbac
+                data:
+                  policy: eso-cert-auth-rbac
+                  errorCount: {{ "{{" }} $errors | len | quote {{ "}}" }}
+                  errors: |
+                    {{ "{{-" }} range $e := $errors {{ "}}" }}
+                    - {{ "{{" }} $e {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} else {{ "}}" }}
+            ##### No precondition errors: clear any stale status ConfigMap so the signal self-heals. #####
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-cert-auth-rbac-status
+                  namespace: open-cluster-management-agent-addon
+            {{ "{{-" }} end {{ "}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy

@@ -16,9 +16,9 @@
 #
 # Contract: this Policy is a GATE, surfaced WITHOUT `fail` (which buries the real reason under the whole
 # policy-rendered-as-a-string in the console and often truncates it off). Two ConfigurationPolicies:
-#   * eso-boot-readiness-spoke-report (enforce) collects every problem into $errors, then — via the shared
-#     eso.boot.statusReport helper — writes a per-policy status ConfigMap (the full list) + a Warning Event
-#     when anything is wrong, and ENFORCE-deletes both when everything is ready (self-clearing).
+#   * eso-boot-readiness-spoke-report (enforce) collects every problem into $errors, then — via the inline
+#     status-report block at the end of its body — writes a per-policy status ConfigMap (the full list)
+#     when anything is wrong, and ENFORCE-deletes it when everything is ready (self-clearing).
 #   * eso-boot-readiness-spoke-gate (inform) mustnothave's that status ConfigMap, so IT is the compliance
 #     proxy: NonCompliant exactly while the report CM exists. The inform gate creates nothing itself — the
 #     enforce report owns the objects' lifecycle, which is why the report must clear the CM on recovery.
@@ -203,11 +203,40 @@ spec:
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
-            ##### SURFACE results as DATA (no fail): the eso.boot.statusReport helper emits, AS RUNTIME #####
-            ##### conditionals on $errors, the status ConfigMap (full list) + Warning Event when anything was #####
-            ##### collected, and mustnothave's both when $errors is empty so the signal self-heals. The #####
-            ##### companion inform gate CP below turns that ConfigMap's presence into this Policy's compliance. #####
-            {{- include "eso.boot.statusReport" (dict "policy" "eso-boot-readiness-spoke" "ns" "open-cluster-management-agent-addon") | nindent 12 }}
+            ##### SURFACE results as DATA (no fail): the status-report block below emits, AS RUNTIME #####
+            ##### conditionals on $errors, the status ConfigMap (full list) when anything was collected, #####
+            ##### and mustnothave's it when $errors is empty so the signal self-heals. The companion #####
+            ##### inform gate CP below turns that ConfigMap's presence into this Policy's compliance. #####
+            {{ "{{-" }} if $errors {{ "}}" }}
+            ##### PRECONDITION REPORT (replaces fail): full detail in a ConfigMap. ACM emits its own compliance #####
+            ##### Events, so this carries the DETAIL only; the inform gate CP turns its presence into NonCompliant. #####
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-boot-readiness-spoke-status
+                  namespace: open-cluster-management-agent-addon
+                  labels:
+                    autoshift.io/eso-boot-status: "true"
+                    autoshift.io/eso-boot-policy: eso-boot-readiness-spoke
+                data:
+                  policy: eso-boot-readiness-spoke
+                  errorCount: {{ "{{" }} $errors | len | quote {{ "}}" }}
+                  errors: |
+                    {{ "{{-" }} range $e := $errors {{ "}}" }}
+                    - {{ "{{" }} $e {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} else {{ "}}" }}
+            ##### No precondition errors: clear any stale status ConfigMap so the signal self-heals. #####
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: eso-boot-readiness-spoke-status
+                  namespace: open-cluster-management-agent-addon
+            {{ "{{-" }} end {{ "}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy

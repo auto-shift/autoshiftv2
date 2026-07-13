@@ -1819,13 +1819,18 @@ the readiness gates' per-cluster cert-manager-policy compliance check (a hub loo
 fails closed and the gate cannot go Compliant. `policy-eso-boot-prereqs` centralizes that RBAC and is
 driven entirely by config, so grants are declared in one place rather than scattered across policies.
 
-This is a **deployment-wide chart value** (`externalSecretsOperator.bootPrereqs`), not per-cluster
-`config.eso` — RBAC prerequisites are fixed infrastructure for a deployment. `bootPrereqs.rbac` is a
-list of grants; each renders to a `Role`+`RoleBinding` (namespaced) or `ClusterRole`+`ClusterRoleBinding`
-(cluster), bound to the grant's ServiceAccount. Set it to `[]` (or omit) and the policy still renders
-with an **empty** `object-templates-raw` list — a Compliant no-op that creates no RBAC — so dependents
-can always rely on it (see below). The structure is intentionally generic so it can later be lifted
-into a standalone, shared policy group that centralizes **all** AutoShift-internal RBAC.
+The grant list is read **per hub** from that hub's rendered config (`config.eso.bootPrereqs.rbac`),
+falling back to the chart value (`externalSecretsOperator.bootPrereqs.rbac`) baked in as the default —
+a hub template expands the grants at policy evaluation time, so a rendered-config override takes
+effect without a chart re-render. `bootPrereqs.rbac` is a list of grants; each expands to a
+`Role`+`RoleBinding` (namespaced) or `ClusterRole`+`ClusterRoleBinding` (cluster), bound to the
+grant's ServiceAccount. With an empty list the policy still renders with an **empty**
+`object-templates-raw` list — a Compliant no-op that creates no RBAC — so dependents can always rely
+on it (see below). Chart-provided grants are validated at Helm render time (missing fields fail the
+render); grants arriving via rendered-config are **not** re-validated — a grant missing `name` or
+`serviceAccount.name`, or naming an unknown `scope`, is skipped, and the gap surfaces as the
+readiness-hub gate's lookups failing closed. The structure is intentionally generic so it can later
+be lifted into a standalone, shared policy group that centralizes **all** AutoShift-internal RBAC.
 
 ```yaml
 # values overlay (umbrella / chart values), under externalSecretsOperator:

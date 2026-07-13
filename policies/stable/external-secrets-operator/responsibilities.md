@@ -116,7 +116,7 @@ Readiness gate for the hub-side boot policies.
 | `eso-boot-readiness-spoke-report` (enforce) | Assert the per-mode PKI preconditions on the target cluster (client cert minted/present for this cluster, serving CA discoverable, mode-specific inputs) before the bootstrap store may be built; write results to the status ConfigMap. |
 | `eso-boot-readiness-spoke-gate` (inform) | Surface unmet preconditions. |
 
-### `templates/policy-eso-boot-serving-ca.yaml` *(hub-gated render; boot-body define `eso.bootBody.servingCa`)*
+### `templates/policy-eso-boot-serving-ca.yaml` *(hub-gated render; twin-copy body)*
 
 **Policy `policy-eso-boot-serving-ca`** — set: `policyset-eso-boot-hub` (hubs only).
 
@@ -124,7 +124,7 @@ Readiness gate for the hub-side boot policies.
 |---|---|
 | `eso-boot-serving-ca` (enforce) | Discover the hub apiserver's serving CA at runtime — a custom named serving cert if the APIServer config declares one, else the operator-managed bundle — and stash it in the policy namespace, where boot-store (and per-store `caSource` delivery) pick it up for spokes. |
 
-### `templates/policy-eso-boot-clientca-self.yaml` *(hub-gated render; boot-body define `eso.bootBody.clientcaSelf`)*
+### `templates/policy-eso-boot-clientca-self.yaml` *(hub-gated render; twin-copy body)*
 
 **Policy `policy-eso-boot-clientca-self`** — set: `policyset-eso-boot-hub` (hubs only). Active
 in `selfSigned` mode; renders inert otherwise.
@@ -134,7 +134,7 @@ in `selfSigned` mode; renders inert otherwise.
 | `eso-boot-clientca-self` (enforce) | Mint the self-signed bootstrap CA, then for every ManagedCluster carrying an `autoshift.io/owning-namespace` label (across ALL deployments, not just this one): mint a per-cluster client cert (CN = `<prefix>.<managedClusterName>.<baseDomain>` — the hub's OCM name for the cluster, with the CN-truncation rule; the DNS-derived identity is externalCA-only) into that cluster's owning namespace, and create the reader Role/RoleBinding there so the CN can read exactly its deployment's secrets. Tenancy is per-owning-namespace by design. Includes cleanup sweeps for departed clusters/certs. |
 | `eso-boot-clientca-self-gate` (inform) | Status-ConfigMap gate. |
 
-### `templates/policy-eso-boot-clientca-self-wire.yaml` *(hub-gated render; define `eso.bootBody.clientcaSelfWire`)*
+### `templates/policy-eso-boot-clientca-self-wire.yaml` *(hub-gated render; twin-copy body)*
 
 **Policy `policy-eso-boot-clientca-self-wire`** — set: `policyset-eso-boot-hub` (hubs only).
 Split from the mint policy so the atomic object-templates evaluation can't deadlock (the wire
@@ -144,7 +144,7 @@ step reads what the mint step creates).
 |---|---|
 | `eso-boot-clientca-self-wire` (enforce) | Wire the minted bootstrap CA into `APIServer.spec.clientCA` (additive — merged into the existing bundle; triggers one kube-apiserver rollout on first set). |
 
-### `templates/policy-eso-boot-clientca-ext.yaml` *(hub-gated render; define `eso.bootBody.clientcaExt`)*
+### `templates/policy-eso-boot-clientca-ext.yaml` *(hub-gated render; twin-copy body)*
 
 **Policy `policy-eso-boot-clientca-ext`** — set: `policyset-eso-boot-hub` (hubs only). Active
 in the external trust modes (`externalCA`, `externalCAReuseServingCert`); no minting happens.
@@ -154,7 +154,7 @@ in the external trust modes (`externalCA`, `externalCAReuseServingCert`); no min
 | `eso-boot-clientca-ext` (enforce) | Materialize the externally supplied CA bundle into the apiserver clientCA ConfigMap, and create per-owning-namespace reader RBAC for the spoke-derived cert CNs (the CN contract: spokes present certs the external CA issued; the hub must authorize those CNs without ever seeing the keys). |
 | `eso-boot-clientca-ext-gate` (inform) | Status-ConfigMap gate. |
 
-### `templates/policy-eso-boot-store.yaml` *(boot-body define `eso.bootBody.bootStore`)*
+### `templates/policy-eso-boot-store.yaml` *(twin-copy body)*
 
 **Policy `policy-eso-boot-store`** — set: `policyset-eso-boot-spoke` (all clusters). The
 payoff of the boot chain: after this, the cluster can pull hub secrets.
@@ -174,15 +174,20 @@ the two-hop credential transport (hop 2 is in policy-eso-secret-stores on the sp
 | `eso-hub-secrets` (enforce) | Runtime-sweep the rendered config of every cluster this hub owns; for each store credential source with an `external` block, materialize it as an ExternalSecret in the owning namespace (pulling from the named external store on the hub) so the spoke's hop-2 ExternalSecret finds it at `hubSecretName`. For native sources (no `external`), verify the seed Secret exists — missing means *pending* (someone still has to seed it), not error. Runtime lookups keep this correct on self-managed and managed hubs alike. |
 | `eso-hub-secrets-gate` (inform) | Status-ConfigMap gate (per-source pending/failed detail). |
 
-### `templates/_eso-boot-status.tpl` *(helpers, renders nothing by itself)*
+### No Helm defines or includes — inline twin-copy bodies
 
-Shared Helm defines for the fail-to-status-ConfigMap pattern used by every enforce/gate pair:
+The chart deliberately uses **no `.tpl` helpers, `define`s, or `include`s** (the upstream
+architecture is moving away from Helm, and inline bodies keep that drift small; as much logic as
+possible lives in the ACM hub/runtime templates rather than in Helm). Two patterns replaced them:
 
-- `eso.boot.statusReport` — emit the per-policy status ConfigMap block that the enforce CP
-  writes its success/failure entries into.
-- `eso.boot.statusReportPerStore` — the per-item (per-store / per-source) variant used where
-  one policy tracks many independent units.
-
-The boot policy *bodies* are each single-sourced in a per-file define (`eso.bootBody.*`,
-listed above) so the live, readinessOnly, and debugRender render paths can't drift apart —
-edit the define, not an inline copy.
+- **Status-report blocks** (the fail-to-status-ConfigMap pattern used by every enforce/gate
+  pair) are expanded inline at each of the eight sites: the enforce CP writes success/failure
+  entries into a per-policy `<policy>-status` ConfigMap (`mustonlyhave` when `$errors` is
+  non-empty, self-clearing `mustnothave` otherwise); `policy-eso-secret-stores` carries the
+  per-store keyed variant, and `policy-eso-hub-secrets` additionally reports a `pending` list.
+- **Boot-policy bodies** marked *(twin-copy body)* above appear **twice per file**: a live copy
+  (12-space indent) and a debugRender preview copy (20-space indent, the text payload of the
+  `*-debug-render` ConfigMap). The two copies must stay byte-identical apart from indentation;
+  debug/live divergence happens inside the shared body via hub-template `if $debug`
+  conditionals (secret-material emissions swap to DEBUG placeholder text). Each file's header
+  comment restates the rule — edit both copies together, never one alone.

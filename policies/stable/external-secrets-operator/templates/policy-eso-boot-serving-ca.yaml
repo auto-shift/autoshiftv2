@@ -1,62 +1,14 @@
 {{- /*
-  Single-sourced object-templates body for policy-eso-boot-serving-ca.
-  Included TWICE below: once as the live object stream (indent 12), once as the text
-  payload of the debug-render ConfigMap (nindent 20). Include directives are indented;
-  {{- left-trims the source newline+spaces and nindent re-supplies them. Helm-render locals threaded in via the context dict ($ctx).
+  TWIN-COPY STRUCTURE (no Helm defines/includes — the upstream architecture is moving away from
+  Helm, so the object-templates body is duplicated INLINE instead of single-sourced in a define):
+  the body appears TWICE in this file:
+    - live copy:  12-space indent, applied when diagnostics.debugRender is off
+    - debug copy: 20-space indent, embedded as the text payload of the *-debug-render ConfigMap,
+      so the target cluster resolves it and captures what WOULD be applied (nothing goes live)
+  RULE: the two copies MUST stay byte-identical apart from the indentation. Debug/live divergence
+  is handled INSIDE the shared body by hub-template `if $debug` conditionals (secret-material
+  emissions swap to DEBUG placeholder text), never by editing one copy alone.
 */ -}}
-{{- define "eso.bootBody.servingCa" -}}
-##### DERIVE (hub): the explicit teardown flag from THIS cluster's rendered config — a positive flag, #####
-##### never inferred from config absence, so a transient read miss can never trigger a teardown. #####
-{{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ .policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
-{{ "{{hub-" }} $teardown := (dig "eso" "hubBootstrap" "teardown" {{ .defaultTeardown }} $clusterConfig) {{ "hub}}" }}
-{{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
-{{ "{{-" }} if eq $teardown "1" {{ "}}" }}
-##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): remove the stashed serving-CA ConfigMap #####
-##### (the copy policy skips its copies under the same flag, so nothing re-reads it). #####
-- complianceType: mustnothave
-  objectDefinition:
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: {{ .servingCAConfigMap }}
-      namespace: {{ .policyNamespace }}
-{{ "{{-" }} else {{ "}}" }}
-##### RUNTIME (on the hub itself): resolve the hub apiserver serving CA #####
-##### prefer a custom named serving cert for the hub's external apiserver host; else the operator-managed CA #####
-{{ "{{-" }} $apiserver := ((lookup "config.openshift.io/v1" "APIServer" "" "cluster") | default dict) {{ "}}" }}
-{{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
-{{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
-{{ "{{-" }} $caPEM := "" {{ "}}" }}
-{{ "{{-" }} range $nc := (dig "spec" "servingCerts" "namedCertificates" list $apiserver) {{ "}}" }}
-  {{ "{{-" }} if has $apiHost ((index $nc "names") | default list) {{ "}}" }}
-    {{ "{{-" }} $ncSecret := (dig "servingCertificate" "name" "" $nc) {{ "}}" }}
-    {{ "{{-" }} if ne $ncSecret "" {{ "}}" }}
-      {{ "{{-" }} $caPEM = (fromSecret "openshift-config" $ncSecret "tls.crt" | base64dec) {{ "}}" }}
-    {{ "{{-" }} end {{ "}}" }}
-  {{ "{{-" }} end {{ "}}" }}
-{{ "{{-" }} end {{ "}}" }}
-{{ "{{-" }} if eq $caPEM "" {{ "}}" }}
-  {{ "{{-" }} $caPEM = (fromConfigMap "{{ .caNamespace }}" "{{ .caName }}" "{{ .caKey }}") {{ "}}" }}
-{{ "{{-" }} end {{ "}}" }}
-##### STASH the serving CA in the policy namespace for the copy policy to read (hub-template-readable) #####
-{{ "{{-" }} if ne $caPEM "" {{ "}}" }}
-- complianceType: musthave
-  objectDefinition:
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: {{ .servingCAConfigMap }}
-      namespace: {{ .policyNamespace }}
-    data:
-      ca.crt: |
-        {{- if .debug }}
-        DEBUG would-read serving CA at runtime: named-cert Secret openshift-config/<servingCertificate.name> key tls.crt, else ConfigMap {{ .caNamespace }}/{{ .caName }} key {{ .caKey }}
-        {{- else }}
-        {{ "{{" }} $caPEM | autoindent {{ "}}" }}
-        {{- end }}
-{{ "{{-" }} end {{ "}}" }}
-{{ "{{-" }} end {{ "}}" }}
-{{- end -}}
 # Serving-CA capture, hub-side. Placed ONLY on hub clusters (hubClusterSets). It resolves the
 # CA that signs the hub apiserver's SERVING cert and stashes it as a ConfigMap in the policy
 # namespace, where the copy policy (policy-eso-boot-store.yaml) can read
@@ -103,7 +55,6 @@
        debugRender wins, so previews still render under readinessOnly. */ -}}
 {{- $readinessOnly := (dig "diagnostics" "readinessOnly" "" $hb | default false) }}
 {{- $debugRender := (dig "diagnostics" "debugRender" "" $hb | default false) }}
-{{- $ctx := (dict "policyNamespace" $policyNamespace "servingCAConfigMap" $servingCAConfigMap "caNamespace" $caNamespace "caName" $caName "caKey" $caKey "defaultTeardown" $defaultTeardown) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -159,7 +110,57 @@ spec:
                     autoshift.io/eso-debug-render: "true"
                 data:
                   rendered.yaml: |
-                    {{- include "eso.bootBody.servingCa" (merge (dict "debug" true) $ctx) | nindent 20 }}
+                    ##### DERIVE (hub): the explicit teardown flag from THIS cluster's rendered config — a positive flag, #####
+                    ##### never inferred from config absence, so a transient read miss can never trigger a teardown. #####
+                    {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+                    {{ "{{hub-" }} $teardown := (dig "eso" "hubBootstrap" "teardown" {{ $defaultTeardown }} $clusterConfig) {{ "hub}}" }}
+                    {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} if eq $teardown "1" {{ "}}" }}
+                    ##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): remove the stashed serving-CA ConfigMap #####
+                    ##### (the copy policy skips its copies under the same flag, so nothing re-reads it). #####
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: v1
+                        kind: ConfigMap
+                        metadata:
+                          name: {{ $servingCAConfigMap }}
+                          namespace: {{ $policyNamespace }}
+                    {{ "{{-" }} else {{ "}}" }}
+                    ##### RUNTIME (on the hub itself): resolve the hub apiserver serving CA #####
+                    ##### prefer a custom named serving cert for the hub's external apiserver host; else the operator-managed CA #####
+                    {{ "{{-" }} $apiserver := ((lookup "config.openshift.io/v1" "APIServer" "" "cluster") | default dict) {{ "}}" }}
+                    {{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
+                    {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
+                    {{ "{{-" }} $caPEM := "" {{ "}}" }}
+                    {{ "{{-" }} range $nc := (dig "spec" "servingCerts" "namedCertificates" list $apiserver) {{ "}}" }}
+                      {{ "{{-" }} if has $apiHost ((index $nc "names") | default list) {{ "}}" }}
+                        {{ "{{-" }} $ncSecret := (dig "servingCertificate" "name" "" $nc) {{ "}}" }}
+                        {{ "{{-" }} if ne $ncSecret "" {{ "}}" }}
+                          {{ "{{-" }} $caPEM = (fromSecret "openshift-config" $ncSecret "tls.crt" | base64dec) {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if eq $caPEM "" {{ "}}" }}
+                      {{ "{{-" }} $caPEM = (fromConfigMap "{{ $caNamespace }}" "{{ $caName }}" "{{ $caKey }}") {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    ##### STASH the serving CA in the policy namespace for the copy policy to read (hub-template-readable) #####
+                    {{ "{{-" }} if ne $caPEM "" {{ "}}" }}
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: v1
+                        kind: ConfigMap
+                        metadata:
+                          name: {{ $servingCAConfigMap }}
+                          namespace: {{ $policyNamespace }}
+                        data:
+                          ca.crt: |
+                            {{ "{{hub-" }} if $debug {{ "hub}}" }}
+                            DEBUG would-read serving CA at runtime: named-cert Secret openshift-config/<servingCertificate.name> key tls.crt, else ConfigMap {{ $caNamespace }}/{{ $caName }} key {{ $caKey }}
+                            {{ "{{hub-" }} else {{ "hub}}" }}
+                            {{ "{{" }} $caPEM | autoindent {{ "}}" }}
+                            {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
             {{ "{{hub-" }} else {{ "hub}}" }}
             ##### debugRender OFF: clear any stale preview ConfigMap left by a previous debug run #####
             - complianceType: mustnothave
@@ -170,7 +171,57 @@ spec:
                   name: eso-boot-serving-ca-debug-render
                   namespace: {{ $policyNamespace }}
             {{ "{{hub-" }} if not $readinessOnly {{ "hub}}" }}
-            {{- include "eso.bootBody.servingCa" $ctx | nindent 12 }}
+            ##### DERIVE (hub): the explicit teardown flag from THIS cluster's rendered config — a positive flag, #####
+            ##### never inferred from config absence, so a transient read miss can never trigger a teardown. #####
+            {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $teardown := (dig "eso" "hubBootstrap" "teardown" {{ $defaultTeardown }} $clusterConfig) {{ "hub}}" }}
+            {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} if eq $teardown "1" {{ "}}" }}
+            ##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): remove the stashed serving-CA ConfigMap #####
+            ##### (the copy policy skips its copies under the same flag, so nothing re-reads it). #####
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: {{ $servingCAConfigMap }}
+                  namespace: {{ $policyNamespace }}
+            {{ "{{-" }} else {{ "}}" }}
+            ##### RUNTIME (on the hub itself): resolve the hub apiserver serving CA #####
+            ##### prefer a custom named serving cert for the hub's external apiserver host; else the operator-managed CA #####
+            {{ "{{-" }} $apiserver := ((lookup "config.openshift.io/v1" "APIServer" "" "cluster") | default dict) {{ "}}" }}
+            {{ "{{-" }} $apiUrl := (fromClusterClaim "apiserverurl.openshift.io") {{ "}}" }}
+            {{ "{{-" }} $apiHost := (index (splitList ":" (replace "https://" "" $apiUrl)) 0) {{ "}}" }}
+            {{ "{{-" }} $caPEM := "" {{ "}}" }}
+            {{ "{{-" }} range $nc := (dig "spec" "servingCerts" "namedCertificates" list $apiserver) {{ "}}" }}
+              {{ "{{-" }} if has $apiHost ((index $nc "names") | default list) {{ "}}" }}
+                {{ "{{-" }} $ncSecret := (dig "servingCertificate" "name" "" $nc) {{ "}}" }}
+                {{ "{{-" }} if ne $ncSecret "" {{ "}}" }}
+                  {{ "{{-" }} $caPEM = (fromSecret "openshift-config" $ncSecret "tls.crt" | base64dec) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if eq $caPEM "" {{ "}}" }}
+              {{ "{{-" }} $caPEM = (fromConfigMap "{{ $caNamespace }}" "{{ $caName }}" "{{ $caKey }}") {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            ##### STASH the serving CA in the policy namespace for the copy policy to read (hub-template-readable) #####
+            {{ "{{-" }} if ne $caPEM "" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: {{ $servingCAConfigMap }}
+                  namespace: {{ $policyNamespace }}
+                data:
+                  ca.crt: |
+                    {{ "{{hub-" }} if $debug {{ "hub}}" }}
+                    DEBUG would-read serving CA at runtime: named-cert Secret openshift-config/<servingCertificate.name> key tls.crt, else ConfigMap {{ $caNamespace }}/{{ $caName }} key {{ $caKey }}
+                    {{ "{{hub-" }} else {{ "hub}}" }}
+                    {{ "{{" }} $caPEM | autoindent {{ "}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
 {{ end }}
