@@ -1,28 +1,18 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: check-cluster-storage-node-readiness
-spec:
-  remediationAction: inform
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates-raw: |
-              {{- if (eq {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes-provider" | quote hub}} "baremetal") }}
-                {{- $storage_nodes := (lookup "v1" "Node" "" "" "cluster.ocs.openshift.io/openshift-storage").items }}
-                {{- range $storage_nodes }}
-              - complianceType: musthave
-                objectDefinition:
-                  apiVersion: v1
-                  kind: Node
-                  metadata:
-                    name: {{ .metadata.name }}
-                    labels:
-                      cluster.ocs.openshift.io/openshift-storage: ''
-                  status:
-                    conditions:
-                      - type: Ready
-                        status: 'True'
-                {{- end }}
-              {{- end }}
+object-templates-raw: |
+  {{- if (eq {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes-provider" | quote hub}} "baremetal") }}
+    {{- $storage_nodes := (lookup "v1" "Node" "" "" "cluster.ocs.openshift.io/openshift-storage").items }}
+    {{- range $storage_nodes }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ .metadata.name }}
+        labels:
+          cluster.ocs.openshift.io/openshift-storage: ''
+      status:
+        conditions:
+          - type: Ready
+            status: 'True'
+    {{- end }}
+  {{- end }}

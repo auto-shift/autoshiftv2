@@ -1,32 +1,18 @@
-# This policy configures the NooBaa backing store for ODF on the managed clusters.
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
+apiVersion: noobaa.io/v1alpha1
+kind: BackingStore
 metadata:
-  name: noobaa-backing-store
+  name: noobaa-default-backing-store
+  namespace: openshift-storage
 spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates:
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: noobaa.io/v1alpha1
-        kind: BackingStore
-        metadata:
-          name: noobaa-default-backing-store
-          namespace: openshift-storage
-        spec:
-          pvPool:
-            numVolumes: '{{hub index .ManagedClusterLabels "autoshift.io/odf-noobaa-store-size" | default "1" hub}}'
-            resources:
-              limits:
-                cpu: 1000m
-                memory: 4000Mi
-              requests:
-                cpu: 500m
-                memory: 500Mi
-                storage: '{{hub index .ManagedClusterLabels "autoshift.io/odf-noobaa-store-num-volumes" | default "500Gi" hub}}'
-            secret: {}
-          type: pv-pool
+  pvPool:
+    numVolumes: '{{hub index .ManagedClusterLabels "autoshift.io/odf-noobaa-store-size" | default "1" hub}}'
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 4000Mi
+      requests:
+        cpu: 500m
+        memory: 500Mi
+        storage: '{{hub index .ManagedClusterLabels "autoshift.io/odf-noobaa-store-num-volumes" | default "500Gi" hub}}'
+    secret: {}
+  type: pv-pool

@@ -1,25 +1,13 @@
-# This policy suppresses the PodDisruptionBudgetAtLimit alert for the NooBaa
-# CNPG primary PDB, which is expected to always have 0 allowed disruptions.
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
+apiVersion: monitoring.openshift.io/v1
+kind: AlertRelabelConfig
 metadata:
-  name: noobaa-pdb-alert-relabel
+  name: suppress-noobaa-pdb-at-limit
+  namespace: openshift-monitoring
 spec:
-  remediationAction: ${REMEDIATION}
-  severity: low
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates:
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: monitoring.openshift.io/v1
-        kind: AlertRelabelConfig
-        metadata:
-          name: suppress-noobaa-pdb-at-limit
-          namespace: openshift-monitoring
-        spec:
-          configs:
-            - sourceLabels: [alertname, namespace, poddisruptionbudget]
-              regex: "PodDisruptionBudgetAtLimit;openshift-storage;noobaa-db-pg-cluster-primary"
-              action: Drop
+  configs:
+  - sourceLabels:
+    - alertname
+    - namespace
+    - poddisruptionbudget
+    regex: PodDisruptionBudgetAtLimit;openshift-storage;noobaa-db-pg-cluster-primary
+    action: Drop

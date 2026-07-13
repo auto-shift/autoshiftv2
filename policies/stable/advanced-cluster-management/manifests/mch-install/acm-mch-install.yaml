@@ -1,31 +1,21 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: acm-mch-install
-spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: ${EVAL_COMPLIANT}
-    noncompliant: ${EVAL_NONCOMPLIANT}
-  object-templates-raw: |
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: operator.open-cluster-management.io/v1
-        kind: MultiClusterHub
-        metadata:
-          name: multiclusterhub
-          namespace: open-cluster-management
-        spec:
-          availabilityConfig: '{{hub $availability_config := index .ManagedClusterLabels "autoshift.io/acm-availability-config" | default "High" -hub}} {{hub print (substr 0 1 $availability_config | upper) (substr 1 (len $availability_config) $availability_config) -hub}}'
-          {{- $selfmanaged := {{hub (index .ManagedClusterLabels "autoshift.io/self-managed") | default "true" hub}} }}
-          {{- if eq (print $selfmanaged) "false" }}
-          disableHubSelfManagement: true
-          {{- end }}
-          {{- $clusterInstall := {{hub (index .ManagedClusterLabels "autoshift.io/cluster-install") | default "false" hub}} }}
-          {{- if eq (print $clusterInstall) "true" }}
-          overrides:
-            components:
-              - name: siteconfig
-                enabled: true
-          {{- end }}
+object-templates-raw: |
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.open-cluster-management.io/v1
+      kind: MultiClusterHub
+      metadata:
+        name: multiclusterhub
+        namespace: open-cluster-management
+      spec:
+        availabilityConfig: '{{hub $availability_config := index .ManagedClusterLabels "autoshift.io/acm-availability-config" | default "High" -hub}} {{hub print (substr 0 1 $availability_config | upper) (substr 1 (len $availability_config) $availability_config) -hub}}'
+        {{- $selfmanaged := {{hub (index .ManagedClusterLabels "autoshift.io/self-managed") | default "true" hub}} }}
+        {{- if eq (print $selfmanaged) "false" }}
+        disableHubSelfManagement: true
+        {{- end }}
+        {{- $clusterInstall := {{hub (index .ManagedClusterLabels "autoshift.io/cluster-install") | default "false" hub}} }}
+        {{- if eq (print $clusterInstall) "true" }}
+        overrides:
+          components:
+            - name: siteconfig
+              enabled: true
+        {{- end }}

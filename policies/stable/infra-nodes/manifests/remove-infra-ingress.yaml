@@ -1,23 +1,12 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: remove-infra-ingress
-spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  pruneObjectBehavior: None
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates-raw: |
-            {{- $IngressController := (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default") | default dict }}
-            {{- if not (empty $IngressController) }}
-            {{- $spec := $IngressController.spec }}
-            {{- $nodePlacement := dict "nodeSelector" (dict) "tolerations" (list) }}
-            {{- $newSpec := set $spec "nodePlacement" $nodePlacement }}
-            {{- $IngressControllerNoStatus := unset $IngressController "status" }}
-            {{- $objectDefinition := set $IngressControllerNoStatus "spec" $newSpec }}
-            - complianceType: mustonlyhave
-              objectDefinition:
-                {{ $objectDefinition | toYaml | autoindent }}
-            {{- end }}
+object-templates-raw: |
+  {{- $IngressController := (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default") | default dict }}
+  {{- if not (empty $IngressController) }}
+  {{- $spec := $IngressController.spec }}
+  {{- $nodePlacement := dict "nodeSelector" (dict) "tolerations" (list) }}
+  {{- $newSpec := set $spec "nodePlacement" $nodePlacement }}
+  {{- $IngressControllerNoStatus := unset $IngressController "status" }}
+  {{- $objectDefinition := set $IngressControllerNoStatus "spec" $newSpec }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      {{ $objectDefinition | toYaml | autoindent }}
+  {{- end }}

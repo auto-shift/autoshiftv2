@@ -1,25 +1,15 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: policy-bgp-configuration
-spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates-raw: |
-            {{hub- $bgp_list := list hub}}
-            {{hub- range $label, $labelvalue := .ManagedClusterLabels hub}}
-              {{hub- if $label | hasPrefix "autoshift.io/metallb-bgp-" hub}}
-                {{hub- $bgp_list = append $bgp_list $labelvalue hub}}
-              {{hub- end hub}}
-            {{hub- end hub}}
-            {{hub- range $bgp_list hub}}
-              {{hub- $cfg := ((lookup "v1" "ConfigMap" $.PolicyMetadata.namespace (print "bgp-" .)).data) hub}}
-            - complianceType: musthave
-              objectDefinition:
-                {{hub- if $cfg.adv hub}}
-                    {{hub $cfg.adv | base64dec | autoindent hub}}
-                  {{hub- end hub}}
-                {{hub- end hub}}
+object-templates-raw: |
+  {{hub- $bgp_list := list hub}}
+  {{hub- range $label, $labelvalue := .ManagedClusterLabels hub}}
+    {{hub- if $label | hasPrefix "autoshift.io/metallb-bgp-" hub}}
+      {{hub- $bgp_list = append $bgp_list $labelvalue hub}}
+    {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range $bgp_list hub}}
+    {{hub- $cfg := ((lookup "v1" "ConfigMap" $.PolicyMetadata.namespace (print "bgp-" .)).data) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      {{hub- if $cfg.adv hub}}
+          {{hub $cfg.adv | base64dec | autoindent hub}}
+        {{hub- end hub}}
+      {{hub- end hub}}

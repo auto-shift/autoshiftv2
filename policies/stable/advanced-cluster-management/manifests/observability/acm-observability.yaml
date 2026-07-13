@@ -1,54 +1,39 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
+apiVersion: v1
+kind: Secret
 metadata:
-  name: acm-observability
+  name: multiclusterhub-operator-pull-secret
+  namespace: open-cluster-management-observability
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: '{{ fromSecret "openshift-config" "pull-secret" ".dockerconfigjson" }}'
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: thanos-object-storage
+  namespace: open-cluster-management-observability
+type: Opaque
+stringData:
+  thanos.yaml: |
+    type: s3
+    config:
+      bucket: {{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_NAME" }}
+      endpoint: '{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_HOST" }}:{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_PORT" }}'
+      insecure: false
+      access_key: {{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_ACCESS_KEY_ID" | base64dec }}
+      secret_key: {{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_SECRET_ACCESS_KEY" | base64dec }}
+      http_config:
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+---
+apiVersion: observability.open-cluster-management.io/v1beta2
+kind: MultiClusterObservability
+metadata:
+  name: observability
+  namespace: open-cluster-management-observability
 spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: ${EVAL_COMPLIANT}
-    noncompliant: ${EVAL_NONCOMPLIANT}
-  object-templates:
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: multiclusterhub-operator-pull-secret
-        namespace: open-cluster-management-observability
-      type: kubernetes.io/dockerconfigjson
-      data:
-        .dockerconfigjson: '{{ fromSecret "openshift-config" "pull-secret" ".dockerconfigjson" }}'
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: thanos-object-storage
-        namespace: open-cluster-management-observability
-      type: Opaque
-      stringData:
-        thanos.yaml: |
-          type: s3
-          config:
-            bucket: {{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_NAME" }}
-            endpoint: '{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_HOST" }}:{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_PORT" }}'
-            insecure: false
-            access_key: {{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_ACCESS_KEY_ID" | base64dec }}
-            secret_key: {{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_SECRET_ACCESS_KEY" | base64dec }}
-            http_config:
-              tls_config:
-                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: observability.open-cluster-management.io/v1beta2
-      kind: MultiClusterObservability
-      metadata:
-        name: observability
-        namespace: open-cluster-management-observability
-      spec:
-        observabilityAddonSpec: {}
-        storageConfig:
-          metricObjectStorage:
-            name: thanos-object-storage
-            key: thanos.yaml
+  observabilityAddonSpec: {}
+  storageConfig:
+    metricObjectStorage:
+      name: thanos-object-storage
+      key: thanos.yaml

@@ -1,54 +1,39 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
+apiVersion: v1
+data:
+  admission-control-cert.pem: '{{hub fromSecret "stackrox" "admission-control-tls" "admission-control-cert.pem" hub}}'
+  admission-control-key.pem: '{{hub fromSecret "stackrox" "admission-control-tls" "admission-control-key.pem" hub}}'
+  ca.pem: '{{hub fromSecret "stackrox" "admission-control-tls" "ca.pem" hub}}'
+kind: Secret
 metadata:
-  name: acs-sync-bundle
-spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates:
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: v1
-        data:
-          admission-control-cert.pem: '{{hub fromSecret "stackrox" "admission-control-tls" "admission-control-cert.pem" hub}}'
-          admission-control-key.pem: '{{hub fromSecret "stackrox" "admission-control-tls" "admission-control-key.pem" hub}}'
-          ca.pem: '{{hub fromSecret "stackrox" "admission-control-tls" "ca.pem" hub}}'
-        kind: Secret
-        metadata:
-          labels:
-            certificate_key_name: admission-control-cert.pem
-          name: admission-control-tls
-          namespace: stackrox
-        type: Opaque
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: v1
-        data:
-          collector-cert.pem: '{{hub fromSecret "stackrox" "collector-tls" "collector-cert.pem" hub}}'
-          collector-key.pem: '{{hub fromSecret "stackrox" "collector-tls" "collector-key.pem" hub}}'
-          ca.pem: '{{hub fromSecret "stackrox" "collector-tls" "ca.pem" hub}}'
-        kind: Secret
-        metadata:
-          labels:
-            certificate_key_name: collector-cert.pem
-          name: collector-tls
-          namespace: stackrox
-        type: Opaque
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: v1
-        data:
-          sensor-cert.pem: '{{hub fromSecret "stackrox" "sensor-tls" "sensor-cert.pem" hub}}'
-          sensor-key.pem: '{{hub fromSecret "stackrox" "sensor-tls" "sensor-key.pem" hub}}'
-          ca.pem: '{{hub fromSecret "stackrox" "sensor-tls" "ca.pem" hub}}'
-          acs-host: '{{hub fromSecret "stackrox" "sensor-tls" "acs-host" hub}}'
-        kind: Secret
-        metadata:
-          labels:
-            certificate_key_name: sensor-cert.pem
-          name: sensor-tls
-          namespace: stackrox
-        type: Opaque
+  labels:
+    certificate_key_name: admission-control-cert.pem
+  name: admission-control-tls
+  namespace: stackrox
+type: Opaque
+---
+apiVersion: v1
+data:
+  collector-cert.pem: '{{hub fromSecret "stackrox" "collector-tls" "collector-cert.pem" hub}}'
+  collector-key.pem: '{{hub fromSecret "stackrox" "collector-tls" "collector-key.pem" hub}}'
+  ca.pem: '{{hub fromSecret "stackrox" "collector-tls" "ca.pem" hub}}'
+kind: Secret
+metadata:
+  labels:
+    certificate_key_name: collector-cert.pem
+  name: collector-tls
+  namespace: stackrox
+type: Opaque
+---
+apiVersion: v1
+data:
+  sensor-cert.pem: '{{hub fromSecret "stackrox" "sensor-tls" "sensor-cert.pem" hub}}'
+  sensor-key.pem: '{{hub fromSecret "stackrox" "sensor-tls" "sensor-key.pem" hub}}'
+  ca.pem: '{{hub fromSecret "stackrox" "sensor-tls" "ca.pem" hub}}'
+  acs-host: '{{hub fromSecret "stackrox" "sensor-tls" "acs-host" hub}}'
+kind: Secret
+metadata:
+  labels:
+    certificate_key_name: sensor-cert.pem
+  name: sensor-tls
+  namespace: stackrox
+type: Opaque

@@ -25,16 +25,19 @@ policyDefaults:
     - CM-2 Baseline Configuration
 policies:
   - name: policy-storage-nodes-aws
+    pruneObjectBehavior: None
     manifests:
       - path: manifests/create-storage-nodes-aws.yaml
     placement:
       placementPath: placement-aws.yaml
   - name: policy-storage-nodes-vmware
+    pruneObjectBehavior: None
     manifests:
       - path: manifests/create-storage-nodes-vmware.yaml
     placement:
       placementPath: placement-vmware.yaml
   - name: policy-storage-nodes-baremetal
+    pruneObjectBehavior: None
     manifests:
       - path: manifests/create-storage-nodes-baremetal.yaml
     placement:
@@ -43,7 +46,14 @@ policies:
   # wildcard over all three check-* ConfigurationPolicies.
   - name: policy-storage-nodes-test
     remediationAction: inform
+    consolidateManifests: false
     manifests:
-      - path: test
+      - path: test/check-cluster-storage-machineset.yaml
+      - path: test/check-cluster-storage-node-count.yaml
+        customMessage:
+          noncompliant: >
+            ❌ Incorrect number of nodes with storage label discovered;
+            Expected: {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub}}
+      - path: test/check-cluster-storage-node-readiness.yaml
     placement:
       placementPath: placement-test.yaml

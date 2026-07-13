@@ -1,84 +1,69 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
 metadata:
-  name: cnpg-artifactory
+  name: artifactory-db
+  namespace: jfrog-system
 spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates:
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: postgresql.cnpg.io/v1
-        kind: Cluster
-        metadata:
-          name: artifactory-db
-          namespace: jfrog-system
-        spec:
-          instances: '{{hub index .ManagedClusterLabels "autoshift.io/jfrog-db-instances" | default "2" | toInt hub}}'
-          postgresql:
-            parameters:
-              max_connections: "400"
-              shared_buffers: 1GB
-              effective_cache_size: 3GB
-              work_mem: 16MB
-          bootstrap:
-            initdb:
-              database: artifactory
-              owner: artifactory
-          storage:
-            size: 50Gi
-          resources:
-            requests:
-              cpu: "2"
-              memory: 4Gi
-            limits:
-              cpu: "4"
-              memory: 8Gi
-          affinity:
-            enablePodAntiAffinity: true
-            topologyKey: kubernetes.io/hostname
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: monitoring.coreos.com/v1
-        kind: ServiceMonitor
-        metadata:
-          name: artifactory-db
-          namespace: jfrog-system
-        spec:
-          selector:
-            matchLabels:
-              cnpg.io/cluster: artifactory-db
-          endpoints:
-            - port: metrics
-              interval: 30s
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        metadata:
-          name: artifactory-db-allow
-          namespace: jfrog-system
-        spec:
-          podSelector:
-            matchLabels:
-              cnpg.io/cluster: artifactory-db
-          ingress:
-            - from:
-                - namespaceSelector:
-                    matchLabels:
-                      kubernetes.io/metadata.name: jfrog-system
-              ports:
-                - port: 5432
-                  protocol: TCP
-                - port: 9187
-                  protocol: TCP
-            - from:
-                - namespaceSelector:
-                    matchLabels:
-                      kubernetes.io/metadata.name: openshift-operators
-              ports:
-                - port: 8000
-                  protocol: TCP
+  instances: '{{hub index .ManagedClusterLabels "autoshift.io/jfrog-db-instances" | default "2" | toInt hub}}'
+  postgresql:
+    parameters:
+      max_connections: '400'
+      shared_buffers: 1GB
+      effective_cache_size: 3GB
+      work_mem: 16MB
+  bootstrap:
+    initdb:
+      database: artifactory
+      owner: artifactory
+  storage:
+    size: 50Gi
+  resources:
+    requests:
+      cpu: '2'
+      memory: 4Gi
+    limits:
+      cpu: '4'
+      memory: 8Gi
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: artifactory-db
+  namespace: jfrog-system
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: artifactory-db
+  endpoints:
+  - port: metrics
+    interval: 30s
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: artifactory-db-allow
+  namespace: jfrog-system
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: artifactory-db
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: jfrog-system
+    ports:
+    - port: 5432
+      protocol: TCP
+    - port: 9187
+      protocol: TCP
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: openshift-operators
+    ports:
+    - port: 8000
+      protocol: TCP

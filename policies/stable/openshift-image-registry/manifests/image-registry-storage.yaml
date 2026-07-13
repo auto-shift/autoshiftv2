@@ -1,64 +1,29 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: image-registry-storage
-spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates-raw: |
-              {{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}}
-              - complianceType: musthave
-                objectDefinition:
-                  kind: PersistentVolumeClaim
-                  apiVersion: v1
-                  metadata:
-                    name: image-registry-storage
-                    namespace: openshift-image-registry
-                  spec:
-                    accessModes:
-                      - {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-access-mode" hub}}
-                    resources:
-                      requests:
-                        storage: {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage" | default "100Gi" hub}}
-                    volumeMode: {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-volume-mode" | default "Filesystem" hub}}
-                    storageClassName: {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage-class" hub}}
-              {{hub- else if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}
-              - complianceType: musthave
-                objectDefinition:
-                  apiVersion: objectbucket.io/v1alpha1
-                  kind: ObjectBucketClaim
-                  metadata:
-                    name: image-registry-storage
-                    namespace: openshift-image-registry
-                  spec:
-                    storageClassName: openshift-storage.noobaa.io
-                    generateBucketName: image-registry-storage
-              {{hub- end hub}}
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: image-registry-storage-bound
-spec:
-  # Always inform: this is a status/readiness assertion (status.phase: Bound) that can only be
-  # observed, never enforced. Kept at inform regardless of dry-run.
-  remediationAction: inform
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates-raw: |
-            {{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: objectbucket.io/v1alpha1
-                kind: ObjectBucketClaim
-                metadata:
-                  name: image-registry-storage
-                  namespace: openshift-image-registry
-                status:
-                  phase: Bound
-            {{hub- end hub}}
+object-templates-raw: |
+  {{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      kind: PersistentVolumeClaim
+      apiVersion: v1
+      metadata:
+        name: image-registry-storage
+        namespace: openshift-image-registry
+      spec:
+        accessModes:
+          - {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-access-mode" hub}}
+        resources:
+          requests:
+            storage: {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage" | default "100Gi" hub}}
+        volumeMode: {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-volume-mode" | default "Filesystem" hub}}
+        storageClassName: {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage-class" hub}}
+  {{hub- else if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: objectbucket.io/v1alpha1
+      kind: ObjectBucketClaim
+      metadata:
+        name: image-registry-storage
+        namespace: openshift-image-registry
+      spec:
+        storageClassName: openshift-storage.noobaa.io
+        generateBucketName: image-registry-storage
+  {{hub- end hub}}

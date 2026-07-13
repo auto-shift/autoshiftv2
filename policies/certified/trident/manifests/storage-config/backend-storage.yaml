@@ -1,54 +1,44 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: trident-backend-storage-config
-spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates-raw: |
-    {{hub $configs := index (index (fromConfigMap .PolicyMetadata.namespace (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "trident" | default dict) hub}}
-    {{hub range $storage := $configs.storage hub}}
-    - complianceType: mustonlyhave
-      objectDefinition:
-        apiVersion: trident.netapp.io/v1
-        kind: TridentBackendConfig
-        metadata:
-          name: "{{hub $storage.backendName hub}}"
-          namespace: trident
-        spec:
-          version: 1
-          backendName: "{{hub $storage.backendName hub}}"
-          storageDriverName: "{{hub $storage.storageDriverName | default "ontap-san" hub}}"
-          managementLIF: "{{hub $storage.svmLif hub}}"
-          sanType: "{{hub $storage.sanType | default "nvme" hub}}"
-        {{hub- if or (eq (($storage).authMethod | default "password") "cert") (eq (($storage).authMethod | default "password") "certs") hub}}
-          clientCertificate: {{ fromSecret "openshift-config" "api-tls" "tls.crt" }}
-          trustedCACertificate: {{ fromConfigMap "openshift-config" "user-ca-bundle" "ca-bundle.crt" | base64enc }}
-        {{hub- end hub}}
-          credentials:
-            name: "{{hub $storage.secretName hub}}"
-        {{hub- if eq $storage.useREST "true" hub}}
-          useREST: true
-        {{hub- end hub}}
-    - complianceType: mustonlyhave
-      objectDefinition:
-        apiVersion: storage.k8s.io/v1
-        kind: StorageClass
-        metadata:
-        {{hub- if eq $storage.defaultStorageClass "true" hub}}
-          annotations:
-            storageclass.kubernetes.io/is-default-class: 'true'
-        {{hub- end hub}}
-          name: "{{hub $storage.storageClassName hub}}"
-        provisioner: csi.trident.netapp.io
-        parameters:
-          backendType: "{{hub $storage.storageDriverName | default "ontap-san" hub}}"
-          storagePools: "{{hub $storage.backendName hub}}:.*"
-          fsType: "{{hub $storage.fsType | default "ext4" hub}}"
-        mountOptions:
-          - discard
-        allowVolumeExpansion: true
-    {{hub end hub}}
+object-templates-raw: |
+  {{hub $configs := index (index (fromConfigMap .PolicyMetadata.namespace (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "trident" | default dict) hub}}
+  {{hub range $storage := $configs.storage hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: trident.netapp.io/v1
+      kind: TridentBackendConfig
+      metadata:
+        name: "{{hub $storage.backendName hub}}"
+        namespace: trident
+      spec:
+        version: 1
+        backendName: "{{hub $storage.backendName hub}}"
+        storageDriverName: "{{hub $storage.storageDriverName | default "ontap-san" hub}}"
+        managementLIF: "{{hub $storage.svmLif hub}}"
+        sanType: "{{hub $storage.sanType | default "nvme" hub}}"
+      {{hub- if or (eq (($storage).authMethod | default "password") "cert") (eq (($storage).authMethod | default "password") "certs") hub}}
+        clientCertificate: {{ fromSecret "openshift-config" "api-tls" "tls.crt" }}
+        trustedCACertificate: {{ fromConfigMap "openshift-config" "user-ca-bundle" "ca-bundle.crt" | base64enc }}
+      {{hub- end hub}}
+        credentials:
+          name: "{{hub $storage.secretName hub}}"
+      {{hub- if eq $storage.useREST "true" hub}}
+        useREST: true
+      {{hub- end hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: storage.k8s.io/v1
+      kind: StorageClass
+      metadata:
+      {{hub- if eq $storage.defaultStorageClass "true" hub}}
+        annotations:
+          storageclass.kubernetes.io/is-default-class: 'true'
+      {{hub- end hub}}
+        name: "{{hub $storage.storageClassName hub}}"
+      provisioner: csi.trident.netapp.io
+      parameters:
+        backendType: "{{hub $storage.storageDriverName | default "ontap-san" hub}}"
+        storagePools: "{{hub $storage.backendName hub}}:.*"
+        fsType: "{{hub $storage.fsType | default "ext4" hub}}"
+      mountOptions:
+        - discard
+      allowVolumeExpansion: true
+  {{hub end hub}}

@@ -1,57 +1,44 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
 metadata:
-  name: cnpg-gitlab-pooler-rw
+  name: gitlab-db-pooler-rw
+  namespace: gitlab-system
 spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates:
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: postgresql.cnpg.io/v1
-        kind: Pooler
-        metadata:
-          name: gitlab-db-pooler-rw
-          namespace: gitlab-system
-        spec:
-          cluster:
-            name: gitlab-db
-          instances: '{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-pooler-instances" | default "2" | toInt hub}}'
-          type: rw
-          pgbouncer:
-            poolMode: session
-            parameters:
-              max_client_conn: "1000"
-              default_pool_size: "50"
-              min_pool_size: "10"
-              reserve_pool_size: "10"
-              server_reset_query: DISCARD ALL
-              server_check_query: SELECT 1
-              server_check_delay: "30"
-              query_wait_timeout: "120"
-          template:
-            metadata:
-              labels:
-                app: gitlab-db-pooler
-            spec:
-              containers:
-                - name: pgbouncer
-                  resources:
-                    requests:
-                      cpu: 100m
-                      memory: 128Mi
-                    limits:
-                      cpu: 500m
-                      memory: 256Mi
-              affinity:
-                podAntiAffinity:
-                  preferredDuringSchedulingIgnoredDuringExecution:
-                    - weight: 1
-                      podAffinityTerm:
-                        topologyKey: kubernetes.io/hostname
-                        labelSelector:
-                          matchLabels:
-                            app: gitlab-db-pooler
+  cluster:
+    name: gitlab-db
+  instances: '{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-pooler-instances" | default "2" | toInt hub}}'
+  type: rw
+  pgbouncer:
+    poolMode: session
+    parameters:
+      max_client_conn: '1000'
+      default_pool_size: '50'
+      min_pool_size: '10'
+      reserve_pool_size: '10'
+      server_reset_query: DISCARD ALL
+      server_check_query: SELECT 1
+      server_check_delay: '30'
+      query_wait_timeout: '120'
+  template:
+    metadata:
+      labels:
+        app: gitlab-db-pooler
+    spec:
+      containers:
+      - name: pgbouncer
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: gitlab-db-pooler

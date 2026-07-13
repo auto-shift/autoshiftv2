@@ -1,34 +1,21 @@
-# CSI plugin tolerations - controls which nodes can mount Ceph RBD/CephFS PVCs.
-# Set autoshift.io/odf-csi-all-nodes: 'true' to run CSI plugins on all nodes (masters, infra, etc.)
-# ODF 4.20+ uses the ceph-csi-operator OperatorConfig CR instead of the rook-ceph-operator-config ConfigMap.
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: ceph-csi-operator-config-tolerations
-spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates-raw: |
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: csi.ceph.io/v1
-        kind: OperatorConfig
-        metadata:
-          name: ceph-csi-operator-config
-          namespace: openshift-storage
-        spec:
-          driverSpecDefaults:
-            nodePlugin:
-              {{hub- if eq (index .ManagedClusterLabels "autoshift.io/odf-csi-all-nodes" | default "false") "true" hub}}
-              tolerations:
-                - operator: Exists
-              {{hub- else hub}}
-              tolerations:
-                - key: node.ocs.openshift.io/storage
-                  operator: Equal
-                  value: "true"
-                  effect: NoSchedule
-              {{hub- end hub}}
+object-templates-raw: |
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: csi.ceph.io/v1
+      kind: OperatorConfig
+      metadata:
+        name: ceph-csi-operator-config
+        namespace: openshift-storage
+      spec:
+        driverSpecDefaults:
+          nodePlugin:
+            {{hub- if eq (index .ManagedClusterLabels "autoshift.io/odf-csi-all-nodes" | default "false") "true" hub}}
+            tolerations:
+              - operator: Exists
+            {{hub- else hub}}
+            tolerations:
+              - key: node.ocs.openshift.io/storage
+                operator: Equal
+                value: "true"
+                effect: NoSchedule
+            {{hub- end hub}}

@@ -1,65 +1,54 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: create-storage-nodes-baremetal
-spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  pruneObjectBehavior: None
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates-raw: |
-            # Declare the template to create the node labels
-            {{- define "node_template" }}
-              {{- range .nodes }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: v1
-                kind: Node
-                metadata:
-                  name: {{ .metadata.name }}
-                  labels:
-                    node-role.kubernetes.io/infra: ''
-                    cluster.ocs.openshift.io/openshift-storage: ''
-              {{- end }}
-            {{- end }}
+object-templates-raw: |
+  # Declare the template to create the node labels
+  {{- define "node_template" }}
+    {{- range .nodes }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ .metadata.name }}
+        labels:
+          node-role.kubernetes.io/infra: ''
+          cluster.ocs.openshift.io/openshift-storage: ''
+    {{- end }}
+  {{- end }}
 
-            # Declare the node list to use with the template
-            {{- $nodes := list }}
+  # Declare the node list to use with the template
+  {{- $nodes := list }}
 
-            # Build list of labels on hub
-            {{hub- $label_list := list hub}}
-            {{hub- range $label, $labelvalue := .ManagedClusterLabels hub}}
-              {{hub- if $label | hasPrefix "autoshift.io/storage-nodes-node" hub}}
-                {{hub- $label_list = append $label_list $labelvalue hub}}
-              {{hub- end hub}}
-            {{hub- end hub}}
+  # Build list of labels on hub
+  {{hub- $label_list := list hub}}
+  {{hub- range $label, $labelvalue := .ManagedClusterLabels hub}}
+    {{hub- if $label | hasPrefix "autoshift.io/storage-nodes-node" hub}}
+      {{hub- $label_list = append $label_list $labelvalue hub}}
+    {{hub- end hub}}
+  {{hub- end hub}}
 
-            # Build list with labels if labels exist
-            {{- if not (eq 0 (len (list
-              {{hub range $label_list hub}} {{hub . | quote hub}} {{hub end hub}}))) }}
+  # Build list with labels if labels exist
+  {{- if not (eq 0 (len (list
+    {{hub range $label_list hub}} {{hub . | quote hub}} {{hub end hub}}))) }}
 
-              # Build node list from labels
-              {{- range (list
-                {{hub range $label_list hub}} {{hub . | quote hub}} {{hub end hub}}) }}
-                {{- $nodes = append $nodes (lookup "v1" "Node" "" .) }}
-              {{- end }}
+    # Build node list from labels
+    {{- range (list
+      {{hub range $label_list hub}} {{hub . | quote hub}} {{hub end hub}}) }}
+      {{- $nodes = append $nodes (lookup "v1" "Node" "" .) }}
+    {{- end }}
 
-              # Call template
-              {{- template "node_template" (dict "nodes" $nodes) }}
+    # Call template
+    {{- template "node_template" (dict "nodes" $nodes) }}
 
-            # Build list with first {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub}} nodes instead of labels
-            {{- else }}
+  # Build list with first {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub}} nodes instead of labels
+  {{- else }}
 
-              # Perform lookup of all nodes
-              {{- $all_nodes := (lookup "v1" "Node" "" "").items }}
+    # Perform lookup of all nodes
+    {{- $all_nodes := (lookup "v1" "Node" "" "").items }}
 
-              # Build nodelist from number
-              {{- range until {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub}} }}
-                {{- $nodes = append $nodes (index $all_nodes .) }}
-              {{- end }}
+    # Build nodelist from number
+    {{- range until {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub}} }}
+      {{- $nodes = append $nodes (index $all_nodes .) }}
+    {{- end }}
 
-              # Call template
-              {{- template "node_template" (dict "nodes" $nodes) }}
-            {{- end }}
+    # Call template
+    {{- template "node_template" (dict "nodes" $nodes) }}
+  {{- end }}

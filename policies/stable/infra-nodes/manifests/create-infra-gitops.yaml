@@ -1,25 +1,12 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
+apiVersion: pipelines.openshift.io/v1alpha1
+kind: GitopsService
 metadata:
-  name: create-infra-gitops
+  name: cluster
+  namespace: '{{hub index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops" hub}}'
 spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates:
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: pipelines.openshift.io/v1alpha1
-        kind: GitopsService
-        metadata:
-          name: cluster
-          namespace: '{{hub index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops" hub}}'
-        spec:
-          runOnInfra: true
-          tolerations:
-            - effect: NoSchedule
-              key: node-role.kubernetes.io/infra
-            - effect: NoExecute
-              key: node-role.kubernetes.io/infra
+  runOnInfra: true
+  tolerations:
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/infra
+  - effect: NoExecute
+    key: node-role.kubernetes.io/infra

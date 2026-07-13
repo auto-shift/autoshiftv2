@@ -1,25 +1,14 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: remove-infra-image-registry
-spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  pruneObjectBehavior: None
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates-raw: |
-            [
-            {{- $RegistryConfig := lookup "imageregistry.operator.openshift.io/v1" "Config" "" "cluster" -}}
-            {{- if not (empty $RegistryConfig) -}}
-            {{- $spec := $RegistryConfig.spec -}}
-            {{- $newSpec := unset $spec "nodeSelector" -}}
-            {{- $RegistryConfigNoStatus := unset $RegistryConfig "status" -}}
-            {{- $objectDefinition := set $RegistryConfigNoStatus "spec" $newSpec -}}
-            {
-              "complianceType": "mustonlyhave",
-              "objectDefinition": {{ $objectDefinition | toRawJson }}
-            }
-            {{- end -}}
-            ]
+object-templates-raw: |
+  [
+  {{- $RegistryConfig := lookup "imageregistry.operator.openshift.io/v1" "Config" "" "cluster" -}}
+  {{- if not (empty $RegistryConfig) -}}
+  {{- $spec := $RegistryConfig.spec -}}
+  {{- $newSpec := unset $spec "nodeSelector" -}}
+  {{- $RegistryConfigNoStatus := unset $RegistryConfig "status" -}}
+  {{- $objectDefinition := set $RegistryConfigNoStatus "spec" $newSpec -}}
+  {
+    "complianceType": "mustonlyhave",
+    "objectDefinition": {{ $objectDefinition | toRawJson }}
+  }
+  {{- end -}}
+  ]

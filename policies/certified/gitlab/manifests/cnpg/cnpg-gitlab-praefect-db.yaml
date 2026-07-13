@@ -1,25 +1,15 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: cnpg-gitlab-praefect-db
-spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates-raw: |
-    {{hub- if eq (index .ManagedClusterLabels "autoshift.io/gitlab-gitaly-ha" | default "false") "true" hub}}
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: postgresql.cnpg.io/v1
-        kind: Database
-        metadata:
-          name: praefect-production
-          namespace: gitlab-system
-        spec:
-          cluster:
-            name: gitlab-db
-          name: praefect_production
-          owner: gitlab
-    {{hub- end hub}}
+object-templates-raw: |
+  {{hub- if eq (index .ManagedClusterLabels "autoshift.io/gitlab-gitaly-ha" | default "false") "true" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Database
+      metadata:
+        name: praefect-production
+        namespace: gitlab-system
+      spec:
+        cluster:
+          name: gitlab-db
+        name: praefect_production
+        owner: gitlab
+  {{hub- end hub}}

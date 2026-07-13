@@ -1,27 +1,14 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
+apiVersion: addon.open-cluster-management.io/v1alpha1
+kind: AddOnDeploymentConfig
 metadata:
-  name: acm-addon-config-policy-controller-resources
+  name: config-policy-controller-tuning
+  namespace: open-cluster-management
 spec:
-  remediationAction: ${REMEDIATION}
-  severity: medium
-  evaluationInterval:
-    compliant: ${EVAL_COMPLIANT}
-    noncompliant: ${EVAL_NONCOMPLIANT}
-  object-templates-raw: |
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: addon.open-cluster-management.io/v1alpha1
-        kind: AddOnDeploymentConfig
-        metadata:
-          name: config-policy-controller-tuning
-          namespace: open-cluster-management
-        spec:
-          resourceRequirements:
-            - containerID: 'deployments:config-policy-controller:config-policy-controller'
-              resources:
-                requests:
-                  memory: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-mem-request" | default "256Mi" hub}}'
-                  cpu: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-cpu-request" | default "150m" hub}}'
-                limits:
-                  memory: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-mem-limit" | default "1Gi" hub}}'
+  resourceRequirements:
+  - containerID: deployments:config-policy-controller:config-policy-controller
+    resources:
+      requests:
+        memory: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-mem-request" | default "256Mi" hub}}'
+        cpu: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-cpu-request" | default "150m" hub}}'
+      limits:
+        memory: '{{hub index .ManagedClusterLabels "autoshift.io/acm-addon-cpc-mem-limit" | default "1Gi" hub}}'

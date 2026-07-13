@@ -1,29 +1,19 @@
-apiVersion: policy.open-cluster-management.io/v1
-kind: ConfigurationPolicy
-metadata:
-  name: gitlab-argocd-repo-creds
-spec:
-  remediationAction: ${REMEDIATION}
-  severity: high
-  evaluationInterval:
-    compliant: 10m
-    noncompliant: 30s
-  object-templates-raw: |
-    {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
-    {{- $gitlabUrl := (printf "https://gitlab.%s" $ingressDomain) }}
-    {{- $password := (fromSecret "gitlab-system" "gitlab-gitlab-initial-root-password" "password" | base64dec) }}
-    - complianceType: musthave
-      objectDefinition:
-        apiVersion: v1
-        kind: Secret
-        metadata:
-          name: gitlab-repo-creds
-          namespace: openshift-gitops
-          labels:
-            argocd.argoproj.io/secret-type: repo-creds
-        type: Opaque
-        stringData:
-          url: {{ $gitlabUrl }}
-          username: root
-          password: {{ $password }}
-          type: git
+object-templates-raw: |
+  {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
+  {{- $gitlabUrl := (printf "https://gitlab.%s" $ingressDomain) }}
+  {{- $password := (fromSecret "gitlab-system" "gitlab-gitlab-initial-root-password" "password" | base64dec) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gitlab-repo-creds
+        namespace: openshift-gitops
+        labels:
+          argocd.argoproj.io/secret-type: repo-creds
+      type: Opaque
+      stringData:
+        url: {{ $gitlabUrl }}
+        username: root
+        password: {{ $password }}
+        type: git
