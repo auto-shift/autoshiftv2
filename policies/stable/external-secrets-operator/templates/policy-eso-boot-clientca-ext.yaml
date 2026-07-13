@@ -213,6 +213,11 @@ spec:
                                 {{ "{{-" }} $clusterOk = false {{ "}}" }}
                               {{ "{{-" }} else {{ "}}" }}
                                 {{ "{{-" }} $clusterSeg := (join "." (slice $hostLabels 1)) {{ "}}" }}
+                                ##### If the derived name already ends in ".<baseDomain>" (the usual case: baseDomain set to the #####
+                                ##### clusters' real DNS base), strip that suffix from the CN's cluster segment — the CN printf #####
+                                ##### below re-appends baseDomain, so without the strip it would appear twice. No trimSuffix in #####
+                                ##### ACM templates, so cut by length with substr. #####
+                                {{ "{{-" }} if hasSuffix (printf ".%s" $certBaseDomain) $clusterSeg {{ "}}" }}{{ "{{-" }} $clusterSeg = (substr 0 (toInt (sub (len $clusterSeg) (add (len $certBaseDomain) 1))) $clusterSeg) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
                                 ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
                                 ##### After a mid-label cut, trim trailing "."/"-" so the CN never carries an empty/invalid DNS label. #####
                                 {{ "{{-" }} if gt (len $clusterSeg) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (trimAll ".-" (substr 0 (toInt $cnBudget) $clusterSeg)) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
@@ -538,6 +543,11 @@ spec:
                         {{ "{{-" }} $clusterOk = false {{ "}}" }}
                       {{ "{{-" }} else {{ "}}" }}
                         {{ "{{-" }} $clusterSeg := (join "." (slice $hostLabels 1)) {{ "}}" }}
+                        ##### If the derived name already ends in ".<baseDomain>" (the usual case: baseDomain set to the #####
+                        ##### clusters' real DNS base), strip that suffix from the CN's cluster segment — the CN printf #####
+                        ##### below re-appends baseDomain, so without the strip it would appear twice. No trimSuffix in #####
+                        ##### ACM templates, so cut by length with substr. #####
+                        {{ "{{-" }} if hasSuffix (printf ".%s" $certBaseDomain) $clusterSeg {{ "}}" }}{{ "{{-" }} $clusterSeg = (substr 0 (toInt (sub (len $clusterSeg) (add (len $certBaseDomain) 1))) $clusterSeg) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
                         ##### substr needs int args; ACM math yields int64, so convert with toInt (sprig slice rejects strings). #####
                         ##### After a mid-label cut, trim trailing "."/"-" so the CN never carries an empty/invalid DNS label. #####
                         {{ "{{-" }} if gt (len $clusterSeg) $cnBudget {{ "}}" }}{{ "{{-" }} $clusterSeg = (trimAll ".-" (substr 0 (toInt $cnBudget) $clusterSeg)) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}

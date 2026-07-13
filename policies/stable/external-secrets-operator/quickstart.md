@@ -194,7 +194,8 @@ managedClusterSets:
 mints its own client cert through a customer-provided `ClusterIssuer`/`Issuer` chained to a
 shared external CA; the hub trusts that CA's bundle. Identity still lines up automatically:
 the spoke derives its CN from its own apiserver URL — the full host minus the leading `api.`
-label (`api.ocp.zone-a.example.com` → `ocp.zone-a.example.com`) — with the
+label (`api.ocp.zone-a.example.com` → `ocp.zone-a.example.com`; a trailing `.<baseDomain>` is
+stripped from the segment so the base domain never appears twice in the CN) — with the
 exact same `<certCNPrefix>.<cluster>.<baseDomain>` formula the hub uses for the RBAC subject
 (from the same `apiserverurl.openshift.io` ClusterClaim) — so authorization matches without
 any coordination beyond agreeing on `baseDomain`.
