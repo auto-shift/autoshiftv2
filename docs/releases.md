@@ -23,9 +23,9 @@ AutoShift Chart (from OCI)
     |
 ApplicationSet with List Generator
     |
-Reads policy-list.txt (generated at release time)
+Reads policy-list.txt + policy-list-pg.txt (generated at release time)
     |
-Deploys each policy chart from OCI registry
+Deploys each policy from the OCI registry (Helm chart or PolicyGenerator artifact)
 ```
 
 The OCI chart includes a `files/policy-list.txt` that is **automatically generated during the release process** by discovering all policies in the `policies/` directory. No manual maintenance is required.
@@ -51,10 +51,10 @@ quay.io/autoshift/
 │   └── advanced-cluster-management  # Bootstrap chart for ACM operator
 ├── autoshift                      # Main chart (ApplicationSet)
 └── policies/
-    ├── openshift-gitops           # Policy chart (takes over GitOps)
-    ├── advanced-cluster-management # Policy chart (takes over ACM)
-    ├── advanced-cluster-security
-    └── ... (additional policy charts)
+    ├── openshift-gitops           # Policy: Helm chart (takes over GitOps)
+    ├── advanced-cluster-management # Policy: PolicyGenerator (takes over ACM)
+    ├── advanced-cluster-security  # Policy: PolicyGenerator
+    └── ... (additional policies: mostly PolicyGenerator dirs, a few Helm charts)
 ```
 
 All charts share the same version number, set during the release process.
@@ -67,7 +67,7 @@ When deploying from OCI, three values control the behavior. These are set automa
 # Enable OCI mode (boolean, not a URL)
 autoshiftOciRegistry: true
 
-# OCI path where policy charts are published
+# OCI path where policies are published (Helm charts + PolicyGenerator artifacts)
 autoshiftOciRepo: oci://quay.io/autoshift/policies
 
 ```
@@ -77,9 +77,9 @@ autoshiftOciRepo: oci://quay.io/autoshift/policies
 AutoShift releases consist of multiple Helm charts:
 - **2 bootstrap charts**: `openshift-gitops`, `advanced-cluster-management`
 - **1 main chart**: `autoshift` (ApplicationSet)
-- **Policy charts**: ACM policies for Day 2 operations (one per `policies/` subdirectory)
+- **Policies**: ACM policies for Day 2 operations (one per `policies/` subdirectory) — mostly PolicyGenerator dirs, plus a few Helm charts (openshift-gitops, policy-foundation, cluster-labels, cluster-config-maps)
 
-All charts are version-synchronized and published to an OCI registry. Released charts are completely self-contained with no Git repository access required at runtime.
+All artifacts are version-synchronized and published to an OCI registry. Released artifacts are completely self-contained with no Git repository access required at runtime.
 
 ## Prerequisites
 

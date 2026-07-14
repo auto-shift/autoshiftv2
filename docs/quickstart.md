@@ -44,7 +44,7 @@ oc login --token=sha256~lQ...dI --server=https://api.cluster.example.com:6443
 > [!NOTE]
 > Alternatively you can use the devcontainer provided by this repository. By default the container will install the stable version of `oc` and the latest Red Hat provided version of `helm`. These versions can be specified by setting the `OCP_VERSION` and `HELM_VERSION` variables before building. From the container you can login as usual with `oc login` or copy your kubeconfig into the container `podman cp ${cluster_dir}/auth/kubeconfig ${container-name}:/workspaces/.kube/config`.
 
-If installing in a disconnected or internet-disadvantaged environment, update the values in `policies/stable/openshift-gitops/values.yaml` and `policies/stable/advanced-cluster-management/values.yaml` with the source mirror registry, otherwise leave these values as is.
+If installing in a disconnected or internet-disadvantaged environment, update the values in `policies/stable/openshift-gitops/values.yaml` and `advanced-cluster-management/values.yaml` (the ACM bootstrap chart's own values — the ACM policy is a PolicyGenerator dir and no longer carries a `values.yaml`) with the source mirror registry, otherwise leave these values as is.
 
 If your clone of AutoShiftv2 requires credentials or you would like to add credentials to any other git repos you can do this in the `openshift-gitops/values` file before installing. This can also be done in the OpenShift GitOps GUI after install.
 
@@ -58,6 +58,20 @@ helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/open
 
 > [!NOTE]
 > If OpenShift GitOps is already installed manually on cluster and the default argo instance exists this step can be skipped. Make sure that argocd controller has cluster-admin
+
+> [!IMPORTANT]
+> Both bootstrap charts run a short-lived Job that waits for CRDs, using a CLI image that defaults to the
+> in-cluster registry: `image-registry.openshift-image-registry.svc:5000/openshift/cli:latest`. On clusters
+> where the internal image registry is **not** enabled (e.g. bare metal, or when the registry
+> `managementState` is `Removed`), that image can't be pulled and the bootstrap Job hangs in
+> `ImagePullBackOff`. Override it with an external CLI image on **both** bootstrap installs (Step 2 and Step 3):
+> ```console
+> helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml \
+>   --set image=registry.redhat.io/openshift4/ose-cli:latest
+> helm upgrade --install advanced-cluster-management advanced-cluster-management \
+>   --set image=registry.redhat.io/openshift4/ose-cli:latest
+> ```
+> In a disconnected environment, use your mirrored equivalent of the `openshift4/ose-cli` image.
 
 After the installation is complete, verify that all the pods in the `openshift-gitops` namespace are running. This can take a few minutes depending on your network to even return anything.
 
@@ -112,7 +126,7 @@ If this is not the case you may need to run `helm upgrade ...` command again.
 Using helm, install OpenShift Advanced Cluster Management on the hub cluster:
 
 ```console
-helm upgrade --install advanced-cluster-management advanced-cluster-management -f policies/stable/advanced-cluster-management/values.yaml
+helm upgrade --install advanced-cluster-management advanced-cluster-management
 ```
 
 Test if Red Hat Advanced Cluster Management has installed correctly, this may take some time:
@@ -308,6 +322,12 @@ helm upgrade --install openshift-gitops ${OCI_REPO}/bootstrap/openshift-gitops \
     --timeout 10m
 ```
 
+> [!IMPORTANT]
+> As with the source install, the bootstrap CRD-wait Job defaults to the in-cluster CLI image
+> (`image-registry.openshift-image-registry.svc:5000/openshift/cli:latest`). On clusters without the
+> internal image registry (e.g. bare metal), add `--set image=registry.redhat.io/openshift4/ose-cli:latest`
+> (or your mirrored equivalent) to **both** bootstrap installs (Step 2 and Step 3).
+
 Verify GitOps is running:
 
 ```console
@@ -336,7 +356,7 @@ oc get mch -A -w
 
 #### Step 4: Deploy AutoShift from OCI
 
-Create the ArgoCD Application pointing to the OCI registry. The key difference from source mode is the OCI values (`autoshiftOciRegistry`, `autoshiftOciRepo`) which tell the ApplicationSet to pull policy charts from the registry instead of Git:
+Create the ArgoCD Application pointing to the OCI registry. The key difference from source mode is the OCI values (`autoshiftOciRegistry`, `autoshiftOciRepo`) which tell the ApplicationSet to pull policies from the registry instead of Git:
 
 ```console
 export OCI_REGISTRY="quay.io/autoshift"

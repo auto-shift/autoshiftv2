@@ -126,7 +126,7 @@ flowchart TD
 
 1. **GitOps Foundation**: ArgoCD ApplicationSet monitors `policies/{stable,certified,community}/*` directories in Git repository
 2. **Dynamic Application Creation**: ApplicationSet creates individual ArgoCD Applications for each policy
-3. **Helm Chart Deployment**: Each Application deploys a Helm chart containing ACM Policy + Placement + PlacementBinding
+3. **Policy Rendering**: Each Application renders a PolicyGenerator dir via the repo-server CMP (or a Helm chart for the few holdouts), producing an ACM Policy + Placement + PlacementBinding
 4. **Hub Template Processing**: ACM processes hub templates on the hub cluster, resolving per-cluster values before replication
 5. **Policy Propagation**: ACM Policy Framework propagates processed policies to target spoke clusters
 6. **Spoke Template Processing**: Policy agents on spoke clusters process any remaining regular templates with local cluster context

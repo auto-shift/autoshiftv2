@@ -90,7 +90,9 @@ else
     FAILED=1
 fi
 
-# Check all policy charts under policies/<category>/<chart>/
+# Helm-lint the Helm-chart policies under policies/<category>/<chart>/.
+# PolicyGenerator policies (policy-generator-config.yaml, the majority) are NOT Helm charts and
+# can't be helm-linted — they're validated by the integration test: go test -tags integration ./tools/...
 POLICY_COUNT=$(find policies -maxdepth 3 -name Chart.yaml | wc -l | tr -d ' ')
 POLICY_FAILED=0
 while IFS= read -r chart_file; do
@@ -103,7 +105,7 @@ while IFS= read -r chart_file; do
 done < <(find policies -maxdepth 3 -name Chart.yaml 2>/dev/null)
 
 if [[ $POLICY_FAILED -eq 0 ]]; then
-    success "All $POLICY_COUNT policy charts valid"
+    success "All $POLICY_COUNT Helm-chart policies valid (PolicyGenerator policies validated by the integration test)"
 else
     FAILED=1
 fi
