@@ -78,20 +78,21 @@ spec:
           object-templates-raw: |
             {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
             {{/* The CMP sidecar image is the SAME image as the running argocd-repo-server (operator-set),
-                 resolved here at policy-enforcement time via a live hub-template lookup — the governance
-                 -policy-propagator does live lookups, whereas ArgoCD's repo-server never runs helm lookups.
-                 No value fallback: if the repo-server isn't found the image resolves empty and the ArgoCD CR
-                 fails loudly, rather than silently retrying a bad pinned tag. The repo-server always exists by
-                 the time this day-2 policy runs (the day-0 bootstrap created the ArgoCD instance). */}}
-            {{ "{{hub" }} $argoRepoDep := (lookup "apps/v1" "Deployment" "{{ .Values.gitops.argoNamespace }}" "{{ .Values.gitops.argoName }}-repo-server") {{ "hub}}" }}
-            {{ "{{hub" }} $argoImageLive := "" {{ "hub}}" }}
-            {{ "{{hub" }} if $argoRepoDep {{ "hub}}" }}{{ "{{hub" }} $argoImageLive = (index $argoRepoDep.spec.template.spec.containers 0).image {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }}
-            {{/* Same for the ACM subscription image (ships the PolicyGenerator binary): resolve the running
-                 multicluster-operators-hub-subscription image at enforcement time so it matches the hub's ACM
-                 version. No value fallback — the lookup is the source of truth. */}}
-            {{ "{{hub" }} $acmSubDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "multicluster-operators-hub-subscription") {{ "hub}}" }}
-            {{ "{{hub" }} $acmImageLive := "" {{ "hub}}" }}
-            {{ "{{hub" }} if $acmSubDep {{ "hub}}" }}{{ "{{hub" }} $acmImageLive = (index $acmSubDep.spec.template.spec.containers 0).image {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }}
+                 resolved via a SPOKE-side lookup ({{ }}) — config-policy-controller runs it on the managed
+                 cluster (this self-managed hub), where the repo-server actually lives. A hub-side lookup
+                 ({{hub}}) is namespace-restricted to the policy namespace and would fail; a helm lookup
+                 returns nothing in ArgoCD's repo-server. No value fallback: if the repo-server isn't found
+                 the image resolves empty and the ArgoCD CR fails loudly rather than retrying a bad pinned
+                 tag. The repo-server always exists by the time this day-2 policy runs. */}}
+            {{ "{{" }} $argoRepoDep := (lookup "apps/v1" "Deployment" "{{ .Values.gitops.argoNamespace }}" "{{ .Values.gitops.argoName }}-repo-server") {{ "}}" }}
+            {{ "{{" }} $argoImageLive := "" {{ "}}" }}
+            {{ "{{" }} if $argoRepoDep {{ "}}" }}{{ "{{" }} $argoImageLive = (index $argoRepoDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
+            {{/* Same for the ACM subscription image (ships the PolicyGenerator binary): spoke-side lookup of
+                 the running multicluster-operators-hub-subscription so it matches the hub's ACM version.
+                 No value fallback — the lookup is the source of truth. */}}
+            {{ "{{" }} $acmSubDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "multicluster-operators-hub-subscription") {{ "}}" }}
+            {{ "{{" }} $acmImageLive := "" {{ "}}" }}
+            {{ "{{" }} if $acmSubDep {{ "}}" }}{{ "{{" }} $acmImageLive = (index $acmSubDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: argoproj.io/v1beta1
@@ -161,7 +162,7 @@ spec:
                     initContainers:
                       # Binary path inside the ACM image varies by version; search known locations.
                       - name: policy-generator-install
-                        image: {{ "{{hub" }} $acmImageLive {{ "hub}}" }}
+                        image: {{ "{{" }} $acmImageLive {{ "}}" }}
                         command: [/bin/sh, -c]
                         args:
                           - |
@@ -185,7 +186,7 @@ spec:
                     sidecarContainers:
                       - name: policy-generator
                         command: [/var/run/argocd/argocd-cmp-server]
-                        image: {{ "{{hub" }} $argoImageLive {{ "hub}}" }}
+                        image: {{ "{{" }} $argoImageLive {{ "}}" }}
                         securityContext:
                           runAsNonRoot: true
                         env:
