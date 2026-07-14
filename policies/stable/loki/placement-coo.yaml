@@ -4,11 +4,18 @@ metadata:
   name: placement-policy-loki-coo
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Distinct predicate: the Cluster Observability logging UI targets clusters labeled autoshift.io/coo.
+  # The Cluster Observability logging UI plugs into the Loki stack (its dependency chain runs back to
+  # policy-loki-stack-install), so it needs loki too. A per-entry placementPath REPLACES the default
+  # placement (it does NOT inherit its predicate), so AND-in the base loki predicate here.
+  # Target: loki: true AND coo: true.
   predicates:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
+            - key: 'autoshift.io/loki'
+              operator: In
+              values:
+                - 'true'
             - key: 'autoshift.io/coo'
               operator: In
               values:

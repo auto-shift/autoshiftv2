@@ -4,11 +4,17 @@ metadata:
   name: placement-policy-loki-logging
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Distinct predicate: the logging forwarder targets clusters labeled autoshift.io/logging.
+  # The forwarder ships logs INTO the Loki stack (depends on policy-loki-stack-install), so it needs
+  # both loki and logging. A per-entry placementPath REPLACES the default placement (it does NOT
+  # inherit its predicate), so AND-in the base loki predicate here. Target: loki: true AND logging: true.
   predicates:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
+            - key: 'autoshift.io/loki'
+              operator: In
+              values:
+                - 'true'
             - key: 'autoshift.io/logging'
               operator: In
               values:
