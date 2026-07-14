@@ -47,6 +47,10 @@ spec:
                         {{ "{{-" }} $managedClusterConfigObjects := (list) {{ "}}" }}
                         {{ "{{-" }} $labelPrefix := "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}" {{ "}}" }}
                         {{ "{{-" }} $seenClusters := (dict) {{ "}}" }}
+                        {{ "{{-" }} $clusterSetTypes := (dict) {{ "}}" }}
+                        {{ "{{-" }} range $_, $cs := ((lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "" "autoshift.io/cluster-set-type").items | default list) {{ "}}" }}
+                          {{ "{{-" }} $_ := set $clusterSetTypes $cs.metadata.name (dig "metadata" "labels" "autoshift.io/cluster-set-type" "" $cs) {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
                         {{ "{{-" }} $labelConfigs := lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-labels" {{ "}}" }}
                         {{ "{{-" }} range $idx, $cm := $labelConfigs.items {{ "}}" }}
                           {{ "{{-" }} if (hasPrefix "cluster-set." $cm.metadata.name) {{ "}}" }}
@@ -90,6 +94,16 @@ spec:
                                 {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
                                   {{ "{{-" }} $_ := set $renderedLabels $label $value {{ "}}" }}
                                 {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} $clusterSetType := (index $clusterSetTypes $clusterSetName | default "") {{ "}}" }}
+                              {{ "{{-" }} $clusterType := "" {{ "}}" }}
+                              {{ "{{-" }} if eq $clusterSetType "hub" {{ "}}" }}
+                                {{ "{{-" }} $clusterType = (ternary "selfManagedHub" "managedHub" (eq (index $tempLabels (printf "%sself-managed" $labelPrefix) | default "false") "true")) {{ "}}" }}
+                              {{ "{{-" }} else if eq $clusterSetType "spoke" {{ "}}" }}
+                                {{ "{{-" }} $clusterType = "spoke" {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} if ne $clusterType "" {{ "}}" }}
+                                {{ "{{-" }} $_ := set $renderedLabels (printf "%scluster-type" $labelPrefix) $clusterType {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
                             {{ "{{-" }} else {{ "}}" }}
                               {{ "{{-" }} $renderedLabels = $existingLabelsNoAutoshift {{ "}}" }}
                             {{ "{{-" }} end {{ "}}" }}

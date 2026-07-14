@@ -4,6 +4,12 @@ apiVersion: cluster.open-cluster-management.io/v1beta2
 kind: ManagedClusterSet
 metadata:
   name: {{ $clusterSet }}
+  # cluster-set-type marks what kind of clusters this set holds. It is the runtime source of
+  # truth for the autoshift.io/cluster-type label the cluster-labels policy applies to member
+  # clusters: deployments are templated independently and never see each other's values, but
+  # every deployment's policies can look up the ManagedClusterSet objects on the hub.
+  labels:
+    autoshift.io/cluster-set-type: spoke
 spec:
   clusterSelector:
     selectorType: ExclusiveClusterSetLabel
@@ -14,6 +20,8 @@ apiVersion: cluster.open-cluster-management.io/v1beta2
 kind: ManagedClusterSet
 metadata:
   name: {{ $clusterSet }}
+  labels:
+    autoshift.io/cluster-set-type: hub
 spec:
   clusterSelector:
     selectorType: ExclusiveClusterSetLabel
