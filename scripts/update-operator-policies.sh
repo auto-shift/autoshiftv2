@@ -1,9 +1,16 @@
 #!/bin/bash
-# AutoShift Operator Policy Updater
-# Regenerates operator policies from template, then use git diff to review changes
+# AutoShift Operator Policy Updater (PolicyGenerator)
+# Re-renders every operator's bare OperatorPolicy manifest (manifests/operator.yaml) from the
+# shared template, preserving each operator's own params. Use it to propagate a template-wide
+# change (e.g. a new OperatorPolicy field) across all operators, then review with `git diff`.
+#
+# It regenerates ONLY the OperatorPolicy manifest — not the Namespace, placement, or
+# policy-generator-config.yaml. Structural drift in an operator manifest is reset to the template
+# (that is the point); real per-operator values (subscription/namespace/channel/source) are
+# extracted from the existing manifest and preserved.
 #
 # Usage: ./scripts/update-operator-policies.sh [options]
-# Example: ./scripts/update-operator-policies.sh                    # Regenerate all policies
+# Example: ./scripts/update-operator-policies.sh                    # Regenerate all
 # Example: ./scripts/update-operator-policies.sh --operator kiali   # Regenerate only kiali
 
 set -e
@@ -26,7 +33,7 @@ fi
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TEMPLATE_FILE="$SCRIPT_DIR/templates/policy-operator-install.yaml.template"
+TEMPLATE_FILE="$SCRIPT_DIR/templates/manifest-operator.yaml.template"
 POLICIES_DIR="$REPO_ROOT/policies"
 
 # Options
@@ -36,16 +43,16 @@ VERBOSE=false
 usage() {
     echo "Usage: $0 [options]"
     echo ""
-    echo "Regenerates operator installation policies from the template."
+    echo "Re-renders operator OperatorPolicy manifests (manifests/operator.yaml) from the template."
     echo "After running, use 'git diff' to review changes and 'git checkout' to discard."
     echo ""
     echo "Options:"
-    echo "  --operator NAME        Only regenerate a specific operator (e.g., kiali)"
-    echo "  --verbose              Show detailed output"
+    echo "  --operator NAME        Only regenerate a specific operator (dir name, e.g., kiali)"
+    echo "  --verbose              Show extracted params per operator"
     echo "  --help                 Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0                           # Regenerate all policies"
+    echo "  $0                           # Regenerate all"
     echo "  $0 --operator tempo          # Regenerate only tempo"
     echo "  $0 --verbose                 # Show extraction details"
     echo ""
@@ -93,130 +100,168 @@ log_verbose() {
     fi
 }
 
+log_warning() {
+    echo -e "${YELLOW}$1${NC}"
+}
+
 log_error() {
     echo -e "${RED}$1${NC}"
 }
 
-# Extract component info from an existing policy file
-extract_component_info() {
-    local policy_file="$1"
-    local component_name=""
-    local component_camel=""
-    local label_prefix=""
-    local filename=""
-
-    # Extract component name from OperatorPolicy name: install-operator-COMPONENT
-    component_name=$(grep -oE 'name: install-operator-[a-zA-Z0-9-]+' "$policy_file" 2>/dev/null | \
-                     head -1 | \
-                     sed 's/name: install-operator-//')
-
-    # Fallback: derive from filename
-    if [[ -z "$component_name" ]]; then
-        filename=$(basename "$policy_file" .yaml)
-        component_name=$(echo "$filename" | sed 's/^policy-//' | sed 's/-operator-install$//' | sed 's/-install-operator$//' | sed 's/-op-install$//' | sed 's/-operator$//')
-    fi
-
-    # Extract camelCase from .Values.CAMEL.namespace pattern
-    component_camel=$(grep -oE '\.Values\.[a-zA-Z0-9]+\.namespace' "$policy_file" 2>/dev/null | \
-                      head -1 | \
-                      sed 's/\.Values\.//' | \
-                      sed 's/\.namespace//')
-
-    # If still no camelCase, derive from component name
-    if [[ -z "$component_camel" ]]; then
-        component_camel=$(echo "$component_name" | awk -F'-' '{for(i=1;i<=NF;i++){if(i==1){printf "%s",$i}else{printf "%s%s",toupper(substr($i,1,1)),substr($i,2)}}}')
-    fi
-
-    # Extract label prefix from autoshift.io/XXX-channel pattern
-    # This captures the actual label prefix used (e.g., "virt" not "virtualization")
-    label_prefix=$(grep -oE 'autoshift\.io/[a-zA-Z0-9-]+-channel' "$policy_file" 2>/dev/null | \
-                   head -1 | \
-                   sed 's/autoshift\.io\///' | \
-                   sed 's/-channel//')
-
-    # If no label prefix found, fall back to component name
-    if [[ -z "$label_prefix" ]]; then
-        label_prefix="$component_name"
-    fi
-
-    echo "$component_name|$component_camel|$label_prefix"
+# Extract a `| default "<value>"` from the hub-template line whose label key ends in <suffix>.
+# Uses @ as the sed delimiter so the go-template pipe (|) stays literal.
+extract_default_for() {
+    local file="$1" suffix="$2"
+    sed -n "s@.*${suffix}\" | default \"\([^\"]*\)\".*@\1@p" "$file" | head -1
 }
 
-# Generate policy from template
-regenerate_policy() {
-    local policy_file="$1"
-    local component_name="$2"
-    local component_camel="$3"
-    local label_prefix="$4"
+# Extract the 7 template params + namespace-scoped flag from an existing operator manifest.
+# Emits: component_name|label_prefix|namespace|subscription_name|source|source_namespace|channel|scoped
+extract_operator_params() {
+    local file="$1"
 
-    log_verbose "component_name: $component_name"
-    log_verbose "component_camel: $component_camel"
-    log_verbose "label_prefix: $label_prefix"
+    # component_name from `name: install-operator-<component>`
+    local component_name
+    component_name=$(sed -n 's@.*name: install-operator-\([a-zA-Z0-9-]*\).*@\1@p' "$file" | head -1)
 
-    # Use awk instead of sed to avoid shell expansion of $base and other
-    # Go template variables in the template file
-    awk -v cn="$component_name" -v cc="$component_camel" -v lp="$label_prefix" '{
+    # label_prefix from `autoshift.io/<prefix>-channel` (may differ from component_name, e.g. virt)
+    local label_prefix
+    label_prefix=$(sed -n 's@.*autoshift.io/\(.*\)-channel".*@\1@p' "$file" | head -1)
+    [[ -z "$label_prefix" ]] && label_prefix="$component_name"
+
+    # namespace = the operatorGroup namespace (first `    namespace:` line, 4-space indent)
+    local namespace
+    namespace=$(grep -m1 '^    namespace:' "$file" | awk '{print $2}')
+
+    # defaults baked into the hub templates
+    local subscription_name source source_namespace channel
+    subscription_name=$(extract_default_for "$file" "-subscription-name")
+    source=$(extract_default_for "$file" "-source")
+    source_namespace=$(extract_default_for "$file" "-source-namespace")
+    channel=$(extract_default_for "$file" "-channel")
+
+    # namespace-scoped if the operatorGroup carries targetNamespaces
+    local scoped="false"
+    grep -q '^    targetNamespaces:' "$file" && scoped="true"
+
+    echo "${component_name}|${label_prefix}|${namespace}|${subscription_name}|${source}|${source_namespace}|${channel}|${scoped}"
+}
+
+# Re-render an operator manifest from the template with the extracted params.
+regenerate_operator() {
+    local out_file="$1" cn="$2" lp="$3" ns="$4" sub="$5" src="$6" srcns="$7" ch="$8" scoped="$9"
+
+    log_verbose "component=$cn label_prefix=$lp namespace=$ns"
+    log_verbose "subscription=$sub source=$src source-namespace=$srcns channel=$ch scoped=$scoped"
+
+    # awk (not sed) so the template's Go vars ($base, etc.) and ${REMEDIATION} token pass through.
+    # NB: `sub` is a reserved awk function name, so the subscription var is `subn`.
+    awk -v cn="$cn" -v lp="$lp" -v ns="$ns" -v subn="$sub" -v src="$src" -v srcns="$srcns" -v ch="$ch" '{
         gsub(/\{\{COMPONENT_NAME\}\}/, cn)
-        gsub(/\{\{COMPONENT_CAMEL\}\}/, cc)
         gsub(/\{\{LABEL_PREFIX\}\}/, lp)
+        gsub(/\{\{NAMESPACE\}\}/, ns)
+        gsub(/\{\{SUBSCRIPTION_NAME\}\}/, subn)
+        gsub(/\{\{SOURCE_NAMESPACE\}\}/, srcns)
+        gsub(/\{\{SOURCE\}\}/, src)
+        gsub(/\{\{CHANNEL\}\}/, ch)
         print
-    }' "$TEMPLATE_FILE" > "$policy_file"
+    }' "$TEMPLATE_FILE" > "$out_file"
+
+    # Re-inject targetNamespaces into the operatorGroup for namespace-scoped operators.
+    if [[ "$scoped" == "true" ]]; then
+        awk -v ns="$ns" '
+            !done && /^    namespace: / {
+                print; print "    targetNamespaces:"; print "      - " ns; done=1; next
+            }
+            { print }
+        ' "$out_file" > "$out_file.tmp" && mv "$out_file.tmp" "$out_file"
+    fi
+}
+
+# Render a PolicyGenerator dir the way the CMP/CI does (token-subst a temp copy, then kustomize+PG).
+# Returns 0 ok, 1 render failure, 2 toolchain missing.
+pg_render() {
+    local dir="$1" kbin plugin_home
+    if [[ -x "$REPO_ROOT/.tools/kustomize" ]]; then
+        kbin="$REPO_ROOT/.tools/kustomize"; plugin_home="$REPO_ROOT/.tools/kustomize-plugin"
+    elif command -v kustomize >/dev/null 2>&1; then
+        kbin="kustomize"; plugin_home="${KUSTOMIZE_PLUGIN_HOME:-}"
+    else
+        return 2
+    fi
+    local tmp; tmp="$(mktemp -d)"
+    cp -R "$dir"/. "$tmp"/
+    local f
+    while IFS= read -r f; do
+        sed -e 's/\${POLICY_NAMESPACE}/policies-autoshift/g' \
+            -e 's/\${REMEDIATION}/enforce/g' \
+            -e 's/\${EVAL_COMPLIANT}/2h/g' \
+            -e 's/\${EVAL_NONCOMPLIANT}/45s/g' \
+            -e 's/\${CLUSTER_SET_SUFFIX}//g' \
+            "$f" > "$f.sub" && mv "$f.sub" "$f"
+    done < <(find "$tmp" -name '*.yaml')
+    KUSTOMIZE_PLUGIN_HOME="$plugin_home" "$kbin" build \
+        --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone "$tmp" >/dev/null 2>&1
+    local rc=$?; rm -rf "$tmp"; return $rc
 }
 
 # Main function
 main() {
-    local total=0
-    local regenerated=0
-    local failed=0
+    local total=0 regenerated=0 failed=0 render_warned=0
 
-    log_info "Regenerating operator policies from template..."
+    log_info "Re-rendering operator manifests from $(basename "$TEMPLATE_FILE")..."
     echo ""
 
-    # Find all operator install policies (matches OperatorPolicy kind in file).
-    # Layout: policies/<category>/<operator>/templates/policy-*.yaml
-    for policy_file in "$POLICIES_DIR"/*/*/templates/policy-*.yaml; do
-        # Skip if glob matched nothing
+    # Find bare OperatorPolicy manifests anywhere under a policy's manifests/ dir.
+    while IFS= read -r policy_file; do
         [[ -f "$policy_file" ]] || continue
-        # Only process files that contain an OperatorPolicy (i.e., operator install policies)
-        grep -q 'kind: OperatorPolicy' "$policy_file" 2>/dev/null || continue
+        grep -q '^kind: OperatorPolicy' "$policy_file" 2>/dev/null || continue
 
-        local operator_dir=""
-        operator_dir=$(basename "$(dirname "$(dirname "$policy_file")")")
+        local policy_dir operator_dir
+        policy_dir="${policy_file%%/manifests/*}"
+        operator_dir=$(basename "$policy_dir")
 
-        # Skip if specific operator requested and this isn't it
         if [[ -n "$SPECIFIC_OPERATOR" && "$operator_dir" != "$SPECIFIC_OPERATOR" ]]; then
             continue
         fi
 
         total=$((total + 1))
 
-        local info=""
-        local component_name=""
-        local component_camel=""
-        local label_prefix=""
-        info=$(extract_component_info "$policy_file")
-        component_name=$(echo "$info" | cut -d'|' -f1)
-        component_camel=$(echo "$info" | cut -d'|' -f2)
-        label_prefix=$(echo "$info" | cut -d'|' -f3)
+        local info cn lp ns sub src srcns ch scoped
+        info=$(extract_operator_params "$policy_file")
+        IFS='|' read -r cn lp ns sub src srcns ch scoped <<< "$info"
 
-        if [[ -n "$component_name" && -n "$component_camel" && -n "$label_prefix" ]]; then
-            regenerate_policy "$policy_file" "$component_name" "$component_camel" "$label_prefix"
-            log_success "  $operator_dir"
-            regenerated=$((regenerated + 1))
-        else
-            log_error "  $operator_dir - could not extract component info"
+        # Require the fields the template needs; skip (don't clobber) if extraction was incomplete.
+        if [[ -z "$cn" || -z "$lp" || -z "$ns" || -z "$sub" || -z "$src" || -z "$srcns" || -z "$ch" ]]; then
+            log_error "  $operator_dir - could not extract all params (non-standard manifest), skipping"
+            log_verbose "extracted: cn=$cn lp=$lp ns=$ns sub=$sub src=$src srcns=$srcns ch=$ch"
             failed=$((failed + 1))
+            continue
         fi
 
-    done
+        regenerate_operator "$policy_file" "$cn" "$lp" "$ns" "$sub" "$src" "$srcns" "$ch" "$scoped"
 
-    # Summary
+        # Validate the dir still renders through PolicyGenerator.
+        pg_render "$policy_dir"
+        local rc=$?
+        if [[ $rc -eq 0 ]]; then
+            log_success "  $operator_dir"
+        elif [[ $rc -eq 2 ]]; then
+            log_success "  $operator_dir (render not validated — .tools/ missing)"
+            render_warned=1
+        else
+            log_warning "  $operator_dir - regenerated but PolicyGenerator render FAILED (review git diff)"
+        fi
+        regenerated=$((regenerated + 1))
+    done < <(find "$POLICIES_DIR" -path '*/manifests/*' -name '*.yaml' | sort)
+
     echo ""
-    log_info "Summary: $regenerated/$total policies regenerated"
-
+    log_info "Summary: $regenerated/$total operator manifests re-rendered"
+    if [[ $render_warned -eq 1 ]]; then
+        log_warning "Some dirs were not render-validated. Install the toolchain: make install-policy-generator"
+    fi
     if [[ $failed -gt 0 ]]; then
-        log_error "Errors: $failed"
-        exit 1
+        log_error "Skipped (incomplete extraction): $failed — review these manually"
     fi
 
     echo ""

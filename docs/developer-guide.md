@@ -180,13 +180,11 @@ rm -rf policies/stable/test-config/
 # Check existing policies
 ls -la policies/
 
-# Validate all existing policies (optional but recommended)
-# Policy charts live at policies/<category>/<chart>/Chart.yaml
-find policies -maxdepth 3 -name Chart.yaml | while read -r chart_file; do
-  policy=$(dirname "$chart_file")
-  echo "Validating $policy..."
-  helm template "$policy" > /dev/null && echo "✓ Valid" || echo "✗ Invalid"
-done
+# Validate ALL policies at once — renders every chart (PolicyGenerator dirs with a
+# policy-generator-config.yaml AND the Helm holdouts with a Chart.yaml), resolves hub/spoke
+# templates, and checks the label contract. This is the canonical validation:
+make install-policy-generator          # one-time: stages kustomize + PG plugin into .tools/
+cd tools && go test -tags integration -count=1 ./internal/resolver/... && cd ..
 ```
 
 ## 💡 Creating Your First Policy
@@ -226,15 +224,17 @@ oc describe packagemanifest your-operator -n openshift-marketplace
 
 ### Step 3: Understand Generated Files
 
-Your new policy directory (`policies/stable/my-component/`) contains:
+Your new policy directory (`policies/stable/my-component/`) is an ACM **PolicyGenerator** source:
 
 ```
 policies/stable/my-component/
-├── Chart.yaml                          # Helm chart metadata
-├── values.yaml                         # Default configuration
+├── kustomization.yaml                  # Kustomize entrypoint
+├── policy-generator-config.yaml        # PolicyGenerator (policy graph, remediation, eval interval)
+├── placement.yaml                      # Placement predicate + tolerations
 ├── README.md                           # Policy documentation
-└── templates/
-    └── policy-my-component-operator-install.yaml  # RHACM Policy
+└── manifests/                          # bare resources — PG wraps each into a ConfigurationPolicy
+    ├── namespace.yaml                  #   the operator Namespace (raw)
+    └── operator.yaml                   #   the OperatorPolicy (first-class; carries ${REMEDIATION})
 ```
 
 ### Step 4: Add Operator Configuration
@@ -251,11 +251,15 @@ oc get crds | grep my-component
   --target both \
   --dependency my-component-operator-install
 
-# 3. Edit the generated template - replace the placeholder ConfigMap with your actual resource
-vi policies/stable/my-component/templates/policy-my-component-config.yaml
+# 3. Edit the generated bare manifest - replace the placeholder ConfigMap with your actual resource
+vi policies/stable/my-component/manifests/my-component-config.yaml
 ```
 
-The generator creates a complete policy with the correct structure (Policy + ConfigurationPolicy + Placement + PlacementBinding), `evaluationInterval`, dry-run support, and cluster tolerations. You can also generate standalone configuration policies in a new directory:
+The generator drops a **bare** manifest under `manifests/` and adds a `policies[]` entry (with its
+dependency and placement) to `policy-generator-config.yaml` — PolicyGenerator generates the
+ConfigurationPolicy + Placement + PlacementBinding and injects `remediationAction`/`evaluationInterval`.
+For a resource needing hub templates, loops, or conditionals, replace the placeholder with a bare
+`object-templates-raw:` manifest. You can also generate standalone configuration policies in a new directory:
 
 ```bash
 # Create a new policy directory for non-operator configuration
@@ -270,8 +274,12 @@ See [generate-policy.sh documentation](../scripts/README.md#generate-policysh) f
 ### Step 5: Test and Deploy
 
 ```bash
-# Validate your policy renders correctly
-helm template policies/stable/my-component/
+# Validate your policy renders correctly (needs: make install-policy-generator)
+KUSTOMIZE_PLUGIN_HOME=$PWD/.tools/kustomize-plugin .tools/kustomize build \
+  --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone \
+  policies/stable/my-component/
+# Full validation (helm render + hub/spoke resolution + label contract):
+cd tools && go test -tags integration -count=1 ./internal/resolver/... && cd ..
 
 # Commit and push to deploy
 git add policies/stable/my-component/
@@ -489,11 +497,13 @@ spec:
 ### Updating an Existing Policy
 
 ```bash
-# 1. Make changes to policy templates
-vi policies/stable/my-component/templates/policy-my-component-config.yaml
+# 1. Make changes to the bare manifests (or policy-generator-config.yaml for the policy graph)
+vi policies/stable/my-component/manifests/my-component-config.yaml
 
 # 2. Validate changes
-helm template policies/stable/my-component/
+KUSTOMIZE_PLUGIN_HOME=$PWD/.tools/kustomize-plugin .tools/kustomize build \
+  --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone \
+  policies/stable/my-component/
 
 # 3. Update with different label values
 vi autoshift/values/clustersets/sbx.yaml
@@ -639,14 +649,14 @@ gitops-channel: gitops-1.18
 ### Local Validation
 
 ```bash
-# Validate single policy
-helm template policies/stable/my-component/ | oc apply --dry-run=client -f -
+# Validate a single PolicyGenerator policy (render it the way the CMP/CI does)
+KUSTOMIZE_PLUGIN_HOME=$PWD/.tools/kustomize-plugin .tools/kustomize build \
+  --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone \
+  policies/stable/my-component/
 
-# Validate all policies
-find policies/ -name "Chart.yaml" -exec dirname {} \; | while read policy; do
-  echo "Testing $policy..."
-  helm template "$policy" > /dev/null 2>&1 || echo "FAILED: $policy"
-done
+# Validate ALL policies (PolicyGenerator dirs + Helm holdouts), with hub/spoke resolution
+# and the label contract — the same suite CI runs:
+cd tools && go test -tags integration -count=1 ./internal/resolver/... && cd ..
 ```
 
 ### Compliance Validation

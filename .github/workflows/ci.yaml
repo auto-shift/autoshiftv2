@@ -130,13 +130,24 @@ jobs:
         run: |
           echo "=== Validating policy name lengths (max 40 chars) ==="
           FAILED=0
+          check() {  # $1=name $2=file
+            local len=${#1}
+            if [ "$len" -gt 40 ]; then
+              echo "::error file=$2::Policy name '$1' is $len chars (max 40). Combined with a 20-char namespace this exceeds ACM's 62-char limit."
+              FAILED=1
+            fi
+          }
+          # PolicyGenerator policies: `- name:` entries directly under `policies:` (2-space indent)
+          # in each policy-generator-config.yaml.
           while IFS= read -r file; do
             while IFS= read -r name; do
-              len=${#name}
-              if [ "$len" -gt 40 ]; then
-                echo "::error file=$file::Policy name '$name' is $len chars (max 40). Combined with a 20-char namespace this exceeds ACM's 62-char limit."
-                FAILED=1
-              fi
+              check "$name" "$file"
+            done < <(grep -oP '^  - name: \K.*' "$file" 2>/dev/null || true)
+          done < <(find policies -name "policy-generator-config.yaml")
+          # Helm holdouts still author the name via `$policyName := "..."`.
+          while IFS= read -r file; do
+            while IFS= read -r name; do
+              check "$name" "$file"
             done < <(grep -oP '(?<=\$policyName := ")[^"]+' "$file" 2>/dev/null || true)
           done < <(find policies -name "*.yaml")
           [ "$FAILED" -eq 0 ] && echo "All policy names within limit" || exit 1

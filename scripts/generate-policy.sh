@@ -52,7 +52,45 @@ sed_inplace() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATE_DIR="$SCRIPT_DIR/templates"
+
+# Render a PolicyGenerator dir the same way the repo-server CMP / CI does: substitute ONLY the
+# per-deployment ${...} tokens into a throwaway copy (never mutate the source), then run
+# kustomize + the PolicyGenerator plugin. Returns 0 on success, 1 on render failure, 2 if the
+# toolchain is not installed.
+pg_render() {
+    local dir="$1"
+    local kbin plugin_home
+    if [[ -x "$PROJECT_ROOT/.tools/kustomize" ]]; then
+        kbin="$PROJECT_ROOT/.tools/kustomize"
+        plugin_home="$PROJECT_ROOT/.tools/kustomize-plugin"
+    elif command -v kustomize >/dev/null 2>&1; then
+        kbin="kustomize"
+        plugin_home="${KUSTOMIZE_PLUGIN_HOME:-}"
+    else
+        return 2
+    fi
+
+    local tmp
+    tmp="$(mktemp -d)"
+    cp -R "$dir"/. "$tmp"/
+    local f
+    while IFS= read -r f; do
+        sed -e 's/\${POLICY_NAMESPACE}/policies-autoshift/g' \
+            -e 's/\${REMEDIATION}/enforce/g' \
+            -e 's/\${EVAL_COMPLIANT}/2h/g' \
+            -e 's/\${EVAL_NONCOMPLIANT}/45s/g' \
+            -e 's/\${CLUSTER_SET_SUFFIX}//g' \
+            "$f" > "$f.sub" && mv "$f.sub" "$f"
+    done < <(find "$tmp" -name '*.yaml')
+
+    KUSTOMIZE_PLUGIN_HOME="$plugin_home" "$kbin" build \
+        --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone "$tmp" >/dev/null 2>&1
+    local rc=$?
+    rm -rf "$tmp"
+    return $rc
+}
 
 # Parse arguments
 POLICY_NAME=""
@@ -248,80 +286,93 @@ if [[ ! -d "$POLICY_DIR" ]]; then
     IS_NEW_DIR=true
 fi
 
-# Check if template file already exists
-if [[ -f "$POLICY_DIR/templates/policy-${POLICY_NAME}.yaml" ]]; then
-    log_error "Template file $POLICY_DIR/templates/policy-${POLICY_NAME}.yaml already exists"
+# Check if a manifest for this policy already exists
+if [[ -f "$POLICY_DIR/manifests/${POLICY_NAME}.yaml" ]]; then
+    log_error "Manifest $POLICY_DIR/manifests/${POLICY_NAME}.yaml already exists"
     exit 1
 fi
 
-# Build placement clusterSets block
-build_clustersets() {
-    local cs=""
+# Existing dir must be a PolicyGenerator dir (AutoShift policies use PolicyGenerator, not Helm)
+if [[ "$IS_NEW_DIR" == "false" && ! -f "$POLICY_DIR/policy-generator-config.yaml" ]]; then
+    log_error "$POLICY_DIR exists but has no policy-generator-config.yaml"
+    if [[ -f "$POLICY_DIR/Chart.yaml" ]]; then
+        echo "This looks like a legacy Helm chart. AutoShift policies now use PolicyGenerator —"
+        echo "migrate this directory first, or pass --dir with a new directory name."
+    fi
+    exit 1
+fi
+
+# Build the predicate matchExpressions for the given target. The PG placements carry NO
+# spec.clusterSets — scoping comes from the ManagedClusterSetBindings the top autoshift chart
+# creates in the policy namespace, filtered by these label predicates:
+#   hub   -> autoshift.io/self-managed Exists   (hub-only marker; managed clusters never carry it)
+#   spoke -> self-managed DoesNotExist + autoshift.io/<label> In [true]
+#   both  -> autoshift.io/<label> In [true]      (hub + managed)
+#   all   -> no predicate (every bound cluster)
+build_match_expressions() {
     case "$TARGET" in
         hub)
-            cs='  {{- range $clusterSet, $value := .Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}'
+            echo "            - key: 'autoshift.io/self-managed'"
+            echo "              operator: Exists"
             ;;
         spoke)
-            cs='  {{- range $clusterSet, $value := .Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}'
+            echo "            - key: 'autoshift.io/self-managed'"
+            echo "              operator: DoesNotExist"
+            echo "            - key: 'autoshift.io/${LABEL}'"
+            echo "              operator: In"
+            echo "              values:"
+            echo "                - 'true'"
             ;;
-        both|all)
-            cs='  {{- range $clusterSet, $value := .Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  {{- range $clusterSet, $value := .Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}'
+        both)
+            echo "            - key: 'autoshift.io/${LABEL}'"
+            echo "              operator: In"
+            echo "              values:"
+            echo "                - 'true'"
             ;;
     esac
-    echo "$cs"
 }
 
-# Build placement predicates block
-build_predicates() {
-    local pred=""
-    case "$TARGET" in
-        spoke|both)
-            pred="  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/${LABEL}'
-              operator: In
-              values:
-              - 'true'
+# Write a complete Placement file for the given target to stdout.
+# $1 = placement metadata.name
+build_placement() {
+    local placement_name="$1"
+    cat <<EOF
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: ${placement_name}
+  namespace: \${POLICY_NAMESPACE}
+spec:
+EOF
+    if [[ "$TARGET" != "all" ]]; then
+        echo "  # No spec.clusterSets: selects across all ManagedClusterSetBindings in this namespace,"
+        echo "  # filtered by the predicate below."
+        echo "  predicates:"
+        echo "    - requiredClusterSelector:"
+        echo "        labelSelector:"
+        echo "          matchExpressions:"
+        build_match_expressions
+    else
+        echo "  # No predicate: selects every cluster bound to this namespace's ManagedClusterSetBindings."
+    fi
+    cat <<'EOF'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
     - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists"
-            ;;
-        hub|all)
-            pred="  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists"
-            ;;
-    esac
-    echo "$pred"
+EOF
 }
 
-# Build dependency block
+# Build the PolicyGenerator dependencies block for a policies[] entry (4-space indent).
+# Emits nothing when there are no dependencies.
 build_dependency_block() {
     if [[ ${#DEPENDENCIES[@]} -eq 0 ]]; then
         return
     fi
-    echo "  dependencies:"
+    echo "    dependencies:"
     for dep in "${DEPENDENCIES[@]}"; do
-        echo "    - name: policy-${dep}"
-        echo "      namespace: {{ .Values.policy_namespace }}"
-        echo "      apiVersion: policy.open-cluster-management.io/v1"
-        echo "      compliance: Compliant"
-        echo "      kind: Policy"
+        echo "      - name: policy-${dep}"
     done
 }
 
@@ -649,92 +700,94 @@ echo ""
 echo -e "${GREEN}🚀 Generating configuration policy '${POLICY_NAME}'...${NC}"
 echo ""
 
-# Create directory structure
+# Emit the bare placeholder manifest for this policy (PG wraps it into a ConfigurationPolicy).
+write_manifest() {
+    mkdir -p "$POLICY_DIR/manifests"
+    sed -e "s/{{POLICY_NAME}}/$POLICY_NAME/g" \
+        -e "s/{{LABEL}}/$LABEL/g" \
+        "$TEMPLATE_DIR/manifest-config.yaml.template" > "$POLICY_DIR/manifests/${POLICY_NAME}.yaml"
+    log_success "Created manifests/${POLICY_NAME}.yaml (bare placeholder — replace with your resource)"
+}
+
+MANIFEST_PATH="manifests/${POLICY_NAME}.yaml"
+
 if [[ "$IS_NEW_DIR" == "true" ]]; then
-    log_step "Creating new chart directory: $POLICY_DIR"
-    mkdir -p "$POLICY_DIR/templates"
+    log_step "Creating new PolicyGenerator directory: $POLICY_DIR"
+    mkdir -p "$POLICY_DIR/manifests"
 
-    # Generate Chart.yaml using existing template
-    log_step "Generating Chart.yaml"
-    sed -e "s/{{COMPONENT_NAME}}/$DIR_BASENAME/g" \
-        "$TEMPLATE_DIR/Chart.yaml.template" > "$POLICY_DIR/Chart.yaml"
-    log_success "Created Chart.yaml"
+    # kustomization.yaml (static entrypoint)
+    cp "$TEMPLATE_DIR/kustomization.yaml.template" "$POLICY_DIR/kustomization.yaml"
+    log_success "Created kustomization.yaml"
 
-    # Generate minimal values.yaml
-    log_step "Generating values.yaml"
-    cp "$TEMPLATE_DIR/values-minimal.yaml.template" "$POLICY_DIR/values.yaml"
-    log_success "Created values.yaml"
+    # placement.yaml (default placement for the dir)
+    build_placement "placement-policy-${POLICY_NAME}" > "$POLICY_DIR/placement.yaml"
+    log_success "Created placement.yaml (target: $TARGET)"
+
+    # policy-generator-config.yaml — line-based marker replacement for the dependency block
+    log_step "Generating policy-generator-config.yaml"
+    DEP_BLOCK="$(build_dependency_block)"
+    {
+        while IFS= read -r line; do
+            case "$line" in
+                *'{{DEPENDENCY_BLOCK}}'*)
+                    [[ -n "$DEP_BLOCK" ]] && echo "$DEP_BLOCK"
+                    ;;
+                *)
+                    line="${line//\{\{DIR_BASENAME\}\}/$DIR_BASENAME}"
+                    line="${line//\{\{POLICY_NAME\}\}/$POLICY_NAME}"
+                    echo "$line"
+                    ;;
+            esac
+        done < "$TEMPLATE_DIR/pg-config.yaml.template"
+    } > "$POLICY_DIR/policy-generator-config.yaml"
+    log_success "Created policy-generator-config.yaml"
+
+    # bare manifest
+    write_manifest
 else
-    log_step "Using existing directory: $POLICY_DIR"
-    mkdir -p "$POLICY_DIR/templates"
+    log_step "Appending policy to existing PolicyGenerator directory: $POLICY_DIR"
+
+    # A bare `path: manifests` wildcard on an existing policy would also sweep the new flat file.
+    if grep -qE '^[[:space:]]*-[[:space:]]*path:[[:space:]]*manifests[[:space:]]*$' "$POLICY_DIR/policy-generator-config.yaml"; then
+        log_warning "An existing policy uses 'path: manifests' (dir wildcard); it may also pick up the new"
+        log_warning "manifest. Review policy-generator-config.yaml and use explicit file paths if so."
+    fi
+
+    # bare manifest
+    write_manifest
+
+    # per-policy placement (the dir's default placement.yaml has its own predicate)
+    build_placement "placement-policy-${POLICY_NAME}" > "$POLICY_DIR/placement-${POLICY_NAME}.yaml"
+    log_success "Created placement-${POLICY_NAME}.yaml (target: $TARGET)"
+
+    # Append a policies[] entry (assumes policies: is the last top-level key — true for all
+    # AutoShift PG configs).
+    log_step "Appending policies[] entry to policy-generator-config.yaml"
+    {
+        echo "  - name: policy-${POLICY_NAME}"
+        echo "    placement:"
+        echo "      placementPath: placement-${POLICY_NAME}.yaml"
+        build_dependency_block
+        echo "    manifests:"
+        echo "      - path: ${MANIFEST_PATH}"
+    } >> "$POLICY_DIR/policy-generator-config.yaml"
+    log_success "Appended policy-${POLICY_NAME} to policy-generator-config.yaml"
 fi
 
-# Write substitution blocks to temp files for reliable multi-line replacement
-_project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
-TMPDIR_SUB="$_project_root/.tmp/policy-sub-$$"
-mkdir -p "$TMPDIR_SUB"
-build_clustersets > "$TMPDIR_SUB/clustersets"
-build_predicates > "$TMPDIR_SUB/predicates"
-build_dependency_block > "$TMPDIR_SUB/dependency"
+OUTPUT_FILE="$POLICY_DIR/manifests/${POLICY_NAME}.yaml"
 
-if [[ "$TARGET" == "hub" ]]; then
-    echo '{{- if .Values.hubClusterSets }}' > "$TMPDIR_SUB/hub_start"
-    echo '{{- end }}' > "$TMPDIR_SUB/hub_end"
+# Validate with a PolicyGenerator render (same as the CMP / CI)
+log_step "Validating generated policy (PolicyGenerator render)..."
+pg_render "$POLICY_DIR"
+rc=$?
+if [[ $rc -eq 0 ]]; then
+    log_success "Policy validation passed (kustomize + PolicyGenerator)"
+elif [[ $rc -eq 2 ]]; then
+    log_warning "kustomize/PolicyGenerator not found in .tools/ — skipping render validation."
+    log_warning "Install it with: make install-policy-generator"
 else
-    : > "$TMPDIR_SUB/hub_start"
-    : > "$TMPDIR_SUB/hub_end"
-fi
-
-# Generate policy template
-log_step "Generating policy template"
-
-OUTPUT_FILE="$POLICY_DIR/templates/policy-${POLICY_NAME}.yaml"
-
-# Read the template line by line, replacing markers with file contents
-{
-    while IFS= read -r line; do
-        case "$line" in
-            *'{{HUB_WRAP_START}}'*)
-                if [[ -s "$TMPDIR_SUB/hub_start" ]]; then
-                    cat "$TMPDIR_SUB/hub_start"
-                fi
-                ;;
-            *'{{HUB_WRAP_END}}'*)
-                if [[ -s "$TMPDIR_SUB/hub_end" ]]; then
-                    cat "$TMPDIR_SUB/hub_end"
-                fi
-                ;;
-            *'{{PLACEMENT_CLUSTERSETS}}'*)
-                cat "$TMPDIR_SUB/clustersets"
-                ;;
-            *'{{PLACEMENT_PREDICATES}}'*)
-                cat "$TMPDIR_SUB/predicates"
-                ;;
-            *'{{DEPENDENCY_BLOCK}}'*)
-                if [[ -s "$TMPDIR_SUB/dependency" ]]; then
-                    cat "$TMPDIR_SUB/dependency"
-                fi
-                ;;
-            *'{{POLICY_NAME}}'*)
-                echo "${line//\{\{POLICY_NAME\}\}/$POLICY_NAME}"
-                ;;
-            *)
-                echo "$line"
-                ;;
-        esac
-    done < "$TEMPLATE_DIR/policy-config.yaml.template"
-} > "$OUTPUT_FILE"
-
-rm -rf "$TMPDIR_SUB"
-log_success "Created policy-${POLICY_NAME}.yaml"
-
-# Validate with helm template
-log_step "Validating generated policy..."
-if helm template "$POLICY_DIR" >/dev/null 2>&1; then
-    log_success "Policy validation passed (helm template)"
-else
-    log_error "Generated policy fails helm template validation"
-    echo "Run: helm template $POLICY_DIR"
+    log_error "Generated policy fails PolicyGenerator render"
+    echo "Run: KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR"
     exit 1
 fi
 
@@ -772,14 +825,16 @@ echo ""
 # Show next steps
 echo -e "${BLUE}📋 Next Steps:${NC}"
 echo "1. Edit $OUTPUT_FILE"
-echo "   - Replace the placeholder ConfigMap with your actual resource definition"
-echo "   - Adjust severity and complianceType as needed"
-echo "2. Test locally: helm template $POLICY_DIR/"
+echo "   - Replace the placeholder ConfigMap with your actual bare resource (no ConfigurationPolicy wrapper)"
+echo "   - For hub templates / loops / conditionals, use a bare 'object-templates-raw:' manifest instead"
+echo "2. Test locally: KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR"
+echo "   Full validation: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
 if [[ "$TARGET" != "all" ]]; then
     if [[ "$ADD_TO_AUTOSHIFT" == "true" ]]; then
         echo "3. Labels already added to values files via --add-to-autoshift"
     else
         echo "3. Add 'autoshift.io/${LABEL}: true' to your values files (or re-run with --add-to-autoshift)"
+        echo "   Also declare 'autoshift.io/${LABEL}' in autoshift/values/clustersets/_example.yaml (label-contract CI)"
     fi
 fi
 echo ""
