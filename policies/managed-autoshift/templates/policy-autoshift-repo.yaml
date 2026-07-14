@@ -36,15 +36,15 @@ spec:
           severity: high
           object-templates-raw: |
             [
-            {{ "{{hub-" }} $autoshiftConfigs := index (index (fromConfigMap "{{ $policyNamespace }}" (print  .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "autoshift" {{ "hub}}" }}
+            {{ "{{hub-" }} $autoshiftConfigs := index (index (fromConfigMap "{{ $policyNamespace }}" (print  .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "autoshift" | default (list) {{ "hub}}" }}
             {{ "{{hub-" }} $lastIndex := (sub (len $autoshiftConfigs) 1) {{ "hub}}" }}
             {{ "{{hub-" }} range $index, $autoshiftConfig := $autoshiftConfigs {{ "hub}}" }}
               {{ "{{hub" }} $appName := index $autoshiftConfig "appName" | default "managed-autoshift" {{ "hub}}" }}
               {{ "{{hub-" }} $gitopsNamespace := index $autoshiftConfig "gitopsNamespace" | default "openshift-gitops" {{ "hub}}" }}
-              {{ "{{hub-" }} $secretRef := index (index $autoshiftConfig "repoSecretRef" | default dict) "repoSecretRef" | default dict {{ "hub}}" }}
+              {{ "{{hub-" }} $secretRef := index $autoshiftConfig "repoSecretRef" | default dict {{ "hub}}" }}
               {{ "{{hub-" }} $secretName := index $secretRef "name" | default "autoshift-repo-secret" {{ "hub}}" }}
               {{ "{{hub-" }} $secretNamespace := index $secretRef "namespace" | default "{{ $policyNamespace }}" {{ "hub}}" }}
-              {{ "{{hub-" }} $valuesSecretRef := index (index $autoshiftConfig "valuesRepoSecretRef" | default dict) "valuesRepoSecretRef" | default dict {{ "hub}}" }}
+              {{ "{{hub-" }} $valuesSecretRef := index $autoshiftConfig "valuesRepoSecretRef" | default dict {{ "hub}}" }}
               {{ "{{hub-" }} $valuesSecretName := index $valuesSecretRef "name" | default "autoshift-values-repo-secret" {{ "hub}}" }}
               {{ "{{hub-" }} $valuesSecretNamespace := index $valuesSecretRef "namespace" | default "{{ $policyNamespace }}" {{ "hub}}" }}
               {{ "{{hub-" }} $valuesRepoUrl := index $autoshiftConfig "valuesRepoUrl" | default "" {{ "hub}}" }}

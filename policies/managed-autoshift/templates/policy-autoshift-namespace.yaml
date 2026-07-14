@@ -22,14 +22,16 @@ spec:
           remediationAction: enforce
           severity: high
           object-templates-raw: |
-            {{ "{{hub" }} $autoshiftConfig := (index (fromConfigMap "{{ $policyNamespace }}" (print {{ "{{hub" }} .ManagedClusterName {{ "hub}}" }} ".rendered-config") "config" | default "{}") "autoshift" | default "{}" | fromYaml) {{ "hub}}" }}
-            {{ "{{hub" }} $appName := index $autoshiftConfig "appName" | default "managed-autoshift" {{ "hub}}" }}
-            {{ "{{" }} $policyNamespace := {{ "{{hub-" }} print "policies-" $appName | default "" {{ "-hub}}" }} {{ "}}" }}
+            {{ "{{hub-" }} $autoshiftConfigs := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "autoshift" | default (list) {{ "hub}}" }}
+            {{ "{{hub-" }} range $autoshiftConfig := $autoshiftConfigs {{ "hub}}" }}
+            {{ "{{hub-" }} $appName := index $autoshiftConfig "appName" | default "managed-autoshift" {{ "hub}}" }}
             - complianceType: musthave
-              apiVersion: v1
-              kind: Namespace
-              metadata:
-                name: {{ "{{" }} $policyNamespace {{ "}}" }}
-                labels:
-                  autoshift.io/createdByAutoshift: "true"
-                  openshift.io/cluster-monitoring: "true"
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} print "policies-" $appName {{ "hub}}" }}
+                  labels:
+                    autoshift.io/createdByAutoshift: "true"
+                    openshift.io/cluster-monitoring: "true"
+            {{ "{{hub-" }} end {{ "hub}}" }}
