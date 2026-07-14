@@ -37,6 +37,10 @@ POLICY_NAMES := $(notdir $(POLICY_CHARTS))
 # Still packaged/pushed to OCI, but must be kept out of policy-list.txt to avoid a duplicate Application.
 DEDICATED_APP_NAMES := cluster-labels cluster-config-maps
 POLICY_LIST_NAMES := $(filter-out $(DEDICATED_APP_NAMES),$(POLICY_NAMES))
+# PolicyGenerator policy dirs (kustomize, no Chart.yaml) — published as Argo CD-native OCI artifacts
+# and rendered by the repo-server policy-generator CMP (same as git mode).
+POLICY_PG_DIRS := $(shell find policies -maxdepth 3 -name policy-generator-config.yaml -exec dirname {} \;)
+POLICY_PG_NAMES := $(notdir $(POLICY_PG_DIRS))
 
 .PHONY: discover
 discover: ## Discover all charts in the repository
@@ -120,12 +124,13 @@ sync-values: ## Sync bootstrap chart values from policy charts
 	@printf "$(GREEN)✓$(NC) Bootstrap values synced\n"
 
 .PHONY: generate-policy-list
-generate-policy-list: ## Generate policy-list.txt for OCI mode
-	@printf "$(BLUE)[INFO]$(NC) Generating policy-list.txt with $(words $(POLICY_LIST_NAMES)) policies...\n"
+generate-policy-list: ## Generate policy-list.txt (helm) + policy-list-pg.txt (PolicyGenerator) for OCI mode
+	@printf "$(BLUE)[INFO]$(NC) Generating policy lists: $(words $(POLICY_LIST_NAMES)) helm + $(words $(POLICY_PG_NAMES)) PolicyGenerator...\n"
 	@mkdir -p autoshift/files
-	@rm -f autoshift/files/policy-list.txt
+	@rm -f autoshift/files/policy-list.txt autoshift/files/policy-list-pg.txt
 	@$(foreach policy,$(POLICY_LIST_NAMES),echo "$(policy)" >> autoshift/files/policy-list.txt;)
-	@printf "$(GREEN)✓$(NC) Generated policy-list.txt with $(words $(POLICY_LIST_NAMES)) policies\n"
+	@$(foreach policy,$(POLICY_PG_NAMES),echo "$(policy)" >> autoshift/files/policy-list-pg.txt;)
+	@printf "$(GREEN)✓$(NC) Generated policy-list.txt ($(words $(POLICY_LIST_NAMES)) helm) + policy-list-pg.txt ($(words $(POLICY_PG_NAMES)) PolicyGenerator)\n"
 
 .PHONY: package-charts
 package-charts: ## Package all Helm charts
@@ -191,6 +196,28 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 		echo "  Policies: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
 	fi
 
+.PHONY: push-policies-oci
+push-policies-oci: ## Push PolicyGenerator policy dirs to OCI as Argo CD-native artifacts (requires oras CLI)
+	@if [ "$(DRY_RUN)" = "true" ]; then \
+		printf "$(YELLOW)[WARN]$(NC) DRY RUN: Skipping PolicyGenerator OCI push\n"; \
+		echo "PolicyGenerator policies would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies/<name>:$(VERSION)"; \
+	else \
+		command -v oras >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) oras CLI is required. Install from: https://oras.land/docs/installation\n"; exit 1; }; \
+		printf "$(BLUE)[INFO]$(NC) Pushing PolicyGenerator policies to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies\n"; \
+		for dir in $(POLICY_PG_DIRS); do \
+			name=$$(basename $$dir); \
+			tmp=$$(mktemp -d); \
+			COPYFILE_DISABLE=1 tar --exclude='._*' --exclude='.DS_Store' -czf $$tmp/content.tar.gz -C $$dir . || { rm -rf $$tmp; exit 1; }; \
+			printf '{}' > $$tmp/config.json; \
+			echo "  - Pushing $$name..."; \
+			( cd $$tmp && oras push $(REGISTRY)/$(REGISTRY_NAMESPACE)/policies/$$name:$(VERSION) \
+				--config config.json:application/vnd.cncf.argoproj.argocd.config.v1+json \
+				content.tar.gz:application/vnd.oci.image.layer.v1.tar+gzip >/dev/null ) || { rm -rf $$tmp; exit 1; }; \
+			rm -rf $$tmp; \
+		done; \
+		printf "$(GREEN)✓$(NC) Pushed $(words $(POLICY_PG_NAMES)) PolicyGenerator policies to oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies\n"; \
+	fi
+
 .PHONY: tag-latest
 tag-latest: ## Tag all pushed charts with 'latest' in the OCI registry (requires oras CLI)
 	@if [ "$(DRY_RUN)" = "true" ]; then \
@@ -217,6 +244,11 @@ tag-latest: ## Tag all pushed charts with 'latest' in the OCI registry (requires
 			echo "  - $$CHART_NAME:latest"; \
 			oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/policies/$$CHART_NAME:$(VERSION) latest || exit 1; \
 		done; \
+		printf "$(BLUE)[INFO]$(NC) Tagging PolicyGenerator policy artifacts as latest...\n"; \
+		for name in $(POLICY_PG_NAMES); do \
+			echo "  - $$name:latest"; \
+			oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/policies/$$name:$(VERSION) latest || exit 1; \
+		done; \
 		echo ""; \
 		printf "$(GREEN)✓$(NC) All charts tagged as 'latest'\n"; \
 	fi
@@ -229,7 +261,7 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@printf "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/\n"
 
 .PHONY: release
-release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts tag-latest generate-artifacts ## Full release process (add INCLUDE_MIRROR=false to skip mirror artifacts)
+release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts push-policies-oci tag-latest generate-artifacts ## Full release process (add INCLUDE_MIRROR=false to skip mirror artifacts)
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
 		printf "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
 		$(MAKE) generate-imageset VERSION=$(VERSION) || { \

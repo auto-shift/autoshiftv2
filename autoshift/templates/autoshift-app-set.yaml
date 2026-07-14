@@ -32,18 +32,57 @@ spec:
           destination:
             server: https://kubernetes.default.svc
             namespace: {{ printf "policies-%s" .Release.Name }}
+          # Single source: the OCI helm chart ships its own values.yaml (packaged at release time),
+          # so we do NOT pull a per-policy values.yaml from a git ref (the old $values/policies/<name>
+          # path predated the stable/certified/community layout and broke). valuesObject layers the
+          # cross-cutting autoshift config on top of the chart's built-in defaults.
           sources:
-          - repoURL: {{ (.Values.autoshiftValues).repoUrl | default .Values.autoshiftGitRepo }}
-            targetRevision: {{ (.Values.autoshiftValues).targetRevision | default .Values.autoshiftGitBranchTag }}
-            ref: values
           - path: .
             repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
             targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
             helm:
-              valueFiles:
-                - $values/policies/{{ "{{" }} .name {{ "}}" }}/values.yaml
               valuesObject:
                 {{- include "autoshift.policyValuesObject" . | nindent 16 }}
+  # OCI Registry mode - PolicyGenerator policies published as Argo CD-native OCI artifacts.
+  # Names read from bundled files/policy-list-pg.txt (generated at release time). Rendered by the
+  # repo-server policy-generator CMP, identical to git mode — single source, no values ref (the CMP
+  # gets everything from env tokens).
+  - list:
+      elements:
+      {{- $pgList := .Files.Get "files/policy-list-pg.txt" | trim | split "\n" }}
+      {{- range $pgList }}
+      {{- if not (has . $.Values.excludePolicies) }}
+      - name: {{ . }}
+      {{- end }}
+      {{- end }}
+      template:
+        metadata:
+          name: '{{ .Release.Name }}-{{"{{"}} .name {{"}}"}}'
+        spec:
+          project: default
+          destination:
+            server: https://kubernetes.default.svc
+            namespace: {{ printf "policies-%s" .Release.Name }}
+          sources:
+          - path: .
+            repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
+            targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
+            plugin:
+              name: policy-generator
+              env:
+              - name: POLICY_NAMESPACE
+                value: {{ printf "policies-%s" .Release.Name }}
+              # inform when autoshift.dryRun, else enforce
+              - name: REMEDIATION
+                value: {{ if ((.Values.autoshift).dryRun) }}inform{{ else }}enforce{{ end }}
+              - name: EVAL_COMPLIANT
+                value: '{{ (((.Values.autoshift).evaluationInterval).compliant) | default "10m" }}'
+              - name: EVAL_NONCOMPLIANT
+                value: '{{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}'
+              # versionedClusterSets suffix (empty unless versionedClusterSets); appended to
+              # managedClusterSet names by cluster-install so installed clusters join the versioned set.
+              - name: CLUSTER_SET_SUFFIX
+                value: '{{ include "autoshift.clusterSetSuffix" . }}'
   {{- else }}
   # Git mode - discover policies from Git repository by MARKER FILE (hybrid Helm + Kustomize).
   #   dir with kustomization.yaml            -> PolicyGenerator via the repo-server CMP plugin
