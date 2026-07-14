@@ -6,11 +6,13 @@ metadata:
 # `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
 # templates contain `$vars` that substitution would clobber.
 #
-# remediationAction is intentionally NOT set at the policy level. Every manifest is a first-class
-# ConfigurationPolicy carrying its own remediationAction: ${REMEDIATION}, so dry-run support flows
-# from the manifests and no Policy-level override is needed.
+# remediationAction: ${REMEDIATION} is set once in policyDefaults (dry-run aware). Readiness/status
+# checks, when present, are their own policies[] entry with remediationAction: inform and a manifest
+# under test/ (a separate Policy, so the enforce root of a config policy can't clobber the check).
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
   severity: high
   consolidateManifests: true
   evaluationInterval:

@@ -10,13 +10,15 @@ metadata:
 # wildcarded manifests dir. Per-deployment scalars (${...}) live here and in placement*.yaml only —
 # never in manifests/, whose hub templates contain $vars that substitution would clobber.
 #
-# NOTE: remediationAction is intentionally NOT set in policyDefaults. Several policies mix enforce
-# children with an inform status-check child in a single Policy, so those carry a per-manifest
-# remediationAction. The remaining policies set it at the policy level.
+# remediationAction: ${REMEDIATION} is set once in policyDefaults (dry-run aware). Readiness/status
+# checks are their own policies[] entry (policy-*-test, remediationAction: inform, manifest under
+# test/) — a separate Policy so the enforce root of a config policy can't clobber the inform check.
 placementBindingDefaults:
   name: binding-policy-jfrog
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
   severity: high
   consolidateManifests: false
   evaluationInterval:
@@ -31,7 +33,6 @@ policyDefaults:
 policies:
   # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
   - name: policy-jfrog-operator-install
-    remediationAction: ${REMEDIATION}
     manifests:
       - path: manifests/operator-install
     placement:
@@ -53,14 +54,16 @@ policies:
       - name: policy-jfrog-operator-install
     manifests:
       - path: manifests/cnpg-artifactory
-        remediationAction: ${REMEDIATION}
-      - path: test/cnpg-artifactory-ready.yaml
-        remediationAction: inform
     placement:
       placementPath: placement-jfrog-cnpg.yaml
   # 4) CNPG connection poolers (rw + ro).
+  - name: policy-cnpg-artifactory-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-jfrog-cnpg.yaml
+    manifests:
+      - path: test/cnpg-artifactory-ready.yaml
   - name: policy-cnpg-artifactory-pooler
-    remediationAction: ${REMEDIATION}
     dependencies:
       - name: policy-cnpg-artifactory
     manifests:
@@ -69,7 +72,6 @@ policies:
       placementPath: placement-jfrog-cnpg.yaml
   # 5) Scheduled CNPG backups to NooBaa (requires odf). Own placement predicate.
   - name: policy-cnpg-artifactory-backup
-    remediationAction: ${REMEDIATION}
     dependencies:
       - name: policy-cnpg-artifactory
       - name: policy-storage-cluster-test
@@ -87,8 +89,12 @@ policies:
       - name: policy-jfrog-keys
     manifests:
       - path: manifests/jfrog-instance
-        remediationAction: ${REMEDIATION}
-      - path: test/jfrog-instance-ready.yaml
-        remediationAction: inform
     placement:
       placementPath: placement-jfrog.yaml
+
+  - name: policy-jfrog-instance-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-jfrog.yaml
+    manifests:
+      - path: test/jfrog-instance-ready.yaml

@@ -2,16 +2,20 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: PolicyGenerator
 metadata:
   name: user-workload-monitoring
+# uwm-enable (config) + uwm-enable-test (readiness check) share one placement, so name the binding.
+placementBindingDefaults:
+  name: binding-policy-uwm
 # Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
 # `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
 # templates contain `$vars` that substitution would clobber.
 #
-# remediationAction is intentionally NOT set at the policy level. The three ConfigurationPolicies
-# in uwm-enable.yaml carry their own remediationAction: the enable/config policies follow
-# ${REMEDIATION} while the readiness check (uwm-ready) stays at inform. A Policy-level
-# remediationAction would override the children and force the inform check to enforce.
+# remediationAction: ${REMEDIATION} is set once in policyDefaults (dry-run aware). The UWM readiness
+# check is its own policies[] entry (policy-uwm-enable-test, remediationAction: inform, manifest under
+# test/) — a separate Policy so the enforce root can't clobber the inform check.
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
   severity: high
   consolidateManifests: true
   evaluationInterval:
@@ -32,6 +36,8 @@ policies:
     consolidateManifests: false
     manifests:
       - path: manifests/uwm-enable.yaml
-        remediationAction: ${REMEDIATION}
-      - path: manifests/uwm-enable-ready.yaml
-        remediationAction: inform
+
+  - name: policy-uwm-enable-test
+    remediationAction: inform
+    manifests:
+      - path: test/uwm-enable-ready.yaml

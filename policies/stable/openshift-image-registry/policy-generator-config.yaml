@@ -6,14 +6,15 @@ metadata:
 # `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
 # templates contain `$vars` that substitution would clobber.
 #
-# remediationAction is intentionally NOT set at the policy level. Every manifest is a first-class
-# ConfigurationPolicy carrying its own remediationAction, so the status/readiness check
-# (image-registry-storage-bound) stays at inform while the config policies follow ${REMEDIATION}.
-# A Policy-level remediationAction would override the children and force the inform check to enforce.
+# remediationAction: ${REMEDIATION} is set once in policyDefaults (dry-run aware). The OBC-Bound
+# readiness check is its own policies[] entry (policy-image-registry-storage-test, remediationAction:
+# inform, manifest under test/) — a separate Policy so the enforce root can't clobber the inform check.
 placementBindingDefaults:
   name: binding-policy-image-registry
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
   severity: high
   consolidateManifests: true
   evaluationInterval:
@@ -34,12 +35,12 @@ policies:
     consolidateManifests: false
     manifests:
       - path: manifests/image-registry-storage.yaml
-        remediationAction: ${REMEDIATION}
-      - path: manifests/image-registry-storage-ready.yaml
-        remediationAction: inform
   # Enables the image registry Config; waits on storage to be provisioned.
+  - name: policy-image-registry-storage-test
+    remediationAction: inform
+    manifests:
+      - path: test/image-registry-storage-ready.yaml
   - name: policy-enable-image-registry
-    remediationAction: ${REMEDIATION}
     dependencies:
       - name: policy-image-registry-storage
     manifests:

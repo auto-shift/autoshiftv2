@@ -16,14 +16,15 @@ metadata:
 # hand-authored placements select hubs via `autoshift.io/self-managed: Exists` (a hub-only label
 # cluster-labels propagates to hub-clusterset members; managed clusters never carry it).
 #
-# remediationAction is NOT set in policyDefaults: provisioning mixes an enforce config with an
-# inform readiness check in one Policy, so it omits the root action (children stand). The other
-# five set it at the policy level. Every manifest also bakes remediationAction: ${REMEDIATION}
-# (or inform for the check), so the dry-run toggle drives the controlling template directly.
+# remediationAction: ${REMEDIATION} is set once in policyDefaults (dry-run aware). Readiness/status
+# checks are their own policies[] entry (policy-*-test, remediationAction: inform, manifest under
+# test/) — a separate Policy so the enforce root of a config policy can't clobber the inform check.
 placementBindingDefaults:
   name: binding-policy-acm
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
   severity: high
   consolidateManifests: true
   evaluationInterval:
@@ -41,17 +42,14 @@ policyDefaults:
 policies:
   # 1) ACM operator install: Namespaces (ConfigurationPolicy) + first-class OperatorPolicy.
   - name: policy-acm-operator-install
-    remediationAction: ${REMEDIATION}
     manifests:
       - path: manifests/operator-install
   # 2) MultiClusterHub. Branches on autoshift.io/self-managed (disableHubSelfManagement).
   - name: policy-acm-mch-install
-    remediationAction: ${REMEDIATION}
     manifests:
       - path: manifests/mch-install
   # 3) ACM Observability (MCO + object bucket). Needs the SA for fromSecret/fromConfigMap.
   - name: policy-acm-observability
-    remediationAction: ${REMEDIATION}
     placement:
       placementPath: placement-observability.yaml
     hubTemplateOptions:
@@ -63,7 +61,6 @@ policies:
       - path: manifests/observability
   # 4) ACM Search persistent storage.
   - name: policy-acm-search-storage
-    remediationAction: ${REMEDIATION}
     placement:
       placementPath: placement-search-storage.yaml
     dependencies:
@@ -72,15 +69,13 @@ policies:
       - path: manifests/search-storage
   # 5) Governance-controller addon tuning at scale.
   - name: policy-acm-addon-tuning
-    remediationAction: ${REMEDIATION}
     placement:
       placementPath: placement-addon-tuning.yaml
     dependencies:
       - name: policy-acm-mch-install
     manifests:
       - path: manifests/addon-tuning
-  # 6) CIM/bare-metal provisioning. MIXED: Provisioning/AgentServiceConfig enforce, readiness informs
-  #    -> omit the policy-level remediationAction so the inform check isn't clobbered by a root action.
+  # 6) CIM/bare-metal provisioning: Provisioning + AgentServiceConfig (enforce, from policyDefaults).
   - name: policy-acm-provisioning
     placement:
       placementPath: placement-provisioning.yaml
@@ -90,3 +85,12 @@ policies:
       - name: policy-acm-mch-install
     manifests:
       - path: manifests/provisioning
+  # 6-test) AgentServiceConfig readiness (status observation → inform, its own Policy in test/).
+  - name: policy-acm-provisioning-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-provisioning.yaml
+    dependencies:
+      - name: policy-acm-mch-install
+    manifests:
+      - path: test/acm-agentserviceconfig-test.yaml
