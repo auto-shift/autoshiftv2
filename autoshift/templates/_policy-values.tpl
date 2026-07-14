@@ -8,6 +8,11 @@ so the two branches never drift. Consumed via: {{- include "autoshift.policyValu
 gitopsNamespace: {{ .Values.gitopsNamespace }}
 policy_namespace: {{ printf "policies-%s" .Release.Name }}
 clusterSetSuffix: {{ $clusterSetSuffix }}
+{{- if .Values.gitopsPolicyGeneratorSidecarImage }}
+gitops:
+  policyGenerator:
+    sidecarImage: {{ .Values.gitopsPolicyGeneratorSidecarImage }}
+{{- end }}
 autoshift:
   dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
   evaluationInterval:

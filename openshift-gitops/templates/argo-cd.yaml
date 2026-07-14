@@ -20,13 +20,11 @@ spec:
       enabled: true
   monitoring:
     enabled: false
-  {{- if (.Values.gitops.policyGenerator).enabled }}
   # PolicyGenerator kustomize plugin support (values proven on feature/policy-generator).
   kustomizeBuildOptions: --enable-helm --helm-command /usr/local/bin/helm --enable-alpha-plugins --load-restrictor LoadRestrictionsNone
   # Avoid app.kubernetes.io/instance label conflicts between ArgoCD and ACM/PolicyGenerator policies.
   applicationInstanceLabelKey: argocd.argoproj.io/instance
   resourceTrackingMethod: annotation+label
-  {{- end }}
   sso:
     dex:
       resources:
@@ -52,33 +50,27 @@ spec:
     {{- /* Declared at repo scope so they're visible in the initContainers/sidecar blocks below. */}}
     {{- $acmImage := ($pg).subscriptionImage }}
     {{- $argoImage := ($pg).sidecarImage }}
-    {{- if ($pg).enabled }}
     {{- /* Reuse the ACM + repo-server images already cached on the cluster; fall back to values.
            The subscription image (which ships PolicyGenerator) runs as multicluster-operators-hub-subscription. */}}
     {{- $acmDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "multicluster-operators-hub-subscription") }}
     {{- if $acmDep }}{{- $acmImage = (index $acmDep.spec.template.spec.containers 0).image }}{{- end }}
     {{- $argoDep := (lookup "apps/v1" "Deployment" .Values.gitops.argoNamespace (printf "%s-repo-server" .Values.gitops.argoName)) }}
     {{- if $argoDep }}{{- $argoImage = (index $argoDep.spec.template.spec.containers 0).image }}{{- end }}
-    {{- end }}
-    {{- if or $caBundle ($pg).enabled }}
     volumeMounts:
       {{- if $caBundle }}
       - name: user-ca-bundle
         mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
         subPath: ca-bundle.crt
       {{- end }}
-      {{- if ($pg).enabled }}
       # PG binary (staged by the init container) at the kustomize plugin home.
       - name: policy-generator
         mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
-      {{- end }}
     volumes:
       {{- if $caBundle }}
       - name: user-ca-bundle
         configMap:
           name: user-ca-bundle
       {{- end }}
-      {{- if ($pg).enabled }}
       - name: policy-generator
         emptyDir: {}
       - name: policy-generator-cmp-config
@@ -86,9 +78,6 @@ spec:
           name: policy-generator-cmp-plugin
       - name: cmp-tmp
         emptyDir: {}
-      {{- end }}
-    {{- end }}
-    {{- if ($pg).enabled }}
     env:
       # Let PolicyGenerator inflate Helm charts referenced as manifest input.
       - name: POLICY_GEN_ENABLE_HELM
@@ -149,7 +138,6 @@ spec:
           # PolicyGenerator binary from ACM (staged by the init container) at the plugin home.
           - name: policy-generator
             mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
-    {{- end }}
     resources:
       limits:
         cpu: {{ ((.Values.gitops.repo).limits).cpu | default "1000m" }}

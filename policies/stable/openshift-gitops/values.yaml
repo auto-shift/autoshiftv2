@@ -59,15 +59,9 @@ gitops:
   # container (stages the PG binary from the ACM subscription image) and a CMP sidecar that
   # runs `kustomize build --enable-alpha-plugins` after substituting the per-deployment
   # ${...} placeholders. See openshift-gitops/templates/argo-cd.yaml.
-  policyGenerator:
-    enabled: true
-    # Image containing the PolicyGenerator binary (ships in the ACM subscription image).
-    # Pin the tag to the hub's ACM version.
-    subscriptionImage: registry.redhat.io/rhacm2/multicluster-operators-subscription-rhel9:v2.16
-    # Sidecar image: needs sh, sed, kustomize, and the argocd-cmp-server binary at
-    # /var/run/argocd. The OpenShift GitOps repo-server image satisfies this; override to
-    # match your GitOps operator version (`oc -n openshift-gitops get deploy infra-gitops-repo-server -o jsonpath='{..image}'`).
-    sidecarImage: registry.redhat.io/openshift-gitops-1/argocd-rhel9:latest
+  # The PolicyGenerator CMP is unconditional (the repo-server can't render any kustomize/PolicyGenerator
+  # policy without it). Its init/sidecar images are resolved at enforcement time via hub-template lookups
+  # in templates/policy-gitops-systems-argocd.yaml — no values to configure here.
   server:
     autoscale:
       enabled: true
