@@ -1,0 +1,30 @@
+object-templates-raw: |
+  {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
+  {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
+  {{- $desired := (index (index $status "desired" | default dict) "version" | default "") }}
+  {{- $current := "" }}
+  {{- range $h := (index $status "history" | default list) }}
+  {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}{{- $current = (index $h "version") }}{{- end }}
+  {{- end }}
+  {{- $inAvail := false }}
+  {{- range $u := (index $status "availableUpdates" | default list) }}
+  {{-   if eq (index $u "version") $target }}{{- $inAvail = true }}{{- end }}
+  {{- end }}
+  {{- /* valid = a reachable update, OR already targeted by the CVO, OR already at/above it. The
+         latter two keep this stable during and after the upgrade (availableUpdates empties while
+         Progressing). Guard the semver check so a malformed version reports invalid, not a crash. */ -}}
+  {{- $valid := false }}
+  {{- if regexMatch "^[0-9]+[.][0-9]+[.][0-9]+" $target }}
+  {{-   $valid = or $inAvail (eq $desired $target) (and (ne $current "") (semverCompare (printf ">= %s" $target) $current)) }}
+  {{- end }}
+  {{- if and (ne $target "") (not $valid) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: ClusterVersion
+      metadata:
+        name: version
+      status:
+        availableUpdates:
+          - version: '{{ $target }}'
+  {{- end }}
