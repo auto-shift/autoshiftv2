@@ -1,0 +1,124 @@
+{{- $managedHubs := dict }}
+{{- $selfManagedHubs := dict }}
+{{- range $k, $v := $.Values.hubClusterSets  }}
+  {{-  if eq ((index $v.labels "self-managed") | default "false")  "false" }}
+    {{- $_ := set $managedHubs $k $k }}
+  {{- else }}
+    {{- $_ := set $selfManagedHubs $k $k }}
+  {{- end }}
+{{- end }}
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $targets := list }}
+{{- if not (empty $selfManagedHubs) }}
+  {{- $targets = append $targets "selfManagedHub" }}
+{{- end }}
+{{- if not (empty $managedHubs) }}
+  {{- $targets = append $targets "managedHub" }}
+{{- end }}
+{{- range $_, $target := $targets }}
+  {{- $policyName := (printf "policy-%s-cluster-set-labels" ($target | lower)) }}
+  {{- $configPolicyName := printf "configure-%s" $policyName }}
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+    {{- if (eq $target "managedHub") }}
+  dependencies:
+    - apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      name:  "policy-managed-hub-namespace"
+      namespace: {{ $policyNamespace }}
+    {{- end }}
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: {{ $configPolicyName }}
+        spec:
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+            #Indentation Anchor
+            {{ "{{-" }} $clusterSetLookupResult := (lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "") | default dict {{ "}}" }}
+            {{ "{{-" }} if not (empty $clusterSetLookupResult) {{ "}}" }}
+              {{ "{{-" }} $allClusterSetLabels := (dict) {{ "}}" }}
+              {{ "{{-" }} $managedClusterSets := (index $clusterSetLookupResult "items") | default list {{ "}}" }}
+              {{ "{{-" }} $lastIndex := (sub (len $managedClusterSets) 1) {{ "}}" }}
+              {{ "{{-" }} if (ne $lastIndex -1) {{ "}}" }}
+                {{ "{{-" }} $clusterSetConfigObjects := (list) {{ "}}" }}
+                {{ "{{-" }} $labelPrefix := "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}" {{ "}}" }}
+                ##### Same sources as policy-cluster-labels, minus the managed-cluster.* ConfigMaps: #####
+                ##### each cluster-set.<name> ConfigMap carries the set's declared labels and its #####
+                ##### cluster-set-type. The lookup is cluster-wide and label-selected, so every #####
+                ##### deployment's copy of this policy computes the same label set for every #####
+                ##### ManagedClusterSet — the rewrites agree instead of fighting. #####
+                {{ "{{-" }} $clusterSetTypes := (dict) {{ "}}" }}
+                {{ "{{-" }} $labelConfigs := lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-labels" {{ "}}" }}
+                {{ "{{-" }} range $idx, $cm := (index $labelConfigs "items" | default list) {{ "}}" }}
+                  {{ "{{-" }} if (hasPrefix "cluster-set." $cm.metadata.name) {{ "}}" }}
+                    {{ "{{-" }} $clusterSetName := ($cm.metadata.name | replace "cluster-set." "") {{ "}}" }}
+                    {{ "{{-" }} $clusterSetNs := $cm.metadata.namespace {{ "}}" }}
+                    {{ "{{-" }} if hasKey $allClusterSetLabels $clusterSetName {{ "}}" }}
+                      {{ "{{-" }} fail (printf "Multiple configurations for ManagedClusterSet [%s] detected!. Only one namespace/autoshift deployment can manage a given managed cluster! Conflicting namespaces: '%s' and '%s'" $clusterSetName $clusterSetNs (dig $clusterSetName "namespace" "" $allClusterSetLabels)) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $clusterSetLabels := ((($cm).data).labels | default "{}" | fromJson) {{ "}}" }}
+                    {{ "{{-" }} $clusterSetEntry := (dict $clusterSetName (dict "namespace" $clusterSetNs "labels" $clusterSetLabels)) {{ "}}" }}
+                    {{ "{{-" }} $allClusterSetLabels = merge $clusterSetEntry $allClusterSetLabels {{ "}}" }}
+                    {{ "{{-" }} $_ := set $clusterSetTypes $clusterSetName (dig "data" "cluster-set-type" "" $cm) {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} range $index, $clusterSet := $managedClusterSets {{ "}}" }}
+                  {{ "{{-" }} $clusterSetName := (index $clusterSet "metadata" "name") {{ "}}" }}
+                  {{ "{{-" }} $existingLabels := (dig "metadata" "labels" (dict) $clusterSet) {{ "}}" }}
+                  {{ "{{-" }} $renderedLabels := (dict) {{ "}}" }}
+                  {{ "{{-" }} $existingLabelsNoAutoshift := (dict) {{ "}}" }}
+                  {{ "{{-" }} $clusterSetObj := (dict) {{ "}}" }}
+                  {{ "{{-" }} range $label, $value := $existingLabels {{ "}}" }}
+                    {{ "{{-" }} if not (hasPrefix $labelPrefix $label) {{ "}}" }}
+                      {{ "{{-" }} $_ :=  set $existingLabelsNoAutoshift $label $value {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} $clusterSetTenancyNamespace := (dig $clusterSetName "namespace" "" $allClusterSetLabels) {{ "}}" }}
+                  {{ "{{-" }} if ne $clusterSetTenancyNamespace "" {{ "}}" }}
+                    {{ "{{-" }} $declaredLabels := (index $allClusterSetLabels $clusterSetName "labels" | default dict) {{ "}}" }}
+                    {{ "{{-" }} $tempLabels := merge (dict) $declaredLabels $existingLabelsNoAutoshift {{ "}}" }}
+                    {{ "{{-" }} $_ := set $renderedLabels "autoshift.io/owning-namespace" $clusterSetTenancyNamespace {{ "}}" }}
+                    {{ "{{-" }} $_ := set $renderedLabels "autoshift.io/owning-deployment" (replace "policies-" "" $clusterSetTenancyNamespace) {{ "}}" }}
+                    {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
+                      {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
+                        {{ "{{-" }} $_ := set $renderedLabels $label $value {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
+                    ##### cluster-set-type (hub | spoke) — derived, never user-set, so it is written #####
+                    ##### AFTER the user-label loop and wins over any value smuggled in via labels config. #####
+                    {{ "{{-" }} $clusterSetType := (index $clusterSetTypes $clusterSetName | default "") {{ "}}" }}
+                    {{ "{{-" }} if ne $clusterSetType "" {{ "}}" }}
+                      {{ "{{-" }} $_ := set $renderedLabels (printf "%scluster-set-type" $labelPrefix) $clusterSetType {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} else {{ "}}" }}
+                    {{ "{{-" }} $renderedLabels = $existingLabelsNoAutoshift {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $metadata := set $clusterSet.metadata "labels" $renderedLabels {{ "}}" }}
+                    {{ "{{-" }} $objectDefinition := set $clusterSet "metadata" $metadata {{ "}}" }}
+                    {{ "{{-" }} $_ := unset $objectDefinition "status" {{ "}}" }}
+                    {{ "{{-" }} $_ := set $clusterSetObj "complianceType" "mustonlyhave" {{ "}}" }}
+                    {{ "{{-" }} $_ := set $clusterSetObj "objectDefinition" $objectDefinition {{ "}}" }}
+                    {{ "{{-" }} $clusterSetConfigObjects = append $clusterSetConfigObjects $clusterSetObj {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+              {{ "{{" }} $clusterSetConfigObjects | toRawJson | autoindent {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+---
+{{- end }}

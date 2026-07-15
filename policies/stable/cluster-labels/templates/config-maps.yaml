@@ -23,7 +23,23 @@ data:
   labels: '{{ $prefixedClusterLabels | toJson }}'
   {{- end }}
 
-  {{- range $clusterSet, $data := merge (dict) (deepCopy ($.Values.hubClusterSets | default dict)) (deepCopy ($.Values.managedClusterSets | default dict)) }}
+  {{- /* cluster-set-type (hub | spoke) rides in each cluster-set ConfigMap. It is the runtime
+         source of truth for the autoshift.io/cluster-type label the cluster-labels policy
+         applies to member clusters: deployments are templated independently and never see each
+         other's values, but the policy's cluster-wide label-selected ConfigMap lookup sees
+         every deployment's CMs. */}}
+  {{- $clusterSetTypes := dict }}
+  {{- range $clusterSet, $data := ($.Values.clusterSets | default dict) }}
+    {{- $_ := set $clusterSetTypes $clusterSet ((index $data "type") | default "spoke") }}
+  {{- end }}
+  {{- range $clusterSet, $data := ($.Values.managedClusterSets | default dict) }}
+    {{- $_ := set $clusterSetTypes $clusterSet "spoke" }}
+  {{- end }}
+  {{- range $clusterSet, $data := ($.Values.hubClusterSets | default dict) }}
+    {{- $_ := set $clusterSetTypes $clusterSet "hub" }}
+  {{- end }}
+
+  {{- range $clusterSet, $data := merge (dict) (deepCopy ($.Values.hubClusterSets | default dict)) (deepCopy ($.Values.managedClusterSets | default dict)) (deepCopy ($.Values.clusterSets | default dict)) }}
 ---
     {{- $prefixedClusterSetLabels := dict -}}
     {{- range $label, $value := $data.labels -}}
@@ -36,13 +52,14 @@ data:
     {{- $_ := set $data "labels" $prefixedClusterSetLabels -}}
 apiVersion: v1
 kind: ConfigMap
-metadata: 
+metadata:
   name: {{ printf "cluster-set.%s" $clusterSet }}
-  namespace: "{{ $.Values.policy_namespace }}" 
+  namespace: "{{ $.Values.policy_namespace }}"
   labels:
     autoshift.io/cluster-labels: ""
 data:
   values: '{{ $data | toJson }}'
   labels: '{{ $prefixedClusterSetLabels | toJson }}'
+  cluster-set-type: '{{ index $clusterSetTypes $clusterSet }}'
   {{- end }}
 {{- end }}

@@ -1,39 +1,11 @@
-{{- range $clusterSet, $value := .Values.managedClusterSets }}
+{{- /* cluster-set-type is not stamped here: it rides in the cluster-labels chart's
+       cluster-set.<name> ConfigMaps, which the cluster-labels policy looks up at runtime. */}}
+{{- range $clusterSet, $value := merge (dict) (deepCopy (.Values.hubClusterSets | default dict)) (deepCopy (.Values.managedClusterSets | default dict)) (deepCopy (.Values.clusterSets | default dict)) }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta2
 kind: ManagedClusterSet
 metadata:
   name: {{ $clusterSet }}
-  # cluster-set-type marks what kind of clusters this set holds. It is the runtime source of
-  # truth for the autoshift.io/cluster-type label the cluster-labels policy applies to member
-  # clusters: deployments are templated independently and never see each other's values, but
-  # every deployment's policies can look up the ManagedClusterSet objects on the hub.
-  labels:
-    autoshift.io/cluster-set-type: spoke
-spec:
-  clusterSelector:
-    selectorType: ExclusiveClusterSetLabel
-{{- end }}
-{{- range $clusterSet, $value := .Values.hubClusterSets }}
----
-apiVersion: cluster.open-cluster-management.io/v1beta2
-kind: ManagedClusterSet
-metadata:
-  name: {{ $clusterSet }}
-  labels:
-    autoshift.io/cluster-set-type: hub
-spec:
-  clusterSelector:
-    selectorType: ExclusiveClusterSetLabel
-{{- end }}
-{{- range $clusterSet, $value := .Values.clusterSets }}
----
-apiVersion: cluster.open-cluster-management.io/v1beta2
-kind: ManagedClusterSet
-metadata:
-  name: {{ $clusterSet }}
-  labels:
-    autoshift.io/cluster-set-type: {{ index $value "type" | default "spoke" }}
 spec:
   clusterSelector:
     selectorType: ExclusiveClusterSetLabel

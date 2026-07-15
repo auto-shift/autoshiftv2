@@ -18,7 +18,6 @@
 {{- range $_, $target := $targets }}
   {{- $policyName := (printf "policy-%s-labels" ($target | lower)) }}
   {{- $configPolicyName := printf "configure-%s" $policyName }}
-  {{- $placementName := printf "placement-%s" $policyName }}
 ---
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -62,15 +61,12 @@ spec:
               {{ "{{-" }} if (ne $lastIndex -1) {{ "}}" }}
                 {{ "{{-" }} $managedClusterConfigObjects := (list) {{ "}}" }}
                 {{ "{{-" }} $labelPrefix := "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}" {{ "}}" }}
-                ##### ManagedClusterSet objects carry autoshift.io/cluster-set-type (hub | spoke), set by the #####
-                ##### advanced-cluster-management policy. That is the cross-deployment source of truth for a #####
-                ##### member cluster's autoshift.io/cluster-type: this policy is templated per deployment and #####
-                ##### never sees other deployments' values, but the cluster-scoped ManagedClusterSets from ALL #####
-                ##### deployments are visible to this runtime lookup. #####
+                ##### Each cluster-set.<name> ConfigMap carries a cluster-set-type (hub | spoke), written #####
+                ##### by the cluster-labels chart. That is the cross-deployment source of truth for a #####
+                ##### member cluster's autoshift.io/cluster-type: this policy is templated per deployment #####
+                ##### and never sees other deployments' values, but the cluster-wide label-selected #####
+                ##### ConfigMap lookup below sees ALL deployments' CMs. #####
                 {{ "{{-" }} $clusterSetTypes := (dict) {{ "}}" }}
-                {{ "{{-" }} range $_, $cs := ((lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "" "autoshift.io/cluster-set-type").items | default list) {{ "}}" }}
-                  {{ "{{-" }} $_ := set $clusterSetTypes $cs.metadata.name (dig "metadata" "labels" "autoshift.io/cluster-set-type" "" $cs) {{ "}}" }}
-                {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} $labelConfigs := lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-labels" {{ "}}" }}
                 {{ "{{-" }} range $idx, $cm := (index $labelConfigs "items" | default list) {{ "}}" }}
                 ##### CLUSTER SET #####
@@ -83,6 +79,7 @@ spec:
                     {{ "{{-" }} $clusterSetLabels := ((($cm).data).labels | default "{}" | fromJson) {{ "}}" }}
                     {{ "{{-" }} $clusterSetEntry := (dict $clusterSetName (dict "namespace" $clusterSetNs "labels" $clusterSetLabels)) {{ "}}" }}
                     {{ "{{-" }} $allClusterSetLabels = merge $clusterSetEntry $allClusterSetLabels {{ "}}" }}
+                    {{ "{{-" }} $_ := set $clusterSetTypes $clusterSetName (dig "data" "cluster-set-type" "" $cm) {{ "}}" }}
                   {{ "{{-" }} else if (hasPrefix "managed-cluster." $cm.metadata.name) {{ "}}" }}
                     {{ "{{-" }} $clusterNs := $cm.metadata.namespace {{ "}}" }}
                     {{ "{{-" }} $clusterName := ($cm.metadata.name | replace "managed-cluster." "") {{ "}}" }}
@@ -147,63 +144,5 @@ spec:
               {{ "{{" }} $managedClusterConfigObjects | toRawJson | autoindent {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
----
-
-  {{- if (eq $target "managedHub") }}
----
-    {{- if not (empty $managedHubs) }}
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ $policyNamespace }}
-spec:
-  clusterSets:
-  {{- range $managedHub, $_ := $managedHubs }}
-    - {{ $managedHub }}
-  {{- end }}
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
-      {{- end }}
----
-  {{- end }}
-  {{- if (eq $target "selfManagedHub") }}
----
-    {{- if not (empty $selfManagedHubs) }}
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ $policyNamespace }}
-spec:
-  clusterSets:
-    {{- range $sMH, $_ := $selfManagedHubs }}
-    - {{ $sMH }}
-    {{- end }}
-    {{- end }}
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-  {{- end }}
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ $policyNamespace }}
-placementRef:
-  name: {{ $placementName}}
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: {{ $policyName }}
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
 ---
 {{- end }}

@@ -48,9 +48,6 @@ spec:
                         {{ "{{-" }} $labelPrefix := "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}" {{ "}}" }}
                         {{ "{{-" }} $seenClusters := (dict) {{ "}}" }}
                         {{ "{{-" }} $clusterSetTypes := (dict) {{ "}}" }}
-                        {{ "{{-" }} range $_, $cs := ((lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "" "autoshift.io/cluster-set-type").items | default list) {{ "}}" }}
-                          {{ "{{-" }} $_ := set $clusterSetTypes $cs.metadata.name (dig "metadata" "labels" "autoshift.io/cluster-set-type" "" $cs) {{ "}}" }}
-                        {{ "{{-" }} end {{ "}}" }}
                         {{ "{{-" }} $labelConfigs := lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-labels" {{ "}}" }}
                         {{ "{{-" }} range $idx, $cm := $labelConfigs.items {{ "}}" }}
                           {{ "{{-" }} if (hasPrefix "cluster-set." $cm.metadata.name) {{ "}}" }}
@@ -62,6 +59,7 @@ spec:
                             {{ "{{-" }} $clusterSetLabels := ((($cm).data).labels | default "{}" | fromJson) {{ "}}" }}
                             {{ "{{-" }} $clusterSetEntry := (dict $clusterSetName (dict "namespace" $clusterSetNs "labels" $clusterSetLabels)) {{ "}}" }}
                             {{ "{{-" }} $allClusterSetLabels = merge $clusterSetEntry $allClusterSetLabels {{ "}}" }}
+                            {{ "{{-" }} $_ := set $clusterSetTypes $clusterSetName (dig "data" "cluster-set-type" "" $cm) {{ "}}" }}
                           {{ "{{-" }} else if (hasPrefix "managed-cluster." $cm.metadata.name) {{ "}}" }}
                             {{ "{{-" }} $clusterNs := $cm.metadata.namespace {{ "}}" }}
                             {{ "{{-" }} $clusterName := ($cm.metadata.name | replace "cluster-set." "") {{ "}}" }}

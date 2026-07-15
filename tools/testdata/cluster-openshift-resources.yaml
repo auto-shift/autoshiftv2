@@ -231,19 +231,34 @@ spec:
   hubAcceptsClient: true
 ---
 # ManagedClusterSet — registers cluster.open-cluster-management.io/v1beta2 so the
-# cluster-labels policy's label-selector lookup (lookup ... ManagedClusterSet "" ""
-# "autoshift.io/cluster-set-type") resolves. Carries the cluster-set-type label the
-# advanced-cluster-management policy stamps on every set it creates; the cluster-labels
-# policy derives each member cluster's autoshift.io/cluster-type from it.
+# cluster-set-labels policy's lookup (lookup ... ManagedClusterSet "" "") resolves.
+# Deliberately unlabeled: the policy computes its labels from the cluster-set.hub
+# ConfigMap below.
 apiVersion: cluster.open-cluster-management.io/v1beta2
 kind: ManagedClusterSet
 metadata:
   name: hub
-  labels:
-    autoshift.io/cluster-set-type: hub
 spec:
   clusterSelector:
     selectorType: ExclusiveClusterSetLabel
+---
+# cluster-set label ConfigMap — feeds the cluster-labels and cluster-set-labels
+# policies' cluster-wide label-selector lookup (lookup "v1" "ConfigMap" "" ""
+# "autoshift.io/cluster-labels"). Carries the cluster-set-type data key the
+# cluster-labels chart writes into every cluster-set.<name> ConfigMap; the policies
+# derive autoshift.io/cluster-type (members) and autoshift.io/cluster-set-type
+# (the set itself) from it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-set.hub
+  namespace: open-cluster-policies
+  labels:
+    autoshift.io/cluster-labels: ""
+data:
+  values: '{}'
+  labels: '{}'
+  cluster-set-type: hub
 ---
 # ClusterDeployment — registers hive.openshift.io/v1 so the cluster-install
 # "already installed" lookup (lookup ... ClusterDeployment $clusterName $clusterName)
