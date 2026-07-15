@@ -1,10 +1,4 @@
 object-templates-raw: |
-  {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-version" | default "" hub}}" }}
-  {{- $cv := (lookup "config.openshift.io/v1" "ClusterVersion" "" "version") | default dict }}
-  {{- $status := (index $cv "status" | default dict) }}
-  {{- $desired := (index $status "desired" | default dict) }}
-  {{- $current := (index $desired "version" | default "") }}
-  {{- if and (ne $target "") (or (eq $current "") (semverCompare (printf ">= %s" $current) $target)) }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: config.openshift.io/v1
@@ -14,5 +8,4 @@ object-templates-raw: |
       status:
         history:
           - state: Completed
-            version: '{{ $target }}'
-  {{- end }}
+            version: '{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-version" hub}}'

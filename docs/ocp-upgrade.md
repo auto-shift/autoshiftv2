@@ -32,9 +32,13 @@ object never carries operator-owned status:
   `managedPolicies` so TALM advances a batch only once the upgrade has actually **finished**, not just
   when `desiredUpdate` was set.
 
-Both share a **no-downgrade guard**: a `semverCompare` on the live `ClusterVersion` only asserts when
-`target >= current`. Clusters already at/above target stay Compliant, and TALM skips Compliant
-clusters — so a campaign upgrades only the clusters that need it.
+Both use **static templates** (hub-template *values* only, no `{{- if }}` control flow). This is a
+hard TALM requirement: TALM unmarshals `object-templates-raw` as YAML to inspect the policy, and
+Go control-flow isn't valid YAML until rendered — a dynamic template fails validation with
+`policy was unable to be unmmarshalled from object-templates-raw`. Version skew is therefore handled
+by **cluster selection** — the CGU's `clusters` / `clusterLabelSelectors` picks which clusters to
+upgrade — not by an in-policy semver guard. Don't put clusters already at/above the target in the
+campaign.
 
 ### Labels (set on the target clusterset)
 
