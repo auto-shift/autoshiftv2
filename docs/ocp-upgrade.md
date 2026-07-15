@@ -19,16 +19,22 @@ The capability has two halves that are worth separating:
 
 ## The `openshift-upgrade` policy
 
-`policies/stable/openshift-upgrade/` renders a single **inform-only** `ConfigurationPolicy` asserting
-the desired `ClusterVersion`. It is a deliberate exception to the `${REMEDIATION}` convention — an OCP
-upgrade must never blanket-enforce under GitOps (a single label bump would upgrade the whole fleet at
-once). Key properties:
+`policies/stable/openshift-upgrade/` is **inform-only** — a deliberate exception to the
+`${REMEDIATION}` convention, because an OCP upgrade must never blanket-enforce under GitOps (a single
+label bump would upgrade the whole fleet at once). It splits into two policies so that the config
+object never carries operator-owned status:
 
-- **Completion-gated:** asserts `spec.desiredUpdate` **and** `status.history[].state: Completed` for
-  the target version, so the policy is `Compliant` only when the upgrade has actually finished.
-- **No-downgrade / no-op:** a `semverCompare` guard reads the live `ClusterVersion` and only asserts
-  when `target >= current`. Clusters already at/above target stay Compliant; TALM skips Compliant
-  clusters, so a campaign upgrades only those that need it.
+- **`policy-openshift-upgrade`** — declares **only `spec`** (`channel` + `desiredUpdate`). This is what
+  TALM drives to `enforce` to trigger the upgrade. It never asserts `status`.
+- **`policy-openshift-upgrade-ready`** — asserts **only `status.history[].state: Completed`**, the
+  completion gate. `status` is owned by the CVO, so this is a *readiness check*, not a desired-state
+  declaration — it lives in its own inform Policy (the `test/` convention). List it in the CGU
+  `managedPolicies` so TALM advances a batch only once the upgrade has actually **finished**, not just
+  when `desiredUpdate` was set.
+
+Both share a **no-downgrade guard**: a `semverCompare` on the live `ClusterVersion` only asserts when
+`target >= current`. Clusters already at/above target stay Compliant, and TALM skips Compliant
+clusters — so a campaign upgrades only the clusters that need it.
 
 ### Labels (set on the target clusterset)
 
