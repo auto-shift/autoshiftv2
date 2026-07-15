@@ -2,17 +2,13 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: PolicyGenerator
 metadata:
   name: openshift-upgrade
-# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
-# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
-# templates contain `$vars` that substitution would clobber.
-#
-# Drives the ClusterVersion to the desired OpenShift version. The target is the shared
-# autoshift.io/openshift-version label (also used by the operator-channel tooling), so there is one
-# version knob per clusterset. A cluster upgrades when it lands in a clusterset whose
-# openshift-version is higher than its current version. The manifest's semver guard only asserts when target > current, so
-# already-at/above clusters are a Compliant no-op and downgrades are never attempted. Blast radius
-# is controlled by clusterset membership — move clusters into the target clusterset in waves; do NOT
-# enable this on an already-populated clusterset. See docs/ocp-upgrade.md.
+# Multiple policies share one placement, so the binding must be named.
+placementBindingDefaults:
+  name: binding-policy-openshift-upgrade
+# Day-2 OpenShift upgrade, staged: set the channel, validate the target is a reachable version
+# (inform, clear error), then drive the ClusterVersion once it validates. A cluster upgrades when it
+# lands in a clusterset whose openshift-version is higher than its current version; blast radius is
+# controlled by clusterset membership (roll out in waves). See docs/ocp-upgrade.md.
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
   remediationAction: ${REMEDIATION}
@@ -30,6 +26,39 @@ policyDefaults:
   placement:
     placementPath: placement.yaml
 policies:
+  # 1. Channel (enforce, unconditional) — so availableUpdates recomputes for the desired channel and
+  #    the y-stream case can't deadlock the dependency below.
+  - name: policy-openshift-upgrade-channel
+    manifests:
+      - path: manifests/channel.yaml
+
+  # 2. Allowed-versions check (inform) — NonCompliant with a clear message when openshift-version is
+  #    not a valid/available upgrade. Stable during and after the upgrade.
+  - name: policy-openshift-upgrade-allowed
+    remediationAction: inform
+    manifests:
+      - path: test/openshift-upgrade-allowed.yaml
+    customMessage:
+      noncompliant: >
+        openshift-version '{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" hub}}' is
+        not a valid or available OpenShift update for this cluster on channel
+        '{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-channel" | default "stable-4.20" hub}}'
+        — check the version and channel against the cluster's available updates.
+
+  # 3. The upgrade (enforce) — sets desiredUpdate (unless already Progressing) + completion gate.
+  #    Blocked until the target validates (dependency on the allowed check).
   - name: policy-openshift-upgrade
+    dependencies:
+      - name: policy-openshift-upgrade-allowed
     manifests:
       - path: manifests/clusterversion.yaml
+
+  # 4. Failure signal (inform) — NonCompliant when the CVO is failing to reach the target.
+  - name: policy-openshift-upgrade-failing
+    remediationAction: inform
+    manifests:
+      - path: test/openshift-upgrade-failing.yaml
+    customMessage:
+      noncompliant: >
+        OpenShift upgrade to '{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" hub}}'
+        is FAILING on this cluster (ClusterVersion Failing=True) — inspect ClusterVersion and ClusterOperators.

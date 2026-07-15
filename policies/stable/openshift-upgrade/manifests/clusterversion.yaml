@@ -1,11 +1,19 @@
 object-templates-raw: |
   {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
-  {{- $channel := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-channel" | default "stable-4.20" hub}}" }}
   {{- $upstream := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-upstream" | default "https://api.openshift.com/api/upgrades_info/v1/graph" hub}}" }}
-  {{- $cv := (lookup "config.openshift.io/v1" "ClusterVersion" "" "version") | default dict }}
-  {{- $status := (index $cv "status" | default dict) }}
-  {{- $desired := (index $status "desired" | default dict) }}
-  {{- $current := (index $desired "version" | default "") }}
+  {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
+  {{- /* current = latest Completed history entry (the actual running version). */ -}}
+  {{- $current := "" }}
+  {{- range $h := (index $status "history" | default list) }}
+  {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}{{- $current = (index $h "version") }}{{- end }}
+  {{- end }}
+  {{- /* do not re-trigger while an upgrade is already in flight. */ -}}
+  {{- $progressing := false }}
+  {{- range $c := (index $status "conditions" | default list) }}
+  {{-   if and (eq (index $c "type") "Progressing") (eq (index $c "status") "True") }}{{- $progressing = true }}{{- end }}
+  {{- end }}
+  {{- /* Only act on a real upgrade (target > current). Validity/availability is enforced by the
+         policy-openshift-upgrade-allowed dependency, so no availableUpdates check needed here. */ -}}
   {{- if and (ne $target "") (or (eq $current "") (semverCompare (printf "> %s" $current) $target)) }}
   - complianceType: musthave
     objectDefinition:
@@ -15,9 +23,10 @@ object-templates-raw: |
         name: version
       spec:
         upstream: '{{ $upstream }}'
-        channel: '{{ $channel }}'
+        {{- if not $progressing }}
         desiredUpdate:
           version: '{{ $target }}'
+        {{- end }}
       status:
         history:
           - state: Completed
