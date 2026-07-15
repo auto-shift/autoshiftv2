@@ -90,9 +90,8 @@ else
     FAILED=1
 fi
 
-# Helm-lint the Helm-chart policies under policies/<category>/<chart>/.
-# PolicyGenerator policies (policy-generator-config.yaml, the majority) are NOT Helm charts and
-# can't be helm-linted — they're validated by the integration test: go test -tags integration ./tools/...
+# Helm-lint the Helm-chart policies. PolicyGenerator policies aren't Helm charts (validated
+# separately by: go test -tags integration ./tools/...).
 POLICY_COUNT=$(find policies -maxdepth 3 -name Chart.yaml | wc -l | tr -d ' ')
 POLICY_FAILED=0
 while IFS= read -r chart_file; do

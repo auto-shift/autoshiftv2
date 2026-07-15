@@ -32,10 +32,8 @@ spec:
           destination:
             server: https://kubernetes.default.svc
             namespace: {{ printf "policies-%s" .Release.Name }}
-          # Single source: the OCI helm chart ships its own values.yaml (packaged at release time),
-          # so we do NOT pull a per-policy values.yaml from a git ref (the old $values/policies/<name>
-          # path predated the stable/certified/community layout and broke). valuesObject layers the
-          # cross-cutting autoshift config on top of the chart's built-in defaults.
+          # Single source: the packaged OCI chart ships its own values.yaml; valuesObject adds the
+          # cross-cutting autoshift config on top. No git values ref needed.
           sources:
           - path: .
             repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
@@ -43,10 +41,8 @@ spec:
             helm:
               valuesObject:
                 {{- include "autoshift.policyValuesObject" . | nindent 16 }}
-  # OCI Registry mode - PolicyGenerator policies published as Argo CD-native OCI artifacts.
-  # Names read from bundled files/policy-list-pg.txt (generated at release time). Rendered by the
-  # repo-server policy-generator CMP, identical to git mode — single source, no values ref (the CMP
-  # gets everything from env tokens).
+  # OCI mode - PolicyGenerator policies as OCI artifacts (names from files/policy-list-pg.txt).
+  # Rendered by the repo-server policy-generator CMP; single source, no values ref (env tokens only).
   - list:
       elements:
       {{- $pgList := .Files.Get "files/policy-list-pg.txt" | trim | split "\n" }}

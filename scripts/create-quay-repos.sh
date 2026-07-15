@@ -43,11 +43,8 @@ API_URL="https://quay.io/api/v1"
 echo "Creating repositories in organization: $ORG"
 echo ""
 
-# Discover all artifacts.
-# Bootstrap charts live at <chart>/Chart.yaml (depth 2).
-# Policies live at policies/<category>/<name>/ (depth 3) — Helm charts (Chart.yaml) AND
-# PolicyGenerator dirs (policy-generator-config.yaml). Both publish to policies/<name>, so both
-# need a repo. Discovering only Chart.yaml would silently miss every PolicyGenerator policy.
+# Bootstrap charts: <chart>/Chart.yaml (depth 2). Policies: Helm charts (Chart.yaml) or
+# PolicyGenerator dirs (policy-generator-config.yaml), both need a repo. Chart.yaml-only misses PG policies.
 BOOTSTRAP_CHARTS=$(find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" -exec dirname {} \; | xargs -r -n1 basename)
 POLICY_CHARTS=$(find policies -maxdepth 3 \( -name Chart.yaml -o -name policy-generator-config.yaml \) -exec dirname {} \; | sort -u | xargs -r -n1 basename)
 

@@ -1177,10 +1177,8 @@ EOF
         else
             log_step "Adding AutoShift OCI Helm charts from $AUTOSHIFT_REGISTRY (version: $AUTOSHIFT_VERSION)"
 
-            # Discover all policies. Helm policy charts (Chart.yaml) AND PolicyGenerator dirs
-            # (policy-generator-config.yaml) both publish to <registry>/policies/<name> as OCI
-            # artifacts, so both must be mirrored via additionalImages (an OCI copy that is
-            # artifact-type agnostic). Missing the PG dirs here silently drops most policies.
+            # Helm charts (Chart.yaml) and PolicyGenerator dirs (policy-generator-config.yaml) both
+            # publish to <registry>/policies/<name>, so mirror both. Chart.yaml-only misses the PG policies.
             local policy_charts=()
             for chart_dir in policies/stable/*/ policies/certified/*/ policies/community/*/; do
                 if [[ -f "${chart_dir}Chart.yaml" || -f "${chart_dir}policy-generator-config.yaml" ]]; then

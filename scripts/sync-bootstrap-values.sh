@@ -93,12 +93,9 @@ success "Synced openshift-gitops values"
 # =============================================================================
 # Advanced Cluster Management (no longer synced)
 # =============================================================================
-# The ACM policy migrated from a Helm chart to a PolicyGenerator dir, so
-# policies/stable/advanced-cluster-management/ no longer has a values.yaml to sync
-# from (its acm.* config is baked as literals into the PG manifests). The bootstrap
-# chart advanced-cluster-management/values.yaml is now the hand-maintained source of
-# truth for initial ACM install — edit it directly.
-log "Skipping advanced-cluster-management (bootstrap values.yaml is hand-maintained since the ACM policy is PolicyGenerator)"
+# The ACM policy is a PolicyGenerator dir with no values.yaml; its bootstrap chart
+# (advanced-cluster-management/values.yaml) is hand-maintained.
+log "Skipping advanced-cluster-management (bootstrap values.yaml is hand-maintained)"
 
 echo ""
 log "========================================="
