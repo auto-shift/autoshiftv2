@@ -20,8 +20,8 @@
 # Usage: ./generate-imageset-config.sh <values-files> [options]
 # Example: ./generate-imageset-config.sh values/clustersets/hub.yaml
 # Example: ./generate-imageset-config.sh values/clustersets/hub.yaml,values/clustersets/sbx.yaml --openshift-version 4.20
-# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml --openshift-version 4.20.12
-# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml --openshift-version 4.20 --min-version 4.20.5 --max-version 4.20.12
+# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml --openshift-version 4.20.28
+# Example: ./generate-imageset-config.sh values/clustersets/hub.yaml --openshift-version 4.20 --min-version 4.20.5 --max-version 4.20.28
 # Example: ./generate-imageset-config.sh values/clustersets/hub-baremetal-sno.yaml --operators-only
 
 set -e
@@ -271,8 +271,8 @@ usage() {
     echo "Examples:"
     echo "  $0 values/clustersets/hub.yaml"
     echo "  $0 values/clustersets/hub.yaml,values/clustersets/sbx.yaml --openshift-version 4.20"
-    echo "  $0 values/clustersets/hub.yaml --openshift-version 4.20.12"
-    echo "  $0 values/clustersets/hub.yaml --openshift-version 4.20 --min-version 4.20.5 --max-version 4.20.12"
+    echo "  $0 values/clustersets/hub.yaml --openshift-version 4.20.28"
+    echo "  $0 values/clustersets/hub.yaml --openshift-version 4.20 --min-version 4.20.5 --max-version 4.20.28"
     echo "  $0 values/clustersets/hub-baremetal-sno.yaml --operators-only"
     echo "  $0 values/clustersets/hub.yaml --output my-imageset.yaml"
     echo ""

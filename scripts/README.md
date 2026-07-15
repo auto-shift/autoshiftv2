@@ -652,7 +652,7 @@ For `generate-imageset-config.sh` on Windows without symlink support, use the `-
 
 ### Catalog Version Auto-Detection
 
-Scripts that extract the operator catalog auto-detect the catalog version from the `openshift-version` label in your clusterset values files (e.g., `openshift-version: '4.20.12'` resolves to `v4.20`). Use `--catalog` to override.
+Scripts that extract the operator catalog auto-detect the catalog version from the `openshift-version` label in your clusterset values files (e.g., `openshift-version: '4.20.28'` resolves to `v4.20`). Use `--catalog` to override.
 
 ---
 

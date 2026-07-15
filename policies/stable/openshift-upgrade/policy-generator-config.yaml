@@ -5,10 +5,15 @@ metadata:
 # Multiple policies share one placement, so the binding must be named.
 placementBindingDefaults:
   name: binding-policy-openshift-upgrade
-# Day-2 OpenShift upgrade, staged: set the channel, validate the target is a reachable version
-# (inform, clear error), then drive the ClusterVersion once it validates. A cluster upgrades when it
-# lands in a clusterset whose openshift-version is higher than its current version; blast radius is
-# controlled by clusterset membership (roll out in waves). See docs/ocp-upgrade.md.
+# Day-2 OpenShift upgrade, staged: set the channel, validate the target is reachable (inform, clear
+# error), drive the ClusterVersion once it validates, and report completion (inform). A cluster
+# upgrades when it lands in a clusterset whose openshift-version is higher than its current version;
+# blast radius is controlled by clusterset membership (roll out in waves). See docs/ocp-upgrade.md.
+#
+# Design note: the inform checks decide Compliant/NonCompliant in Go template logic and force
+# NonCompliant with a mustnothave on the ClusterVersion (an object that always exists) — ACM does not
+# reliably match status LISTS (conditions/history), so those are never asserted. Failure visibility
+# comes from OpenShift's own upgrade alerts, not a (flappy) policy check.
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
   remediationAction: ${REMEDIATION}
@@ -45,20 +50,22 @@ policies:
         '{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-channel" | default "stable-4.20" hub}}'
         — check the version and channel against the cluster's available updates.
 
-  # 3. The upgrade (enforce) — sets desiredUpdate (unless already Progressing) + completion gate.
-  #    Blocked until the target validates (dependency on the allowed check).
+  # 3. The upgrade (enforce) — sets upstream + desiredUpdate (unless already Progressing). Blocked
+  #    until the target validates (dependency on the allowed check).
   - name: policy-openshift-upgrade
     dependencies:
       - name: policy-openshift-upgrade-allowed
     manifests:
       - path: manifests/clusterversion.yaml
 
-  # 4. Failure signal (inform) — NonCompliant when the CVO is failing to reach the target.
-  - name: policy-openshift-upgrade-failing
+  # 4. Completion status (inform) — Compliant once the cluster has reached the target version
+  #    (latest Completed history >= target). Non-flapping; this is the wave-rollout gate.
+  - name: policy-openshift-upgrade-status
     remediationAction: inform
     manifests:
-      - path: test/openshift-upgrade-failing.yaml
+      - path: test/openshift-upgrade-status.yaml
     customMessage:
       noncompliant: >
-        OpenShift upgrade to '{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" hub}}'
-        is FAILING on this cluster (ClusterVersion Failing=True) — inspect ClusterVersion and ClusterOperators.
+        Cluster has not yet reached openshift-version
+        '{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" hub}}' — upgrade in progress or
+        pending. Check ManagedClusterInfo / the OpenShift console for progress and any upgrade alerts.

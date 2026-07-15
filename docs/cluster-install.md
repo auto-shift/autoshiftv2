@@ -265,7 +265,7 @@ clusterInstall:
   createCluster: 'true'              # Required - triggers provisioning
   platform: baremetal                 # 'baremetal' (default), 'aws', or 'vmware'
   baseDomain: example.com
-  openshiftVersion: '4.20.12'
+  openshiftVersion: '4.20.28'
   cpuArch: x86_64                    # default: x86_64
   openshiftChannel: stable           # ClusterImageSet channel label (default: stable)
   clusterImageSet: ''                # optional, overrides openshiftVersion+cpuArch
@@ -461,7 +461,7 @@ clusters:
         createCluster: 'true'
         platform: baremetal              # or 'aws' / 'vmware'
         baseDomain: example.com
-        openshiftVersion: '4.20.12'
+        openshiftVersion: '4.20.28'
         controlPlaneAgents: 3            # 1 = SNO
         apiVip: '10.0.0.2'              # required for multi-node
         ingressVip: '10.0.0.3'          # required for multi-node
@@ -638,7 +638,7 @@ clusters:
       clusterInstall:
         createCluster: 'true'
         baseDomain: example.com
-        openshiftVersion: '4.20.12'
+        openshiftVersion: '4.20.28'
         # inherits secretSourceNamespace, bmcCredentialRef, etc. from clusterset
 ```
 
@@ -742,7 +742,7 @@ clusters:
       clusterInstall:
         createCluster: 'true'
         baseDomain: example.com
-        openshiftVersion: '4.20.12'
+        openshiftVersion: '4.20.28'
         controlPlaneAgents: 1
         sshPublicKey: 'ssh-rsa ...'
 ```

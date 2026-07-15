@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![OpenShift](https://img.shields.io/badge/OpenShift-4.20%2B-red)](https://www.openshift.com/)
-[![RHACM](https://img.shields.io/badge/RHACM-2.15%2B-purple)](https://www.redhat.com/en/technologies/management/advanced-cluster-management)
+[![RHACM](https://img.shields.io/badge/RHACM-2.16%2B-purple)](https://www.redhat.com/en/technologies/management/advanced-cluster-management)
 
 **Build and manage OpenShift Platform Plus infrastructure as code with policy-driven automation**
 

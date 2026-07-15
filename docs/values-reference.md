@@ -210,7 +210,7 @@ created for each replica of the image service. 2GiB per OSImage entry is require
 - **Large (200-500 clusters)**: Consider `acm-addon-cpc-eval-concurrency: '10'`, `acm-addon-cpc-mem-limit: '2Gi'`
 - **Very Large (500+ clusters)**: Consider `acm-addon-cpc-eval-concurrency: '15'`, `acm-addon-cpc-client-qps: '150'`, `acm-addon-cpc-mem-limit: '4Gi'`
 
-> **Note:** Increased concurrency/QPS increases CPU and memory on the controller pods, the Kubernetes API server, and the OpenShift API server. Concurrency/QPS/burst are set via ManagedClusterAddOn annotations per ACM 2.15 docs. Resource limits are set via AddOnDeploymentConfig.
+> **Note:** Increased concurrency/QPS increases CPU and memory on the controller pods, the Kubernetes API server, and the OpenShift API server. Concurrency/QPS/burst are set via ManagedClusterAddOn annotations per ACM 2.16 docs. Resource limits are set via AddOnDeploymentConfig.
 
 ### Cluster Labels
 
