@@ -29,9 +29,9 @@ clustersets in waves, verifying compliance between waves.
 
 | Label | Purpose | Example |
 |---|---|---|
-| `autoshift.io/openshift-upgrade` | opt the cluster in | `'true'` |
+| `autoshift.io/openshift-upgrade` | opt the cluster in to Day-2 upgrades | `'true'` |
+| `autoshift.io/openshift-version` | target version — shared with operator-channel tooling (upgrades only if `> current`) | `'4.20.28'` |
 | `autoshift.io/openshift-upgrade-channel` | ClusterVersion channel | `'stable-4.20'` |
-| `autoshift.io/openshift-upgrade-version` | target version (upgrades only if `> current`) | `'4.20.28'` |
 | `autoshift.io/openshift-upgrade-upstream` | OSUS graph (local URL when disconnected) | `https://api.openshift.com/...` |
 
 ## Validation is free
@@ -52,7 +52,7 @@ And ArgoCD surfaces it too: OpenShift GitOps ships a health check for `Policy`, 
 The model is **blue/green clustersets** + **wave migration**:
 
 1. **Deploy the new version** as a versioned clusterset (see [gradual-rollout.md](gradual-rollout.md)).
-   Its `openshift-upgrade-version` targets the new OCP version. The clusterset starts empty (or with a
+   Its `openshift-version` targets the new OCP version. The clusterset starts empty (or with a
    canary).
 2. **Move a canary cluster** into the new clusterset. Its `openshift-upgrade` policy enforces → the
    CVO upgrades it → the policy goes `Compliant` when finished.
