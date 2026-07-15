@@ -1,46 +1,29 @@
 # OpenShift Fleet Upgrades
 
-AutoShift manages Day-2 OpenShift platform upgrades as a label-driven, GitOps-native capability, with
-Red Hat's **Topology Aware Lifecycle Manager (TALM)** as an optional orchestration layer for canaried,
-throttled, fleet-wide rollouts.
+AutoShift performs Day-2 OpenShift upgrades the same way it does everything else: **label-driven
+policies + clusterset membership**, reconciled by GitOps. There is no separate orchestration operator
+— the rollout unit is the **clusterset**, and you stage a fleet upgrade by moving clusters between
+clustersets in waves, verifying compliance between waves.
 
-The capability has two halves that are worth separating:
-
-- **Validation is native to ACM.** The `openshift-upgrade` policy is `inform` and reports `Compliant`
-  only once a cluster has *finished* upgrading to the target version. `oc get policy` / the ACM
-  compliance dashboard is your fleet-wide "did every cluster make it" view — no TALM required.
-- **Orchestration is optional.** TALM drives the `inform` policy to `enforce` in canaried batches
-  (canary → halt-on-failure → `maxConcurrency` throttle → pre-cache). Use it for large fleets and
-  edge/SNO/disconnected clusters; for a small connected fleet, native label-wave enforcement is enough.
-
-> **`openshift-upgrade` vs `openshift-version`:** these are different. `openshift-version` is consumed
-> by `cluster-install` at *provision* time (Hive `ClusterImageSet`). `openshift-upgrade-version` is the
-> Day-2 *upgrade target* for a running cluster. Do not conflate them.
+> **Why not TALM?** The Topology Aware Lifecycle Manager orchestrates per-cluster policy enforcement,
+> but it requires literal upgrade coordinates baked into the root policy and cannot consume
+> AutoShift's hub-template labels (it validates the hub-side policy, where `{{hub}}` values are
+> unresolved). It's also a maintenance-mode, ZTP-oriented operator. ACM has no native progressive
+> *policy* rollout either (the `RolloutStrategy` API is consumed by addons/ManifestWork, not
+> Policies — `Policy`/`PlacementBinding` expose no rollout hook). So the staging lever that actually
+> fits AutoShift is clusterset membership, controlled by you.
 
 ## The `openshift-upgrade` policy
 
-`policies/stable/openshift-upgrade/` is **inform-only** — a deliberate exception to the
-`${REMEDIATION}` convention, because an OCP upgrade must never blanket-enforce under GitOps (a single
-label bump would upgrade the whole fleet at once). It is a **single ClusterVersion policy** carrying
-both the upgrade coordinates and the completion gate (the docs §13.6 shape, which TALM requires — it
-rejects a ClusterVersion policy that lacks `upstream`/`channel`/`version`):
+`policies/stable/openshift-upgrade/` renders one `ClusterVersion` policy driven by labels:
 
-- **`spec`** — `upstream` + `channel` + `desiredUpdate.version` from labels. This is what TALM drives
-  to `enforce` to trigger the upgrade.
-- **`status.history[].state: Completed`** — the completion gate, so the policy is `Compliant` only
-  once the upgrade has actually **finished**, not just when `desiredUpdate` was set.
-
-Putting `status` in the enforced object is safe: `clusterversions/status` is a **subresource**, so
-`enforce` cannot write it via the main resource — it stays **compare-only** even when TALM flips the
-binding. status is never actually pushed onto the CVO; it only gates compliance.
-
-Both use **static templates** (hub-template *values* only, no `{{- if }}` control flow). This is a
-hard TALM requirement: TALM unmarshals `object-templates-raw` as YAML to inspect the policy, and
-Go control-flow isn't valid YAML until rendered — a dynamic template fails validation with
-`policy was unable to be unmmarshalled from object-templates-raw`. Version skew is therefore handled
-by **cluster selection** — the CGU's `clusters` / `clusterLabelSelectors` picks which clusters to
-upgrade — not by an in-policy semver guard. Don't put clusters already at/above the target in the
-campaign.
+- **`spec`** — `upstream` + `channel` + `desiredUpdate.version` from labels. When enforced, this sets
+  the desired version and the CVO upgrades.
+- **`status.history[].state: Completed`** — the completion gate. The policy is `Compliant` only once
+  the upgrade has actually **finished**, so compliance is a trustworthy "this cluster is upgraded"
+  signal. (`clusterversions/status` is a subresource, so `enforce` can't write it — it's compare-only.)
+- **Semver guard** — a spoke-side `semverCompare` only asserts when `target > current`, so clusters
+  already at/above the target are a Compliant no-op and downgrades are never attempted.
 
 ### Labels (set on the target clusterset)
 
@@ -48,88 +31,55 @@ campaign.
 |---|---|---|
 | `autoshift.io/openshift-upgrade` | opt the cluster in | `'true'` |
 | `autoshift.io/openshift-upgrade-channel` | ClusterVersion channel | `'stable-4.20'` |
-| `autoshift.io/openshift-upgrade-version` | target version (upgrades only if `> current`) | `'4.20.12'` |
-| `autoshift.io/openshift-upgrade-upstream` | optional OSUS/upgrade graph (disconnected/edge) | `''` |
+| `autoshift.io/openshift-upgrade-version` | target version (upgrades only if `> current`) | `'4.20.28'` |
+| `autoshift.io/openshift-upgrade-upstream` | OSUS graph (local URL when disconnected) | `https://api.openshift.com/...` |
 
-## Validate (and optionally upgrade) without TALM
+## Validation is free
 
-Set the labels above with `openshift-upgrade: 'true'`. The inform policy immediately gives you
-fleet-wide validation:
+Because the policy is a normal ACM policy, you get fleet-wide validation with no extra tooling:
 
 ```bash
 oc get policy -n policies-autoshift policy-openshift-upgrade \
   -o jsonpath='{range .status.status[*]}{.clustername}{"\t"}{.compliant}{"\n"}{end}'
 ```
 
-To actually roll the upgrade natively, gate enforcement by rolling clusters into the target label in
-waves (relabel a batch, watch compliance, relabel the next). This upgrades *and* validates with no
-extra operator — appropriate for small, connected fleets.
+And ArgoCD surfaces it too: OpenShift GitOps ships a health check for `Policy`, so the
+`autoshift-openshift-upgrade` **Application is Healthy only when the policy is Compliant**. That's your
+"this wave is done, proceed" gate — watch it in the ArgoCD UI or via `oc get application`.
 
-## Orchestrate with TALM (recommended for large / edge fleets)
+## Rolling out an upgrade (or a new AutoShift version) in waves
 
-### 1. Install TALM (per hub)
+The model is **blue/green clustersets** + **wave migration**:
 
-Set `autoshift.io/talm: 'true'` on each **self-managed-hub** clusterset. The
-`topology-aware-lifecycle-manager` policy installs TALM on that hub (hub-scoped placement). In
-hub-of-hubs this is **per-layer self-install** — every layer installs TALM on its own hub; there is no
-detection or cross-layer propagation.
+1. **Deploy the new version** as a versioned clusterset (see [gradual-rollout.md](gradual-rollout.md)).
+   Its `openshift-upgrade-version` targets the new OCP version. The clusterset starts empty (or with a
+   canary).
+2. **Move a canary cluster** into the new clusterset. Its `openshift-upgrade` policy enforces → the
+   CVO upgrades it → the policy goes `Compliant` when finished.
+3. **Verify** the canary via policy compliance / ArgoCD health.
+4. **Move the next wave**, verify, repeat until the fleet is migrated.
 
-### 2. Author a ClusterGroupUpgrade (one-off, unique name)
+**Safety:** blast radius is controlled entirely by membership. **Never enable `openshift-upgrade` on
+an already-populated clusterset** — every opted-in cluster in it would upgrade at once (ACM fans the
+policy out with no staging). Always move clusters *into* the upgrading clusterset in controlled waves.
 
-CGUs are **one-shot** — a completed CGU will not run again ("you must create a new
-ClusterGroupUpgrade CR when you need to update again"). So:
+### Making the waves Argo-native
 
-- **Unique name per campaign**, keyed to the target (`cgu-upgrade-4-20-12`).
-- **Apply out-of-band** (`oc apply`) — do **not** put it under an ArgoCD Application with `selfHeal`
-  (continuous reconcile fights the one-shot lifecycle). Store it in git as a record if you like, but
-  don't reconcile it.
-- **Prune** completed CGUs periodically; they accumulate as history.
+Rather than `oc label` by hand, keep clusterset membership **declarative in git** (a values-driven
+cluster→clusterset map). A rollout is then a series of **commits** moving N clusters per wave; Argo
+reconciles each; the ArgoCD compliance-health above tells you when to commit the next wave;
+`git revert` is your rollback. The only thing not automated is "auto-proceed when green" — that single
+gate is either your commit cadence or a thin script that reads compliance and moves the next wave.
 
-See [`examples/cgu-ocp-upgrade.yaml`](examples/cgu-ocp-upgrade.yaml). Start it by patching
-`spec.enable: true` inside your maintenance window:
+> *(A declarative clusterset-membership generator is a planned follow-up; today, membership is set via
+> `oc label` / cluster-install, and the wave discipline above still applies.)*
 
-```bash
-oc apply -f docs/examples/cgu-ocp-upgrade.yaml
-# ...at the window:
-oc -n policies-autoshift patch clustergroupupgrade.ran.openshift.io/cgu-upgrade-4-20-12 \
-  --type=merge -p '{"spec":{"enable":true}}'
-oc -n policies-autoshift get cgu cgu-upgrade-4-20-12 -o jsonpath='{.status}' | jq
-```
+## Hub-of-hubs
 
-TALM upgrades the canary first, waits for the `openshift-upgrade` policy to report `Compliant`
-(upgrade finished), then proceeds in batches of `maxConcurrency`, aborting if a batch times out.
-`preCaching: true` stages release images before the window — important for SNO / limited bandwidth.
-
-> **Timeouts:** OCP upgrades are slow. Size `remediationStrategy.timeout` in the hours-per-batch
-> range, not minutes.
-
-## Hub-of-hubs: one campaign per hub, top-down
-
-Because each ACM only sees its own registered clusters (a hub-of-hubs cannot see a spoke's spokes),
-a fleet upgrade is **N campaigns, one per hub** — TALM does not coordinate across layers. Order matters:
-
-1. **hub-of-hubs** upgrades first (its self-managed local-cluster).
-2. **spoke hubs** next — the hoh's TALM upgrades `hub1`/`hub2` (they are ManagedClusters on the hoh).
-   A spoke hub must be back to `Ready` before it upgrades its own spokes (its AutoShift/TALM is
-   disrupted during its own reboot).
-3. **leaf spokes** last — each spoke hub's TALM upgrades its spokes.
-
-The ACM hub must run a version that supports the clusters it manages, which is why this is strictly
-top-down. Enable `talm: 'true'` and the `openshift-upgrade` labels on the appropriate clusterset at
-**each** layer.
-
-## Combined switch + upgrade (blue/green)
-
-A version bump and a policy-set migration often travel together. TALM can do both in one campaign:
-`beforeEnable.addClusterLabels` flips a cluster's clusterset from the old AutoShift deployment to the
-new one, and `policy-openshift-upgrade` in `managedPolicies` upgrades OCP if the new deployment's
-target is higher (a no-op when versions match). See
-[`examples/cgu-switch-and-upgrade.yaml`](examples/cgu-switch-and-upgrade.yaml).
-
-**Prefer sequential CGUs for now** — upgrade in place first, then switch — because the new
-deployment's enforce-by-default operator policies fire on clusterset join, concurrent with the
-TALM-gated upgrade. The combined form becomes clean once operator policies are inform-baseline (a
-future enhancement).
+Each layer's ACM only sees its own clusters, so a fleet upgrade is still **per-layer, top-down**
+(hoh → spoke-hubs → leaf spokes): the ACM hub must run a version that supports the clusters it
+manages. Apply the `openshift-upgrade` labels on the appropriate clusterset at each layer, and roll
+each layer's waves in that order.
 
 ## See also
 

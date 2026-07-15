@@ -6,15 +6,15 @@ metadata:
 # `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
 # templates contain `$vars` that substitution would clobber.
 #
-# DELIBERATE EXCEPTION to the ${REMEDIATION} convention: this policy is remediationAction: inform
-# and NEVER enforces on its own. An OpenShift platform upgrade must never blanket-enforce under
-# GitOps (a single label bump would trigger a fleet-wide simultaneous upgrade). The desired
-# ClusterVersion is asserted as inform for fleet-wide validation (Compliant only once the upgrade
-# has FINISHED), and TALM drives the actual rollout by flipping the PlacementBinding to enforce in
-# canaried batches (bindingOverrides.remediationAction) — the Policy object itself stays inform.
+# Drives the ClusterVersion to a target OpenShift version. A cluster upgrades when it lands in a
+# clusterset whose deployment targets a higher version (the version comes from the
+# openshift-upgrade-* labels). The manifest's semver guard only asserts when target > current, so
+# already-at/above clusters are a Compliant no-op and downgrades are never attempted. Blast radius
+# is controlled by clusterset membership — move clusters into the target clusterset in waves; do NOT
+# enable this on an already-populated clusterset. See docs/ocp-upgrade.md.
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
-  remediationAction: inform
+  remediationAction: ${REMEDIATION}
   severity: high
   consolidateManifests: true
   evaluationInterval:
@@ -26,15 +26,9 @@ policyDefaults:
     - CM Configuration Management
   controls:
     - CM-2 Baseline Configuration
-  # Placement authored by us (placement.yaml at the dir root, full fidelity); PG includes it and
-  # generates only the PlacementBinding.
   placement:
     placementPath: placement.yaml
 policies:
-  # Single ClusterVersion policy (docs §13.6 shape, required by TALM): spec carries the upgrade
-  # coordinates (upstream/channel/version); status.history Completed is the completion gate so the
-  # policy is Compliant only once the upgrade has FINISHED. status is a subresource (clusterversions/
-  # status) so enforce cannot write it — it stays compare-only even when TALM flips the binding.
   - name: policy-openshift-upgrade
     manifests:
       - path: manifests/clusterversion.yaml
