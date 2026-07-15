@@ -1,0 +1,24 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-talm-operator-install
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Hub-scoped: autoshift.io/self-managed is a hub-only label (managed clusters never carry it), so
+  # Exists selects hub-clusterset members (self-managed hubs AND spoke hubs). Each AutoShift layer
+  # installs TALM on its own hub via autoshift.io/talm — the per-layer self-install lever.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/self-managed'
+              operator: Exists
+            - key: 'autoshift.io/talm'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

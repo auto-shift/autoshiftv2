@@ -1,0 +1,31 @@
+# Example: TALM ClusterGroupUpgrade to roll an OpenShift upgrade across a fleet.
+#
+# ONE-OFF, per campaign. CGUs are one-shot — a completed CGU will not run again. Each new campaign
+# needs a UNIQUE name (key it to the target version, e.g. cgu-upgrade-4-20-12). Apply this OUT OF
+# BAND (oc apply) — do NOT place it under an ArgoCD Application with selfHeal.
+#
+# Prereq: TALM installed on this hub (autoshift.io/talm: 'true' on the hub clusterset) and the
+# openshift-upgrade policy deployed (autoshift.io/openshift-upgrade: 'true' + channel/version labels
+# on the target clusterset). The openshift-upgrade policy is inform; TALM flips it to enforce in
+# canaried batches, and it reports Compliant only once each cluster has FINISHED upgrading.
+apiVersion: ran.openshift.io/v1alpha1
+kind: ClusterGroupUpgrade
+metadata:
+  name: cgu-upgrade-4-20-12            # UNIQUE per campaign — bump for every new target
+  namespace: policies-autoshift        # the AutoShift policy namespace on this hub
+spec:
+  enable: false                        # flip to true to start (gate to a maintenance window)
+  clusterLabelSelectors:
+    - matchExpressions:
+        - key: autoshift.io/openshift-upgrade
+          operator: In
+          values: ['true']
+  managedPolicies:
+    - policy-openshift-upgrade          # the inform ClusterVersion policy TALM drives to enforce
+  preCaching: true                      # stage release images before the window (SNO / edge / low bandwidth)
+  remediationStrategy:
+    canaries:
+      - spoke-cluster-1                 # validate one cluster first; halt the rollout if it fails
+    maxConcurrency: 5                   # upgrade at most N clusters at once
+    timeout: 360                        # MINUTES — OCP upgrades are slow; size in hours per batch
+  batchTimeoutAction: abort             # stop the whole campaign if a batch times out
