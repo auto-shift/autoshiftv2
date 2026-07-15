@@ -1,0 +1,37 @@
+# Example (Phase-2 pattern): combined blue/green policy-set SWITCH + conditional OCP upgrade in one
+# TALM campaign. Moves clusters from an old AutoShift deployment's clusterset to a new one AND, if
+# the new deployment targets a higher OpenShift version, upgrades them — all in canaried batches.
+#
+# CAVEAT: beforeEnable relabels the clusterset BEFORE any policy gating, so the new deployment's
+# enforce-by-default policies (operators) fire on join, concurrent with the TALM-gated OCP upgrade.
+# Until operator policies are inform-baseline (see docs), prefer SEQUENTIAL CGUs instead:
+#   1) cgu-ocp-upgrade.yaml   (upgrade in place on the OLD clusterset)
+#   2) a switch CGU with NO openshift-upgrade in managedPolicies (policy-set move only)
+# Use this combined form only once the ordering is proven on a cluster.
+apiVersion: ran.openshift.io/v1alpha1
+kind: ClusterGroupUpgrade
+metadata:
+  name: cgu-switch-2-0-0               # UNIQUE per transition (key to the new autoshift version)
+  namespace: policies-autoshift
+spec:
+  enable: false
+  clusterLabelSelectors:
+    - matchExpressions:                 # everyone still on the OLD deployment's clusterset
+        - key: cluster.open-cluster-management.io/clusterset
+          operator: In
+          values: ['hub-1-0-0']
+  actions:
+    beforeEnable:
+      addClusterLabels:                 # THE switch — overwrites the single-valued clusterset label
+        cluster.open-cluster-management.io/clusterset: hub-2-0-0
+    afterCompletion:
+      addClusterLabels: { migration-done: '' }
+      deleteClusterLabels: { migration-running: '' }
+  managedPolicies:
+    - policy-openshift-upgrade          # no-op when the new target == current version; upgrades if higher
+    # - policy-<other v2 policies / ready checks> ...
+  remediationStrategy:
+    canaries: [spoke-cluster-1]
+    maxConcurrency: 5
+    timeout: 360
+  batchTimeoutAction: abort

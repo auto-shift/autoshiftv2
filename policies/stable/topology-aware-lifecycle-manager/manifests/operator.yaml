@@ -1,0 +1,21 @@
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: OperatorPolicy
+metadata:
+  name: install-operator-talm
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  complianceType: musthave
+  # No operatorGroup: TALM installs into openshift-operators, which already carries the cluster-global
+  # OperatorGroup. OperatorPolicy uses the existing group rather than creating a conflicting one.
+  subscription:
+    name: '{{hub index .ManagedClusterLabels "autoshift.io/talm-subscription-name" | default "topology-aware-lifecycle-manager" hub}}'
+    namespace: openshift-operators
+    # Source: base from label or default; if disconnected-mirror is true, append -<mirror suffix>.
+    source: '{{hub $base := (index .ManagedClusterLabels "autoshift.io/talm-source" | default "redhat-operators") hub}}{{hub ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}'
+    sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/talm-source-namespace" | default "openshift-marketplace" hub}}'
+    channel: '{{hub index .ManagedClusterLabels "autoshift.io/talm-channel" | default "stable" hub}}'
+    startingCSV: '{{hub index .ManagedClusterLabels "autoshift.io/talm-version" | default "" hub}}'
+  upgradeApproval: Automatic
+  versions:
+    - '{{hub index .ManagedClusterLabels "autoshift.io/talm-version" | default "" hub}}'

@@ -1,0 +1,22 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-openshift-upgrade
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Shared placement (no self-managed predicate): a cluster at ANY layer opts in — a leaf spoke
+  # (upgraded by its hub) or a managed hub (upgraded by the hub-of-hubs). Each layer's ACM only
+  # sees its own registered clusters, so this policy naturally lands where it can act.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/openshift-upgrade'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
