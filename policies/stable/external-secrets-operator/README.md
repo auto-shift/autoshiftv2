@@ -1303,10 +1303,14 @@ config:
       # THE Certificate ONLY WHEN SET. Left unset they fall back to MODE-BASED defaults: selfSigned (our own
       # CA honors them verbatim) -> sensible values INCLUDING the client-auth usage; externalCA / reuse ->
       # LEFT UNSET so the external issuer governs validity + keyUsage and is never fought into a perpetual
-      # re-issue loop (see the "external issuers" note below).
+      # re-issue loop (see the "external issuers" note below). useDefaultCertValues overrides that mode
+      # gate in either direction.
       clientIdentity:
         certCNPrefix: eso-client   # client cert CN = <prefix>.<managedClusterName>.<baseDomain> (default from values)
         # baseDomain: eso.hub.example.com    # CN FQDN tail (selfSigned default: autoshift.io; REQUIRED in externalCA)
+        # useDefaultCertValues: true         # '' (default) = mode-based defaults as above; true/false = force the
+        #                                    # default set (720h/480h/client-auth usages/RSA-2048) on/off in ANY mode.
+        #                                    # false under selfSigned without certUsages -> certs lack client auth.
         # certDuration: 720h                 # unset -> selfSigned: 720h; external: omitted (issuer decides)
         # certRenewBefore: 480h              # unset -> selfSigned: 480h; external: omitted (issuer decides)
         # certUsages: [client auth, digital signature, key encipherment]  # unset -> selfSigned: this set; external: omitted
@@ -1374,6 +1378,8 @@ value `hubBootstrap.clientIdentity.certCNPrefix`). The remaining cert-spec tunab
 (`certDuration`/`certRenewBefore`/`certUsages`/`privateKey*`) are **emit-only-when-set** with mode-based
 fallbacks — see the external-issuer note above; precedence per field is explicit per-deployment config →
 chart `values.yaml` → mode-based default (selfSigned sensible / external bare).
+`clientIdentity.useDefaultCertValues: true|false` overrides the mode gate, forcing the default set
+on/off in any mode; explicitly-set fields always win.
 
 - **Opt-in / all-or-nothing:** the copy policy is a no-op unless `hubBootstrap` is set (needs
   at least a `hubServer`); the trust policy is a no-op unless at least one owned `ManagedCluster`
@@ -1672,6 +1678,9 @@ of them lists `externalSecrets` — this policy provisions the store only; consu
 No external PKI. Omitting `mode` selects this. `baseDomain` defaults to `autoshift.io`. The cert-spec
 tunables are optional and shown only to make the knobs explicit; left unset, selfSigned applies its
 mode-based defaults (720h / 480h / `[client auth, digital signature, key encipherment]` / RSA 2048).
+Set `clientIdentity.useDefaultCertValues: false` to suppress that default set (cert-manager/issuer
+defaults apply instead — but then set `certUsages` yourself: hub mTLS needs `client auth`, which
+cert-manager's own default usages omit).
 
 ```yaml
 clusters:

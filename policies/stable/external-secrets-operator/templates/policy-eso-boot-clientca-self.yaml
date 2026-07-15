@@ -107,6 +107,9 @@
   {{- $defaultCertUsages := (dig "clientIdentity" "certUsages" (list) $hb) }}
   {{- $defaultPrivateKeyAlgorithm := (dig "clientIdentity" "privateKeyAlgorithm" "" $hb) }}
   {{- $defaultPrivateKeySize := (dig "clientIdentity" "privateKeySize" "" $hb) }}
+  {{- /* useDefaultCertValues: "" = mode-based (selfSigned on, external modes off); true/false forces the */}}
+  {{- /* opinionated default set (720h / 480h / client-auth usages / RSA-2048) on or off in any mode. */}}
+  {{- $defaultUseDefaultCertValues := (printf "%v" (dig "clientIdentity" "useDefaultCertValues" "" $hb)) }}
   {{- /* Diagnostics run modes (deployment-wide). readinessOnly: suppress this active policy entirely.
          debugRender: emit only a preview ConfigMap of what this policy WOULD apply (nothing live).
          debugRender wins, so previews still render under readinessOnly. */ -}}
@@ -178,16 +181,20 @@ spec:
                     {{ "{{hub-" }} $clientIdentity := (dig "clientIdentity" (dict) $hubBootstrap) {{ "hub}}" }}
                     {{ "{{hub-" }} $certCNPrefix := (index $clientIdentity "certCNPrefix" | default "{{ $defaultCertCNPrefix }}") {{ "hub}}" }}
                     {{ "{{hub-" }} $certBaseDomain := (index $clientIdentity "baseDomain" | default "{{ $defaultCertBaseDomain }}") {{ "hub}}" }}
-                    ##### Cert spec fields: explicit per-cluster config wins, else the chart default, else a MODE-BASED default. #####
-                    ##### selfSigned (our own CA honors them verbatim) -> sensible values INCLUDING client auth (required for hub #####
-                    ##### mTLS); external modes -> EMPTY so the issuer governs validity/keyUsage. This policy only mints in #####
-                    ##### selfSigned, so in practice the selfSigned arm always applies here. #####
-                    {{ "{{hub-" }} $ssCertDefaults := (eq $mode "selfSigned") {{ "hub}}" }}
-                    {{ "{{hub-" }} $certDuration := (index $clientIdentity "certDuration" | default "{{ $defaultCertDuration }}" | default (ternary "720h" "" $ssCertDefaults)) {{ "hub}}" }}
-                    {{ "{{hub-" }} $certRenewBefore := (index $clientIdentity "certRenewBefore" | default "{{ $defaultCertRenewBefore }}" | default (ternary "480h" "" $ssCertDefaults)) {{ "hub}}" }}
-                    {{ "{{hub-" }} $certUsages := (index $clientIdentity "certUsages" | default (`{{ $defaultCertUsages | toJson }}` | fromJson) | default (ternary (list "client auth" "digital signature" "key encipherment") (list) $ssCertDefaults)) {{ "hub}}" }}
-                    {{ "{{hub-" }} $privateKeyAlgorithm := (index $clientIdentity "privateKeyAlgorithm" | default "{{ $defaultPrivateKeyAlgorithm }}" | default (ternary "RSA" "" $ssCertDefaults)) {{ "hub}}" }}
-                    {{ "{{hub-" }} $privateKeySize := (index $clientIdentity "privateKeySize" | default "{{ $defaultPrivateKeySize }}" | default (ternary "2048" "" $ssCertDefaults)) {{ "hub}}" }}
+                    ##### Cert spec fields: explicit per-cluster config wins, else the chart default, else the opinionated #####
+                    ##### DEFAULT SET (720h / 480h / client-auth usages / RSA-2048) — applied only when useDefaultCertValues #####
+                    ##### allows. unset/'' = mode-based: on here (this policy only mints in selfSigned, whose CA honors the #####
+                    ##### values verbatim). Explicit false = no defaults — WARNING: without clientIdentity.certUsages that #####
+                    ##### mints certs LACKING "client auth" (cert-manager's default usages omit it) and hub mTLS fails. #####
+                    ##### hasKey, not `default`: an explicit false must not fall through to the chart default. #####
+                    {{ "{{hub-" }} $useDefaultCertValues := "{{ $defaultUseDefaultCertValues }}" {{ "hub}}" }}
+                    {{ "{{hub-" }} if hasKey $clientIdentity "useDefaultCertValues" {{ "hub}}" }}{{ "{{hub-" }} $useDefaultCertValues = (printf "%v" (index $clientIdentity "useDefaultCertValues")) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} $certDefaults := (ternary (eq $useDefaultCertValues "true") (eq $mode "selfSigned") (ne $useDefaultCertValues "")) {{ "hub}}" }}
+                    {{ "{{hub-" }} $certDuration := (index $clientIdentity "certDuration" | default "{{ $defaultCertDuration }}" | default (ternary "720h" "" $certDefaults)) {{ "hub}}" }}
+                    {{ "{{hub-" }} $certRenewBefore := (index $clientIdentity "certRenewBefore" | default "{{ $defaultCertRenewBefore }}" | default (ternary "480h" "" $certDefaults)) {{ "hub}}" }}
+                    {{ "{{hub-" }} $certUsages := (index $clientIdentity "certUsages" | default (`{{ $defaultCertUsages | toJson }}` | fromJson) | default (ternary (list "client auth" "digital signature" "key encipherment") (list) $certDefaults)) {{ "hub}}" }}
+                    {{ "{{hub-" }} $privateKeyAlgorithm := (index $clientIdentity "privateKeyAlgorithm" | default "{{ $defaultPrivateKeyAlgorithm }}" | default (ternary "RSA" "" $certDefaults)) {{ "hub}}" }}
+                    {{ "{{hub-" }} $privateKeySize := (index $clientIdentity "privateKeySize" | default "{{ $defaultPrivateKeySize }}" | default (ternary "2048" "" $certDefaults)) {{ "hub}}" }}
                     ##### BRIDGE the derived cert settings to the runtime side #####
                     {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
@@ -595,16 +602,20 @@ spec:
             {{ "{{hub-" }} $clientIdentity := (dig "clientIdentity" (dict) $hubBootstrap) {{ "hub}}" }}
             {{ "{{hub-" }} $certCNPrefix := (index $clientIdentity "certCNPrefix" | default "{{ $defaultCertCNPrefix }}") {{ "hub}}" }}
             {{ "{{hub-" }} $certBaseDomain := (index $clientIdentity "baseDomain" | default "{{ $defaultCertBaseDomain }}") {{ "hub}}" }}
-            ##### Cert spec fields: explicit per-cluster config wins, else the chart default, else a MODE-BASED default. #####
-            ##### selfSigned (our own CA honors them verbatim) -> sensible values INCLUDING client auth (required for hub #####
-            ##### mTLS); external modes -> EMPTY so the issuer governs validity/keyUsage. This policy only mints in #####
-            ##### selfSigned, so in practice the selfSigned arm always applies here. #####
-            {{ "{{hub-" }} $ssCertDefaults := (eq $mode "selfSigned") {{ "hub}}" }}
-            {{ "{{hub-" }} $certDuration := (index $clientIdentity "certDuration" | default "{{ $defaultCertDuration }}" | default (ternary "720h" "" $ssCertDefaults)) {{ "hub}}" }}
-            {{ "{{hub-" }} $certRenewBefore := (index $clientIdentity "certRenewBefore" | default "{{ $defaultCertRenewBefore }}" | default (ternary "480h" "" $ssCertDefaults)) {{ "hub}}" }}
-            {{ "{{hub-" }} $certUsages := (index $clientIdentity "certUsages" | default (`{{ $defaultCertUsages | toJson }}` | fromJson) | default (ternary (list "client auth" "digital signature" "key encipherment") (list) $ssCertDefaults)) {{ "hub}}" }}
-            {{ "{{hub-" }} $privateKeyAlgorithm := (index $clientIdentity "privateKeyAlgorithm" | default "{{ $defaultPrivateKeyAlgorithm }}" | default (ternary "RSA" "" $ssCertDefaults)) {{ "hub}}" }}
-            {{ "{{hub-" }} $privateKeySize := (index $clientIdentity "privateKeySize" | default "{{ $defaultPrivateKeySize }}" | default (ternary "2048" "" $ssCertDefaults)) {{ "hub}}" }}
+            ##### Cert spec fields: explicit per-cluster config wins, else the chart default, else the opinionated #####
+            ##### DEFAULT SET (720h / 480h / client-auth usages / RSA-2048) — applied only when useDefaultCertValues #####
+            ##### allows. unset/'' = mode-based: on here (this policy only mints in selfSigned, whose CA honors the #####
+            ##### values verbatim). Explicit false = no defaults — WARNING: without clientIdentity.certUsages that #####
+            ##### mints certs LACKING "client auth" (cert-manager's default usages omit it) and hub mTLS fails. #####
+            ##### hasKey, not `default`: an explicit false must not fall through to the chart default. #####
+            {{ "{{hub-" }} $useDefaultCertValues := "{{ $defaultUseDefaultCertValues }}" {{ "hub}}" }}
+            {{ "{{hub-" }} if hasKey $clientIdentity "useDefaultCertValues" {{ "hub}}" }}{{ "{{hub-" }} $useDefaultCertValues = (printf "%v" (index $clientIdentity "useDefaultCertValues")) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $certDefaults := (ternary (eq $useDefaultCertValues "true") (eq $mode "selfSigned") (ne $useDefaultCertValues "")) {{ "hub}}" }}
+            {{ "{{hub-" }} $certDuration := (index $clientIdentity "certDuration" | default "{{ $defaultCertDuration }}" | default (ternary "720h" "" $certDefaults)) {{ "hub}}" }}
+            {{ "{{hub-" }} $certRenewBefore := (index $clientIdentity "certRenewBefore" | default "{{ $defaultCertRenewBefore }}" | default (ternary "480h" "" $certDefaults)) {{ "hub}}" }}
+            {{ "{{hub-" }} $certUsages := (index $clientIdentity "certUsages" | default (`{{ $defaultCertUsages | toJson }}` | fromJson) | default (ternary (list "client auth" "digital signature" "key encipherment") (list) $certDefaults)) {{ "hub}}" }}
+            {{ "{{hub-" }} $privateKeyAlgorithm := (index $clientIdentity "privateKeyAlgorithm" | default "{{ $defaultPrivateKeyAlgorithm }}" | default (ternary "RSA" "" $certDefaults)) {{ "hub}}" }}
+            {{ "{{hub-" }} $privateKeySize := (index $clientIdentity "privateKeySize" | default "{{ $defaultPrivateKeySize }}" | default (ternary "2048" "" $certDefaults)) {{ "hub}}" }}
             ##### BRIDGE the derived cert settings to the runtime side #####
             {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}

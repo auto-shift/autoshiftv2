@@ -166,8 +166,23 @@ externalSecretsOperator:
                                              # override: config.eso.hubBootstrap.clientIdentity.baseDomain. KNOWN LIMITATION: if prefix+baseDomain
                                              # leave no room the policy FAILS; and two clusters whose names share the surviving
                                              # truncation budget would collide — the clientca policy detects that and FAILS loudly.
-      certDuration: 720h                     # cert-manager Certificate duration for client certs (default 30d)
-      certRenewBefore: 480h                  # cert-manager renewBefore window (default 20d)
+      certDuration: ''                       # cert-manager Certificate duration for minted client certs. '' = omit the
+                                             # field (the issuer / cert-manager decides) unless useDefaultCertValues
+                                             # turns the default set on (then 720h).
+      certRenewBefore: ''                    # cert-manager renewBefore window. '' = omit unless useDefaultCertValues
+                                             # turns the default set on (then 480h).
+      useDefaultCertValues: ''               # opinionated default set for cert fields NOT explicitly set above/in config:
+                                             # duration 720h, renewBefore 480h, usages [client auth, digital signature,
+                                             # key encipherment], privateKey RSA 2048.
+                                             #   '' (default) = mode-based: ON for selfSigned (our own CA honors the values
+                                             #       verbatim), OFF for the external modes — every unset field is omitted
+                                             #       from the Certificate so the issuer (e.g. Venafi) governs
+                                             #       validity/keyUsage and is not fought into a re-issue loop.
+                                             #   true / false = force the set on/off regardless of mode. WARNING —
+                                             #       false under selfSigned without certUsages mints certs LACKING
+                                             #       "client auth" (cert-manager's default usages omit it): hub mTLS fails.
+                                             # Explicitly-set fields always win. Per-cluster override:
+                                             # config.eso.hubBootstrap.clientIdentity.useDefaultCertValues.
     # ---- externalCertAuthority: external-CA trust (externalCA / externalCAReuseServingCert) ----
     # Per-deployment overrides under config.eso.hubBootstrap.externalCertAuthority.<...>.
     externalCertAuthority:

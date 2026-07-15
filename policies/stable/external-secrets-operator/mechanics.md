@@ -207,6 +207,9 @@ flowchart TB
   *bare* cert (`dnsNames` + `issuerRef` only) and emits `duration`/`renewBefore`/`usages`/
   `privateKey` **only if explicitly configured**; in selfSigned mode (our own CA honors the
   spec) sensible defaults including the required `client auth` usage are applied.
+  `clientIdentity.useDefaultCertValues: true|false` overrides that mode split, forcing the
+  default set (720h / 480h / client-auth usages / RSA-2048) on or off in any mode;
+  explicitly-set fields always win.
 
 ---
 

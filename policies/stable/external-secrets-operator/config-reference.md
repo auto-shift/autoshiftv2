@@ -81,11 +81,14 @@ The cert-shape fields (`certDuration` … `privateKeySize`) are **mode-gated**: 
 `selfSigned` mode, unset means the defaults shown below; in `externalCA` mode, unset means
 the field is **omitted** from the Certificate entirely so the external issuer's own
 defaults/policy apply (prevents fighting an external CA's reissue rules).
+`useDefaultCertValues` overrides that mode gate in either direction; explicitly-set fields
+always win regardless of it.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `certCNPrefix` | string | `eso-client` | Client cert CN prefix. Full CN = `<prefix>.<segment>.<baseDomain>`; the segment is the **OCM ManagedCluster name** in `selfSigned` mode (the hub owns the signer, so its name for the cluster is the identity) and the **apiserver host minus the leading `api.` label** (`api.ocp.zone-a.example.com` → `ocp.zone-a.example.com` — the full remainder, so same-named clusters in different DNS zones stay distinct) in the external modes. If the derived segment already ends in `.<baseDomain>` (the usual case when `baseDomain` is the clusters' real DNS base), that suffix is stripped from the segment before composing, so `baseDomain` never appears twice in the CN. |
 | `baseDomain` | string | `''` | CN base domain (FQDN tail). `selfSigned`: defaults to `autoshift.io`. `externalCA`: **required** (must satisfy the customer PKI). CN capped at 63 chars — the cluster segment is truncated to fit (trailing `.`/`-` trimmed after the cut, so the CN never carries a double dot); the policy fails loudly if no budget remains or two truncated segments collide. |
+| `useDefaultCertValues` | `''`/bool | `''` | Gate for the default set below. `''` (default) = mode-based: apply in `selfSigned`, omit in the external modes. `true`/`false` = force the whole set on/off in any mode. **Warning:** `false` under `selfSigned` without `certUsages` mints certs lacking `client auth` (cert-manager's default usages omit it) — hub mTLS fails. |
 | `certDuration` | duration | `720h` (selfSigned) / omit (externalCA) | cert-manager Certificate `duration` for client certs. |
 | `certRenewBefore` | duration | `480h` (selfSigned) / omit (externalCA) | cert-manager `renewBefore` window. |
 | `certUsages` | list(string) | `[client auth, digital signature, key encipherment]` (selfSigned) / omit (externalCA) | Certificate `usages`. If you set it, keep `client auth` — hub mTLS requires it. Not listed in `values.yaml` but settable there and at runtime. |
@@ -278,7 +281,7 @@ key for key. Only the keys below differ from or add to the chart surface:
 | `storeName` | string | chart `storePrefix` (`hub-bootstrap`) | **Runtime-only.** Name of the ClusterSecretStore created on the spoke — the name consumers put in `secretStoreRef`. All *other* minted-object names still derive from the chart `storePrefix`. |
 | `mode` | string | chart `mode` (`selfSigned`) | Trust mode: `selfSigned` \| `externalCA` \| `externalCAReuseServingCert`. |
 | `teardown` | bool | chart `teardown` (`false`) | Explicit decommission flag — see §1 and README → Decommissioning. |
-| `clientIdentity.*` | — | chart values | Same keys as §1 `clientIdentity` (`certCNPrefix`, `baseDomain`, `certDuration`, `certRenewBefore`, `certUsages`, `privateKeyAlgorithm`, `privateKeySize`), same mode-gated defaults. |
+| `clientIdentity.*` | — | chart values | Same keys as §1 `clientIdentity` (`certCNPrefix`, `baseDomain`, `useDefaultCertValues`, `certDuration`, `certRenewBefore`, `certUsages`, `privateKeyAlgorithm`, `privateKeySize`), same mode-gated defaults. |
 | `externalCertAuthority.*` | — | chart values | Same keys as §1 `externalCertAuthority` (`caTrustBundle.{namespace,name,key}`, `certIssuer.{name,kind,group}`, `autoshiftProvisioned`). |
 | `diagnostics.readinessOnly` | bool | chart value (`false`) | Per-cluster: active cert boot policies apply nothing. |
 | `diagnostics.debugRender` | bool | chart value (`false`) | Per-cluster: active cert boot policies emit their debug-preview ConfigMap instead of applying. |

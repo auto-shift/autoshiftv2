@@ -151,8 +151,9 @@ hubClusterSets:
           # storeName: hub-bootstrap    # ClusterSecretStore name created on each spoke (default)
           clientIdentity:
             baseDomain: autoshift.io    # default; CN = eso-client.<cluster>.autoshift.io
-            # certDuration: 720h        # optional; mode defaults 720h / 480h are applied if unset
-            # certRenewBefore: 480h
+            # certDuration: 720h        # optional; selfSigned defaults 720h / 480h are applied if unset
+            # certRenewBefore: 480h     # (external modes omit unset fields — the issuer decides;
+            # useDefaultCertValues: true # true/false forces the default set on/off in any mode)
     labels:
       external-secrets-operator: 'true'
       external-secrets-operator-channel: 'stable-v1'

@@ -313,7 +313,9 @@ the deadlock; seed the Secret manually and remove the self-reference.
    `oc get certificaterequest -n $POLICY_NS | wc -l` growing. CAUSE: cert-spec fields set
    that the external issuer overrides (spec drift → perpetual reissue → notification storms).
    FIX: unset `clientIdentity.certDuration/certRenewBefore/certUsages/privateKey*` in the
-   external modes — the chart then requests a bare cert (mechanics §3).
+   external modes — the chart then requests a bare cert (mechanics §3). If
+   `clientIdentity.useDefaultCertValues: true` is set, remove it too — it forces the
+   opinionated default set onto the Certificate in every mode.
 3. **CN truncation collision / no budget.** CONFIRM: `eso-boot-clientca-self-status` errors
    naming two clusters. FIX: shorten `certCNPrefix`/`baseDomain` so cluster names survive
    truncation uniquely (CN capped at 63 chars).
