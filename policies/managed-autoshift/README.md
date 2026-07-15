@@ -39,7 +39,7 @@ These values are read from the per-cluster `rendered-config` ConfigMap on the hu
 | `gitopsNamespace` | string | `openshift-gitops` | Namespace where the ArgoCD Application and repo Secret are created |
 | `valuesFiles` | list | `["values.<clusterName>.yaml"]` | List of Helm values files passed to the ArgoCD Application source |
 | `argoProject` | string | `default` | ArgoCD project for the Application |
-| `argoServer` | string | `https://kubernetes.default.svc` | ArgoCD destination server URL |
+| `argoServer` | string | `https://kubernetes.default.svc` | (Currently unused) Destination server is hard-coded in the Application template |
 | `targetRevision` | string | `main` | Git branch or tag to track |
 | `useRepoSecret` | bool | `false` | When `true`, replicates a git repo Secret to the managed hub for private repo access |
 | `repoSecretRef.name` | string | `autoshift-repo-secret` | Name of the source Secret on the hub to replicate |
@@ -84,17 +84,17 @@ hubClusterSets:
       self-managed: 'false'
     config:
       autoshift:
-        appName: 'managed-autoshift'
-        repoUrl: 'https://github.com/my-org/autoshiftv2.git'
-        targetRevision: 'release-1.0'
-        gitopsNamespace: 'openshift-gitops'
-        argoProject: 'infrastructure'
-        argoServer: 'https://kubernetes.default.svc'
-        valuesFiles:
-          - 'values/global.yaml'
-          - 'values/clustersets/hub.yaml'
-        useRepoSecret: true
-        repoSecretRef:
-          name: 'autoshift-repo-secret'
-          namespace: 'open-cluster-policies'
+        - appName: 'managed-autoshift'
+          repoUrl: 'https://github.com/my-org/autoshiftv2.git'
+          targetRevision: 'release-1.0'
+          gitopsNamespace: 'openshift-gitops'
+          argoProject: 'infrastructure'
+          argoServer: 'https://kubernetes.default.svc'
+          valuesFiles:
+            - 'values/global.yaml'
+            - 'values/clustersets/hub.yaml'
+          useRepoSecret: true
+          repoSecretRef:
+            name: 'autoshift-repo-secret'
+            namespace: 'open-cluster-policies'
 ```
