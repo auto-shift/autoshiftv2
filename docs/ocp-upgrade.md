@@ -21,16 +21,18 @@ The capability has two halves that are worth separating:
 
 `policies/stable/openshift-upgrade/` is **inform-only** — a deliberate exception to the
 `${REMEDIATION}` convention, because an OCP upgrade must never blanket-enforce under GitOps (a single
-label bump would upgrade the whole fleet at once). It splits into two policies so that the config
-object never carries operator-owned status:
+label bump would upgrade the whole fleet at once). It is a **single ClusterVersion policy** carrying
+both the upgrade coordinates and the completion gate (the docs §13.6 shape, which TALM requires — it
+rejects a ClusterVersion policy that lacks `upstream`/`channel`/`version`):
 
-- **`policy-openshift-upgrade`** — declares **only `spec`** (`channel` + `desiredUpdate`). This is what
-  TALM drives to `enforce` to trigger the upgrade. It never asserts `status`.
-- **`policy-openshift-upgrade-ready`** — asserts **only `status.history[].state: Completed`**, the
-  completion gate. `status` is owned by the CVO, so this is a *readiness check*, not a desired-state
-  declaration — it lives in its own inform Policy (the `test/` convention). List it in the CGU
-  `managedPolicies` so TALM advances a batch only once the upgrade has actually **finished**, not just
-  when `desiredUpdate` was set.
+- **`spec`** — `upstream` + `channel` + `desiredUpdate.version` from labels. This is what TALM drives
+  to `enforce` to trigger the upgrade.
+- **`status.history[].state: Completed`** — the completion gate, so the policy is `Compliant` only
+  once the upgrade has actually **finished**, not just when `desiredUpdate` was set.
+
+Putting `status` in the enforced object is safe: `clusterversions/status` is a **subresource**, so
+`enforce` cannot write it via the main resource — it stays **compare-only** even when TALM flips the
+binding. status is never actually pushed onto the CVO; it only gates compliance.
 
 Both use **static templates** (hub-template *values* only, no `{{- if }}` control flow). This is a
 hard TALM requirement: TALM unmarshals `object-templates-raw` as YAML to inspect the policy, and

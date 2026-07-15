@@ -2,9 +2,6 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: PolicyGenerator
 metadata:
   name: openshift-upgrade
-# Two policies share one placement (config + readiness check), so the binding must be named.
-placementBindingDefaults:
-  name: binding-policy-openshift-upgrade
 # Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
 # `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
 # templates contain `$vars` that substitution would clobber.
@@ -34,14 +31,10 @@ policyDefaults:
   placement:
     placementPath: placement.yaml
 policies:
-  # Config policy: declares only spec (channel + desiredUpdate). This is what TALM drives to enforce.
-  # It NEVER contains status — status is owned by the CVO, not asserted as desired state.
+  # Single ClusterVersion policy (docs §13.6 shape, required by TALM): spec carries the upgrade
+  # coordinates (upstream/channel/version); status.history Completed is the completion gate so the
+  # policy is Compliant only once the upgrade has FINISHED. status is a subresource (clusterversions/
+  # status) so enforce cannot write it — it stays compare-only even when TALM flips the binding.
   - name: policy-openshift-upgrade
     manifests:
       - path: manifests/clusterversion.yaml
-  # Readiness check: asserts status.history Completed — the completion gate TALM waits on. Its own
-  # inform Policy (status is observed, never enforced). List it in the CGU managedPolicies so TALM
-  # advances a batch only once the upgrade has actually finished.
-  - name: policy-openshift-upgrade-ready
-    manifests:
-      - path: test/openshift-upgrade-ready.yaml
