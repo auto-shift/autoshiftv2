@@ -2,18 +2,17 @@ object-templates-raw: |
   {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
   {{- $upstream := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-upstream" | default "https://api.openshift.com/api/upgrades_info/v1/graph" hub}}" }}
   {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
-  {{- /* current = latest Completed history entry (the actual running version). */ -}}
   {{- $current := "" }}
   {{- range $h := (index $status "history" | default list) }}
   {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}{{- $current = (index $h "version") }}{{- end }}
   {{- end }}
-  {{- /* do not re-trigger while an upgrade is already in flight. */ -}}
   {{- $progressing := false }}
   {{- range $c := (index $status "conditions" | default list) }}
   {{-   if and (eq (index $c "type") "Progressing") (eq (index $c "status") "True") }}{{- $progressing = true }}{{- end }}
   {{- end }}
-  {{- /* Only act on a real upgrade (target > current). Validity/availability is enforced by the
-         policy-openshift-upgrade-allowed dependency, so no availableUpdates check needed here. */ -}}
+  {{- /* Trigger only: assert scalar spec fields (upstream always; desiredUpdate only when a real
+         upgrade is needed and none is already in flight). Completion is reported by the separate
+         status policy — no status-list assertion here (ACM does not match those reliably). */ -}}
   {{- if and (ne $target "") (or (eq $current "") (semverCompare (printf "> %s" $current) $target)) }}
   - complianceType: musthave
     objectDefinition:
@@ -27,8 +26,4 @@ object-templates-raw: |
         desiredUpdate:
           version: '{{ $target }}'
         {{- end }}
-      status:
-        history:
-          - state: Completed
-            version: '{{ $target }}'
   {{- end }}
