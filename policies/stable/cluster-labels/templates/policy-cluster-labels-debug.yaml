@@ -88,14 +88,18 @@ spec:
                               {{ "{{-" }} $clusterLabels = (dig $clusterTenancyNamespace $clusterName "labels" (dict) $allClusterLabels) {{ "}}" }}
                               {{ "{{-" }} $clusterSetLabels = (index $allClusterSetLabels $clusterSetName "labels" | default dict) {{ "}}" }}
                               {{ "{{-" }} $tempLabels := merge (dict) $clusterLabels $clusterSetLabels $existingLabelsNoAutoshift {{ "}}" }}
+                              {{ "{{-" }} $clusterSetType := (index $clusterSetTypes $clusterSetName | default "") {{ "}}" }}
+                              {{ "{{-" }} $selfManaged := (eq (index $tempLabels (printf "%sself-managed" $labelPrefix) | default "false") "true") {{ "}}" }}
+                              {{ "{{-" }} if and $selfManaged (ne $clusterSetType "hub") {{ "}}" }}
+                                {{ "{{-" }} fail (printf "Misconfiguration: cluster [%s] carries self-managed=true but its ManagedClusterSet [%s] has cluster-set-type '%s', not 'hub'. self-managed is only valid for clusters in hub clustersets; refusing to apply labels." $clusterName $clusterSetName $clusterSetType) {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
                               {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
                                 {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
                                   {{ "{{-" }} $_ := set $renderedLabels $label $value {{ "}}" }}
                                 {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
-                              {{ "{{-" }} $clusterSetType := (index $clusterSetTypes $clusterSetName | default "") {{ "}}" }}
                               {{ "{{-" }} $clusterType := "" {{ "}}" }}
                               {{ "{{-" }} if eq $clusterSetType "hub" {{ "}}" }}
-                                {{ "{{-" }} $clusterType = (ternary "selfManagedHub" "managedHub" (eq (index $tempLabels (printf "%sself-managed" $labelPrefix) | default "false") "true")) {{ "}}" }}
+                                {{ "{{-" }} $clusterType = (ternary "selfManagedHub" "managedHub" $selfManaged) {{ "}}" }}
                               {{ "{{-" }} else if eq $clusterSetType "spoke" {{ "}}" }}
                                 {{ "{{-" }} $clusterType = "spoke" {{ "}}" }}
                               {{ "{{-" }} end {{ "}}" }}

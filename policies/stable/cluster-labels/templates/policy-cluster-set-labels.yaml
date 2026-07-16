@@ -95,6 +95,13 @@ spec:
                   {{ "{{-" }} if ne $clusterSetTenancyNamespace "" {{ "}}" }}
                     {{ "{{-" }} $declaredLabels := (index $allClusterSetLabels $clusterSetName "labels" | default dict) {{ "}}" }}
                     {{ "{{-" }} $tempLabels := merge (dict) $declaredLabels $existingLabelsNoAutoshift {{ "}}" }}
+                    {{ "{{-" }} $clusterSetType := (index $clusterSetTypes $clusterSetName | default "") {{ "}}" }}
+                    ##### self-managed is only meaningful for hub sets. A non-hub set declaring it would #####
+                    ##### stamp the label on the set and every member would inherit it: misconfig — refuse #####
+                    ##### to apply anything and fail loudly (mirrors the guard in policy-cluster-labels). #####
+                    {{ "{{-" }} if and (eq (index $tempLabels (printf "%sself-managed" $labelPrefix) | default "false") "true") (ne $clusterSetType "hub") {{ "}}" }}
+                      {{ "{{-" }} fail (printf "Misconfiguration: ManagedClusterSet [%s] declares self-managed=true but its cluster-set-type is '%s', not 'hub'. self-managed is only valid for hub clustersets; refusing to apply labels." $clusterSetName $clusterSetType) {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} $_ := set $renderedLabels "autoshift.io/owning-namespace" $clusterSetTenancyNamespace {{ "}}" }}
                     {{ "{{-" }} $_ := set $renderedLabels "autoshift.io/owning-deployment" (replace "policies-" "" $clusterSetTenancyNamespace) {{ "}}" }}
                     {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
@@ -103,7 +110,6 @@ spec:
                       {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
                     ##### cluster-set-type (hub | spoke) — derived, never user-set, so it is written #####
                     ##### AFTER the user-label loop and wins over any value smuggled in via labels config. #####
-                    {{ "{{-" }} $clusterSetType := (index $clusterSetTypes $clusterSetName | default "") {{ "}}" }}
                     {{ "{{-" }} if ne $clusterSetType "" {{ "}}" }}
                       {{ "{{-" }} $_ := set $renderedLabels (printf "%scluster-set-type" $labelPrefix) $clusterSetType {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}

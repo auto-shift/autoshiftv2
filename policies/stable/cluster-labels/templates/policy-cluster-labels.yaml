@@ -108,6 +108,14 @@ spec:
                       {{ "{{-" }} $clusterLabels = (dig $clusterTenancyNamespace $clusterName "labels" (dict) $allClusterLabels) {{ "}}" }}
                       {{ "{{-" }} $clusterSetLabels = (index $allClusterSetLabels $clusterSetName "labels" | default dict) {{ "}}" }}
                       {{ "{{-" }} $tempLabels := merge (dict) $clusterLabels $clusterSetLabels $existingLabelsNoAutoshift {{ "}}" }}
+                      {{ "{{-" }} $clusterSetType := (index $clusterSetTypes $clusterSetName | default "") {{ "}}" }}
+                      {{ "{{-" }} $selfManaged := (eq (index $tempLabels (printf "%sself-managed" $labelPrefix) | default "false") "true") {{ "}}" }}
+                      ##### self-managed is only meaningful for clusters in hub sets. A cluster claiming it #####
+                      ##### (directly or inherited from its set) inside a non-hub set is a misconfig: refuse #####
+                      ##### to apply anything and fail loudly instead of quietly propagating the label. #####
+                      {{ "{{-" }} if and $selfManaged (ne $clusterSetType "hub") {{ "}}" }}
+                        {{ "{{-" }} fail (printf "Misconfiguration: cluster [%s] carries self-managed=true but its ManagedClusterSet [%s] has cluster-set-type '%s', not 'hub'. self-managed is only valid for clusters in hub clustersets; refusing to apply labels." $clusterName $clusterSetName $clusterSetType) {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} $_ := set $renderedLabels "autoshift.io/owning-namespace" $clusterTenancyNamespace {{ "}}" }}
                       {{ "{{-" }} $_ := set $renderedLabels "autoshift.io/owning-deployment" (replace "policies-" "" $clusterTenancyNamespace) {{ "}}" }}
                       {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
@@ -116,12 +124,12 @@ spec:
                         {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
                       ##### cluster-type (selfManagedHub | managedHub | spoke) - derived, never user-set, so it is #####
                       ##### written AFTER the user-label loop and wins over any value smuggled in via labels config. #####
-                      ##### hub-type sets split on the set's self-managed label (checked against the labels being #####
-                      ##### applied this pass, not the cluster's current labels, so the type never lags a change). #####
-                      {{ "{{-" }} $clusterSetType := (index $clusterSetTypes $clusterSetName | default "") {{ "}}" }}
+                      ##### hub-type sets split on self-managed, cluster labels winning over set labels (checked #####
+                      ##### against the labels being applied this pass, not the cluster's current labels, so the #####
+                      ##### type never lags a change). #####
                       {{ "{{-" }} $clusterType := "" {{ "}}" }}
                       {{ "{{-" }} if eq $clusterSetType "hub" {{ "}}" }}
-                        {{ "{{-" }} $clusterType = (ternary "selfManagedHub" "managedHub" (eq (index $tempLabels (printf "%sself-managed" $labelPrefix) | default "false") "true")) {{ "}}" }}
+                        {{ "{{-" }} $clusterType = (ternary "selfManagedHub" "managedHub" $selfManaged) {{ "}}" }}
                       {{ "{{-" }} else if eq $clusterSetType "spoke" {{ "}}" }}
                         {{ "{{-" }} $clusterType = "spoke" {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }}

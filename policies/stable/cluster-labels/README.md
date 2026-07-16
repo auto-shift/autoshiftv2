@@ -42,9 +42,13 @@ templated independently and never see each other's values, but the cluster-wide
 label-selected lookup sees every deployment's CMs — and types each member cluster from its
 set: `hub`-set members split into `selfManagedHub`/`managedHub` on the set's `self-managed`
 label (checked against the labels being applied in the same pass, so the type never lags a
-config change); `spoke`-set members are `spoke`. The derived value is written after the
-user-label merge, so a `cluster-type` declared in values is ignored. Clusters in sets without
-a `cluster-set-type` get no `cluster-type`.
+config change); `spoke`-set members are `spoke`. `self-managed` is a per-cluster property —
+a cluster-level declaration wins the merge over a set-level one — and is only valid inside
+hub sets: a cluster carrying `self-managed=true` in a non-hub set (directly or inherited),
+or a non-hub set declaring it, is a misconfiguration and both policies fail loudly instead
+of applying labels. The derived value is written after the user-label merge, so a
+`cluster-type` declared in values is ignored. Clusters in sets without a `cluster-set-type`
+get no `cluster-type`.
 
 ## Policies rendered
 
