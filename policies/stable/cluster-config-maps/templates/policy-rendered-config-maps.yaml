@@ -3,6 +3,13 @@
   {{- $policyName := "policy-cluster-configs" }}
   {{- $placementName := "placement-cluster-configs" }}
   {{- $configPolicyName := "policy-cluster-configs" }}
+  {{- /* Build the anchor-replacement chain from configVariables (see values.yaml). Applied to the */}}
+  {{- /* merged config's JSON encoding per cluster, so consumers read fully resolved config. */}}
+  {{- $configVariables := ($.Values.configVariables | default dict) }}
+  {{- $cvChain := "" }}
+  {{- range $cvName, $cv := $configVariables }}
+    {{- $cvChain = printf "%s | replace %q $cv_%s" $cvChain $cv.anchor $cvName }}
+  {{- end }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -87,9 +94,26 @@ spec:
                 {{ "{{-" }} $clusterConfig := (dig $clusterSetNamespace $cluster.metadata.name (dict) $allClusterConfigs) {{ "}}" }}
                 {{ "{{-" }} $renderedConfig := (dict) {{ "}}" }}
                 {{ "{{-" }} $_ := merge $renderedConfig $clusterConfig $clusterSetConfig $defaultConfig {{ "}}" }}
-                {{ "{{-" }} $wrapper := (dict $clusterSetNamespace (dict $cluster.metadata.name $renderedConfig)) {{ "}}" }}
-                {{ "{{-" }} $_ := merge $wrapper $allRendered {{ "}}" }}
-                {{ "{{-" }} $allRendered = $wrapper {{ "}}" }}
+{{- if $configVariables }}
+                {{ "{{-" }} $clusterClaims := dict {{ "}}" }}
+                {{ "{{-" }} range $cvClaim := (dig "status" "clusterClaims" list $cluster) {{ "}}" }}{{ "{{-" }} $_ := set $clusterClaims $cvClaim.name $cvClaim.value {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+{{- end }}
+{{- range $cvName, $cv := $configVariables }}
+{{- if hasKey $cv "expr" }}
+                {{ "{{-" }} $cv_{{ $cvName }} := (printf "%v" ({{ $cv.expr }})) {{ "}}" }}
+{{- else }}
+                {{ "{{-" }} $cv_{{ $cvName }} := {{ $cv.value | quote }} {{ "}}" }}
+{{- end }}
+{{- end }}
+{{- if $configVariables }}
+                {{ "{{-" }} $renderedConfig = ($renderedConfig | toJson{{ $cvChain }} | fromJson) {{ "}}" }}
+{{- end }}
+                {{- /* set, not merge: this entry is already the full cluster>set>default merge, and */}}
+                {{- /* sprig merge would backfill zero-value keys ("" substitutions) from a loop-1 pre-seed. */}}
+                {{ "{{-" }} if not (hasKey $allRendered $clusterSetNamespace) {{ "}}" }}
+                  {{ "{{-" }} $_ := set $allRendered $clusterSetNamespace (dict) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $_ := set (index $allRendered $clusterSetNamespace) $cluster.metadata.name $renderedConfig {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             {{ if $.Values.debug | default false }}

@@ -19,6 +19,27 @@ autoshiftGitBranchTag: main
 # Per-cluster overrides use the autoshift.io/gitops-namespace label
 gitopsNamespace: openshift-gitops
 
+# Optional: Config template variables — anchors substituted per cluster into the
+# rendered configs by policy-cluster-configs. Defaults ship in
+# policies/stable/cluster-config-maps/values.yaml:
+#   %CLUSTER_NAME% -> ManagedCluster name
+#   %CLUSTER_SET%  -> clusterset label value
+#   plus the universal clusterclaims of the cluster itself: %CLUSTER_API_URL%,
+#   %CLUSTER_CONSOLE_URL%, %CLUSTER_ID%, %CLUSTER_OCP_ID%, %CLUSTER_OCP_VERSION%,
+#   %CLUSTER_KUBE_VERSION%, %CLUSTER_PLATFORM%, %CLUSTER_PRODUCT%, %CLUSTER_REGION%,
+#   %CLUSTER_CP_TOPOLOGY%
+#   plus the rendering hub's own values (talk-back addresses): %HUB_API_URL%,
+#   %HUB_CONSOLE_URL%, %HUB_NAME%
+# Anchors are usable in any config value (default/clusterSet/cluster level).
+# Extend or override here (deep-merged over the chart defaults), e.g.:
+# configVariables:
+#   region:
+#     anchor: '%REGION%'
+#     expr: 'index ($cluster.metadata.labels | default dict) "topology.kubernetes.io/region" | default ""'
+#   environment:
+#     anchor: '%ENV%'
+#     value: 'production'
+
 # Optional: Enable versioned ClusterSet names for gradual rollout
 # When true, appends version/branch to all clusterset names
 # - OCI mode: uses autoshiftOciVersion (defaults to "latest", e.g., "hub" -> "hub-0-0-1")
