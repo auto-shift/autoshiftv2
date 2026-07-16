@@ -44,6 +44,11 @@ These values are read from the per-cluster `rendered-config` ConfigMap on the hu
 | `useRepoSecret` | bool | `false` | When `true`, replicates a git repo Secret to the managed hub for private repo access |
 | `repoSecretRef.name` | string | `autoshift-repo-secret` | Name of the source Secret on the hub to replicate |
 | `repoSecretRef.namespace` | string | `<policy_namespace>` | Namespace of the source Secret on the hub |
+| `valuesRepoUrl` | string | Undefined | URL for the values repo to pull the values from if different from the code repo |
+| `valuesRepoSecretRef` | object | undefined | Object containing name and namespace reference for a repositor secret allowing argo to sync with the `valuesRepoUrl` |
+| `valuesRepoSecretRef.name` | string | undefined | Name of the the argo repo secret containing the values repo creds |
+| `valuesRepoSecretRef.namespace` | string | undefined | Name of the the argo repo secret containing the values repo creds |
+
 
 ## Chart Values (`autoshift.*`)
 
