@@ -13,6 +13,10 @@ spec:
     # otherwise fall back to the namespace name. Resolves on the managed cluster.
     name: '{{ with (lookup "operators.coreos.com/v1" "OperatorGroup" "tssc-tpa" "").items }}{{ (index . 0).metadata.name }}{{ else }}tssc-tpa{{ end }}'
     namespace: tssc-tpa
+    # RHTPA only supports OwnNamespace/SingleNamespace — scope the OperatorGroup to tssc-tpa.
+    # Without targetNamespaces the OperatorPolicy generates an AllNamespaces group the operator rejects.
+    targetNamespaces:
+      - tssc-tpa
   subscription:
     name: '{{hub index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer-subscription-name" | default "rhtpa-operator" hub}}'
     namespace: tssc-tpa

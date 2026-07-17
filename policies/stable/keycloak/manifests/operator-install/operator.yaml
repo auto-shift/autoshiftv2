@@ -13,6 +13,10 @@ spec:
     # otherwise fall back to the namespace name. Resolves on the managed cluster.
     name: '{{ with (lookup "operators.coreos.com/v1" "OperatorGroup" "keycloak-system" "").items }}{{ (index . 0).metadata.name }}{{ else }}keycloak-system{{ end }}'
     namespace: keycloak-system
+    # RHBK only supports OwnNamespace/SingleNamespace — scope the OperatorGroup to keycloak-system.
+    # Without targetNamespaces the OperatorPolicy generates an AllNamespaces group the operator rejects.
+    targetNamespaces:
+      - keycloak-system
   subscription:
     name: '{{hub index .ManagedClusterLabels "autoshift.io/keycloak-subscription-name" | default "rhbk-operator" hub}}'
     namespace: keycloak-system
