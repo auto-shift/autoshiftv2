@@ -99,15 +99,13 @@ spec:
                 {{ "{{-" }} range $cvClaim := (dig "status" "clusterClaims" list $cluster) {{ "}}" }}
                   {{ "{{-" }} $_ := set $clusterClaims $cvClaim.name $cvClaim.value {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
-                {{- end }}
-                {{- range $cvName, $cv := $configVariables }}
-                  {{- if hasKey $cv "expr" }}
+                  {{- range $cvName, $cv := $configVariables }}
+                    {{- if hasKey $cv "expr" }}
                 {{ "{{-" }} $cv_{{ $cvName }} := (printf "%v" ({{ $cv.expr }})) {{ "}}" }}
-                  {{- else }}
+                    {{- else }}
                 {{ "{{-" }} $cv_{{ $cvName }} := {{ $cv.value | quote }} {{ "}}" }}
+                    {{- end }}
                   {{- end }}
-                {{- end }}
-                {{- if $configVariables }}
                 {{ "{{-" }} $renderedConfig = ($renderedConfig | toJson{{ $cvChain }} | fromJson) {{ "}}" }}
                 {{- end }}
                 {{- /* set, not merge: this entry is already the full cluster>set>default merge, and */}}
