@@ -1,10 +1,12 @@
 {{- include "autoshift.validate-cluster-install" . }}
 {{- include "autoshift.validate-naming" . }}
+{{- include "autoshift.validate-gitops" . }}
+{{- $gitopsNamespace := include "autoshift.gitopsNamespace" . -}}
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
   name: "{{ .Release.Name }}-policies"
-  namespace: {{ .Values.gitopsNamespace }}
+  namespace: {{ $gitopsNamespace }}
   labels:
     velero.io/exclude-from-backup: "true"
 spec:
@@ -63,22 +65,11 @@ spec:
           - path: .
             repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
             targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
-            plugin:
-              name: policy-generator
-              env:
-              - name: POLICY_NAMESPACE
-                value: {{ printf "policies-%s" .Release.Name }}
-              # inform when autoshift.dryRun, else enforce
-              - name: REMEDIATION
-                value: {{ if ((.Values.autoshift).dryRun) }}inform{{ else }}enforce{{ end }}
-              - name: EVAL_COMPLIANT
-                value: '{{ (((.Values.autoshift).evaluationInterval).compliant) | default "10m" }}'
-              - name: EVAL_NONCOMPLIANT
-                value: '{{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}'
-              # versionedClusterSets suffix (empty unless versionedClusterSets); appended to
-              # managedClusterSet names by cluster-install so installed clusters join the versioned set.
-              - name: CLUSTER_SET_SUFFIX
-                value: '{{ include "autoshift.clusterSetSuffix" . }}'
+            # OCI mode is ALWAYS prerendered Helm charts (rendered in CI by `make render-policy-charts`);
+            # the policy-generator CMP is never used for OCI. Same valuesObject contract as the holdouts.
+            helm:
+              valuesObject:
+                {{- include "autoshift.policyValuesObject" . | nindent 16 }}
   {{- else }}
   # Git mode - discover policies from Git repository by MARKER FILE (hybrid Helm + Kustomize).
   #   dir with kustomization.yaml            -> PolicyGenerator via the repo-server CMP plugin

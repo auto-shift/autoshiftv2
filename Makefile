@@ -162,6 +162,15 @@ package-charts: ## Package all Helm charts
 	@echo ""
 	@printf "$(GREEN)✓$(NC) Packaged charts: $(shell ls -1 $(CHARTS_DIR)/bootstrap/ | wc -l | tr -d ' ') bootstrap + $(shell ls -1 $(CHARTS_DIR)/policies/ | wc -l | tr -d ' ') policies + 1 main\n"
 
+.PHONY: render-policy-charts
+render-policy-charts: ## Render PolicyGenerator policies into stock Helm charts (CI release; no CMP needed by consumers)
+	@printf "$(BLUE)[INFO]$(NC) Rendering $(words $(POLICY_PG_NAMES)) PolicyGenerator policies into Helm charts...\n"
+	@test -x $(TOOLS_DIR)/kustomize || { printf "$(RED)[ERROR]$(NC) $(TOOLS_DIR)/kustomize missing — run 'make install-policy-generator' first\n"; exit 1; }
+	@mkdir -p $(CHARTS_DIR)/policies
+	@KUSTOMIZE=$(TOOLS_DIR)/kustomize KUSTOMIZE_PLUGIN_HOME=$(KUSTOMIZE_PLUGIN_HOME) CHARTS_DIR=$(CHARTS_DIR) VERSION=$(VERSION) \
+		scripts/render-policygen-charts.sh $(POLICY_PG_DIRS)
+	@printf "$(GREEN)✓$(NC) Rendered $(words $(POLICY_PG_NAMES)) policies into $(CHARTS_DIR)/policies/\n"
+
 .PHONY: push-charts
 push-charts: ## Push charts to OCI registry with namespaced paths
 	@if [ "$(DRY_RUN)" = "true" ]; then \
@@ -261,7 +270,7 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@printf "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/\n"
 
 .PHONY: release
-release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts push-policies-oci tag-latest generate-artifacts ## Full release process (add INCLUDE_MIRROR=false to skip mirror artifacts)
+release: validate validate-version clean sync-values update-versions generate-policy-list install-policy-generator package-charts render-policy-charts push-charts tag-latest generate-artifacts ## Full release process (add INCLUDE_MIRROR=false to skip mirror artifacts)
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
 		printf "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
 		$(MAKE) generate-imageset VERSION=$(VERSION) || { \

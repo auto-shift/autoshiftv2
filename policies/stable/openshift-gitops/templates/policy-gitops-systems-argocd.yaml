@@ -101,6 +101,7 @@ spec:
                   name: {{ .Values.gitops.argoName }}
                   namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
+                  disableAdmin: {{ .Values.gitops.disableAdmin | default false }}
                   server:
                     {{- if ((($.Values.gitops.server).autoscale).enabled | default false) }}
                     autoscale:
@@ -154,6 +155,7 @@ spec:
                       requests:
                         cpu: {{ ((.Values.gitops.repo).requests).cpu | default "250m" }}
                         memory: {{ ((.Values.gitops.repo).requests).memory | default "256Mi" }}
+                    {{- if (.Values.gitops.policyGenerator).enabled }}
                     env:
                       - name: POLICY_GEN_ENABLE_HELM
                         value: "true"
@@ -204,15 +206,19 @@ spec:
                             mountPath: /tmp
                           - name: policy-generator
                             mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+                    {{- end }}
                     volumeMounts:
+                      {{- if (.Values.gitops.policyGenerator).enabled }}
                       - name: policy-generator
                         mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+                      {{- end }}
                       {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default "{{ .Values.gitops.repo.cluster_ca_bundle }}") "true" {{ "hub}}" }}
                       - name: user-ca-bundle
                         mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
                         subPath: ca-bundle.crt
                       {{ "{{hub-" }} end {{ "hub}}" }}
                     volumes:
+                      {{- if (.Values.gitops.policyGenerator).enabled }}
                       - name: policy-generator
                         emptyDir: {}
                       - name: policy-generator-cmp-config
@@ -220,6 +226,7 @@ spec:
                           name: policy-generator-cmp-plugin
                       - name: cmp-tmp
                         emptyDir: {}
+                      {{- end }}
                       {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default "{{ .Values.gitops.repo.cluster_ca_bundle }}") "true" {{ "hub}}" }}
                       - name: user-ca-bundle
                         configMap:

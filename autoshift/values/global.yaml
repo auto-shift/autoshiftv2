@@ -19,6 +19,17 @@ autoshiftGitBranchTag: main
 # Per-cluster overrides use the autoshift.io/gitops-namespace label
 gitopsNamespace: openshift-gitops
 
+# Does this deployment render policies through the policy-generator CMP sidecar?
+# - GIT/source mode RENDERS PolicyGenerator dirs live via the CMP, so it REQUIRES policyGenerator: true
+#   (validation fails otherwise). true installs the CMP sidecar in the infra ArgoCD repo-server.
+# - OCI mode ships PRERENDERED Helm charts (built in CI by `make render-policy-charts`) and NEVER uses
+#   the CMP, so an OCI-only deployment sets policyGenerator: false (validation fails if true in OCI).
+# The default below is true because the default deploy mode is git/source (no autoshiftOciRegistry);
+# OCI-only deployments set autoshiftOciRegistry AND policyGenerator: false.
+# This is the FLEET-WIDE default; a hub can override it in its self-managed clusterset under
+# config.gitops.policyGenerator (see clustersets/_example.yaml).
+policyGenerator: true
+
 # Optional: Enable versioned ClusterSet names for gradual rollout
 # When true, appends version/branch to all clusterset names
 # - OCI mode: uses autoshiftOciVersion (defaults to "latest", e.g., "hub" -> "hub-0-0-1")

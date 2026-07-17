@@ -1,3 +1,4 @@
+{{- include "openshift-gitops.validate-gitops" . }}
 ---
 apiVersion: argoproj.io/v1beta1
 kind: ArgoCD
@@ -46,7 +47,10 @@ spec:
     scopes: '[groups]'
   repo:
     {{- $caBundle := .Values.gitops.repo.cluster_ca_bundle }}
-    {{- $pg := (.Values.gitops.policyGenerator) }}
+    {{- $pg := (.Values.gitops.policyGenerator | default dict) }}
+    {{- /* Install the policy-generator CMP sidecar only when enabled (git/source bootstrap); OCI-only
+           bootstrap sets false. Default true for backwards compatibility. */}}
+    {{- $pgEnabled := ternary ($pg.enabled) true (hasKey $pg "enabled") }}
     {{- /* Declared at repo scope so they're visible in the initContainers/sidecar blocks below. */}}
     {{- $acmImage := ($pg).subscriptionImage }}
     {{- $argoImage := ($pg).sidecarImage }}
@@ -56,21 +60,25 @@ spec:
     {{- if $acmDep }}{{- $acmImage = (index $acmDep.spec.template.spec.containers 0).image }}{{- end }}
     {{- $argoDep := (lookup "apps/v1" "Deployment" .Values.gitops.argoNamespace (printf "%s-repo-server" .Values.gitops.argoName)) }}
     {{- if $argoDep }}{{- $argoImage = (index $argoDep.spec.template.spec.containers 0).image }}{{- end }}
+    {{- if or $pgEnabled $caBundle }}
     volumeMounts:
       {{- if $caBundle }}
       - name: user-ca-bundle
         mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
         subPath: ca-bundle.crt
       {{- end }}
+      {{- if $pgEnabled }}
       # PG binary (staged by the init container) at the kustomize plugin home.
       - name: policy-generator
         mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+      {{- end }}
     volumes:
       {{- if $caBundle }}
       - name: user-ca-bundle
         configMap:
           name: user-ca-bundle
       {{- end }}
+      {{- if $pgEnabled }}
       - name: policy-generator
         emptyDir: {}
       - name: policy-generator-cmp-config
@@ -78,6 +86,9 @@ spec:
           name: policy-generator-cmp-plugin
       - name: cmp-tmp
         emptyDir: {}
+      {{- end }}
+    {{- end }}
+    {{- if $pgEnabled }}
     env:
       # Let PolicyGenerator inflate Helm charts referenced as manifest input.
       - name: POLICY_GEN_ENABLE_HELM
@@ -138,6 +149,7 @@ spec:
           # PolicyGenerator binary from ACM (staged by the init container) at the plugin home.
           - name: policy-generator
             mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+    {{- end }}
     resources:
       limits:
         cpu: {{ ((.Values.gitops.repo).limits).cpu | default "1000m" }}
