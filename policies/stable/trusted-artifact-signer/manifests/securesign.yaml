@@ -1,0 +1,67 @@
+# Securesign CR (Fulcio, Rekor, Trillian, CTlog, TUF, TSA) in the tssc-tas namespace, plus the
+# tssc-tas-integration secret advertising rekor/tuf URLs to pipelines + RHDH. Fulcio uses Keycloak
+# OIDC — the issuer is derived from cluster DNS so it matches the Keycloak Route. Org name from
+# config.tas.orgName; realm from config.keycloak.realmName.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $realm := (index (index $cfg "keycloak" | default dict) "realmName" | default "tssc-iam") hub}}
+  {{hub- $orgName := (index (index $cfg "tas" | default dict) "orgName" | default "TSSC") hub}}
+  {{hub- $ns := "tssc-tas" hub}}
+  {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
+  {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
+  {{- $appsDomain := printf "apps.%s" $baseDomain }}
+  {{- $oidcIssuer := printf "https://keycloak.%s/realms/{{hub $realm hub}}" $appsDomain }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: '{{hub $ns hub}}'
+        labels:
+          openshift.io/cluster-monitoring: "true"
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rhtas.redhat.com/v1alpha1
+      kind: Securesign
+      metadata:
+        name: trusted-artifact-signer
+        namespace: '{{hub $ns hub}}'
+      spec:
+        fulcio:
+          externalAccess:
+            enabled: true
+          certificate:
+            commonName: 'fulcio.{{ $appsDomain }}'
+            organizationEmail: 'tas@{{ $baseDomain }}'
+            organizationName: '{{hub $orgName hub}}'
+          config:
+            OIDCIssuers:
+              - Issuer: '{{ $oidcIssuer }}'
+                IssuerURL: '{{ $oidcIssuer }}'
+                ClientID: trusted-artifact-signer
+                Type: email
+        rekor:
+          externalAccess:
+            enabled: true
+          rekorSearchUI:
+            enabled: true
+          signer:
+            kms: secret
+        trillian:
+          database:
+            create: true
+        tuf:
+          externalAccess:
+            enabled: true
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tssc-tas-integration
+        namespace: '{{hub $ns hub}}'
+      type: Opaque
+      stringData:
+        rekor_url: 'https://rekor-server-{{hub $ns hub}}.{{ $appsDomain }}'
+        tuf_url: 'https://tuf-{{hub $ns hub}}.{{ $appsDomain }}'

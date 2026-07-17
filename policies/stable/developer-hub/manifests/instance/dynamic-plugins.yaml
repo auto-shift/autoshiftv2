@@ -1,0 +1,159 @@
+# Backstage dynamic plugins. Core RHADS plugins (Tekton CI, multi-source security viewer, Kubernetes,
+# Topology, TechDocs, RBAC, Keycloak catalog) are always included; ArgoCD, GitLab, and GitHub plugins
+# are gated on config.devHub.scm / the gitops-dev label.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $scm := (index (index $cfg "devHub" | default dict) "scm" | default dict) hub}}
+  {{hub- $ghEnabled := (index $scm "github" | default false) hub}}
+  {{hub- $glEnabled := (index $scm "gitlab" | default false) hub}}
+  {{hub- $quayEnabled := eq (index .ManagedClusterLabels "autoshift.io/quay" | default "false") "true" hub}}
+  {{hub- $ns := "tssc-dh" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: tssc-developer-hub-dynamic-plugins
+        namespace: '{{hub $ns hub}}'
+      data:
+        dynamic-plugins.yaml: |
+          includes:
+            - dynamic-plugins.default.yaml
+          plugins:
+            # CI (Tekton)
+            - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-tekton:bs_1.45.3__3.33.3'
+              disabled: false
+              pluginConfig:
+                dynamicPlugins:
+                  frontend:
+                    backstage-community.plugin-tekton:
+                      mountPoints:
+                        - config:
+                            if:
+                              allOf:
+                                - isTektonCIAvailable
+                            layout:
+                              gridColumn: 1 / -1
+                              gridRowStart: 1
+                          importName: TektonCI
+                          mountPoint: entity.page.ci/cards
+            # Multi-source security viewer (CI/security)
+            - package: 'oci://quay.io/redhat-tssc/backstage-plugins:1.9.0!tssc-plugins-backstage-community-plugin-multi-source-security-viewer'
+              disabled: false
+              pluginConfig:
+                dynamicPlugins:
+                  frontend:
+                    tssc-plugins.backstage-community-plugin-multi-source-security-viewer:
+                      mountPoints:
+                        - config:
+                            layout:
+                              gridColumn: 1 / -1
+                              gridRowStart: 2
+                            if:
+                              allOf:
+                                - isMultiCIAvailable
+                          importName: EntityMultiCIPipelinesContent
+                          mountPoint: entity.page.ci/cards
+                      entityTabs:
+                        - path: /ci
+                          title: CI
+                          mountPoint: entity.page.ci
+            - package: 'oci://quay.io/redhat-tssc/backstage-plugins:1.9.0!tssc-plugins-backstage-community-plugin-multi-source-security-viewer-backend'
+              disabled: false
+            # ArgoCD (wired to the infra openshift-gitops instance)
+            - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-argocd:bs_1.45.3__2.4.3'
+              disabled: false
+            - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-argocd-backend:bs_1.45.3__1.0.2'
+              disabled: false
+              pluginConfig:
+                argocd:
+                  appLocatorMethods:
+                    - type: 'config'
+                      instances: []
+            - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/roadiehq-scaffolder-backend-argocd:bs_1.45.3__1.8.1'
+              disabled: false
+              pluginConfig:
+                argocd:
+                  appLocatorMethods:
+                    - type: 'config'
+                      instances: []
+            # Kubernetes
+            - package: './dynamic-plugins/dist/backstage-plugin-kubernetes'
+              disabled: false
+            - package: './dynamic-plugins/dist/backstage-plugin-kubernetes-backend-dynamic'
+              disabled: false
+              pluginConfig:
+                kubernetes:
+                  clusterLocatorMethods:
+                    - clusters:
+                        - authProvider: serviceAccount
+                          customResources:
+                            - group: argoproj.io
+                              apiVersion: v1alpha1
+                              plural: rollouts
+                            - apiVersion: v1
+                              group: route.openshift.io
+                              plural: routes
+                            - apiVersion: v1
+                              group: tekton.dev
+                              plural: pipelineruns
+                            - apiVersion: v1
+                              group: tekton.dev
+                              plural: taskruns
+                          name: rhdh-cluster
+                          serviceAccountToken: ${K8S_SERVICEACCOUNT_TOKEN}
+                          skipTLSVerify: true
+                          url: https://kubernetes.default.svc
+                      type: config
+                  serviceLocatorMethod:
+                    type: multiTenant
+            - package: './dynamic-plugins/dist/backstage-community-plugin-topology'
+              disabled: false
+            {{hub- if $glEnabled hub}}
+            # GitLab
+            - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/immobiliarelabs-backstage-plugin-gitlab:bs_1.45.3__6.13.0'
+              disabled: false
+              pluginConfig:
+                dynamicPlugins:
+                  frontend:
+                    immobiliarelabs.backstage-plugin-gitlab:
+                      mountPoints:
+                        - mountPoint: entity.page.ci/cards
+                          importName: EntityGitlabPipelinesTable
+                          config:
+                            layout:
+                              gridColumn: "1 / -1"
+                            if:
+                              allOf:
+                                - isGitlabAvailable
+                                - hasAnnotation:
+                                    - gitlab.com/enabled
+            - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/immobiliarelabs-backstage-plugin-gitlab-backend:bs_1.45.3__6.13.0'
+              disabled: false
+            - package: './dynamic-plugins/dist/backstage-plugin-scaffolder-backend-module-gitlab-dynamic'
+              disabled: false
+            {{hub- end hub}}
+            {{hub- if $ghEnabled hub}}
+            # GitHub
+            - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-github-actions:bs_1.45.3__0.18.0'
+              disabled: false
+            - package: './dynamic-plugins/dist/backstage-plugin-scaffolder-backend-module-github-dynamic'
+              disabled: false
+            {{hub- end hub}}
+            {{hub- if $quayEnabled hub}}
+            # Quay (image registry — tags, security scan results)
+            - package: 'oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-community-plugin-quay:bs_1.45.3__1.28.1'
+              disabled: false
+            {{hub- end hub}}
+            # TechDocs
+            - package: './dynamic-plugins/dist/backstage-plugin-techdocs'
+              disabled: false
+            - package: './dynamic-plugins/dist/backstage-plugin-techdocs-backend-dynamic'
+              disabled: false
+            # RBAC
+            - package: './dynamic-plugins/dist/backstage-community-plugin-rbac'
+              disabled: false
+            # Keycloak catalog
+            - package: './dynamic-plugins/dist/backstage-community-plugin-catalog-backend-module-keycloak-dynamic'
+              disabled: false

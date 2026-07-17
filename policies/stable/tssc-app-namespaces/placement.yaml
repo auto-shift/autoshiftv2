@@ -1,0 +1,21 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-tssc-app-namespaces
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Gated on dev-hub: the app pipeline namespaces are part of the RHADS/TSSC bundle. The actual set of
+  # namespaces created is driven by config.appNamespaces (empty config -> the policy is a no-op).
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/dev-hub'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

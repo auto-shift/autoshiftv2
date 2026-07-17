@@ -2,22 +2,20 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: PolicyGenerator
 metadata:
   name: developer-hub
-# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
-# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
-# templates contain `$vars` that substitution would clobber.
-#
-# manifests[].path is a DIRECTORY: drop a new manifest into manifests/ and it is picked up
-# automatically — no edit to this file needed. Only edit this file to change the policy graph
-# itself (names, dependencies, per-policy remediation). Keep placement.yaml OUT of manifests/
-# (a Placement inside a wildcarded dir would be wrapped into the Policy as a managed object).
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# Policy names use the short "policy-dh-*" prefix to keep the replicated <namespace>.<policyname>
+# under 63 chars. The Backstage instance lives in the tssc-dh namespace. SCM providers come from
+# config.devHub.scm; the security integrations (acs/tpa/tas) are gated on their operator labels.
+placementBindingDefaults:
+  name: binding-policy-dh
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
   # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
   remediationAction: ${REMEDIATION}
   severity: high
-  # Consolidate the raw Namespace into one generated ConfigurationPolicy; the first-class
-  # OperatorPolicy stays its own policy-template. Net: one Policy, two policy-templates.
-  consolidateManifests: true
+  consolidateManifests: false
   evaluationInterval:
     compliant: ${EVAL_COMPLIANT}
     noncompliant: ${EVAL_NONCOMPLIANT}
@@ -27,11 +25,57 @@ policyDefaults:
     - CM Configuration Management
   controls:
     - CM-2 Baseline Configuration
-  # Placement authored by us (placement.yaml at the dir root, full fidelity); PG includes it and
-  # generates only the PlacementBinding.
   placement:
     placementPath: placement.yaml
 policies:
+  # Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
   - name: policy-developer-hub-operator-install
     manifests:
-      - path: manifests
+      - path: manifests/operator-install
+  # Instance namespace + Kubernetes-plugin ServiceAccount/token/RBAC.
+  - name: policy-dh-namespace
+    dependencies:
+      - name: policy-developer-hub-operator-install
+    manifests:
+      - path: manifests/instance/namespace.yaml
+  # Backstage app-config ConfigMap.
+  - name: policy-dh-app-config
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-dh-namespace
+    manifests:
+      - path: manifests/instance/app-config.yaml
+  # Dynamic plugins ConfigMap.
+  - name: policy-dh-dynamic-plugins
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-dh-namespace
+    manifests:
+      - path: manifests/instance/dynamic-plugins.yaml
+  # Deterministic backend signing secret.
+  - name: policy-dh-backend-secret
+    dependencies:
+      - name: policy-dh-namespace
+    manifests:
+      - path: manifests/instance/backend-secret.yaml
+  # Env Secret assembling ${VAR} values from the integration secrets.
+  - name: policy-dh-env
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-dh-backend-secret
+    manifests:
+      - path: manifests/instance/env-secret.yaml
+  # Backstage CR.
+  - name: policy-dh-instance
+    dependencies:
+      - name: policy-dh-env
+    manifests:
+      - path: manifests/instance/backstage.yaml
+  # Readiness gate (inform): Backstage CR reports Deployed.
+  - name: policy-dh-instance-test
+    remediationAction: inform
+    manifests:
+      - path: test/backstage-ready.yaml

@@ -1,0 +1,19 @@
+# tssc-acs-integration secret (endpoint + token) for the RHADS/TSSC flow — consumed by RHDH and the
+# app-namespace rox-api-token. Created only when dev-hub is enabled. The endpoint is the Central host
+# (from the sensor-tls secret, same idiom as console-link); the token is a pre-created ACS API token
+# supplied by the admin in the hub secret tssc-acs-integration (key: token) — ACS declarative config
+# cannot mint API tokens, so this one value is bootstrapped once on the hub and propagated here.
+object-templates-raw: |
+  {{hub- if eq (index .ManagedClusterLabels "autoshift.io/dev-hub" | default "false") "true" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tssc-acs-integration
+        namespace: stackrox
+      type: Opaque
+      stringData:
+        endpoint: 'https://{{ fromSecret "stackrox" "sensor-tls" "acs-host" | base64dec }}'
+        token: '{{hub fromSecret .PolicyMetadata.namespace "tssc-acs-integration" "token" hub}}'
+  {{hub- end hub}}

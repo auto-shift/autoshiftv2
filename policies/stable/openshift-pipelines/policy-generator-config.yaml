@@ -2,22 +2,18 @@ apiVersion: policy.open-cluster-management.io/v1
 kind: PolicyGenerator
 metadata:
   name: openshift-pipelines
-# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
-# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
-# templates contain `$vars` that substitution would clobber.
-#
-# manifests[].path is a DIRECTORY: drop a new manifest into manifests/ and it is picked up
-# automatically — no edit to this file needed. Only edit this file to change the policy graph
-# itself (names, dependencies, per-policy remediation). Keep placement.yaml OUT of manifests/
-# (a Placement inside a wildcarded dir would be wrapped into the Policy as a managed object).
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+# The operator installs cluster-wide (openshift-operators). The tssc-config policy layers Tekton
+# Chains signing onto the singleton TektonConfig, but only when TAS is enabled (see tssc-config.yaml).
+placementBindingDefaults:
+  name: binding-policy-pipelines
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
   # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
   remediationAction: ${REMEDIATION}
   severity: high
-  # Consolidate the raw Namespace into one generated ConfigurationPolicy; the first-class
-  # OperatorPolicy stays its own policy-template. Net: one Policy, two policy-templates.
-  consolidateManifests: true
+  consolidateManifests: false
   evaluationInterval:
     compliant: ${EVAL_COMPLIANT}
     noncompliant: ${EVAL_NONCOMPLIANT}
@@ -27,11 +23,16 @@ policyDefaults:
     - CM Configuration Management
   controls:
     - CM-2 Baseline Configuration
-  # Placement authored by us (placement.yaml at the dir root, full fidelity); PG includes it and
-  # generates only the PlacementBinding.
   placement:
     placementPath: placement.yaml
 policies:
+  # Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
   - name: policy-pipelines-operator-install
     manifests:
-      - path: manifests
+      - path: manifests/operator-install
+  # Tekton Chains signing + Rekor transparency on the TektonConfig (only when TAS is enabled).
+  - name: policy-pipelines-tssc-config
+    dependencies:
+      - name: policy-pipelines-operator-install
+    manifests:
+      - path: manifests/tssc-config.yaml

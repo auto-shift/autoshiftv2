@@ -1,0 +1,184 @@
+# TPA PostgreSQL database. Config from config.tpa.db (rendered-config). Three modes via
+# config.tpa.db.mode: cnpg (default, needs the cloudnative-pg operator), simple (rhel9 postgres
+# Deployment + PVC; password from the hub tssc-tpa-config secret, key db-password), external (none).
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $db := (index (index $cfg "tpa" | default dict) "db" | default dict) hub}}
+  {{hub- $mode := (index $db "mode" | default "cnpg") hub}}
+  {{hub- $cluster := (index $db "clusterName" | default "tpa-pgsql") hub}}
+  {{hub- $sc := (index $db "storageClass" | default "") hub}}
+  {{hub- $size := (index $db "storage" | default "50Gi") hub}}
+  {{hub- $pooler := (index $db "pooler" | default dict) hub}}
+  {{hub- $ns := "tssc-tpa" hub}}
+  {{hub- if eq $mode "cnpg" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: '{{hub $cluster hub}}'
+        namespace: '{{hub $ns hub}}'
+      spec:
+        instances: {{hub index $db "instances" | default 2 hub}}
+        postgresql:
+          parameters:
+            max_connections: "200"
+            shared_buffers: 256MB
+        bootstrap:
+          initdb:
+            database: tpa
+            owner: tpa
+        storage:
+          size: '{{hub $size hub}}'
+          {{hub- if ne $sc "" hub}}
+          storageClass: '{{hub $sc hub}}'
+          {{hub- end hub}}
+        resources:
+          requests:
+            cpu: "250m"
+            memory: 512Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+        affinity:
+          enablePodAntiAffinity: true
+          topologyKey: kubernetes.io/hostname
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Pooler
+      metadata:
+        name: '{{hub $cluster hub}}-pooler-rw'
+        namespace: '{{hub $ns hub}}'
+      spec:
+        cluster:
+          name: '{{hub $cluster hub}}'
+        instances: {{hub index $pooler "instances" | default 2 hub}}
+        type: rw
+        pgbouncer:
+          poolMode: session
+          parameters:
+            max_client_conn: "{{hub index $pooler "maxClientConn" | default 400 hub}}"
+            default_pool_size: "{{hub index $pooler "poolSize" | default 40 hub}}"
+            min_pool_size: "{{hub index $pooler "minPoolSize" | default 5 hub}}"
+            reserve_pool_size: "{{hub index $pooler "reservePoolSize" | default 10 hub}}"
+            server_reset_query: DISCARD ALL
+        template:
+          spec:
+            containers:
+              - name: pgbouncer
+                resources:
+                  requests:
+                    cpu: 50m
+                    memory: 64Mi
+                  limits:
+                    cpu: 200m
+                    memory: 128Mi
+            affinity:
+              podAntiAffinity:
+                preferredDuringSchedulingIgnoredDuringExecution:
+                  - weight: 1
+                    podAffinityTerm:
+                      topologyKey: kubernetes.io/hostname
+                      labelSelector:
+                        matchLabels:
+                          cnpg.io/poolerName: '{{hub $cluster hub}}-pooler-rw'
+  {{hub- else if eq $mode "simple" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: '{{hub $cluster hub}}'
+        namespace: '{{hub $ns hub}}'
+      type: Opaque
+      data:
+        username: '{{hub index $db "user" | default "tpa" | b64enc hub}}'
+        password: '{{hub fromSecret .PolicyMetadata.namespace "tssc-tpa-config" "db-password" | b64enc hub}}'
+        database: '{{hub "tpa" | b64enc hub}}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: '{{hub $cluster hub}}-data'
+        namespace: '{{hub $ns hub}}'
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: '{{hub $size hub}}'
+        {{hub- if ne $sc "" hub}}
+        storageClassName: '{{hub $sc hub}}'
+        {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: '{{hub $cluster hub}}'
+        namespace: '{{hub $ns hub}}'
+        labels:
+          app: '{{hub $cluster hub}}'
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: '{{hub $cluster hub}}'
+        template:
+          metadata:
+            labels:
+              app: '{{hub $cluster hub}}'
+          spec:
+            containers:
+              - name: postgresql
+                image: '{{hub index $db "image" | default "registry.redhat.io/rhel9/postgresql-16:latest" hub}}'
+                ports:
+                  - containerPort: 5432
+                    name: postgresql
+                env:
+                  - name: POSTGRESQL_USER
+                    valueFrom:
+                      secretKeyRef:
+                        name: '{{hub $cluster hub}}'
+                        key: username
+                  - name: POSTGRESQL_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: '{{hub $cluster hub}}'
+                        key: password
+                  - name: POSTGRESQL_DATABASE
+                    valueFrom:
+                      secretKeyRef:
+                        name: '{{hub $cluster hub}}'
+                        key: database
+                volumeMounts:
+                  - name: data
+                    mountPath: /var/lib/pgsql/data
+                resources:
+                  requests:
+                    cpu: 250m
+                    memory: 512Mi
+                  limits:
+                    cpu: "1"
+                    memory: 2Gi
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: '{{hub $cluster hub}}-data'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: '{{hub $cluster hub}}'
+        namespace: '{{hub $ns hub}}'
+      spec:
+        selector:
+          app: '{{hub $cluster hub}}'
+        ports:
+          - port: 5432
+            targetPort: 5432
+  {{hub- end hub}}

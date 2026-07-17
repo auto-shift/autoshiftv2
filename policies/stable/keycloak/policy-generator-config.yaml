@@ -1,0 +1,73 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: keycloak
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a
+# wildcard: drop a file in, no config edit). Keep placement.yaml at the dir root, NOT inside a
+# wildcarded manifests dir. Per-deployment scalars (${...}) live here and in placement.yaml only —
+# never in manifests/, whose hub templates contain $vars that substitution would clobber.
+#
+# The Keycloak PostgreSQL DB has three modes (autoshift.io/keycloak-db-mode): cnpg (default, needs
+# the cloudnative-pg operator — enable autoshift.io/cloudnative-pg), simple, external. The database
+# policy has NO hard dependency on the CNPG operator policy so simple/external work without it.
+placementBindingDefaults:
+  name: binding-policy-keycloak
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-keycloak-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # PostgreSQL database (cnpg / simple / external, from config.keycloak.db). simple mode reads
+  # db-password from the hub tssc-keycloak-config secret, so it needs the elevated SA.
+  - name: policy-keycloak-database
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-keycloak-operator-install
+    manifests:
+      - path: manifests/database.yaml
+  # Keycloak CR + TLS Service.
+  - name: policy-keycloak-instance
+    dependencies:
+      - name: policy-keycloak-database
+    manifests:
+      - path: manifests/instance.yaml
+  # Readiness gate (inform): Keycloak CR reports Ready.
+  - name: policy-keycloak-instance-test
+    remediationAction: inform
+    manifests:
+      - path: test/keycloak-ready.yaml
+  # Realm client secrets propagated from the hub tssc-keycloak-config secret (needs elevated SA).
+  - name: policy-keycloak-realm-secrets
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-keycloak-operator-install
+    manifests:
+      - path: manifests/realm-secrets.yaml
+  # Realm import with per-component OIDC clients.
+  - name: policy-keycloak-realm-import
+    dependencies:
+      - name: policy-keycloak-instance
+    manifests:
+      - path: manifests/realm-import.yaml

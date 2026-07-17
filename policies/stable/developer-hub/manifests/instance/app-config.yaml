@@ -1,0 +1,130 @@
+# Backstage app-config. SCM providers (github/gitlab) come from config.devHub.scm; the security
+# integrations (acs/tpa/tas) are gated on their operator labels. ${VAR} references are populated by
+# the tssc-developer-hub-env Secret (env-secret.yaml).
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $dh := (index $cfg "devHub" | default dict) hub}}
+  {{hub- $scm := (index $dh "scm" | default dict) hub}}
+  {{hub- $title := (index $dh "title" | default "Red Hat Developer Hub") hub}}
+  {{hub- $realm := (index (index $cfg "keycloak" | default dict) "realmName" | default "tssc-iam") hub}}
+  {{hub- $ghEnabled := (index $scm "github" | default false) hub}}
+  {{hub- $glEnabled := (index $scm "gitlab" | default false) hub}}
+  {{hub- $acsEnabled := eq (index .ManagedClusterLabels "autoshift.io/acs" | default "false") "true" hub}}
+  {{hub- $tpaEnabled := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false") "true" hub}}
+  {{hub- $tasEnabled := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
+  {{hub- $quayEnabled := eq (index .ManagedClusterLabels "autoshift.io/quay" | default "false") "true" hub}}
+  {{hub- $ns := "tssc-dh" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: tssc-developer-hub-app-config
+        namespace: '{{hub $ns hub}}'
+      data:
+        app-config.tssc.yaml: |
+          app:
+            title: '{{hub $title hub}}'
+            baseUrl: ${BACKEND_URL}
+          backend:
+            auth:
+              externalAccess:
+                - type: static
+                  options:
+                    token: ${BACKEND_SECRET}
+                    subject: legacy
+            baseUrl: ${BACKEND_URL}
+            cors:
+              origin: ${BACKEND_URL}
+          auth:
+            environment: production
+            providers:
+              oidc:
+                production:
+                  metadataUrl: ${KEYCLOAK_URL}/realms/{{hub $realm hub}}/.well-known/openid-configuration
+                  clientId: ${KEYCLOAK_CLIENT_ID}
+                  clientSecret: ${KEYCLOAK_CLIENT_SECRET}
+                  scope: openid email profile groups
+                  prompt: auto
+                  signIn:
+                    resolvers:
+                      - resolver: preferredUsernameMatchingUserEntityName
+          signInPage: oidc
+          {{hub- if $quayEnabled hub}}
+          proxy:
+            endpoints:
+              '/quay/api':
+                target: ${QUAY_URL}
+                changeOrigin: true
+                headers:
+                  X-Requested-With: 'XMLHttpRequest'
+                  Authorization: 'Bearer ${QUAY_API_TOKEN}'
+                secure: true
+          {{hub- end hub}}
+          catalog:
+            rules:
+              - allow: [Component, System, Group, Resource, Location, Template, API]
+            locations: []
+            {{hub- if or $glEnabled $ghEnabled hub}}
+            providers:
+              {{hub- if $glEnabled hub}}
+              gitlab:
+                default:
+                  host: ${GITLAB_HOST}
+                  branch: main
+                  fallbackBranch: master
+                  entityFilename: catalog-info.yaml
+                  projectPattern: '[\s\S]*'
+              {{hub- end hub}}
+              {{hub- if $ghEnabled hub}}
+              github:
+                default:
+                  organization: ${GITHUB_ORG}
+                  catalogPath: /catalog-info.yaml
+                  filters:
+                    branch: main
+              {{hub- end hub}}
+            {{hub- end hub}}
+          argocd:
+            appLocatorMethods:
+              - type: config
+                instances:
+                  - name: default
+                    url: https://${ARGOCD_HOSTNAME}
+                    token: ${ARGOCD_API_TOKEN}
+                    username: ${ARGOCD_USER}
+                    password: ${ARGOCD_PASSWORD}
+          {{hub- if or $glEnabled $ghEnabled hub}}
+          integrations:
+            {{hub- if $glEnabled hub}}
+            gitlab:
+              - host: ${GITLAB_HOST}
+                token: ${GITLAB_TOKEN}
+                apiBaseUrl: https://${GITLAB_HOST}/api/v4
+                baseUrl: https://${GITLAB_HOST}
+            {{hub- end hub}}
+            {{hub- if $ghEnabled hub}}
+            github:
+              - host: ${GITHUB_HOST}
+                token: ${GITHUB_TOKEN}
+            {{hub- end hub}}
+          {{hub- end hub}}
+          {{hub- if $acsEnabled hub}}
+          acs:
+            endpoint: ${ACS_ENDPOINT}
+            token: ${ACS_API_TOKEN}
+          {{hub- end hub}}
+          {{hub- if $tpaEnabled hub}}
+          trustification:
+            bombasticApiUrl: ${TPA_BOMBASTIC_API_URL}
+            vexinationApiUrl: ${TPA_VEXINATION_API_URL}
+          {{hub- end hub}}
+          {{hub- if $tasEnabled hub}}
+          tas:
+            rekorUrl: ${REKOR_URL}
+          {{hub- end hub}}
+          {{hub- if $quayEnabled hub}}
+          quay:
+            uiUrl: ${QUAY_URL}
+          {{hub- end hub}}

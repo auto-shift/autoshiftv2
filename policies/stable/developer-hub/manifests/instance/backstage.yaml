@@ -1,0 +1,23 @@
+# Backstage CR wiring the app-config, dynamic-plugins, and env Secret. The route host is left to the
+# operator default (backstage-developer-hub-tssc-dh.<appsDomain>) — the Keycloak realm redirect URIs and
+# the RHDH BACKEND_URL are derived to match that same operator-generated host.
+object-templates-raw: |
+  {{hub- $ns := "tssc-dh" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rhdh.redhat.com/v1alpha3
+      kind: Backstage
+      metadata:
+        name: developer-hub
+        namespace: '{{hub $ns hub}}'
+      spec:
+        application:
+          route:
+            enabled: true
+          appConfig:
+            configMaps:
+              - name: tssc-developer-hub-app-config
+          dynamicPluginsConfigMapName: tssc-developer-hub-dynamic-plugins
+          extraEnvs:
+            secrets:
+              - name: tssc-developer-hub-env

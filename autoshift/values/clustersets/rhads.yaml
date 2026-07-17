@@ -1,0 +1,140 @@
+# =============================================================================
+# Red Hat Advanced Developer Suite (RHADS / TSSC) — end-to-end pipelines overlay
+# =============================================================================
+# Composable overlay that turns on the full RHADS stack (Keycloak IAM, Trusted
+# Artifact Signer, Trusted Profile Analyzer, Advanced Cluster Security, OpenShift
+# Pipelines with Tekton Chains signing, and Red Hat Developer Hub) plus the app
+# pipeline namespaces. Layer it on top of a hub profile:
+#
+#   valueFiles:
+#     - values/global.yaml
+#     - values/clustersets/hub.yaml
+#     - values/clustersets/rhads.yaml
+#
+# The clusterset key below (hub) must match the clusterset key in the profile you
+# layer this onto — Helm deep-merges same-key maps.
+#
+# Operator install is label-driven; the instance/DB/realm/plugin configuration is
+# in the config: section (rendered per-cluster and read by the policies at runtime).
+hubClusterSets:
+  hub:
+    labels:
+      # Object storage foundation — NooBaa standalone (MCG only, PV-pool backing store off the default
+      # StorageClass). Provides the ObjectBucketClaims that Quay and GitLab need. No Ceph required.
+      odf: 'true'
+      odf-subscription-name: odf-operator
+      odf-channel: stable-4.20
+      odf-source: redhat-operators
+      odf-source-namespace: openshift-marketplace
+      odf-multi-cloud-gateway: standalone
+      odf-noobaa-pvpool: 'true'
+      odf-noobaa-store-size: '1'          # number of PV backing volumes
+      odf-noobaa-store-num-volumes: 100Gi # size of each backing volume
+
+      # PostgreSQL for Keycloak/TPA (cnpg mode, the default). Uses the CloudNativePG operator.
+      cloudnative-pg: 'true'
+      cloudnative-pg-subscription-name: cloudnative-pg
+      cloudnative-pg-channel: stable-v1
+      cloudnative-pg-source: certified-operators
+      cloudnative-pg-source-namespace: openshift-marketplace
+
+      # Keycloak (Red Hat Build of Keycloak) — IAM
+      keycloak: 'true'
+      keycloak-subscription-name: rhbk-operator
+      keycloak-channel: stable-v26
+      keycloak-source: redhat-operators
+      keycloak-source-namespace: openshift-marketplace
+
+      # Trusted Artifact Signer (Securesign: Fulcio/Rekor/Trillian/TUF)
+      tas: 'true'
+      tas-subscription-name: rhtas-operator
+      tas-channel: stable
+      tas-source: redhat-operators
+      tas-source-namespace: openshift-marketplace
+
+      # Trusted Profile Analyzer (SBOM/VEX)
+      trusted-profile-analyzer: 'true'
+      trusted-profile-analyzer-subscription-name: rhtpa-operator
+      trusted-profile-analyzer-channel: stable-v1.1
+      trusted-profile-analyzer-source: redhat-operators
+      trusted-profile-analyzer-source-namespace: openshift-marketplace
+
+      # Advanced Cluster Security
+      acs: 'true'
+      acs-subscription-name: rhacs-operator
+      acs-channel: stable
+      acs-source: redhat-operators
+      acs-source-namespace: openshift-marketplace
+
+      # OpenShift Pipelines (Tekton Chains signing wires on automatically when tas is enabled)
+      pipelines: 'true'
+      pipelines-subscription-name: openshift-pipelines-operator-rh
+      pipelines-channel: latest
+      pipelines-source: redhat-operators
+      pipelines-source-namespace: openshift-marketplace
+
+      # Red Hat Developer Hub (RHDH)
+      dev-hub: 'true'
+      dev-hub-subscription-name: rhdh
+      dev-hub-channel: fast-1.9
+      dev-hub-source: redhat-operators
+      dev-hub-source-namespace: openshift-marketplace
+
+      # OpenShift Dev Spaces (cloud IDE — RHDH surfaces "Open in Dev Spaces")
+      dev-spaces: 'true'
+      dev-spaces-subscription-name: devspaces
+      dev-spaces-channel: stable
+      dev-spaces-source: redhat-operators
+      dev-spaces-source-namespace: openshift-marketplace
+
+      # Quay (image registry). RHDH auto-wires the Quay proxy + plugin (tags/security scan) from the
+      # quay chart's registry-quay route + quay-integration token; pipelines push to it. Uses a NooBaa
+      # ObjectBucketClaim for registry storage.
+      quay: 'true'
+      quay-subscription-name: quay-operator
+      quay-channel: stable-3.17
+      quay-source: redhat-operators
+      quay-source-namespace: openshift-marketplace
+
+      # GitLab (SCM). RHDH wires GitLab as an SCM/catalog provider (config.devHub.scm.gitlab below).
+      # Uses CloudNativePG (already enabled) + a NooBaa ObjectBucketClaim.
+      gitlab: 'true'
+      gitlab-subscription-name: gitlab-operator-kubernetes
+      gitlab-channel: stable
+      gitlab-source: certified-operators
+      gitlab-source-namespace: openshift-marketplace
+    config:
+      keycloak:
+        realmName: tssc-iam
+        db:
+          mode: cnpg            # 'cnpg' (default), 'simple', or 'external'
+          storageClass: ''      # '' = cluster default StorageClass
+          storage: 50Gi
+      tpa:
+        db:
+          mode: cnpg
+          storageClass: ''
+          storage: 50Gi
+        storage:
+          size: 32Gi
+      tas:
+        orgName: TSSC
+      devHub:
+        title: Red Hat Developer Hub
+        scm:
+          gitlab: true          # wire GitLab as SCM (needs a GitLab PAT in gitlab-system/tssc-gitlab-credentials)
+          github: false         # set true + create tssc-github-credentials in github-system to wire GitHub
+      devSpaces:
+        storageClass: ''        # '' = cluster default
+        pvcStrategy: per-workspace
+      # Application pipeline namespaces — one entry per team/app. Each app gets
+      # {team}-{app}-{env} namespaces with the pipeline SA + signing/integration secrets.
+      appNamespaces:
+        example:
+          quarkus-app:
+            environments:
+              - ci
+              - development
+              - stage
+              - prod
+            gitProvider: gitlab

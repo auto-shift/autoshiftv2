@@ -1,0 +1,184 @@
+# KeycloakRealmImport — the tssc-iam realm with per-component OIDC clients. Client secrets are read
+# (spoke-side) from the Secrets realm-secrets.yaml propagated to the managed cluster; each client is
+# included only when its component label is set. Redirect URIs are built from the cluster apps domain.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $ns := "keycloak-system" hub}}
+  {{hub- $realm := (index (index $cfg "keycloak" | default dict) "realmName" | default "tssc-iam") hub}}
+  {{hub- $tasEnabled := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
+  {{hub- $tpaEnabled := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false") "true" hub}}
+  {{hub- $rhdhEnabled := eq (index .ManagedClusterLabels "autoshift.io/dev-hub" | default "false") "true" hub}}
+  {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
+  {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
+  {{- $appsDomain := printf "apps.%s" $baseDomain }}
+  {{- $tasSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "trusted-artifact-signer-clients" | default dict).data | default dict }}
+  {{- $tpaSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "tpa-realm-clients" | default dict).data | default dict }}
+  {{- $rhdhSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "rhdh-realm-clients" | default dict).data | default dict }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: k8s.keycloak.org/v2alpha1
+      kind: KeycloakRealmImport
+      metadata:
+        name: '{{hub $realm hub}}'
+        namespace: '{{hub $ns hub}}'
+        labels:
+          app: keycloak
+      spec:
+        keycloakCRName: keycloak
+        realm:
+          realm: '{{hub $realm hub}}'
+          displayName: TSSC IAM
+          enabled: true
+          accessCodeLifespan: 60
+          accessCodeLifespanLogin: 1800
+          accessCodeLifespanUserAction: 300
+          accessTokenLifespan: 300
+          accessTokenLifespanForImplicitFlow: 900
+          adminEventsDetailsEnabled: false
+          adminEventsEnabled: false
+          clientScopes:
+            - name: read:document
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+            - name: write:document
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+            - name: create:document
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+            - name: update:document
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+            - name: delete:document
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+          clients:
+          {{hub- if $tasEnabled hub}}
+            - clientId: trusted-artifact-signer
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $tasSecret "trustedArtifactSigner" | default "" | b64dec }}'
+              enabled: true
+              name: trusted-artifact-signer
+              description: Client for Red Hat Trusted Artifact Signer authentication
+              publicClient: true
+              bearerOnly: false
+              directAccessGrantsEnabled: true
+              standardFlowEnabled: true
+              fullScopeAllowed: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - profile
+                - email
+              optionalClientScopes: []
+              redirectUris:
+                - "*"
+                - "urn:ietf:wg:oauth:2.0:oob"
+              attributes:
+                request.object.signature.alg: RS256
+                user.info.response.signature.alg: RS256
+              protocolMappers:
+                - name: audience
+                  protocol: openid-connect
+                  protocolMapper: oidc-hardcoded-claim-mapper
+                  consentRequired: false
+                  config:
+                    access.token.claim: "true"
+                    claim.name: aud
+                    claim.value: trusted-artifact-signer
+                    id.token.claim: "true"
+                    userinfo.token.claim: "true"
+          {{hub- end hub}}
+          {{hub- if $tpaEnabled hub}}
+            - clientId: cli
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $tpaSecret "cli" | default "" | b64dec }}'
+              enabled: true
+              publicClient: false
+              bearerOnly: false
+              directAccessGrantsEnabled: false
+              standardFlowEnabled: false
+              fullScopeAllowed: true
+              serviceAccountsEnabled: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - web-origins
+                - profile
+                - roles
+                - read:document
+                - email
+                - create:document
+                - update:document
+                - delete:document
+              attributes:
+                access.token.lifespan: "300"
+                post.logout.redirect.uris: +
+            - clientId: frontend
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $tpaSecret "frontend" | default "" | b64dec }}'
+              enabled: true
+              publicClient: true
+              bearerOnly: false
+              directAccessGrantsEnabled: false
+              standardFlowEnabled: true
+              implicitFlowEnabled: true
+              fullScopeAllowed: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - web-origins
+                - profile
+                - roles
+                - read:document
+                - email
+                - create:document
+                - delete:document
+              attributes:
+                access.token.lifespan: "300"
+                post.logout.redirect.uris: +
+              redirectUris:
+                - "http://localhost:8080"
+                - 'https://server-tssc-tpa.{{ $appsDomain }}'
+                - 'https://server-tssc-tpa.{{ $appsDomain }}/*'
+                - 'https://sbom-tssc-tpa.{{ $appsDomain }}'
+                - 'https://sbom-tssc-tpa.{{ $appsDomain }}/*'
+              webOrigins:
+                - "*"
+          {{hub- end hub}}
+          {{hub- if $rhdhEnabled hub}}
+            - clientId: rhdh
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $rhdhSecret "rhdh" | default "" | b64dec }}'
+              enabled: true
+              publicClient: false
+              bearerOnly: false
+              directAccessGrantsEnabled: true
+              standardFlowEnabled: true
+              fullScopeAllowed: true
+              serviceAccountsEnabled: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - web-origins
+                - acr
+                - roles
+                - profile
+                - email
+              optionalClientScopes: []
+              redirectUris:
+                - 'https://backstage-developer-hub-tssc-dh.{{ $appsDomain }}/api/auth/oidc/handler/frame'
+                - 'https://backstage-developer-hub-tssc-dh.{{ $appsDomain }}/*'
+              webOrigins:
+                - 'https://backstage-developer-hub-tssc-dh.{{ $appsDomain }}'
+              attributes:
+                backchannel.logout.session.required: "true"
+                backchannel.logout.revoke.offline.tokens: "false"
+          {{hub- end hub}}

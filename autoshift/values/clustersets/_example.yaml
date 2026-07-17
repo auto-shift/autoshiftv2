@@ -82,6 +82,82 @@ hubClusterSets:
               cpu: '100m'
               memory: '256Mi'
       # =======================================================================
+      # Keycloak (RHADS/TSSC IAM) — instance/DB/realm config. Enable + operator
+      # subscription knobs are labels (autoshift.io/keycloak*); everything else here.
+      # =======================================================================
+      keycloak:
+        realmName: tssc-iam
+        db:
+          mode: cnpg                # 'cnpg' (default, needs the cloudnative-pg operator), 'simple', or 'external'
+          clusterName: keycloak-pgsql
+          storageClass: ''          # '' = cluster default StorageClass
+          storage: 50Gi
+          instances: 1              # cnpg primary replica count
+          user: keycloak            # simple mode: DB username
+          image: ''                 # simple mode: postgres image override ('' = rhel9 postgresql-16)
+          pooler:                   # cnpg PgBouncer tuning
+            instances: 2
+            poolSize: 20
+            minPoolSize: 5
+            reservePoolSize: 5
+            maxClientConn: 200
+          external:                 # external mode only
+            host: ''
+            secret: ''              # DB credentials secret (keys: username, password)
+            name: keycloak
+      # =======================================================================
+      # Trusted Profile Analyzer (RHADS/TSSC) — instance/DB config. Enable +
+      # operator subscription knobs are labels (autoshift.io/trusted-profile-analyzer*).
+      # =======================================================================
+      tpa:
+        db:
+          mode: cnpg                # 'cnpg' (default), 'simple', or 'external'
+          clusterName: tpa-pgsql
+          storageClass: ''
+          storage: 50Gi
+          instances: 2
+          user: tpa
+          image: ''
+          pooler:
+            instances: 2
+            poolSize: 40
+            minPoolSize: 5
+            reservePoolSize: 10
+            maxClientConn: 400
+          external:
+            host: ''
+            secret: ''
+            name: tpa
+        storage:                    # TPA document (SBOM/VEX) filesystem storage — separate from the DB
+          size: 32Gi
+      # =======================================================================
+      # Trusted Artifact Signer (RHADS/TSSC signing) — Securesign instance config.
+      # Enable + operator subscription knobs are labels (autoshift.io/tas*).
+      # =======================================================================
+      tas:
+        orgName: TSSC              # Fulcio certificate organizationName
+      # =======================================================================
+      # Developer Hub (RHADS/TSSC RHDH) — instance config. Enable + operator
+      # subscription knobs are labels (autoshift.io/dev-hub*). Security integrations
+      # (acs/tpa/tas) auto-wire when their operator labels are enabled.
+      # =======================================================================
+      devHub:
+        title: Red Hat Developer Hub
+        scm:
+          github: false           # wire GitHub as an SCM provider (needs tssc-github-credentials in github-system)
+          gitlab: false           # wire GitLab as an SCM provider (needs tssc-gitlab-credentials in gitlab-system)
+      # =======================================================================
+      # OpenShift Dev Spaces (RHADS/TSSC) — CheCluster instance config. Enable +
+      # operator subscription knobs are labels (autoshift.io/dev-spaces*). RHDH's
+      # topology plugin surfaces "Open in Dev Spaces" automatically.
+      # =======================================================================
+      devSpaces:
+        storageClass: ''                            # '' = cluster default (per-workspace PVCs)
+        pvcStrategy: per-workspace                  # 'per-workspace', 'per-user', or 'common'
+        defaultEditor: che-incubator/che-code/latest
+        maxRunningWorkspacesPerUser: 3
+        openVSXURL: https://open-vsx.org
+      # =======================================================================
       # Disconnected Mirror (read via rendered-config ConfigMap)
       # =======================================================================
       disconnected:
@@ -646,6 +722,30 @@ hubClusterSets:
       tas-channel: stable
       tas-source: redhat-operators
       tas-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Keycloak (Red Hat Build of Keycloak) — RHADS/TSSC IAM
+      # Operator install is label-driven (below); the instance/DB/realm config
+      # lives in config.keycloak (see the config: section above).
+      # =======================================================================
+      keycloak: 'false'
+      keycloak-subscription-name: rhbk-operator
+      keycloak-version: ''
+      keycloak-channel: stable-v26
+      keycloak-source: redhat-operators
+      keycloak-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Trusted Profile Analyzer (RHTPA) — RHADS/TSSC SBOM/VEX analysis
+      # Operator install is label-driven (below); the instance/DB config lives
+      # in config.tpa (see the config: section above).
+      # =======================================================================
+      trusted-profile-analyzer: 'false'
+      trusted-profile-analyzer-subscription-name: rhtpa-operator
+      trusted-profile-analyzer-version: ''
+      trusted-profile-analyzer-channel: stable-v1.1
+      trusted-profile-analyzer-source: redhat-operators
+      trusted-profile-analyzer-source-namespace: openshift-marketplace
 
       # =======================================================================
       # Quay

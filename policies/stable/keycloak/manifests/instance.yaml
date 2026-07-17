@@ -1,0 +1,76 @@
+# Keycloak CR + TLS Service. The Service's serving-cert annotation triggers OpenShift to mint the
+# keycloak-tls secret the Keycloak CR references. DB connection is derived from config.keycloak.db:
+#   cnpg   -> <cluster>-pooler-rw service, <cluster>-app secret (CNPG-generated)
+#   simple -> <cluster> service, <cluster> secret (database.yaml-generated)
+#   external -> config.keycloak.db.external.{host,secret,name}
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $db := (index (index $cfg "keycloak" | default dict) "db" | default dict) hub}}
+  {{hub- $mode := (index $db "mode" | default "cnpg") hub}}
+  {{hub- $cluster := (index $db "clusterName" | default "keycloak-pgsql") hub}}
+  {{hub- $ext := (index $db "external" | default dict) hub}}
+  {{hub- $ns := "keycloak-system" hub}}
+  {{hub- $dbHost := printf "%s-pooler-rw.%s.svc" $cluster $ns hub}}
+  {{hub- $dbSecret := printf "%s-app" $cluster hub}}
+  {{hub- $dbName := "keycloak" hub}}
+  {{hub- if eq $mode "simple" hub}}
+  {{hub- $dbHost = printf "%s.%s.svc" $cluster $ns hub}}
+  {{hub- $dbSecret = $cluster hub}}
+  {{hub- else if eq $mode "external" hub}}
+  {{hub- $dbHost = (index $ext "host" | default "") hub}}
+  {{hub- $dbSecret = (index $ext "secret" | default "keycloak-db") hub}}
+  {{hub- $dbName = (index $ext "name" | default "keycloak") hub}}
+  {{hub- end hub}}
+  {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
+  {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
+  {{- $hostname := printf "keycloak.apps.%s" $baseDomain }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: keycloak
+        namespace: '{{hub $ns hub}}'
+        annotations:
+          service.beta.openshift.io/serving-cert-secret-name: keycloak-tls
+      spec:
+        ports:
+          - name: https
+            port: 8443
+            targetPort: 8443
+        selector:
+          app: keycloak
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: k8s.keycloak.org/v2alpha1
+      kind: Keycloak
+      metadata:
+        name: keycloak
+        namespace: '{{hub $ns hub}}'
+      spec:
+        instances: 1
+        additionalOptions:
+          - name: enable-recovery
+            value: "true"
+        transaction:
+          xaEnabled: true
+        db:
+          vendor: postgres
+          database: '{{hub $dbName hub}}'
+          host: '{{hub $dbHost hub}}'
+          usernameSecret:
+            name: '{{hub $dbSecret hub}}'
+            key: username
+          passwordSecret:
+            name: '{{hub $dbSecret hub}}'
+            key: password
+        hostname:
+          hostname: '{{ $hostname }}'
+          strict: false
+          strictBackchannel: false
+        http:
+          httpEnabled: false
+          tlsSecret: keycloak-tls
+        ingress:
+          enabled: false

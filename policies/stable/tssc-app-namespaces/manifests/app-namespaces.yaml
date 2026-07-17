@@ -1,0 +1,132 @@
+# Per-application pipeline namespaces + secret propagation, driven entirely by config.appNamespaces:
+#   config.appNamespaces.<team>.<app>: { environments: [ci, development, stage, prod],
+#                                        gitProvider: gitlab|github, gitHost: '' }
+# Each environment gets a {team}-{app}-{env} namespace (labeled argocd.argoproj.io/managed-by), the
+# tssc-image-registry-auth pull secret, and a pipeline ServiceAccount. The -ci namespace additionally
+# receives the signing/attestation/integration secrets the RHADS pipelines consume (cosign public key,
+# ACS, TAS, TPA, ArgoCD, git). ArgoCD creds come from the infra instance (openshift-gitops).
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $apps := (index $cfg "appNamespaces" | default dict) hub}}
+  {{- $pullData := (lookup "v1" "Secret" "openshift-config" "pull-secret" | default dict).data | default dict }}
+  {{- $dockerCfg := index $pullData ".dockerconfigjson" | default "" }}
+  {{- $cosignData := (lookup "v1" "Secret" "openshift-pipelines" "signing-secrets" | default dict).data | default dict }}
+  {{- $cosignPub := index $cosignData "cosign.pub" | default "" }}
+  {{- $acsData := (lookup "v1" "Secret" "stackrox" "tssc-acs-integration" | default dict).data | default dict }}
+  {{- $tasData := (lookup "v1" "Secret" "tssc-tas" "tssc-tas-integration" | default dict).data | default dict }}
+  {{- $tpaData := (lookup "v1" "Secret" "tssc-tpa" "tssc-tpa-integration" | default dict).data | default dict }}
+  {{- $argoRoute := (lookup "route.openshift.io/v1" "Route" "openshift-gitops" "openshift-gitops-server" | default dict).spec | default dict }}
+  {{- $argoHost := index $argoRoute "host" | default "" }}
+  {{- $argoAdmin := (lookup "v1" "Secret" "openshift-gitops" "openshift-gitops-cluster" | default dict).data | default dict }}
+  {{- $argoPass := index $argoAdmin "admin.password" | default "" }}
+  {{hub- range $team, $teamApps := $apps hub}}
+  {{hub- range $app, $appCfg := $teamApps hub}}
+  {{hub- $prefix := printf "%s-%s" $team $app hub}}
+  {{hub- $envs := (index $appCfg "environments" | default list) hub}}
+  {{hub- $gitProvider := (index $appCfg "gitProvider" | default "gitlab") hub}}
+  {{hub- $gitNs := ternary "github-system" "gitlab-system" (eq $gitProvider "github") hub}}
+  {{hub- $gitSecret := ternary "tssc-github-credentials" "tssc-gitlab-credentials" (eq $gitProvider "github") hub}}
+  {{- $gitData := (lookup "v1" "Secret" "{{hub $gitNs hub}}" "{{hub $gitSecret hub}}" | default dict).data | default dict }}
+  {{hub- range $env := $envs hub}}
+  {{hub- $ns := printf "%s-%s" $prefix $env hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: '{{hub $ns hub}}'
+        labels:
+          argocd.argoproj.io/managed-by: openshift-gitops
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tssc-image-registry-auth
+        namespace: '{{hub $ns hub}}'
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: '{{ $dockerCfg }}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: pipeline
+        namespace: '{{hub $ns hub}}'
+      imagePullSecrets:
+        - name: tssc-image-registry-auth
+  {{hub- if eq $env "ci" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: cosign-pub
+        namespace: '{{hub $ns hub}}'
+      type: Opaque
+      data:
+        cosign.pub: '{{ $cosignPub }}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tssc-acs-integration
+        namespace: '{{hub $ns hub}}'
+      type: Opaque
+      data:
+        endpoint: '{{ index $acsData "endpoint" | default "" }}'
+        token: '{{ index $acsData "token" | default "" }}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tssc-tas-integration
+        namespace: '{{hub $ns hub}}'
+      type: Opaque
+      data:
+        rekor_url: '{{ index $tasData "rekor_url" | default "" }}'
+        tuf_url: '{{ index $tasData "tuf_url" | default "" }}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tssc-tpa-integration
+        namespace: '{{hub $ns hub}}'
+      type: Opaque
+      data:
+        bombastic_api_url: '{{ index $tpaData "bombastic_api_url" | default "" }}'
+        vexination_api_url: '{{ index $tpaData "vexination_api_url" | default "" }}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tssc-argocd-integration
+        namespace: '{{hub $ns hub}}'
+      type: Opaque
+      data:
+        ARGOCD_HOSTNAME: '{{ $argoHost | b64enc }}'
+        ARGOCD_USER: '{{ "admin" | b64enc }}'
+        ARGOCD_PASSWORD: '{{ $argoPass }}'
+        ARGOCD_API_TOKEN: '{{ "" | b64enc }}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tssc-git-integration
+        namespace: '{{hub $ns hub}}'
+      type: Opaque
+      data:
+        host: '{{ index $gitData "host" | default "" }}'
+        token: '{{ index $gitData "token" | default "" }}'
+        username: '{{ index $gitData "username" | default "" }}'
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

@@ -1,0 +1,68 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: trusted-profile-analyzer
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# Policy names use the short "policy-tpa-*" prefix: the replicated <namespace>.<policyname> must stay
+# under 63 chars, and "policy-trusted-profile-analyzer-*" overflows it.
+#
+# DB config comes from config.tpa.db (rendered-config); three modes (cnpg default / simple / external).
+# The database policy has NO hard dependency on the cloudnative-pg operator so simple/external work
+# without it (enable autoshift.io/cloudnative-pg when using cnpg mode).
+placementBindingDefaults:
+  name: binding-policy-tpa
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-tpa-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # PostgreSQL database (cnpg / simple / external). simple mode reads db-password from the hub secret.
+  - name: policy-tpa-database
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-tpa-operator-install
+    manifests:
+      - path: manifests/database.yaml
+  # Unified DB connection secret the TPA CR consumes.
+  - name: policy-tpa-db-config
+    dependencies:
+      - name: policy-tpa-database
+    manifests:
+      - path: manifests/db-credentials.yaml
+  # TrustedProfileAnalyzer CR.
+  - name: policy-tpa-instance
+    dependencies:
+      - name: policy-tpa-db-config
+    manifests:
+      - path: manifests/instance.yaml
+  # Readiness gate (inform): TPA CR reports Successful.
+  - name: policy-tpa-instance-test
+    remediationAction: inform
+    manifests:
+      - path: test/tpa-ready.yaml
+  # Integration secret advertising TPA API endpoints to other TSSC components.
+  - name: policy-tpa-integration
+    dependencies:
+      - name: policy-tpa-instance
+    manifests:
+      - path: manifests/integration-secret.yaml
