@@ -1,0 +1,30 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: cluster-set-assignment
+# Runs on the hub. Reads each cluster's rendered-config (config.clusterSet / config.clusterSetVersion)
+# and stamps the cluster.open-cluster-management.io/clusterset label on the ManagedCluster — the
+# declarative, GitOps way to assign a cluster to a clusterset / roll it between versioned releases.
+# Only acts when config.clusterSet is set, and only on clusters this deployment is allowed to own
+# (unowned or already owned by it) — so it can hand a cluster off but never steal one. See
+# docs/cluster-set-assignment.md.
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement-hub.yaml
+policies:
+  - name: policy-cluster-set-assignment
+    manifests:
+      - path: manifests/assignment.yaml
