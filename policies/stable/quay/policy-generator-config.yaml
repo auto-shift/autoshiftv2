@@ -36,7 +36,10 @@ policies:
   - name: policy-quay-deploy
     dependencies:
       - name: policy-quay-operator-install
-      - name: policy-storage-cluster
+      # Storage-readiness gate that exists in BOTH standard and standalone MCG modes (default ODF
+      # placement) — policy-storage-cluster is standard-only, so depending on it stranded Quay on
+      # standalone-MCG clusters. Matches the -test dependency used by the other ODF dependents.
+      - name: policy-storage-cluster-test
     manifests:
       - path: manifests/quay-deploy
   # 3) Post-deploy configuration (RBAC + admin bootstrap Job). Waits on the deploy.
