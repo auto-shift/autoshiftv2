@@ -1,0 +1,30 @@
+object-templates-raw: |
+  {{- /* Declarative cluster->clusterset ownership. For every rendered-config with a config.clusterSet,
+         compose the target clusterset and stamp it on the ManagedCluster — but only if the cluster is
+         unowned OR already owned by THIS deployment (owner-driven handoff; no stealing). The target
+         suffix comes from config.clusterSetVersion when set (the git-driven rollover knob), otherwise
+         this deployment's own ${CLUSTER_SET_SUFFIX} (matches cluster-install, no conflict). */ -}}
+  {{- $configMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/rendered-config-map") | default dict }}
+  {{- range $_, $cm := ($configMaps.items | default list) }}
+  {{-   $clusterName := (replace ".rendered-config" "" $cm.metadata.name) }}
+  {{-   $config := ($cm.data.config | fromYaml) }}
+  {{-   $clusterSet := (index $config "clusterSet" | default "") }}
+  {{-   if ne $clusterSet "" }}
+  {{-     $version := (index $config "clusterSetVersion" | default "") }}
+  {{-     $suffix := "${CLUSTER_SET_SUFFIX}" }}
+  {{-     if ne $version "" }}{{- $suffix = printf "-%s" ($version | replace "." "-" | replace "/" "-" | lower) }}{{- end }}
+  {{-     $target := printf "%s%s" $clusterSet $suffix }}
+  {{-     $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" $clusterName) | default dict }}
+  {{-     $mcOwningNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) }}
+  {{-     if (or (empty $mc) (eq $mcOwningNs "") (eq $mcOwningNs $cm.metadata.namespace)) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cluster.open-cluster-management.io/v1
+      kind: ManagedCluster
+      metadata:
+        name: {{ $clusterName }}
+        labels:
+          cluster.open-cluster-management.io/clusterset: {{ $target }}
+  {{-     end }}
+  {{-   end }}
+  {{- end }}
