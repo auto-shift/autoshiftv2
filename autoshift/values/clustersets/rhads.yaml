@@ -117,6 +117,8 @@ hubClusterSets:
               memory: '512Mi'
       keycloak:
         realmName: tssc-iam
+        # cert-manager ClusterIssuer for the keycloak.apps.<domain> cert (set to your cluster's issuer).
+        tlsIssuer: letsencrypt-production-aws-fallback
         db:
           mode: cnpg            # 'cnpg' (default), 'simple', or 'external'
           storageClass: ''      # '' = cluster default StorageClass
@@ -133,8 +135,10 @@ hubClusterSets:
       devHub:
         title: Red Hat Developer Hub
         scm:
-          gitlab: true          # wire GitLab as SCM (needs a GitLab PAT in gitlab-system/tssc-gitlab-credentials)
-          github: false         # set true + create tssc-github-credentials in github-system to wire GitHub
+          # Only enable an SCM provider once it is actually reachable AND its credentials secret exists.
+          # RHDH hard-fails startup if the integration host resolves empty (TypeError: got empty-string).
+          gitlab: false         # enable only when GitLab is up + gitlab-system/tssc-gitlab-credentials (PAT) exists
+          github: false         # enable + create github-system/tssc-github-credentials to wire GitHub
       devSpaces:
         storageClass: ''        # '' = cluster default
         pvcStrategy: per-workspace

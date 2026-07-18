@@ -1,15 +1,21 @@
-# Keycloak CR + TLS Service. The Service's serving-cert annotation triggers OpenShift to mint the
-# keycloak-tls secret the Keycloak CR references. DB connection is derived from config.keycloak.db:
+# Keycloak CR + external TLS. A cert-manager Certificate issues keycloak-tls for the external hostname
+# (keycloak.apps.<domain>) from the ClusterIssuer named in config.keycloak.tlsIssuer, and RHBK's native
+# passthrough ingress serves it — so every OIDC consumer (TPA, RHDH, TAS/Fulcio) validates the cert
+# cleanly. Without tlsIssuer set, no Certificate is created and RHBK falls back to a self-signed serving
+# cert (fine for internal-only use, but external OIDC consumers will fail cert validation).
+# DB connection is derived from config.keycloak.db:
 #   cnpg   -> <cluster>-pooler-rw service, <cluster>-app secret (CNPG-generated)
 #   simple -> <cluster> service, <cluster> secret (database.yaml-generated)
 #   external -> config.keycloak.db.external.{host,secret,name}
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
-  {{hub- $db := (index (index $cfg "keycloak" | default dict) "db" | default dict) hub}}
+  {{hub- $kc := (index $cfg "keycloak" | default dict) hub}}
+  {{hub- $db := (index $kc "db" | default dict) hub}}
   {{hub- $mode := (index $db "mode" | default "cnpg") hub}}
   {{hub- $cluster := (index $db "clusterName" | default "keycloak-pgsql") hub}}
   {{hub- $ext := (index $db "external" | default dict) hub}}
+  {{hub- $tlsIssuer := (index $kc "tlsIssuer" | default "") hub}}
   {{hub- $ns := "keycloak-system" hub}}
   {{hub- $dbHost := printf "%s-pooler-rw.%s.svc" $cluster $ns hub}}
   {{hub- $dbSecret := printf "%s-app" $cluster hub}}
@@ -25,22 +31,22 @@ object-templates-raw: |
   {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
   {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
   {{- $hostname := printf "keycloak.apps.%s" $baseDomain }}
+  {{hub- if ne $tlsIssuer "" hub}}
   - complianceType: musthave
     objectDefinition:
-      apiVersion: v1
-      kind: Service
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
       metadata:
-        name: keycloak
+        name: keycloak-tls
         namespace: '{{hub $ns hub}}'
-        annotations:
-          service.beta.openshift.io/serving-cert-secret-name: keycloak-tls
       spec:
-        ports:
-          - name: https
-            port: 8443
-            targetPort: 8443
-        selector:
-          app: keycloak
+        secretName: keycloak-tls
+        dnsNames:
+          - '{{ $hostname }}'
+        issuerRef:
+          name: '{{hub $tlsIssuer hub}}'
+          kind: ClusterIssuer
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: k8s.keycloak.org/v2alpha1
@@ -73,4 +79,6 @@ object-templates-raw: |
           httpEnabled: false
           tlsSecret: keycloak-tls
         ingress:
-          enabled: false
+          # RHBK creates a passthrough Route at hostname.hostname serving the cert-manager keycloak-tls
+          # (valid for keycloak.apps.<domain>), so external OIDC consumers validate cleanly.
+          enabled: true
