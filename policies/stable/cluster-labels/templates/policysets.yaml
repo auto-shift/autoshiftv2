@@ -1,0 +1,71 @@
+# PolicySets for cluster-labels
+#
+# All placement for the label engine lives HERE: policy-cluster-labels.yaml and
+# policy-cluster-set-labels.yaml carry no Placement/PlacementBinding. Both policies share
+# one placement per hub flavor — they run on the same hubs against the same sources, so
+# they are grouped into one PolicySet per flavor and bound to one Placement each:
+#
+#   policyset-selfmanagedhub-cluster-labels  (self-managed hub sets)
+#   policyset-managedhub-cluster-labels      (managed hub sets)
+{{- $managedHubs := dict }}
+{{- $selfManagedHubs := dict }}
+{{- range $k, $v := $.Values.hubClusterSets  }}
+  {{-  if eq ((index $v.labels "self-managed") | default "false")  "false" }}
+    {{- $_ := set $managedHubs $k $k }}
+  {{- else }}
+    {{- $_ := set $selfManagedHubs $k $k }}
+  {{- end }}
+{{- end }}
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $targets := dict }}
+{{- if not (empty $selfManagedHubs) }}
+  {{- $_ := set $targets "selfManagedHub" $selfManagedHubs }}
+{{- end }}
+{{- if not (empty $managedHubs) }}
+  {{- $_ := set $targets "managedHub" $managedHubs }}
+{{- end }}
+{{- range $target, $hubs := $targets }}
+  {{- $policySetName := printf "policyset-%s-cluster-labels" ($target | lower) }}
+  {{- $placementName := printf "placement-%s-cluster-labels" ($target | lower) }}
+---
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: PolicySet
+metadata:
+  name: {{ $policySetName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  description: AutoShift label engine - rewrites ManagedCluster and ManagedClusterSet labels from the declared label ConfigMaps
+  policies:
+    - {{ printf "policy-%s-labels" ($target | lower) }}
+    - {{ printf "policy-%s-cluster-set-labels" ($target | lower) }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+spec:
+  clusterSets:
+  {{- range $hub, $_ := $hubs }}
+    - {{ $hub }}
+  {{- end }}
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ $policyNamespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policySetName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: PolicySet
+{{- end }}

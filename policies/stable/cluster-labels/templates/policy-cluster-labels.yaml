@@ -18,7 +18,6 @@
 {{- range $_, $target := $targets }}
   {{- $policyName := (printf "policy-%s-labels" ($target | lower)) }}
   {{- $configPolicyName := printf "configure-%s" $policyName }}
-  {{- $placementName := printf "placement-%s" $policyName }}
 ---
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
@@ -62,6 +61,12 @@ spec:
               {{ "{{-" }} if (ne $lastIndex -1) {{ "}}" }}
                 {{ "{{-" }} $managedClusterConfigObjects := (list) {{ "}}" }}
                 {{ "{{-" }} $labelPrefix := "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}" {{ "}}" }}
+                ##### Each cluster-set.<name> ConfigMap carries a cluster-set-type (hub | spoke), written #####
+                ##### by the cluster-labels chart. That is the cross-deployment source of truth for a #####
+                ##### member cluster's autoshift.io/cluster-type: this policy is templated per deployment #####
+                ##### and never sees other deployments' values, but the cluster-wide label-selected #####
+                ##### ConfigMap lookup below sees ALL deployments' CMs. #####
+                {{ "{{-" }} $clusterSetTypes := (dict) {{ "}}" }}
                 {{ "{{-" }} $labelConfigs := lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-labels" {{ "}}" }}
                 {{ "{{-" }} range $idx, $cm := (index $labelConfigs "items" | default list) {{ "}}" }}
                 ##### CLUSTER SET #####
@@ -74,6 +79,7 @@ spec:
                     {{ "{{-" }} $clusterSetLabels := ((($cm).data).labels | default "{}" | fromJson) {{ "}}" }}
                     {{ "{{-" }} $clusterSetEntry := (dict $clusterSetName (dict "namespace" $clusterSetNs "labels" $clusterSetLabels)) {{ "}}" }}
                     {{ "{{-" }} $allClusterSetLabels = merge $clusterSetEntry $allClusterSetLabels {{ "}}" }}
+                    {{ "{{-" }} $_ := set $clusterSetTypes $clusterSetName (dig "data" "cluster-set-type" "" $cm) {{ "}}" }}
                   {{ "{{-" }} else if (hasPrefix "managed-cluster." $cm.metadata.name) {{ "}}" }}
                     {{ "{{-" }} $clusterNs := $cm.metadata.namespace {{ "}}" }}
                     {{ "{{-" }} $clusterName := ($cm.metadata.name | replace "managed-cluster." "") {{ "}}" }}
@@ -102,12 +108,34 @@ spec:
                       {{ "{{-" }} $clusterLabels = (dig $clusterTenancyNamespace $clusterName "labels" (dict) $allClusterLabels) {{ "}}" }}
                       {{ "{{-" }} $clusterSetLabels = (index $allClusterSetLabels $clusterSetName "labels" | default dict) {{ "}}" }}
                       {{ "{{-" }} $tempLabels := merge (dict) $clusterLabels $clusterSetLabels $existingLabelsNoAutoshift {{ "}}" }}
+                      {{ "{{-" }} $clusterSetType := (index $clusterSetTypes $clusterSetName | default "") {{ "}}" }}
+                      {{ "{{-" }} $selfManaged := (eq (index $tempLabels (printf "%sself-managed" $labelPrefix) | default "false") "true") {{ "}}" }}
+                      ##### self-managed is only meaningful for clusters in hub sets. A cluster claiming it #####
+                      ##### (directly or inherited from its set) inside a non-hub set is a misconfig: refuse #####
+                      ##### to apply anything and fail loudly instead of quietly propagating the label. #####
+                      {{ "{{-" }} if and $selfManaged (ne $clusterSetType "hub") {{ "}}" }}
+                        {{ "{{-" }} fail (printf "Misconfiguration: cluster [%s] carries self-managed=true but its ManagedClusterSet [%s] has cluster-set-type '%s', not 'hub'. self-managed is only valid for clusters in hub clustersets; refusing to apply labels." $clusterName $clusterSetName $clusterSetType) {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} $_ := set $renderedLabels "autoshift.io/owning-namespace" $clusterTenancyNamespace {{ "}}" }}
                       {{ "{{-" }} $_ := set $renderedLabels "autoshift.io/owning-deployment" (replace "policies-" "" $clusterTenancyNamespace) {{ "}}" }}
                       {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
                         {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
                           {{ "{{-" }} $_ := set $renderedLabels $label $value {{ "}}" }}
                         {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
+                      ##### cluster-type (selfManagedHub | managedHub | spoke) - derived, never user-set, so it is #####
+                      ##### written AFTER the user-label loop and wins over any value smuggled in via labels config. #####
+                      ##### hub-type sets split on self-managed, cluster labels winning over set labels (checked #####
+                      ##### against the labels being applied this pass, not the cluster's current labels, so the #####
+                      ##### type never lags a change). #####
+                      {{ "{{-" }} $clusterType := "" {{ "}}" }}
+                      {{ "{{-" }} if eq $clusterSetType "hub" {{ "}}" }}
+                        {{ "{{-" }} $clusterType = (ternary "selfManagedHub" "managedHub" $selfManaged) {{ "}}" }}
+                      {{ "{{-" }} else if eq $clusterSetType "spoke" {{ "}}" }}
+                        {{ "{{-" }} $clusterType = "spoke" {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} if ne $clusterType "" {{ "}}" }}
+                        {{ "{{-" }} $_ := set $renderedLabels (printf "%scluster-type" $labelPrefix) $clusterType {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} else {{ "}}" }}
                       {{ "{{-" }} $renderedLabels = $existingLabelsNoAutoshift {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
@@ -124,63 +152,5 @@ spec:
               {{ "{{" }} $managedClusterConfigObjects | toRawJson | autoindent {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
----
-
-  {{- if (eq $target "managedHub") }}
----
-    {{- if not (empty $managedHubs) }}
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ $policyNamespace }}
-spec:
-  clusterSets:
-  {{- range $managedHub, $_ := $managedHubs }}
-    - {{ $managedHub }}
-  {{- end }}
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
-      {{- end }}
----
-  {{- end }}
-  {{- if (eq $target "selfManagedHub") }}
----
-    {{- if not (empty $selfManagedHubs) }}
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ $policyNamespace }}
-spec:
-  clusterSets:
-    {{- range $sMH, $_ := $selfManagedHubs }}
-    - {{ $sMH }}
-    {{- end }}
-    {{- end }}
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-  {{- end }}
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ $policyNamespace }}
-placementRef:
-  name: {{ $placementName}}
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: {{ $policyName }}
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
 ---
 {{- end }}

@@ -47,6 +47,7 @@ spec:
                         {{ "{{-" }} $managedClusterConfigObjects := (list) {{ "}}" }}
                         {{ "{{-" }} $labelPrefix := "{{ ($.Values.autoshiftLabelPrefix | default "autoshift.io/" ) }}" {{ "}}" }}
                         {{ "{{-" }} $seenClusters := (dict) {{ "}}" }}
+                        {{ "{{-" }} $clusterSetTypes := (dict) {{ "}}" }}
                         {{ "{{-" }} $labelConfigs := lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-labels" {{ "}}" }}
                         {{ "{{-" }} range $idx, $cm := $labelConfigs.items {{ "}}" }}
                           {{ "{{-" }} if (hasPrefix "cluster-set." $cm.metadata.name) {{ "}}" }}
@@ -58,6 +59,7 @@ spec:
                             {{ "{{-" }} $clusterSetLabels := ((($cm).data).labels | default "{}" | fromJson) {{ "}}" }}
                             {{ "{{-" }} $clusterSetEntry := (dict $clusterSetName (dict "namespace" $clusterSetNs "labels" $clusterSetLabels)) {{ "}}" }}
                             {{ "{{-" }} $allClusterSetLabels = merge $clusterSetEntry $allClusterSetLabels {{ "}}" }}
+                            {{ "{{-" }} $_ := set $clusterSetTypes $clusterSetName (dig "data" "cluster-set-type" "" $cm) {{ "}}" }}
                           {{ "{{-" }} else if (hasPrefix "managed-cluster." $cm.metadata.name) {{ "}}" }}
                             {{ "{{-" }} $clusterNs := $cm.metadata.namespace {{ "}}" }}
                             {{ "{{-" }} $clusterName := ($cm.metadata.name | replace "cluster-set." "") {{ "}}" }}
@@ -86,10 +88,24 @@ spec:
                               {{ "{{-" }} $clusterLabels = (dig $clusterTenancyNamespace $clusterName "labels" (dict) $allClusterLabels) {{ "}}" }}
                               {{ "{{-" }} $clusterSetLabels = (index $allClusterSetLabels $clusterSetName "labels" | default dict) {{ "}}" }}
                               {{ "{{-" }} $tempLabels := merge (dict) $clusterLabels $clusterSetLabels $existingLabelsNoAutoshift {{ "}}" }}
+                              {{ "{{-" }} $clusterSetType := (index $clusterSetTypes $clusterSetName | default "") {{ "}}" }}
+                              {{ "{{-" }} $selfManaged := (eq (index $tempLabels (printf "%sself-managed" $labelPrefix) | default "false") "true") {{ "}}" }}
+                              {{ "{{-" }} if and $selfManaged (ne $clusterSetType "hub") {{ "}}" }}
+                                {{ "{{-" }} fail (printf "Misconfiguration: cluster [%s] carries self-managed=true but its ManagedClusterSet [%s] has cluster-set-type '%s', not 'hub'. self-managed is only valid for clusters in hub clustersets; refusing to apply labels." $clusterName $clusterSetName $clusterSetType) {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
                               {{ "{{-" }} range $label, $value := $tempLabels {{ "}}" }}
                                 {{ "{{-" }} if not (and ($label | hasPrefix $labelPrefix) (eq $value "_")) {{ "}}" }}
                                   {{ "{{-" }} $_ := set $renderedLabels $label $value {{ "}}" }}
                                 {{ "{{-" }} end {{ "}}" }} {{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} $clusterType := "" {{ "}}" }}
+                              {{ "{{-" }} if eq $clusterSetType "hub" {{ "}}" }}
+                                {{ "{{-" }} $clusterType = (ternary "selfManagedHub" "managedHub" $selfManaged) {{ "}}" }}
+                              {{ "{{-" }} else if eq $clusterSetType "spoke" {{ "}}" }}
+                                {{ "{{-" }} $clusterType = "spoke" {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} if ne $clusterType "" {{ "}}" }}
+                                {{ "{{-" }} $_ := set $renderedLabels (printf "%scluster-type" $labelPrefix) $clusterType {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
                             {{ "{{-" }} else {{ "}}" }}
                               {{ "{{-" }} $renderedLabels = $existingLabelsNoAutoshift {{ "}}" }}
                             {{ "{{-" }} end {{ "}}" }}
