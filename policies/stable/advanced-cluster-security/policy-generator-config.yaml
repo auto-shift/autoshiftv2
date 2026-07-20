@@ -129,12 +129,13 @@ policies:
       - path: manifests/console-link.yaml
   # 10) tssc-acs-integration secret (endpoint + pre-created hub token) for the RHADS flow. MANAGED-only,
   #     needs the elevated SA to read the hub token secret. Only emits when dev-hub is enabled.
+  # tssc-acs-integration API token minted by an in-cluster Job (reads central-htpasswd, calls Central's
+  # apitokens API) — same pattern as the init-bundle. HUB-side (Central + central-htpasswd live there);
+  # no elevated hub SA needed (the Job's own SA reads the password). Only runs when dev-hub is enabled.
   - name: policy-acs-tssc-integration
     placement:
-      placementPath: placement-managed.yaml
-    hubTemplateOptions:
-      serviceAccountName: autoshift-policy-service-account
+      placementPath: placement-hub.yaml
     dependencies:
-      - name: policy-acs-secured-cluster
+      - name: policy-acs-central
     manifests:
       - path: manifests/tssc-integration.yaml

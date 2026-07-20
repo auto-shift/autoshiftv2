@@ -1,19 +1,94 @@
-# tssc-acs-integration secret (endpoint + token) for the RHADS/TSSC flow — consumed by RHDH and the
-# app-namespace rox-api-token. Created only when dev-hub is enabled. The endpoint is the Central host
-# (from the sensor-tls secret, same idiom as console-link); the token is a pre-created ACS API token
-# supplied by the admin in the hub secret tssc-acs-integration (key: token) — ACS declarative config
-# cannot mint API tokens, so this one value is bootstrapped once on the hub and propagated here.
+# tssc-acs-integration secret (endpoint + API token) for the RHADS/TSSC flow — consumed by RHDH and the
+# app-namespace rox-api-token. An ACS API token can't be minted declaratively, so — exactly like the
+# init-bundle — a Job reads the admin password from central-htpasswd IN-CLUSTER and calls Central's
+# /v1/apitokens/generate, then writes tssc-acs-integration. The admin password never leaves the cluster.
+# Idempotent (skips if the token secret already exists). Only runs when dev-hub is enabled.
 object-templates-raw: |
   {{hub- if eq (index .ManagedClusterLabels "autoshift.io/dev-hub" | default "false") "true" hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
-      kind: Secret
+      kind: ServiceAccount
       metadata:
-        name: tssc-acs-integration
+        name: create-acs-token
         namespace: stackrox
-      type: Opaque
-      stringData:
-        endpoint: 'https://{{ fromSecret "stackrox" "sensor-tls" "acs-host" | base64dec }}'
-        token: '{{hub fromSecret .PolicyMetadata.namespace "tssc-acs-integration" "token" hub}}'
+        annotations:
+          argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: create-acs-token
+        namespace: stackrox
+      rules:
+        - apiGroups: ['']
+          resources: [secrets]
+          verbs: [get, list, create, patch, update]
+        - apiGroups: [route.openshift.io]
+          resources: [routes]
+          verbs: [get, list]
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: create-acs-token
+        namespace: stackrox
+        annotations:
+          argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: create-acs-token
+      subjects:
+        - kind: ServiceAccount
+          name: create-acs-token
+          namespace: stackrox
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: create-acs-token
+        namespace: stackrox
+      spec:
+        backoffLimit: 6
+        template:
+          metadata:
+            annotations:
+              argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+          spec:
+            restartPolicy: Never
+            serviceAccountName: create-acs-token
+            containers:
+              - name: create-acs-token
+                image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+                imagePullPolicy: Always
+                env:
+                  - name: PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: central-htpasswd
+                        key: password
+                command:
+                  - /bin/bash
+                  - -c
+                  - |
+                    set -eu
+                    if oc get secret tssc-acs-integration -n stackrox -o jsonpath='{.data.token}' 2>/dev/null | grep -q .; then
+                      echo "tssc-acs-integration already has a token, nothing to do"; exit 0
+                    fi
+                    echo "Waiting for Central..."
+                    n=0; until curl -k --silent --head --fail https://central >/dev/null; do
+                      n=$((n+1)); [ "$n" -ge 30 ] && { echo "Central not ready"; exit 1; }; sleep 10; done
+                    echo "Generating ACS API token..."
+                    curl -k -sf -o /tmp/t.json -X POST -u "admin:${PASSWORD}" -H 'Content-Type: application/json' \
+                      --data '{"name":"tssc-rhads","role":"Admin"}' https://central/v1/apitokens/generate
+                    TOKEN=$(python3 -c "import json;print(json.load(open('/tmp/t.json'))['token'])")
+                    ENDPOINT="https://$(oc get route central -n stackrox -o jsonpath='{.spec.host}')"
+                    oc create secret generic tssc-acs-integration -n stackrox \
+                      --from-literal=endpoint="${ENDPOINT}" --from-literal=token="${TOKEN}" \
+                      --dry-run=client -o yaml | oc apply -f -
+                    echo "tssc-acs-integration created"
   {{hub- end hub}}
