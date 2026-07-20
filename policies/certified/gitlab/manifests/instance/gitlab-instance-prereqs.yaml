@@ -3,7 +3,10 @@ object-templates-raw: |
   {{- $dbMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" hub}}" }}
   {{- $redisMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-redis-mode" | default "managed" hub}}" }}
   {{- $objStoreMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-object-storage-mode" | default "managed" hub}}" }}
-  {{ if ne $dbMode "bundled" }}
+  {{ if eq $dbMode "external" }}
+  {{/* Only pre-create gitlab-db-app for an EXTERNAL db the admin supplies. For managed (CNPG) mode
+       CloudNativePG auto-generates <cluster>-app with username/password — pre-creating it empty makes
+       CNPG treat it as user-supplied and leave it empty, so initdb fails "couldn't find key username". */}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
