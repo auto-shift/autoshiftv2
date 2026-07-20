@@ -105,9 +105,18 @@ object-templates-raw: |
               hosts:
                 domain: {{ $ingressDomain }}
               ingress:
+                # enabled:true + class:none is the GitLab-on-OpenShift pattern: the operator turns the
+                # chart's Ingress objects into edge-terminated OpenShift Routes (default wildcard cert).
+                # Without enabled:true no Ingress is rendered, so the operator creates no Routes.
+                enabled: true
                 annotations:
                   route.openshift.io/termination: edge
                 class: none
+              # Use OpenShift Routes (operator-created), not the Gateway API/Envoy path the chart now
+              # defaults to — the Envoy Gateway CRDs aren't installed, so leaving it on aborts the
+              # operator reconcile with "no matches for kind EnvoyProxy" before any workloads deploy.
+              gatewayApi:
+                enabled: false
               minio:
                 enabled: {{ eq $objStoreMode "bundled" }}
           {{- if ne $objStoreMode "bundled" }}
