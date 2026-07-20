@@ -37,12 +37,21 @@ policies:
   - name: policy-gitlab-operator-install
     manifests:
       - path: manifests/operator-install
-  # 2) GitLab instance CR + prereqs (enforce, from policyDefaults).
+  # 2-prereq) Presence check for the CR's external deps (db/redis/object-storage connection
+  #   Secrets + CM). INFORM-only: those are produced by the CNPG/redis/OBC policies (or the admin),
+  #   never by GitLab — creating empty placeholders here would shadow the real generators.
+  - name: policy-gitlab-prereqs
+    remediationAction: inform
+    dependencies:
+      - name: policy-gitlab-operator-install
+    manifests:
+      - path: test/gitlab-prereqs.yaml
+  # 2) GitLab instance CR (enforce, from policyDefaults). Self-gates on the prereqs above via lookups.
   - name: policy-gitlab-instance
     dependencies:
       - name: policy-gitlab-operator-install
     manifests:
-      - path: manifests/instance
+      - path: manifests/instance/gitlab-instance.yaml
   # 2-test) GitLab CR readiness (status observation → inform, its own Policy in test/).
   - name: policy-gitlab-instance-test
     remediationAction: inform

@@ -1,12 +1,15 @@
+# Inform-only presence check for the GitLab CR's external dependencies. The connection Secrets/ConfigMap
+# below are PRODUCED by other policies (CNPG -> gitlab-db-app, redis -> gitlab-redis-password, the NooBaa
+# OBC provisioner -> gitlab-objectstorage) or supplied by the admin (external mode). This policy only
+# OBSERVES that they exist (remediationAction: inform) — it must NEVER create empty placeholders, which
+# would shadow the real generators (CNPG/OBC leave a pre-existing secret/CM untouched and never populate
+# it, so initdb / the OBC hang forever). Skipped per-service when that service is bundled (GitLab-internal).
 object-templates-raw: |
   {{- $ns := "gitlab-system" }}
   {{- $dbMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" hub}}" }}
   {{- $redisMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-redis-mode" | default "managed" hub}}" }}
   {{- $objStoreMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-object-storage-mode" | default "managed" hub}}" }}
-  {{ if eq $dbMode "external" }}
-  {{/* Only pre-create gitlab-db-app for an EXTERNAL db the admin supplies. For managed (CNPG) mode
-       CloudNativePG auto-generates <cluster>-app with username/password — pre-creating it empty makes
-       CNPG treat it as user-supplied and leave it empty, so initdb fails "couldn't find key username". */}}
+  {{ if ne $dbMode "bundled" }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1

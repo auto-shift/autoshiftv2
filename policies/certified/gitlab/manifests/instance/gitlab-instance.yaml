@@ -251,6 +251,17 @@ object-templates-raw: |
                   requests:
                     cpu: 500m
                     memory: 1000M
+          {{- if ne $objStoreMode "bundled" }}
+              # minio is disabled, so the toolbox has no auto-generated backup s3cmd config —
+              # point it at the gitlab-s3cmd-config secret or the chart render hard-fails.
+              toolbox:
+                backups:
+                  objectStorage:
+                    backend: s3
+                    config:
+                      secret: gitlab-s3cmd-config
+                      key: config
+          {{- end }}
           {{- if not (empty $gitalyStorageClass) }}
               gitaly:
                 persistence:
