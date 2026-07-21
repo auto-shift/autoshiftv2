@@ -1,14 +1,26 @@
 object-templates-raw: |
   {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{- $gitlabHost := (printf "gitlab.%s" $ingressDomain) }}
-  {{- $tlsCert := (fromSecret "gitlab-system" "gitlab-wildcard-tls" "tls.crt" | base64dec) }}
+  {{- /* The cert GitLab actually serves on its routes: gitlab-provided-tls (cert-manager, from
+         config.gitlab.tlsIssuer). On a public ACME issuer ArgoCD already trusts it and this is redundant;
+         on the built-in autoshift-ca it's what lets ArgoCD verify GitLab. NOT gitlab-wildcard-tls (the
+         operator's unused self-signed cert). */}}
+  {{- $tlsCert := (fromSecret "gitlab-system" "gitlab-provided-tls" "tls.crt" | base64dec) }}
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $nsList := list "openshift-gitops" hub}}
+  {{hub- range $team, $_ := (dig "gitops" "teams" dict $cfg) hub}}
+  {{hub- $nsList = append $nsList (printf "openshift-gitops-%s" $team) hub}}
+  {{hub- end hub}}
+  {{hub- range $argoNs := $nsList hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
       kind: ConfigMap
       metadata:
         name: argocd-tls-certs-cm
-        namespace: openshift-gitops
+        namespace: {{hub $argoNs hub}}
       data:
         {{ $gitlabHost }}: |
           {{ $tlsCert | autoindent }}
+  {{hub- end hub}}
