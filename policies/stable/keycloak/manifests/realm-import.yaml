@@ -63,6 +63,29 @@ object-templates-raw: |
               attributes:
                 include.in.token.scope: "true"
                 display.on.consent.screen: "true"
+            # groups client scope: emits the user's group membership as a 'groups' claim so RHDH can do
+            # group-based ownership/RBAC and sync Keycloak groups. Requested via app-config additionalScopes.
+            - name: groups
+              protocol: openid-connect
+              description: Group membership of the user
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+              protocolMappers:
+                - name: groups
+                  protocol: openid-connect
+                  protocolMapper: oidc-group-membership-mapper
+                  config:
+                    claim.name: groups
+                    full.path: "false"
+                    id.token.claim: "true"
+                    access.token.claim: "true"
+                    userinfo.token.claim: "true"
+          # Seed realm groups so team-based ownership/RBAC has something to map to. Assign users to these
+          # in the Keycloak admin console (or via federation); membership flows to RHDH via the groups claim.
+          groups:
+            - name: platform-team
+            - name: developers
           clients:
           {{hub- if $tasEnabled hub}}
             - clientId: trusted-artifact-signer
@@ -172,6 +195,7 @@ object-templates-raw: |
                 - roles
                 - profile
                 - email
+                - groups
               optionalClientScopes: []
               redirectUris:
                 - 'https://backstage-developer-hub-tssc-dh.{{ $appsDomain }}/api/auth/oidc/handler/frame'
