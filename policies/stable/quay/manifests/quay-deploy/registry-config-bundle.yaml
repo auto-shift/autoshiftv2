@@ -5,9 +5,30 @@ metadata:
   namespace: quay-enterprise
 type: Opaque
 stringData:
+  # Keycloak OIDC login is added only when the admin has seeded quay-client-secret in the hub
+  # tssc-keycloak-config secret (i.e. Keycloak is set up); otherwise Quay keeps local-only auth.
+  # quayadmin stays a super-user and FEATURE_DIRECT_LOGIN stays on as a break-glass local login.
   config.yaml: |
     FEATURE_USER_INITIALIZE: true
     BROWSER_API_CALLS_XHR_ONLY: false
     SUPER_USERS:
     - quayadmin
+    {{hub $kc := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
+    {{hub $quaySecret := (index $kc "quay-client-secret" | default "") hub}}
+    {{hub if $quaySecret hub}}
+    {{hub $baseDomain := (lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict).spec.baseDomain | default "cluster.local" hub}}
+    FEATURE_USER_CREATION: true
+    FEATURE_DIRECT_LOGIN: true
+    KEYCLOAK_LOGIN_CONFIG:
+      CLIENT_ID: quay
+      CLIENT_SECRET: {{hub $quaySecret | b64dec hub}}
+      OIDC_SERVER: https://keycloak.apps.{{hub $baseDomain hub}}/realms/tssc-iam/
+      SERVICE_NAME: Keycloak
+      LOGIN_SCOPES:
+      - openid
+      - profile
+      - email
+      PREFERRED_USERNAME_CLAIM_NAME: preferred_username
+    {{hub else hub}}
     FEATURE_USER_CREATION: false
+    {{hub end hub}}

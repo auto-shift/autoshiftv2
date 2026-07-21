@@ -9,6 +9,11 @@ object-templates-raw: |
   {{hub- $gitlabCfg := (index $rcmConfig "gitlab" | default dict) hub}}
   {{hub- $tlsIssuer := (index $gitlabCfg "tlsIssuer" | default "autoshift-ca") hub}}
 
+  # Keycloak OIDC (omniauth) is wired only when the admin seeded gitlab-client-secret in the hub
+  # tssc-keycloak-config secret (i.e. Keycloak is set up); otherwise GitLab keeps local-only login.
+  {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
+  {{hub- $gitlabOidcSecret := (index $kcData "gitlab-client-secret" | default "") hub}}
+
   # Service modes: managed (default), external, or bundled
   {{- $dbMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" hub}}" }}
   {{- $redisMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-redis-mode" | default "managed" hub}}" }}
@@ -116,6 +121,39 @@ object-templates-raw: |
         postgresql-password: {{ $dbPass }}
         postgresql-postgres-password: {{ $dbPass }}
   {{- end }}
+  {{hub- if $gitlabOidcSecret hub}}
+  # OmniAuth OpenID Connect provider config consumed by global.appConfig.omniauth on the GitLab CR.
+  # The client secret is resolved (hub-side) from tssc-keycloak-config and the gitlab realm client.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gitlab-omniauth-openid-connect
+        namespace: {{ $ns }}
+      type: Opaque
+      stringData:
+        provider: |
+          name: openid_connect
+          label: Keycloak
+          args:
+            name: openid_connect
+            scope:
+              - openid
+              - profile
+              - email
+            response_type: code
+            issuer: https://keycloak.{{ $ingressDomain }}/realms/tssc-iam
+            discovery: true
+            client_auth_method: query
+            uid_field: preferred_username
+            pkce: true
+            send_scope_to_token_endpoint: true
+            client_options:
+              identifier: gitlab
+              secret: {{hub $gitlabOidcSecret | b64dec hub}}
+              redirect_uri: https://gitlab.{{ $ingressDomain }}/users/auth/openid_connect/callback
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: apps.gitlab.com/v1beta1
@@ -204,6 +242,20 @@ object-templates-raw: |
           {{- end }}
           {{- if ne $objStoreMode "bundled" }}
               appConfig:
+          {{hub- if $gitlabOidcSecret hub}}
+                # Keycloak SSO. autoLinkUser links an existing account by verified email; new SSO users are
+                # auto-provisioned. quayadmin-style local login stays available as break-glass.
+                omniauth:
+                  enabled: true
+                  allowSingleSignOn:
+                    - openid_connect
+                  autoLinkUser:
+                    - openid_connect
+                  blockAutoCreatedUsers: false
+                  providers:
+                    - secret: gitlab-omniauth-openid-connect
+                      key: provider
+          {{hub- end hub}}
                 object_store:
                   enabled: true
                   proxy_download: true

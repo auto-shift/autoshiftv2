@@ -9,12 +9,20 @@ object-templates-raw: |
   {{hub- $tasEnabled := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
   {{hub- $tpaEnabled := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false") "true" hub}}
   {{hub- $rhdhEnabled := eq (index .ManagedClusterLabels "autoshift.io/dev-hub" | default "false") "true" hub}}
+  {{hub- $quayEnabled := eq (index .ManagedClusterLabels "autoshift.io/quay" | default "false") "true" hub}}
+  {{hub- $gitlabEnabled := eq (index .ManagedClusterLabels "autoshift.io/gitlab" | default "false") "true" hub}}
+  # ArgoCD Keycloak SSO is opt-in: enabled only when the admin seeded argocd-client-secret in tssc-keycloak-config.
+  {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
+  {{hub- $argocdSsoEnabled := ne (index $kcData "argocd-client-secret" | default "") "" hub}}
   {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
   {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
   {{- $appsDomain := printf "apps.%s" $baseDomain }}
   {{- $tasSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "trusted-artifact-signer-clients" | default dict).data | default dict }}
   {{- $tpaSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "tpa-realm-clients" | default dict).data | default dict }}
   {{- $rhdhSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "rhdh-realm-clients" | default dict).data | default dict }}
+  {{- $quaySecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "quay-realm-clients" | default dict).data | default dict }}
+  {{- $gitlabSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "gitlab-realm-clients" | default dict).data | default dict }}
+  {{- $argocdSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "argocd-realm-clients" | default dict).data | default dict }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: k8s.keycloak.org/v2alpha1
@@ -256,6 +264,68 @@ object-templates-raw: |
               attributes:
                 backchannel.logout.session.required: "true"
                 backchannel.logout.revoke.offline.tokens: "false"
+          {{hub- end hub}}
+          {{hub- if $quayEnabled hub}}
+            # Quay OIDC login (KEYCLOAK_LOGIN_CONFIG in the Quay config bundle). Confidential client;
+            # Quay resolves the preferred_username claim from the profile scope.
+            - clientId: quay
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $quaySecret "quay" | default "" | b64dec }}'
+              enabled: true
+              publicClient: false
+              standardFlowEnabled: true
+              fullScopeAllowed: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - profile
+                - email
+              redirectUris:
+                - 'https://registry-quay-quay-enterprise.{{ $appsDomain }}/oauth2/keycloak/callback'
+                - 'https://registry-quay-quay-enterprise.{{ $appsDomain }}/oauth2/keycloak/callback/attach'
+                - 'https://registry-quay-quay-enterprise.{{ $appsDomain }}/oauth2/keycloak/callback/cli'
+              webOrigins:
+                - 'https://registry-quay-quay-enterprise.{{ $appsDomain }}'
+          {{hub- end hub}}
+          {{hub- if $gitlabEnabled hub}}
+            # GitLab OIDC login (omniauth openid_connect provider in the GitLab CR). Confidential client;
+            # uid_field preferred_username comes from the profile scope.
+            - clientId: gitlab
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $gitlabSecret "gitlab" | default "" | b64dec }}'
+              enabled: true
+              publicClient: false
+              standardFlowEnabled: true
+              fullScopeAllowed: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - profile
+                - email
+              redirectUris:
+                - 'https://gitlab.{{ $appsDomain }}/users/auth/openid_connect/callback'
+              webOrigins:
+                - 'https://gitlab.{{ $appsDomain }}'
+          {{hub- end hub}}
+          {{hub- if $argocdSsoEnabled hub}}
+            # ArgoCD Keycloak SSO (Dex oidc connector, alongside OpenShift OAuth). One client for both the
+            # infra (openshift-gitops) and dev (openshift-gitops-dev) instances; groups scope drives ArgoCD RBAC.
+            - clientId: argocd
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $argocdSecret "argocd" | default "" | b64dec }}'
+              enabled: true
+              publicClient: false
+              standardFlowEnabled: true
+              fullScopeAllowed: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - profile
+                - email
+                - groups
+              redirectUris:
+                - 'https://infra-gitops-server-openshift-gitops.{{ $appsDomain }}/api/dex/callback'
+                - 'https://argocd-dev-server-openshift-gitops-dev.{{ $appsDomain }}/api/dex/callback'
+              webOrigins:
+                - 'https://infra-gitops-server-openshift-gitops.{{ $appsDomain }}'
+                - 'https://argocd-dev-server-openshift-gitops-dev.{{ $appsDomain }}'
           {{hub- end hub}}
           {{hub- if $rhdhEnabled hub}}
           # The rhdh client's service account needs realm-management read roles so the keycloakOrg catalog
