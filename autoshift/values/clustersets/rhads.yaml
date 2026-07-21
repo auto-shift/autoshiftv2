@@ -103,6 +103,11 @@ hubClusterSets:
       gitlab-channel: stable
       gitlab-source: certified-operators
       gitlab-source-namespace: openshift-marketplace
+
+      # Developer-team ArgoCD (gitops-dev). RHADS golden-path apps deploy through the team's argocd-dev
+      # instance (openshift-gitops-dev), keeping infra-gitops for platform/infra GitOps only.
+      gitops-dev: 'true'
+      gitops-dev-team-dev: 'hub'             # 'hub' (team ArgoCD on this hub) or 'standalone'
     config:
       # Infra ArgoCD repo-server needs more CPU: rendering ~50 PolicyGenerator charts through the CMP
       # sidecar is CPU-heavy and the default 1 core makes cold renders exceed the 60s manifest deadline.
@@ -115,6 +120,14 @@ hubClusterSets:
             requests:
               cpu: '1000m'
               memory: '512Mi'
+        # Developer team ArgoCD instances (gitops-dev). The 'dev' team gets argocd-dev in
+        # openshift-gitops-dev; RHADS golden-path apps deploy here (see config.devHub.argocd.team).
+        teams:
+          dev:
+            # admin stays enabled: RHDH scaffolds into this instance via admin/password (argocd-dev-cluster).
+            disableAdmin: 'false'
+            gitops_rbac_policies:
+              - 'g, openshift-developers, role:admin'
       keycloak:
         realmName: tssc-iam
         # cert-manager ClusterIssuer for the keycloak.apps.<domain> cert (set to your cluster's issuer).
@@ -139,6 +152,10 @@ hubClusterSets:
         orgName: TSSC
       devHub:
         title: Red Hat Developer Hub
+        # Which ArgoCD RHDH scaffolds golden-path apps into. Set 'team' to a gitops-dev team so apps
+        # deploy via that team's argocd-dev (openshift-gitops-<team>); unset = infra-gitops (platform).
+        argocd:
+          team: dev
         scm:
           # Only enable an SCM provider once it is actually reachable AND its credentials secret exists.
           # RHDH hard-fails startup if the integration host resolves empty (TypeError: got empty-string).
