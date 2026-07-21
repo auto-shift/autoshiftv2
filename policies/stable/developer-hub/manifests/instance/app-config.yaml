@@ -55,10 +55,12 @@ object-templates-raw: |
                   prompt: auto
                   signIn:
                     resolvers:
-                      # Resolves the OIDC preferred_username to a catalog User entity. Those entities come
-                      # from the keycloakOrg catalog provider below (Keycloak user/group sync), so only
-                      # known Keycloak users can sign in.
+                      # Resolve the OIDC preferred_username to a catalog User entity (synced from Keycloak by
+                      # the keycloakOrg provider below). dangerouslyAllowSignInWithoutUserInCatalog is kept as
+                      # a safety net so sign-in still works during the sync's initial delay / if it's briefly
+                      # unavailable — access is already gated by Keycloak auth. Drop it for stricter posture.
                       - resolver: preferredUsernameMatchingUserEntityName
+                        dangerouslyAllowSignInWithoutUserInCatalog: true
           signInPage: oidc
           {{hub- if $quayEnabled hub}}
           proxy:

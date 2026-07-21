@@ -63,6 +63,57 @@ object-templates-raw: |
               attributes:
                 include.in.token.scope: "true"
                 display.on.consent.screen: "true"
+            # This clientScopes list REPLACES Keycloak's built-in scopes, so profile/email must be declared
+            # here or OIDC clients can't request them (RHDH login fails invalid_scope on profile/email).
+            - name: profile
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+              protocolMappers:
+                - name: username
+                  protocol: openid-connect
+                  protocolMapper: oidc-usermodel-property-mapper
+                  config:
+                    user.attribute: username
+                    claim.name: preferred_username
+                    jsonType.label: String
+                    id.token.claim: "true"
+                    access.token.claim: "true"
+                    userinfo.token.claim: "true"
+                - name: full name
+                  protocol: openid-connect
+                  protocolMapper: oidc-full-name-mapper
+                  config:
+                    id.token.claim: "true"
+                    access.token.claim: "true"
+                    userinfo.token.claim: "true"
+            - name: email
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+              protocolMappers:
+                - name: email
+                  protocol: openid-connect
+                  protocolMapper: oidc-usermodel-property-mapper
+                  config:
+                    user.attribute: email
+                    claim.name: email
+                    jsonType.label: String
+                    id.token.claim: "true"
+                    access.token.claim: "true"
+                    userinfo.token.claim: "true"
+                - name: email verified
+                  protocol: openid-connect
+                  protocolMapper: oidc-usermodel-property-mapper
+                  config:
+                    user.attribute: emailVerified
+                    claim.name: email_verified
+                    jsonType.label: boolean
+                    id.token.claim: "true"
+                    access.token.claim: "true"
+                    userinfo.token.claim: "true"
             # groups client scope: emits the user's group membership as a 'groups' claim so RHDH can do
             # group-based ownership/RBAC and sync Keycloak groups. Requested via app-config additionalScopes.
             - name: groups
@@ -205,4 +256,18 @@ object-templates-raw: |
               attributes:
                 backchannel.logout.session.required: "true"
                 backchannel.logout.revoke.offline.tokens: "false"
+          {{hub- end hub}}
+          {{hub- if $rhdhEnabled hub}}
+          # The rhdh client's service account needs realm-management read roles so the keycloakOrg catalog
+          # provider can sync Keycloak users/groups into RHDH. This is a role binding (service-account-rhdh),
+          # not a login credential — real login users come from federation or the admin.
+          users:
+            - username: service-account-rhdh
+              enabled: true
+              serviceAccountClientId: rhdh
+              clientRoles:
+                realm-management:
+                  - view-users
+                  - query-users
+                  - query-groups
           {{hub- end hub}}
