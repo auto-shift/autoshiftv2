@@ -55,6 +55,9 @@ object-templates-raw: |
                   prompt: auto
                   signIn:
                     resolvers:
+                      # Resolves the OIDC preferred_username to a catalog User entity. Those entities come
+                      # from the keycloakOrg catalog provider below (Keycloak user/group sync), so only
+                      # known Keycloak users can sign in.
                       - resolver: preferredUsernameMatchingUserEntityName
           signInPage: oidc
           {{hub- if $quayEnabled hub}}
@@ -81,8 +84,23 @@ object-templates-raw: |
             {{hub- else hub}}
             locations: []
             {{hub- end hub}}
-            {{hub- if or $glEnabled $ghEnabled hub}}
             providers:
+              # Sync Keycloak users + groups into the catalog so sign-in resolves real User entities and
+              # group-based ownership/RBAC work. Uses the rhdh client's service account (needs realm-mgmt
+              # view/query-users + query-groups roles). Always on — RHDH always authenticates via Keycloak.
+              keycloakOrg:
+                default:
+                  baseUrl: ${KEYCLOAK_URL}
+                  loginRealm: ${KEYCLOAK_REALM}
+                  realm: ${KEYCLOAK_REALM}
+                  clientId: ${KEYCLOAK_CLIENT_ID}
+                  clientSecret: ${KEYCLOAK_CLIENT_SECRET}
+                  userQuerySize: 100
+                  groupQuerySize: 100
+                  schedule:
+                    frequency: { hours: 1 }
+                    timeout: { minutes: 3 }
+                    initialDelay: { seconds: 15 }
               {{hub- if $glEnabled hub}}
               gitlab:
                 default:
@@ -100,7 +118,6 @@ object-templates-raw: |
                   filters:
                     branch: main
               {{hub- end hub}}
-            {{hub- end hub}}
           argocd:
             appLocatorMethods:
               - type: config
