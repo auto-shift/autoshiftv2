@@ -1,0 +1,44 @@
+# AutoShift's built-in self-signed CA — the DEFAULT TLS issuer when a cluster has no external ACME
+# ClusterIssuer. Components reference ClusterIssuer `autoshift-ca` via their config.<comp>.tlsIssuer
+# default (e.g. GitLab, Keycloak); internal consumers (RHDH, Tekton, ArgoCD) are given the autoshift-ca
+# CA cert to trust. Override any component with a real ACME issuer (Let's Encrypt/ZeroSSL) for public trust.
+#
+# Chain: selfSigned ClusterIssuer -> CA Certificate (isCA) in the cert-manager cluster-resource-namespace
+# (`cert-manager`, from --cluster-resource-namespace=$(POD_NAMESPACE)) -> CA ClusterIssuer that signs leaf
+# certs. The CA secret MUST live in that namespace for the CA ClusterIssuer to read it.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: autoshift-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: autoshift-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: autoshift-ca
+  secretName: autoshift-ca
+  # Long-lived root per NIST SP 800-57 (roots are long-lived; the SERVING certs it signs rotate every 30d).
+  # rotationPolicy defaults to Never, so cert-manager renewal REUSES the key — the CA identity is unchanged
+  # and consumers' trust is never interrupted. Rotating the ROOT KEY itself would need trust-manager to
+  # distribute the old+new CA during overlap (deferred; not a FedRAMP requirement).
+  duration: 17520h0m0s        # 2y
+  renewBefore: 2160h0m0s      # renew 90d before expiry
+  privateKey:
+    algorithm: ECDSA
+    size: 384                 # P-384: FIPS 140-approved, higher-assurance curve for FedRAMP High
+  issuerRef:
+    name: autoshift-selfsigned
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: autoshift-ca
+spec:
+  ca:
+    secretName: autoshift-ca

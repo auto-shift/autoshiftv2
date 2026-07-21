@@ -1,8 +1,9 @@
 # Keycloak CR + external TLS. A cert-manager Certificate issues keycloak-tls for the external hostname
 # (keycloak.apps.<domain>) from the ClusterIssuer named in config.keycloak.tlsIssuer, and RHBK's native
 # passthrough ingress serves it — so every OIDC consumer (TPA, RHDH, TAS/Fulcio) validates the cert
-# cleanly. Without tlsIssuer set, no Certificate is created and RHBK falls back to a self-signed serving
-# cert (fine for internal-only use, but external OIDC consumers will fail cert validation).
+# cleanly. config.keycloak.tlsIssuer defaults to AutoShift's built-in CA (autoshift-ca) so trust works on
+# any cluster; set a real ACME issuer for public trust. (On autoshift-ca clusters, OIDC consumers must
+# trust the autoshift-ca cert — same CA distribution as RHDH; see autoshift_ca_plan.)
 # DB connection is derived from config.keycloak.db:
 #   cnpg   -> <cluster>-pooler-rw service, <cluster>-app secret (CNPG-generated)
 #   simple -> <cluster> service, <cluster> secret (database.yaml-generated)
@@ -15,7 +16,7 @@ object-templates-raw: |
   {{hub- $mode := (index $db "mode" | default "cnpg") hub}}
   {{hub- $cluster := (index $db "clusterName" | default "keycloak-pgsql") hub}}
   {{hub- $ext := (index $db "external" | default dict) hub}}
-  {{hub- $tlsIssuer := (index $kc "tlsIssuer" | default "") hub}}
+  {{hub- $tlsIssuer := (index $kc "tlsIssuer" | default "autoshift-ca") hub}}
   {{hub- $ns := "keycloak-system" hub}}
   {{hub- $dbHost := printf "%s-pooler-rw.%s.svc" $cluster $ns hub}}
   {{hub- $dbSecret := printf "%s-app" $cluster hub}}
@@ -43,6 +44,14 @@ object-templates-raw: |
         secretName: keycloak-tls
         dnsNames:
           - '{{ $hostname }}'
+        # 30d serving cert, ECDSA P-384, fresh key each rotation (see gitlab/cert-manager for the FedRAMP
+        # High rationale). The signing CA is unchanged across leaf rotation, so OIDC consumers keep trust.
+        duration: 720h0m0s
+        renewBefore: 240h0m0s
+        privateKey:
+          algorithm: ECDSA
+          size: 384
+          rotationPolicy: Always
         issuerRef:
           name: '{{hub $tlsIssuer hub}}'
           kind: ClusterIssuer

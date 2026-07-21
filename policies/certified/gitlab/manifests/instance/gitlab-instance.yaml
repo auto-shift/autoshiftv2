@@ -2,6 +2,13 @@ object-templates-raw: |
   {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{- $ns := "gitlab-system" }}
 
+  # config.gitlab from the rendered-config ConfigMap (hub-side). tlsIssuer names a cert-manager
+  # ClusterIssuer for the GitLab route certs; empty = the operator self-signs (untrusted by consumers).
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $gitlabCfg := (index $rcmConfig "gitlab" | default dict) hub}}
+  {{hub- $tlsIssuer := (index $gitlabCfg "tlsIssuer" | default "autoshift-ca") hub}}
+
   # Service modes: managed (default), external, or bundled
   {{- $dbMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" hub}}" }}
   {{- $redisMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-redis-mode" | default "managed" hub}}" }}
@@ -63,6 +70,37 @@ object-templates-raw: |
   {{- if (empty $bucketName) }}{{- $objStoreReady = false }}{{- end }}
   {{- end }}
 
+  # Trusted cert for the GitLab routes (gitlab./registry./kas.). cert-manager issues it from the
+  # ClusterIssuer in config.gitlab.tlsIssuer; the operator serves it via global.ingress.tls.secretName
+  # below. Without this the operator self-signs, and RHDH/Tekton/ArgoCD reject the TLS as untrusted.
+  {{hub- if ne $tlsIssuer "" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: gitlab-provided-tls
+        namespace: {{ $ns }}
+      spec:
+        secretName: gitlab-provided-tls
+        dnsNames:
+          - gitlab.{{ $ingressDomain }}
+          - registry.{{ $ingressDomain }}
+          - kas.{{ $ingressDomain }}
+        # Short-lived serving cert, auto-rotated by cert-manager. FedRAMP High (SC-12/SC-13) mandates no
+        # fixed cadence — 30d is a defensible, stronger-than-required cryptoperiod. rotationPolicy: Always
+        # rotates the KEY each cycle; the signing CA is unchanged so no consumer's trust breaks.
+        duration: 720h0m0s          # 30d validity
+        renewBefore: 240h0m0s       # renew ~10d before expiry (rolls every ~20d)
+        privateKey:
+          algorithm: ECDSA
+          size: 384                 # P-384: FIPS 140-approved, higher-assurance curve for High
+          rotationPolicy: Always
+        issuerRef:
+          name: {{hub $tlsIssuer hub}}
+          kind: ClusterIssuer
+  {{hub- end hub}}
+
   # Only deploy when all enabled external services are ready
   {{- if and $dbReady $redisReady $objStoreReady }}
   {{- if ne $dbMode "bundled" }}
@@ -109,6 +147,12 @@ object-templates-raw: |
                 # chart's Ingress objects into edge-terminated OpenShift Routes (default wildcard cert).
                 # Without enabled:true no Ingress is rendered, so the operator creates no Routes.
                 enabled: true
+                {{hub- if ne $tlsIssuer "" hub}}
+                # Serve the cert-manager-issued (trusted) cert instead of the operator's self-signed one.
+                tls:
+                  enabled: true
+                  secretName: gitlab-provided-tls
+                {{hub- end hub}}
                 annotations:
                   route.openshift.io/termination: edge
                 class: none

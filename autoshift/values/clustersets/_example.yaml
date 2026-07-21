@@ -88,9 +88,9 @@ hubClusterSets:
       keycloak:
         realmName: tssc-iam
         # cert-manager ClusterIssuer that issues the keycloak.apps.<domain> TLS cert (RHBK passthrough
-        # serves it). REQUIRED for external OIDC consumers (TPA/RHDH/TAS) to trust Keycloak. Name your
-        # cluster's issuer (e.g. a Let's Encrypt/ZeroSSL ACME ClusterIssuer). Empty = self-signed only.
-        tlsIssuer: ''
+        # serves it) so external OIDC consumers (TPA/RHDH/TAS) trust Keycloak. Defaults to AutoShift's
+        # built-in CA (autoshift-ca) so it works on any cluster; set a real ACME issuer for public trust.
+        tlsIssuer: autoshift-ca
         db:
           mode: cnpg                # 'cnpg' (default, needs the cloudnative-pg operator), 'simple', or 'external'
           clusterName: keycloak-pgsql
@@ -187,6 +187,11 @@ hubClusterSets:
       gitlab:
         dbBackupSchedule: '0 2 * * *'
         dbBackupRetention: '30d'
+        # cert-manager ClusterIssuer that issues the GitLab route certs (gitlab./registry./kas..apps.<domain>).
+        # Defaults to AutoShift's built-in self-signed CA (ClusterIssuer autoshift-ca) so TLS trust works on
+        # ANY cluster with cert-manager; internal consumers (RHDH/Tekton/ArgoCD) are given the autoshift-ca
+        # cert to trust. Set a real ACME issuer (e.g. letsencrypt-production-aws-fallback) for public trust.
+        tlsIssuer: autoshift-ca
       # =======================================================================
       # JFrog Artifactory
       # =======================================================================

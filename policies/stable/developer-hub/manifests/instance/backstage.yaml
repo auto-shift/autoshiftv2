@@ -3,6 +3,24 @@
 # the RHDH BACKEND_URL are derived to match that same operator-generated host.
 object-templates-raw: |
   {{hub- $ns := "tssc-dh" hub}}
+  # Trust bundle: AutoShift's built-in CA (cert-manager/autoshift-ca) so RHDH (Node) trusts in-cluster
+  # routes signed by it — GitLab/Keycloak/etc. when config.<comp>.tlsIssuer uses the default autoshift-ca.
+  # NODE_EXTRA_CA_CERTS ADDS to the built-in public roots, so this is harmless when a component instead
+  # uses a public ACME issuer (Let's Encrypt is still trusted). tls.crt of the CA secret is the CA cert.
+  {{hub- $caSecret := (lookup "v1" "Secret" "cert-manager" "autoshift-ca") | default dict hub}}
+  {{hub- $caCert := (index ($caSecret.data | default dict) "tls.crt" | default "" | base64dec) hub}}
+  {{hub- if ne $caCert "" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: tssc-developer-hub-trusted-ca
+        namespace: '{{hub $ns hub}}'
+      data:
+        ca-bundle.crt: |
+          {{hub $caCert | autoindent hub}}
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: rhdh.redhat.com/v1alpha3
@@ -18,6 +36,18 @@ object-templates-raw: |
             configMaps:
               - name: tssc-developer-hub-app-config
           dynamicPluginsConfigMapName: tssc-developer-hub-dynamic-plugins
+          {{hub- if ne $caCert "" hub}}
+          extraFiles:
+            mountPath: /opt/app-root/src/trusted-ca
+            configMaps:
+              - name: tssc-developer-hub-trusted-ca
+                key: ca-bundle.crt
+          {{hub- end hub}}
           extraEnvs:
+            {{hub- if ne $caCert "" hub}}
+            envs:
+              - name: NODE_EXTRA_CA_CERTS
+                value: /opt/app-root/src/trusted-ca/ca-bundle.crt
+            {{hub- end hub}}
             secrets:
               - name: tssc-developer-hub-env
