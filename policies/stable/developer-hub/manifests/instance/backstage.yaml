@@ -9,6 +9,11 @@ object-templates-raw: |
   # uses a public ACME issuer (Let's Encrypt is still trusted). tls.crt of the CA secret is the CA cert.
   {{hub- $caSecret := (lookup "v1" "Secret" "cert-manager" "autoshift-ca") | default dict hub}}
   {{hub- $caCert := (index ($caSecret.data | default dict) "tls.crt" | default "" | base64dec) hub}}
+  # Also trust the in-cluster Kubernetes API CA (kube-root-ca) so the RHDH Kubernetes plugin can reach
+  # kubernetes.default.svc: once NODE_EXTRA_CA_CERTS is set, Node validates that TLS and the plugin's
+  # skipTLSVerify is ignored, so the API server cert must chain to a CA in this bundle. Read spoke-side
+  # (the cluster RHDH runs on). kube-root-ca.crt exists in every namespace.
+  {{- $kubeCACert := (index ((lookup "v1" "ConfigMap" "tssc-dh" "kube-root-ca.crt" | default dict).data | default dict) "ca.crt" | default "") }}
   {{hub- if ne $caCert "" hub}}
   - complianceType: musthave
     objectDefinition:
@@ -20,6 +25,7 @@ object-templates-raw: |
       data:
         ca-bundle.crt: |
           {{hub $caCert | autoindent hub}}
+          {{ $kubeCACert | autoindent }}
   {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
