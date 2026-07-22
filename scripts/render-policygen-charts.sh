@@ -20,9 +20,22 @@ mkdir -p "$OUT"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+# ai-accelerator source for the openshift-ai / gpu-operator hybrid policies. These tokens live in a
+# kustomize resource URL, so they must be substituted to concrete values BEFORE `kustomize build` fetches
+# (unlike ${POLICY_NAMESPACE}/${REMEDIATION}/${CLUSTER_SET_SUFFIX}, which pass PG untouched for the shim).
+AI_ACCELERATOR_REPO="${AI_ACCELERATOR_REPO:-github.com/redhat-ai-services/ai-accelerator}"
+AI_ACCELERATOR_REF="${AI_ACCELERATOR_REF:-main}"
+AI_ACCELERATOR_OVERLAY="${AI_ACCELERATOR_OVERLAY:-instance-3.x/base}"
+
 # Absurd, valid, unique duration sentinels for the ONLY tokens PolicyGenerator validates
-# (evaluationInterval). ${POLICY_NAMESPACE}/${REMEDIATION}/${CLUSTER_SET_SUFFIX} pass PG untouched.
-sedtok() { sed -e 's|${EVAL_COMPLIANT}|1000000h|g' -e 's|${EVAL_NONCOMPLIANT}|2000000h|g'; }
+# (evaluationInterval). ${POLICY_NAMESPACE}/${REMEDIATION}/${CLUSTER_SET_SUFFIX} pass PG untouched;
+# the ai-accelerator tokens are substituted to real values here (they steer the kustomize fetch).
+sedtok() {
+  sed -e 's|${EVAL_COMPLIANT}|1000000h|g' -e 's|${EVAL_NONCOMPLIANT}|2000000h|g' \
+      -e "s|\${AI_ACCELERATOR_REPO}|${AI_ACCELERATOR_REPO}|g" \
+      -e "s|\${AI_ACCELERATOR_REF}|${AI_ACCELERATOR_REF}|g" \
+      -e "s|\${AI_ACCELERATOR_OVERLAY}|${AI_ACCELERATOR_OVERLAY}|g"
+}
 unsedtok() { sed -e 's|1000000h|${EVAL_COMPLIANT}|g' -e 's|2000000h|${EVAL_NONCOMPLIANT}|g'; }
 
 for dir in "$@"; do

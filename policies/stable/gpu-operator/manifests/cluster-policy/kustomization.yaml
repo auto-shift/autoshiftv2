@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Sources the GPU ClusterPolicy from ai-accelerator (gpu instance/base). Repo + ref are the shared
+# per-deployment render tokens (${AI_ACCELERATOR_REPO}, ${AI_ACCELERATOR_REF}); the GPU MIG strategy is a
+# per-cluster label (gpu-mig-strategy), so no overlay token here. mig-patch injects that label.
+resources:
+  - ${AI_ACCELERATOR_REPO}//components/operators/gpu-operator-certified/instance/base?ref=${AI_ACCELERATOR_REF}
+patches:
+  - path: mig-patch.yaml
+  # The base bundles a Grafana dashboard ConfigMap whose {{gpu}}/{{instance}} Grafana variables collide
+  # with ACM's {{ }} template syntax (the config-policy-controller would try to resolve them and fail).
+  # Drop it from the ACM-managed set — it's console eye-candy, not required for GPU enablement.
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: nvidia-dcgm-exporter-dashboard
+        namespace: openshift-config-managed

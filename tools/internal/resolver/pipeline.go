@@ -85,6 +85,10 @@ func KustomizeBuild(policyDir string) (string, error) {
 		"${EVAL_COMPLIANT}", "10m",
 		"${EVAL_NONCOMPLIANT}", "30s",
 		"${CLUSTER_SET_SUFFIX}", "",
+		// ai-accelerator source for the openshift-ai / gpu-operator hybrid policies (per-deployment).
+		"${AI_ACCELERATOR_REPO}", "github.com/redhat-ai-services/ai-accelerator",
+		"${AI_ACCELERATOR_REF}", "e0139efe7ece9a68782a423cdab94750172739fb",
+		"${AI_ACCELERATOR_OVERLAY}", "instance-3.x/base",
 	)
 	work, err := os.MkdirTemp("", "autoshift-kustomize-*")
 	if err != nil {

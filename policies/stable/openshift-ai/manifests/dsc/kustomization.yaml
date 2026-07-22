@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Sources the RHOAI DataScienceCluster + DSCInitialization from ai-accelerator. Repo, ref and the
+# openshift-ai sub-path (overlay) are per-deployment render tokens, so a deployment can point at its own
+# fork/branch/overlay: ${AI_ACCELERATOR_REPO}, ${AI_ACCELERATOR_REF}, ${AI_ACCELERATOR_OVERLAY}
+# (defaults in autoshift/values/global.yaml; e.g. overlay = instance-3.x/base for the clean DSC/DSCI, or
+# instance-3.x/overlays/<name> for a full overlay). The patch injects {{hub}} templates so per-cluster
+# managementState comes from labels. Connected git-mode + the CI-render/OCI release fetch this; live
+# DISCONNECTED git-mode needs the repo mirrored into your Git or the OCI release (rendered once in CI).
+resources:
+  - ${AI_ACCELERATOR_REPO}//components/operators/openshift-ai/${AI_ACCELERATOR_OVERLAY}?ref=${AI_ACCELERATOR_REF}
+patches:
+  - path: managementstate-patch.yaml

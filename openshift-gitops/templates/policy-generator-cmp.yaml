@@ -34,6 +34,10 @@ data:
             REM="${ARGOCD_ENV_REMEDIATION:-${REMEDIATION:-enforce}}"
             EC="${ARGOCD_ENV_EVAL_COMPLIANT:-${EVAL_COMPLIANT:-10m}}"
             EN="${ARGOCD_ENV_EVAL_NONCOMPLIANT:-${EVAL_NONCOMPLIANT:-30s}}"
+            # ai-accelerator source for the openshift-ai / gpu-operator hybrid policies (per-deployment).
+            AIREPO="${ARGOCD_ENV_AI_ACCELERATOR_REPO:-${AI_ACCELERATOR_REPO:-github.com/redhat-ai-services/ai-accelerator}}"
+            AIREF="${ARGOCD_ENV_AI_ACCELERATOR_REF:-${AI_ACCELERATOR_REF:-main}}"
+            AIOVL="${ARGOCD_ENV_AI_ACCELERATOR_OVERLAY:-${AI_ACCELERATOR_OVERLAY:-instance-3.x/base}}"
             # sed (envsubst is not in the argocd image), restricted to these exact tokens so
             # hub-template $vars ($base, $cm, ...) inside manifests/ are never touched.
             find . -type f -name '*.yaml' -exec sed -i \
@@ -41,5 +45,8 @@ data:
               -e "s|\${REMEDIATION}|${REM}|g" \
               -e "s|\${EVAL_COMPLIANT}|${EC}|g" \
               -e "s|\${EVAL_NONCOMPLIANT}|${EN}|g" \
+              -e "s|\${AI_ACCELERATOR_REPO}|${AIREPO}|g" \
+              -e "s|\${AI_ACCELERATOR_REF}|${AIREF}|g" \
+              -e "s|\${AI_ACCELERATOR_OVERLAY}|${AIOVL}|g" \
               {} +
             kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone .

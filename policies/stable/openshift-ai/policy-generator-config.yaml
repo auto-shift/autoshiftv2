@@ -1,0 +1,45 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: openshift-ai
+# Hybrid RHOAI (OpenShift AI) policy. AutoShift installs ONLY the operator (OperatorPolicy) and delivers
+# the DataScienceCluster / DSCInitialization config; RHOAI is a meta-operator, so any DSC component set to
+# Managed is installed and OWNED by RHOAI — do NOT also enable AutoShift's overlapping operator policies
+# (openshift-pipelines / external-secrets / servicemesh / serverless) on a RHOAI clusterset.
+#
+# The DSC/DSCI are SOURCED from redhat-ai-services/ai-accelerator's kustomize (vendored under
+# manifests/dsc/base for portability/disconnected) and patched with {{hub}} templates so per-cluster
+# managementState comes from labels. PolicyGenerator runs manifests/dsc as a nested kustomize and wraps
+# the result in a ConfigurationPolicy. Per-deployment ${...} tokens live here + placement.yaml only.
+placementBindingDefaults:
+  name: binding-policy-openshift-ai
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) RHOAI operator install (Namespace + first-class OperatorPolicy). Label-driven channel/source.
+  - name: policy-openshift-ai-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) DataScienceCluster + DSCInitialization, sourced from ai-accelerator (manifests/dsc = vendored base
+  #    + hub-template patches). Depends on the operator so the DSC CRDs exist before this applies.
+  #    musthave (default) asserts the managementState fields without fighting RHOAI's own status mutations.
+  - name: policy-openshift-ai-dsc
+    dependencies:
+      - name: policy-openshift-ai-operator-install
+    manifests:
+      - path: manifests/dsc
