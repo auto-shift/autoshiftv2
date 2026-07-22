@@ -1,0 +1,65 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: cluster-install
+# Cluster provisioning policies. The per-cluster fan-out lives INSIDE each ConfigurationPolicy's
+# object-templates-raw — a hub-evaluated `range` over the rendered-config ConfigMaps discovered with
+# `lookup ... "autoshift.io/rendered-config-map"` (+ an owning-namespace ownership filter), so there
+# is no Helm .Values.clusters loop and the whole body survives verbatim as static PG manifests.
+#
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP before kustomize runs;
+# they live here and in placement.yaml only. ${CLUSTER_SET_SUFFIX} (versionedClusterSets tag,
+# usually empty) is appended to the managedClusterSet name the installed cluster joins.
+#
+# All 5 policies share one placement (self-managed Exists + cluster-install: true) and are uniform
+# enforce, so remediationAction is set in policyDefaults. The dependency chain
+# (prereqs -> secrets -> siteconfig/aws/vmware) is encoded per-policy.
+placementBindingDefaults:
+  name: binding-policy-cluster-install
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Namespace + ClusterImageSet + KlusterletAddonConfig prereqs (per cluster, hub-eval loop).
+  - name: policy-cluster-install-prereqs
+    manifests:
+      - path: manifests/prereqs.yaml
+  # 2) BMC + pull secrets staged into each cluster namespace.
+  - name: policy-cluster-install-secrets
+    dependencies:
+      - name: policy-cluster-install-prereqs
+    manifests:
+      - path: manifests/secrets.yaml
+  # 3) Baremetal Assisted-Installer SiteConfig/ClusterInstance stack.
+  - name: policy-cluster-install-siteconfig
+    dependencies:
+      - name: policy-cluster-install-secrets
+    manifests:
+      - path: manifests/siteconfig.yaml
+  # 4) Hive AWS IPI install stack.
+  - name: policy-cluster-install-aws
+    dependencies:
+      - name: policy-cluster-install-prereqs
+      - name: policy-cluster-install-secrets
+    manifests:
+      - path: manifests/aws.yaml
+  # 5) Hive vSphere IPI install stack.
+  - name: policy-cluster-install-vmware
+    dependencies:
+      - name: policy-cluster-install-prereqs
+      - name: policy-cluster-install-secrets
+    manifests:
+      - path: manifests/vmware.yaml

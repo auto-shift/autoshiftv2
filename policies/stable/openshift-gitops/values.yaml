@@ -12,6 +12,13 @@ gitops:
   name: openshift-gitops-operator
   argoName: infra-gitops
   disableDefaultArgoCD: true
+  # Disable the ArgoCD built-in admin account.
+  disableAdmin: false
+  policyGenerator:
+    # Install the policy-generator CMP sidecar in the infra ArgoCD repo-server. Required for git/source
+    # mode (renders PolicyGenerator dirs live); disabled for OCI-only deployments (prerendered Helm).
+    # The ApplicationSet forwards the effective value from the deployment's policyGenerator flag.
+    enabled: true
   # Dev team cluster-scoped namespaces are auto-discovered from managed cluster labels
   # matching autoshift.io/gitops-dev-team-<team>-cluster-scoped: 'true'
   rbac_policies:
@@ -54,6 +61,14 @@ gitops:
     requests:
       cpu: 250m
       memory: 256Mi
+  # PolicyGenerator ConfigManagementPlugin (CMP) for rendering kustomize/PolicyGenerator
+  # policies in the hub repo-server. Required for GIT/source deployments. Adds an init
+  # container (stages the PG binary from the ACM subscription image) and a CMP sidecar that
+  # runs `kustomize build --enable-alpha-plugins` after substituting the per-deployment
+  # ${...} placeholders. See openshift-gitops/templates/argo-cd.yaml.
+  # Gated by gitops.policyGenerator.enabled (above): OCI-only deployments consume prerendered Helm
+  # charts and set it false to omit the sidecar. Its init/sidecar images are resolved at enforcement
+  # time via hub-template lookups in templates/policy-gitops-systems-argocd.yaml.
   server:
     autoscale:
       enabled: true

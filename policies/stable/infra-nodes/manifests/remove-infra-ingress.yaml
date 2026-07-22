@@ -1,0 +1,12 @@
+object-templates-raw: |
+  {{- $IngressController := (lookup "operator.openshift.io/v1" "IngressController" "openshift-ingress-operator" "default") | default dict }}
+  {{- if not (empty $IngressController) }}
+  {{- $spec := $IngressController.spec }}
+  {{- $nodePlacement := dict "nodeSelector" (dict) "tolerations" (list) }}
+  {{- $newSpec := set $spec "nodePlacement" $nodePlacement }}
+  {{- $IngressControllerNoStatus := unset $IngressController "status" }}
+  {{- $objectDefinition := set $IngressControllerNoStatus "spec" $newSpec }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      {{ $objectDefinition | toYaml | autoindent }}
+  {{- end }}

@@ -1,0 +1,19 @@
+object-templates-raw: |
+  {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
+  {{- $gitlabUrl := (printf "https://gitlab.%s" $ingressDomain) }}
+  {{- $password := (fromSecret "gitlab-system" "gitlab-gitlab-initial-root-password" "password" | base64dec) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gitlab-repo-creds
+        namespace: openshift-gitops
+        labels:
+          argocd.argoproj.io/secret-type: repo-creds
+      type: Opaque
+      stringData:
+        url: {{ $gitlabUrl }}
+        username: root
+        password: {{ $password }}
+        type: git

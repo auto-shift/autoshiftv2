@@ -190,6 +190,112 @@ hubClusterSets:
             useREST: "true"
             authMethod: "password"
             sanType: "nvme"
+      # =======================================================================
+      # Developer OpenShift GitOps (team ArgoCD instances)
+      # Per-team ArgoCD spec (RBAC + resource sizing). Which teams deploy, and
+      # in which mode, is driven by the cluster labels gitops-dev /
+      # gitops-dev-team-<team>: 'hub' | 'standalone' (see labels below). The keys
+      # under teams.<name> must match the team name in the gitops-dev-team-<name>
+      # label. All fields are optional; omitted values fall back to defaults.
+      # =======================================================================
+      gitops:
+        # Does THIS hub render policies via the policy-generator CMP? Overrides the fleet-wide
+        # policyGenerator in global.yaml for this hub's Argo CD. GIT/source hubs set true (installs the
+        # CMP sidecar in the infra ArgoCD repo-server); OCI-only hubs set false. Read only from the
+        # self-managed hub clusterset (self-managed: 'true').
+        # policyGenerator: true
+        #
+        # Gitops namespace for the WHOLE deployment (default openshift-gitops). Overrides gitopsNamespace.
+        # namespace: openshift-gitops
+        #
+        # Whether the operator's default ArgoCD instance exists (default false — AutoShift runs its own
+        # infra-gitops instance). Drives gitops-disable-default-argocd (disable = not defaultInstance).
+        # defaultInstance: false
+        #
+        # Infra (main) ArgoCD instance config — same knobs as teams.<team> below, plus infra-only fields
+        # (server.autoscale, controller.statusProcessors/operationProcessors, repo.cluster_ca_bundle).
+        # Deep-merged over the openshift-gitops chart's gitops.* defaults; omit any field to keep default.
+        # infra:
+        #   rbac_policies:
+        #     - 'g, my-admins, role:admin'
+        #   disableAdmin: 'true'
+        #   server:
+        #     limits: { cpu: '500m', memory: '256Mi' }
+        #     requests: { cpu: '125m', memory: '128Mi' }
+        #     autoscale: { enabled: false, maxReplicas: 3 }
+        #   repo:
+        #     limits: { cpu: '1000m', memory: '1024Mi' }
+        #     requests: { cpu: '250m', memory: '256Mi' }
+        #     cluster_ca_bundle: false
+        #   controller:
+        #     limits: { cpu: '2000m', memory: '2048Mi' }
+        #     requests: { cpu: '250m', memory: '1024Mi' }
+        #     statusProcessors: '20'
+        #     operationProcessors: '10'
+        #   ha: { enabled: 'false' }
+        #   redis: {}
+        #   dex: {}
+        #   applicationSet: {}
+        teams:
+          dev:
+            gitops_rbac_policies:
+              - 'g, openshift-systems, role:admin'
+              - 'g, openshift-dev-leads, role:admin'
+              - 'g, openshift-developers, role:readonly'
+            disableAdmin: 'true'
+            server:
+              limits:
+                cpu: '500m'
+                memory: '256Mi'
+              requests:
+                cpu: '125m'
+                memory: '128Mi'
+            dex:
+              limits:
+                cpu: '500m'
+                memory: '256Mi'
+              requests:
+                cpu: '250m'
+                memory: '128Mi'
+            ha:
+              enabled: 'false'
+              limits:
+                cpu: '500m'
+                memory: '256Mi'
+              requests:
+                cpu: '250m'
+                memory: '128Mi'
+            redis:
+              limits:
+                cpu: '500m'
+                memory: '256Mi'
+              requests:
+                cpu: '250m'
+                memory: '128Mi'
+            repo:
+              limits:
+                cpu: '1000m'
+                memory: '1024Mi'
+              requests:
+                cpu: '250m'
+                memory: '256Mi'
+            controller:
+              limits:
+                cpu: '2000m'
+                memory: '2048Mi'
+              requests:
+                cpu: '250m'
+                memory: '1024Mi'
+            applicationSet:
+              limits:
+                cpu: '2'
+                memory: '1Gi'
+              requests:
+                cpu: '250m'
+                memory: '512Mi'
+          test:
+            gitops_rbac_policies:
+              - 'g, openshift-systems, role:admin'
     labels:
       # =======================================================================
       # Core Configuration

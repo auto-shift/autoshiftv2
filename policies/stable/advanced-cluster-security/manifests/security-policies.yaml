@@ -1,0 +1,72 @@
+object-templates-raw: |
+  {{hub- if eq (index .ManagedClusterLabels "autoshift.io/acs-default-policies" | default "") "true" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.stackrox.io/v1alpha1
+      kind: SecurityPolicy
+      metadata:
+        name: no-privilege-escalation
+        namespace: stackrox
+      spec:
+        policyName: No Privilege Escalation
+        categories:
+          - Privileges
+        severity: HIGH_SEVERITY
+        disabled: false
+        lifecycleStages:
+          - DEPLOY
+        policySections:
+          - sectionName: Rule 1
+            policyGroups:
+              - fieldName: Allow Privilege Escalation
+                values:
+                  - value: "true"
+        enforcementActions: []
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.stackrox.io/v1alpha1
+      kind: SecurityPolicy
+      metadata:
+        name: no-root-user-containers
+        namespace: stackrox
+      spec:
+        policyName: No Root User Containers
+        categories:
+          - Privileges
+        severity: HIGH_SEVERITY
+        disabled: false
+        lifecycleStages:
+          - DEPLOY
+        policySections:
+          - sectionName: Rule 1
+            policyGroups:
+              - fieldName: Run As User
+                values:
+                  - value: "0"
+        enforcementActions: []
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.stackrox.io/v1alpha1
+      kind: SecurityPolicy
+      metadata:
+        name: no-shell-spawning
+        namespace: stackrox
+      spec:
+        policyName: No Shell Spawning at Runtime
+        categories:
+          - System Modification
+        severity: HIGH_SEVERITY
+        disabled: false
+        lifecycleStages:
+          - RUNTIME
+        eventSource: DEPLOYMENT_EVENT
+        policySections:
+          - sectionName: Rule 1
+            policyGroups:
+              - fieldName: Process Name
+                values:
+                  - value: "/bin/sh"
+                  - value: "/bin/bash"
+                  - value: "/bin/dash"
+        enforcementActions: []
+  {{hub- end hub}}

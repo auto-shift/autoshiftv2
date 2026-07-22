@@ -1,3 +1,4 @@
+{{- include "openshift-gitops.validate-gitops" . }}
 ---
 apiVersion: argoproj.io/v1beta1
 kind: ArgoCD
@@ -20,6 +21,11 @@ spec:
       enabled: true
   monitoring:
     enabled: false
+  # PolicyGenerator kustomize plugin support (values proven on feature/policy-generator).
+  kustomizeBuildOptions: --enable-helm --helm-command /usr/local/bin/helm --enable-alpha-plugins --load-restrictor LoadRestrictionsNone
+  # Avoid app.kubernetes.io/instance label conflicts between ArgoCD and ACM/PolicyGenerator policies.
+  applicationInstanceLabelKey: argocd.argoproj.io/instance
+  resourceTrackingMethod: annotation+label
   sso:
     dex:
       resources:
@@ -40,15 +46,109 @@ spec:
     {{- end }}
     scopes: '[groups]'
   repo:
-    {{- if .Values.gitops.repo.cluster_ca_bundle }}
+    {{- $caBundle := .Values.gitops.repo.cluster_ca_bundle }}
+    {{- $pg := (.Values.gitops.policyGenerator | default dict) }}
+    {{- /* Install the policy-generator CMP sidecar only when enabled (git/source bootstrap); OCI-only
+           bootstrap sets false. Default true for backwards compatibility. */}}
+    {{- $pgEnabled := ternary ($pg.enabled) true (hasKey $pg "enabled") }}
+    {{- /* Declared at repo scope so they're visible in the initContainers/sidecar blocks below. */}}
+    {{- $acmImage := ($pg).subscriptionImage }}
+    {{- $argoImage := ($pg).sidecarImage }}
+    {{- /* Reuse the ACM + repo-server images already cached on the cluster; fall back to values.
+           The subscription image (which ships PolicyGenerator) runs as multicluster-operators-hub-subscription. */}}
+    {{- $acmDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "multicluster-operators-hub-subscription") }}
+    {{- if $acmDep }}{{- $acmImage = (index $acmDep.spec.template.spec.containers 0).image }}{{- end }}
+    {{- $argoDep := (lookup "apps/v1" "Deployment" .Values.gitops.argoNamespace (printf "%s-repo-server" .Values.gitops.argoName)) }}
+    {{- if $argoDep }}{{- $argoImage = (index $argoDep.spec.template.spec.containers 0).image }}{{- end }}
+    {{- if or $pgEnabled $caBundle }}
     volumeMounts:
+      {{- if $caBundle }}
       - name: user-ca-bundle
         mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
         subPath: ca-bundle.crt
+      {{- end }}
+      {{- if $pgEnabled }}
+      # PG binary (staged by the init container) at the kustomize plugin home.
+      - name: policy-generator
+        mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+      {{- end }}
     volumes:
+      {{- if $caBundle }}
       - name: user-ca-bundle
         configMap:
           name: user-ca-bundle
+      {{- end }}
+      {{- if $pgEnabled }}
+      - name: policy-generator
+        emptyDir: {}
+      - name: policy-generator-cmp-config
+        configMap:
+          name: policy-generator-cmp-plugin
+      - name: cmp-tmp
+        emptyDir: {}
+      {{- end }}
+    {{- end }}
+    {{- if $pgEnabled }}
+    env:
+      # Let PolicyGenerator inflate Helm charts referenced as manifest input.
+      - name: POLICY_GEN_ENABLE_HELM
+        value: "true"
+      - name: KUSTOMIZE_PLUGIN_HOME
+        value: /etc/kustomize/plugin
+    initContainers:
+      # Copy the PolicyGenerator binary out of the ACM subscription image into the shared volume
+      # the CMP sidecar reads. The binary's path inside the image varies by ACM version, so search
+      # the known locations. The output volume is mounted at /policy-generator-tmp to avoid shadowing
+      # any source path.
+      - name: policy-generator-install
+        image: {{ $acmImage }}
+        command: [/bin/sh, -c]
+        args:
+          - |
+            set -e
+            for src in \
+              /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator/PolicyGenerator \
+              /policy-generator/PolicyGenerator \
+              /policy-generator/PolicyGenerator-rhel8 \
+              /policy-generator/PolicyGenerator-not-fips-compliant; do
+              if [ -f "$src" ]; then
+                cp "$src" /policy-generator-tmp/PolicyGenerator
+                chmod +x /policy-generator-tmp/PolicyGenerator
+                exit 0
+              fi
+            done
+            echo "PolicyGenerator binary not found in ACM image" >&2
+            exit 1
+        volumeMounts:
+          - name: policy-generator
+            mountPath: /policy-generator-tmp
+    sidecarContainers:
+      # CMP sidecar that renders kustomize/PolicyGenerator policy dirs (config in the
+      # policy-generator-cmp-plugin ConfigMap). var-files and plugins are the repo-server's
+      # operator-provided shared volumes (confirmed against the proven feature/policy-generator branch).
+      - name: policy-generator
+        command: [/var/run/argocd/argocd-cmp-server]
+        image: {{ $argoImage }}
+        securityContext:
+          runAsNonRoot: true
+        env:
+          # kustomize (run by the CMP) finds the PolicyGenerator plugin here — mounted directly,
+          # so no runtime copy into a (non-writable) $HOME is needed.
+          - name: KUSTOMIZE_PLUGIN_HOME
+            value: /etc/kustomize/plugin
+        volumeMounts:
+          - name: var-files
+            mountPath: /var/run/argocd
+          - name: plugins
+            mountPath: /home/argocd/cmp-server/plugins
+          - name: policy-generator-cmp-config
+            mountPath: /home/argocd/cmp-server/config/plugin.yaml
+            subPath: plugin.yaml
+          - name: cmp-tmp
+            mountPath: /tmp
+          # PolicyGenerator binary from ACM (staged by the init container) at the plugin home.
+          - name: policy-generator
+            mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
     {{- end }}
     resources:
       limits:

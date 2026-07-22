@@ -1,0 +1,13 @@
+object-templates-raw: |
+  {{- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace") | default "openshift-gitops" }}
+  {{- $ArgoCD := (lookup "pipelines.openshift.io/v1alpha1" "GitopsService" $gitopsNs "cluster") | default dict }}
+  {{- if not (empty $ArgoCD) }}
+  {{- $spec := $ArgoCD.spec }}
+  {{- $newSpecNoTolerations := unset $spec "tolerations" }}
+  {{- $newSpec := set $newSpecNoTolerations "runOnInfra" false }}
+  {{- $ArgoCDNoStatus := unset $ArgoCD "status" }}
+  {{- $objectDefinition := set $ArgoCDNoStatus "spec" $newSpec }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      {{ $objectDefinition | toYaml | autoindent }}
+  {{- end }}

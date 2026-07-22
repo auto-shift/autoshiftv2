@@ -1,0 +1,24 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-acm-addon-tuning
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: selects across the namespace's ManagedClusterSetBindings filtered by the
+  # predicate. autoshift.io/self-managed is a hub-only label (managed clusters never carry it), so
+  # Exists restricts to hub-clusterset members — the PG equivalent of the old clusterSets: hubClusterSets.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/self-managed'
+              operator: Exists
+            - key: 'autoshift.io/acm-addon-tuning'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

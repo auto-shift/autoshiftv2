@@ -1,0 +1,30 @@
+object-templates-raw: |
+  {{- range $role := list "master" "worker" }}
+  - complianceType: musthave
+    objectDefinition:
+      kind: MachineConfig
+      apiVersion: machineconfiguration.openshift.io/v1
+      metadata:
+        name: 99-{{ $role }}-ensure-proper-nqn
+        labels:
+          machineconfiguration.openshift.io/role: {{ $role }}
+      spec:
+        config:
+          ignition:
+            version: 3.2.0
+          systemd:
+            units:
+              - name: ensure-proper-nqn.service
+                enabled: true
+                contents: |
+                  [Unit]
+                  Description=ensure proper NQN
+                  Before=network.target
+
+                  [Service]
+                  ExecStart=/usr/bin/sh -c 'HOSTNAME=$(hostname); echo "nqn.2024-05.io.openshift:$HOSTNAME" > /etc/nvme/hostnqn'
+                  RemainAfterExit=yes
+
+                  [Install]
+                  WantedBy=multi-user.target
+  {{- end }}

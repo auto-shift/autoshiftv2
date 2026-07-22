@@ -1,0 +1,26 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-metallb-configmaps
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # The metallb config LIBRARY (bgp-/l2-/ippool-/peer- ConfigMaps) lives in the hub's policy
+  # namespace; the *-config policies read it via a hub-template lookup that resolves on the hub.
+  # So it must be on every hub that manages metallb clusters — gated on self-managed Exists ONLY
+  # (NOT metallb: true), so a hub that manages metallb spokes but doesn't run metallb itself still
+  # hosts the library. metallb itself (operator + CRs) is placed on any cluster via placement.yaml.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/metallb'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/self-managed'
+              operator: Exists
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

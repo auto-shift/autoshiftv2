@@ -1,0 +1,51 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: worker-nodes
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement-*.yaml — never in manifests/ or test/,
+# whose hub templates contain `$vars` that substitution would clobber.
+#
+# Each policy has its own placement predicate (kubelet config vs. per-provider machinesets), so
+# placement is set per policy via placement.placementPath — PG names each generated PlacementBinding
+# after its policy.
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+policies:
+  - name: policy-worker-node-config
+    manifests:
+      - path: manifests/worker-node-config.yaml
+    placement:
+      placementPath: placement-worker-node-config.yaml
+  - name: policy-worker-nodes-aws
+    pruneObjectBehavior: None
+    manifests:
+      - path: manifests/create-worker-nodes-aws.yaml
+    placement:
+      placementPath: placement-aws.yaml
+  - name: policy-worker-nodes-vmware
+    pruneObjectBehavior: None
+    manifests:
+      - path: manifests/create-worker-nodes-vmware.yaml
+    placement:
+      placementPath: placement-vmware.yaml
+  # test/ holds an inform-only status assertion (a status can only be observed).
+  - name: policy-worker-nodes-test
+    remediationAction: inform
+    manifests:
+      - path: test/check-cluster-worker-nodes.yaml
+    placement:
+      placementPath: placement-test.yaml

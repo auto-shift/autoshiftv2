@@ -1,0 +1,96 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: advanced-cluster-management
+# ACM install + config policies (the raw hub-foundation objects — policy Namespace,
+# service account, ManagedClusterSet/Binding — live in the Helm `policy-foundation` dir).
+#
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP before kustomize runs;
+# they live here and in the placement-*.yaml files only — never in manifests/, whose hub templates
+# contain $vars that substitution would clobber. acm.* knobs are baked as literals (they were Helm
+# chart defaults; per-cluster overrides still flow through the label-driven `| default` in the hub
+# templates).
+#
+# Hub-only targeting: these policies configure ACM ON THE HUB. The old chart scoped them with
+# `clusterSets: <hubClusterSets>`; PG placements can't list per-deployment clustersets, so the
+# hand-authored placements select hubs via `autoshift.io/self-managed: Exists` (a hub-only label
+# cluster-labels propagates to hub-clusterset members; managed clusters never carry it).
+#
+# remediationAction: ${REMEDIATION} is set once in policyDefaults (dry-run aware). Readiness/status
+# checks are their own policies[] entry (policy-*-test, remediationAction: inform, manifest under
+# test/) — a separate Policy so the enforce root of a config policy can't clobber the inform check.
+placementBindingDefaults:
+  name: binding-policy-acm
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Default placement: hub-only (self-managed Exists). Feature-gated policies override below.
+  placement:
+    placementPath: placement-hub.yaml
+policies:
+  # 1) ACM operator install: Namespaces (ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-acm-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) MultiClusterHub. Branches on autoshift.io/self-managed (disableHubSelfManagement).
+  - name: policy-acm-mch-install
+    manifests:
+      - path: manifests/mch-install
+  # 3) ACM Observability (MCO + object bucket). Needs the SA for fromSecret/fromConfigMap.
+  - name: policy-acm-observability
+    placement:
+      placementPath: placement-observability.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-acm-mch-install
+      - name: policy-storage-cluster-test
+    manifests:
+      - path: manifests/observability
+  # 4) ACM Search persistent storage.
+  - name: policy-acm-search-storage
+    placement:
+      placementPath: placement-search-storage.yaml
+    dependencies:
+      - name: policy-acm-mch-install
+    manifests:
+      - path: manifests/search-storage
+  # 5) Governance-controller addon tuning at scale.
+  - name: policy-acm-addon-tuning
+    placement:
+      placementPath: placement-addon-tuning.yaml
+    dependencies:
+      - name: policy-acm-mch-install
+    manifests:
+      - path: manifests/addon-tuning
+  # 6) CIM/bare-metal provisioning: Provisioning + AgentServiceConfig (enforce, from policyDefaults).
+  - name: policy-acm-provisioning
+    placement:
+      placementPath: placement-provisioning.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-acm-mch-install
+    manifests:
+      - path: manifests/provisioning
+  # 6-test) AgentServiceConfig readiness (status observation → inform, its own Policy in test/).
+  - name: policy-acm-provisioning-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-provisioning.yaml
+    dependencies:
+      - name: policy-acm-mch-install
+    manifests:
+      - path: test/acm-agentserviceconfig-test.yaml

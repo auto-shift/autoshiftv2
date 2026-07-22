@@ -1,0 +1,24 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-acs-hub
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Hub-side ACS (Central + its config). Restores the old clusterSets: hubClusterSets scope:
+  # autoshift.io/self-managed is a hub-only label (managed clusters never carry it), so Exists
+  # selects hub-clusterset members (self-managed hubs AND spoke hubs).
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acs'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/self-managed'
+              operator: Exists
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

@@ -8,9 +8,6 @@
 
 # Bootstrap-specific settings
 ignoreHelmHooks: false
-# Skip operator install (Subscription, OperatorGroup, CRD wait) when the
-# GitOps operator is already installed and you only need the ArgoCD instance
-skipOperatorInstall: false
 
 # Job image for waiting for CRD
 # Use internal registry for disconnected environments
@@ -34,15 +31,28 @@ gitops:
   argoNamespace: openshift-gitops
   group: openshift-gitops-operator
   source: redhat-operators
-  channel: gitops-1.19
+  channel: gitops-1.20
   sourceNamespace: openshift-marketplace
   name: openshift-gitops-operator
   argoName: infra-gitops
   disableDefaultArgoCD: true
+  # Disable the ArgoCD built-in admin account (parity with the dev-team instances).
+  disableAdmin: false
+  policyGenerator:
+    # Install the policy-generator CMP sidecar in the infra ArgoCD repo-server. Required for git/source
+    # mode (renders PolicyGenerator dirs live); disabled for OCI-only deployments (prerendered Helm).
+    # The ApplicationSet forwards the effective value from the deployment's policyGenerator flag.
+    enabled: true
+  # Dev team cluster-scoped namespaces are auto-discovered from managed cluster labels
+  # matching autoshift.io/gitops-dev-team-<team>-cluster-scoped: 'true'
   rbac_policies:
     - 'g, openshift-systems, role:admin'
-    # OPTIONAL
+  # OPTIONAL
   controller:
+    # Scaling: increase processors for environments with many Applications
+    # Recommended: 50 status / 25 operation for 1000+ Applications
+    statusProcessors: 20 # concurrent status reconciliations (default: 20)
+    operationProcessors: 10 # concurrent sync operations (default: 10)
     limits:
       cpu: 2000m
       memory: 6Gi
@@ -66,9 +76,7 @@ gitops:
       memory: 128Mi
   repo:
     # If you're using a custom CA bundle and you have imported it into your OpenShift cluster
-  
     # enabling the cluster_ca_bundle will inject the cluster's trusted CA bundle into the repo
-  
     # server that Argo CD uses. This allows Argo CD to connect to repositories using custom certificates.
     cluster_ca_bundle: false
     limits:
@@ -77,7 +85,18 @@ gitops:
     requests:
       cpu: 250m
       memory: 256Mi
+  # PolicyGenerator ConfigManagementPlugin (CMP) for rendering kustomize/PolicyGenerator
+  # policies in the hub repo-server. Required for GIT/source deployments. Adds an init
+  # container (stages the PG binary from the ACM subscription image) and a CMP sidecar that
+  # runs `kustomize build --enable-alpha-plugins` after substituting the per-deployment
+  # ${...} placeholders. See openshift-gitops/templates/argo-cd.yaml.
+  # Gated by gitops.policyGenerator.enabled (above): OCI-only deployments consume prerendered Helm
+  # charts and set it false to omit the sidecar. Its init/sidecar images are resolved at enforcement
+  # time via hub-template lookups in templates/policy-gitops-systems-argocd.yaml.
   server:
+    autoscale:
+      enabled: true
+      maxReplicas: 5
     limits:
       cpu: 500m
       memory: 256Mi
@@ -91,3 +110,6 @@ gitops:
     requests:
       cpu: 250m
       memory: 128Mi
+
+# Disable default ArgoCD instance (we create our own)
+disableDefaultArgoCD: true

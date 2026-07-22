@@ -1,0 +1,20 @@
+# Bare resource — PG wraps it into a ConfigurationPolicy. Hub-template values are quoted so the
+# manifest is valid YAML; the typed fields use toBool/toInt so ACM strips the quotes back to
+# their native YAML type (bool/int) after resolving.
+apiVersion: lvm.topolvm.io/v1alpha1
+kind: LVMCluster
+metadata:
+  name: lvmcluster
+  namespace: openshift-storage
+spec:
+  storage:
+    deviceClasses:
+      - default: '{{hub index .ManagedClusterLabels "autoshift.io/lvm-default" | default "true" | toBool hub}}'
+        fstype: '{{hub index .ManagedClusterLabels "autoshift.io/lvm-fstype" | default "xfs" hub}}'
+        name: vg1
+        thinPoolConfig:
+          chunkSizeCalculationPolicy: Static
+          metadataSizeCalculationPolicy: Host
+          sizePercent: '{{hub index .ManagedClusterLabels "autoshift.io/lvm-size-percent" | default 90 | toInt hub}}'
+          name: thin-pool-1
+          overprovisionRatio: '{{hub index .ManagedClusterLabels "autoshift.io/lvm-overprovision-ratio" | default 10 | toInt hub}}'

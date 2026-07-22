@@ -1,0 +1,45 @@
+# ConfigManagementPlugin config for the PolicyGenerator CMP sidecar (see the repo
+# sidecarContainers in argo-cd.yaml). The sidecar mounts this at
+# /home/argocd/cmp-server/config/plugin.yaml.
+#
+# Mechanics mirror the proven feature/policy-generator branch:
+#   discover -> only dirs containing policy-generator-config.yaml match this plugin
+#   init     -> copy the PG binary (staged into the shared /policy-generator volume by the
+#               repo initContainer) into the sidecar's kustomize plugin home
+#   generate -> substitute the per-deployment ${...} placeholders, then kustomize build
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: policy-generator-cmp-plugin
+  namespace: {{ .Values.gitops.argoNamespace }}
+data:
+  plugin.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      # Sidecar CMP registered name. Must match spec.source.plugin.name in the ApplicationSet.
+      # Do NOT add spec.version — that would register it as `policy-generator-<version>`.
+      name: policy-generator
+    spec:
+      discover:
+        find:
+          glob: "**/policy-generator-config.yaml"
+      generate:
+        command: [/bin/sh, -c]
+        args:
+          - |
+            set -eu
+            # ArgoCD may or may not prefix plugin.env with ARGOCD_ENV_ depending on version; read both.
+            NS="${ARGOCD_ENV_POLICY_NAMESPACE:-${POLICY_NAMESPACE:-policies-autoshift}}"
+            REM="${ARGOCD_ENV_REMEDIATION:-${REMEDIATION:-enforce}}"
+            EC="${ARGOCD_ENV_EVAL_COMPLIANT:-${EVAL_COMPLIANT:-10m}}"
+            EN="${ARGOCD_ENV_EVAL_NONCOMPLIANT:-${EVAL_NONCOMPLIANT:-30s}}"
+            # sed (envsubst is not in the argocd image), restricted to these exact tokens so
+            # hub-template $vars ($base, $cm, ...) inside manifests/ are never touched.
+            find . -type f -name '*.yaml' -exec sed -i \
+              -e "s|\${POLICY_NAMESPACE}|${NS}|g" \
+              -e "s|\${REMEDIATION}|${REM}|g" \
+              -e "s|\${EVAL_COMPLIANT}|${EC}|g" \
+              -e "s|\${EVAL_NONCOMPLIANT}|${EN}|g" \
+              {} +
+            kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone .

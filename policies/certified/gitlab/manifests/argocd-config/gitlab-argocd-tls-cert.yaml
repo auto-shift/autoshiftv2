@@ -1,0 +1,14 @@
+object-templates-raw: |
+  {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
+  {{- $gitlabHost := (printf "gitlab.%s" $ingressDomain) }}
+  {{- $tlsCert := (fromSecret "gitlab-system" "gitlab-wildcard-tls" "tls.crt" | base64dec) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: argocd-tls-certs-cm
+        namespace: openshift-gitops
+      data:
+        {{ $gitlabHost }}: |
+          {{ $tlsCert | autoindent }}

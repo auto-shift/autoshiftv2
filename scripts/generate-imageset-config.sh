@@ -1177,10 +1177,11 @@ EOF
         else
             log_step "Adding AutoShift OCI Helm charts from $AUTOSHIFT_REGISTRY (version: $AUTOSHIFT_VERSION)"
 
-            # Discover all policy charts
+            # Helm charts (Chart.yaml) and PolicyGenerator dirs (policy-generator-config.yaml) both
+            # publish to <registry>/policies/<name>, so mirror both. Chart.yaml-only misses the PG policies.
             local policy_charts=()
             for chart_dir in policies/stable/*/ policies/certified/*/ policies/community/*/; do
-                if [[ -f "${chart_dir}Chart.yaml" ]]; then
+                if [[ -f "${chart_dir}Chart.yaml" || -f "${chart_dir}policy-generator-config.yaml" ]]; then
                     policy_charts+=($(basename "$chart_dir"))
                 fi
             done
@@ -1195,12 +1196,12 @@ EOF
             echo "    - name: $AUTOSHIFT_REGISTRY/bootstrap/openshift-gitops:$AUTOSHIFT_VERSION" >> "$output_file"
             echo "    - name: $AUTOSHIFT_REGISTRY/bootstrap/advanced-cluster-management:$AUTOSHIFT_VERSION" >> "$output_file"
 
-            echo "    # Policy charts" >> "$output_file"
+            echo "    # Policies (Helm charts + PolicyGenerator OCI artifacts)" >> "$output_file"
             for chart_name in "${policy_charts[@]}"; do
                 echo "    - name: $AUTOSHIFT_REGISTRY/policies/$chart_name:$AUTOSHIFT_VERSION" >> "$output_file"
             done
 
-            log_success "Added ${#policy_charts[@]} policy charts + 3 core charts to additionalImages"
+            log_success "Added ${#policy_charts[@]} policies + 3 core charts to additionalImages"
         fi
     else
         if [[ ${#known_images[@]} -gt 0 ]]; then

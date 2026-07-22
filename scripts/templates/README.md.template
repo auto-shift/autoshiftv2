@@ -1,25 +1,43 @@
 # {{COMPONENT_NAME}} AutoShift Policy
 
 ## Overview
-This policy installs the {{SUBSCRIPTION_NAME}} operator using AutoShift patterns.
+Installs the {{SUBSCRIPTION_NAME}} operator using AutoShift's ACM **PolicyGenerator** pattern. The
+directory is a Kustomize source: `policy-generator-config.yaml` wraps the bare manifests under
+`manifests/` into an ACM `Policy`, and pairs it with the hand-authored `placement.yaml`.
 
-## Status
-✅ **Operator Installation**: Ready to deploy  
-🔧 **Configuration**: Requires operator-specific setup (see below)
-
-## Quick Deploy
-
-### Test Locally
-```bash
-# Validate policy renders correctly
-helm template policies/{{COMPONENT_NAME}}/
+## Layout
 ```
+{{COMPONENT_NAME}}/
+  kustomization.yaml            # entrypoint: generators: [policy-generator-config.yaml]
+  policy-generator-config.yaml  # the PolicyGenerator (policy graph, remediation, eval interval)
+  placement.yaml                # Placement predicate (autoshift.io/{{COMPONENT_NAME}}) + tolerations
+  manifests/                    # bare resources — PG wraps each into the ConfigurationPolicy
+    namespace.yaml              #   the operator Namespace (raw)
+    operator.yaml               #   the OperatorPolicy (first-class; carries ${REMEDIATION})
+```
+`manifests[].path` is the `manifests` directory — drop another bare manifest in and it is picked up
+automatically, no config edit needed.
 
-### Enable on Clusters
-Edit AutoShift values files to add the operator labels:
+## Test Locally
+```bash
+# Render the policy exactly as the CMP/CI does (needs: make install-policy-generator)
+KUSTOMIZE_PLUGIN_HOME=$PWD/.tools/kustomize-plugin .tools/kustomize build \
+  --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone \
+  policies/stable/{{COMPONENT_NAME}}
+
+# Full validation (helm render + hub/spoke template resolution + label contract)
+cd tools && go test -tags integration -count=1 ./internal/resolver/...
+```
+The `${POLICY_NAMESPACE}`, `${REMEDIATION}`, `${EVAL_COMPLIANT}`, `${EVAL_NONCOMPLIANT}` tokens are
+substituted per-deployment by the repo-server CMP before `kustomize build` runs; leave them as-is.
+
+## Enable on Clusters
+Labels are defined in values files only — never directly on managed clusters. The cluster-labels
+policy propagates them, and this policy's `placement.yaml` selects clusters with
+`autoshift.io/{{COMPONENT_NAME}}: 'true'`.
 
 ```yaml
-# In autoshift/values/clustersets/hub.yaml (or other clusterset files)
+# In autoshift/values/clustersets/hub.yaml (or another clusterset / per-cluster file)
 hubClusterSets:
   hub:
     labels:
@@ -28,237 +46,87 @@ hubClusterSets:
       {{COMPONENT_NAME}}-channel: '{{CHANNEL}}'
       {{COMPONENT_NAME}}-source: '{{SOURCE}}'
       {{COMPONENT_NAME}}-source-namespace: '{{SOURCE_NAMESPACE}}'
-      # {{COMPONENT_NAME}}-version: '{{SUBSCRIPTION_NAME}}.v1.x.x'  # Optional: pin to specific CSV version
-
-managedClusterSets:
-  managed:
-    labels:
-      {{COMPONENT_NAME}}: 'true'
-      {{COMPONENT_NAME}}-subscription-name: '{{SUBSCRIPTION_NAME}}'
-      {{COMPONENT_NAME}}-channel: '{{CHANNEL}}'
-      {{COMPONENT_NAME}}-source: '{{SOURCE}}'
-      {{COMPONENT_NAME}}-source-namespace: '{{SOURCE_NAMESPACE}}'
-      # {{COMPONENT_NAME}}-version: '{{SUBSCRIPTION_NAME}}.v1.x.x'  # Optional: pin to specific CSV version
-
-# For specific clusters (optional override)
-clusters:
-  my-cluster:
-    labels:
-      {{COMPONENT_NAME}}: 'true'
-      {{COMPONENT_NAME}}-channel: 'fast'  # Override channel for this cluster
+      # {{COMPONENT_NAME}}-version: '{{SUBSCRIPTION_NAME}}.v1.x.x'  # Optional: pin to a specific CSV
 ```
+`generate-operator-policy.sh --add-to-autoshift` adds these for you (and to `_example*.yaml`, which
+the label-contract CI requires for every consumed `autoshift.io/*` key).
 
-Labels are defined in values files only — never directly on managed clusters. The cluster-labels policy handles propagating these labels from the values files to managed clusters.
+The ApplicationSet auto-discovers new directories under `policies/stable/*` (and `certified`/
+`community`) — no manual registration required.
 
-### AutoShift Policy Discovery
-New policies are automatically discovered by the ApplicationSet. In Git mode, the ApplicationSet globs `policies/stable/*`, `policies/certified/*`, and `policies/community/*` to pick up all subdirectories. No manual registration is required — simply adding your policy folder under the appropriate category (`stable`, `certified`, or `community`) is sufficient.
-
-## Configuration
-
-### Namespace Scope
-This operator is configured as:
-- **Cluster-scoped**: Manages resources across all namespaces (default)
-- **Namespace-scoped**: Limited to specific target namespaces (if `targetNamespaces` enabled in values.yaml)
-
-To change scope, edit `values.yaml` and uncomment/configure the `targetNamespaces` field.
-
-### Version Control
-This policy supports AutoShift's operator version control system:
-
-- **Automatic Upgrades**: By default, the operator follows automatic upgrade paths within its channel
-- **Version Pinning**: Add `{{COMPONENT_NAME}}-version` label to pin to a specific CSV version
-- **Manual Control**: Pinned versions require manual updates to upgrade
-
-To pin to a specific version, set the version label in your clusterset or per-cluster values file:
-```yaml
-{{COMPONENT_NAME}}-version: '{{SUBSCRIPTION_NAME}}.v1.x.x'
-```
-
-Find available CSV versions:
+## Version Control
+- **Automatic upgrades** within the channel by default.
+- **Pin a version** with the `{{COMPONENT_NAME}}-version` label — a pinned version sets a manual
+  install plan (`startingCSV` + `versions`), so upgrades become explicit.
 ```bash
-# List available versions for this operator
+# Find available CSV versions
 oc get packagemanifests {{SUBSCRIPTION_NAME}} -o jsonpath='{.status.channels[*].currentCSV}'
 ```
 
-## Next Steps: Configuration
+## Adding Configuration (operator CRs)
+After the operator installs, add its Custom Resources as **bare manifests** — do NOT hand-write a
+ConfigurationPolicy wrapper; PolicyGenerator generates it.
 
-### 1. Explore Installed CRDs
-After operator installation, check what Custom Resources are available:
-```bash
-# Wait for operator to install
-oc get pods -n {{NAMESPACE}}
+1. Explore the CRDs the operator installed:
+   ```bash
+   oc get pods -n {{NAMESPACE}}
+   oc get crds | grep {{COMPONENT_NAME}}
+   oc explain <CustomResourceName>
+   ```
+2. For a **static** CR, drop a bare manifest into `manifests/`:
+   ```yaml
+   # manifests/{{COMPONENT_NAME}}-config.yaml
+   apiVersion: <operator apiVersion>
+   kind: <CustomResource>
+   metadata:
+     name: {{COMPONENT_NAME}}-config
+     namespace: {{NAMESPACE}}
+   spec:
+     setting: value
+   ```
+3. For a CR that needs **hub templates / loops / conditionals**, use a bare `object-templates-raw`
+   manifest instead (PG still wraps it into one ConfigurationPolicy; `complianceType` lives inside):
+   ```yaml
+   # manifests/{{COMPONENT_NAME}}-config.yaml
+   object-templates-raw: |
+     - complianceType: musthave
+       objectDefinition:
+         apiVersion: <operator apiVersion>
+         kind: <CustomResource>
+         metadata:
+           name: {{COMPONENT_NAME}}-config
+           namespace: {{NAMESPACE}}
+         spec:
+           setting: '{{hub index .ManagedClusterLabels "autoshift.io/{{COMPONENT_NAME}}-setting" | default "default-value" hub}}'
+   ```
+4. If the config must be its **own** Policy (separate remediation, a dependency, or a different
+   predicate), add a `policies[]` entry in `policy-generator-config.yaml` (with `dependencies:` on
+   `policy-{{COMPONENT_NAME}}-operator-install`) and point it at the new manifest with its own
+   `placement.placementPath`. `generate-policy.sh --dir policies/stable/{{COMPONENT_NAME}}` scaffolds this.
 
-# Check available CRDs
-oc get crds | grep {{COMPONENT_NAME}}
+Document any new `autoshift.io/{{COMPONENT_NAME}}-*` label in `autoshift/values/clustersets/_example.yaml`
+or the label-contract CI (`go test -tags integration`) fails with `Missing`.
 
-# Explore CRD specifications
-oc explain <CustomResourceName>
-```
+### Readiness / status checks
+A status assertion (e.g. CSV `phase: Succeeded`) can only be observed, so give it its own
+`policies[]` entry with `remediationAction: inform` — never fold an inform check into an enforce
+manifest (ACM's root action would clobber it).
 
-### 2. Create Configuration Policies
-Add operator-specific configuration policies to `templates/` directory.
-
-#### Common Patterns:
-- `policy-{{COMPONENT_NAME}}-config.yaml` - Main configuration
-- `policy-{{COMPONENT_NAME}}-<feature>.yaml` - Feature-specific configs
-
-#### Template Structure:
-```yaml
-{{- $policyName := "policy-{{COMPONENT_NAME}}-config" }}
-{{- $placementName := "placement-policy-{{COMPONENT_NAME}}-config" }}
-
-apiVersion: policy.open-cluster-management.io/v1
-kind: Policy
-metadata:
-  name: {{ $policyName }}
-  namespace: {{ .Values.policy_namespace }}
-  annotations:
-    policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CM Configuration Management
-    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
-spec:
-  disabled: false
-  dependencies:
-    - name: policy-{{COMPONENT_NAME}}-operator-install
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-  policy-templates:
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: {{COMPONENT_NAME}}-config
-        spec:
-          remediationAction: enforce
-          severity: high
-          evaluationInterval:
-            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: # Your operator's API version
-                kind: # Your operator's Custom Resource
-                metadata:
-                  name: {{COMPONENT_NAME}}-config
-                  namespace: {{ .Values.{{COMPONENT_CAMEL}}.namespace }}
-                spec:
-                  # Your operator-specific configuration
-                  # Use dynamic labels when needed:
-                  # setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/{{COMPONENT_NAME}}-setting" | default "default-value" {{ "hub}}" }}'
-          pruneObjectBehavior: None
----
-# Use same placement as operator install or create specific targeting
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/{{COMPONENT_NAME}}'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-placementRef:
-  name: {{ $placementName }}
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: {{ $policyName }}
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
-```
-
-### 3. Reference Examples
-**Study similar complexity policies:**
-- **Simple**: `policies/stable/openshift-gitops/` - Basic operator + ArgoCD config
-- **Medium**: `policies/stable/advanced-cluster-security/` - Multiple related policies
-- **Complex**: `policies/stable/metallb/` - Multiple configuration types (L2, BGP, etc.)
-- **Advanced**: `policies/stable/openshift-data-foundation/` - Storage cluster configuration
-
-### 4. AutoShift Labels
-Add configuration labels to `values.yaml` and use in templates:
-
-```yaml
-# Add to values.yaml AutoShift Labels Documentation:
-# {{COMPONENT_NAME}}-setting<string>: Configuration option (default: 'value')
-# {{COMPONENT_NAME}}-feature-enabled<bool>: Enable optional feature (default: 'false')
-# {{COMPONENT_NAME}}-provider<string>: Provider-specific config (default: 'generic')
-
-# Use in templates:
-setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/{{COMPONENT_NAME}}-setting" | default "default-value" {{ "hub}}" }}'
-```
-
-## Common Patterns
-
-### CSV Status Checking (Optional)
-For operators that need installation verification:
-```yaml
-- objectDefinition:
-    apiVersion: policy.open-cluster-management.io/v1
-    kind: ConfigurationPolicy
-    metadata:
-      name: {{COMPONENT_NAME}}-csv-status
-    spec:
-      remediationAction: inform
-      severity: high
-      evaluationInterval:
-        compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-        noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
-      object-templates:
-        - complianceType: musthave
-          objectDefinition:
-            apiVersion: operators.coreos.com/v1alpha1
-            kind: ClusterServiceVersion
-            metadata:
-              namespace: {{ .Values.{{COMPONENT_CAMEL}}.namespace }}
-            status:
-              phase: Succeeded
-```
+## Reference Examples
+- **Simple operator**: `policies/stable/cert-manager/` — bare Namespace + OperatorPolicy (this shape)
+- **Multiple related policies / placements**: `policies/stable/advanced-cluster-security/`
+- **Multiple config types**: `policies/stable/metallb/`
+- **Storage cluster config**: `policies/stable/openshift-data-foundation/`
 
 ## Troubleshooting
-
-### Policy Not Applied
-1. Check cluster labels: `oc get managedcluster <cluster> --show-labels`
-2. Verify placement: `oc get placement -n open-cluster-policies`
-3. Check policy status: `oc describe policy policy-{{COMPONENT_NAME}}-operator-install`
-
-### Operator Installation Issues
-1. Check subscription: `oc get subscription -n {{NAMESPACE}}`
-2. Check install plan: `oc get installplan -n {{NAMESPACE}}`
-3. Verify operator source exists: `oc get catalogsource -n {{SOURCE_NAMESPACE}}`
-
-### Template Rendering Issues
-1. Test locally: `helm template policies/{{COMPONENT_NAME}}/`
-2. Check hub escaping: Look for `{{ "{{hub" }} ... {{ "hub}}" }}` patterns
-3. Validate YAML: `helm lint policies/{{COMPONENT_NAME}}/`
+- **Policy not applied**: `oc get managedcluster <cluster> --show-labels`; check the Placement
+  (`oc get placement -n policies-autoshift`) and `oc describe policy policy-{{COMPONENT_NAME}}-operator-install`.
+- **Operator install issues**: `oc get subscription,installplan -n {{NAMESPACE}}`;
+  `oc get catalogsource -n {{SOURCE_NAMESPACE}}`.
+- **Render issues**: run the `kustomize build` above; hub templates use bare `{{hub … hub}}`
+  delimiters (no Helm `{{ "{{hub" }}` escaping in PolicyGenerator manifests).
 
 ## Resources
-- [Operator Documentation](https://operatorhub.io/operator/{{SUBSCRIPTION_NAME}}) - Find your operator details
-- [AutoShift Developer Guide](../../docs/developer-guide.md) - Comprehensive policy development guide
-- [ACM Policy Documentation](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes) - Policy syntax reference in Governence Section
-- [Similar Policies](../) - Browse other policies for patterns and examples
+- [Operator Documentation](https://operatorhub.io/operator/{{SUBSCRIPTION_NAME}})
+- [AutoShift Developer Guide](../../../docs/developer-guide.md)
+- [ACM PolicyGenerator](https://github.com/open-cluster-management-io/policy-generator-plugin)

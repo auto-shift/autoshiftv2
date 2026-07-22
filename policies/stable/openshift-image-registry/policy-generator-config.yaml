@@ -1,0 +1,47 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: openshift-image-registry
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# remediationAction: ${REMEDIATION} is set once in policyDefaults (dry-run aware). The OBC-Bound
+# readiness check is its own policies[] entry (policy-image-registry-storage-test, remediationAction:
+# inform, manifest under test/) — a separate Policy so the enforce root can't clobber the inform check.
+placementBindingDefaults:
+  name: binding-policy-image-registry
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Both policies share one hand-authored Placement (predicate autoshift.io/imageregistry).
+  placement:
+    placementPath: placement.yaml
+policies:
+  # Storage backing (PVC or NooBaa ObjectBucketClaim) + a Bound readiness check.
+  - name: policy-image-registry-storage
+    consolidateManifests: false
+    manifests:
+      - path: manifests/image-registry-storage.yaml
+  # Enables the image registry Config; waits on storage to be provisioned.
+  - name: policy-image-registry-storage-test
+    remediationAction: inform
+    manifests:
+      - path: test/image-registry-storage-ready.yaml
+  - name: policy-enable-image-registry
+    dependencies:
+      - name: policy-image-registry-storage
+    manifests:
+      - path: manifests/enable-image-registry.yaml
