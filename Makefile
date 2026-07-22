@@ -11,6 +11,10 @@ REGISTRY ?= quay.io
 REGISTRY_NAMESPACE ?= autoshift
 DRY_RUN ?= false
 INCLUDE_MIRROR ?= true
+# helm push resilience: registries (esp. over flaky links) intermittently drop blob uploads (EOF).
+# Retry each push up to PUSH_RETRIES times, waiting PUSH_RETRY_DELAY seconds between attempts.
+PUSH_RETRIES ?= 5
+PUSH_RETRY_DELAY ?= 3
 CHARTS_DIR := .helm-charts
 ARTIFACTS_DIR := release-artifacts
 
@@ -182,64 +186,30 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 		echo "Policy charts would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
 	else \
 		printf "$(BLUE)[INFO]$(NC) Pushing charts to OCI registry...\n"; \
+		push_retry() { for a in $$(seq 1 $(PUSH_RETRIES)); do helm push "$$1" "$$2" && return 0; printf "$(YELLOW)    transient push error, retry %s/$(PUSH_RETRIES) (%s)$(NC)\n" "$$a" "$$(basename $$1)"; sleep $(PUSH_RETRY_DELAY); done; printf "$(RED)[ERROR]$(NC) push failed after $(PUSH_RETRIES) retries: %s\n" "$$1"; return 1; }; \
 		echo ""; \
 		printf "$(BLUE)[INFO]$(NC) Pushing bootstrap charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap\n"; \
 		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
 			echo "  - Pushing $$(basename $$chart)..."; \
-			helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap || exit 1; \
+			push_retry $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap || exit 1; \
 		done; \
 		echo ""; \
 		printf "$(BLUE)[INFO]$(NC) Pushing main chart to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)\n"; \
 		if [ -f "$(CHARTS_DIR)/autoshift-$(VERSION).tgz" ]; then \
 			echo "  - Pushing autoshift-$(VERSION).tgz..."; \
-			helm push $(CHARTS_DIR)/autoshift-$(VERSION).tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE) || exit 1; \
+			push_retry $(CHARTS_DIR)/autoshift-$(VERSION).tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE) || exit 1; \
 		fi; \
 		echo ""; \
 		printf "$(BLUE)[INFO]$(NC) Pushing policy charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies\n"; \
 		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
 			echo "  - Pushing $$(basename $$chart)..."; \
-			helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies || exit 1; \
+			push_retry $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies || exit 1; \
 		done; \
 		echo ""; \
 		printf "$(GREEN)✓$(NC) All charts pushed\n"; \
 		echo "  Bootstrap: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap"; \
 		echo "  Main: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"; \
 		echo "  Policies: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
-	fi
-
-.PHONY: tag-latest
-tag-latest: ## Tag all pushed charts with 'latest' in the OCI registry (requires oras CLI)
-	@if [ "$(DRY_RUN)" = "true" ]; then \
-		printf "$(YELLOW)[WARN]$(NC) DRY RUN: Skipping latest tagging\n"; \
-	else \
-		if ! command -v oras &>/dev/null; then \
-			printf "$(RED)[ERROR]$(NC) oras CLI is required for tagging. Install from: https://oras.land/docs/installation\n"; \
-			exit 1; \
-		fi; \
-		printf "$(BLUE)[INFO]$(NC) Tagging charts as 'latest' ($(VERSION) -> latest)...\n"; \
-		echo ""; \
-		printf "$(BLUE)[INFO]$(NC) Tagging bootstrap charts as latest...\n"; \
-		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
-			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
-			echo "  - $$CHART_NAME:latest"; \
-			oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap/$$CHART_NAME:$(VERSION) latest || exit 1; \
-		done; \
-		printf "$(BLUE)[INFO]$(NC) Tagging main chart as latest...\n"; \
-		echo "  - autoshift:latest"; \
-		oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/autoshift:$(VERSION) latest || exit 1; \
-		printf "$(BLUE)[INFO]$(NC) Tagging policy charts as latest...\n"; \
-		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
-			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
-			echo "  - $$CHART_NAME:latest"; \
-			oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/policies/$$CHART_NAME:$(VERSION) latest || exit 1; \
-		done; \
-		printf "$(BLUE)[INFO]$(NC) Tagging PolicyGenerator policy artifacts as latest...\n"; \
-		for name in $(POLICY_PG_NAMES); do \
-			echo "  - $$name:latest"; \
-			oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/policies/$$name:$(VERSION) latest || exit 1; \
-		done; \
-		echo ""; \
-		printf "$(GREEN)✓$(NC) All charts tagged as 'latest'\n"; \
 	fi
 
 .PHONY: generate-artifacts
@@ -250,7 +220,7 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@printf "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/\n"
 
 .PHONY: release
-release: validate validate-version clean sync-values update-versions generate-policy-list install-policy-generator package-charts render-policy-charts push-charts tag-latest generate-artifacts ## Full release process (add INCLUDE_MIRROR=false to skip mirror artifacts)
+release: validate validate-version clean sync-values update-versions generate-policy-list install-policy-generator package-charts render-policy-charts push-charts generate-artifacts ## Full release process (add INCLUDE_MIRROR=false to skip mirror artifacts)
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
 		printf "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
 		$(MAKE) generate-imageset VERSION=$(VERSION) || { \

@@ -41,7 +41,9 @@ spec:
           sources:
           - path: .
             repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
-            targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
+            # Pin an explicit release version — a mutable tag like 'latest' is not reliably tracked by Argo CD's
+            # OCI resolver and breaks GitOps determinism. Set autoshiftOciVersion to the release you deployed.
+            targetRevision: {{ required "autoshiftOciVersion is required in OCI mode — pin the release version (a mutable 'latest' tag is unreliable with Argo CD OCI)." .Values.autoshiftOciVersion }}
             helm:
               valuesObject:
                 {{- include "autoshift.policyValuesObject" . | nindent 16 }}
