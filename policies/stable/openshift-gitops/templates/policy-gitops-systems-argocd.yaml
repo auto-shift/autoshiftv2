@@ -93,6 +93,10 @@ spec:
             {{ "{{" }} $acmSubDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "multicluster-operators-hub-subscription") {{ "}}" }}
             {{ "{{" }} $acmImageLive := "" {{ "}}" }}
             {{ "{{" }} if $acmSubDep {{ "}}" }}{{ "{{" }} $acmImageLive = (index $acmSubDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
+            {{- /* ArgoCD Keycloak SSO (alongside OpenShift OAuth) — enabled only when argocd-realm-clients was
+                   propagated (realm-secrets, gated on the admin-provided argocd-client-secret). Spoke-side. */}}
+            {{ "{{" }} $argoSsoKey := (index ((lookup "v1" "Secret" "keycloak-system" "argocd-realm-clients" | default dict).data | default dict) "argocd" | default "") {{ "}}" }}
+            {{ "{{" }} $appsDomain := printf "apps.%s" (((lookup "config.openshift.io/v1" "DNS" "" "cluster") | default dict).spec | default dict).baseDomain {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: argoproj.io/v1beta1
@@ -138,6 +142,33 @@ spec:
                           cpu: {{ ((.Values.gitops.dex).requests).cpu | default "125m" }}
                           memory: {{ ((.Values.gitops.dex).requests).memory | default "128Mi" }}
                       openShiftOAuth: true
+                      {{ "{{" }} if ne $argoSsoKey "" {{ "}}" }}
+                      config: |
+                        connectors:
+                          - type: openshift
+                            id: openshift
+                            name: OpenShift
+                            config:
+                              issuer: https://kubernetes.default.svc
+                              clientID: system:serviceaccount:{{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}:{{ .Values.gitops.argoName }}-argocd-dex-server
+                              clientSecret: $oidc.dex.clientSecret
+                              redirectURI: https://{{ .Values.gitops.argoName }}-server-{{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}.{{ "{{" }} $appsDomain {{ "}}" }}/api/dex/callback
+                              insecureCA: true
+                          - type: oidc
+                            id: keycloak
+                            name: Keycloak
+                            config:
+                              issuer: https://keycloak.{{ "{{" }} $appsDomain {{ "}}" }}/realms/tssc-iam
+                              clientID: argocd
+                              clientSecret: $dex.keycloak.clientSecret
+                              redirectURI: https://{{ .Values.gitops.argoName }}-server-{{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}.{{ "{{" }} $appsDomain {{ "}}" }}/api/dex/callback
+                              insecureEnableGroups: true
+                              scopes:
+                                - openid
+                                - profile
+                                - email
+                                - groups
+                      {{ "{{" }} end {{ "}}" }}
                     provider: dex
                   rbac:
                     defaultPolicy: ''
@@ -146,6 +177,10 @@ spec:
                     {{- range .Values.gitops.rbac_policies}}
                       {{ . }}
                     {{- end }}
+                      {{ "{{" }} if ne $argoSsoKey "" {{ "}}" }}
+                      g, platform-team, role:admin
+                      g, developers, role:readonly
+                      {{ "{{" }} end {{ "}}" }}
                     scopes: '[groups]'
                   repo:
                     resources:
@@ -292,6 +327,17 @@ spec:
                         end
                         hs.message = obj.status.compliant
                         return hs
+            {{ "{{" }} if ne $argoSsoKey "" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Secret
+                metadata:
+                  name: argocd-secret
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                data:
+                  dex.keycloak.clientSecret: {{ "{{" }} $argoSsoKey {{ "}}" }}
+            {{ "{{" }} end {{ "}}" }}
     - objectDefinition:
         apiVersion: policy.open-cluster-management.io/v1
         kind: ConfigurationPolicy

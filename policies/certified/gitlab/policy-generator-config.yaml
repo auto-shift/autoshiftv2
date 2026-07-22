@@ -98,6 +98,15 @@ policies:
       - name: policy-gitlab-instance-test
     manifests:
       - path: manifests/tssc-gitlab-credentials.yaml
+  # Keycloak -> GitLab group sync CronJob. Hub-reads the rhdh client secret from tssc-keycloak-config, so it
+  # needs the elevated policy service account. Only renders when Keycloak (rhdh client) is configured.
+  - name: policy-gitlab-keycloak-group-sync
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-gitlab-tssc-credentials
+    manifests:
+      - path: manifests/keycloak-group-sync.yaml
   # 6) CNPG PostgreSQL cluster (enforce, from policyDefaults).
   - name: policy-cnpg-gitlab
     dependencies:

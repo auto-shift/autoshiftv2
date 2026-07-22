@@ -3,6 +3,13 @@ object-templates-raw: |
   {{hub- $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
   {{hub- $isHub := ne (index .ManagedClusterLabels "autoshift.io/self-managed") "" hub}}
+  # ArgoCD Keycloak SSO (alongside OpenShift OAuth) is opt-in: enabled only when the admin seeded
+  # argocd-client-secret in tssc-keycloak-config. The OpenShift connector reuses the operator-maintained
+  # $oidc.dex.clientSecret (openShiftOAuth stays on), so only the Keycloak client secret is propagated.
+  {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
+  {{hub- $argoClientSecret := (index $kcData "argocd-client-secret" | default "") hub}}
+  {{hub- $argoSsoOn := ne $argoClientSecret "" hub}}
+  {{hub- $appsDomain := printf "apps.%s" (((lookup "config.openshift.io/v1" "DNS" "" "cluster") | default dict).spec | default dict).baseDomain hub}}
   {{hub- $clusterSets := list hub}}
   {{hub- $mcsList := (lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "") | default dict hub}}
   {{hub- range $_, $mcs := ($mcsList.items | default list) hub}}
@@ -16,6 +23,9 @@ object-templates-raw: |
   {{hub- $rbac := "g, system:cluster-admins, role:admin\n" hub}}
   {{hub- range (dig "gitops_rbac_policies" list $spec) hub}}
   {{hub- $rbac = printf "%s%s\n" $rbac . hub}}
+  {{hub- end hub}}
+  {{hub- if $argoSsoOn hub}}
+  {{hub- $rbac = printf "%sg, platform-team, role:admin\ng, developers, role:readonly\n" $rbac hub}}
   {{hub- end hub}}
   {{hub- $route := (lookup "route.openshift.io/v1" "Route" (printf "openshift-gitops-%s" $team) "argocd-dev-server") | default dict hub}}
   {{hub- $host := (dig "spec" "host" "" $route) hub}}
@@ -58,6 +68,33 @@ object-templates-raw: |
                 cpu: {{hub dig "dex" "requests" "cpu" "125m" $spec hub}}
                 memory: {{hub dig "dex" "requests" "memory" "128Mi" $spec hub}}
             openShiftOAuth: true
+            {{hub- if $argoSsoOn hub}}
+            config: |
+              connectors:
+                - type: openshift
+                  id: openshift
+                  name: OpenShift
+                  config:
+                    issuer: https://kubernetes.default.svc
+                    clientID: system:serviceaccount:openshift-gitops-{{hub $team hub}}:argocd-dev-argocd-dex-server
+                    clientSecret: $oidc.dex.clientSecret
+                    redirectURI: https://argocd-dev-server-openshift-gitops-{{hub $team hub}}.{{hub $appsDomain hub}}/api/dex/callback
+                    insecureCA: true
+                - type: oidc
+                  id: keycloak
+                  name: Keycloak
+                  config:
+                    issuer: https://keycloak.{{hub $appsDomain hub}}/realms/tssc-iam
+                    clientID: argocd
+                    clientSecret: $dex.keycloak.clientSecret
+                    redirectURI: https://argocd-dev-server-openshift-gitops-{{hub $team hub}}.{{hub $appsDomain hub}}/api/dex/callback
+                    insecureEnableGroups: true
+                    scopes:
+                      - openid
+                      - profile
+                      - email
+                      - groups
+            {{hub- end hub}}
           provider: dex
         rbac:
           defaultPolicy: ''
@@ -113,6 +150,19 @@ object-templates-raw: |
             - TaskRun
             - PipelineRun
         disableAdmin: {{hub dig "disableAdmin" "true" $spec hub}}
+  {{hub- if $argoSsoOn hub}}
+  # Keycloak client secret for the Dex oidc connector ($dex.keycloak.clientSecret). musthave adds this key
+  # without touching the operator-managed keys (oidc.dex.clientSecret, admin.password, server.secretkey).
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: argocd-secret
+        namespace: openshift-gitops-{{hub $team hub}}
+      data:
+        dex.keycloak.clientSecret: {{hub $argoClientSecret hub}}
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: argoproj.io/v1alpha1

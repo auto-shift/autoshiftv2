@@ -1,0 +1,144 @@
+# Keycloak -> GitLab group membership sync. Members of the Keycloak developers/platform-team groups are added
+# to the GitLab 'development' group (where scaffolded repos live) so SSO-provisioned users can push. Uses the
+# rhdh client's service account (view-users/query-groups) via client_credentials, so it runs only when Keycloak
+# (the rhdh client) is configured. A user is synced on the first CronJob run after their GitLab SSO login
+# provisions them. musthave on the group membership is additive; it never removes existing members.
+object-templates-raw: |
+  {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
+  {{hub- $rhdhB64 := (index $kcData "rhdh-client-secret" | default "") hub}}
+  {{hub- if $rhdhB64 hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: gl-group-sync-script
+        namespace: gitlab-system
+      data:
+        sync.py: |
+          import json, os, ssl, urllib.request, urllib.parse, urllib.error
+
+          ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+          KC = os.environ['KC']; REALM = os.environ.get('REALM', 'tssc-iam')
+          GL = os.environ['GL']; GLT = os.environ['GLT']
+          GROUP_PATH = os.environ.get('GROUP_PATH', 'development')
+          # Keycloak group name -> GitLab access level (50=Owner, 40=Maintainer, 30=Developer)
+          ROLES = {'platform-team': 50, 'developers': 40}
+
+
+          def req(url, data=None, headers=None, method=None):
+              body = urllib.parse.urlencode(data).encode() if isinstance(data, dict) else data
+              r = urllib.request.Request(url, data=body, headers=headers or {}, method=method)
+              return urllib.request.urlopen(r, context=ctx)
+
+
+          cid, csec = os.environ.get('CLIENT_ID'), os.environ.get('CLIENT_SECRET')
+          if cid and csec:
+              turl = f"{KC}/realms/{REALM}/protocol/openid-connect/token"
+              tdata = {'grant_type': 'client_credentials', 'client_id': cid, 'client_secret': csec}
+          else:
+              turl = f"{KC}/realms/master/protocol/openid-connect/token"
+              tdata = {'grant_type': 'password', 'client_id': 'admin-cli',
+                       'username': os.environ['KCU'], 'password': os.environ['KCP']}
+          tok = json.load(req(turl, tdata))['access_token']
+          kh = {'Authorization': f'Bearer {tok}'}
+          kc_groups = {g['name']: g['id'] for g in json.load(req(f"{KC}/admin/realms/{REALM}/groups", headers=kh))}
+
+          glh = {'PRIVATE-TOKEN': GLT}
+          grp = [g for g in json.load(req(f"{GL}/groups?search={GROUP_PATH}", headers=glh))
+                 if g['full_path'] == GROUP_PATH]
+          if not grp:
+              raise SystemExit(f"GitLab group '{GROUP_PATH}' not found")
+          gid = grp[0]['id']
+
+          for kc_name, access in ROLES.items():
+              if kc_name not in kc_groups:
+                  print(f"keycloak group '{kc_name}' absent; skip"); continue
+              members = json.load(req(f"{KC}/admin/realms/{REALM}/groups/{kc_groups[kc_name]}/members?max=200",
+                                      headers=kh))
+              for m in members:
+                  u = m.get('username', '')
+                  if not u:
+                      continue
+                  gu = json.load(req(f"{GL}/users?username={urllib.parse.quote(u)}", headers=glh))
+                  if not gu:
+                      print(f"  skip {u}: no GitLab user yet (log in via SSO first)"); continue
+                  uid = gu[0]['id']
+                  try:
+                      req(f"{GL}/groups/{gid}/members", {'user_id': uid, 'access_level': access}, glh, 'POST').read()
+                      print(f"  added {u} -> {GROUP_PATH} (access {access})")
+                  except urllib.error.HTTPError as e:
+                      if e.code == 409:
+                          req(f"{GL}/groups/{gid}/members/{uid}", {'access_level': access}, glh, 'PUT').read()
+                          print(f"  ensured {u} -> {GROUP_PATH} (access {access})")
+                      else:
+                          print(f"  error {u}: HTTP {e.code}")
+          print("group sync done")
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gl-group-sync-keycloak
+        namespace: gitlab-system
+      type: Opaque
+      stringData:
+        client-id: rhdh
+        client-secret: '{{hub $rhdhB64 | b64dec hub}}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: gl-group-sync
+        namespace: gitlab-system
+      spec:
+        schedule: "*/10 * * * *"
+        concurrencyPolicy: Forbid
+        successfulJobsHistoryLimit: 1
+        failedJobsHistoryLimit: 2
+        jobTemplate:
+          spec:
+            backoffLimit: 1
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: sync
+                    image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+                    command:
+                      - /bin/bash
+                      - -c
+                      - |
+                        set -eu
+                        export GL="https://$(tr -d '[:space:]' < /gl/host)/api/v4"
+                        export GLT="$(tr -d '[:space:]' < /gl/token)"
+                        python3 /script/sync.py
+                    env:
+                      - name: KC
+                        value: https://keycloak-service.keycloak-system.svc:8443
+                      - name: CLIENT_ID
+                        valueFrom:
+                          secretKeyRef:
+                            name: gl-group-sync-keycloak
+                            key: client-id
+                      - name: CLIENT_SECRET
+                        valueFrom:
+                          secretKeyRef:
+                            name: gl-group-sync-keycloak
+                            key: client-secret
+                    volumeMounts:
+                      - name: gl
+                        mountPath: /gl
+                        readOnly: true
+                      - name: script
+                        mountPath: /script
+                        readOnly: true
+                volumes:
+                  - name: gl
+                    secret:
+                      secretName: tssc-gitlab-credentials
+                  - name: script
+                    configMap:
+                      name: gl-group-sync-script
+  {{hub- end hub}}
