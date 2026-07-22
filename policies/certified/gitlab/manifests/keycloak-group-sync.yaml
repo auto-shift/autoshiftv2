@@ -4,9 +4,11 @@
 # (the rhdh client) is configured. A user is synced on the first CronJob run after their GitLab SSO login
 # provisions them. musthave on the group membership is additive; it never removes existing members.
 object-templates-raw: |
-  {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
-  {{hub- $rhdhB64 := (index $kcData "rhdh-client-secret" | default "") hub}}
-  {{hub- if $rhdhB64 hub}}
+  {{- /* Read the rhdh client secret from rhdh-realm-clients (what realm-import uses to set the actual
+         Keycloak client secret) — spoke-side, no elevated SA. Only renders when Keycloak/RHDH is configured. */}}
+  {{- $rhdhClient := (lookup "v1" "Secret" "keycloak-system" "rhdh-realm-clients" | default dict).data | default dict }}
+  {{- $rhdhSecret := (index $rhdhClient "rhdh" | default "" | b64dec) }}
+  {{- if ne $rhdhSecret "" }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -84,7 +86,7 @@ object-templates-raw: |
       type: Opaque
       stringData:
         client-id: rhdh
-        client-secret: '{{hub $rhdhB64 | b64dec hub}}'
+        client-secret: '{{ $rhdhSecret }}'
   - complianceType: musthave
     objectDefinition:
       apiVersion: batch/v1
@@ -141,4 +143,4 @@ object-templates-raw: |
                   - name: script
                     configMap:
                       name: gl-group-sync-script
-  {{hub- end hub}}
+  {{- end }}
