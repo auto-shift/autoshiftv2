@@ -23,7 +23,7 @@ AutoShift Chart (from OCI)
     |
 ApplicationSet with List Generator
     |
-Reads policy-list.txt + policy-list-pg.txt (generated at release time)
+Reads policy-list.txt (generated at release time; every policy is a Helm chart)
     |
 Deploys each policy from the OCI registry (Helm chart or PolicyGenerator artifact)
 ```
@@ -258,13 +258,13 @@ When enabled, AutoShift:
 
 For disconnected environments, mirror the released artifacts to an internal registry.
 
-> **Two artifact types.** AutoShift policies ship under `oci://<registry>/policies/<name>` in two forms:
-> Helm charts (listed in `policy-list.txt`) and PolicyGenerator OCI artifacts (listed in `policy-list-pg.txt`).
-> PolicyGenerator artifacts are **not** Helm charts — `helm pull` fails on them. Mirror them as generic OCI
-> artifacts (`oras`/`skopeo`/`oc mirror`), which copies either type byte-for-byte.
+> **One artifact type.** Every AutoShift policy ships as a **Helm chart** under `oci://<registry>/policies/<name>`
+> — the hand-authored holdout charts and the PolicyGenerator policies (rendered to stock Helm charts in CI by
+> `make render-policy-charts`). All are listed in `policy-list.txt`; `helm pull` works on every one. The
+> policy-generator CMP is never used for OCI.
 
 **Recommended — the ImageSet generator.** It discovers every AutoShift artifact (main chart, bootstrap charts,
-all policies — Helm *and* PolicyGenerator — plus the operator images each enabled policy needs) and emits an
+all policy charts, plus the operator images each enabled policy needs) and emits an
 `ImageSetConfiguration` for `oc mirror`:
 
 ```bash
@@ -277,8 +277,7 @@ bash scripts/generate-imageset-config.sh \
 oc mirror --config imageset-config.yaml docker://registry.example.com
 ```
 
-**Manual alternative** — copy the OCI artifacts registry-to-registry with `oras` (works for both Helm charts
-and PolicyGenerator artifacts, so both lists are handled the same way):
+**Manual alternative** — copy the OCI artifacts registry-to-registry with `oras` (all policies are Helm charts):
 
 ```bash
 VERSION="X.Y.Z"  # Replace with desired version
@@ -290,8 +289,8 @@ for ref in autoshift bootstrap/openshift-gitops bootstrap/advanced-cluster-manag
   oras cp ${SRC}/${ref}:${VERSION} ${DST}/${ref}:${VERSION}
 done
 
-# All policies (Helm charts from policy-list.txt + PolicyGenerator artifacts from policy-list-pg.txt)
-for policy in $(cat policy-list.txt policy-list-pg.txt); do
+# All policy charts (from policy-list.txt)
+for policy in $(cat policy-list.txt); do
   oras cp ${SRC}/policies/${policy}:${VERSION} ${DST}/policies/${policy}:${VERSION}
 done
 ```

@@ -37,7 +37,16 @@ policies:
   - name: policy-gitlab-operator-install
     manifests:
       - path: manifests/operator-install
-  # 2) GitLab instance CR + prereqs (enforce, from policyDefaults).
+  # 1-check) Prereqs verification (inform): the DB/redis/object-storage connection secrets are created by
+  # the CNPG/redis/object-storage policies — VERIFY they exist, never enforce (enforce would create empty
+  # placeholder secrets and clobber the real ones). Its own Policy so the enforce roots can't override it.
+  - name: policy-gitlab-instance-prereqs
+    remediationAction: inform
+    dependencies:
+      - name: policy-gitlab-operator-install
+    manifests:
+      - path: test/gitlab-instance-prereqs.yaml
+  # 2) GitLab instance CR (enforce, from policyDefaults). Its own readiness gates wait for the prereq secrets.
   - name: policy-gitlab-instance
     dependencies:
       - name: policy-gitlab-operator-install

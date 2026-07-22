@@ -14,8 +14,10 @@ spec:
   goTemplateOptions: ["missingkey=error"]
   generators:
   {{- if .Values.autoshiftOciRegistry }}
-  # OCI Registry mode - deploy from published Helm charts
-  # Policy list is read from bundled files/policy-list.txt file (generated at release time)
+  # OCI Registry mode - deploy every policy as a published Helm chart. files/policy-list.txt (generated at
+  # release time) holds them all: the hand-authored holdout charts AND the PolicyGenerator policies rendered
+  # to stock Helm charts in CI by `make render-policy-charts`. The policy-generator CMP is NEVER used for OCI
+  # (enforced by the policyGenerator guard) — every entry is a plain Helm chart with the same valuesObject contract.
   - list:
       elements:
       {{- $policyList := .Files.Get "files/policy-list.txt" | trim | split "\n" }}
@@ -40,33 +42,6 @@ spec:
           - path: .
             repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
             targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
-            helm:
-              valuesObject:
-                {{- include "autoshift.policyValuesObject" . | nindent 16 }}
-  # OCI mode - PolicyGenerator policies as OCI artifacts (names from files/policy-list-pg.txt).
-  # Rendered by the repo-server policy-generator CMP; single source, no values ref (env tokens only).
-  - list:
-      elements:
-      {{- $pgList := .Files.Get "files/policy-list-pg.txt" | trim | split "\n" }}
-      {{- range $pgList }}
-      {{- if not (has . $.Values.excludePolicies) }}
-      - name: {{ . }}
-      {{- end }}
-      {{- end }}
-      template:
-        metadata:
-          name: '{{ .Release.Name }}-{{"{{"}} .name {{"}}"}}'
-        spec:
-          project: default
-          destination:
-            server: https://kubernetes.default.svc
-            namespace: {{ printf "policies-%s" .Release.Name }}
-          sources:
-          - path: .
-            repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
-            targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
-            # OCI mode is ALWAYS prerendered Helm charts (rendered in CI by `make render-policy-charts`);
-            # the policy-generator CMP is never used for OCI. Same valuesObject contract as the holdouts.
             helm:
               valuesObject:
                 {{- include "autoshift.policyValuesObject" . | nindent 16 }}

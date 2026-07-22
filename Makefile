@@ -124,13 +124,15 @@ sync-values: ## Sync bootstrap chart values from policy charts
 	@printf "$(GREEN)✓$(NC) Bootstrap values synced\n"
 
 .PHONY: generate-policy-list
-generate-policy-list: ## Generate policy-list.txt (helm) + policy-list-pg.txt (PolicyGenerator) for OCI mode
-	@printf "$(BLUE)[INFO]$(NC) Generating policy lists: $(words $(POLICY_LIST_NAMES)) helm + $(words $(POLICY_PG_NAMES)) PolicyGenerator...\n"
+generate-policy-list: ## Generate policy-list.txt (every OCI policy chart: helm holdouts + rendered PolicyGenerator) for OCI mode
+	@printf "$(BLUE)[INFO]$(NC) Generating policy-list.txt: $(words $(POLICY_LIST_NAMES)) helm + $(words $(POLICY_PG_NAMES)) rendered PolicyGenerator...\n"
 	@mkdir -p autoshift/files
+	@# One deploy list: OCI ships every policy as a Helm chart (PG dirs are rendered to Helm in CI), so the
+	@# ApplicationSet consumes a single list. The holdout/PG split only matters at BUILD time (package vs render).
 	@rm -f autoshift/files/policy-list.txt autoshift/files/policy-list-pg.txt
 	@$(foreach policy,$(POLICY_LIST_NAMES),echo "$(policy)" >> autoshift/files/policy-list.txt;)
-	@$(foreach policy,$(POLICY_PG_NAMES),echo "$(policy)" >> autoshift/files/policy-list-pg.txt;)
-	@printf "$(GREEN)✓$(NC) Generated policy-list.txt ($(words $(POLICY_LIST_NAMES)) helm) + policy-list-pg.txt ($(words $(POLICY_PG_NAMES)) PolicyGenerator)\n"
+	@$(foreach policy,$(POLICY_PG_NAMES),echo "$(policy)" >> autoshift/files/policy-list.txt;)
+	@printf "$(GREEN)✓$(NC) Generated policy-list.txt ($(words $(POLICY_LIST_NAMES)) helm + $(words $(POLICY_PG_NAMES)) rendered PolicyGenerator)\n"
 
 .PHONY: package-charts
 package-charts: ## Package all Helm charts
@@ -203,28 +205,6 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 		echo "  Bootstrap: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap"; \
 		echo "  Main: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"; \
 		echo "  Policies: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
-	fi
-
-.PHONY: push-policies-oci
-push-policies-oci: ## Push PolicyGenerator policy dirs to OCI as Argo CD-native artifacts (requires oras CLI)
-	@if [ "$(DRY_RUN)" = "true" ]; then \
-		printf "$(YELLOW)[WARN]$(NC) DRY RUN: Skipping PolicyGenerator OCI push\n"; \
-		echo "PolicyGenerator policies would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies/<name>:$(VERSION)"; \
-	else \
-		command -v oras >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) oras CLI is required. Install from: https://oras.land/docs/installation\n"; exit 1; }; \
-		printf "$(BLUE)[INFO]$(NC) Pushing PolicyGenerator policies to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies\n"; \
-		for dir in $(POLICY_PG_DIRS); do \
-			name=$$(basename $$dir); \
-			tmp=$$(mktemp -d); \
-			COPYFILE_DISABLE=1 tar --exclude='._*' --exclude='.DS_Store' -czf $$tmp/content.tar.gz -C $$dir . || { rm -rf $$tmp; exit 1; }; \
-			printf '{}' > $$tmp/config.json; \
-			echo "  - Pushing $$name..."; \
-			( cd $$tmp && oras push $(REGISTRY)/$(REGISTRY_NAMESPACE)/policies/$$name:$(VERSION) \
-				--config config.json:application/vnd.cncf.argoproj.argocd.config.v1+json \
-				content.tar.gz:application/vnd.oci.image.layer.v1.tar+gzip >/dev/null ) || { rm -rf $$tmp; exit 1; }; \
-			rm -rf $$tmp; \
-		done; \
-		printf "$(GREEN)✓$(NC) Pushed $(words $(POLICY_PG_NAMES)) PolicyGenerator policies to oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies\n"; \
 	fi
 
 .PHONY: tag-latest
