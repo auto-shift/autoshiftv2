@@ -1,0 +1,53 @@
+# ==============================================================================
+# OpenShift AI (RHOAI) test profile — LAYER on top of a base hub profile
+# ==============================================================================
+# Enables the OpenShift AI hybrid (operator + DataScienceCluster/DSCInitialization sourced from
+# redhat-ai-services/ai-accelerator) plus its hardware floor: Node Feature Discovery + NVIDIA GPU
+# operator. Meant to be combined with a minimal hub, e.g.:
+#
+#   helm ... \
+#     -f values/global.yaml \
+#     -f values/clustersets/hub-minimal.yaml \
+#     -f values/clustersets/openshift-ai.yaml
+#
+# Notes:
+#   - Self-managed hub: these labels land on local-cluster, so RHOAI installs on the hub itself.
+#   - GPU: only meaningful if the cluster has GPU nodes (this one does). Drop gpu-operator + the mig
+#     label for a CPU-only RHOAI test.
+#   - aiAccelerator.* points at the source repo/ref/overlay (pinned to a validated commit here). Change
+#     repo to your fork, ref to a branch/tag, overlay to instance-3.x/overlays/<name> for a full overlay.
+# ==============================================================================
+
+aiAccelerator:
+  repo: github.com/redhat-ai-services/ai-accelerator
+  ref: e0139efe7ece9a68782a423cdab94750172739fb
+  overlay: instance-3.x/base
+
+hubClusterSets:
+  hub:
+    labels:
+      # --- Node Feature Discovery (RHOAI / GPU floor) ---
+      node-feature-discovery: 'true'
+      node-feature-discovery-subscription-name: nfd
+      node-feature-discovery-channel: stable
+      node-feature-discovery-source: redhat-operators
+      node-feature-discovery-source-namespace: openshift-marketplace
+      node-feature-discovery-version: ''            # '' = latest on channel
+      # --- NVIDIA GPU Operator (floor; this cluster has a GPU node) ---
+      gpu-operator: 'true'
+      gpu-operator-subscription-name: gpu-operator-certified
+      gpu-operator-channel: stable
+      gpu-operator-source: certified-operators
+      gpu-operator-source-namespace: openshift-marketplace
+      gpu-operator-version: ''
+      gpu-mig-strategy: single                      # none | single | mixed
+      # --- OpenShift AI (RHOAI) ---
+      openshift-ai: 'true'
+      openshift-ai-subscription-name: rhods-operator
+      openshift-ai-channel: stable-3.4
+      openshift-ai-source: redhat-operators
+      openshift-ai-source-namespace: openshift-marketplace
+      openshift-ai-version: ''
+      # DataScienceCluster component managementState (Managed | Removed | Unmanaged):
+      openshift-ai-kserve: Managed
+      openshift-ai-kueue: Removed
