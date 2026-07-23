@@ -1,0 +1,24 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: vault
+# Example: integrate a THIRD-PARTY Helm chart (HashiCorp Vault) that has no AutoShift/ACM awareness.
+# The nested manifests/vault/ kustomization pulls the upstream chart; per-cluster values are injected
+# as ACM hub-template lookups in its valuesInline. PolicyGenerator wraps the rendered output into a Policy.
+placementBindingDefaults:
+  name: binding-policy-vault
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-vault
+    manifests:
+      - path: manifests/namespace.yaml
+      - path: manifests/vault

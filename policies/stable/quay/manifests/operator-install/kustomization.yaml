@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Renders the shared components/operator-install chart (which owns the OperatorPolicy structure).
+# The per-operator VALUES below are the visible ACM lookups. ${POLICY_NAMESPACE}/${REMEDIATION} are
+# substituted before kustomize runs.
+helmGlobals:
+  chartHome: ../../../../../components/
+helmCharts:
+  - name: operator-install
+    releaseName: quay
+    valuesInline:
+      name: quay
+      namespace: quay-operator
+      remediation: ${REMEDIATION}
+      subscription:
+        name: '{{hub index .ManagedClusterLabels "autoshift.io/quay-subscription-name" | default "quay-operator" hub}}'
+        channel: '{{hub index .ManagedClusterLabels "autoshift.io/quay-channel" | default "stable-3.17" hub}}'
+        source: '{{hub $base := (index .ManagedClusterLabels "autoshift.io/quay-source" | default "redhat-operators") hub}}{{hub ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}'
+        sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/quay-source-namespace" | default "openshift-marketplace" hub}}'
+        # Version resolution (config lives in the rendered-config ConfigMap on the hub):
+        #   config mode (config.quay.versions set): versions = that list; startingCSV = config.quay.startingCSV
+        #     (explicit — the list says what's ALLOWED, not where to START; default "" = let OLM pick).
+        #   label mode (no config): versions = [quay-version label]; startingCSV = that same version.
+        # $vers/$start are computed here and $vers is reused by `versions` below.
+        startingCSV: |-
+          {{hub- $cfg := (index (index (index ((lookup "v1" "ConfigMap" "${POLICY_NAMESPACE}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "quay" | default dict) hub}}
+          {{hub- $cfgVers := (dig "versions" (list) $cfg) hub}}
+          {{hub- $isCfg := (not (empty $cfgVers)) hub}}
+          {{hub- $labelVer := (index .ManagedClusterLabels "autoshift.io/quay-version" | default "") hub}}
+          {{hub- $vers := (ternary $cfgVers (compact (list $labelVer)) $isCfg) hub}}
+          {{hub- (ternary (dig "startingCSV" "" $cfg) $labelVer $isCfg) hub}}
+      # versions reuses $vers set in startingCSV above (same policy, resolves after it).
+      versions: '{{hub $vers | toRawJson | toLiteral hub}}'

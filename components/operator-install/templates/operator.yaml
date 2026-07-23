@@ -1,0 +1,38 @@
+{{- /*
+Shared OperatorPolicy skeleton. Values are passed through verbatim — never tpl'd — so each may be an
+ACM lookup ({{hub}}/{{ }}) or a plain literal. `startingCSV` and the string form of `versions` are
+emitted as folded (>-) block scalars so the caller can write a readable MULTI-LINE hub template (e.g.
+intermediate {{hub- $var := ... hub}} lines) instead of one cramped line; folding + toLiteral still
+resolve them correctly.
+*/}}
+{{- $versions := .Values.versions | default (list) -}}
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: OperatorPolicy
+metadata:
+  name: install-operator-{{ .Values.name }}
+spec:
+  remediationAction: {{ .Values.remediation }}
+  severity: high
+  complianceType: musthave
+  operatorGroup:
+    {{- /* Default: reuse an existing OperatorGroup in the namespace, else the namespace name (a spoke
+          lookup built from the namespace — no autoshift labels, so callers needn't repeat it).
+          Callers can still pass operatorGroupName to override (e.g. a hardcoded name). */}}
+    name: '{{ .Values.operatorGroupName | default (printf "{{ with (lookup \"operators.coreos.com/v1\" \"OperatorGroup\" \"%s\" \"\").items }}{{ (index . 0).metadata.name }}{{ else }}%s{{ end }}" .Values.namespace .Values.namespace) }}'
+    namespace: {{ .Values.namespace }}
+  subscription:
+    name: '{{ .Values.subscription.name }}'
+    namespace: {{ .Values.namespace }}
+    source: '{{ .Values.subscription.source }}'
+    sourceNamespace: '{{ .Values.subscription.sourceNamespace }}'
+    channel: '{{ .Values.subscription.channel }}'
+    startingCSV: >-
+{{ .Values.subscription.startingCSV | default "" | indent 6 }}
+  upgradeApproval: Automatic
+  {{- /* versions: a hardcoded list -> YAML flow sequence; a string (ACM template) -> block scalar */}}
+  {{- if kindIs "string" $versions }}
+  versions: >-
+{{ $versions | indent 4 }}
+  {{- else }}
+  versions: {{ $versions | toJson }}
+  {{- end }}

@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Renders the shared components/operator-install chart. Visible per-operator ACM lookups below.
+helmGlobals:
+  chartHome: ../../../../../components/
+helmCharts:
+  - name: operator-install
+    releaseName: gitlab
+    valuesInline:
+      name: gitlab
+      namespace: gitlab-system
+      remediation: ${REMEDIATION}
+      subscription:
+        name: '{{hub index .ManagedClusterLabels "autoshift.io/gitlab-subscription-name" | default "gitlab-operator-kubernetes" hub}}'
+        channel: '{{hub index .ManagedClusterLabels "autoshift.io/gitlab-channel" | default "stable" hub}}'
+        source: '{{hub $base := (index .ManagedClusterLabels "autoshift.io/gitlab-source" | default "certified-operators") hub}}{{hub ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}'
+        sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/gitlab-source-namespace" | default "openshift-marketplace" hub}}'
+        startingCSV: '{{hub index .ManagedClusterLabels "autoshift.io/gitlab-version" | default "" hub}}'
+      versions: '{{hub compact (list (index .ManagedClusterLabels "autoshift.io/gitlab-version" | default "")) | toRawJson | toLiteral hub}}'
