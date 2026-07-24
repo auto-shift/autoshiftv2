@@ -92,18 +92,43 @@ func KustomizeBuild(policyDir string) (string, error) {
 	}
 	defer os.RemoveAll(work)
 
-	// Copy the policy dir, substituting placeholders in every file. The exact
+	// Stage the policy dir, substituting placeholders in every file. The exact
 	// ${...} tokens never appear in manifests (whose hub templates use $var), so
 	// substituting broadly is safe — mirrors an envsubst restricted to these vars.
-	if err := copyDirSubst(policyDir, work, repl); err != nil {
+	//
+	// A policy may render a shared Helm chart via a nested kustomization whose
+	// helmGlobals.chartHome reaches up to the repo-level components/ dir. To keep
+	// that relative path resolvable inside the isolated work tree, stage the policy
+	// at its repo-relative path and copy components/ alongside. Falls back to flat
+	// staging when no components/ root is found (policies that don't use it are
+	// unaffected — they just render from a deeper path).
+	absPolicy, _ := filepath.Abs(policyDir)
+	buildTarget := work
+	if root := findComponentsRoot(absPolicy); root != "" {
+		rel, _ := filepath.Rel(root, absPolicy)
+		buildTarget = filepath.Join(work, rel)
+		if err := copyDirSubst(absPolicy, buildTarget, repl); err != nil {
+			return "", fmt.Errorf("stage kustomize dir: %w", err)
+		}
+		if err := copyDirSubst(filepath.Join(root, "components"), filepath.Join(work, "components"), repl); err != nil {
+			return "", fmt.Errorf("stage components dir: %w", err)
+		}
+	} else if err := copyDirSubst(policyDir, work, repl); err != nil {
 		return "", fmt.Errorf("stage kustomize dir: %w", err)
 	}
 
 	bin, pluginHome := resolveKustomizeTools(policyDir)
 	// Match the flags the repo-server CMP uses so the tested render == the deployed one.
 	cmd := exec.Command(bin, "build", "--enable-alpha-plugins", "--enable-helm",
-		"--load-restrictor", "LoadRestrictionsNone", work)
+		"--load-restrictor", "LoadRestrictionsNone", buildTarget)
 	cmd.Env = os.Environ()
+	// PolicyGenerator renders a manifest path that is itself a kustomization (for the
+	// shared-chart pattern) by spawning a nested `kustomize build`; that nested build is
+	// configured by these env vars, NOT the outer flags above.
+	cmd.Env = append(cmd.Env,
+		"POLICY_GEN_ENABLE_HELM=true",
+		"POLICY_GEN_DISABLE_LOAD_RESTRICTORS=true",
+	)
 	if pluginHome != "" {
 		cmd.Env = append(cmd.Env, "KUSTOMIZE_PLUGIN_HOME="+pluginHome)
 	}
@@ -161,6 +186,22 @@ func isDir(p string) bool {
 }
 
 // copyDirSubst copies src to dst, applying repl to the contents of every file.
+// findComponentsRoot walks up from dir to the nearest ancestor containing a
+// components/ directory (the repo-level home for shared Helm charts). Returns ""
+// if none is found before the filesystem root.
+func findComponentsRoot(dir string) string {
+	for {
+		if st, err := os.Stat(filepath.Join(dir, "components")); err == nil && st.IsDir() {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
 func copyDirSubst(src, dst string, repl *strings.Replacer) error {
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil {

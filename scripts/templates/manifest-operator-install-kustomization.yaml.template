@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Renders the shared components/operator-install chart, which owns the OperatorPolicy structure and
+# creates the namespace (with the cluster-monitoring label). The per-operator ACM lookups below are the
+# visible, greppable inputs — every autoshift.io/{{LABEL_PREFIX}}-* label this operator consumes is here.
+# ${REMEDIATION} is substituted by the CMP before kustomize runs.
+helmGlobals:
+  chartHome: ../../../../../components/
+helmCharts:
+  - name: operator-install
+    releaseName: {{COMPONENT_NAME}}
+    valuesInline:
+      name: {{COMPONENT_NAME}}
+      namespace: {{NAMESPACE}}
+      remediation: ${REMEDIATION}
+      subscription:
+        name: '{{hub index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-subscription-name" | default "{{SUBSCRIPTION_NAME}}" hub}}'
+        channel: '{{hub index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-channel" | default "{{CHANNEL}}" hub}}'
+        source: '{{hub $base := (index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-source" | default "{{SOURCE}}") hub}}{{hub ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}'
+        sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-source-namespace" | default "{{SOURCE_NAMESPACE}}" hub}}'
+        startingCSV: '{{hub index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-version" | default "" hub}}'
+      versions: '{{hub compact (list (index .ManagedClusterLabels "autoshift.io/{{LABEL_PREFIX}}-version" | default "")) | toRawJson | toLiteral hub}}'

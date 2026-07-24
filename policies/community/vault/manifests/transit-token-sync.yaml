@@ -1,0 +1,13 @@
+# Component C: copy the hub Vault's transit-unseal token onto transit spokes so their transit seal can
+# authenticate. Read from the hub Vault namespace via fromSecret (needs hubTemplateOptions SA); created
+# as vault-transit-token in the spoke's vault namespace, mounted by the chart as VAULT_TOKEN.
+# (Hub CA is NOT synced here: spoke + hub share the autoshift-ca ClusterIssuer, so the spoke's own
+# vault-tls ca.crt already validates the hub — the seal's tls_ca_cert points at it.)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vault-transit-token
+  namespace: vault
+type: Opaque
+data:
+  token: '{{hub fromSecret "vault" "vault-transit-unseal-token" "token" hub}}'

@@ -11,12 +11,14 @@ directory is a Kustomize source: `policy-generator-config.yaml` wraps the bare m
   kustomization.yaml            # entrypoint: generators: [policy-generator-config.yaml]
   policy-generator-config.yaml  # the PolicyGenerator (policy graph, remediation, eval interval)
   placement.yaml                # Placement predicate (autoshift.io/{{COMPONENT_NAME}}) + tolerations
-  manifests/                    # bare resources — PG wraps each into the ConfigurationPolicy
-    namespace.yaml              #   the operator Namespace (raw)
-    operator.yaml               #   the OperatorPolicy (first-class; carries ${REMEDIATION})
+  manifests/
+    operator-install/
+      kustomization.yaml        # renders the shared components/operator-install chart (Namespace +
+                                #   OperatorPolicy); per-operator ACM lookups are visible here
 ```
-`manifests[].path` is the `manifests` directory — drop another bare manifest in and it is picked up
-automatically, no config edit needed.
+The operator-install renders the shared `components/operator-install` chart — edit the visible ACM
+lookups in `manifests/operator-install/kustomization.yaml` to tune the subscription/version. Add
+further CRs as new `policies[]` entries in `policy-generator-config.yaml` pointing at their own dirs.
 
 ## Test Locally
 ```bash

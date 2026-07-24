@@ -1,0 +1,75 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: vault
+# Example: integrate a THIRD-PARTY Helm chart (HashiCorp Vault) that has no AutoShift/ACM awareness.
+# The nested manifests/vault/ kustomization pulls the upstream chart; per-cluster values are injected
+# as ACM hub-template lookups in its valuesInline. PolicyGenerator wraps the rendered output into a Policy.
+#
+# Production layout: namespace + a cert-manager TLS cert first (needs the cert-manager operator), then
+# the HA Vault (which mounts that cert). Ordering is enforced with policy dependencies.
+placementBindingDefaults:
+  name: binding-policy-vault
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Namespace + TLS serving cert (cert-manager). Requires the cert-manager operator + a ClusterIssuer.
+  - name: policy-vault-tls
+    dependencies:
+      - name: policy-cert-manager-operator-install
+    manifests:
+      - path: manifests/namespace.yaml
+      - path: manifests/tls/vault-certificate.yaml
+  # 2) HA Vault (raft, 3 nodes) + injector, mounting the vault-tls secret from (1). Seal backend is
+  #    per-cluster (autoshift.io/vault-seal-type): shamir (manual) | transit (two-tier) | cloud KMS.
+  - name: policy-vault
+    dependencies:
+      - name: policy-vault-tls
+    manifests:
+      - path: manifests/vault
+  # 3) Transit unseal provider — configures the hub Vault's transit engine + recovery KV (Component B).
+  #    Hub only (vault-transit-provider: true).
+  - name: policy-vault-transit-provider
+    placement:
+      placementPath: placement-transit-provider.yaml
+    dependencies:
+      - name: policy-vault
+    manifests:
+      - path: manifests/transit-provider/provider-resources.yaml
+  # 4) Transit token sync — copies the provider's unseal token onto transit spokes (Component C).
+  #    Eventually consistent: fromSecret is empty/noncompliant until (3) creates the token, then heals.
+  - name: policy-vault-transit-token
+    placement:
+      placementPath: placement-transit-spoke.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-vault
+    manifests:
+      - path: manifests/transit-token-sync.yaml
+  # 5) Init automation — idempotent init on auto-unseal clusters; auto-unseals, no stored unseal keys
+  #    (Component D). Shamir clusters excluded (manual ceremony).
+  - name: policy-vault-init
+    placement:
+      placementPath: placement-autounseal.yaml
+    dependencies:
+      - name: policy-vault
+    manifests:
+      - path: manifests/init/init-resources.yaml
+  # 6) Readiness gate (inform): Compliant once the init Job succeeds.
+  - name: policy-vault-init-ready
+    placement:
+      placementPath: placement-autounseal.yaml
+    remediationAction: inform
+    dependencies:
+      - name: policy-vault-init
+    manifests:
+      - path: test/vault-init-ready.yaml

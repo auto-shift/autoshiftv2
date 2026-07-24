@@ -255,9 +255,15 @@ pg_render() {
         return 2
     fi
 
-    local tmp
+    # Stage the policy at its repo-relative path and copy components/ alongside, so the
+    # operator-install caller's `chartHome: ../../../../../components/` resolves in the isolated
+    # tree (mirrors the e2e harness).
+    local tmp rel
     tmp="$(mktemp -d)"
-    cp -R "$dir"/. "$tmp"/
+    rel="${dir#"$PROJECT_ROOT"/}"; rel="${rel#./}"
+    mkdir -p "$tmp/$(dirname "$rel")"
+    cp -R "$PROJECT_ROOT/$rel" "$tmp/$rel"
+    [[ -d "$PROJECT_ROOT/components" ]] && cp -R "$PROJECT_ROOT/components" "$tmp/components"
     # Substitute the 5 exact tokens (mirrors the CMP sed / e2e replacer). Hub vars like $base
     # have no braces, so these anchored ${...} patterns never touch them.
     local f
@@ -268,29 +274,16 @@ pg_render() {
             -e 's/\${EVAL_NONCOMPLIANT}/45s/g' \
             -e 's/\${CLUSTER_SET_SUFFIX}//g' \
             "$f" > "$f.sub" && mv "$f.sub" "$f"
-    done < <(find "$tmp" -name '*.yaml')
+    done < <(find "$tmp/$rel" -name '*.yaml')
 
-    KUSTOMIZE_PLUGIN_HOME="$plugin_home" "$kbin" build \
-        --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone "$tmp" >/dev/null 2>&1
+    # POLICY_GEN_* env vars configure PolicyGenerator's nested `kustomize build` for the chart
+    # (the outer flags don't reach it).
+    KUSTOMIZE_PLUGIN_HOME="$plugin_home" \
+    POLICY_GEN_ENABLE_HELM=true POLICY_GEN_DISABLE_LOAD_RESTRICTORS=true \
+        "$kbin" build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone "$tmp/$rel" >/dev/null 2>&1
     local rc=$?
     rm -rf "$tmp"
     return $rc
-}
-
-# Insert targetNamespaces into the operatorGroup (namespace-scoped operators). Inserts right after
-# the operatorGroup's `namespace:` line (the first `    namespace:` in the OperatorPolicy).
-insert_target_namespaces() {
-    local file="$1"
-    awk -v ns="$NAMESPACE" '
-        !done && /^    namespace: / {
-            print
-            print "    targetNamespaces:"
-            print "      - " ns
-            done=1
-            next
-        }
-        { print }
-    ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
 }
 
 # Validation function
@@ -320,7 +313,7 @@ generate_policy() {
 
     # Create directory structure
     log_step "Creating directory structure"
-    mkdir -p "$POLICY_DIR/manifests"
+    mkdir -p "$POLICY_DIR/manifests/operator-install"
     log_success "Created $POLICY_DIR/"
 
     # Generate kustomization.yaml (static entrypoint)
@@ -338,20 +331,15 @@ generate_policy() {
     substitute_template "$TEMPLATE_DIR/placement-operator.yaml.template" "$POLICY_DIR/placement.yaml"
     log_success "Created placement.yaml"
 
-    # Generate the bare Namespace manifest (PG wraps it into a ConfigurationPolicy)
-    log_step "Generating manifests/namespace.yaml"
-    substitute_template "$TEMPLATE_DIR/manifest-namespace.yaml.template" "$POLICY_DIR/manifests/namespace.yaml"
-    log_success "Created manifests/namespace.yaml"
-
-    # Generate the first-class OperatorPolicy manifest
-    log_step "Generating manifests/operator.yaml"
-    substitute_template "$TEMPLATE_DIR/manifest-operator.yaml.template" "$POLICY_DIR/manifests/operator.yaml"
-    # Namespace-scoped operators: inject targetNamespaces into the operatorGroup
+    # Generate the operator-install caller: a nested kustomization that renders the shared
+    # components/operator-install chart (which owns the OperatorPolicy + creates the namespace).
+    log_step "Generating manifests/operator-install/kustomization.yaml"
+    substitute_template "$TEMPLATE_DIR/manifest-operator-install-kustomization.yaml.template" "$POLICY_DIR/manifests/operator-install/kustomization.yaml"
+    log_success "Created manifests/operator-install/kustomization.yaml"
     if [[ "$NAMESPACE_SCOPED" == "true" ]]; then
-        insert_target_namespaces "$POLICY_DIR/manifests/operator.yaml"
-        log_success "Created manifests/operator.yaml (namespace-scoped: targetNamespaces=$NAMESPACE)"
-    else
-        log_success "Created manifests/operator.yaml"
+        log_warning "--namespace-scoped: the operator-install chart installs AllNamespaces-style (no"
+        log_warning "targetNamespaces). For a namespace-scoped OperatorGroup, hand-write the operator-install"
+        log_warning "manifest instead (see policies/certified/trident for a non-standard example)."
     fi
 
     # Generate README.md

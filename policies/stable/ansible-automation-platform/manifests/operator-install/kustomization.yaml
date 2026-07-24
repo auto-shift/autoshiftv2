@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Renders the shared components/operator-install chart. Visible per-operator ACM lookups below.
+helmGlobals:
+  chartHome: ../../../../../components/
+helmCharts:
+  - name: operator-install
+    releaseName: aap
+    valuesInline:
+      name: aap
+      namespace: ansible-automation-platform
+      remediation: ${REMEDIATION}
+      subscription:
+        name: '{{hub index .ManagedClusterLabels "autoshift.io/aap-subscription-name" | default "ansible-automation-platform-operator" hub}}'
+        channel: '{{hub index .ManagedClusterLabels "autoshift.io/aap-channel" | default "stable-2.6" hub}}'
+        source: '{{hub $base := (index .ManagedClusterLabels "autoshift.io/aap-source" | default "redhat-operators") hub}}{{hub ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}'
+        sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/aap-source-namespace" | default "openshift-marketplace" hub}}'
+        startingCSV: '{{hub index .ManagedClusterLabels "autoshift.io/aap-version" | default "" hub}}'
+      versions: '{{hub compact (list (index .ManagedClusterLabels "autoshift.io/aap-version" | default "")) | toRawJson | toLiteral hub}}'
