@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # Production HashiCorp Vault: HA (raft, 3 nodes) + persistence + TLS (cert-manager) + injector.
-# Per-cluster values (version, storage size/class) are visible ACM lookups.
+# Per-cluster values (version, storage size) are visible ACM lookups.
 # NOTE: Vault must be one-time initialized + unsealed after first deploy — an imperative op that
 # declarative policy can't express (see README). With Shamir (default) that is manual; configure a
 # KMS `seal` stanza in the raft config below for auto-unseal.
@@ -14,34 +14,33 @@ helmCharts:
     skipTests: true
     valuesInline:
       global:
+        # OpenShift: drop the chart's fixed runAsUser/fsGroup so the restricted-v2 SCC assigns UIDs.
+        openshift: true
         tlsDisable: false
       injector:
         enabled: true
+        # Fully-qualified images: the chart's default unqualified 'hashicorp/*' resolves via OpenShift's
+        # unqualified-search-registries (often registry.connect.redhat.com, which lacks them) -> pin docker.io.
+        image:
+          repository: docker.io/hashicorp/vault-k8s
+        agentImage:
+          repository: docker.io/hashicorp/vault
         resources:
           requests: {memory: 128Mi, cpu: 100m}
           limits: {memory: 256Mi, cpu: 250m}
       server:
         image:
+          repository: docker.io/hashicorp/vault
           tag: '{{hub index .ManagedClusterLabels "autoshift.io/vault-version" | default "1.17.2" hub}}'
         resources:
           requests: {memory: 256Mi, cpu: 250m}
           limits: {memory: 1Gi, cpu: 1}
         dataStorage:
+          # size is set via the patch below (the chart emits size UNQUOTED, so an ACM {{hub}} value
+          # would break the YAML; a kustomize patch on the rendered PVC serializes it QUOTED).
+          # storageClass stays cluster-default (omit) — patch it the same way for a per-cluster class.
           enabled: true
-          # size is set below via a `patches:` block, not here: the upstream chart emits size UNQUOTED
-          # (an ACM {{hub}} value would break the YAML), but a kustomize patch on the rendered PVC
-          # serializes the value QUOTED, so the hub lookup is valid. storageClass stays cluster-default
-          # (omit) — patch it the same way if you need a per-cluster class.
           size: 10Gi
-# Patch the rendered PVC's storage with a per-cluster ACM lookup (kustomize quotes it -> valid YAML).
-patches:
-  - target:
-      kind: StatefulSet
-      name: vault
-    patch: |-
-      - op: replace
-        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
-        value: '{{hub index .ManagedClusterLabels "autoshift.io/vault-storage-size" | default "10Gi" hub}}'
         extraVolumes:
           - type: secret
             name: vault-tls
@@ -67,3 +66,12 @@ patches:
                 retry_join { leader_api_addr = "https://vault-2.vault-internal:8200" leader_ca_cert_file = "/vault/userconfig/vault-tls/ca.crt" }
               }
               service_registration "kubernetes" {}
+# Patch the rendered PVC's storage with a per-cluster ACM lookup (kustomize quotes it -> valid YAML).
+patches:
+  - target:
+      kind: StatefulSet
+      name: vault
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: '{{hub index .ManagedClusterLabels "autoshift.io/vault-storage-size" | default "10Gi" hub}}'
