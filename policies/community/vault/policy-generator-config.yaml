@@ -31,6 +31,10 @@ policies:
   # 2) HA Vault (raft, 3 nodes) + injector, mounting the vault-tls secret from (1). Seal backend is
   #    per-cluster (autoshift.io/vault-seal-type): shamir (manual) | transit (two-tier) | cloud KMS.
   - name: policy-vault
+    # The transit seal auto-discovers the hub Vault Route via a cross-namespace lookup (ns "vault"), which
+    # ACM restricts to the policy namespace unless a service account is set.
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-vault-tls
     manifests:

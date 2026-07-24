@@ -10,6 +10,8 @@ metadata:
 # automatically — no edit to this file needed. Only edit this file to change the policy graph
 # itself (names, dependencies, per-policy remediation). Keep placement.yaml OUT of manifests/
 # (a Placement inside a wildcarded dir would be wrapped into the Policy as a managed object).
+placementBindingDefaults:
+  name: binding-policy-cert-manager
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
   # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
@@ -35,3 +37,16 @@ policies:
   - name: policy-cert-manager-operator-install
     manifests:
       - path: manifests
+  # AutoShift's built-in CA (autoshift-ca ClusterIssuer) — default TLS issuer where cert-manager is on.
+  # Signer is a ref (autoshift.io/cert-manager-ca-issuer): default self-signed root, or point at your own
+  # issuer to make autoshift-ca an intermediate. Opt out per cluster with cert-manager-ca: 'false' (via the
+  # placement). Per-cluster CA (no key sharing); Vault cross-cluster transit trusts the hub CA public cert.
+  - name: policy-cert-manager-ca
+    placement:
+      placementPath: placement-cert-manager-ca.yaml
+    # object-templates-raw (conditional signer) — its own ConfigurationPolicy, don't consolidate.
+    consolidateManifests: false
+    dependencies:
+      - name: policy-cert-manager-operator-install
+    manifests:
+      - path: manifests/ca

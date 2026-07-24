@@ -1,7 +1,26 @@
 # cert-manager AutoShift Policy
 
 ## Overview
-This policy installs the openshift-cert-manager-operator operator using AutoShift patterns.
+This policy installs the openshift-cert-manager-operator operator using AutoShift patterns, and
+provisions a built-in CA (`policy-cert-manager-ca`).
+
+## Built-in CA (`autoshift-ca`)
+`policy-cert-manager-ca` creates the `autoshift-ca` ClusterIssuer — the default TLS issuer components use
+via their `tlsIssuer` (GitLab, Keycloak, Vault, …). The **signer is a ref**, so you choose the trust root:
+
+| `autoshift.io/cert-manager-ca-issuer` | Result |
+|---|---|
+| `autoshift-selfsigned` (default) | A **self-signed root** is generated (the bootstrap selfSigned issuer is created only in this case). |
+| your `Issuer`/`ClusterIssuer` name | `autoshift-ca` becomes an **intermediate CA signed by your issuer** — cert-manager does the signing; AutoShift never handles your CA key. |
+
+- `cert-manager-ca-issuer-kind` (default `ClusterIssuer`) and `cert-manager-ca-issuer-group` (default
+  `cert-manager.io`) complete the ref — set `-group` for external issuers (Venafi, step-ca, AWS PCA).
+- The signer must be able to issue a **CA cert** (`isCA`) — a `ca` issuer over your root / Venafi / step.
+  Public ACME **cannot** (it won't issue CA certs; use ACME for leaf/Route certs, not the CA).
+- **Opt out** entirely with `autoshift.io/cert-manager-ca: 'false'` (handled by placement) — then components
+  must set their own `tlsIssuer`.
+- **Two-tier note**: if every cluster's `autoshift-ca` chains to the same enterprise root, spokes trust the
+  hub automatically (no CA distribution needed).
 
 ## Status
 ✅ **Operator Installation**: Ready to deploy  

@@ -51,6 +51,10 @@ helmCharts:
         extraVolumes:
           - type: secret
             name: vault-tls
+          # Hub CA public cert for the transit seal (transit spokes only; patched optional below so
+          # non-transit clusters, which don't have this secret, still start).
+          - type: secret
+            name: vault-transit-ca
         # Passthrough Route so transit spokes on OTHER clusters can reach this Vault (the in-cluster
         # Service is not reachable cross-cluster). Host is set per-cluster via the patch below.
         route:
@@ -85,7 +89,7 @@ helmCharts:
                 address     = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-transit-address" | default (printf "https://%s" (dig "spec" "host" "" (lookup "route.openshift.io/v1" "Route" "vault" "vault" | default dict))) hub}}` }}"
                 key_name    = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-transit-key" | default "autoshift-unseal" hub}}` }}"
                 mount_path  = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-transit-mount" | default "transit/" hub}}` }}"
-                tls_ca_cert = "/vault/userconfig/vault-tls/ca.crt"
+                tls_ca_cert = "/vault/userconfig/vault-transit-ca/ca.crt"
               }
               {{ `{{hub- end hub}}` }}
               {{ `{{hub- if eq (index .ManagedClusterLabels "autoshift.io/vault-seal-type" | default "shamir") "awskms" hub}}` }}
@@ -136,7 +140,8 @@ patches:
       - op: add
         path: /spec/host
         value: '{{hub index .ManagedClusterLabels "autoshift.io/vault-external-hostname" | default "" hub}}'
-  # Make VAULT_TOKEN's secret ref optional so non-transit clusters (no vault-transit-token) still start.
+  # Make the transit secrets optional so non-transit clusters (no vault-transit-token / vault-transit-ca)
+  # still start: the VAULT_TOKEN env ref and the vault-transit-ca volume.
   - target:
       kind: StatefulSet
       name: vault
@@ -148,6 +153,10 @@ patches:
       spec:
         template:
           spec:
+            volumes:
+              - name: userconfig-vault-transit-ca
+                secret:
+                  optional: true
             containers:
               - name: vault
                 env:

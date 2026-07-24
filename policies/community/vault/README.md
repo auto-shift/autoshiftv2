@@ -13,6 +13,10 @@ HA cluster:
 - `autoshift.io/vault: 'true'` on the clusterset/cluster.
 - **cert-manager** operator + a **ClusterIssuer** (default `autoshift-ca`; override with
   `autoshift.io/vault-tls-issuer`). The policy depends on `policy-cert-manager-operator-install`.
+  The `autoshift-ca` issuer is provisioned per-cluster by **`policy-cert-manager-ca`** (each cluster its
+  own CA; keys never leave the cluster). For **two-tier transit**, the spoke can't use its own CA to trust
+  the hub, so the transit sync distributes the hub CA's **public** cert (`vault-transit-ca`) to spokes and
+  the transit seal validates the hub Vault Route cert against it.
 
 ## Seal backend (auto-unseal) — `autoshift.io/vault-seal-type`
 
@@ -42,9 +46,9 @@ and centrally recoverable, but a compromised/unavailable hub affects them. Pick 
   need no address config and never drift from the hub's actual Route. (`vault-transit-address` remains an
   optional override for an external LB / custom DNS / a non-local hub.) The in-cluster Service is never
   used — it's unreachable cross-cluster. `policy-vault-transit-token` copies the provider's token onto
-  each spoke; the spoke transit seal uses it. Spoke + hub share the **autoshift-ca** issuer and the Route
-  is passthrough, so the spoke validates the hub cert against autoshift-ca (hence the Route hostname is in
-  the hub cert SANs, handled above).
+  each spoke, along with the hub CA's **public** cert (`vault-transit-ca`). The Route is passthrough, so the
+  spoke's transit seal validates the hub Vault cert against the distributed hub CA (hence the Route hostname
+  must be in the hub cert SANs, handled above). CAs are per-cluster — only the hub's public cert crosses.
 - Recovery keys for spokes are stored in the hub Vault's recovery KV — self-contained, no cloud dependency.
 
 ### Cloud KMS (`awskms` / `gcpckms` / `azurekeyvault`)
