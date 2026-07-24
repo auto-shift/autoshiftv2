@@ -32,6 +32,13 @@ helmCharts:
         image:
           repository: docker.io/hashicorp/vault
           tag: '{{hub index .ManagedClusterLabels "autoshift.io/vault-version" | default "1.17.2" hub}}'
+        # Auto-unseal token for the transit seal (Component A). Absent on non-transit clusters, so the
+        # env's secretKeyRef is patched optional below; the transit-token sync policy creates it on
+        # transit spokes. VAULT_TOKEN is read by the transit seal at startup.
+        extraSecretEnvironmentVars:
+          - envName: VAULT_TOKEN
+            secretName: vault-transit-token
+            secretKey: token
         resources:
           requests: {memory: 256Mi, cpu: 250m}
           limits: {memory: 1Gi, cpu: 1}
@@ -44,6 +51,13 @@ helmCharts:
         extraVolumes:
           - type: secret
             name: vault-tls
+        # Passthrough Route so transit spokes on OTHER clusters can reach this Vault (the in-cluster
+        # Service is not reachable cross-cluster). Host is set per-cluster via the patch below.
+        route:
+          enabled: true
+          activeService: true
+          tls:
+            termination: passthrough
         ha:
           enabled: true
           replicas: 3
@@ -66,6 +80,35 @@ helmCharts:
                 retry_join { leader_api_addr = "https://vault-2.vault-internal:8200" leader_ca_cert_file = "/vault/userconfig/vault-tls/ca.crt" }
               }
               service_registration "kubernetes" {}
+              {{ `{{hub- if eq (index .ManagedClusterLabels "autoshift.io/vault-seal-type" | default "shamir") "transit" hub}}` }}
+              seal "transit" {
+                address     = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-transit-address" | default (printf "https://%s" (dig "spec" "host" "" (lookup "route.openshift.io/v1" "Route" "vault" "vault" | default dict))) hub}}` }}"
+                key_name    = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-transit-key" | default "autoshift-unseal" hub}}` }}"
+                mount_path  = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-transit-mount" | default "transit/" hub}}` }}"
+                tls_ca_cert = "/vault/userconfig/vault-tls/ca.crt"
+              }
+              {{ `{{hub- end hub}}` }}
+              {{ `{{hub- if eq (index .ManagedClusterLabels "autoshift.io/vault-seal-type" | default "shamir") "awskms" hub}}` }}
+              seal "awskms" {
+                region     = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-seal-kms-region" | default "us-east-1" hub}}` }}"
+                kms_key_id = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-seal-kms-key-id" | default "" hub}}` }}"
+              }
+              {{ `{{hub- end hub}}` }}
+              {{ `{{hub- if eq (index .ManagedClusterLabels "autoshift.io/vault-seal-type" | default "shamir") "gcpckms" hub}}` }}
+              seal "gcpckms" {
+                project    = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-seal-kms-project" | default "" hub}}` }}"
+                region     = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-seal-kms-region" | default "global" hub}}` }}"
+                key_ring   = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-seal-kms-key-ring" | default "" hub}}` }}"
+                crypto_key = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-seal-kms-key-id" | default "" hub}}` }}"
+              }
+              {{ `{{hub- end hub}}` }}
+              {{ `{{hub- if eq (index .ManagedClusterLabels "autoshift.io/vault-seal-type" | default "shamir") "azurekeyvault" hub}}` }}
+              seal "azurekeyvault" {
+                tenant_id  = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-seal-kms-tenant-id" | default "" hub}}` }}"
+                vault_name = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-seal-kms-vault-name" | default "" hub}}` }}"
+                key_name   = "{{ `{{hub index .ManagedClusterLabels "autoshift.io/vault-seal-kms-key-id" | default "" hub}}` }}"
+              }
+              {{ `{{hub- end hub}}` }}
 # Patch the rendered PVC's storage with a per-cluster ACM lookup (kustomize quotes it -> valid YAML).
 patches:
   - target:
@@ -75,3 +118,31 @@ patches:
       - op: replace
         path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
         value: '{{hub index .ManagedClusterLabels "autoshift.io/vault-storage-size" | default "10Gi" hub}}'
+  # Set the Route host per-cluster (chart emits host: unquoted, so an ACM {{hub}} would break YAML;
+  # patch it quoted). Empty -> OpenShift auto-assigns; the transit provider sets vault-external-hostname.
+  - target:
+      kind: Route
+      name: vault
+    patch: |-
+      - op: add
+        path: /spec/host
+        value: '{{hub index .ManagedClusterLabels "autoshift.io/vault-external-hostname" | default "" hub}}'
+  # Make VAULT_TOKEN's secret ref optional so non-transit clusters (no vault-transit-token) still start.
+  - target:
+      kind: StatefulSet
+      name: vault
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: vault
+      spec:
+        template:
+          spec:
+            containers:
+              - name: vault
+                env:
+                  - name: VAULT_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        optional: true

@@ -1,0 +1,96 @@
+# Component D: idempotent Vault init for AUTO-UNSEAL clusters (transit / KMS seal-type).
+# Runs once; with an auto-unseal seal configured, `vault operator init` also auto-unseals — no unseal
+# step, no stored unseal keys. Produces break-glass RECOVERY keys, stashed in the vault-init secret for
+# operators to retrieve + secure + delete. Shamir clusters are NOT gated to this Job (manual ceremony).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-init
+  namespace: vault
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-init
+  namespace: vault
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+  - apiGroups:
+      - ''
+    resources:
+      - pods/exec
+    verbs:
+      - create
+  - apiGroups:
+      - ''
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - create
+      - patch
+      - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-init
+  namespace: vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vault-init
+subjects:
+  - kind: ServiceAccount
+    name: vault-init
+    namespace: vault
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-init-v1
+  namespace: vault
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      serviceAccountName: vault-init
+      restartPolicy: Never
+      containers:
+        - name: vault-init
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          imagePullPolicy: Always
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -eo pipefail
+              NS=vault
+              CA=/vault/userconfig/vault-tls/ca.crt
+              vex() { oc exec -n "$NS" vault-0 -- env VAULT_CACERT="$CA" "$@"; }
+
+              echo "waiting for vault-0..."
+              for i in $(seq 1 60); do
+                [ "$(oc get pod -n "$NS" vault-0 -o jsonpath='{.status.phase}' 2>/dev/null)" = "Running" ] && break
+                sleep 5
+              done
+
+              if vex vault status -format=json 2>/dev/null \
+                   | python3 -c 'import sys,json; sys.exit(0 if json.load(sys.stdin)["initialized"] else 1)'; then
+                echo "vault already initialized — nothing to do"
+                exit 0
+              fi
+
+              echo "initializing vault (auto-unseal; recovery keys)"
+              vex vault operator init -recovery-shares=1 -recovery-threshold=1 -format=json > /tmp/init.json
+              oc create secret generic vault-init -n "$NS" \
+                --from-file=init.json=/tmp/init.json \
+                --dry-run=client -o yaml | oc apply -f -
+              echo "vault initialized and auto-unsealed; break-glass recovery keys stored in secret/vault-init"

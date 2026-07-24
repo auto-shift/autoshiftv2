@@ -672,6 +672,22 @@ hubClusterSets:
       vault-version: '1.17.2'                 # server.image.tag injected into the upstream chart
       vault-tls-issuer: 'autoshift-ca'        # cert-manager ClusterIssuer for the Vault TLS cert
       vault-storage-size: '10Gi'              # raft data PVC size per node (applied via a kustomize patch)
+      # Auto-unseal: seal backend per cluster. shamir=manual (independent, default); awskms/gcpckms/
+      # azurekeyvault=cloud KMS auto-unseal (independent); transit=auto-unseal via the hub Vault (two-tier).
+      vault-seal-type: 'transit'              # shamir | awskms | gcpckms | azurekeyvault | transit
+      vault-transit-provider: 'false'         # 'true' on the hub Vault: hosts the transit unseal engine + KV recovery sink
+      vault-external-hostname: ''             # hub Vault Route hostname (provider only): Route host + TLS cert SAN
+      # Spokes AUTO-DISCOVER the hub Vault Route via lookup (resolved on the hub) — normally leave blank.
+      # Set only to override: an external LB/custom DNS, or a spoke unsealing against a non-local hub.
+      vault-transit-address: ''               # optional override; default = https://<hub Vault Route host>
+      vault-transit-key: 'autoshift-unseal'   # transit key name on the hub Vault
+      vault-transit-mount: 'transit/'         # transit engine mount path on the hub Vault
+      vault-seal-kms-region: 'us-east-1'      # awskms/gcpckms region
+      vault-seal-kms-key-id: ''               # awskms kms_key_id / gcpckms crypto_key / azurekeyvault key_name
+      vault-seal-kms-project: ''              # gcpckms project
+      vault-seal-kms-key-ring: ''             # gcpckms key_ring
+      vault-seal-kms-tenant-id: ''            # azurekeyvault tenant_id
+      vault-seal-kms-vault-name: ''           # azurekeyvault vault_name
 
       # =======================================================================
       # Developer OpenShift GitOps (team ArgoCD instances)
