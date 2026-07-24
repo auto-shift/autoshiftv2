@@ -118,6 +118,15 @@ patches:
       - op: replace
         path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
         value: '{{hub index .ManagedClusterLabels "autoshift.io/vault-storage-size" | default "10Gi" hub}}'
+  # The chart's injector NetworkPolicy omits metadata.namespace (doesn't template .Release.Namespace),
+  # so it renders namespace-less and ACM can't place it -> policy NonCompliant. Stamp it explicitly.
+  - target:
+      kind: NetworkPolicy
+      name: vault-agent-injector
+    patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: vault
   # Set the Route host per-cluster (chart emits host: unquoted, so an ACM {{hub}} would break YAML;
   # patch it quoted). Empty -> OpenShift auto-assigns; the transit provider sets vault-external-hostname.
   - target:
