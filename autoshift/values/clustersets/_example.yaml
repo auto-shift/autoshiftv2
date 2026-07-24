@@ -94,6 +94,12 @@ hubClusterSets:
               mirror: 'registry.example.com:5000/rhel'
             - source: 'quay.io'
               mirror: 'registry.example.com:5000/quay'
+          # tagMirrors -> ImageTagMirrorSet, for images pulled by TAG (not digest). The Vault chart
+          # images (docker.io/hashicorp/vault:1.17.2, vault-k8s:1.4.2) are tag-referenced, so mirror
+          # them here. `oc mirror` copies them via the imageset (vault key in known-additional-images.json).
+          tagMirrors:
+            - source: 'docker.io/hashicorp'
+              mirror: 'registry.example.com:5000/hashicorp'
         catalogs:
           - source: redhat-operators
             image: 'registry.example.com:5000/redhat/redhat-operator-index:v4.20'
@@ -688,6 +694,8 @@ hubClusterSets:
       vault-seal-kms-key-ring: ''             # gcpckms key_ring
       vault-seal-kms-tenant-id: ''            # azurekeyvault tenant_id
       vault-seal-kms-vault-name: ''           # azurekeyvault vault_name
+      # Image for the init/transit-provider Jobs. Override for disconnected/baremetal (no internal registry).
+      vault-job-image: 'image-registry.openshift-image-registry.svc:5000/openshift/cli:latest'
 
       # =======================================================================
       # Developer OpenShift GitOps (team ArgoCD instances)

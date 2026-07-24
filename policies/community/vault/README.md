@@ -64,3 +64,50 @@ oc exec -n vault vault-0 -- vault operator unseal <key>  # x3 (threshold), on ea
 
 A **Shamir hub** that is *also* the transit provider: do the ceremony above, then put its root/admin token
 in `secret/vault-bootstrap-token` (key `token`) so `policy-vault-transit-provider` can configure transit.
+
+## Disconnected / air-gap
+
+- **Seal choice**: use **`transit`** (two-tier — fleet-internal, no internet) or **`shamir`**. Cloud KMS
+  (`awskms`/`gcpckms`/`azurekeyvault`) needs the cloud KMS API and does **not** work air-gapped. The
+  `autoshift-ca` issuer is self-signed, so TLS trust needs no external CA.
+- **Images** — mirror the tag-referenced chart images:
+  - `docker.io/hashicorp/vault:1.17.2` (server + injector agent), `docker.io/hashicorp/vault-k8s:1.4.2`
+    (injector). They are in `scripts/known-additional-images.json` (key `vault`), so
+    `scripts/generate-imageset-config.sh` adds them to the imageset when `vault: 'true'`; `oc mirror`
+    copies them to the mirror registry.
+  - Add a **tag** redirect to your disconnected config `mirrorRegistry.tagMirrors`
+    (`source: docker.io/hashicorp`) — tag-referenced images need an ImageTagMirrorSet, not IDMS.
+  - Set `autoshift.io/vault-job-image` to a mirrored CLI image on baremetal/clusters without the internal
+    image registry (the init/transit-provider Jobs default to the internal `openshift/cli`).
+- **Deploy mode**: use **OCI mode**. The upstream Vault chart is rendered to plain manifests at release
+  time (baked into the OCI artifact), so nothing pulls `helm.releases.hashicorp.com` on the cluster. Git
+  mode (on-cluster CMP render) would pull the chart at deploy time and needs the chart vendored/mirrored.
+
+## Versions & updating
+
+Two **decoupled** version knobs:
+
+| Knob | Where | Scope |
+|---|---|---|
+| **Helm chart** version | `manifests/vault/kustomization.yaml` `helmCharts[].version` | repo-level (build-time pull; **not** a per-cluster label) — controls the deployment scaffolding |
+| **Vault server** image tag | `autoshift.io/vault-version` label (default in the chart's `server.image.tag` lookup) | per-cluster override; controls the running Vault binary |
+
+The injector image (`vault-k8s`) has no explicit tag, so it follows the **chart** default.
+
+### Bump the Vault server version
+Set `autoshift.io/vault-version` on the clusterset/cluster (or change its default in the chart lookup +
+`_example.yaml`). No chart change needed. Also update the mirror tag (below) for disconnected.
+
+### Bump the Helm chart version (manual — no auto-bumper)
+1. Edit `manifests/vault/kustomization.yaml` → `helmCharts[].version`.
+2. Read the new chart's default image tags:
+   `helm show values hashicorp/vault --version <new> | grep -B1 -A2 -E 'image:|tag:'`
+3. **Keep these in sync with the new image tags** (drift here breaks disconnected mirroring):
+   - `scripts/known-additional-images.json` (`vault` key) — server + `vault-k8s` tags. **Required** so
+     `oc mirror` copies the right images.
+   - `autoshift.io/vault-version` default (chart lookup + `_example.yaml`) — if the default server should track the chart.
+   - `README.md` + `_example.yaml` mirror comment (docs).
+4. Re-render to confirm the pull:
+   `KUSTOMIZE_PLUGIN_HOME=.tools/kustomize-plugin POLICY_GEN_ENABLE_HELM=true .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone manifests/vault`
+   (repulls into the gitignored `charts/vault-<new>/`; the old cache is stale, safe to delete).
+5. `cd tools && go test -tags integration ./internal/resolver/...`, then re-release (OCI).
