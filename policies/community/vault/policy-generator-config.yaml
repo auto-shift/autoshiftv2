@@ -5,6 +5,9 @@ metadata:
 # Example: integrate a THIRD-PARTY Helm chart (HashiCorp Vault) that has no AutoShift/ACM awareness.
 # The nested manifests/vault/ kustomization pulls the upstream chart; per-cluster values are injected
 # as ACM hub-template lookups in its valuesInline. PolicyGenerator wraps the rendered output into a Policy.
+#
+# Production layout: namespace + a cert-manager TLS cert first (needs the cert-manager operator), then
+# the HA Vault (which mounts that cert). Ordering is enforced with policy dependencies.
 placementBindingDefaults:
   name: binding-policy-vault
 policyDefaults:
@@ -18,7 +21,16 @@ policyDefaults:
   placement:
     placementPath: placement.yaml
 policies:
-  - name: policy-vault
+  # 1) Namespace + TLS serving cert (cert-manager). Requires the cert-manager operator + a ClusterIssuer.
+  - name: policy-vault-tls
+    dependencies:
+      - name: policy-cert-manager-operator-install
     manifests:
       - path: manifests/namespace.yaml
+      - path: manifests/tls/vault-certificate.yaml
+  # 2) HA Vault (raft, 3 nodes) + injector, mounting the vault-tls secret from (1).
+  - name: policy-vault
+    dependencies:
+      - name: policy-vault-tls
+    manifests:
       - path: manifests/vault

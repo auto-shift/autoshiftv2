@@ -1,0 +1,33 @@
+# TLS serving cert for Vault (raft peers + client), issued by cert-manager. The secret name
+# (vault-tls) matches server.extraVolumes in the vault chart. Requires cert-manager + a ClusterIssuer
+# (default autoshift-ca; override with the autoshift.io/vault-tls-issuer label).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vault-tls
+  namespace: vault
+spec:
+  secretName: vault-tls
+  duration: 8760h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  commonName: vault
+  dnsNames:
+    - vault
+    - vault.vault
+    - vault.vault.svc
+    - vault.vault.svc.cluster.local
+    - vault-active
+    - vault-active.vault.svc
+    - vault-0.vault-internal
+    - vault-1.vault-internal
+    - vault-2.vault-internal
+    - '*.vault-internal'
+  ipAddresses:
+    - 127.0.0.1
+  issuerRef:
+    name: '{{hub index .ManagedClusterLabels "autoshift.io/vault-tls-issuer" | default "autoshift-ca" hub}}'
+    kind: ClusterIssuer
+    group: cert-manager.io
