@@ -34,6 +34,9 @@ spec:
             evaluationInterval:
               compliant: {{ (((.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
               noncompliant: {{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          {{- /* cluster-type is derived from which bucket the set is declared in, not from
+                 values. It is emitted after the declared labels so it wins over any value a
+                 values file tries to set. */}}
           {{- if .Values.hubClusterSets }}
           hubClusterSets:
           {{-  range $cluster, $clustervalue := .Values.hubClusterSets }}
@@ -42,6 +45,7 @@ spec:
               {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
                 {{ $labelkey }}: '{{ $labelvalue }}'
               {{- end }}
+                cluster-type: 'hub'
           {{- end }}
           {{- end }}
           {{- if .Values.managedClusterSets }}
@@ -52,6 +56,7 @@ spec:
               {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
                 {{ $labelkey }}: '{{ $labelvalue }}'
               {{- end }}
+                cluster-type: 'spoke'
           {{- end }}
           {{- end }}
           {{- if .Values.clusters }}

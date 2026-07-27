@@ -4,9 +4,8 @@ metadata:
   name: placement-policy-acs-managed
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Managed-cluster ACS (SecuredCluster sensor + cert sync). Restores the old
-  # clusterSets: managedClusterSets scope: managed-clusterset members do NOT carry
-  # autoshift.io/self-managed, so DoesNotExist selects them and excludes hubs/spoke-hubs.
+  # Managed-cluster ACS (SecuredCluster sensor + cert sync). cluster-type: spoke
+  # selects managed-clusterset members.
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -15,8 +14,10 @@ spec:
               operator: In
               values:
                 - 'true'
-            - key: 'autoshift.io/self-managed'
-              operator: DoesNotExist
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'spoke'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

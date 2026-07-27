@@ -5,14 +5,16 @@ metadata:
   namespace: ${POLICY_NAMESPACE}
 spec:
   # cluster-install runs ON the hub (it creates Hive/SiteConfig resources that provision spoke
-  # clusters). No spec.clusterSets: the namespace bindings scope it; self-managed Exists is the
-  # hub-only marker (PG equivalent of the old clusterSets: hubClusterSets), plus cluster-install: true.
+  # clusters). No spec.clusterSets: the namespace bindings scope it; cluster-type: hub is the
+  # hub-only marker, plus cluster-install: true.
   predicates:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/self-managed'
-              operator: Exists
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
             - key: 'autoshift.io/cluster-install'
               operator: In
               values:

@@ -4,9 +4,8 @@ metadata:
   name: placement-policy-acs-hub
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Hub-side ACS (Central + its config). Restores the old clusterSets: hubClusterSets scope:
-  # autoshift.io/self-managed is a hub-only label (managed clusters never carry it), so Exists
-  # selects hub-clusterset members (self-managed hubs AND spoke hubs).
+  # Hub-side ACS (Central + its config). cluster-type: hub selects hub-clusterset
+  # members (self-managed hubs AND spoke hubs).
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -15,8 +14,10 @@ spec:
               operator: In
               values:
                 - 'true'
-            - key: 'autoshift.io/self-managed'
-              operator: Exists
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

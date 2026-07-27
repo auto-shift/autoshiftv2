@@ -305,19 +305,23 @@ fi
 # Build the predicate matchExpressions for the given target. The PG placements carry NO
 # spec.clusterSets — scoping comes from the ManagedClusterSetBindings the top autoshift chart
 # creates in the policy namespace, filtered by these label predicates:
-#   hub   -> autoshift.io/self-managed Exists   (hub-only marker; managed clusters never carry it)
-#   spoke -> self-managed DoesNotExist + autoshift.io/<label> In [true]
+#   hub   -> autoshift.io/cluster-type In [hub]  (derived: hubClusterSets members)
+#   spoke -> autoshift.io/cluster-type In [spoke] + autoshift.io/<label> In [true]
 #   both  -> autoshift.io/<label> In [true]      (hub + managed)
 #   all   -> no predicate (every bound cluster)
 build_match_expressions() {
     case "$TARGET" in
         hub)
-            echo "            - key: 'autoshift.io/self-managed'"
-            echo "              operator: Exists"
+            echo "            - key: 'autoshift.io/cluster-type'"
+            echo "              operator: In"
+            echo "              values:"
+            echo "                - 'hub'"
             ;;
         spoke)
-            echo "            - key: 'autoshift.io/self-managed'"
-            echo "              operator: DoesNotExist"
+            echo "            - key: 'autoshift.io/cluster-type'"
+            echo "              operator: In"
+            echo "              values:"
+            echo "                - 'spoke'"
             echo "            - key: 'autoshift.io/${LABEL}'"
             echo "              operator: In"
             echo "              values:"

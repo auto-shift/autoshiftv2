@@ -6,7 +6,7 @@ metadata:
 spec:
   # The metallb config LIBRARY (bgp-/l2-/ippool-/peer- ConfigMaps) lives in the hub's policy
   # namespace; the *-config policies read it via a hub-template lookup that resolves on the hub.
-  # So it must be on every hub that manages metallb clusters — gated on self-managed Exists ONLY
+  # So it must be on every hub that manages metallb clusters — gated on cluster-type: hub ONLY
   # (NOT metallb: true), so a hub that manages metallb spokes but doesn't run metallb itself still
   # hosts the library. metallb itself (operator + CRs) is placed on any cluster via placement.yaml.
   predicates:
@@ -17,8 +17,10 @@ spec:
               operator: In
               values:
                 - 'true'
-            - key: 'autoshift.io/self-managed'
-              operator: Exists
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
