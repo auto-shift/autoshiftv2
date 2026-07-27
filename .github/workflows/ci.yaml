@@ -83,12 +83,15 @@ jobs:
           fi
 
           POLICY_COUNT=$(wc -l < autoshift/files/policy-list.txt | tr -d ' ')
-          # cluster-labels and cluster-config-maps are deployed as dedicated Applications
-          # (full label/config data), not via the ApplicationSet list, so they are excluded
-          # from policy-list.txt. Keep this in sync with DEDICATED_APP_NAMES in the Makefile.
-          EXPECTED=$(find policies -maxdepth 3 -name Chart.yaml \
+          # A policy ships either as a PolicyGenerator dir (policy-generator-config.yaml) or a
+          # Helm holdout (Chart.yaml). cluster-labels and cluster-config-maps are deployed as
+          # dedicated Applications (full label/config data), not via the ApplicationSet list, so
+          # they are excluded from policy-list.txt. Keep in sync with DEDICATED_APP_NAMES in the Makefile.
+          PG_COUNT=$(find policies -maxdepth 3 -name policy-generator-config.yaml | wc -l | tr -d ' ')
+          CHART_COUNT=$(find policies -maxdepth 3 -name Chart.yaml \
             -not -path 'policies/*/cluster-labels/*' \
             -not -path 'policies/*/cluster-config-maps/*' | wc -l | tr -d ' ')
+          EXPECTED=$((PG_COUNT + CHART_COUNT))
 
           echo "policy-list.txt contains $POLICY_COUNT entries"
           echo "Expected $EXPECTED policies"
