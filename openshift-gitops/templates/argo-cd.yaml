@@ -39,13 +39,20 @@ spec:
     provider: dex
   rbac:
     defaultPolicy: ''
+    # All cluster admins get Argo CD admin: system:cluster-admins is the built-in kubeadmin group;
+    # cluster-admins is the OpenShift group users are added to for cluster-admin. Grant both.
     policy: |
       g, system:cluster-admins, role:admin
+      g, cluster-admins, role:admin
     {{- range .Values.gitops.rbac_policies}}
       {{ . }}
     {{- end }}
     scopes: '[groups]'
   repo:
+    # Multiple repo-server replicas so PolicyGenerator CMP renders (kustomize --enable-helm + PG +
+    # nested Helm — CPU/memory heavy) spread across pods instead of thrashing a single one when the
+    # ApplicationSet fans out to all policies/* at once.
+    replicas: {{ ((.Values.gitops.repo).replicas) | default 3 }}
     {{- $caBundle := .Values.gitops.repo.cluster_ca_bundle }}
     {{- $pg := (.Values.gitops.policyGenerator | default dict) }}
     {{- /* Install the policy-generator CMP sidecar only when enabled (git/source bootstrap); OCI-only
@@ -149,14 +156,23 @@ spec:
           # PolicyGenerator binary from ACM (staged by the init container) at the plugin home.
           - name: policy-generator
             mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+        # The CMP sidecar runs the actual kustomize/PolicyGenerator/Helm render, so it needs real CPU.
+        # Without resources it competes unbounded and renders time out under fan-out load.
+        resources:
+          limits:
+            cpu: {{ (((.Values.gitops.policyGenerator).resources).limits).cpu | default "2000m" }}
+            memory: {{ (((.Values.gitops.policyGenerator).resources).limits).memory | default "2048Mi" }}
+          requests:
+            cpu: {{ (((.Values.gitops.policyGenerator).resources).requests).cpu | default "500m" }}
+            memory: {{ (((.Values.gitops.policyGenerator).resources).requests).memory | default "512Mi" }}
     {{- end }}
     resources:
       limits:
-        cpu: {{ ((.Values.gitops.repo).limits).cpu | default "1000m" }}
-        memory: {{ ((.Values.gitops.repo).limits).memory | default "1024Mi" }}
+        cpu: {{ ((.Values.gitops.repo).limits).cpu | default "2000m" }}
+        memory: {{ ((.Values.gitops.repo).limits).memory | default "2048Mi" }}
       requests:
-        cpu: {{ ((.Values.gitops.repo).requests).cpu | default "250m" }}
-        memory: {{ ((.Values.gitops.repo).requests).memory | default "256Mi" }}
+        cpu: {{ ((.Values.gitops.repo).requests).cpu | default "500m" }}
+        memory: {{ ((.Values.gitops.repo).requests).memory | default "512Mi" }}
   ha:
     resources:
       limits:

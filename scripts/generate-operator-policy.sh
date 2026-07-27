@@ -335,11 +335,17 @@ generate_policy() {
     # components/operator-install chart (which owns the OperatorPolicy + creates the namespace).
     log_step "Generating manifests/operator-install/kustomization.yaml"
     substitute_template "$TEMPLATE_DIR/manifest-operator-install-kustomization.yaml.template" "$POLICY_DIR/manifests/operator-install/kustomization.yaml"
-    log_success "Created manifests/operator-install/kustomization.yaml"
     if [[ "$NAMESPACE_SCOPED" == "true" ]]; then
-        log_warning "--namespace-scoped: the operator-install chart installs AllNamespaces-style (no"
-        log_warning "targetNamespaces). For a namespace-scoped OperatorGroup, hand-write the operator-install"
-        log_warning "manifest instead (see policies/certified/trident for a non-standard example)."
+        # Own/SingleNamespace install mode: scope the OperatorGroup to the install namespace via the
+        # shared component's targetNamespaces passthrough (inserted after the valuesInline namespace).
+        local kfile="$POLICY_DIR/manifests/operator-install/kustomization.yaml"
+        awk -v ns="$NAMESPACE" '
+            { print }
+            /^      namespace: / && !ins { print "      targetNamespaces:"; print "        - " ns; ins=1 }
+        ' "$kfile" > "$kfile.tmp" && mv "$kfile.tmp" "$kfile"
+        log_success "Created manifests/operator-install/kustomization.yaml (namespace-scoped: targetNamespaces [$NAMESPACE])"
+    else
+        log_success "Created manifests/operator-install/kustomization.yaml"
     fi
 
     # Generate README.md
