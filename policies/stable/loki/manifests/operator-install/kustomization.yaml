@@ -25,7 +25,7 @@ helmCharts:
           {{hub- $cfgVers := (dig "versions" (list) $cfg) hub}}
           {{hub- $isCfg := (not (empty $cfgVers)) hub}}
           {{hub- $labelVer := (index .ManagedClusterLabels "autoshift.io/loki-version" | default "") hub}}
-          {{hub- $vers := (ternary $cfgVers (compact (list $labelVer)) $isCfg) hub}}
+          {{hub- $vers := (ternary $cfgVers (ternary (list) (list $labelVer) (empty $labelVer)) $isCfg) hub}}
           {{hub- (ternary (dig "startingCSV" "" $cfg) $labelVer $isCfg) hub}}
       # versions reuses $vers set in startingCSV above (same policy, resolves after it).
       versions: '{{hub $vers | toRawJson | toLiteral hub}}'
