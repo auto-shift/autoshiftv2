@@ -20,6 +20,13 @@ spec:
           Callers can still pass operatorGroupName to override (e.g. a hardcoded name). */}}
     name: '{{ .Values.operatorGroupName | default (printf "{{ with (lookup \"operators.coreos.com/v1\" \"OperatorGroup\" \"%s\" \"\").items }}{{ (index . 0).metadata.name }}{{ else }}%s{{ end }}" .Values.namespace .Values.namespace) }}'
     namespace: {{ .Values.namespace }}
+    {{- /* targetNamespaces (optional): pass a list to install in Own/SingleNamespace mode. Omitted by
+          default -> AllNamespaces (cluster-scoped) OperatorGroup. Values pass through verbatim, so an
+          entry may be a literal namespace or an ACM lookup. */}}
+    {{- with .Values.targetNamespaces }}
+    targetNamespaces:
+    {{- toYaml . | nindent 6 }}
+    {{- end }}
   subscription:
     name: '{{ .Values.subscription.name }}'
     namespace: {{ .Values.namespace }}
@@ -28,7 +35,9 @@ spec:
     channel: '{{ .Values.subscription.channel }}'
     startingCSV: >-
 {{ .Values.subscription.startingCSV | default "" | indent 6 }}
-  upgradeApproval: Automatic
+  {{- /* upgradeApproval (optional): defaults to Automatic. Passed through verbatim, so a caller may
+        supply a literal (Automatic/Manual) or an ACM lookup (e.g. a per-cluster label). */}}
+  upgradeApproval: '{{ .Values.upgradeApproval | default "Automatic" }}'
   {{- /* versions: a hardcoded list -> YAML flow sequence; a string (ACM template) -> block scalar */}}
   {{- if kindIs "string" $versions }}
   versions: >-

@@ -147,13 +147,149 @@ hubClusterSets:
         dbBackupSchedule: '0 3 * * *'
         dbBackupRetention: '30d'
       # =======================================================================
-      # Quay (operator version override — a list, so it lives in config not a label)
+      # Operator version allow-list — works for EVERY operator, keyed by its version-label base
+      # (config.<key>.versions + optional .startingCSV). A list, so it lives in config, not a label.
+      # When set, `versions` pins the permitted CSV(s) and `startingCSV` the initial install ('' = OLM
+      # picks); when unset, the single autoshift.io/<key>-version label is used. Keys match the
+      # <key>-version label: quay, odf, metallb, virt, acs, dev-spaces, dev-hub, tas, acm, gitops, etc.
+      # Quay shown as the example.
       # =======================================================================
       quay:
         versions:                              # allowed CSV versions (compliance constraint)
           - 'quay-operator.v3.17.0'
           - 'quay-operator.v3.17.1'
         startingCSV: 'quay-operator.v3.17.0'   # explicit initial install pin (optional; '' = let OLM pick)
+      # Every other operator supports the SAME block — uncomment and set real CSV(s) to pin.
+      # Config key = the operator's <key>-version label base (shown). CSV name usually
+      # <package>.vX.Y.Z — confirm with `oc get packagemanifest <name> -o jsonpath='{.status.channels}'`.
+      # aap:
+      #   versions:
+      #     - 'ansible-automation-platform-operator.vX.Y.Z'
+      #   startingCSV: 'ansible-automation-platform-operator.vX.Y.Z'
+      # acm:
+      #   versions:
+      #     - 'advanced-cluster-management.vX.Y.Z'
+      #   startingCSV: 'advanced-cluster-management.vX.Y.Z'
+      # acs:
+      #   versions:
+      #     - 'rhacs-operator.vX.Y.Z'
+      #   startingCSV: 'rhacs-operator.vX.Y.Z'
+      # cert-manager:
+      #   versions:
+      #     - 'openshift-cert-manager-operator.vX.Y.Z'
+      #   startingCSV: 'openshift-cert-manager-operator.vX.Y.Z'
+      # cloudnative-pg:
+      #   versions:
+      #     - 'cloudnative-pg.vX.Y.Z'
+      #   startingCSV: 'cloudnative-pg.vX.Y.Z'
+      # compliance:
+      #   versions:
+      #     - 'compliance-operator.vX.Y.Z'
+      #   startingCSV: 'compliance-operator.vX.Y.Z'
+      # coo:
+      #   versions:
+      #     - 'cluster-observability-operator.vX.Y.Z'
+      #   startingCSV: 'cluster-observability-operator.vX.Y.Z'
+      # dev-hub:
+      #   versions:
+      #     - 'rhdh.vX.Y.Z'
+      #   startingCSV: 'rhdh.vX.Y.Z'
+      # dev-spaces:
+      #   versions:
+      #     - 'devspaces.vX.Y.Z'
+      #   startingCSV: 'devspaces.vX.Y.Z'
+      # external-secrets-operator:
+      #   versions:
+      #     - 'openshift-external-secrets-operator.vX.Y.Z'
+      #   startingCSV: 'openshift-external-secrets-operator.vX.Y.Z'
+      # gitlab:
+      #   versions:
+      #     - 'gitlab-operator-kubernetes.vX.Y.Z'
+      #   startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
+      # gitlab-runner:
+      #   versions:
+      #     - 'gitlab-runner-operator.vX.Y.Z'
+      #   startingCSV: 'gitlab-runner-operator.vX.Y.Z'
+      # gitops:
+      #   versions:
+      #     - 'openshift-gitops-operator.vX.Y.Z'
+      #   startingCSV: 'openshift-gitops-operator.vX.Y.Z'
+      # jfrog:
+      #   versions:
+      #     - 'openshiftartifactoryha-operator.vX.Y.Z'
+      #   startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
+      # kiali:
+      #   versions:
+      #     - 'kiali-ossm.vX.Y.Z'
+      #   startingCSV: 'kiali-ossm.vX.Y.Z'
+      # local-storage:
+      #   versions:
+      #     - 'local-storage-operator.vX.Y.Z'
+      #   startingCSV: 'local-storage-operator.vX.Y.Z'
+      # logging:
+      #   versions:
+      #     - 'cluster-logging.vX.Y.Z'
+      #   startingCSV: 'cluster-logging.vX.Y.Z'
+      # loki:
+      #   versions:
+      #     - 'loki-operator.vX.Y.Z'
+      #   startingCSV: 'loki-operator.vX.Y.Z'
+      # lvm:
+      #   versions:
+      #     - 'lvms-operator.vX.Y.Z'
+      #   startingCSV: 'lvms-operator.vX.Y.Z'
+      # metallb:
+      #   versions:
+      #     - 'metallb-operator.vX.Y.Z'
+      #   startingCSV: 'metallb-operator.vX.Y.Z'
+      # mtv:
+      #   versions:
+      #     - 'mtv-operator.vX.Y.Z'
+      #   startingCSV: 'mtv-operator.vX.Y.Z'
+      # nmstate:
+      #   versions:
+      #     - 'kubernetes-nmstate-operator.vX.Y.Z'
+      #   startingCSV: 'kubernetes-nmstate-operator.vX.Y.Z'
+      # node-feature-discovery:
+      #   versions:
+      #     - 'nfd.vX.Y.Z'
+      #   startingCSV: 'nfd.vX.Y.Z'
+      # node-maintenance:
+      #   versions:
+      #     - 'node-maintenance-operator.vX.Y.Z'
+      #   startingCSV: 'node-maintenance-operator.vX.Y.Z'
+      # odf:
+      #   versions:
+      #     - 'odf-operator.vX.Y.Z'
+      #   startingCSV: 'odf-operator.vX.Y.Z'
+      # opentelemetry:
+      #   versions:
+      #     - 'opentelemetry-product.vX.Y.Z'
+      #   startingCSV: 'opentelemetry-product.vX.Y.Z'
+      # pipelines:
+      #   versions:
+      #     - 'openshift-pipelines-operator-rh.vX.Y.Z'
+      #   startingCSV: 'openshift-pipelines-operator-rh.vX.Y.Z'
+      # servicemesh3operator:
+      #   versions:
+      #     - 'servicemeshoperator3.vX.Y.Z'
+      #   startingCSV: 'servicemeshoperator3.vX.Y.Z'
+      # tas:
+      #   versions:
+      #     - 'rhtas-operator.vX.Y.Z'
+      #   startingCSV: 'rhtas-operator.vX.Y.Z'
+      # tempo:
+      #   versions:
+      #     - 'tempo-product.vX.Y.Z'
+      #   startingCSV: 'tempo-product.vX.Y.Z'
+      # trident:
+      #   versions:
+      #     - 'trident-operator.vX.Y.Z'
+      #   startingCSV: 'trident-operator.vX.Y.Z'
+      # virt:
+      #   versions:
+      #     - 'kubevirt-hyperconverged.vX.Y.Z'
+      #   startingCSV: 'kubevirt-hyperconverged.vX.Y.Z'
       # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
       # =======================================================================
