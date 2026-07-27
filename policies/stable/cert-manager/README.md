@@ -8,19 +8,63 @@ provisions a built-in CA (`policy-cert-manager-ca`).
 `policy-cert-manager-ca` creates the `autoshift-ca` ClusterIssuer — the default TLS issuer components use
 via their `tlsIssuer` (GitLab, Keycloak, Vault, …). The **signer is a ref**, so you choose the trust root:
 
-| `autoshift.io/cert-manager-ca-issuer` | Result |
+**Placement is a label; the issuer ref (data) is in `config.certManager.ca.issuer`.**
+
+| `config.certManager.ca.issuer.name` | Result |
 |---|---|
 | `autoshift-selfsigned` (default) | A **self-signed root** is generated (the bootstrap selfSigned issuer is created only in this case). |
 | your `Issuer`/`ClusterIssuer` name | `autoshift-ca` becomes an **intermediate CA signed by your issuer** — cert-manager does the signing; AutoShift never handles your CA key. |
 
-- `cert-manager-ca-issuer-kind` (default `ClusterIssuer`) and `cert-manager-ca-issuer-group` (default
-  `cert-manager.io`) complete the ref — set `-group` for external issuers (Venafi, step-ca, AWS PCA).
+- `.issuer.kind` (default `ClusterIssuer`) and `.issuer.group` (default `cert-manager.io`) complete the ref —
+  set `.group` for external issuers (Venafi, step-ca, AWS PCA).
 - The signer must be able to issue a **CA cert** (`isCA`) — a `ca` issuer over your root / Venafi / step.
   Public ACME **cannot** (it won't issue CA certs; use ACME for leaf/Route certs, not the CA).
 - **Opt out** entirely with `autoshift.io/cert-manager-ca: 'false'` (handled by placement) — then components
   must set their own `tlsIssuer`.
 - **Two-tier note**: if every cluster's `autoshift-ca` chains to the same enterprise root, spokes trust the
   hub automatically (no CA distribution needed).
+
+## Cluster serving certs — API & Ingress (opt-in, safe, gated)
+
+cert-manager can also manage the cluster's two external serving certs. Both are **opt-in, default OFF** (the
+**enable is a label**; issuer refs + SANs are **data in `config.certManager`**), and **separately gated**
+because they have very different blast radius:
+
+| | `cert-manager-api-cert` (label) | `cert-manager-ingress-cert` (label) |
+|---|---|---|
+| Target | `APIServer/cluster` `namedCertificates` for **`api.<domain>`** | `IngressController/default` `defaultCertificate` (**`*.apps.<domain>`** + bare `apps.<domain>`) |
+| Behavior | **Additive + SNI** — internal cert & `api-int` untouched | **Replaces** the wildcard (console, CLI, all routes) |
+| Risk | Low | Higher |
+| Config | `config.certManager.apiCert.{issuer,extraSANs}` | `config.certManager.ingressCert.{issuer,extraSANs}` |
+
+Issuer defaults to `autoshift-ca`; on a cluster with a real ACME issuer set e.g.
+`config.certManager.apiCert.issuer.name: zerossl-production-aws`. Secret/Certificate names are
+`cert-manager-api-cert` / `cert-manager-ingress-cert`.
+
+**Why it's safe / how it falls back:**
+- **Readiness gate** — the policy always creates the cert-manager `Certificate`, but only patches the
+  APIServer/IngressController **once that `Certificate` is `Ready`**. A failed issuance leaves the cluster on
+  its default cert (never points it at a cert that hasn't issued).
+- **Additive merge** (`musthave`) — doesn't clobber other operator-managed spec fields.
+- **Non-disruptive rotation** — cert-manager keeps the same secret name; the router hot-reloads and the API
+  server dynamically reloads. Only the *first* API add rolls one kube-apiserver revision (no reboot).
+- **Later failure = alert, not auto-revert** — `policy-cert-manager-{api,ingress}-cert-ready` (inform)
+  surface a `Certificate` going NotReady. We deliberately do **not** auto-remove the patch (un-merging would
+  flap kube-apiserver revisions). To revert, remove the field from the CR (or set the label `false` and
+  delete the `namedCertificate`/`defaultCertificate` entry) — a manual, deliberate step.
+- ⚠️ **Never** name-cert the internal `api-int.<domain>` — it degrades the cluster. The policy only ever
+  templates `api.<domain>`.
+
+**Self-signed CA + Ingress — trust companion.** If the ingress issuer is the self-signed `autoshift-ca`, the
+cluster's internal clients (console → routes) must also **trust** that CA, or the console breaks. Per the
+Red Hat *Configuring certificates* guide, create a `custom-ca` ConfigMap of the CA in `openshift-config` and
+patch `proxy/cluster` `spec.trustedCA.name: custom-ca`. Caveats: `trustedCA` is a cluster **singleton**
+(conflicts if you already manage it) and applying it triggers a brief per-node kubelet/CRI-O restart. This
+step is **not automated** here (default-off, disruptive) — prefer a **real/enterprise issuer for ingress**
+(`cert-manager-ingress-cert-issuer`) to avoid it entirely.
+
+**Rollout order:** enable `cert-manager-api-cert` first (low risk), confirm `oc get co kube-apiserver`
+settles (PROGRESSING True→False), then `cert-manager-ingress-cert`.
 
 ## Status
 ✅ **Operator Installation**: Ready to deploy  

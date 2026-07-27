@@ -38,7 +38,7 @@ policies:
     manifests:
       - path: manifests
   # AutoShift's built-in CA (autoshift-ca ClusterIssuer) — default TLS issuer where cert-manager is on.
-  # Signer is a ref (autoshift.io/cert-manager-ca-issuer): default self-signed root, or point at your own
+  # Signer is a ref (config.certManager.ca.issuer): default self-signed root, or point at your own
   # issuer to make autoshift-ca an intermediate. Opt out per cluster with cert-manager-ca: 'false' (via the
   # placement). Per-cluster CA (no key sharing); Vault cross-cluster transit trusts the hub CA public cert.
   - name: policy-cert-manager-ca
@@ -50,3 +50,42 @@ policies:
       - name: policy-cert-manager-operator-install
     manifests:
       - path: manifests/ca
+  # Opt-in (cert-manager-api-cert): cert-manager-managed API server serving cert. ADDITIVE namedCertificate
+  # (SNI, api.<domain> only — never api-int). Only patches APIServer once the Certificate is Ready (gated in
+  # the manifest). object-templates-raw -> consolidateManifests: false.
+  - name: policy-cert-manager-api-cert
+    placement:
+      placementPath: placement-cert-manager-api-cert.yaml
+    consolidateManifests: false
+    dependencies:
+      - name: policy-cert-manager-ca
+    manifests:
+      - path: manifests/api-cert
+  # inform: surfaces the api-cert Certificate NOT being Ready (fallback visibility).
+  - name: policy-cert-manager-api-cert-ready
+    placement:
+      placementPath: placement-cert-manager-api-cert.yaml
+    remediationAction: inform
+    dependencies:
+      - name: policy-cert-manager-api-cert
+    manifests:
+      - path: test/api-cert-ready.yaml
+  # Opt-in (cert-manager-ingress-cert): cert-manager-managed default Ingress wildcard cert. REPLACES *.apps
+  # (higher blast radius). Only patches IngressController once the Certificate is Ready (gated in the manifest).
+  - name: policy-cert-manager-ingress-cert
+    placement:
+      placementPath: placement-cert-manager-ingress-cert.yaml
+    consolidateManifests: false
+    dependencies:
+      - name: policy-cert-manager-ca
+    manifests:
+      - path: manifests/ingress-cert
+  # inform: surfaces the ingress-cert Certificate NOT being Ready (fallback visibility).
+  - name: policy-cert-manager-ingress-cert-ready
+    placement:
+      placementPath: placement-cert-manager-ingress-cert.yaml
+    remediationAction: inform
+    dependencies:
+      - name: policy-cert-manager-ingress-cert
+    manifests:
+      - path: test/ingress-cert-ready.yaml
