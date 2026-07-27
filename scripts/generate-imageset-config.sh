@@ -1152,6 +1152,30 @@ EOF
         done
     fi
 
+    # Non-operator (Helm chart) components: their images aren't in any OLM catalog, so the operator scan
+    # above misses them. Mirror their known images when the component is enabled ('<component>: true' in a
+    # clusterset values file). Keyed the same as operators in known-additional-images.json.
+    if [[ -f "$KNOWN_IMAGES_FILE" ]]; then
+        local CHART_COMPONENTS=("vault")
+        for comp in "${CHART_COMPONENTS[@]}"; do
+            local comp_enabled=false
+            for values_file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
+                [[ -f "$values_file" ]] || continue
+                [[ "$(basename "$values_file")" == _* ]] && continue
+                if grep -qE "^[[:space:]]*${comp}:[[:space:]]*['\"]?true['\"]?[[:space:]]*\$" "$values_file" 2>/dev/null; then
+                    comp_enabled=true; break
+                fi
+            done
+            [[ "$comp_enabled" != true ]] && continue
+            local comp_imgs
+            comp_imgs=$(jq -r --arg pkg "$comp" '.[$pkg] // [] | .[]' "$KNOWN_IMAGES_FILE" 2>/dev/null)
+            while IFS= read -r img; do
+                [[ -z "$img" ]] && continue
+                known_images+=("$img")
+            done <<< "$comp_imgs"
+        done
+    fi
+
     # Add AutoShift OCI Helm charts to additionalImages if requested
     # OCI Helm charts are stored as OCI artifacts, so they must be mirrored via additionalImages, not helm section
     if [[ "$INCLUDE_AUTOSHIFT_CHARTS" == "true" ]]; then

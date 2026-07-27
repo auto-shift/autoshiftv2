@@ -1,0 +1,27 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-vault-transit-spoke
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Transit-sealed spokes (Component C token sync). self-managed DoesNotExist excludes hubs/spoke-hubs,
+  # matching real managed-clusterset members only.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/vault'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/vault-seal-type'
+              operator: In
+              values:
+                - 'transit'
+            - key: 'autoshift.io/self-managed'
+              operator: DoesNotExist
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

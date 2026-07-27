@@ -6,10 +6,10 @@ metadata:
 # `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
 # templates contain `$vars` that substitution would clobber.
 #
-# manifests[].path is a DIRECTORY: drop a new manifest into manifests/ and it is picked up
-# automatically — no edit to this file needed. Only edit this file to change the policy graph
-# itself (names, dependencies, per-policy remediation). Keep placement.yaml OUT of manifests/
-# (a Placement inside a wildcarded dir would be wrapped into the Policy as a managed object).
+# The operator-install policy points at manifests/operator-install/, a nested kustomization that
+# renders the shared components/operator-install chart. Add further CRs as new policies[] entries
+# pointing at their own manifests/<dir> (a wildcarded dir picks up drop-in files automatically).
+# Keep placement.yaml OUT of manifests/ (a Placement inside a wildcarded dir would be wrapped in).
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
   # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
@@ -34,4 +34,4 @@ policyDefaults:
 policies:
   - name: policy-{{COMPONENT_NAME}}-operator-install
     manifests:
-      - path: manifests
+      - path: manifests/operator-install

@@ -15,10 +15,19 @@ HELM="${HELM:-helm}"
 CHARTS_DIR="${CHARTS_DIR:-.helm-charts}"
 VERSION="${VERSION:?VERSION is required}"
 
+# A policy may render a shared chart from components/ via a nested kustomization; PolicyGenerator
+# spawns a nested `kustomize build` for it, configured by these env vars (not the outer flags).
+export POLICY_GEN_ENABLE_HELM=true
+export POLICY_GEN_DISABLE_LOAD_RESTRICTORS=true
+
 OUT="$CHARTS_DIR/policies"
 mkdir -p "$OUT"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+
+# Stage components/ once so a policy's `chartHome: ../../../../../components/` resolves inside $work
+# (policies are staged at their repo-relative path below).
+[ -d components ] && cp -r components "$work/components"
 
 # Absurd, valid, unique duration sentinels for the ONLY tokens PolicyGenerator validates
 # (evaluationInterval). ${POLICY_NAMESPACE}/${REMEDIATION}/${CLUSTER_SET_SUFFIX} pass PG untouched.
@@ -27,7 +36,10 @@ unsedtok() { sed -e 's|1000000h|${EVAL_COMPLIANT}|g' -e 's|2000000h|${EVAL_NONCO
 
 for dir in "$@"; do
   name="$(basename "$dir")"
-  src="$work/$name-src"
+  # Stage at the repo-relative path so a nested chartHome (../../../../../components/) resolves.
+  rel="${dir#./}"
+  src="$work/$rel"
+  mkdir -p "$(dirname "$src")"
   cp -r "$dir" "$src"
 
   # 1. EVAL tokens -> sentinel durations so PG's duration validation passes.

@@ -1,0 +1,62 @@
+# AutoShift's built-in CA — the DEFAULT TLS issuer (ClusterIssuer `autoshift-ca`) when a cluster has no
+# external ACME issuer. Components reference it via their config.<comp>.tlsIssuer default (e.g. GitLab,
+# Keycloak, Vault); internal consumers (RHDH, Tekton, ArgoCD) are given the autoshift-ca CA cert to trust.
+#
+# The SIGNER is a ref — config.certManager.ca.issuer {name, kind, group}:
+#   - default `autoshift-selfsigned` -> a self-signed root is generated (the bootstrap issuer below is
+#     created ONLY in this case).
+#   - point it at your own Issuer/ClusterIssuer -> `autoshift-ca` becomes an INTERMEDIATE CA signed by it
+#     (cert-manager does the signing; AutoShift never handles your CA key). The signer must be able to
+#     issue a CA cert (a `ca` issuer over your root / Venafi / step-ca) — public ACME cannot.
+# Opt out entirely with the label autoshift.io/cert-manager-ca: 'false' (handled by placement; components
+# must then set their own tlsIssuer).
+#
+# Chain: signer -> CA Certificate (isCA) in the cert-manager cluster-resource-namespace (`cert-manager`)
+# -> CA ClusterIssuer that signs leaf certs. The CA secret MUST live in that namespace.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $issuer := (index (index (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "certManager" | default dict) "ca" | default dict) "issuer" | default dict) hub}}
+  {{hub- $signer := (index $issuer "name" | default "autoshift-selfsigned") hub}}
+  {{hub- $signerKind := (index $issuer "kind" | default "ClusterIssuer") hub}}
+  {{hub- $signerGroup := (index $issuer "group" | default "cert-manager.io") hub}}
+  {{hub if eq $signer "autoshift-selfsigned" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: autoshift-selfsigned
+      spec:
+        selfSigned: {}
+  {{hub end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: autoshift-ca
+        namespace: cert-manager
+      spec:
+        isCA: true
+        commonName: autoshift-ca
+        secretName: autoshift-ca
+        # Long-lived root per NIST SP 800-57 (roots are long-lived; the SERVING certs it signs rotate).
+        # rotationPolicy defaults to Never, so renewal REUSES the key — CA identity/trust is unchanged.
+        duration: 17520h0m0s        # 2y
+        renewBefore: 2160h0m0s      # renew 90d before expiry
+        privateKey:
+          algorithm: ECDSA
+          size: 384                 # P-384: FIPS 140-approved, higher-assurance curve for FedRAMP High
+        issuerRef:
+          name: {{hub $signer hub}}
+          kind: {{hub $signerKind hub}}
+          group: {{hub $signerGroup hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: autoshift-ca
+      spec:
+        ca:
+          secretName: autoshift-ca

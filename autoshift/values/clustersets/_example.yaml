@@ -51,6 +51,33 @@ hubClusterSets:
   hub:  # ← CHANGE 2: replace with your clusterset name
     config:
       # =======================================================================
+      # cert-manager — issuer refs + SANs (DATA; the ENABLE flags are labels below:
+      # cert-manager, cert-manager-ca, cert-manager-api-cert, cert-manager-ingress-cert).
+      # =======================================================================
+      certManager:
+        # Built-in autoshift-ca signer ref. Default self-signed root; point at your own
+        # Issuer/ClusterIssuer to make autoshift-ca an intermediate (must be CA-capable, not ACME).
+        ca:
+          issuer:
+            name: 'autoshift-selfsigned'
+            kind: 'ClusterIssuer'
+            group: 'cert-manager.io'
+        # Cluster API server serving cert (api.<domain>). Issuer default autoshift-ca; on a cluster with a
+        # real ACME issuer set e.g. name: 'zerossl-production-aws'. extraSANs adds names beyond api.<domain>.
+        apiCert:
+          issuer:
+            name: 'autoshift-ca'
+            kind: 'ClusterIssuer'
+            group: 'cert-manager.io'
+          extraSANs: []
+        # Default Ingress wildcard (*.apps.<domain>). extraSANs commonly includes the bare apps.<domain>.
+        ingressCert:
+          issuer:
+            name: 'autoshift-ca'
+            kind: 'ClusterIssuer'
+            group: 'cert-manager.io'
+          extraSANs: []
+      # =======================================================================
       # User Workload Monitoring (config section - read via rendered-config)
       # =======================================================================
       uwm:
@@ -94,6 +121,12 @@ hubClusterSets:
               mirror: 'registry.example.com:5000/rhel'
             - source: 'quay.io'
               mirror: 'registry.example.com:5000/quay'
+          # tagMirrors -> ImageTagMirrorSet, for images pulled by TAG (not digest). The Vault chart
+          # images (docker.io/hashicorp/vault:1.17.2, vault-k8s:1.4.2) are tag-referenced, so mirror
+          # them here. `oc mirror` copies them via the imageset (vault key in known-additional-images.json).
+          tagMirrors:
+            - source: 'docker.io/hashicorp'
+              mirror: 'registry.example.com:5000/hashicorp'
         catalogs:
           - source: redhat-operators
             image: 'registry.example.com:5000/redhat/redhat-operator-index:v4.20'
@@ -113,6 +146,150 @@ hubClusterSets:
       jfrog:
         dbBackupSchedule: '0 3 * * *'
         dbBackupRetention: '30d'
+      # =======================================================================
+      # Operator version allow-list — works for EVERY operator, keyed by its version-label base
+      # (config.<key>.versions + optional .startingCSV). A list, so it lives in config, not a label.
+      # When set, `versions` pins the permitted CSV(s) and `startingCSV` the initial install ('' = OLM
+      # picks); when unset, the single autoshift.io/<key>-version label is used. Keys match the
+      # <key>-version label: quay, odf, metallb, virt, acs, dev-spaces, dev-hub, tas, acm, gitops, etc.
+      # Quay shown as the example.
+      # =======================================================================
+      quay:
+        versions:                              # allowed CSV versions (compliance constraint)
+          - 'quay-operator.v3.17.0'
+          - 'quay-operator.v3.17.1'
+        startingCSV: 'quay-operator.v3.17.0'   # explicit initial install pin (optional; '' = let OLM pick)
+      # Every other operator supports the SAME block — uncomment and set real CSV(s) to pin.
+      # Config key = the operator's <key>-version label base (shown). CSV name usually
+      # <package>.vX.Y.Z — confirm with `oc get packagemanifest <name> -o jsonpath='{.status.channels}'`.
+      # aap:
+      #   versions:
+      #     - 'ansible-automation-platform-operator.vX.Y.Z'
+      #   startingCSV: 'ansible-automation-platform-operator.vX.Y.Z'
+      # acm:
+      #   versions:
+      #     - 'advanced-cluster-management.vX.Y.Z'
+      #   startingCSV: 'advanced-cluster-management.vX.Y.Z'
+      # acs:
+      #   versions:
+      #     - 'rhacs-operator.vX.Y.Z'
+      #   startingCSV: 'rhacs-operator.vX.Y.Z'
+      # cert-manager:
+      #   versions:
+      #     - 'openshift-cert-manager-operator.vX.Y.Z'
+      #   startingCSV: 'openshift-cert-manager-operator.vX.Y.Z'
+      # cloudnative-pg:
+      #   versions:
+      #     - 'cloudnative-pg.vX.Y.Z'
+      #   startingCSV: 'cloudnative-pg.vX.Y.Z'
+      # compliance:
+      #   versions:
+      #     - 'compliance-operator.vX.Y.Z'
+      #   startingCSV: 'compliance-operator.vX.Y.Z'
+      # coo:
+      #   versions:
+      #     - 'cluster-observability-operator.vX.Y.Z'
+      #   startingCSV: 'cluster-observability-operator.vX.Y.Z'
+      # dev-hub:
+      #   versions:
+      #     - 'rhdh.vX.Y.Z'
+      #   startingCSV: 'rhdh.vX.Y.Z'
+      # dev-spaces:
+      #   versions:
+      #     - 'devspaces.vX.Y.Z'
+      #   startingCSV: 'devspaces.vX.Y.Z'
+      # external-secrets-operator:
+      #   versions:
+      #     - 'openshift-external-secrets-operator.vX.Y.Z'
+      #   startingCSV: 'openshift-external-secrets-operator.vX.Y.Z'
+      # gitlab:
+      #   versions:
+      #     - 'gitlab-operator-kubernetes.vX.Y.Z'
+      #   startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
+      # gitlab-runner:
+      #   versions:
+      #     - 'gitlab-runner-operator.vX.Y.Z'
+      #   startingCSV: 'gitlab-runner-operator.vX.Y.Z'
+      # gitops:
+      #   versions:
+      #     - 'openshift-gitops-operator.vX.Y.Z'
+      #   startingCSV: 'openshift-gitops-operator.vX.Y.Z'
+      # jfrog:
+      #   versions:
+      #     - 'openshiftartifactoryha-operator.vX.Y.Z'
+      #   startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
+      # kiali:
+      #   versions:
+      #     - 'kiali-ossm.vX.Y.Z'
+      #   startingCSV: 'kiali-ossm.vX.Y.Z'
+      # local-storage:
+      #   versions:
+      #     - 'local-storage-operator.vX.Y.Z'
+      #   startingCSV: 'local-storage-operator.vX.Y.Z'
+      # logging:
+      #   versions:
+      #     - 'cluster-logging.vX.Y.Z'
+      #   startingCSV: 'cluster-logging.vX.Y.Z'
+      # loki:
+      #   versions:
+      #     - 'loki-operator.vX.Y.Z'
+      #   startingCSV: 'loki-operator.vX.Y.Z'
+      # lvm:
+      #   versions:
+      #     - 'lvms-operator.vX.Y.Z'
+      #   startingCSV: 'lvms-operator.vX.Y.Z'
+      # metallb:
+      #   versions:
+      #     - 'metallb-operator.vX.Y.Z'
+      #   startingCSV: 'metallb-operator.vX.Y.Z'
+      # mtv:
+      #   versions:
+      #     - 'mtv-operator.vX.Y.Z'
+      #   startingCSV: 'mtv-operator.vX.Y.Z'
+      # nmstate:
+      #   versions:
+      #     - 'kubernetes-nmstate-operator.vX.Y.Z'
+      #   startingCSV: 'kubernetes-nmstate-operator.vX.Y.Z'
+      # node-feature-discovery:
+      #   versions:
+      #     - 'nfd.vX.Y.Z'
+      #   startingCSV: 'nfd.vX.Y.Z'
+      # node-maintenance:
+      #   versions:
+      #     - 'node-maintenance-operator.vX.Y.Z'
+      #   startingCSV: 'node-maintenance-operator.vX.Y.Z'
+      # odf:
+      #   versions:
+      #     - 'odf-operator.vX.Y.Z'
+      #   startingCSV: 'odf-operator.vX.Y.Z'
+      # opentelemetry:
+      #   versions:
+      #     - 'opentelemetry-product.vX.Y.Z'
+      #   startingCSV: 'opentelemetry-product.vX.Y.Z'
+      # pipelines:
+      #   versions:
+      #     - 'openshift-pipelines-operator-rh.vX.Y.Z'
+      #   startingCSV: 'openshift-pipelines-operator-rh.vX.Y.Z'
+      # servicemesh3operator:
+      #   versions:
+      #     - 'servicemeshoperator3.vX.Y.Z'
+      #   startingCSV: 'servicemeshoperator3.vX.Y.Z'
+      # tas:
+      #   versions:
+      #     - 'rhtas-operator.vX.Y.Z'
+      #   startingCSV: 'rhtas-operator.vX.Y.Z'
+      # tempo:
+      #   versions:
+      #     - 'tempo-product.vX.Y.Z'
+      #   startingCSV: 'tempo-product.vX.Y.Z'
+      # trident:
+      #   versions:
+      #     - 'trident-operator.vX.Y.Z'
+      #   startingCSV: 'trident-operator.vX.Y.Z'
+      # virt:
+      #   versions:
+      #     - 'kubevirt-hyperconverged.vX.Y.Z'
+      #   startingCSV: 'kubevirt-hyperconverged.vX.Y.Z'
       # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
       # =======================================================================
@@ -321,7 +498,7 @@ hubClusterSets:
       # Advanced Cluster Management (hub only — not installed on managed clusters)
       # =======================================================================
       acm-subscription-name: advanced-cluster-management
-      acm-version: 'advanced-cluster-management.v2.15.1'
+      acm-version: 'advanced-cluster-management.v2.16.2'
       acm-channel: release-2.16
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
@@ -329,7 +506,7 @@ hubClusterSets:
       acm-observability: 'true'              # Requires ODF for noobaa bucket
       # ACM Search v2 storage (PVC for the search-indexer PostgreSQL)
       acm-search-storage: 'false'
-      acm-search-storage-class: 'ocs-storagecluster-ceph-rbd'
+      acm-search-storage-class: ''           # unset -> the cluster's default StorageClass; set to pin a class
       acm-search-storage-size: '100Gi'
       # Cluster provisioning (hive-based cluster install flow)
       cluster-install: 'false'                     # hub only — enables the cluster-install policy set
@@ -658,6 +835,32 @@ hubClusterSets:
       quay-source-namespace: openshift-marketplace
 
       # =======================================================================
+      # HashiCorp Vault (community: third-party Helm chart integrated via PolicyGenerator)
+      # =======================================================================
+      vault: 'false'
+      vault-version: '1.17.2'                 # server.image.tag injected into the upstream chart
+      vault-tls-issuer: 'autoshift-ca'        # cert-manager ClusterIssuer for the Vault TLS cert
+      vault-storage-size: '10Gi'              # raft data PVC size per node (applied via a kustomize patch)
+      # Auto-unseal: seal backend per cluster. shamir=manual (independent, default); awskms/gcpckms/
+      # azurekeyvault=cloud KMS auto-unseal (independent); transit=auto-unseal via the hub Vault (two-tier).
+      vault-seal-type: 'transit'              # shamir | awskms | gcpckms | azurekeyvault | transit
+      vault-transit-provider: 'false'         # 'true' on the hub Vault: hosts the transit unseal engine + KV recovery sink
+      vault-external-hostname: ''             # hub Vault Route hostname (provider only): Route host + TLS cert SAN
+      # Spokes AUTO-DISCOVER the hub Vault Route via lookup (resolved on the hub) — normally leave blank.
+      # Set only to override: an external LB/custom DNS, or a spoke unsealing against a non-local hub.
+      vault-transit-address: ''               # optional override; default = https://<hub Vault Route host>
+      vault-transit-key: 'autoshift-unseal'   # transit key name on the hub Vault
+      vault-transit-mount: 'transit/'         # transit engine mount path on the hub Vault
+      vault-seal-kms-region: 'us-east-1'      # awskms/gcpckms region
+      vault-seal-kms-key-id: ''               # awskms kms_key_id / gcpckms crypto_key / azurekeyvault key_name
+      vault-seal-kms-project: ''              # gcpckms project
+      vault-seal-kms-key-ring: ''             # gcpckms key_ring
+      vault-seal-kms-tenant-id: ''            # azurekeyvault tenant_id
+      vault-seal-kms-vault-name: ''           # azurekeyvault vault_name
+      # Image for the init/transit-provider Jobs. Override for disconnected/baremetal (no internal registry).
+      vault-job-image: 'image-registry.openshift-image-registry.svc:5000/openshift/cli:latest'
+
+      # =======================================================================
       # Developer OpenShift GitOps (team ArgoCD instances)
       # =======================================================================
       gitops-dev: 'false'
@@ -762,6 +965,15 @@ hubClusterSets:
       cert-manager-version: 'cert-manager-operator.v1.15.1'
       cert-manager-source: redhat-operators
       cert-manager-source-namespace: openshift-marketplace
+      # Enable flags (LABELS, drive placement). Issuer refs + SANs are DATA -> config.certManager (above).
+      cert-manager-ca: 'true'          # 'false' skips the built-in autoshift-ca (bring fully-external issuers)
+      # Opt-in cert-manager management of the cluster's serving certs (default OFF; safe — only applied once
+      # the Certificate is Ready). API = additive namedCertificate (api.<domain>, SNI, low risk). Ingress =
+      # replaces the *.apps wildcard (higher risk). Issuer/SANs per cert live in config.certManager.
+      # NOTE: a self-signed Ingress cert also needs cluster-internal trust of its CA — see the cert-manager
+      # policy README (trustedCA companion) or set config.certManager.ingressCert.issuer to a real issuer.
+      cert-manager-api-cert: 'false'
+      cert-manager-ingress-cert: 'false'
 
       # =======================================================================
       # CloudNativePG (HA PostgreSQL)

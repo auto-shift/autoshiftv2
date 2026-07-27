@@ -1,0 +1,24 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-vault-transit-provider
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # The hub Vault that hosts the transit unseal engine + recovery KV (Component B).
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/vault'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/vault-transit-provider'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
