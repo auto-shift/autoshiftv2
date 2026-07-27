@@ -11,10 +11,10 @@ metadata:
 spec:
   project: default
   revisionHistoryLimit: {{ .Values.revisionHistoryLimit | default 3 }}
+  # Single source: the chart (git path or OCI) ships its own values.yaml; valuesObject layers the
+  # cross-cutting autoshift config on top. No per-chart $values git ref — top-level autoshift is the
+  # only chart that pulls external values files.
   sources:
-    - repoURL: {{ (.Values.autoshiftValues).repoUrl | default .Values.autoshiftGitRepo }}
-      targetRevision: {{ (.Values.autoshiftValues).targetRevision | default .Values.autoshiftGitBranchTag }}
-      ref: values
     {{- if .Values.autoshiftOciRegistry }}
     - path: .
       repoURL: {{ .Values.autoshiftOciRepo }}/cluster-labels
@@ -25,8 +25,6 @@ spec:
       targetRevision: {{ .Values.autoshiftGitBranchTag }}
     {{- end }}
       helm:
-        valueFiles:
-        - $values/policies/stable/cluster-labels/values.yaml
         valuesObject:
           gitopsNamespace: {{ include "autoshift.gitopsNamespace" . }}
           policy_namespace: {{ printf "policies-%s" .Release.Name }}

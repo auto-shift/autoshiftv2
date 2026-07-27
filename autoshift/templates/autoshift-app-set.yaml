@@ -122,16 +122,13 @@ spec:
           destination:
             server: https://kubernetes.default.svc
             namespace: {{ printf "policies-%s" .Release.Name }}
+          # Single source: each policy chart ships its own values.yaml; valuesObject layers the
+          # cross-cutting autoshift config on top. No per-chart $values git ref (matches OCI mode).
           sources:
-          - repoURL: {{ (.Values.autoshiftValues).repoUrl | default .Values.autoshiftGitRepo }}
-            targetRevision: {{ (.Values.autoshiftValues).targetRevision | default .Values.autoshiftGitBranchTag }}
-            ref: values
           - path: '{{"{{"}} .path.path {{"}}"}}'
             repoURL: {{ .Values.autoshiftGitRepo }}
             targetRevision: {{ .Values.autoshiftGitBranchTag }}
             helm:
-              valueFiles:
-                - $values/{{ "{{" }} .path.path {{ "}}" }}/values.yaml
               valuesObject:
                 {{- include "autoshift.policyValuesObject" . | nindent 16 }}
   {{- end }}
