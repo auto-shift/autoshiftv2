@@ -40,7 +40,16 @@ spec:
             {{ $cluster }}{{ $clusterSetSuffix }}:
               labels:
                 self-managed: '{{ index $clustervalue.labels "self-managed" | default "true" }}'
-              config: {{ (index $clustervalue "config" | default (dict) | toYaml | nindent 16) }}
+              {{- /* Stamp the effective policyGenerator flag into config.gitops so the openshift-gitops
+                     policy reads it from the rendered-config (git installs the CMP sidecar, OCI does not):
+                     the hub's config.gitops.policyGenerator if set, else the global default. */}}
+              {{- $cfg := deepCopy (index $clustervalue "config" | default dict) }}
+              {{- $gitops := (index $cfg "gitops" | default dict) }}
+              {{- $effPg := $.Values.policyGenerator | default false }}
+              {{- if hasKey $gitops "policyGenerator" }}{{- $effPg = index $gitops "policyGenerator" }}{{- end }}
+              {{- $_ := set $gitops "policyGenerator" $effPg }}
+              {{- $_ := set $cfg "gitops" $gitops }}
+              config: {{ $cfg | toYaml | nindent 16 }}
           {{- end }}
           {{- end }}
           {{- if .Values.managedClusterSets }}

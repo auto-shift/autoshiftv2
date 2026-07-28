@@ -56,8 +56,10 @@ spec:
             source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/gitops-source" | default "{{ .Values.gitops.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
             config:
               env:
+              # disableDefaultArgoCD default = not config.gitops.defaultInstance (from rendered-config);
+              # the gitops-disable-default-argocd label still overrides.
               - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
-                value: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default "{{ .Values.gitops.disableDefaultArgoCD }}" {{ "hub}}" }}'
+                value: '{{ "{{hub-" }} $ddCfg := (index (index (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) {{ "hub}}" }}{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default (not (index $ddCfg "defaultInstance" | default false) | toString) {{ "hub}}" }}'
               - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
                 value: '{{ "{{hub-" }} $ns := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") {{ "hub}}" }}{{ "{{hub-" }} $result := $ns {{ "hub}}" }}{{ "{{hub" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/gitops-dev-team-") ($label | hasSuffix "-cluster-scoped") (eq $val "true") {{ "hub}}" }}{{ "{{hub-" }} $team := replace "autoshift.io/gitops-dev-team-" "" $label {{ "hub}}" }}{{ "{{hub-" }} $team = replace "-cluster-scoped" "" $team {{ "hub}}" }}{{ "{{hub-" }} $result = printf "%s,openshift-gitops-%s" $result $team {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} $result {{ "hub}}" }}'
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-source-namespace" | default "{{ .Values.gitops.sourceNamespace }}" {{ "hub}}" }}'
@@ -65,7 +67,7 @@ spec:
             # Version resolution (config in the rendered-config ConfigMap): config.gitops.versions/.startingCSV
             # when set, else the gitops-version label. $vers computed here, reused by versions below.
             startingCSV: >-
-              {{ "{{hub-" }} $cfg := (index (index (index ((lookup "v1" "ConfigMap" "{{ .Values.policy_namespace }}" (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) {{ "hub}}" }}
+              {{ "{{hub-" }} $cfg := (index (index (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) {{ "hub}}" }}
               {{ "{{hub-" }} $cfgVers := (dig "versions" (list) $cfg) {{ "hub}}" }}
               {{ "{{hub-" }} $isCfg := (not (empty $cfgVers)) {{ "hub}}" }}
               {{ "{{hub-" }} $labelVer := (index .ManagedClusterLabels "autoshift.io/gitops-version" | default "") {{ "hub}}" }}
