@@ -9,8 +9,20 @@ jobs:
   update-operators:
     runs-on: ubuntu-latest
     steps:
+      # App token lets this workflow open PRs (like Dependabot) without enabling
+      # the org-wide "Actions can create and approve PRs" setting. The app is only
+      # granted contents:write + pull-requests:write, so it can create but not approve.
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.AUTOSHIFT_BOT_APP_ID }}
+          private-key: ${{ secrets.AUTOSHIFT_BOT_PRIVATE_KEY }}
+
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install oc CLI
         run: |
@@ -43,7 +55,7 @@ jobs:
       - name: Create PR
         if: steps.changes.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           BRANCH="automation/update-operators-$(date +%Y%m%d)"
           git config user.name "github-actions[bot]"
