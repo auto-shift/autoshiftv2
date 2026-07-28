@@ -740,6 +740,46 @@ update_policy_channel() {
     return $updated
 }
 
+# Map a label to a root-level bootstrap chart values.yaml. These charts live outside
+# autoshift/ and policies/ (the ACM PG dir has no values.yaml; the gitops bootstrap chart
+# is a hand-maintained copy), so the updaters above miss them. Empty for other labels.
+get_bootstrap_file_for_label() {
+    case "$1" in
+        acm)    echo "$PROJECT_ROOT/advanced-cluster-management/values.yaml" ;;
+        gitops) echo "$PROJECT_ROOT/openshift-gitops/values.yaml" ;;
+        *)      echo "" ;;
+    esac
+}
+
+# Update the nested channel: key in a root bootstrap chart values.yaml
+update_bootstrap_channel() {
+    local label="$1"
+    local new_channel="$2"
+    local updated=0
+
+    local file
+    file=$(get_bootstrap_file_for_label "$label")
+    [[ -z "$file" || ! -f "$file" ]] && return 0
+
+    if grep -qE "^[[:space:]]+channel:" "$file" 2>/dev/null; then
+        if $DRY_RUN; then
+            local current
+            current=$(grep -E "^[[:space:]]+channel:" "$file" | head -1 | \
+                      sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+            if [[ -n "$current" ]] && [[ "$current" != "$new_channel" ]]; then
+                echo "  Would update $file: channel: $current -> $new_channel"
+                updated=1
+            fi
+        else
+            sed -i.bak "s/^\([[:space:]]*channel:\)[[:space:]]*.*/\1 ${new_channel}/" "$file"
+            rm -f "$file.bak"
+            updated=1
+        fi
+    fi
+
+    return $updated
+}
+
 # Get current channel for a label
 get_current_channel() {
     local label="$1"
@@ -868,6 +908,16 @@ main() {
         else
             # best_channel differs but is not newer - current channel is preferred, don't downgrade
             printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${GREEN}up to date${NC} (keeping current channel)"
+        fi
+
+        # Keep the root bootstrap charts (ACM, GitOps) aligned with the channel in use.
+        # Reconciled every run so pre-existing drift is corrected, not only fresh bumps.
+        if ! $CHECK_ONLY && [[ "$current_channel" != "-" ]]; then
+            local effective_channel="$current_channel"
+            if is_newer_channel "$current_channel" "$best_channel"; then
+                effective_channel="$best_channel"
+            fi
+            update_bootstrap_channel "$label" "$effective_channel" || true
         fi
     done
 

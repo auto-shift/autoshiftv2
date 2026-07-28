@@ -60,16 +60,22 @@ jobs:
           BRANCH="automation/update-operators-$(date +%Y%m%d)"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH"
+          # -B resets the branch if a same-day run already created it; force-push overwrites
+          # a stale remote branch left by an earlier run so re-runs don't collide.
+          git checkout -B "$BRANCH"
           # The script edits both autoshift/values/ and policies/*/values.yaml — stage all tracked changes.
           git add -u
           git commit -m "chore: update operator channels and versions"
-          git push origin "$BRANCH"
+          git push --force origin "$BRANCH"
           # gh pr create hard-fails if the label is missing; ensure it exists first.
           gh label create dependencies --color 0366D6 --description "Automated dependency updates" --force >/dev/null 2>&1 || true
-          gh pr create \
-            --title "chore: update operator channels and versions" \
-            --body "$(cat <<'EOF'
+          # Idempotent: update the existing PR's branch (force-push above) instead of failing.
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number')" ]; then
+            echo "PR already open for $BRANCH; branch updated."
+          else
+            gh pr create \
+              --title "chore: update operator channels and versions" \
+              --body "$(cat <<'EOF'
           Automated operator channel update.
 
           Run by: ${{ github.workflow }}
@@ -79,5 +85,6 @@ jobs:
           Review the diff to confirm channel/version bumps look reasonable before merging.
           EOF
           )" \
-            --reviewer bcarr-rh \
-            --label dependencies
+              --reviewer bcarr-rh \
+              --label dependencies
+          fi
