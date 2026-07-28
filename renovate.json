@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "_comment": "Scoped to ONLY the custom regex manager so Renovate does not overlap Dependabot (which handles gomod in /tools and github-actions). Renovate keeps the curl-pinned tool versions in the devcontainer Containerfile and GitLab CI current, driven by the `# renovate:` annotations next to each pin.",
+  "enabledManagers": ["custom.regex"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Tool versions pinned in the devcontainer Containerfile and GitLab CI",
+      "fileMatch": [
+        "^\\.devcontainer/Containerfile$",
+        "^\\.gitlab-ci\\.yml$"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+ARG \\w+=(?<currentValue>\\S+)",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+\\w+: \"(?<currentValue>[^\"]+)\""
+      ]
+    }
+  ]
+}
