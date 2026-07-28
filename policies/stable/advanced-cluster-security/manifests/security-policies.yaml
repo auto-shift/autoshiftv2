@@ -1,5 +1,8 @@
 object-templates-raw: |
-  {{hub- if eq (index .ManagedClusterLabels "autoshift.io/acs-default-policies" | default "") "true" hub}}
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $defaultPolicies := (index (index $config "acs" | default dict) "defaultPolicies" | default false) hub}}
+  {{hub- if $defaultPolicies hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: config.stackrox.io/v1alpha1
