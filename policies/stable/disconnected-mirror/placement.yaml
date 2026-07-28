@@ -1,0 +1,20 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-disconnected-mirror
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: selected via ManagedClusterSetBindings in this namespace + the predicate.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/disconnected-mirror'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

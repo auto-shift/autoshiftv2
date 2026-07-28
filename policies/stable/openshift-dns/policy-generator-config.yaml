@@ -1,0 +1,34 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: openshift-dns
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# remediationAction: ${REMEDIATION} is set once in policyDefaults (dry-run aware). Readiness/status
+# checks, when present, are their own policies[] entry with remediationAction: inform and a manifest
+# under test/ (a separate Policy, so the enforce root of a config policy can't clobber the check).
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Placement authored by us (placement.yaml at the dir root, full fidelity); PG includes it and
+  # generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-dns-tolerations
+    manifests:
+      - path: manifests/dns-tolerations.yaml

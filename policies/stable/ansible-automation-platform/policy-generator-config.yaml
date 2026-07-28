@@ -1,0 +1,68 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: ansible-automation-platform
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a
+# wildcard: drop a file in, no config edit). Keep placement*.yaml at the dir root, NOT inside a
+# wildcarded manifests dir (a Placement there would be wrapped into the Policy as a managed object).
+# Per-deployment scalars (${...}) live here and in placement*.yaml only — never in manifests/,
+# whose hub templates contain $vars that substitution would clobber.
+placementBindingDefaults:
+  name: binding-policy-aap
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-aap-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # AnsibleAutomationPlatform instance CR (first-class ConfigurationPolicy).
+  - name: policy-aap-instance
+    dependencies:
+      - name: policy-aap-operator-install
+    manifests:
+      - path: manifests/aap-instance.yaml
+  # NooBaa S3 storage: ObjectBucketClaim + derived S3 credentials Secret. Own placement predicate.
+  - name: policy-aap-nooba-storage
+    dependencies:
+      - name: policy-aap-operator-install
+    placement:
+      placementPath: placement-nooba-storage.yaml
+    manifests:
+      - path: manifests/aap-nooba-storage/bucketclaim.yaml
+      - path: manifests/aap-nooba-storage/s3-secret.yaml
+        complianceType: mustonlyhave
+  # CA trust bundle: service-ca + trusted-ca ConfigMaps + combined Secret. Own placement predicate.
+  - name: policy-aap-cert-bundle
+    dependencies:
+      - name: policy-aap-operator-install
+    placement:
+      placementPath: placement-cert-bundle.yaml
+    manifests:
+      - path: manifests/aap-cert-bundle
+  # Console link (waits on the AAP instance to be up).
+  - name: policy-aap-consolelink
+    policyAnnotations:
+      argocd.argoproj.io/sync-options: Prune=false,SkipDryRunOnMissingResource=true
+      argocd.argoproj.io/compare-options: IgnoreExtraneous
+    dependencies:
+      - name: policy-aap-instance
+    manifests:
+      - path: manifests/aap-console-link.yaml
+        complianceType: mustonlyhave

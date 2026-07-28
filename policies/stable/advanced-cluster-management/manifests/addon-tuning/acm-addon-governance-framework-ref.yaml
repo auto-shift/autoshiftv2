@@ -1,0 +1,19 @@
+object-templates-raw: |
+  {{- /* Attach the governance-policy-framework-tuning AddOnDeploymentConfig as this addon's default config.
+         The ACM addon-manager pre-populates the CMA's config list with a {__reserved_no_default__}
+         placeholder keyed on {group=addon.open-cluster-management.io, resource=addondeploymentconfigs}.
+         A plain `musthave` APPENDS our entry (same {group,resource}) and the API rejects the duplicate
+         ("supportedConfigs[1]: Duplicate value"). A plain `mustonlyhave` fixes the duplicate but strips
+         addon-manager-owned fields — notably addOnMeta, which the addon-manager does NOT restore. So we
+         copy the live spec, replace ONLY supportedConfigs, and enforce mustonlyhave: the config list is
+         exactly our entry while addOnMeta / installStrategy are preserved. */}}
+  {{- $cma := ((lookup "addon.open-cluster-management.io/v1alpha1" "ClusterManagementAddOn" "" "governance-policy-framework") | default dict) }}
+  {{- $spec := (dig "spec" dict $cma) }}
+  {{- $_ := set $spec "supportedConfigs" (list (dict "group" "addon.open-cluster-management.io" "resource" "addondeploymentconfigs" "defaultConfig" (dict "name" "governance-policy-framework-tuning" "namespace" "open-cluster-management"))) }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: addon.open-cluster-management.io/v1alpha1
+      kind: ClusterManagementAddOn
+      metadata:
+        name: governance-policy-framework
+      spec: {{ $spec | toRawJson }}

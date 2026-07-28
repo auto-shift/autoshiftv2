@@ -1,0 +1,105 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: trident
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a
+# wildcard: drop a file in, no config edit). Keep placement*.yaml at the dir root, NOT inside a
+# wildcarded manifests dir. Per-deployment scalars (${...}) live here and in placement*.yaml only —
+# never in manifests/, whose hub templates contain $vars that substitution would clobber.
+#
+# remediationAction: ${REMEDIATION} is set once in policyDefaults (dry-run aware). Readiness/status
+# checks are their own policies[] entry (policy-*-test, remediationAction: inform, manifest under
+# test/) — a separate Policy so the enforce root of a config policy can't clobber the inform check.
+placementBindingDefaults:
+  name: binding-policy-trident
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy,
+  #    plus CSV-ready status gate. MIXED: install enforce, the CSV check informs.
+  - name: policy-trident-operator-install
+    manifests:
+      - path: manifests/operator-install
+    placement:
+      placementPath: placement-trident.yaml
+  # 2) MachineConfigs: proper NQN + enable nvme-tcp module on master + worker roles.
+  - name: policy-trident-operator-install-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-trident.yaml
+    manifests:
+      - path: test/trident-csv-check.yaml
+  - name: policy-trident-machineconfigs
+    dependencies:
+      - name: policy-trident-operator-install
+    manifests:
+      - path: manifests/machineconfigs
+    placement:
+      placementPath: placement-trident.yaml
+  # 3) NetApp backend auth Secrets, rendered from rendered-config via a secret-reader service account.
+  - name: policy-trident-auth-secret
+    hubTemplateOptions:
+      serviceAccountName: secret-reader
+    dependencies:
+      - name: policy-trident-operator-install
+    manifests:
+      - path: manifests/auth-secret.yaml
+    placement:
+      placementPath: placement-trident.yaml
+  # 4) TridentOrchestrator CR plus install-ready status gate. MIXED: orchestrator enforce, check informs.
+  - name: policy-trident-orchestrator
+    dependencies:
+      - name: policy-trident-machineconfigs
+      - name: policy-trident-auth-secret
+    manifests:
+      - path: manifests/orchestrator.yaml
+        complianceType: mustonlyhave
+    placement:
+      placementPath: placement-trident.yaml
+  # 5) TridentBackendConfig + StorageClass + snapshot class, plus backend-bound status gate.
+  #    MIXED: storage config enforce, the backend check informs.
+  - name: policy-trident-orchestrator-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-trident.yaml
+    manifests:
+      - path: test/trident-orchestrator-test.yaml
+  - name: policy-trident-storage-config
+    dependencies:
+      - name: policy-trident-orchestrator
+      - name: policy-trident-machineconfigs
+    manifests:
+      - path: manifests/storage-config
+        complianceType: mustonlyhave
+    placement:
+      placementPath: placement-trident.yaml
+  # 6) CDI StorageProfiles for the trident StorageClasses (virt only). Own placement predicate.
+  - name: policy-trident-storage-config-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-trident.yaml
+    manifests:
+      - path: test/trident-storage-backend-test.yaml
+  - name: policy-trident-storage-profiles
+    dependencies:
+      - name: policy-trident-storage-config
+    manifests:
+      - path: manifests/storage-profile.yaml
+    placement:
+      placementPath: placement-trident-virt.yaml

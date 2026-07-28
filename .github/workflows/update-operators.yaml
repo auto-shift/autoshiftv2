@@ -49,9 +49,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
-          git add autoshift/values/
+          # The script edits both autoshift/values/ and policies/*/values.yaml — stage all tracked changes.
+          git add -u
           git commit -m "chore: update operator channels and versions"
           git push origin "$BRANCH"
+          # gh pr create hard-fails if the label is missing; ensure it exists first.
+          gh label create dependencies --color 0366D6 --description "Automated dependency updates" --force >/dev/null 2>&1 || true
           gh pr create \
             --title "chore: update operator channels and versions" \
             --body "$(cat <<'EOF'

@@ -238,75 +238,121 @@ substitute_template() {
         "$template_file" > "$output_file"
 }
 
-# Validation function
-validate_generated_policy() {
-    log_step "Validating generated policy..."
-    
-    # Test helm template rendering
-    if ! helm template "$POLICY_DIR" >/dev/null 2>&1; then
-        log_error "Generated policy fails helm template validation"
-        echo "Run: helm template $POLICY_DIR"
-        return 1
-    fi
-    
-    # Check for proper hub escaping
-    if ! grep -q '{{ "{{hub" }}' "$POLICY_DIR/templates"/*.yaml; then
-        log_warning "No hub functions found - this is unusual for AutoShift policies"
-    fi
-    
-    # Additional YAML syntax check (non-template files only, advisory)
-    # helm template above already validates the full chart; this is a secondary check
-    if command -v yq >/dev/null 2>&1; then
-        for yaml_file in "$POLICY_DIR"/*.yaml; do
-            if [[ -f "$yaml_file" ]] && ! yq eval '.' "$yaml_file" >/dev/null 2>&1; then
-                log_warning "YAML syntax issue detected in $yaml_file (helm template passed)"
-            fi
-        done
+# Render a PolicyGenerator dir the same way the repo-server CMP / CI does: substitute ONLY the
+# per-deployment ${...} tokens into a throwaway copy (never mutate the source), then run
+# kustomize + the PolicyGenerator plugin. Returns 0 on success, 1 on render failure, 2 if the
+# toolchain is not installed.
+pg_render() {
+    local dir="$1"
+    local kbin plugin_home
+    if [[ -x "$PROJECT_ROOT/.tools/kustomize" ]]; then
+        kbin="$PROJECT_ROOT/.tools/kustomize"
+        plugin_home="$PROJECT_ROOT/.tools/kustomize-plugin"
+    elif command -v kustomize >/dev/null 2>&1; then
+        kbin="kustomize"
+        plugin_home="${KUSTOMIZE_PLUGIN_HOME:-}"
+    else
+        return 2
     fi
 
-    log_success "Policy validation passed"
-    return 0
+    # Stage the policy at its repo-relative path and copy components/ alongside, so the
+    # operator-install caller's `chartHome: ../../../../../components/` resolves in the isolated
+    # tree (mirrors the e2e harness).
+    local tmp rel
+    tmp="$(mktemp -d)"
+    rel="${dir#"$PROJECT_ROOT"/}"; rel="${rel#./}"
+    mkdir -p "$tmp/$(dirname "$rel")"
+    cp -R "$PROJECT_ROOT/$rel" "$tmp/$rel"
+    [[ -d "$PROJECT_ROOT/components" ]] && cp -R "$PROJECT_ROOT/components" "$tmp/components"
+    # Substitute the 5 exact tokens (mirrors the CMP sed / e2e replacer). Hub vars like $base
+    # have no braces, so these anchored ${...} patterns never touch them.
+    local f
+    while IFS= read -r f; do
+        sed -e 's/\${POLICY_NAMESPACE}/policies-autoshift/g' \
+            -e 's/\${REMEDIATION}/enforce/g' \
+            -e 's/\${EVAL_COMPLIANT}/2h/g' \
+            -e 's/\${EVAL_NONCOMPLIANT}/45s/g' \
+            -e 's/\${CLUSTER_SET_SUFFIX}//g' \
+            "$f" > "$f.sub" && mv "$f.sub" "$f"
+    done < <(find "$tmp/$rel" -name '*.yaml')
+
+    # POLICY_GEN_* env vars configure PolicyGenerator's nested `kustomize build` for the chart
+    # (the outer flags don't reach it).
+    KUSTOMIZE_PLUGIN_HOME="$plugin_home" \
+    POLICY_GEN_ENABLE_HELM=true POLICY_GEN_DISABLE_LOAD_RESTRICTORS=true \
+        "$kbin" build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone "$tmp/$rel" >/dev/null 2>&1
+    local rc=$?
+    rm -rf "$tmp"
+    return $rc
+}
+
+# Validation function
+validate_generated_policy() {
+    log_step "Validating generated policy (PolicyGenerator render)..."
+
+    pg_render "$POLICY_DIR"
+    local rc=$?
+    if [[ $rc -eq 0 ]]; then
+        log_success "Policy validation passed (kustomize + PolicyGenerator)"
+        return 0
+    elif [[ $rc -eq 2 ]]; then
+        log_warning "kustomize/PolicyGenerator not found in .tools/ — skipping render validation."
+        log_warning "Install it with: make install-policy-generator"
+        return 0
+    else
+        log_error "Generated policy fails PolicyGenerator render"
+        echo "Run: KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR"
+        return 1
+    fi
 }
 
 # Main generation function
 generate_policy() {
-    echo -e "${GREEN}🚀 Generating AutoShift policy for $COMPONENT_NAME...${NC}"
+    echo -e "${GREEN}🚀 Generating AutoShift PolicyGenerator policy for $COMPONENT_NAME...${NC}"
     echo ""
-    
+
     # Create directory structure
     log_step "Creating directory structure"
-    mkdir -p "$POLICY_DIR/templates"
+    mkdir -p "$POLICY_DIR/manifests/operator-install"
     log_success "Created $POLICY_DIR/"
-    
-    # Generate Chart.yaml
-    log_step "Generating Chart.yaml"
-    substitute_template "$TEMPLATE_DIR/Chart.yaml.template" "$POLICY_DIR/Chart.yaml"
-    log_success "Created Chart.yaml"
-    
-    # Generate values.yaml
-    log_step "Generating values.yaml"
-    substitute_template "$TEMPLATE_DIR/values.yaml.template" "$POLICY_DIR/values.yaml"
-    
-    # Enable targetNamespaces if namespace-scoped flag is set
+
+    # Generate kustomization.yaml (static entrypoint)
+    log_step "Generating kustomization.yaml"
+    cp "$TEMPLATE_DIR/kustomization.yaml.template" "$POLICY_DIR/kustomization.yaml"
+    log_success "Created kustomization.yaml"
+
+    # Generate policy-generator-config.yaml
+    log_step "Generating policy-generator-config.yaml"
+    substitute_template "$TEMPLATE_DIR/pg-config-operator.yaml.template" "$POLICY_DIR/policy-generator-config.yaml"
+    log_success "Created policy-generator-config.yaml"
+
+    # Generate placement.yaml (hand-authored, referenced by the config)
+    log_step "Generating placement.yaml"
+    substitute_template "$TEMPLATE_DIR/placement-operator.yaml.template" "$POLICY_DIR/placement.yaml"
+    log_success "Created placement.yaml"
+
+    # Generate the operator-install caller: a nested kustomization that renders the shared
+    # components/operator-install chart (which owns the OperatorPolicy + creates the namespace).
+    log_step "Generating manifests/operator-install/kustomization.yaml"
+    substitute_template "$TEMPLATE_DIR/manifest-operator-install-kustomization.yaml.template" "$POLICY_DIR/manifests/operator-install/kustomization.yaml"
     if [[ "$NAMESPACE_SCOPED" == "true" ]]; then
-        # Use | as delimiter to avoid conflicts with / in comments
-        sed_inplace "s|  # targetNamespaces: # Optional: specify target namespaces for namespace-scoped operators|  targetNamespaces: # Target namespaces for namespace-scoped operators|" "$POLICY_DIR/values.yaml"
-        sed_inplace "s|  #   - $NAMESPACE|    - $NAMESPACE|" "$POLICY_DIR/values.yaml"
+        # Own/SingleNamespace install mode: scope the OperatorGroup to the install namespace via the
+        # shared component's targetNamespaces passthrough (inserted after the valuesInline namespace).
+        local kfile="$POLICY_DIR/manifests/operator-install/kustomization.yaml"
+        awk -v ns="$NAMESPACE" '
+            { print }
+            /^      namespace: / && !ins { print "      targetNamespaces:"; print "        - " ns; ins=1 }
+        ' "$kfile" > "$kfile.tmp" && mv "$kfile.tmp" "$kfile"
+        log_success "Created manifests/operator-install/kustomization.yaml (namespace-scoped: targetNamespaces [$NAMESPACE])"
+    else
+        log_success "Created manifests/operator-install/kustomization.yaml"
     fi
-    
-    log_success "Created values.yaml"
-    
-    # Generate operator install policy
-    log_step "Generating operator installation policy"
-    substitute_template "$TEMPLATE_DIR/policy-operator-install.yaml.template" \
-                       "$POLICY_DIR/templates/policy-$COMPONENT_NAME-operator-install.yaml"
-    log_success "Created policy-$COMPONENT_NAME-operator-install.yaml"
-    
+
     # Generate README.md
     log_step "Generating README.md with configuration guidance"
     substitute_template "$TEMPLATE_DIR/README.md.template" "$POLICY_DIR/README.md"
     log_success "Created README.md"
-    
+
     echo ""
 }
 
@@ -687,9 +733,9 @@ main() {
         # Show next steps
         echo -e "${BLUE}📋 Next Steps:${NC}"
         echo "1. Review generated files in $POLICY_DIR/"
-        echo -e "2. Test locally: ${YELLOW}helm template $POLICY_DIR/${NC}"
-        echo "3. Customize values.yaml if needed"
-        echo "4. Add operator-specific configuration policies"
+        echo -e "2. Test locally: ${YELLOW}KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR${NC}"
+        echo "3. Add operator CRs as bare manifests under $POLICY_DIR/manifests/ (PG wraps them — no ConfigurationPolicy boilerplate)"
+        echo "4. Validate everything: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
         echo "5. Commit and push — ApplicationSet auto-discovers $POLICY_SUBDIR/*"
         echo ""
         echo -e "${BLUE}📖 See $POLICY_DIR/README.md for detailed configuration guidance${NC}"

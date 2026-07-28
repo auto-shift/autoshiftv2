@@ -69,10 +69,21 @@ if command -v go &>/dev/null && command -v helm &>/dev/null; then
   done <<< "$CHANGED"
 
   if $needs_lint; then
+    # Kustomize/PolicyGenerator policies need the PG plugin to render. Prefer the
+    # repo-local install from `make install-policy-generator`; fall back to a
+    # kustomize already on PATH with the plugin in the default KUSTOMIZE_PLUGIN_HOME.
+    if [ -x "$REPO_ROOT/.tools/kustomize" ]; then
+      export KUSTOMIZE_BIN="$REPO_ROOT/.tools/kustomize"
+      export KUSTOMIZE_PLUGIN_HOME="$REPO_ROOT/.tools/kustomize-plugin"
+    fi
+    if [ ! -x "${KUSTOMIZE_BIN:-$(command -v kustomize 2>/dev/null)}" ]; then
+      echo "pre-commit: WARNING - kustomize/PolicyGenerator not found; run 'make install-policy-generator'" >&2
+      echo "           (kustomize/PolicyGenerator policies will fail to render without it)" >&2
+    fi
     echo "pre-commit: running unit tests..."
     cd "$REPO_ROOT/tools"
     go test ./... -count=1
-    echo "pre-commit: running policy validation (helm render + hub/spoke resolution + label contract)..."
+    echo "pre-commit: running policy validation (helm + kustomize render + hub/spoke resolution + label contract)..."
     go test -tags integration ./... -count=1
   fi
 fi

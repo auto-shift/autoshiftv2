@@ -1,0 +1,55 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: nmstate
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status/compliance); ALWAYS remediationAction: inform
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a wildcard:
+# drop a file in, no config edit). Keep placement.yaml at the dir root, NOT inside a wildcarded dir (a
+# Placement in a wildcarded dir would be wrapped into the Policy as a managed object).
+placementBindingDefaults:
+  name: binding-policy-nmstate
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # All policies share one hand-authored Placement (predicate autoshift.io/nmstate).
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  #    2 manifests -> a directory (wildcard).
+  - name: policy-nmstate-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) NMState CR (raw -> wrapped). Waits on the operator install.
+  - name: policy-nmstate
+    dependencies:
+      - name: policy-nmstate-operator-install
+    manifests:
+      - path: manifests/nmstate-cr.yaml
+  # 3) Webhook readiness gate — a test/ assertion, so ALWAYS inform (a status can only be observed).
+  - name: policy-nmstate-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-nmstate-operator-install
+    manifests:
+      - path: test/webhook-ready.yaml
+  # 4) NNCP generation. Waits on both the CR and the readiness test.
+  - name: policy-nmstate-nncp
+    dependencies:
+      - name: policy-nmstate
+      - name: policy-nmstate-test
+    manifests:
+      - path: manifests/nncp.yaml

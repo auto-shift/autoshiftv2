@@ -70,25 +70,32 @@ Generate RHACM operator policies for AutoShiftv2 with proper Helm chart structur
 
 ### Generated Structure
 
-The script creates the following structure:
+The script creates an ACM **PolicyGenerator** directory (Kustomize source), not a Helm chart:
 
 ```
-policies/<component-name>/
-├── Chart.yaml                    # Helm chart metadata
-├── values.yaml                   # Default values with AutoShift labels
+policies/stable/<component-name>/
+├── kustomization.yaml            # entrypoint: generators: [policy-generator-config.yaml]
+├── policy-generator-config.yaml  # PolicyGenerator: policy graph, remediation, eval interval
+├── placement.yaml                # Placement predicate (autoshift.io/<component>) + tolerations
 ├── README.md                     # Policy documentation
-└── templates/
-    └── policy-<component>-operator-install.yaml  # RHACM OperatorPolicy
+└── manifests/                    # bare resources — PG wraps each into the ConfigurationPolicy
+    ├── namespace.yaml            #   the operator Namespace (raw)
+    └── operator.yaml             #   the OperatorPolicy (first-class; carries ${REMEDIATION})
 ```
+
+The manifests are **bare** — you author only the resource, and PolicyGenerator generates the
+`ConfigurationPolicy` wrapper and injects `remediationAction`/`severity`/`evaluationInterval`. The
+per-deployment `${POLICY_NAMESPACE}`, `${REMEDIATION}`, `${EVAL_COMPLIANT}`, `${EVAL_NONCOMPLIANT}`
+tokens are substituted by the repo-server CMP before `kustomize build`.
 
 ### Key Features
 
 - **Version Control**: Supports operator version pinning via CSV names for precise lifecycle management
 - **Subscription Name Labels**: Automatically adds `<component>-subscription-name` label for operator tracking
 - **Channel Configuration**: Sets up proper channel subscriptions
-- **AutoShift Integration**: Optional automatic addition to hub values file
-- **Namespace Support**: Handles both cluster-scoped and namespace-scoped operators
-- **Template Variables**: Uses consistent Helm templating for all values
+- **AutoShift Integration**: Optional automatic addition to hub values file (and `_example*.yaml`)
+- **Namespace Support**: Handles both cluster-scoped and namespace-scoped operators (`targetNamespaces`)
+- **PolicyGenerator native**: bare manifests + hand-authored placement; no Helm chart boilerplate
 
 ### Version Control
 
@@ -103,10 +110,11 @@ When `--version` is specified, the script adds version labels to AutoShift value
 
 ### Configuration Labels
 
-Each generated policy includes these AutoShift labels in values.yaml:
+The operator manifest reads these AutoShift labels via hub templates (`{{hub … hub}}`), with the
+defaults baked in as literals. Set them in values files to override per clusterset/cluster:
 
 ```yaml
-<component>: "true"                           # Enable/disable the operator
+<component>: "true"                           # Enable/disable the operator (placement predicate)
 <component>-subscription-name: "<subscription-name>"  # Operator subscription name
 <component>-channel: "<channel>"              # Operator channel
 <component>-version: "operator-name.v1.x.x"  # Specific CSV version (optional)
@@ -172,35 +180,48 @@ Missing required values are prompted interactively.
 
 ### Placement Targets
 
-| Target | ClusterSets | Label Selector | Wrapping |
-|--------|-------------|----------------|----------|
-| `hub` | hubClusterSets only | None | `{{- if .Values.hubClusterSets }}` |
-| `spoke` | managedClusterSets only | `autoshift.io/<label>` | None |
-| `both` | hub + managed | `autoshift.io/<label>` | None |
-| `all` | hub + managed | None (all clusters) | None |
+PG placements carry **no** `spec.clusterSets` — scoping comes from the ManagedClusterSetBindings the
+top autoshift chart creates in the policy namespace, filtered by a label predicate:
+
+| Target | Predicate |
+|--------|-----------|
+| `hub` | `autoshift.io/self-managed Exists` (hub-only marker; managed clusters never carry it) |
+| `spoke` | `autoshift.io/self-managed DoesNotExist` **AND** `autoshift.io/<label> In ['true']` |
+| `both` | `autoshift.io/<label> In ['true']` (hub + managed) |
+| `all` | none (every bound cluster) |
 
 ### Behavior
 
-- **New directory**: Creates full chart (`Chart.yaml`, `values.yaml`, and policy template)
-- **Existing directory**: Only creates the policy template file; does not modify `Chart.yaml` or `values.yaml`
+- **New directory**: Creates a full PolicyGenerator dir (`kustomization.yaml`,
+  `policy-generator-config.yaml`, `placement.yaml`, and a bare manifest).
+- **Existing directory** (must already be a PolicyGenerator dir): adds a bare manifest, a
+  `placement-<policy>.yaml`, and appends a `policies[]` entry (with its own placement + any
+  dependencies) to `policy-generator-config.yaml`.
 
 ### Generated Structure (new directory)
 
 ```
 policies/<dir-name>/
-├── Chart.yaml                          # Helm chart metadata
-├── values.yaml                         # Minimal values (policy_namespace only)
-└── templates/
-    └── policy-<policy-name>.yaml       # RHACM ConfigurationPolicy
+├── kustomization.yaml                  # entrypoint
+├── policy-generator-config.yaml        # PolicyGenerator (one policies[] entry)
+├── placement.yaml                      # Placement predicate for the target
+└── manifests/
+    └── <policy-name>.yaml              # bare placeholder resource (PG wraps it)
 ```
 
-The generated template includes a placeholder ConfigMap that should be replaced with your actual resource definition.
+The generated manifest is a **bare** placeholder ConfigMap — replace it with your actual resource
+(no ConfigurationPolicy wrapper). For hub templates, loops, or conditionals, replace it with a bare
+`object-templates-raw:` manifest instead.
 
 ---
 
 ## 🔄 update-operator-policies.sh
 
-Regenerate existing operator policies from the template. Use this when the template has been updated with new features and you want to apply those changes to all existing policies.
+Re-render every operator's bare OperatorPolicy manifest (`manifests/operator.yaml`, wherever it lives
+under `manifests/`) from `manifest-operator.yaml.template`. Use this when the template gains a new
+feature (e.g. a new OperatorPolicy field) and you want to propagate it to all operators at once. It
+regenerates ONLY the OperatorPolicy manifest — not the Namespace, placement, or
+`policy-generator-config.yaml` — and validates each dir with a PolicyGenerator render.
 
 ### Usage
 
@@ -210,8 +231,8 @@ Regenerate existing operator policies from the template. Use this when the templ
 
 ### Options
 
-- `--operator NAME`: Only regenerate a specific operator (e.g., kiali)
-- `--verbose`: Show detailed extraction info (component_name, component_camel, label_prefix)
+- `--operator NAME`: Only regenerate a specific operator (directory name, e.g., kiali)
+- `--verbose`: Show the params extracted from each operator manifest
 - `--help`: Display help message
 
 ### Examples
@@ -247,13 +268,18 @@ git add -p
 
 ### How It Works
 
-The script extracts three values from each existing policy:
+For each `manifests/**/operator.yaml` containing `kind: OperatorPolicy`, the script extracts the
+operator's real params from the existing manifest and re-renders from the template:
 
-- **component_name**: From filename (e.g., `virtualization` from `policy-virtualization-operator-install.yaml`)
-- **component_camel**: From `.Values.XXX.namespace` pattern (e.g., `virt`)
-- **label_prefix**: From `autoshift.io/XXX-channel` pattern (e.g., `virt`)
+- **component_name**: from `name: install-operator-<component>`
+- **label_prefix**: from the `autoshift.io/<prefix>-channel` label (may differ from component_name, e.g. `virt`)
+- **namespace**: the operatorGroup namespace
+- **subscription_name / source / source_namespace / channel**: the `| default "…"` baked into each hub template
+- **namespace-scoped**: re-injects `targetNamespaces` if the operatorGroup had it
 
-This preserves operator-specific naming conventions when regenerating from the template.
+Structural drift is reset to the template (that is the point); the extracted per-operator values are
+preserved. An operator whose manifest is non-standard (a param can't be extracted) is **skipped**,
+not clobbered — review those by hand. Trident (NetApp's custom install shape) is the current example.
 
 ---
 
@@ -263,29 +289,36 @@ The `scripts/templates/` directory contains templates used by the policy generat
 
 ### Files
 
-- `Chart.yaml.template`: Helm chart metadata template
-- `values.yaml.template`: Default values with AutoShift labels (operator policies)
-- `values-minimal.yaml.template`: Minimal values for configuration policies
-- `policy-operator-install.yaml.template`: RHACM OperatorPolicy template
-- `policy-config.yaml.template`: RHACM ConfigurationPolicy template (with placement markers)
-- `README.md.template`: Policy documentation template
+- `kustomization.yaml.template`: Kustomize entrypoint (shared by both generators)
+- `pg-config-operator.yaml.template`: PolicyGenerator config for operator policies
+- `placement-operator.yaml.template`: Placement for operator policies (`autoshift.io/<component>`)
+- `manifest-namespace.yaml.template`: bare operator Namespace manifest
+- `manifest-operator.yaml.template`: bare OperatorPolicy manifest (unescaped `{{hub … hub}}`)
+- `pg-config.yaml.template`: PolicyGenerator config for configuration policies
+- `manifest-config.yaml.template`: bare placeholder ConfigMap for configuration policies
+- `README.md.template`: Policy documentation template (operator policies)
+
+`update-operator-policies.sh` reuses `manifest-operator.yaml.template` (the same one
+`generate-operator-policy.sh` writes), so a template change propagates through both paths.
 
 ### Template Variables
 
-Templates use these placeholders:
+Templates use these placeholders (substituted by the generators; the `${...}` PolicyGenerator
+tokens are left intact for the repo-server CMP):
 
-- `{{COMPONENT_NAME}}`: Component name used in policy names (e.g., 'virtualization' in `policy-virtualization-operator-install`)
-- `{{COMPONENT_CAMEL}}`: Component name in camelCase for values.yaml references (e.g., 'virt' in `.Values.virt.namespace`)
-- `{{LABEL_PREFIX}}`: Prefix used for cluster labels (e.g., 'virt' in `autoshift.io/virt-channel`). For new operators, this matches COMPONENT_NAME. For existing operators with different conventions, it preserves their label prefix.
+Operator templates:
+- `{{COMPONENT_NAME}}`: Component name used in policy/manifest names (e.g., 'cert-manager')
+- `{{LABEL_PREFIX}}`: Prefix for cluster labels (e.g., 'cert-manager' in `autoshift.io/cert-manager-channel`); matches COMPONENT_NAME
 - `{{SUBSCRIPTION_NAME}}`: Operator subscription name
 - `{{NAMESPACE}}`: Target namespace for operator installation
 - `{{CHANNEL}}`: Operator channel
 - `{{SOURCE}}`: Operator catalog source (e.g., 'redhat-operators')
 - `{{SOURCE_NAMESPACE}}`: Catalog source namespace (e.g., 'openshift-marketplace')
-- `{{VERSION}}`: Operator version (CSV name, optional)
-- `{{OPERATOR_NAME}}`: Formatted operator name (deprecated, use SUBSCRIPTION_NAME)
-- `{{COMPONENT_NAME_LOWER}}`: Lowercase component name (deprecated)
-- `{{TIMESTAMP}}`: Generation timestamp (deprecated)
+
+Configuration templates:
+- `{{DIR_BASENAME}}`: Directory name (PolicyGenerator `metadata.name`)
+- `{{POLICY_NAME}}`: Policy/manifest name (e.g., 'dns-tolerations')
+- `{{LABEL}}`: Placement predicate label without the `autoshift.io/` prefix
 
 ## 🛠️ Development
 
@@ -299,19 +332,19 @@ Templates use these placeholders:
 ### Testing Scripts
 
 ```bash
-# Test policy generation
-./scripts/generate-operator-policy.sh test-op test-operator --channel stable --namespace test-operator
-helm template policies/stable/test-op/
-rm -rf policies/stable/test-op/
+# PolicyGenerator render (needs: make install-policy-generator). The generators run this
+# validation automatically, but you can re-run it by hand:
+PG_RENDER() { KUSTOMIZE_PLUGIN_HOME=$PWD/.tools/kustomize-plugin .tools/kustomize build \
+  --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone "$1"; }
 
-# Test with version pinning
-./scripts/generate-operator-policy.sh test-op test-operator --channel stable --namespace test-operator --version test-operator.v1.0.0
-helm template policies/stable/test-op/
+# Test operator policy generation
+./scripts/generate-operator-policy.sh test-op test-operator --channel stable --namespace test-operator
+PG_RENDER policies/stable/test-op/
 rm -rf policies/stable/test-op/
 
 # Test configuration policy generation
 ./scripts/generate-policy.sh test-config --dir policies/stable/test-config --target both
-helm template policies/stable/test-config/
+PG_RENDER policies/stable/test-config/
 rm -rf policies/stable/test-config/
 
 # Test imageset generation

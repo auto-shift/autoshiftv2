@@ -1,0 +1,23 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-gitops-dev
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: selects across all ManagedClusterSetBindings in this
+  # namespace (bound by the top autoshift chart) filtered by the predicate.
+  # Team presence + mode are handled INSIDE the policy by ranging the
+  # gitops-dev-team-<team> labels; this predicate just gates on gitops-dev.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops-dev'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

@@ -753,7 +753,9 @@ get_current_channel() {
             echo "$current"
             return 0
         fi
-    done < <(get_values_files)
+    # here-string (not process substitution) so the early `return 0` above doesn't abandon a
+    # still-writing producer — that leaves a closed pipe and emits "echo: write error: Broken pipe".
+    done <<< "$(get_values_files)"
 
     # Check policy values file
     local policy_file

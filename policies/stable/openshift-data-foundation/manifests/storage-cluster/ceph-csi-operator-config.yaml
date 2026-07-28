@@ -1,0 +1,21 @@
+object-templates-raw: |
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: csi.ceph.io/v1
+      kind: OperatorConfig
+      metadata:
+        name: ceph-csi-operator-config
+        namespace: openshift-storage
+      spec:
+        driverSpecDefaults:
+          nodePlugin:
+            {{hub- if eq (index .ManagedClusterLabels "autoshift.io/odf-csi-all-nodes" | default "false") "true" hub}}
+            tolerations:
+              - operator: Exists
+            {{hub- else hub}}
+            tolerations:
+              - key: node.ocs.openshift.io/storage
+                operator: Equal
+                value: "true"
+                effect: NoSchedule
+            {{hub- end hub}}

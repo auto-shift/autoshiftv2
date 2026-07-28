@@ -101,7 +101,15 @@ spec:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
+            # Managed hub (spoke hub): a hubClusterSets member (cluster-type: hub) that does not
+            # self-manage (self-managed: false).
+            - key: "{{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "cluster-type" }}"
+              operator: In
+              values:
+                - 'hub'
             - key: "{{ printf "%s%s" ($.Values.autoshiftLabelPrefix | default "autoshift.io/") "self-managed" }}"
-              operator: DoesNotExist
+              operator: In
+              values:
+                - 'false'
 
 {{- end }}

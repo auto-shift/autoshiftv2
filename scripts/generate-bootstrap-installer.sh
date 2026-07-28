@@ -63,11 +63,17 @@ command -v helm >/dev/null 2>&1 || error "helm is required"
 oc whoami >/dev/null 2>&1 || error "Not logged in to OpenShift. Run: oc login"
 
 GITOPS_NAMESPACE="${GITOPS_NAMESPACE:-openshift-gitops}"
+# Optional: override the CRD-wait Job's CLI image. The charts default to the in-cluster registry
+# (image-registry.openshift-image-registry.svc:5000/openshift/cli:latest), which can't be pulled on
+# clusters without the internal image registry (e.g. bare metal). To fix, run with:
+#   CLI_IMAGE=registry.redhat.io/openshift4/ose-cli:latest ./install-bootstrap.sh   (or a mirror)
+CLI_IMAGE="${CLI_IMAGE:-}"
 
 log "Installing OpenShift GitOps..."
 helm upgrade --install openshift-gitops ${OCI_BOOTSTRAP_REPO}/openshift-gitops \
     --version ${VERSION} \
     --set gitops.argoNamespace="${GITOPS_NAMESPACE}" \
+    ${CLI_IMAGE:+--set image="${CLI_IMAGE}"} \
     -n "${GITOPS_NAMESPACE}-operator" \
     --create-namespace \
     --wait \
@@ -79,6 +85,7 @@ echo ""
 log "Installing Advanced Cluster Management..."
 helm upgrade --install advanced-cluster-management ${OCI_BOOTSTRAP_REPO}/advanced-cluster-management \
     --version ${VERSION} \
+    ${CLI_IMAGE:+--set image="${CLI_IMAGE}"} \
     --create-namespace \
     --wait \
     --timeout 15m
@@ -372,7 +379,7 @@ AutoShift provides a complete Infrastructure-as-Code solution for OpenShift usin
                          ↓
 ┌─────────────────────────────────────────────────────────┐
 │  Phase 3: Policy Deployment (via ApplicationSet)       │
-│  ├─ ACM Policy Charts from OCI Registry                │
+│  ├─ ACM Policies from OCI Registry                     │
 │  ├─ policies/stable/openshift-gitops (takes over GitOps)      │
 │  └─ policies/stable/advanced-cluster-management (takes over)  │
 └─────────────────────────────────────────────────────────┘
@@ -461,6 +468,12 @@ oc get multiclusterhub -n open-cluster-management
 oc wait --for=condition=Complete multiclusterhub multiclusterhub \
   -n open-cluster-management --timeout=900s
 ```
+
+> **Bare metal / no internal registry:** the CRD-wait Job defaults to the in-cluster CLI image
+> (`image-registry.openshift-image-registry.svc:5000/openshift/cli:latest`). If the internal image
+> registry is not enabled, add `--set image=registry.redhat.io/openshift4/ose-cli:latest` (or your
+> mirrored equivalent) to both bootstrap `helm upgrade` commands above, or run `install-bootstrap.sh`
+> with `CLI_IMAGE=registry.redhat.io/openshift4/ose-cli:latest`.
 
 #### Step 3: Deploy AutoShift
 

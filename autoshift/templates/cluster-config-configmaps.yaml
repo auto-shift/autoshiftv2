@@ -4,17 +4,17 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: "{{ .Release.Name }}-cluster-config-maps"
-  namespace: {{ .Values.gitopsNamespace }}
+  namespace: {{ include "autoshift.gitopsNamespace" . }}
   labels:
     app: "{{ .Release.Name }}-policies"
     velero.io/exclude-from-backup: "true"
 spec:
   project: default
   revisionHistoryLimit: {{ .Values.revisionHistoryLimit | default 3 }}
+  # Single source: the chart (git path or OCI) ships its own values.yaml; valuesObject layers the
+  # cross-cutting autoshift config on top. No per-chart $values git ref — top-level autoshift is the
+  # only chart that pulls external values files.
   sources:
-    - repoURL: {{ (.Values.autoshiftValues).repoUrl | default .Values.autoshiftGitRepo }}
-      targetRevision: {{ (.Values.autoshiftValues).targetRevision | default .Values.autoshiftGitBranchTag }}
-      ref: values
     {{- if .Values.autoshiftOciRegistry }}
     - path: .
       repoURL: {{ .Values.autoshiftOciRepo }}/cluster-config-maps
@@ -25,10 +25,8 @@ spec:
       targetRevision: {{ .Values.autoshiftGitBranchTag }}
     {{- end }}
       helm:
-        valueFiles:
-        - $values/policies/stable/cluster-config-maps/values.yaml
         valuesObject:
-          gitopsNamespace: {{ .Values.gitopsNamespace }}
+          gitopsNamespace: {{ include "autoshift.gitopsNamespace" . }}
           policy_namespace: {{ printf "policies-%s" .Release.Name }}
           clusterSetSuffix: {{ $clusterSetSuffix }}
           autoshift:
@@ -42,7 +40,16 @@ spec:
             {{ $cluster }}{{ $clusterSetSuffix }}:
               labels:
                 self-managed: '{{ index $clustervalue.labels "self-managed" | default "true" }}'
-              config: {{ (index $clustervalue "config" | default (dict) | toYaml | nindent 16) }}
+              {{- /* Stamp the effective policyGenerator flag into config.gitops so the openshift-gitops
+                     policy reads it from the rendered-config (git installs the CMP sidecar, OCI does not):
+                     the hub's config.gitops.policyGenerator if set, else the global default. */}}
+              {{- $cfg := deepCopy (index $clustervalue "config" | default dict) }}
+              {{- $gitops := (index $cfg "gitops" | default dict) }}
+              {{- $effPg := $.Values.policyGenerator | default false }}
+              {{- if hasKey $gitops "policyGenerator" }}{{- $effPg = index $gitops "policyGenerator" }}{{- end }}
+              {{- $_ := set $gitops "policyGenerator" $effPg }}
+              {{- $_ := set $cfg "gitops" $gitops }}
+              config: {{ $cfg | toYaml | nindent 16 }}
           {{- end }}
           {{- end }}
           {{- if .Values.managedClusterSets }}

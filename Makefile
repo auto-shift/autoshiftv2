@@ -11,8 +11,20 @@ REGISTRY ?= quay.io
 REGISTRY_NAMESPACE ?= autoshift
 DRY_RUN ?= false
 INCLUDE_MIRROR ?= true
+# helm push resilience: registries (esp. over flaky links) intermittently drop blob uploads (EOF).
+# Retry each push up to PUSH_RETRIES times, waiting PUSH_RETRY_DELAY seconds between attempts.
+PUSH_RETRIES ?= 5
+PUSH_RETRY_DELAY ?= 3
 CHARTS_DIR := .helm-charts
 ARTIFACTS_DIR := release-artifacts
+
+# PolicyGenerator toolchain (for rendering kustomize/PolicyGenerator policies).
+# Installed into a repo-local .tools/ dir by `make install-policy-generator`.
+KUSTOMIZE_VERSION ?= v5.8.1
+POLICY_GENERATOR_VERSION ?= latest
+TOOLS_DIR := $(CURDIR)/.tools
+KUSTOMIZE_PLUGIN_HOME ?= $(TOOLS_DIR)/kustomize-plugin
+PG_PLUGIN_DIR := $(KUSTOMIZE_PLUGIN_HOME)/policy.open-cluster-management.io/v1/policygenerator
 
 # Colors for output
 GREEN := \033[0;32m
@@ -29,6 +41,10 @@ POLICY_NAMES := $(notdir $(POLICY_CHARTS))
 # Still packaged/pushed to OCI, but must be kept out of policy-list.txt to avoid a duplicate Application.
 DEDICATED_APP_NAMES := cluster-labels cluster-config-maps
 POLICY_LIST_NAMES := $(filter-out $(DEDICATED_APP_NAMES),$(POLICY_NAMES))
+# PolicyGenerator policy dirs (kustomize, no Chart.yaml) — published as Argo CD-native OCI artifacts
+# and rendered by the repo-server policy-generator CMP (same as git mode).
+POLICY_PG_DIRS := $(shell find policies -maxdepth 3 -name policy-generator-config.yaml -exec dirname {} \;)
+POLICY_PG_NAMES := $(notdir $(POLICY_PG_DIRS))
 
 .PHONY: discover
 discover: ## Discover all charts in the repository
@@ -48,6 +64,19 @@ validate: ## Validate that required tools are installed
 	@command -v yq >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) yq is required but not installed. Install: brew install yq\n"; exit 1; }
 	@command -v git >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) git is required but not installed\n"; exit 1; }
 	@printf "$(GREEN)✓$(NC) All required tools are installed\n"
+
+.PHONY: install-policy-generator
+install-policy-generator: ## Install kustomize + ACM PolicyGenerator plugin (repo-local .tools/) for rendering kustomize policies
+	@printf "$(BLUE)[INFO]$(NC) Installing kustomize $(KUSTOMIZE_VERSION) and PolicyGenerator $(POLICY_GENERATOR_VERSION) into $(TOOLS_DIR)...\n"
+	@command -v go >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) go is required but not installed\n"; exit 1; }
+	GOBIN=$(TOOLS_DIR) go install sigs.k8s.io/kustomize/kustomize/v5@$(KUSTOMIZE_VERSION)
+	GOBIN=$(TOOLS_DIR) go install open-cluster-management.io/policy-generator-plugin/cmd/PolicyGenerator@$(POLICY_GENERATOR_VERSION)
+	mkdir -p "$(PG_PLUGIN_DIR)"
+	cp "$(TOOLS_DIR)/PolicyGenerator" "$(PG_PLUGIN_DIR)/PolicyGenerator"
+	chmod +x "$(PG_PLUGIN_DIR)/PolicyGenerator"
+	@printf "$(GREEN)✓$(NC) Installed. Before running policy tests, export:\n"
+	@printf "    export KUSTOMIZE_BIN=$(TOOLS_DIR)/kustomize\n"
+	@printf "    export KUSTOMIZE_PLUGIN_HOME=$(KUSTOMIZE_PLUGIN_HOME)\n"
 
 .PHONY: lint
 lint: ## Lint all Helm charts
@@ -99,12 +128,15 @@ sync-values: ## Sync bootstrap chart values from policy charts
 	@printf "$(GREEN)✓$(NC) Bootstrap values synced\n"
 
 .PHONY: generate-policy-list
-generate-policy-list: ## Generate policy-list.txt for OCI mode
-	@printf "$(BLUE)[INFO]$(NC) Generating policy-list.txt with $(words $(POLICY_LIST_NAMES)) policies...\n"
+generate-policy-list: ## Generate policy-list.txt (every OCI policy chart: helm holdouts + rendered PolicyGenerator) for OCI mode
+	@printf "$(BLUE)[INFO]$(NC) Generating policy-list.txt: $(words $(POLICY_LIST_NAMES)) helm + $(words $(POLICY_PG_NAMES)) rendered PolicyGenerator...\n"
 	@mkdir -p autoshift/files
-	@rm -f autoshift/files/policy-list.txt
+	@# One deploy list: OCI ships every policy as a Helm chart (PG dirs are rendered to Helm in CI), so the
+	@# ApplicationSet consumes a single list. The holdout/PG split only matters at BUILD time (package vs render).
+	@rm -f autoshift/files/policy-list.txt autoshift/files/policy-list-pg.txt
 	@$(foreach policy,$(POLICY_LIST_NAMES),echo "$(policy)" >> autoshift/files/policy-list.txt;)
-	@printf "$(GREEN)✓$(NC) Generated policy-list.txt with $(words $(POLICY_LIST_NAMES)) policies\n"
+	@$(foreach policy,$(POLICY_PG_NAMES),echo "$(policy)" >> autoshift/files/policy-list.txt;)
+	@printf "$(GREEN)✓$(NC) Generated policy-list.txt ($(words $(POLICY_LIST_NAMES)) helm + $(words $(POLICY_PG_NAMES)) rendered PolicyGenerator)\n"
 
 .PHONY: package-charts
 package-charts: ## Package all Helm charts
@@ -136,6 +168,15 @@ package-charts: ## Package all Helm charts
 	@echo ""
 	@printf "$(GREEN)✓$(NC) Packaged charts: $(shell ls -1 $(CHARTS_DIR)/bootstrap/ | wc -l | tr -d ' ') bootstrap + $(shell ls -1 $(CHARTS_DIR)/policies/ | wc -l | tr -d ' ') policies + 1 main\n"
 
+.PHONY: render-policy-charts
+render-policy-charts: ## Render PolicyGenerator policies into stock Helm charts (CI release; no CMP needed by consumers)
+	@printf "$(BLUE)[INFO]$(NC) Rendering $(words $(POLICY_PG_NAMES)) PolicyGenerator policies into Helm charts...\n"
+	@test -x $(TOOLS_DIR)/kustomize || { printf "$(RED)[ERROR]$(NC) $(TOOLS_DIR)/kustomize missing — run 'make install-policy-generator' first\n"; exit 1; }
+	@mkdir -p $(CHARTS_DIR)/policies
+	@KUSTOMIZE=$(TOOLS_DIR)/kustomize KUSTOMIZE_PLUGIN_HOME=$(KUSTOMIZE_PLUGIN_HOME) CHARTS_DIR=$(CHARTS_DIR) VERSION=$(VERSION) \
+		scripts/render-policygen-charts.sh $(POLICY_PG_DIRS)
+	@printf "$(GREEN)✓$(NC) Rendered $(words $(POLICY_PG_NAMES)) policies into $(CHARTS_DIR)/policies/\n"
+
 .PHONY: push-charts
 push-charts: ## Push charts to OCI registry with namespaced paths
 	@if [ "$(DRY_RUN)" = "true" ]; then \
@@ -145,59 +186,30 @@ push-charts: ## Push charts to OCI registry with namespaced paths
 		echo "Policy charts would be pushed to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
 	else \
 		printf "$(BLUE)[INFO]$(NC) Pushing charts to OCI registry...\n"; \
+		push_retry() { for a in $$(seq 1 $(PUSH_RETRIES)); do helm push "$$1" "$$2" && return 0; printf "$(YELLOW)    transient push error, retry %s/$(PUSH_RETRIES) (%s)$(NC)\n" "$$a" "$$(basename $$1)"; sleep $(PUSH_RETRY_DELAY); done; printf "$(RED)[ERROR]$(NC) push failed after $(PUSH_RETRIES) retries: %s\n" "$$1"; return 1; }; \
 		echo ""; \
 		printf "$(BLUE)[INFO]$(NC) Pushing bootstrap charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap\n"; \
 		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
 			echo "  - Pushing $$(basename $$chart)..."; \
-			helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap || exit 1; \
+			push_retry $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap || exit 1; \
 		done; \
 		echo ""; \
 		printf "$(BLUE)[INFO]$(NC) Pushing main chart to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)\n"; \
 		if [ -f "$(CHARTS_DIR)/autoshift-$(VERSION).tgz" ]; then \
 			echo "  - Pushing autoshift-$(VERSION).tgz..."; \
-			helm push $(CHARTS_DIR)/autoshift-$(VERSION).tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE) || exit 1; \
+			push_retry $(CHARTS_DIR)/autoshift-$(VERSION).tgz oci://$(REGISTRY)/$(REGISTRY_NAMESPACE) || exit 1; \
 		fi; \
 		echo ""; \
 		printf "$(BLUE)[INFO]$(NC) Pushing policy charts to: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies\n"; \
 		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
 			echo "  - Pushing $$(basename $$chart)..."; \
-			helm push $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies || exit 1; \
+			push_retry $$chart oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies || exit 1; \
 		done; \
 		echo ""; \
 		printf "$(GREEN)✓$(NC) All charts pushed\n"; \
 		echo "  Bootstrap: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap"; \
 		echo "  Main: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)"; \
 		echo "  Policies: oci://$(REGISTRY)/$(REGISTRY_NAMESPACE)/policies"; \
-	fi
-
-.PHONY: tag-latest
-tag-latest: ## Tag all pushed charts with 'latest' in the OCI registry (requires oras CLI)
-	@if [ "$(DRY_RUN)" = "true" ]; then \
-		printf "$(YELLOW)[WARN]$(NC) DRY RUN: Skipping latest tagging\n"; \
-	else \
-		if ! command -v oras &>/dev/null; then \
-			printf "$(RED)[ERROR]$(NC) oras CLI is required for tagging. Install from: https://oras.land/docs/installation\n"; \
-			exit 1; \
-		fi; \
-		printf "$(BLUE)[INFO]$(NC) Tagging charts as 'latest' ($(VERSION) -> latest)...\n"; \
-		echo ""; \
-		printf "$(BLUE)[INFO]$(NC) Tagging bootstrap charts as latest...\n"; \
-		for chart in $(CHARTS_DIR)/bootstrap/*.tgz; do \
-			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
-			echo "  - $$CHART_NAME:latest"; \
-			oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/bootstrap/$$CHART_NAME:$(VERSION) latest || exit 1; \
-		done; \
-		printf "$(BLUE)[INFO]$(NC) Tagging main chart as latest...\n"; \
-		echo "  - autoshift:latest"; \
-		oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/autoshift:$(VERSION) latest || exit 1; \
-		printf "$(BLUE)[INFO]$(NC) Tagging policy charts as latest...\n"; \
-		for chart in $(CHARTS_DIR)/policies/*.tgz; do \
-			CHART_NAME=$$(basename $$chart .tgz | sed 's/-$(VERSION)$$//'); \
-			echo "  - $$CHART_NAME:latest"; \
-			oras tag $(REGISTRY)/$(REGISTRY_NAMESPACE)/policies/$$CHART_NAME:$(VERSION) latest || exit 1; \
-		done; \
-		echo ""; \
-		printf "$(GREEN)✓$(NC) All charts tagged as 'latest'\n"; \
 	fi
 
 .PHONY: generate-artifacts
@@ -208,7 +220,7 @@ generate-artifacts: ## Generate bootstrap installation scripts and documentation
 	@printf "$(GREEN)✓$(NC) Bootstrap installation artifacts generated in $(ARTIFACTS_DIR)/\n"
 
 .PHONY: release
-release: validate validate-version clean sync-values update-versions generate-policy-list package-charts push-charts tag-latest generate-artifacts ## Full release process (add INCLUDE_MIRROR=false to skip mirror artifacts)
+release: validate validate-version clean sync-values update-versions generate-policy-list install-policy-generator package-charts render-policy-charts push-charts generate-artifacts ## Full release process (add INCLUDE_MIRROR=false to skip mirror artifacts)
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
 		printf "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
 		$(MAKE) generate-imageset VERSION=$(VERSION) || { \

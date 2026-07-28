@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Renders the shared components/operator-install chart. ACS installs into rhacs-operator and also needs
+# the stackrox namespace (Central/SecuredCluster live there) — both created with the monitoring label.
+helmGlobals:
+  chartHome: ../../../../../components/
+helmCharts:
+  - name: operator-install
+    releaseName: acs
+    valuesInline:
+      name: acs
+      namespace: rhacs-operator
+      namespaces:
+        - stackrox
+      remediation: ${REMEDIATION}
+      subscription:
+        name: '{{hub index .ManagedClusterLabels "autoshift.io/acs-subscription-name" | default "rhacs-operator" hub}}'
+        channel: '{{hub index .ManagedClusterLabels "autoshift.io/acs-channel" | default "stable" hub}}'
+        source: '{{hub $base := (index .ManagedClusterLabels "autoshift.io/acs-source" | default "redhat-operators") hub}}{{hub ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}'
+        sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/acs-source-namespace" | default "openshift-marketplace" hub}}'
+        # Version resolution (config lives in the rendered-config ConfigMap on the hub):
+        #   config mode (config.acs.versions set): versions = that list; startingCSV = config.acs.startingCSV
+        #     (explicit — the list says what's ALLOWED, not where to START; default "" = let OLM pick).
+        #   label mode (no config): versions = [acs-version label]; startingCSV = that same version.
+        # $vers is computed here and reused by `versions` below.
+        startingCSV: |-
+          {{hub- $cfg := (index (index (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "acs" | default dict) hub}}
+          {{hub- $cfgVers := (dig "versions" (list) $cfg) hub}}
+          {{hub- $isCfg := (not (empty $cfgVers)) hub}}
+          {{hub- $labelVer := (index .ManagedClusterLabels "autoshift.io/acs-version" | default "") hub}}
+          {{hub- $vers := (ternary $cfgVers (ternary (list) (list $labelVer) (empty $labelVer)) $isCfg) hub}}
+          {{hub- (ternary (dig "startingCSV" "" $cfg) $labelVer $isCfg) hub}}
+      # versions reuses $vers set in startingCSV above (same policy, resolves after it).
+      versions: '{{hub $vers | toRawJson | toLiteral hub}}'

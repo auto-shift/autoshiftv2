@@ -64,7 +64,7 @@ See `autoshift/README.md` for detailed chart documentation.
 
 Values can be set on a per cluster and clusterset level to decide what features of AutoShift will be applied to each cluster. If a value is defined in helm values, a clusterset label and a cluster label precedence will be **cluster > clusterset > helm** values where helm values is the least.
 
-Helm chart defaults (`values.yaml`) live in each policy's Helm chart under the `policies/` directory (e.g., `policies/stable/openshift-gitops/values.yaml`, `policies/advanced-cluster-security/values.yaml`). These defaults can be overridden by clusterset labels in your `autoshift/values/clustersets/` files, and further overridden by per-cluster labels in `autoshift/values/clusters/`.
+Most policies are PolicyGenerator dirs (no `values.yaml`); their configurable labels and default values are documented in `autoshift/values/clustersets/_example.yaml` — the canonical label catalog. The few policies that remain Helm charts (e.g. `policies/stable/openshift-gitops/`) also carry a `values.yaml` with chart defaults. Either way, values are set via clusterset labels in your `autoshift/values/clustersets/` files and further overridden by per-cluster labels in `autoshift/values/clusters/`.
 
 ## Operator Version Control
 
