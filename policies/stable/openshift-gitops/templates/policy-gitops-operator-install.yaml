@@ -59,9 +59,23 @@ spec:
               # disableDefaultArgoCD default = not config.gitops.defaultInstance (from rendered-config);
               # the gitops-disable-default-argocd label still overrides.
               - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
-                value: '{{ "{{hub-" }} $ddCfg := (index (index (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) {{ "hub}}" }}{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default (not (index $ddCfg "defaultInstance" | default false) | toString) {{ "hub}}" }}'
+                value: >-
+                  {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+                  {{ "{{hub-" }} $renderedConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+                  {{ "{{hub-" }} $gitops := (index $renderedConfig "gitops" | default dict) {{ "hub}}" }}
+                  {{ "{{hub-" }} $defaultInstance := (index $gitops "defaultInstance" | default false) {{ "hub}}" }}
+                  {{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default (printf "%v" (not $defaultInstance)) {{ "hub}}" }}
+              # Base ArgoCD namespace, plus openshift-gitops-<team> for each cluster-scoped dev team on the cluster.
               - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
-                value: '{{ "{{hub-" }} $ns := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") {{ "hub}}" }}{{ "{{hub-" }} $result := $ns {{ "hub}}" }}{{ "{{hub" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}{{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/gitops-dev-team-") ($label | hasSuffix "-cluster-scoped") (eq $val "true") {{ "hub}}" }}{{ "{{hub-" }} $team := replace "autoshift.io/gitops-dev-team-" "" $label {{ "hub}}" }}{{ "{{hub-" }} $team = replace "-cluster-scoped" "" $team {{ "hub}}" }}{{ "{{hub-" }} $result = printf "%s,openshift-gitops-%s" $result $team {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}{{ "{{hub" }} end {{ "hub}}" }}{{ "{{hub" }} $result {{ "hub}}" }}'
+                value: >-
+                  {{ "{{hub-" }} $namespaces := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") {{ "hub}}" }}
+                  {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
+                  {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/gitops-dev-team-") ($label | hasSuffix "-cluster-scoped") (eq $val "true") {{ "hub}}" }}
+                  {{ "{{hub-" }} $team := $label | replace "autoshift.io/gitops-dev-team-" "" | replace "-cluster-scoped" "" {{ "hub}}" }}
+                  {{ "{{hub-" }} $namespaces = printf "%s,openshift-gitops-%s" $namespaces $team {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} $namespaces {{ "hub}}" }}
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-source-namespace" | default "{{ .Values.gitops.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-channel" | default "{{ .Values.gitops.channel }}" {{ "hub}}" }}'
             # Version resolution (config in the rendered-config ConfigMap): config.gitops.versions/.startingCSV
