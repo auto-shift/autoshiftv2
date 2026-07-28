@@ -474,6 +474,26 @@ hubClusterSets:
           test:
             gitops_rbac_policies:
               - 'g, openshift-systems, role:admin'
+      # =======================================================================
+      # Advanced Cluster Security (Day-2 settings; enable the stack with the acs label)
+      # =======================================================================
+      acs:
+        egressConnectivity: Online          # Online | Offline (disconnected)
+        scannerV4: Enabled                  # Enabled | Disabled | Default (SecuredCluster maps Enabled -> AutoSense)
+        monitoring: true                    # OpenShift monitoring integration
+        networkPolicies: Enabled            # Enabled | Disabled (network policy generation); omit to leave default
+        vmScanning: false                   # ROX_VIRTUAL_MACHINES (Tech Preview)
+        defaultPolicies: false              # deploy the baseline SecurityPolicy CRs
+        collector:
+          collection: CORE_BPF              # CORE_BPF (recommended); EBPF is deprecated
+        admissionControl:
+          enabled: true                     # listen on create/update (monitor admissions)
+          contactImageScanners: ScanIfMissing  # ScanIfMissing | DoNotScanInline (inline scan at admission)
+          failurePolicy: Ignore             # Ignore (fail-open, safe) | Fail (fail-closed, strict)
+        auth:
+          provider: openshift               # '' disables the declarative auth config
+          minimumRole: None                 # minimum role for authenticated users
+          adminGroup: cluster-admins        # group mapped to the Admin role
     labels:
       # =======================================================================
       # Core Configuration
@@ -483,7 +503,7 @@ hubClusterSets:
       # DERIVED — do not set: cluster-type ('hub' for hubClusterSets entries, 'spoke' for
       # managedClusterSets entries). Injected by the top-level chart, so a value set here is
       # overwritten. A self-managed hub is cluster-type 'hub' plus self-managed 'true'.
-      openshift-version: '4.20.12'
+      openshift-version: '4.20.29'
       policy-namespace: ''               # hub only — overrides the ACM policy namespace
 
       # =======================================================================
@@ -492,7 +512,7 @@ hubClusterSets:
       gitops: 'true'
       gitops-subscription-name: openshift-gitops-operator
       gitops-disable-default-argocd: 'true'
-      gitops-channel: gitops-1.20
+      gitops-channel: gitops-1.21
       gitops-version: 'openshift-gitops-operator.v1.19.1'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
@@ -504,7 +524,7 @@ hubClusterSets:
       # =======================================================================
       acm-subscription-name: advanced-cluster-management
       acm-version: 'advanced-cluster-management.v2.16.2'
-      acm-channel: release-2.16
+      acm-channel: release-2.17
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'High'       # 'Basic' or 'High'
@@ -594,7 +614,7 @@ hubClusterSets:
       # =======================================================================
       aap: 'false'
       aap-subscription-name: ansible-automation-platform-operator
-      aap-channel: stable-2.6
+      aap-channel: stable-2.7
       aap-install-plan-approval: Automatic
       aap-source: redhat-operators
       aap-source-namespace: openshift-marketplace
@@ -771,23 +791,14 @@ hubClusterSets:
       # =======================================================================
       # Advanced Cluster Security
       # =======================================================================
-      acs: 'false'
+      acs: 'false'                           # enable toggle (placement gate)
       acs-subscription-name: rhacs-operator
       acs-version: 'rhacs-operator.v4.9.2'
-      acs-egress-connectivity: Online        # 'Online' or 'Offline' (disconnected)
       acs-channel: stable
       acs-source: redhat-operators
       acs-source-namespace: openshift-marketplace
-      ### ACS Day 2 Configuration
-      acs-scanner-v4: Enabled               # Scanner V4 component state ('Enabled' or 'Disabled')
-      acs-monitoring: 'true'                 # Enable OpenShift monitoring integration
-      acs-auth-provider: openshift           # Auth provider type ('openshift')
-      acs-auth-min-role: None                # Minimum role for authenticated users
-      acs-auth-admin-group: cluster-admins   # Group mapped to Admin role
-      acs-vm-scanning: 'true'               # Enable VM scanning (Developer Preview)
-      acs-admission-control: 'true'         # Enable admission control enforcement
-      acs-network-policies: Enabled         # Network policy generation ('Enabled' or 'Disabled')
-      acs-default-policies: 'true'          # Deploy baseline SecurityPolicy CRDs
+      # Day-2 ACS settings (scanner, collector, admission control, auth, monitoring, network,
+      # VM scanning, baseline policies) are configured under config.acs below — not via labels.
 
       # =======================================================================
       # Developer Spaces
@@ -805,7 +816,7 @@ hubClusterSets:
       dev-hub: 'false'
       dev-hub-subscription-name: rhdh
       dev-hub-version: 'rhdh-operator.v1.8.3'
-      dev-hub-channel: fast-1.9
+      dev-hub-channel: fast-1.10
       dev-hub-source: redhat-operators
       dev-hub-source-namespace: openshift-marketplace
 
@@ -815,7 +826,7 @@ hubClusterSets:
       pipelines: 'false'
       pipelines-subscription-name: openshift-pipelines-operator-rh
       pipelines-version: 'openshift-pipelines-operator-rh.v1.21.0'
-      pipelines-channel: pipelines-1.21
+      pipelines-channel: pipelines-1.23
       pipelines-source: redhat-operators
       pipelines-source-namespace: openshift-marketplace
 
@@ -878,7 +889,7 @@ hubClusterSets:
       loki: 'false'
       loki-subscription-name: loki-operator
       loki-version: 'loki-operator.v6.4.2'
-      loki-channel: stable-6.5
+      loki-channel: stable-6.6
       loki-source: redhat-operators
       loki-source-namespace: openshift-marketplace
       loki-size: 1x.extra-small             # LokiStack size
@@ -891,7 +902,7 @@ hubClusterSets:
       logging: 'false'
       logging-subscription-name: cluster-logging
       logging-version: 'cluster-logging.v6.4.2'
-      logging-channel: stable-6.5
+      logging-channel: stable-6.6
       logging-source: redhat-operators
       logging-source-namespace: openshift-marketplace
 

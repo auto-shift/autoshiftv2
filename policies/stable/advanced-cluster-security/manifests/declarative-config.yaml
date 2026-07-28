@@ -1,5 +1,11 @@
 object-templates-raw: |
-  {{hub- if (index .ManagedClusterLabels "autoshift.io/acs-auth-provider") hub}}
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $auth := (index (index $config "acs" | default dict) "auth" | default dict) hub}}
+  {{hub- $authProvider := (index $auth "provider" | default "openshift") hub}}
+  {{hub- $minimumRole := (index $auth "minimumRole" | default "None") hub}}
+  {{hub- $adminGroup := (index $auth "adminGroup" | default "cluster-admins") hub}}
+  {{hub- if $authProvider hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -10,11 +16,11 @@ object-templates-raw: |
       data:
         auth-provider.yaml: |
           name: OpenShift
-          minimumRole: '{{hub index .ManagedClusterLabels "autoshift.io/acs-auth-min-role" | default "None" hub}}'
+          minimumRole: '{{hub $minimumRole hub}}'
           openshift:
             enable: true
           groups:
             - key: groups
-              value: '{{hub index .ManagedClusterLabels "autoshift.io/acs-auth-admin-group" | default "cluster-admins" hub}}'
+              value: '{{hub $adminGroup hub}}'
               role: Admin
   {{hub- end hub}}

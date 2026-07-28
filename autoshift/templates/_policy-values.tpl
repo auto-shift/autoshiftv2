@@ -42,8 +42,8 @@ clusterSetSuffix: {{ $clusterSetSuffix }}
 autoshift:
   dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
   evaluationInterval:
-    compliant: {{ (((.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
-    noncompliant: {{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+    compliant: {{ (((.Values.autoshift).evaluationInterval).compliant) | default "watch" }}
+    noncompliant: {{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "watch" }}
 {{- if .Values.hubClusterSets }}
 hubClusterSets:
 {{- range $cluster, $clustervalue := .Values.hubClusterSets }}

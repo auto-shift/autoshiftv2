@@ -35,8 +35,9 @@ spec:
     channel: '{{ .Values.subscription.channel }}'
     startingCSV: >-
 {{ .Values.subscription.startingCSV | default "" | indent 6 }}
-  {{- /* upgradeApproval (optional): defaults to Automatic. Passed through verbatim, so a caller may
-        supply a literal (Automatic/Manual) or an ACM lookup (e.g. a per-cluster label). */}}
+  {{- /* upgradeApproval (optional): defaults to Automatic. The OperatorPolicy enum is None|Automatic
+        (there is no Manual — pin a version via `versions` for manual-approval behavior). Passed
+        through verbatim, so a caller may supply a literal or an ACM lookup (e.g. a per-cluster label). */}}
   upgradeApproval: '{{ .Values.upgradeApproval | default "Automatic" }}'
   {{- /* versions: a hardcoded list -> YAML flow sequence; a string (ACM template) -> block scalar */}}
   {{- if kindIs "string" $versions }}
@@ -44,4 +45,11 @@ spec:
 {{ $versions | indent 4 }}
   {{- else }}
   versions: {{ $versions | toJson }}
+  {{- end }}
+  {{- /* complianceConfig (optional): map OperatorPolicy status signals to compliance (e.g.
+        upgradesAvailable / deprecationsPresent: NonCompliant). Omitted -> operator defaults.
+        Passed through verbatim, so values may be literals or ACM lookups. */}}
+  {{- with .Values.complianceConfig }}
+  complianceConfig:
+    {{- toYaml . | nindent 4 }}
   {{- end }}

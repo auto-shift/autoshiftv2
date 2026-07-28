@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # Renders the shared components/operator-install chart. Trident installs into the trident namespace with a
-# hardcoded OperatorGroup name (trident-operator) and a label-driven upgradeApproval (trident-install-plan-approval).
+# hardcoded OperatorGroup name (trident-operator) and label-driven install-plan approval (trident-install-plan-approval).
 helmGlobals:
   chartHome: ../../../../../components/
 helmCharts:
@@ -13,7 +13,10 @@ helmCharts:
       operatorGroupName: trident-operator
       remediation: ${REMEDIATION}
       policyNamespace: ${POLICY_NAMESPACE}
-      upgradeApproval: '{{hub index .ManagedClusterLabels "autoshift.io/trident-install-plan-approval" | default "Automatic" hub}}'
+      # OperatorPolicy upgradeApproval enum is None|Automatic. The user-facing label accepts
+      # Automatic/Manual; map Manual -> None (OperatorPolicy hands off InstallPlan approval, so
+      # upgrades wait for manual approval — combine with trident-version to pin).
+      upgradeApproval: '{{hub ternary "None" "Automatic" (eq (index .ManagedClusterLabels "autoshift.io/trident-install-plan-approval" | default "Automatic") "Manual") hub}}'
       subscription:
         name: '{{hub index .ManagedClusterLabels "autoshift.io/trident-name" | default "trident-operator" hub}}'
         channel: '{{hub index .ManagedClusterLabels "autoshift.io/trident-channel" | default "stable" hub}}'

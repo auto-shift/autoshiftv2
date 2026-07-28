@@ -1,7 +1,7 @@
 # AutoShiftv2
 
-![OpenShift Version](https://img.shields.io/badge/OpenShift-4.20.12-red?logo=redhatopenshift&logoColor=white)
-![ACM Version](https://img.shields.io/badge/ACM-2.15-blue?logo=redhat&logoColor=white)
+![OpenShift Version](https://img.shields.io/badge/OpenShift-4.20.29-red?logo=redhatopenshift&logoColor=white)
+![ACM Version](https://img.shields.io/badge/ACM-2.17-blue?logo=redhat&logoColor=white)
 
 ## What is AutoShift?
 

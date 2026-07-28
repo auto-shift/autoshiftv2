@@ -1,4 +1,14 @@
 object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $acs := (index $config "acs" | default dict) hub}}
+  {{hub- $scannerV4 := (index $acs "scannerV4" | default "Enabled") hub}}
+  {{hub- $egress := (index $acs "egressConnectivity" | default "Online") hub}}
+  {{hub- $networkPolicies := (index $acs "networkPolicies" | default "") hub}}
+  {{hub- $vmScanning := (index $acs "vmScanning" | default false) hub}}
+  {{hub- $monitoring := (index $acs "monitoring") hub}}
+  {{hub- $auth := (index $acs "auth" | default dict) hub}}
+  {{hub- $authProvider := (index $auth "provider" | default "openshift") hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: platform.stackrox.io/v1alpha1
@@ -19,13 +29,13 @@ object-templates-raw: |
           persistence:
             persistentVolumeClaim:
               claimName: stackrox-db
-          {{hub- if (index .ManagedClusterLabels "autoshift.io/acs-auth-provider") hub}}
+          {{hub- if $authProvider hub}}
           declarativeConfiguration:
             configMaps:
               - name: acs-declarative-configs
           {{hub- end hub}}
         egress:
-          connectivityPolicy: '{{hub index .ManagedClusterLabels "autoshift.io/acs-egress-connectivity" | default "Online" hub}}'
+          connectivityPolicy: '{{hub $egress hub}}'
         scanner:
           analyzer:
             scaling:
@@ -35,17 +45,18 @@ object-templates-raw: |
               replicas: 3
           scannerComponent: Enabled
         scannerV4:
-          scannerComponent: '{{hub index .ManagedClusterLabels "autoshift.io/acs-scanner-v4" | default "Enabled" hub}}'
-        {{hub- if eq (index .ManagedClusterLabels "autoshift.io/acs-monitoring" | default "true") "true" hub}}
+          # Central enum is Enabled|Disabled|Default; treat anything other than Disabled as Enabled.
+          scannerComponent: '{{hub ternary "Disabled" "Enabled" (eq $scannerV4 "Disabled") hub}}'
+        {{hub- if ne $monitoring false hub}}
         monitoring:
           openshift:
             enabled: true
         {{hub- end hub}}
-        {{hub- if (index .ManagedClusterLabels "autoshift.io/acs-network-policies") hub}}
+        {{hub- if $networkPolicies hub}}
         network:
-          policies: '{{hub index .ManagedClusterLabels "autoshift.io/acs-network-policies" hub}}'
+          policies: '{{hub $networkPolicies hub}}'
         {{hub- end hub}}
-        {{hub- if eq (index .ManagedClusterLabels "autoshift.io/acs-vm-scanning" | default "") "true" hub}}
+        {{hub- if $vmScanning hub}}
         customize:
           envVars:
             - name: ROX_VIRTUAL_MACHINES

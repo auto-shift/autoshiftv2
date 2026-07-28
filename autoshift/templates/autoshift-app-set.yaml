@@ -89,10 +89,12 @@ spec:
               # inform when autoshift.dryRun, else enforce
               - name: REMEDIATION
                 value: {{ if ((.Values.autoshift).dryRun) }}inform{{ else }}enforce{{ end }}
+              # Default 'watch' = event-driven K8s API watches (ACM 2.17 default), incl. lookup deps.
+              # Override per-deployment via autoshift.evaluationInterval (e.g. '10m'/'30s') to poll.
               - name: EVAL_COMPLIANT
-                value: '{{ (((.Values.autoshift).evaluationInterval).compliant) | default "10m" }}'
+                value: '{{ (((.Values.autoshift).evaluationInterval).compliant) | default "watch" }}'
               - name: EVAL_NONCOMPLIANT
-                value: '{{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}'
+                value: '{{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "watch" }}'
               # versionedClusterSets suffix (empty unless versionedClusterSets); appended to
               # managedClusterSet names by cluster-install so installed clusters join the versioned set.
               - name: CLUSTER_SET_SUFFIX
