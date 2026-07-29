@@ -34,6 +34,12 @@ trap 'rm -rf "$work"' EXIT
 sedtok() { sed -e 's|${EVAL_COMPLIANT}|1000000h|g' -e 's|${EVAL_NONCOMPLIANT}|2000000h|g'; }
 unsedtok() { sed -e 's|1000000h|${EVAL_COMPLIANT}|g' -e 's|2000000h|${EVAL_NONCOMPLIANT}|g'; }
 
+# ai-accelerator source for the openshift-ai / gpu-operator hybrids. Baked to REAL values before the
+# kustomize build (they steer the remote base fetch), unlike the deploy-time ${...} tokens above.
+AI_ACCELERATOR_REPO="${AI_ACCELERATOR_REPO:-github.com/redhat-ai-services/ai-accelerator}"
+AI_ACCELERATOR_REF="${AI_ACCELERATOR_REF:-main}"
+AI_ACCELERATOR_OVERLAY="${AI_ACCELERATOR_OVERLAY:-instance-3.x/base}"
+
 for dir in "$@"; do
   name="$(basename "$dir")"
   # Stage at the repo-relative path so a nested chartHome (../../../../../components/) resolves.
@@ -42,9 +48,13 @@ for dir in "$@"; do
   mkdir -p "$(dirname "$src")"
   cp -r "$dir" "$src"
 
-  # 1. EVAL tokens -> sentinel durations so PG's duration validation passes.
+  # 1. EVAL tokens -> sentinel durations (PG validation); AI_ACCELERATOR -> real values (steer the
+  #    remote kustomize fetch for the openshift-ai / gpu-operator hybrids, baked at render time).
   find "$src" -name '*.yaml' -type f | while read -r f; do
-    sedtok < "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    sedtok < "$f" \
+      | sed -e "s|\${AI_ACCELERATOR_REPO}|${AI_ACCELERATOR_REPO}|g" \
+            -e "s|\${AI_ACCELERATOR_REF}|${AI_ACCELERATOR_REF}|g" \
+            -e "s|\${AI_ACCELERATOR_OVERLAY}|${AI_ACCELERATOR_OVERLAY}|g" > "$f.tmp" && mv "$f.tmp" "$f"
   done
 
   # 2. render via PolicyGenerator.

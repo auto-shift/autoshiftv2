@@ -1,0 +1,22 @@
+# Authorino with TLS enabled by default. The Kuadrant operator reconciles a default Authorino from the
+# Kuadrant CR; this asserts TLS on its listener + OIDC server (musthave merge). The cert comes from
+# OpenShift's service-ca via the serving-cert annotation on the authorization Service (authorino-service.yaml)
+# — no cert-manager needed, works on any OpenShift cluster. RHOAI MaaS requires this TLS listener.
+apiVersion: operator.authorino.kuadrant.io/v1beta1
+kind: Authorino
+metadata:
+  name: authorino
+  namespace: kuadrant-system
+spec:
+  replicas: 1
+  clusterWide: true
+  listener:
+    tls:
+      enabled: true
+      certSecretRef:
+        name: authorino-server-cert
+  oidcServer:
+    tls:
+      enabled: true
+      certSecretRef:
+        name: authorino-server-cert

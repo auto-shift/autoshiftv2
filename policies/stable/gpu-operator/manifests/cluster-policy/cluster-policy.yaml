@@ -1,0 +1,92 @@
+# NVIDIA GPU ClusterPolicy — AutoShift's standalone default (works on any GPU cluster, RHOAI or not).
+# spec.mig.strategy is set per-cluster from the gpu-mig-strategy label (hub template, inline).
+apiVersion: nvidia.com/v1
+kind: ClusterPolicy
+metadata:
+  name: gpu-cluster-policy
+spec:
+  vgpuDeviceManager:
+    enabled: true
+  migManager:
+    enabled: true
+  operator:
+    defaultRuntime: crio
+    initContainer: {}
+    runtimeClass: nvidia
+    use_ocp_driver_toolkit: true
+  dcgm:
+    enabled: true
+  gfd:
+    enabled: true
+  dcgmExporter:
+    config:
+      name: ''
+    enabled: true
+    serviceMonitor:
+      enabled: true
+  driver:
+    licensingConfig:
+      configMapName: ''
+      nlsEnabled: true
+    enabled: true
+    kernelModuleType: auto
+    certConfig:
+      name: ''
+    useNvidiaDriverCRD: false
+    kernelModuleConfig:
+      name: ''
+    upgradePolicy:
+      autoUpgrade: true
+      drain:
+        deleteEmptyDir: false
+        enable: false
+        force: false
+        timeoutSeconds: 300
+      maxParallelUpgrades: 1
+      maxUnavailable: 25%
+      podDeletion:
+        deleteEmptyDir: false
+        force: false
+        timeoutSeconds: 300
+      waitForCompletion:
+        timeoutSeconds: 0
+    repoConfig:
+      configMapName: ''
+    virtualTopology:
+      config: ''
+  devicePlugin:
+    config:
+      default: ''
+      name: ''
+    enabled: true
+    mps:
+      root: /run/nvidia/mps
+  gdrcopy:
+    enabled: false
+  mig:
+    strategy: '{{hub index .ManagedClusterLabels "autoshift.io/gpu-mig-strategy" | default "single" hub}}'
+  sandboxDevicePlugin:
+    enabled: true
+  validator:
+    plugin:
+      env:
+        - name: WITH_WORKLOAD
+          value: 'false'
+  nodeStatusExporter:
+    enabled: true
+  daemonsets:
+    rollingUpdate:
+      maxUnavailable: '1'
+    updateStrategy: RollingUpdate
+  sandboxWorkloads:
+    defaultWorkload: container
+    enabled: false
+  gds:
+    enabled: false
+  vgpuManager:
+    enabled: false
+  vfioManager:
+    enabled: true
+  toolkit:
+    enabled: true
+    installDir: /usr/local/nvidia

@@ -1,0 +1,120 @@
+# ==============================================================================
+# OpenShift AI (RHOAI) + MaaS profile — defines a MANAGED clusterset for AI clusters
+# ==============================================================================
+# Layers a dedicated managed clusterset (`openshift-ai`) onto a hub profile, for SPOKE clusters that
+# run RHOAI Models-as-a-Service. Add the AI spoke to the `openshift-ai` ManagedClusterSet
+# (label cluster.open-cluster-management.io/clusterset=openshift-ai) and bind that set to the policy
+# namespace (ManagedClusterSetBinding) so AutoShift places on it.
+#
+#   helm ... \
+#     -f values/global.yaml \
+#     -f values/clustersets/hub-minimal.yaml \      # a hub profile (defines hubClusterSets)
+#     -f values/clustersets/openshift-ai.yaml       # this: the managed AI clusterset
+#
+# Installs the RHOAI operator + DataScienceCluster (sourced from redhat-ai-services/ai-accelerator),
+# the GPU floor (Node Feature Discovery + NVIDIA GPU operator), and the MaaS platform dependencies
+# (CloudNativePG, cert-manager + built-in CA, External Secrets) that the MaaS overlay requires.
+#
+# Notes:
+#   - GPU: meaningful only on clusters with GPU nodes. For CPU-only RHOAI, drop gpu-operator + mig and
+#     use overlay instance-3.x/base (minimal DSC) — which also lets you drop the cloudnative-pg /
+#     cert-manager / external-secrets deps below (those are MaaS-only).
+#   - aiAccelerator.overlay: instance-3.x/base = minimal DSC (dashboard only); the
+#     instance-3.x/overlays/stable-3.x-nvidia-gpu overlays add the full MaaS + GPU stack (KServe-MaaS,
+#     CNPG Postgres, inference Gateway, RHOAI auth). Match the overlay to openshift-ai-channel.
+#   - ca-issuer: the ai-accelerator maas-postgres-cnpg Certificate hardcodes a ClusterIssuer named
+#     `ca-issuer`; a kustomize patch in the openshift-ai policy rewrites its issuerRef to AutoShift's
+#     built-in `autoshift-ca` (requires cert-manager-ca, enabled below).
+# ==============================================================================
+
+aiAccelerator:
+  repo: github.com/redhat-ai-services/ai-accelerator
+  ref: maas                                              # branch/tag/SHA; pin a SHA for reproducibility
+  overlay: instance-3.x/overlays/stable-3.4-nvidia-gpu   # full MaaS+GPU; instance-3.x/base = minimal DSC
+
+managedClusterSets:
+  openshift-ai:
+    labels:
+      # --- Node Feature Discovery (RHOAI / GPU floor) ---
+      node-feature-discovery: 'true'
+      node-feature-discovery-subscription-name: nfd
+      node-feature-discovery-channel: stable
+      node-feature-discovery-source: redhat-operators
+      node-feature-discovery-source-namespace: openshift-marketplace
+      node-feature-discovery-version: ''            # '' = latest on channel
+      # --- NVIDIA GPU Operator (floor; requires GPU nodes) ---
+      gpu-operator: 'true'
+      gpu-operator-subscription-name: gpu-operator-certified
+      gpu-operator-channel: stable
+      gpu-operator-source: certified-operators
+      gpu-operator-source-namespace: openshift-marketplace
+      gpu-operator-version: ''
+      gpu-mig-strategy: single                      # none | single | mixed
+      # --- Red Hat Connectivity Link (Kuadrant) — MaaS inference gateway backend ---
+      connectivity-link: 'true'
+      connectivity-link-subscription-name: rhcl-operator
+      connectivity-link-channel: stable
+      connectivity-link-source: redhat-operators
+      connectivity-link-source-namespace: openshift-marketplace
+      connectivity-link-version: ''
+      # --- OpenShift AI (RHOAI) ---
+      openshift-ai: 'true'
+      openshift-ai-subscription-name: rhods-operator
+      openshift-ai-channel: stable-3.4
+      openshift-ai-source: redhat-operators
+      openshift-ai-source-namespace: openshift-marketplace
+      openshift-ai-version: ''
+      # The DataScienceCluster is configured entirely by the ai-accelerator overlay above — AutoShift
+      # delivers it unpatched. Change the DSC by choosing repo/ref/overlay, not with labels.
+      # --- MaaS platform dependencies (required by the stable-3.x-nvidia-gpu overlay; drop for base) ---
+      # CloudNativePG provisions the MaaS Postgres; External Secrets syncs its DB-config secret;
+      # cert-manager (+ built-in CA) issues the Postgres TLS cert.
+      cloudnative-pg: 'true'
+      cloudnative-pg-subscription-name: cloudnative-pg
+      cloudnative-pg-channel: stable-v1
+      cloudnative-pg-source: certified-operators
+      cloudnative-pg-source-namespace: openshift-marketplace
+      external-secrets-operator: 'true'
+      external-secrets-operator-subscription-name: openshift-external-secrets-operator
+      external-secrets-operator-channel: stable-v1
+      external-secrets-operator-source: redhat-operators
+      external-secrets-operator-source-namespace: openshift-marketplace
+      cert-manager: 'true'
+      cert-manager-subscription-name: openshift-cert-manager-operator
+      cert-manager-channel: stable-v1
+      cert-manager-source: redhat-operators
+      cert-manager-source-namespace: openshift-marketplace
+      cert-manager-ca: 'true'
+      # --- User Workload Monitoring (MaaS Showback/FinOps prerequisite) ---
+      uwm: 'true'
+    config:
+      # UWM stack sizing (read by the user-workload-monitoring policy via rendered-config).
+      uwm:
+        storageClass: gp3-csi
+        prometheus:
+          retention: 24h
+          storage: 50Gi
+        thanosRuler:
+          retention: 24h
+          storage: 10Gi
+      # NFD: keep the GPU-safe worker default (omit workerConfig); add the virtualization-capable rule.
+      nodeFeatureDiscovery:
+        nodeFeatureRules:
+          - name: virtualization-capable
+            labels:
+              virtualization-capable: "true"
+            matchAny:
+              - matchFeatures:
+                  - feature: cpu.cpuid
+                    matchExpressions:
+                      VMX: { op: Exists }
+                  - feature: kernel.loadedmodule
+                    matchExpressions:
+                      kvm_intel: { op: Exists }
+              - matchFeatures:
+                  - feature: cpu.cpuid
+                    matchExpressions:
+                      SVM: { op: Exists }
+                  - feature: kernel.loadedmodule
+                    matchExpressions:
+                      kvm_amd: { op: Exists }

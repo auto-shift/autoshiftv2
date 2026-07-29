@@ -10,6 +10,8 @@ metadata:
 # automatically — no edit to this file needed. Only edit this file to change the policy graph
 # itself (names, dependencies, per-policy remediation). Keep placement.yaml OUT of manifests/
 # (a Placement inside a wildcarded dir would be wrapped into the Policy as a managed object).
+placementBindingDefaults:
+  name: binding-policy-external-secrets-operator
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
   # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
@@ -34,4 +36,11 @@ policyDefaults:
 policies:
   - name: policy-external-secrets-operator-install
     manifests:
-      - path: manifests
+      - path: manifests/operator-install
+  # Controller instance (ExternalSecretsConfig singleton). The operator ships the CRD; this CR spins up
+  # the controllers that reconcile ExternalSecrets. Depends on the install so the CRD exists first.
+  - name: policy-external-secrets-operator-config
+    dependencies:
+      - name: policy-external-secrets-operator-install
+    manifests:
+      - path: manifests/config

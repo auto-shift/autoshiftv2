@@ -85,6 +85,9 @@ func KustomizeBuild(policyDir string) (string, error) {
 		"${EVAL_COMPLIANT}", "watch",
 		"${EVAL_NONCOMPLIANT}", "watch",
 		"${CLUSTER_SET_SUFFIX}", "",
+		"${AI_ACCELERATOR_REPO}", "github.com/redhat-ai-services/ai-accelerator",
+		"${AI_ACCELERATOR_REF}", "main",
+		"${AI_ACCELERATOR_OVERLAY}", "instance-3.x/base",
 	)
 	work, err := os.MkdirTemp("", "autoshift-kustomize-*")
 	if err != nil {

@@ -1,0 +1,55 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: openshift-ai
+# Hybrid RHOAI (OpenShift AI) policy. AutoShift installs ONLY the operator (OperatorPolicy) and delivers
+# the DataScienceCluster / DSCInitialization config; RHOAI is a meta-operator, so any DSC component set to
+# Managed is installed and OWNED by RHOAI — do NOT also enable AutoShift's overlapping operator policies
+# (openshift-pipelines / external-secrets / servicemesh / serverless) on a RHOAI clusterset.
+#
+# The DSC/DSCI (plus the rest of the ai-accelerator base — Namespace, GatewayClass, OdhDashboardConfig)
+# are SOURCED LIVE from redhat-ai-services/ai-accelerator's kustomize at render time: baked into the OCI
+# artifact once in CI (`make render-policy-charts` pulls ${AI_ACCELERATOR_REF}, default main), and
+# live-fetched by the CMP in git mode. AutoShift delivers the DSC unmodified — the overlay is the source
+# of truth (change repo/ref/overlay, not labels). PolicyGenerator runs manifests/dsc as a nested kustomize
+# and wraps the result in a ConfigurationPolicy. Per-deployment ${...} tokens live here + placement.yaml only.
+placementBindingDefaults:
+  name: binding-policy-openshift-ai
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) RHOAI operator install (Namespace + first-class OperatorPolicy). Label-driven channel/source.
+  - name: policy-openshift-ai-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) DataScienceCluster + DSCInitialization, sourced live from ai-accelerator (manifests/dsc). Depends on
+  #    the operator so the DSC CRDs exist before this applies. musthave (default) asserts the ai-accelerator
+  #    config without fighting RHOAI's own status mutations.
+  - name: policy-openshift-ai-dsc
+    # ACM templating is DISABLED for this policy. The MaaS ExternalSecret carries ESO's own {{ }} syntax
+    # ({{ .fqdn_uri_var }}) which ACM would otherwise try — and fail — to resolve. disable-templates is
+    # only honored at the policy level (object-level annotations are ignored inside a consolidated
+    # ConfigurationPolicy), and AutoShift delivers this bundle verbatim (no hub-templating), so disabling
+    # here is free. If AutoShift ever needs to hub-template a DSC field, drop the ESO ExternalSecret first
+    # (handle that secret natively) and re-enable templates.
+    configurationPolicyAnnotations:
+      policy.open-cluster-management.io/disable-templates: "true"
+    dependencies:
+      - name: policy-openshift-ai-operator-install
+    manifests:
+      - path: manifests/dsc

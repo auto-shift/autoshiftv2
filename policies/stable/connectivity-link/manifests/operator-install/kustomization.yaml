@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Renders the shared components/operator-install chart. Label-driven subscription. rhcl is a global
+# (AllNamespaces) operator, so no targetNamespaces.
+helmGlobals:
+  chartHome: ../../../../../components/
+helmCharts:
+  - name: operator-install
+    releaseName: connectivity-link
+    valuesInline:
+      name: connectivity-link
+      namespace: kuadrant-system
+      remediation: ${REMEDIATION}
+      subscription:
+        name: '{{hub index .ManagedClusterLabels "autoshift.io/connectivity-link-subscription-name" | default "rhcl-operator" hub}}'
+        channel: '{{hub index .ManagedClusterLabels "autoshift.io/connectivity-link-channel" | default "stable" hub}}'
+        source: '{{hub $base := (index .ManagedClusterLabels "autoshift.io/connectivity-link-source" | default "redhat-operators") hub}}{{hub ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}'
+        sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/connectivity-link-source-namespace" | default "openshift-marketplace" hub}}'
+        # $v (version label) is set here and reused by versions below (same policy, resolves first).
+        startingCSV: |-
+          {{hub- $v := (index .ManagedClusterLabels "autoshift.io/connectivity-link-version" | default "") hub}}
+          {{hub- $v hub}}
+      # versions = [] when no version label (let OLM pick), else [<version>] to pin.
+      versions: '{{hub ternary (list) (list $v) (empty $v) | toRawJson | toLiteral hub}}'

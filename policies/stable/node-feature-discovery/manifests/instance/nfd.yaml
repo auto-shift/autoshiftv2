@@ -1,0 +1,50 @@
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $nfd := (index $cfg "nodeFeatureDiscovery" | default dict) hub}}
+  {{hub- $wc := (index $nfd "workerConfig" | default "") hub}}
+  {{hub- $rules := (index $nfd "nodeFeatureRules" | default (list)) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: nfd.openshift.io/v1
+      kind: NodeFeatureDiscovery
+      metadata:
+        name: nfd-instance
+        namespace: openshift-nfd
+      spec:
+        enableTaints: false
+        instance: ""
+        operand:
+          # No image pin: the operator defaults the operand image to its own version. AutoShift hits many
+          # OCP versions, so a hardcoded tag would pull the wrong operand.
+          imagePullPolicy: IfNotPresent
+        prunerOnDelete: false
+        topologyUpdater: false
+        workerConfig:
+          configData: |
+  {{hub- if $wc hub}}
+            {{hub $wc | autoindent hub}}
+  {{hub- else hub}}
+            core:
+              sleepInterval: 60s
+            sources:
+              pci:
+                deviceClassWhitelist:
+                  - "0200"
+                  - "03"
+                  - "12"
+                deviceLabelFields:
+                  - "vendor"
+  {{hub- end hub}}
+  {{hub- if $rules hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: nfd.openshift.io/v1alpha1
+      kind: NodeFeatureRule
+      metadata:
+        name: autoshift-nfd-rules
+        namespace: openshift-nfd
+      spec:
+        rules:
+          {{hub $rules | toYaml | autoindent hub}}
+  {{hub- end hub}}
