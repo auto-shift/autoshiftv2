@@ -1,0 +1,31 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: hosted-control-planes
+# Enables HyperShift / Hosted Control Planes on the hub by turning on the `hypershift` and
+# `hypershift-local-hosting` components of the existing MultiClusterEngine (created by the ACM
+# MultiClusterHub). Hub-targeted (the MCE lives on the hub); gated by the autoshift.io/hcp label.
+# The enablement is a first-class ConfigurationPolicy (manifests/enable-hypershift.yaml) that reads
+# the live MCE and flips only those two components, so the rest of the component list is preserved.
+placementBindingDefaults:
+  name: binding-policy-hcp
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-hcp-enable-hypershift
+    manifests:
+      - path: manifests/enable-hypershift.yaml

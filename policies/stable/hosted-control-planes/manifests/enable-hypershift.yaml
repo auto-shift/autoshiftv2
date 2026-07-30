@@ -1,0 +1,39 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: ConfigurationPolicy
+metadata:
+  name: enable-hypershift
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # Hosted Control Planes are enabled through the MultiClusterEngine's `hypershift` and
+  # `hypershift-local-hosting` components (not an OLM Subscription). The MCE is owned by the ACM
+  # MultiClusterHub, so we read the live component list and flip ONLY those two to enabled, then
+  # re-apply the whole list with mustonlyhave — this preserves every other MCE component and avoids
+  # the duplicate entries a plain musthave on a list would create. Skipped until the MCE exists.
+  object-templates-raw: |
+    {{hub- $mce := (lookup "multicluster.openshift.io/v1" "MultiClusterEngine" "" "multiclusterengine") hub}}
+    {{hub- if $mce hub}}
+    {{hub- $components := (dig "spec" "overrides" "components" (list) $mce) hub}}
+    {{hub- $out := list hub}}
+    {{hub- $have := dict hub}}
+    {{hub- range $c := $components hub}}
+      {{hub- $n := (dig "name" "" $c) hub}}
+      {{hub- $_ := set $have $n true hub}}
+      {{hub- if or (eq $n "hypershift") (eq $n "hypershift-local-hosting") hub}}
+      {{hub- $out = append $out (merge (dict "enabled" true) $c) hub}}
+      {{hub- else hub}}
+      {{hub- $out = append $out $c hub}}
+      {{hub- end hub}}
+    {{hub- end hub}}
+    {{hub- if not (hasKey $have "hypershift") hub}}{{hub- $out = append $out (dict "name" "hypershift" "enabled" true) hub}}{{hub- end hub}}
+    {{hub- if not (hasKey $have "hypershift-local-hosting") hub}}{{hub- $out = append $out (dict "name" "hypershift-local-hosting" "enabled" true) hub}}{{hub- end hub}}
+    - complianceType: mustonlyhave
+      objectDefinition:
+        apiVersion: multicluster.openshift.io/v1
+        kind: MultiClusterEngine
+        metadata:
+          name: multiclusterengine
+        spec:
+          overrides:
+            components: {{hub $out | toRawJson hub}}
+    {{hub- end hub}}
