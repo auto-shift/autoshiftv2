@@ -4,15 +4,17 @@ metadata:
   name: placement-policy-cluster-set-assignment
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Runs on the hub (autoshift.io/self-managed is a hub-only label). The policy reads rendered-config
-  # ConfigMaps and stamps ManagedCluster clusterset labels — hub-side work, like cluster-install /
-  # cluster-labels. It is a no-op for clusters without config.clusterSet.
+  # Runs on the hub: the policy reads rendered-config ConfigMaps and stamps ManagedCluster clusterset
+  # labels — hub-side work, like cluster-install / cluster-labels. cluster-type: hub selects
+  # hub-clusterset members. It is a no-op for clusters without config.clusterSet.
   predicates:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/self-managed'
-              operator: Exists
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
