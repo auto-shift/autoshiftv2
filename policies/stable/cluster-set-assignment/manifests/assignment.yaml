@@ -16,7 +16,10 @@ object-templates-raw: |
   {{-     $target := printf "%s%s" $clusterSet $suffix }}
   {{-     $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" $clusterName) | default dict }}
   {{-     $mcOwningNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) }}
-  {{-     if (or (empty $mc) (eq $mcOwningNs "") (eq $mcOwningNs $cm.metadata.namespace)) }}
+  {{- /* Only stamp a cluster that is already registered: musthave would otherwise CREATE a bare,
+         unimportable ManagedCluster. A cluster being provisioned gets its clusterset from
+         cluster-install, and is stamped here once it registers. */ -}}
+  {{-     if and (not (empty $mc)) (or (eq $mcOwningNs "") (eq $mcOwningNs $cm.metadata.namespace)) }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: cluster.open-cluster-management.io/v1
