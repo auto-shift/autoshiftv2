@@ -24,7 +24,12 @@ object-templates-raw: |
       {{- $hubDNS := (lookup "config.openshift.io/v1" "DNS" "" "cluster") | default dict }}
       {{- $baseDomain = (splitList "." (dig "spec" "baseDomain" "" $hubDNS) | rest | join ".") }}
       {{- end }}{{- $fips := (eq (printf "%v" (index $ci "fips" | default false)) "true") }}
-      {{- $managedClusterSet := (printf "%s${CLUSTER_SET_SUFFIX}" (index $config "clusterSet" | default "default")) }}
+      {{- /* config.clusterSetVersion pins the clusterset to a specific release; otherwise this
+             deployment's own suffix is used. cluster-set-assignment applies the identical rule. */ -}}
+      {{- $csVersion := (printf "%v" (index $config "clusterSetVersion" | default "")) }}
+      {{- $csSuffix := "${CLUSTER_SET_SUFFIX}" }}
+      {{- if ne $csVersion "" }}{{- $csSuffix = printf "-%s" ($csVersion | replace "." "-" | replace "/" "-" | lower) }}{{- end }}
+      {{- $managedClusterSet := (printf "%s%s" (index $config "clusterSet" | default "default") $csSuffix) }}
       {{- $sshPublicKey := (index $ci "sshPublicKey" | default "") }}
       {{- $sshPublicKeyRef := (index $ci "sshPublicKeyRef" | default dict) }}
       {{- if not (empty $sshPublicKeyRef) }}

@@ -33,6 +33,7 @@ spec:
             {{ "{{-" }} $managedClusterLookupResult := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "}}" }}
             {{ "{{-" }} $allClusterConfigs := (dict) {{ "}}" }}
             {{ "{{-" }} $allClusterSetConfigs := (dict) {{ "}}" }}
+            {{ "{{-" }} $clusterSetBaseIndex := (dict) {{ "}}" }}
             {{ "{{-" }} $clusterConfigMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-configs") | default dict {{ "}}" }}
             {{ "{{-" }} $clusterSetConfigMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/cluster-set-configs") | default dict {{ "}}" }}
             {{ "{{-" }} $defaultConfigs := (dict) {{ "}}" }}
@@ -57,6 +58,12 @@ spec:
                 {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} $clusterSetConfig := (index $clusterSetConfigMap.data "config" | default "{}" | fromJson) {{ "}}" }}
                 {{ "{{-" }} $_ := set (index $allClusterSetConfigs $cm.metadata.namespace) $clusterSetName $clusterSetConfig{{ "}}" }}
+                ##### UNSUFFIXED NAME -> CLUSTER SET NAME, PER NAMESPACE #####
+                {{ "{{-" }} if not (hasKey $clusterSetBaseIndex $cm.metadata.namespace) {{ "}}" }}
+                  {{ "{{-" }} $_ := set $clusterSetBaseIndex $cm.metadata.namespace (dict) {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $clusterSetBase := (index $clusterSetConfigMap.data "clusterSetBase" | default $clusterSetName) {{ "}}" }}
+                {{ "{{-" }} $_ := set (index $clusterSetBaseIndex $cm.metadata.namespace) $clusterSetBase $clusterSetName {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             ##### CLUSTER CONFIG MAPS ####
@@ -67,7 +74,9 @@ spec:
                 {{ "{{-" }} $clusterName := ($clusterConfigMap.metadata.name | replace "managed-cluster-config." "") {{ "}}" }}
                 {{ "{{-" }} $wrapper := (dict $clusterNs (dict $clusterName $clusterConfig)) {{ "}}" }}
                 {{ "{{-" }} $allClusterConfigs = merge $wrapper $allClusterConfigs {{ "}}" }}
-                {{ "{{-" }} $clusterSetName := ($clusterConfig.clusterSet | default "") {{ "}}" }}
+                ##### config.clusterSet has no version suffix; resolve it to the real name first #####
+                {{ "{{-" }} $clusterSetBase := ($clusterConfig.clusterSet | default "") {{ "}}" }}
+                {{ "{{-" }} $clusterSetName := (dig $clusterNs $clusterSetBase $clusterSetBase $clusterSetBaseIndex) {{ "}}" }}
                 {{ "{{-" }} $clusterSetConfig := (dig $clusterNs $clusterSetName (dict) $allClusterSetConfigs )  {{ "}}" }}
                 {{ "{{-" }} $defaultConfig := (index $defaultConfigs $clusterNs | default dict)  {{ "}}" }}
                 {{ "{{-" }} $renderedConfig := (dict) {{ "}}" }}

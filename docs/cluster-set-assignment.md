@@ -21,9 +21,11 @@ The `cluster-set-assignment` policy composes the target clusterset and stamps
 
 - **`clusterSetVersion` set** → target = `<clusterSet>-<sanitized version>` (e.g. `managed-0-0-2`). This
   is the git-driven rollover knob — the suffix comes from the value, **not** the deployment's own version.
-- **`clusterSetVersion` omitted** → target = `<clusterSet><this deployment's ${CLUSTER_SET_SUFFIX}>`
-  (matches cluster-install's provisioning behavior, so the two never fight).
+- **`clusterSetVersion` omitted** → target = `<clusterSet><this deployment's ${CLUSTER_SET_SUFFIX}>`.
 - **`clusterSet` omitted** → the policy does nothing; manage the clusterset however you like.
+
+`cluster-install` composes the clusterset for a cluster it provisions with the **same rule**, so a cluster
+being installed and then assigned never lands in two different clustersets.
 
 ## Ownership: hands off, never steals
 
