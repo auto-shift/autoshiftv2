@@ -135,7 +135,13 @@ spec:
       # operator-provided shared volumes (confirmed against the proven feature/policy-generator branch).
       - name: policy-generator
         command: [/var/run/argocd/argocd-cmp-server]
+        {{- /* On a first install the repo-server Deployment does not exist yet, so the lookup above
+               finds nothing. Emitting `image: null` is rejected by the ArgoCD CRD on some versions;
+               omitting the key lets the operator default it to the repo-server image, which is what
+               this sidecar wants anyway. */}}
+        {{- if $argoImage }}
         image: {{ $argoImage }}
+        {{- end }}
         securityContext:
           runAsNonRoot: true
         env:
