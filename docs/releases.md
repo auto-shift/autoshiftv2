@@ -23,9 +23,9 @@ AutoShift Chart (from OCI)
     |
 ApplicationSet with List Generator
     |
-Reads policy-list.txt (generated at release time)
+Reads policy-list.txt (generated at release time; every policy is a Helm chart)
     |
-Deploys each policy chart from OCI registry
+Deploys each policy from the OCI registry (Helm chart or PolicyGenerator artifact)
 ```
 
 The OCI chart includes a `files/policy-list.txt` that is **automatically generated during the release process** by discovering all policies in the `policies/` directory. No manual maintenance is required.
@@ -51,10 +51,10 @@ quay.io/autoshift/
 │   └── advanced-cluster-management  # Bootstrap chart for ACM operator
 ├── autoshift                      # Main chart (ApplicationSet)
 └── policies/
-    ├── openshift-gitops           # Policy chart (takes over GitOps)
-    ├── advanced-cluster-management # Policy chart (takes over ACM)
-    ├── advanced-cluster-security
-    └── ... (additional policy charts)
+    ├── openshift-gitops           # Policy: Helm chart (takes over GitOps)
+    ├── advanced-cluster-management # Policy: PolicyGenerator (takes over ACM)
+    ├── advanced-cluster-security  # Policy: PolicyGenerator
+    └── ... (additional policies: mostly PolicyGenerator dirs, a few Helm charts)
 ```
 
 All charts share the same version number, set during the release process.
@@ -67,7 +67,7 @@ When deploying from OCI, three values control the behavior. These are set automa
 # Enable OCI mode (boolean, not a URL)
 autoshiftOciRegistry: true
 
-# OCI path where policy charts are published
+# OCI path where policies are published (Helm charts + PolicyGenerator artifacts)
 autoshiftOciRepo: oci://quay.io/autoshift/policies
 
 ```
@@ -77,9 +77,9 @@ autoshiftOciRepo: oci://quay.io/autoshift/policies
 AutoShift releases consist of multiple Helm charts:
 - **2 bootstrap charts**: `openshift-gitops`, `advanced-cluster-management`
 - **1 main chart**: `autoshift` (ApplicationSet)
-- **Policy charts**: ACM policies for Day 2 operations (one per `policies/` subdirectory)
+- **Policies**: ACM policies for Day 2 operations (one per `policies/` subdirectory) — mostly PolicyGenerator dirs, plus a few Helm charts (openshift-gitops, policy-foundation, cluster-labels, cluster-config-maps)
 
-All charts are version-synchronized and published to an OCI registry. Released charts are completely self-contained with no Git repository access required at runtime.
+All artifacts are version-synchronized and published to an OCI registry. Released artifacts are completely self-contained with no Git repository access required at runtime.
 
 ## Prerequisites
 
@@ -256,24 +256,42 @@ When enabled, AutoShift:
 
 ## Disconnected / Air-Gapped Environments
 
-For disconnected environments, mirror the released charts to an internal registry:
+For disconnected environments, mirror the released artifacts to an internal registry.
+
+> **One artifact type.** Every AutoShift policy ships as a **Helm chart** under `oci://<registry>/policies/<name>`
+> — the hand-authored holdout charts and the PolicyGenerator policies (rendered to stock Helm charts in CI by
+> `make render-policy-charts`). All are listed in `policy-list.txt`; `helm pull` works on every one. The
+> policy-generator CMP is never used for OCI.
+
+**Recommended — the ImageSet generator.** It discovers every AutoShift artifact (main chart, bootstrap charts,
+all policy charts, plus the operator images each enabled policy needs) and emits an
+`ImageSetConfiguration` for `oc mirror`:
+
+```bash
+make generate-imageset VERSION=X.Y.Z
+# or call the script directly with your values files:
+bash scripts/generate-imageset-config.sh \
+  autoshift/values/global.yaml,autoshift/values/clustersets/hub.yaml \
+  --output imageset-config.yaml --include-autoshift-charts
+
+oc mirror --config imageset-config.yaml docker://registry.example.com
+```
+
+**Manual alternative** — copy the OCI artifacts registry-to-registry with `oras` (all policies are Helm charts):
 
 ```bash
 VERSION="X.Y.Z"  # Replace with desired version
+SRC="quay.io/autoshift"
+DST="registry.example.com/autoshift"
 
-# Pull all charts from source registry
-helm pull oci://quay.io/autoshift/autoshift --version ${VERSION}
-helm pull oci://quay.io/autoshift/bootstrap/openshift-gitops --version ${VERSION}
-helm pull oci://quay.io/autoshift/bootstrap/advanced-cluster-management --version ${VERSION}
-
-# Pull policy charts (use the policy-list.txt from the release)
-for policy in $(cat policy-list.txt); do
-  helm pull oci://quay.io/autoshift/policies/$policy --version ${VERSION}
+# Main chart + bootstrap charts
+for ref in autoshift bootstrap/openshift-gitops bootstrap/advanced-cluster-management; do
+  oras cp ${SRC}/${ref}:${VERSION} ${DST}/${ref}:${VERSION}
 done
 
-# Push to internal registry
-for chart in *.tgz; do
-  helm push $chart oci://harbor.internal.com/autoshift
+# All policy charts (from policy-list.txt)
+for policy in $(cat policy-list.txt); do
+  oras cp ${SRC}/policies/${policy}:${VERSION} ${DST}/policies/${policy}:${VERSION}
 done
 ```
 
@@ -281,10 +299,8 @@ Update the OCI values to point to your internal registry:
 
 ```yaml
 autoshiftOciRegistry: true
-autoshiftOciRepo: oci://harbor.internal.com/autoshift/policies
+autoshiftOciRepo: oci://registry.example.com/autoshift/policies
 ```
-
-AutoShift also provides an ImageSet generator for mirroring operator images. See `scripts/generate-imageset-config.sh` for details.
 
 ## Version Management
 
@@ -343,13 +359,16 @@ oc logs -n openshift-gitops deployment/argocd-applicationset-controller --tail=1
 oc get application.argoproj.io autoshift -n openshift-gitops -o yaml | grep autoshiftOciRegistry
 ```
 
-### Policy charts not found in registry
+### Policy not found in registry
 
 ```bash
-# Pull specific chart to test (omit --version to pull latest)
-helm pull oci://quay.io/autoshift/policies/advanced-cluster-security
+# PolicyGenerator policies (most policies) are OCI artifacts, not Helm charts — inspect with oras:
+oras manifest fetch quay.io/autoshift/policies/advanced-cluster-security:latest
 
-# Verify all charts are the same version
+# Helm policies (cluster-labels, cluster-config-maps, openshift-gitops, policy-foundation) pull with helm:
+helm pull oci://quay.io/autoshift/policies/openshift-gitops
+
+# Verify all Applications are on the same version
 oc get applications.argoproj.io -n openshift-gitops -o custom-columns=NAME:.metadata.name,REVISION:.spec.source.targetRevision | grep autoshift
 ```
 

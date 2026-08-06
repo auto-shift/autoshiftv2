@@ -38,7 +38,7 @@ AutoShift uses a three-phase deployment model:
                          ↓
 ┌────────────────────────────────────────────────────────────┐
 │  Phase 3: Policy Deployment (via ApplicationSet)           │
-│  ├─ ACM Policy Charts (auto-discovered)                    │
+│  ├─ ACM Policies (auto-discovered)                         │
 │  ├─ policies/stable/openshift-gitops (takes over GitOps)          │
 │  └─ policies/stable/advanced-cluster-management (takes over ACM)  │
 └────────────────────────────────────────────────────────────┘
@@ -59,7 +59,7 @@ All hub clusters must have:
 
 ## OCI Registry Structure
 
-Charts are organized in a namespaced structure:
+Artifacts are organized in a namespaced structure:
 
 ```
 quay.io/autoshift/
@@ -68,10 +68,10 @@ quay.io/autoshift/
 │   └── advanced-cluster-management
 ├── autoshift
 └── policies/
-    ├── openshift-gitops
-    ├── advanced-cluster-management
-    ├── advanced-cluster-security
-    └── ... (additional policy charts)
+    ├── openshift-gitops            # Helm chart
+    ├── advanced-cluster-management # PolicyGenerator artifact
+    ├── advanced-cluster-security   # PolicyGenerator artifact
+    └── ... (additional policies: mostly PolicyGenerator artifacts, a few Helm charts)
 ```
 
 ## Support & Contributing

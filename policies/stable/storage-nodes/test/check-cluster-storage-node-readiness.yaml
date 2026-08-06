@@ -1,0 +1,18 @@
+object-templates-raw: |
+  {{- if (eq {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes-provider" | quote hub}} "baremetal") }}
+    {{- $storage_nodes := (lookup "v1" "Node" "" "" "cluster.ocs.openshift.io/openshift-storage").items }}
+    {{- range $storage_nodes }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ .metadata.name }}
+        labels:
+          cluster.ocs.openshift.io/openshift-storage: ''
+      status:
+        conditions:
+          - type: Ready
+            status: 'True'
+    {{- end }}
+  {{- end }}

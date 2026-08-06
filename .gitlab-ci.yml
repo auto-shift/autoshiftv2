@@ -8,7 +8,10 @@ stages:
   - release
 
 variables:
-  HELM_VERSION: "v3.14.0"
+  # renovate: datasource=github-releases depName=helm/helm
+  HELM_VERSION: "v3.16.3"
+  # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
+  GITLEAKS_VERSION: "8.24.3"
   OCP_VERSION: "stable"
   REGISTRY: "quay.io"
   REGISTRY_NAMESPACE: "autoshift"
@@ -27,7 +30,7 @@ variables:
       dnf -y install yq
     - |
       # Install Helm from official releases
-      curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp
+      curl -fsSL https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz | tar xz -C /tmp
       mv /tmp/linux-amd64/helm /usr/local/bin/helm
       chmod +x /usr/local/bin/helm
       helm version
@@ -41,7 +44,7 @@ secret-scan:
   image: registry.access.redhat.com/ubi9/ubi:latest
   before_script:
     - |
-      curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz -C /tmp
+      curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz | tar xz -C /tmp
       mv /tmp/gitleaks /usr/local/bin/gitleaks
       chmod +x /usr/local/bin/gitleaks
   script:
@@ -177,12 +180,15 @@ verify-policy-list:
       fi
 
       POLICY_COUNT=$(wc -l < autoshift/files/policy-list.txt | tr -d ' ')
-      # cluster-labels and cluster-config-maps are deployed as dedicated Applications
-      # (full label/config data), not via the ApplicationSet list, so they are excluded
-      # from policy-list.txt. Keep this in sync with DEDICATED_APP_NAMES in the Makefile.
-      EXPECTED=$(find policies -maxdepth 3 -name Chart.yaml \
+      # A policy ships either as a PolicyGenerator dir (policy-generator-config.yaml) or a
+      # Helm holdout (Chart.yaml). cluster-labels and cluster-config-maps are deployed as
+      # dedicated Applications (full label/config data), not via the ApplicationSet list, so
+      # they are excluded from policy-list.txt. Keep in sync with DEDICATED_APP_NAMES in the Makefile.
+      PG_COUNT=$(find policies -maxdepth 3 -name policy-generator-config.yaml | wc -l | tr -d ' ')
+      CHART_COUNT=$(find policies -maxdepth 3 -name Chart.yaml \
         -not -path 'policies/*/cluster-labels/*' \
         -not -path 'policies/*/cluster-config-maps/*' | wc -l | tr -d ' ')
+      EXPECTED=$((PG_COUNT + CHART_COUNT))
 
       echo "policy-list.txt contains $POLICY_COUNT entries"
       echo "Expected $EXPECTED policies"
@@ -223,6 +229,29 @@ validate-policy-templates:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
 
+# Full policy validation: render every PolicyGenerator + Helm policy, resolve hub/spoke
+# templates against synthetic ACM resources, and enforce the label contract. Mirrors the
+# GitHub "Validate policy rendering and config (ACM resolver)" job. Uses the Go image so the
+# PolicyGenerator CMP toolchain can be installed via `make install-policy-generator`.
+validate-policies:
+  stage: validate
+  image: golang:1.25
+  variables:
+    KUSTOMIZE_BIN: ${CI_PROJECT_DIR}/.tools/kustomize
+    KUSTOMIZE_PLUGIN_HOME: ${CI_PROJECT_DIR}/.tools/kustomize-plugin
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq make
+  script:
+    - |
+      echo "=== Installing kustomize + PolicyGenerator plugin ==="
+      make install-policy-generator
+    - |
+      echo "=== Validating policies (render, hub/spoke resolution, config coverage, label contract) ==="
+      cd tools && go test -tags integration ./... -count=1
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
 # =============================================================================
 # Release Pipeline (runs on tag push)
 # =============================================================================
@@ -241,7 +270,7 @@ release:
       dnf -y install yq
     - |
       # Install Helm from official releases
-      curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp
+      curl -fsSL https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz | tar xz -C /tmp
       mv /tmp/linux-amd64/helm /usr/local/bin/helm
       chmod +x /usr/local/bin/helm
       helm version

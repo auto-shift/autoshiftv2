@@ -1,0 +1,22 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-image-registry
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: the Placement selects across all ManagedClusterSetBindings in this
+  # namespace filtered by the predicate. Both original policies shared the same enable label,
+  # so one Placement (and one PlacementBinding) covers them.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/imageregistry'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

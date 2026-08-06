@@ -1,0 +1,50 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: quay
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests. Keep the
+# hand-authored Placement (placement.yaml) at the dir root, NOT inside a wildcarded manifests dir.
+placementBindingDefaults:
+  name: binding-policy-quay
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # All policies share one hand-authored Placement (predicate autoshift.io/quay).
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-quay-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) Quay enterprise namespace + config bundle Secret + QuayRegistry CR. Waits on the operator
+  #    install and the storage cluster.
+  - name: policy-quay-deploy
+    dependencies:
+      - name: policy-quay-operator-install
+      # Storage-readiness gate that exists in BOTH standard and standalone MCG modes (default ODF
+      # placement) — policy-storage-cluster is standard-only, so depending on it stranded Quay on
+      # standalone-MCG clusters. Matches the -test dependency used by the other ODF dependents.
+      - name: policy-storage-cluster-test
+    manifests:
+      - path: manifests/quay-deploy
+  # 3) Post-deploy configuration (RBAC + admin bootstrap Job). Waits on the deploy.
+  - name: policy-quay-configure
+    dependencies:
+      - name: policy-quay-deploy
+    manifests:
+      - path: manifests/configure-quay-serviceaccount.yaml

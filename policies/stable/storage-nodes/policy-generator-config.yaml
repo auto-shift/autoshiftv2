@@ -1,0 +1,59 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: storage-nodes
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement-*.yaml — never in manifests/ or test/,
+# whose hub templates contain `$vars` that substitution would clobber.
+#
+# Each provider policy has its own placement predicate (aws/vmware/baremetal), so placement is set
+# per policy via placement.placementPath — PG names each generated PlacementBinding after its policy.
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+policies:
+  - name: policy-storage-nodes-aws
+    pruneObjectBehavior: None
+    manifests:
+      - path: manifests/create-storage-nodes-aws.yaml
+    placement:
+      placementPath: placement-aws.yaml
+  - name: policy-storage-nodes-vmware
+    pruneObjectBehavior: None
+    manifests:
+      - path: manifests/create-storage-nodes-vmware.yaml
+    placement:
+      placementPath: placement-vmware.yaml
+  - name: policy-storage-nodes-baremetal
+    pruneObjectBehavior: None
+    manifests:
+      - path: manifests/create-storage-nodes-baremetal.yaml
+    placement:
+      placementPath: placement-baremetal.yaml
+  # test/ holds inform-only status assertions (a status can only be observed). Directory path =
+  # wildcard over all three check-* ConfigurationPolicies.
+  - name: policy-storage-nodes-test
+    remediationAction: inform
+    consolidateManifests: false
+    manifests:
+      - path: test/check-cluster-storage-machineset.yaml
+      - path: test/check-cluster-storage-node-count.yaml
+        customMessage:
+          noncompliant: >
+            ❌ Incorrect number of nodes with storage label discovered;
+            Expected: {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes" hub}}
+      - path: test/check-cluster-storage-node-readiness.yaml
+    placement:
+      placementPath: placement-test.yaml

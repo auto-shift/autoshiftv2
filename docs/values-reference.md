@@ -64,7 +64,7 @@ See `autoshift/README.md` for detailed chart documentation.
 
 Values can be set on a per cluster and clusterset level to decide what features of AutoShift will be applied to each cluster. If a value is defined in helm values, a clusterset label and a cluster label precedence will be **cluster > clusterset > helm** values where helm values is the least.
 
-Helm chart defaults (`values.yaml`) live in each policy's Helm chart under the `policies/` directory (e.g., `policies/stable/openshift-gitops/values.yaml`, `policies/advanced-cluster-security/values.yaml`). These defaults can be overridden by clusterset labels in your `autoshift/values/clustersets/` files, and further overridden by per-cluster labels in `autoshift/values/clusters/`.
+Most policies are PolicyGenerator dirs (no `values.yaml`); their configurable labels and default values are documented in `autoshift/values/clustersets/_example.yaml` — the canonical label catalog. The few policies that remain Helm charts (e.g. `policies/stable/openshift-gitops/`) also carry a `values.yaml` with chart defaults. Either way, values are set via clusterset labels in your `autoshift/values/clustersets/` files and further overridden by per-cluster labels in `autoshift/values/clusters/`.
 
 ## Operator Version Control
 
@@ -210,7 +210,7 @@ created for each replica of the image service. 2GiB per OSImage entry is require
 - **Large (200-500 clusters)**: Consider `acm-addon-cpc-eval-concurrency: '10'`, `acm-addon-cpc-mem-limit: '2Gi'`
 - **Very Large (500+ clusters)**: Consider `acm-addon-cpc-eval-concurrency: '15'`, `acm-addon-cpc-client-qps: '150'`, `acm-addon-cpc-mem-limit: '4Gi'`
 
-> **Note:** Increased concurrency/QPS increases CPU and memory on the controller pods, the Kubernetes API server, and the OpenShift API server. Concurrency/QPS/burst are set via ManagedClusterAddOn annotations per ACM 2.15 docs. Resource limits are set via AddOnDeploymentConfig.
+> **Note:** Increased concurrency/QPS increases CPU and memory on the controller pods, the Kubernetes API server, and the OpenShift API server. Concurrency/QPS/burst are set via ManagedClusterAddOn annotations per ACM 2.17 docs. Resource limits are set via AddOnDeploymentConfig.
 
 ### Cluster Labels
 

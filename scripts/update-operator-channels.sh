@@ -107,7 +107,7 @@ Options:
   -h, --help          Show this help message
 
 The catalog version is auto-detected from the 'openshift-version' label in your
-values files (e.g., openshift-version: '4.20.12' -> v4.20 catalog). Use --catalog
+values files (e.g., openshift-version: '4.20.29' -> v4.20 catalog). Use --catalog
 to override this.
 
 Examples:
@@ -253,7 +253,7 @@ if [[ "$CATALOG_OVERRIDE" == "false" ]]; then
         exit 1
     fi
 
-    # Extract major.minor (e.g., 4.20.12 -> 4.20)
+    # Extract major.minor (e.g., 4.20.29 -> 4.20)
     CATALOG_VERSION=$(echo "$OCP_VERSION" | grep -oE '^[0-9]+\.[0-9]+')
     if [[ -z "$CATALOG_VERSION" ]]; then
         error "Could not parse major.minor from openshift-version: $OCP_VERSION"
@@ -753,7 +753,9 @@ get_current_channel() {
             echo "$current"
             return 0
         fi
-    done < <(get_values_files)
+    # here-string (not process substitution) so the early `return 0` above doesn't abandon a
+    # still-writing producer — that leaves a closed pipe and emits "echo: write error: Broken pipe".
+    done <<< "$(get_values_files)"
 
     # Check policy values file
     local policy_file

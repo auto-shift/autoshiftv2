@@ -1,0 +1,40 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: servicemesh3-ambient
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`
+# runs. They live here and in placement.yaml — never in manifests/, whose hub templates contain
+# `$vars` that substitution would clobber.
+#
+# Pure-config policy: every manifest is a first-class ConfigurationPolicy, so they all pass through
+# unmodified as separate policy-templates under one Policy. Drop a new manifest into manifests/ and
+# it is picked up automatically (path is a directory / wildcard).
+placementBindingDefaults:
+  name: binding-policy-servicemesh3-ambient
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-servicemesh3-ambient
+    # Waits on the operator installs (servicemesh3/kiali/tempo/opentelemetry) and a storage check.
+    dependencies:
+      - name: policy-servicemesh3-operator-install
+      - name: policy-kiali-operator-install
+      - name: policy-tempo-operator-install
+      - name: policy-opentelemetry-operator-install
+      - name: policy-storage-cluster-test
+    manifests:
+      - path: manifests

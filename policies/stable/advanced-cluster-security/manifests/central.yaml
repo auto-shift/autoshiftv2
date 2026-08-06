@@ -1,0 +1,64 @@
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $acs := (index $config "acs" | default dict) hub}}
+  {{hub- $scannerV4 := (index $acs "scannerV4" | default "Enabled") hub}}
+  {{hub- $egress := (index $acs "egressConnectivity" | default "Online") hub}}
+  {{hub- $networkPolicies := (index $acs "networkPolicies" | default "") hub}}
+  {{hub- $vmScanning := (index $acs "vmScanning" | default false) hub}}
+  {{hub- $monitoring := (index $acs "monitoring") hub}}
+  {{hub- $auth := (index $acs "auth" | default dict) hub}}
+  {{hub- $authProvider := (index $auth "provider" | default "openshift") hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: platform.stackrox.io/v1alpha1
+      kind: Central
+      metadata:
+        namespace: stackrox
+        name: stackrox-central-services
+      spec:
+        central:
+          exposure:
+            loadBalancer:
+              enabled: false
+              port: 443
+            nodePort:
+              enabled: false
+            route:
+              enabled: true
+          persistence:
+            persistentVolumeClaim:
+              claimName: stackrox-db
+          {{hub- if $authProvider hub}}
+          declarativeConfiguration:
+            configMaps:
+              - name: acs-declarative-configs
+          {{hub- end hub}}
+        egress:
+          connectivityPolicy: '{{hub $egress hub}}'
+        scanner:
+          analyzer:
+            scaling:
+              autoScaling: Enabled
+              maxReplicas: 5
+              minReplicas: 2
+              replicas: 3
+          scannerComponent: Enabled
+        scannerV4:
+          # Central enum is Enabled|Disabled|Default; treat anything other than Disabled as Enabled.
+          scannerComponent: '{{hub ternary "Disabled" "Enabled" (eq $scannerV4 "Disabled") hub}}'
+        {{hub- if ne $monitoring false hub}}
+        monitoring:
+          openshift:
+            enabled: true
+        {{hub- end hub}}
+        {{hub- if $networkPolicies hub}}
+        network:
+          policies: '{{hub $networkPolicies hub}}'
+        {{hub- end hub}}
+        {{hub- if $vmScanning hub}}
+        customize:
+          envVars:
+            - name: ROX_VIRTUAL_MACHINES
+              value: "true"
+        {{hub- end hub}}

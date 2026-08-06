@@ -1,0 +1,24 @@
+# Component C: give transit spokes what they need to auto-unseal against the hub Vault:
+#   1. vault-transit-token — the hub's transit unseal token (mounted as VAULT_TOKEN).
+#   2. vault-transit-ca    — the hub's autoshift-ca PUBLIC cert, so the spoke's transit seal can validate
+#      the hub Vault's Route cert. Each cluster has its OWN autoshift-ca (per-cluster, no key sharing —
+#      see policy-cert-manager-ca), so the spoke canNOT use its own vault-tls ca.crt to trust the hub;
+#      it needs the hub CA's public cert (key never leaves the hub).
+# Both read from the hub via fromSecret (needs hubTemplateOptions.serviceAccountName).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vault-transit-token
+  namespace: vault
+type: Opaque
+data:
+  token: '{{hub fromSecret "vault" "vault-transit-unseal-token" "token" hub}}'
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vault-transit-ca
+  namespace: vault
+type: Opaque
+data:
+  ca.crt: '{{hub fromSecret "cert-manager" "autoshift-ca" "ca.crt" hub}}'

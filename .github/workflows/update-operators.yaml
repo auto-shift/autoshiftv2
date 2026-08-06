@@ -9,8 +9,20 @@ jobs:
   update-operators:
     runs-on: ubuntu-latest
     steps:
+      # App token lets this workflow open PRs (like Dependabot) without enabling
+      # the org-wide "Actions can create and approve PRs" setting. The app is only
+      # granted contents:write + pull-requests:write, so it can create but not approve.
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.AUTOSHIFT_BOT_APP_ID }}
+          private-key: ${{ secrets.AUTOSHIFT_BOT_PRIVATE_KEY }}
+
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install oc CLI
         run: |
@@ -43,15 +55,18 @@ jobs:
       - name: Create PR
         if: steps.changes.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           BRANCH="automation/update-operators-$(date +%Y%m%d)"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
-          git add autoshift/values/
+          # The script edits both autoshift/values/ and policies/*/values.yaml — stage all tracked changes.
+          git add -u
           git commit -m "chore: update operator channels and versions"
           git push origin "$BRANCH"
+          # gh pr create hard-fails if the label is missing; ensure it exists first.
+          gh label create dependencies --color 0366D6 --description "Automated dependency updates" --force >/dev/null 2>&1 || true
           gh pr create \
             --title "chore: update operator channels and versions" \
             --body "$(cat <<'EOF'

@@ -1,0 +1,14 @@
+object-templates-raw: |
+  [
+  {{- $RegistryConfig := lookup "imageregistry.operator.openshift.io/v1" "Config" "" "cluster" -}}
+  {{- if not (empty $RegistryConfig) -}}
+  {{- $spec := $RegistryConfig.spec -}}
+  {{- $newSpec := unset $spec "nodeSelector" -}}
+  {{- $RegistryConfigNoStatus := unset $RegistryConfig "status" -}}
+  {{- $objectDefinition := set $RegistryConfigNoStatus "spec" $newSpec -}}
+  {
+    "complianceType": "mustonlyhave",
+    "objectDefinition": {{ $objectDefinition | toRawJson }}
+  }
+  {{- end -}}
+  ]

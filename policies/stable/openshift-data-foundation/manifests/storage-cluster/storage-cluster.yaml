@@ -1,0 +1,93 @@
+object-templates-raw: |
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: ocs.openshift.io/v1
+      kind: StorageCluster
+      metadata:
+        name: ocs-storagecluster
+        namespace: openshift-storage
+      spec:
+        storageDeviceSets:
+          - config: {}
+            count: '{{hub index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-count" | default "1" | toInt hub}}'
+            dataPVCTemplate:
+              metadata: {}
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                {{hub- if eq (index .ManagedClusterLabels "autoshift.io/local-storage" | default "") "true" hub}}
+                resources:
+                  requests:
+                    storage: '1' # will use whole PV from local storage
+                storageClassName: nvme-storageclass
+                {{hub- else hub}}
+                resources:
+                  requests:
+                    storage: '{{hub index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-size" | default "2Ti" hub}}'
+                storageClassName: '{{hub index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-class-name" | default "gp3-csi" hub}}'
+                {{hub- end hub}}
+                volumeMode: Block
+              status: {}
+            name: ocs-deviceset
+            placement: {}
+            preparePlacement: {}
+            replica: '{{hub index .ManagedClusterLabels "autoshift.io/odf-ocs-storage-replicas" | default "3" | toInt hub}}'
+            resources: {}
+        encryption:
+          clusterWide: true
+          enable: true
+          keyRotation:
+            schedule: '@weekly'
+          kms: {}
+        monDataDirHostPath: '/var/lib/rook'
+        managedResources:
+          cephObjectStoreUsers: {}
+          cephCluster: {}
+          cephBlockPools:
+            defaultStorageClass: true
+          cephNonResilientPools:
+            count: 1
+            resources: {}
+            volumeClaimTemplate:
+              metadata: {}
+              spec:
+                resources: {}
+              status: {}
+          cephObjectStores: {}
+          cephFilesystems:
+            dataPoolSpec:
+              application: ''
+              erasureCoded:
+                codingChunks: 0
+                dataChunks: 0
+              mirroring: {}
+              quotas: {}
+              replicated:
+                size: 0
+              statusCheck:
+                mirror: {}
+          cephRBDMirror:
+            daemonCount: 1
+          cephToolbox: {}
+          cephDashboard: {}
+          cephConfig: {}
+        arbiter: {}
+        multiCloudGateway:
+          reconcileStrategy: manage
+        network:
+          connections:
+            encryption:
+              enabled: true
+          multiClusterService: {}
+          selectors: {}
+      {{hub- if index .ManagedClusterLabels "autoshift.io/odf-ocs-flexible-scaling" hub}}
+        flexibleScaling: {{hub index .ManagedClusterLabels "autoshift.io/odf-ocs-flexible-scaling" hub}}
+      {{hub- else if (and
+        (eq (index .ManagedClusterLabels "autoshift.io/storage-nodes-provider") "baremetal")
+        (ne (sub (index .ManagedClusterLabels "autoshift.io/storage-nodes" | default "0" | toInt)
+          (mul 3 (div (index .ManagedClusterLabels "autoshift.io/storage-nodes" | default "0" | toInt) 3))) 0)) hub}}
+        flexibleScaling: true
+      {{hub- end hub}}
+        nodeTopologies: {}
+        externalStorage: {}
+        resourceProfile: '{{hub index .ManagedClusterLabels "autoshift.io/odf-resource-profile" | default "balanced" hub}}'
