@@ -30,11 +30,21 @@ policyDefaults:
   placement:
     placementPath: placement.yaml
 policies:
-  # Storage backing (PVC or NooBaa ObjectBucketClaim) + a Bound readiness check.
+  # PVC storage backing. Shares the default placement; the manifest is hub-gated on storage-type.
   - name: policy-image-registry-storage
     consolidateManifests: false
     manifests:
       - path: manifests/image-registry-storage.yaml
+  # s3 storage backing, split out because it must wait for ODF. An ObjectBucketClaim created before
+  # the NooBaa StorageClass exists is never reconciled — it stays phaseless instead of retrying.
+  # Own placement (storage-type: s3) so pvc-backed clusters aren't stranded by the ODF dependency.
+  - name: policy-image-registry-storage-s3
+    dependencies:
+      - name: policy-storage-cluster-test
+    placement:
+      placementPath: placement-storage-s3.yaml
+    manifests:
+      - path: manifests/image-registry-storage-s3.yaml
   # Enables the image registry Config; waits on storage to be provisioned.
   - name: policy-image-registry-storage-test
     remediationAction: inform
