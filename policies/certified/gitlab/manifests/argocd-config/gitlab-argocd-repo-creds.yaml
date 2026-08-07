@@ -2,13 +2,22 @@ object-templates-raw: |
   {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{- $gitlabUrl := (printf "https://gitlab.%s" $ingressDomain) }}
   {{- $password := (fromSecret "gitlab-system" "gitlab-gitlab-initial-root-password" "password" | base64dec) }}
+  {{- /* ArgoCD repo-creds must live in every ArgoCD instance that syncs GitLab gitops repos: the infra
+         instance (openshift-gitops) plus each gitops-dev team instance (openshift-gitops-<team>). */}}
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $nsList := list "openshift-gitops" hub}}
+  {{hub- range $team, $_ := (dig "gitops" "teams" dict $cfg) hub}}
+  {{hub- $nsList = append $nsList (printf "openshift-gitops-%s" $team) hub}}
+  {{hub- end hub}}
+  {{hub- range $argoNs := $nsList hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
       kind: Secret
       metadata:
         name: gitlab-repo-creds
-        namespace: openshift-gitops
+        namespace: {{hub $argoNs hub}}
         labels:
           argocd.argoproj.io/secret-type: repo-creds
       type: Opaque
@@ -17,3 +26,4 @@ object-templates-raw: |
         username: root
         password: {{ $password }}
         type: git
+  {{hub- end hub}}

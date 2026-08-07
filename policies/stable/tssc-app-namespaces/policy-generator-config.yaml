@@ -1,0 +1,32 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: tssc-app-namespaces
+# Per-application pipeline namespaces + secret propagation for the RHADS/TSSC flow. Everything is
+# driven by config.appNamespaces (rendered-config) — no per-cluster labels beyond the dev-hub gate.
+# Needs the elevated SA to read the source secrets (pull-secret, signing-secrets, integration secrets).
+placementBindingDefaults:
+  name: binding-policy-tssc-app-namespaces
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-tssc-app-namespaces
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: manifests/app-namespaces.yaml

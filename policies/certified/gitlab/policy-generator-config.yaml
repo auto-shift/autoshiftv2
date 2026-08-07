@@ -37,21 +37,24 @@ policies:
   - name: policy-gitlab-operator-install
     manifests:
       - path: manifests/operator-install
-  # 1-check) Prereqs verification (inform): the DB/redis/object-storage connection secrets are created by
-  # the CNPG/redis/object-storage policies — VERIFY they exist, never enforce (enforce would create empty
-  # placeholder secrets and clobber the real ones). Its own Policy so the enforce roots can't override it.
-  - name: policy-gitlab-instance-prereqs
+  # 2-prereq) Presence check for the CR's external deps (db/redis/object-storage connection
+  #   Secrets + CM). INFORM-only: those are produced by the CNPG/redis/OBC policies (or the admin),
+  #   never by GitLab — creating empty placeholders here would shadow the real generators.
+  - name: policy-gitlab-prereqs
     remediationAction: inform
     dependencies:
       - name: policy-gitlab-operator-install
     manifests:
-      - path: test/gitlab-instance-prereqs.yaml
-  # 2) GitLab instance CR (enforce, from policyDefaults). Its own readiness gates wait for the prereq secrets.
+      - path: test/gitlab-prereqs.yaml
+  # 2) GitLab instance CR (enforce, from policyDefaults). Self-gates on the prereqs above via lookups.
+  #    hub SA: reads the rendered-config ConfigMap (config.gitlab.tlsIssuer) on the hub.
   - name: policy-gitlab-instance
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-gitlab-operator-install
     manifests:
-      - path: manifests/instance
+      - path: manifests/instance/gitlab-instance.yaml
   # 2-test) GitLab CR readiness (status observation → inform, its own Policy in test/).
   - name: policy-gitlab-instance-test
     remediationAction: inform
@@ -79,12 +82,32 @@ policies:
       - path: manifests/redis
   # 5) ArgoCD integration (repo creds + TLS cert).
   - name: policy-gitlab-argocd-config
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-gitlab-instance
     placement:
       placementPath: placement-argocd.yaml
     manifests:
       - path: manifests/argocd-config
+  # 5-rhads) Mint a root PAT into tssc-gitlab-credentials for the RHADS/dev-hub flow. In-cluster Job
+  #   (gitlab-rails runner in the toolbox) — same pattern as the ACS token Job. Only emits when dev-hub
+  #   is enabled (gated in the manifest). Depends on GitLab being Ready so the toolbox + routes exist.
+  - name: policy-gitlab-tssc-credentials
+    dependencies:
+      - name: policy-gitlab-instance-test
+    manifests:
+      - path: manifests/tssc-gitlab-credentials.yaml
+  # Keycloak -> GitLab group sync CronJob. Hub-reads the rhdh client secret from tssc-keycloak-config, so it
+  # needs the elevated policy service account. Only renders when Keycloak (rhdh client) is configured.
+  # Depends on instance-test (GitLab up), NOT tssc-credentials: the token Job leaves that policy chronically
+  # NonCompliant (immutable completed Job), which would block this forever. The CronJob self-heals if the
+  # tssc-gitlab-credentials secret isn't there yet (it retries on the next schedule).
+  - name: policy-gitlab-keycloak-group-sync
+    dependencies:
+      - name: policy-gitlab-instance-test
+    manifests:
+      - path: manifests/keycloak-group-sync.yaml
   # 6) CNPG PostgreSQL cluster (enforce, from policyDefaults).
   - name: policy-cnpg-gitlab
     dependencies:

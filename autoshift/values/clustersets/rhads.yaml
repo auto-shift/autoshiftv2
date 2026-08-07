@@ -1,0 +1,184 @@
+# =============================================================================
+# Red Hat Advanced Developer Suite (RHADS / TSSC) — end-to-end pipelines overlay
+# =============================================================================
+# Composable overlay that turns on the full RHADS stack (Keycloak IAM, Trusted
+# Artifact Signer, Trusted Profile Analyzer, Advanced Cluster Security, OpenShift
+# Pipelines with Tekton Chains signing, and Red Hat Developer Hub) plus the app
+# pipeline namespaces. Layer it on top of a hub profile:
+#
+#   valueFiles:
+#     - values/global.yaml
+#     - values/clustersets/hub.yaml
+#     - values/clustersets/rhads.yaml
+#
+# The clusterset key below (hub) must match the clusterset key in the profile you
+# layer this onto — Helm deep-merges same-key maps.
+#
+# Operator install is label-driven; the instance/DB/realm/plugin configuration is
+# in the config: section (rendered per-cluster and read by the policies at runtime).
+hubClusterSets:
+  hub:
+    labels:
+      # Object storage foundation — NooBaa standalone (MCG only, PV-pool backing store off the default
+      # StorageClass). Provides the ObjectBucketClaims that Quay and GitLab need. No Ceph required.
+      odf: 'true'
+      odf-subscription-name: odf-operator
+      odf-channel: stable-4.20
+      odf-source: redhat-operators
+      odf-source-namespace: openshift-marketplace
+      odf-multi-cloud-gateway: standalone
+      odf-noobaa-pvpool: 'true'
+      odf-noobaa-store-size: '1'          # number of PV backing volumes
+      odf-noobaa-store-num-volumes: 100Gi # size of each backing volume
+
+      # ACM MultiClusterObservability — multicluster metrics (Thanos/Grafana) for the hub and every
+      # managed spoke, backed by a NooBaa ObjectBucketClaim (needs the ODF/NooBaa above).
+      acm-observability: 'true'
+
+      # PostgreSQL for Keycloak/TPA (cnpg mode, the default). Uses the CloudNativePG operator.
+      cloudnative-pg: 'true'
+      cloudnative-pg-subscription-name: cloudnative-pg
+      cloudnative-pg-channel: stable-v1
+      cloudnative-pg-source: certified-operators
+      cloudnative-pg-source-namespace: openshift-marketplace
+
+      # Keycloak (Red Hat Build of Keycloak) — IAM
+      keycloak: 'true'
+      keycloak-subscription-name: rhbk-operator
+      keycloak-channel: stable-v26
+      keycloak-source: redhat-operators
+      keycloak-source-namespace: openshift-marketplace
+
+      # Trusted Artifact Signer (Securesign: Fulcio/Rekor/Trillian/TUF)
+      tas: 'true'
+      tas-subscription-name: rhtas-operator
+      tas-channel: stable
+      tas-source: redhat-operators
+      tas-source-namespace: openshift-marketplace
+
+      # Trusted Profile Analyzer (SBOM/VEX)
+      trusted-profile-analyzer: 'true'
+      trusted-profile-analyzer-subscription-name: rhtpa-operator
+      trusted-profile-analyzer-channel: stable-v1.1
+      trusted-profile-analyzer-source: redhat-operators
+      trusted-profile-analyzer-source-namespace: openshift-marketplace
+
+      # Advanced Cluster Security
+      acs: 'true'
+      acs-subscription-name: rhacs-operator
+      acs-channel: stable
+      acs-source: redhat-operators
+      acs-source-namespace: openshift-marketplace
+
+      # OpenShift Pipelines (Tekton Chains signing wires on automatically when tas is enabled)
+      pipelines: 'true'
+      pipelines-subscription-name: openshift-pipelines-operator-rh
+      pipelines-channel: latest
+      pipelines-source: redhat-operators
+      pipelines-source-namespace: openshift-marketplace
+
+      # Red Hat Developer Hub (RHDH)
+      dev-hub: 'true'
+      dev-hub-subscription-name: rhdh
+      dev-hub-channel: fast-1.9
+      dev-hub-source: redhat-operators
+      dev-hub-source-namespace: openshift-marketplace
+
+      # OpenShift Dev Spaces (cloud IDE — RHDH surfaces "Open in Dev Spaces")
+      dev-spaces: 'true'
+      dev-spaces-subscription-name: devspaces
+      dev-spaces-channel: stable
+      dev-spaces-source: redhat-operators
+      dev-spaces-source-namespace: openshift-marketplace
+
+      # Quay (image registry). RHDH auto-wires the Quay proxy + plugin (tags/security scan) from the
+      # quay chart's registry-quay route + quay-integration token; pipelines push to it. Uses a NooBaa
+      # ObjectBucketClaim for registry storage.
+      quay: 'true'
+      quay-subscription-name: quay-operator
+      quay-channel: stable-3.17
+      quay-source: redhat-operators
+      quay-source-namespace: openshift-marketplace
+
+      # GitLab (SCM). RHDH wires GitLab as an SCM/catalog provider (config.devHub.scm.gitlab below).
+      # Uses CloudNativePG (already enabled) + a NooBaa ObjectBucketClaim.
+      gitlab: 'true'
+      gitlab-subscription-name: gitlab-operator-kubernetes
+      gitlab-channel: stable
+      gitlab-source: certified-operators
+      gitlab-source-namespace: openshift-marketplace
+      # ArgoCD repo credentials (+ TLS cert) for GitLab repos, so ArgoCD can sync GitLab-hosted gitops
+      # repos (the golden-path app-of-apps). Created in the infra + each dev-team ArgoCD namespace.
+      gitlab-argocd-integration: 'true'
+
+      # Developer-team ArgoCD (gitops-dev). RHADS golden-path apps deploy through the team's argocd-dev
+      # instance (openshift-gitops-dev), keeping infra-gitops for platform/infra GitOps only.
+      gitops-dev: 'true'
+      gitops-dev-team-dev: 'hub'             # 'hub' (team ArgoCD on this hub) or 'standalone'
+    config:
+      # Infra ArgoCD repo-server needs more CPU: rendering ~50 PolicyGenerator charts through the CMP
+      # sidecar is CPU-heavy and the default 1 core makes cold renders exceed the 60s manifest deadline.
+      gitops:
+        infra:
+          repo:
+            limits:
+              cpu: '4000m'
+              memory: '2048Mi'
+            requests:
+              cpu: '1000m'
+              memory: '512Mi'
+        # Developer team ArgoCD instances (gitops-dev). The 'dev' team gets argocd-dev in
+        # openshift-gitops-dev; RHADS golden-path apps deploy here (see config.devHub.argocd.team).
+        teams:
+          dev:
+            # admin stays enabled: RHDH scaffolds into this instance via admin/password (argocd-dev-cluster).
+            disableAdmin: 'false'
+            gitops_rbac_policies:
+              - 'g, openshift-developers, role:admin'
+      keycloak:
+        realmName: tssc-iam
+        # cert-manager ClusterIssuer for the keycloak.apps.<domain> cert (set to your cluster's issuer).
+        tlsIssuer: letsencrypt-production-aws-fallback
+        db:
+          mode: cnpg            # 'cnpg' (default), 'simple', or 'external'
+          storageClass: ''      # '' = cluster default StorageClass
+          storage: 50Gi
+      gitlab:
+        # cert-manager ClusterIssuer for the GitLab route certs (gitlab./registry./kas..apps.<domain>).
+        # Without it the operator self-signs its routes, which breaks TLS from every consumer that reads
+        # GitLab in-cluster (RHDH catalog, Tekton clone, ArgoCD sync, webhooks). Set to your cluster's issuer.
+        tlsIssuer: letsencrypt-production-aws-fallback
+      tpa:
+        db:
+          mode: cnpg
+          storageClass: ''
+          storage: 50Gi
+        storage:
+          size: 32Gi
+      tas:
+        orgName: TSSC
+      devHub:
+        title: Red Hat Developer Hub
+        # Which ArgoCD RHDH scaffolds golden-path apps into. Set 'team' to a gitops-dev team so apps
+        # deploy via that team's argocd-dev (openshift-gitops-<team>); unset = infra-gitops (platform).
+        argocd:
+          team: dev
+        scm:
+          # Only enable an SCM provider once it is actually reachable AND its credentials secret exists.
+          # RHDH hard-fails startup if the integration host resolves empty (TypeError: got empty-string).
+          gitlab: true          # GitLab is up + gitlab-system/tssc-gitlab-credentials (root PAT) is minted by the token Job
+          github: false         # enable + create github-system/tssc-github-credentials to wire GitHub
+      devSpaces:
+        storageClass: ''        # '' = cluster default
+        pvcStrategy: per-workspace
+      # Application pipeline namespaces — one entry per team/app. Each app gets
+      # {team}-{app}-{env} namespaces with the pipeline SA + signing/integration secrets.
+      appNamespaces:
+        example:
+          quarkus-app:
+            environments:
+              - ci
+              - development
+              - stage
+              - prod
+            gitProvider: gitlab

@@ -1,0 +1,139 @@
+# TrustedProfileAnalyzer CR wired to the tssc-tpa-db-config secret + Keycloak OIDC. The OIDC issuer
+# is derived from cluster DNS so it matches the Keycloak Route. Document (SBOM/VEX) storage size comes
+# from config.tpa.storage.size (separate from the postgres DB storage).
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $tpa := (index $cfg "tpa" | default dict) hub}}
+  {{hub- $realm := (index (index $cfg "keycloak" | default dict) "realmName" | default "tssc-iam") hub}}
+  {{hub- $storSize := (index (index $tpa "storage" | default dict) "size" | default "32Gi") hub}}
+  {{hub- $ns := "tssc-tpa" hub}}
+  {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
+  {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
+  {{- $appsDomain := printf "apps.%s" $baseDomain }}
+  {{- $oidcIssuer := printf "https://keycloak.%s/realms/{{hub $realm hub}}" $appsDomain }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rhtpa.io/v1
+      kind: TrustedProfileAnalyzer
+      metadata:
+        name: trustedprofileanalyzer
+        namespace: '{{hub $ns hub}}'
+      spec:
+        appDomain: '{{ $appsDomain }}'
+        collector: {}
+        database:
+          sslMode: disable
+          host:
+            valueFrom:
+              secretKeyRef:
+                name: tssc-tpa-db-config
+                key: host
+          port:
+            valueFrom:
+              secretKeyRef:
+                name: tssc-tpa-db-config
+                key: port
+          name:
+            valueFrom:
+              secretKeyRef:
+                name: tssc-tpa-db-config
+                key: dbname
+          username:
+            valueFrom:
+              secretKeyRef:
+                name: tssc-tpa-db-config
+                key: user
+          password:
+            valueFrom:
+              secretKeyRef:
+                name: tssc-tpa-db-config
+                key: password
+        createDatabase:
+          name:
+            valueFrom:
+              secretKeyRef:
+                name: tssc-tpa-db-config
+                key: dbname
+          username:
+            valueFrom:
+              secretKeyRef:
+                name: tssc-tpa-db-config
+                key: user
+          password:
+            valueFrom:
+              secretKeyRef:
+                name: tssc-tpa-db-config
+                key: password
+        migrateDatabase:
+          username:
+            valueFrom:
+              secretKeyRef:
+                name: tssc-tpa-db-config
+                key: user
+          password:
+            valueFrom:
+              secretKeyRef:
+                name: tssc-tpa-db-config
+                key: password
+        infrastructure:
+          port: 9010
+        ingress:
+          className: openshift-default
+        metrics:
+          enabled: false
+        modules:
+          createDatabase:
+            enabled: true
+          migrateDatabase:
+            enabled: true
+          createImporters:
+            enabled: true
+            importers:
+              cve:
+                cve:
+                  description: CVE list v5
+                  period: 1d
+                  source: https://github.com/CVEProject/cvelistV5
+                  disabled: false
+              osv-github:
+                osv:
+                  description: GitHub Advisory Database
+                  period: 1d
+                  source: https://github.com/github/advisory-database
+                  path: advisories
+                  disabled: false
+          server:
+            enabled: true
+            replicas: 1
+            resources:
+              requests:
+                cpu: "1"
+                memory: 8Gi
+        oidc:
+          issuerUrl: '{{ $oidcIssuer }}'
+          clients:
+            frontend:
+              clientId: frontend
+            cli:
+              clientId: cli
+              clientSecret:
+                valueFrom:
+                  secretKeyRef:
+                    name: tpa-realm-clients
+                    key: cli
+        openshift:
+          useServiceCa: true
+        partOf: trustify
+        replicas: 1
+        rust:
+          logFilter: info
+          backtrace: false
+        storage:
+          type: filesystem
+          size: '{{hub $storSize hub}}'
+        tls:
+          serviceEnabled: true
+          additionalTrustAnchor: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        tracing:
+          enabled: false

@@ -1,0 +1,22 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-keycloak-operator-install
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: the Placement selects across all ManagedClusterSetBindings in this
+  # namespace (the top autoshift chart binds every clusterset here) filtered by the predicate.
+  # Behaviorally identical to the old "list every clusterset" form.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/keycloak'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
