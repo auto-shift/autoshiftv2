@@ -1,0 +1,114 @@
+# This policy creates the MulticlusterGlobalHub CR (operand) once the
+# Multicluster Global Hub operator is installed.
+#
+# object-templates-raw is used so that:
+#   - the Strimzi catalog-source annotations are only added in disconnected
+#     environments (the operator installs/manages AMQ Streams itself, so in a
+#     mirror it needs to be told which catalog source/channel to pull from)
+#   - consumerGroupPrefix is only set when the label is provided
+{{- $policyName := "policy-global-hub-instance" }}
+{{- $placementName := "placement-policy-global-hub-instance" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+  dependencies:
+    - name: policy-global-hub-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-hub-instance
+        spec:
+          remediationAction: enforce # will be overridden by remediationAction in parent policy
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: operator.open-cluster-management.io/v1alpha4
+                kind: MulticlusterGlobalHub
+                metadata:
+                  name: multiclusterglobalhub
+                  namespace: {{ .Values.globalHub.namespace }}
+                  {{ "{{hub-" }} if (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}
+                  annotations:
+                    global-hub.open-cluster-management.io/strimzi-catalog-source-name: '{{ "{{hub" }} printf "%s-%s" (index .ManagedClusterLabels "autoshift.io/global-hub-source" | default "{{ .Values.globalHub.source }}") (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror") {{ "hub}}" }}'
+                    global-hub.open-cluster-management.io/strimzi-catalog-source-namespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/global-hub-source-namespace" | default "{{ .Values.globalHub.sourceNamespace }}" {{ "hub}}" }}'
+                    global-hub.open-cluster-management.io/strimzi-subscription-package-name: amq-streams
+                    global-hub.open-cluster-management.io/strimzi-subscription-channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/global-hub-strimzi-channel" | default "{{ .Values.globalHub.amqStreamsChannel }}" {{ "hub}}" }}'
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                spec:
+                  availabilityConfig: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/global-hub-availability-config" | default "{{ .Values.globalHub.availabilityConfig }}" {{ "hub}}" }}'
+                  enableMetrics: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/global-hub-enable-metrics" | default "{{ .Values.globalHub.enableMetrics }}" {{ "hub}}" }}
+                  installAgentOnLocal: {{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/global-hub-install-agent-on-local" | default "{{ .Values.globalHub.installAgentOnLocal }}" {{ "hub}}" }}
+                  dataLayer:
+                    kafka:
+                      topics:
+                        specTopic: {{ .Values.globalHub.kafkaSpecTopic }}
+                        statusTopic: '{{ .Values.globalHub.kafkaStatusTopic }}'
+                      {{ "{{hub-" }} $cgp := (index .ManagedClusterLabels "autoshift.io/global-hub-consumer-group-prefix" | default "{{ .Values.globalHub.consumerGroupPrefix }}") {{ "hub}}" }}
+                      {{ "{{hub-" }} if $cgp {{ "hub}}" }}
+                      consumerGroupPrefix: {{ "{{hub" }} $cgp {{ "hub}}" }}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    postgres:
+                      retention: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/global-hub-postgres-retention" | default "{{ .Values.globalHub.postgresRetention }}" {{ "hub}}" }}'
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/global-hub'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
