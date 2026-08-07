@@ -1,0 +1,21 @@
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $ls := (index $config "openshift-lightspeed" | default dict) hub}}
+  {{hub- $providers := (index $ls "providers" | default list) hub}}
+  {{hub- $defaultProvider := (index $ls "defaultProvider" | default "") hub}}
+  {{hub- $defaultModel := (index $ls "defaultModel" | default "") hub}}
+  {{/* Mirror the emission guard in manifests/olsconfig.yaml: with no CR to check, an unguarded
+       inform check would report NonCompliant forever on an enabled-but-unconfigured cluster. */}}
+  {{hub- if and $providers $defaultProvider $defaultModel hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: ols.openshift.io/v1alpha1
+      kind: OLSConfig
+      metadata:
+        name: cluster
+      status:
+        # Set after the first reconciliation; Ready means every component is healthy. Expect
+        # NotReady for a while on a fresh install — the RHOKP sidecar indexes the docs corpus first.
+        overallStatus: Ready
+  {{hub- end hub}}

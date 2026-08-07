@@ -372,6 +372,65 @@ Automated node health monitoring and remediation.
 | `dev-hub-source`                  | string            | `redhat-operators`        |       |
 | `dev-hub-source-namespace`        | string            | `openshift-marketplace`   |       |
 
+### OpenShift Lightspeed
+
+> [!WARNING]
+> x86_64 only, OpenShift 4.16–4.22. The operator does not provide an LLM — you must already have a
+> provider endpoint and API token.
+
+| Variable                                      | Type   | Default Value             | Notes |
+|-----------------------------------------------|--------|---------------------------|-------|
+| `openshift-lightspeed`                        | bool   | `false`                   | If not set OpenShift Lightspeed will not be managed |
+| `openshift-lightspeed-subscription-name`      | string | `lightspeed-operator`     |       |
+| `openshift-lightspeed-channel`                | string | `stable`                  | `stable` or `alpha` |
+| `openshift-lightspeed-version`                | string | (optional)                | Specific CSV version for controlled upgrades |
+| `openshift-lightspeed-source`                 | string | `redhat-operators`        |       |
+| `openshift-lightspeed-source-namespace`       | string | `openshift-marketplace`   |       |
+
+The LLM wiring is data, not flags, so it lives under `config.openshift-lightspeed` rather than in
+labels. The `OLSConfig` is created only when `providers`, `defaultProvider` and `defaultModel` are all
+set — all three are required by the CRD, so a cluster with the label on but no config gets the
+operator and nothing else.
+
+| Config key                                | Type   | Default                       | Notes |
+|-------------------------------------------|--------|-------------------------------|-------|
+| `credentialsSecretName`                   | string | `lightspeed-llm-credentials`  | Secret in `openshift-lightspeed` holding the token under key `apitoken` |
+| `hubSecret.namespace`                     | string | `lightspeed-secrets`          | Optional. Naming a hub Secret makes AutoShift copy it to every selected cluster |
+| `hubSecret.name`                          | string |                               | Omit the whole `hubSecret` block to instead reference a pre-existing Secret |
+| `hubSecret.key`                           | string | `apitoken`                    | Key to read on the hub; always written as `apitoken` |
+| `defaultProvider`                         | string |                               | Required. Must match a `providers[].name` |
+| `defaultModel`                            | string |                               | Required. Must match one of that provider's `models[].name` |
+| `logLevel`                                | string | `INFO`                        | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `introspectionEnabled`                    | bool   | (operator default)            | Kubernetes MCP server |
+| `userDataCollection.feedbackDisabled`     | bool   |                               | Stop sending feedback to Red Hat |
+| `userDataCollection.transcriptsDisabled`  | bool   |                               | Stop sending chat transcripts to Red Hat |
+| `deployment.<component>.replicas`         | int    | `1`                           | Per-component: `api`, `console`, `database`, `mcpServer`, `rhokp`, `otelCollector`, `alertsAdapter`, `agenticConsole`, `dataCollector`. There is no top-level `replicas` |
+| `providers`                               | list   |                               | Required. Passed to `spec.llm.providers` verbatim, so any provider type works. URLs must end in `/v1` |
+
+```yaml
+hubClusterSets:
+  hub:
+    config:
+      openshift-lightspeed:
+        credentialsSecretName: lightspeed-llm-credentials
+        hubSecret:
+          namespace: lightspeed-secrets
+          name: llm-apitoken
+          key: apitoken
+        defaultProvider: myOpenai
+        defaultModel: gpt-4o-mini
+        providers:
+          - name: myOpenai
+            type: openai
+            url: https://api.openai.com/v1
+            credentialsSecretRef:
+              name: lightspeed-llm-credentials
+            models:
+              - name: gpt-4o-mini
+    labels:
+      openshift-lightspeed: 'true'
+```
+
 ### OpenShift Pipelines
 
 | Variable                          | Type              | Default Value             | Notes |

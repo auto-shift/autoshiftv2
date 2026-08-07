@@ -1,0 +1,49 @@
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $ls := (index $config "openshift-lightspeed" | default dict) hub}}
+  {{hub- $providers := (index $ls "providers" | default list) hub}}
+  {{hub- $defaultProvider := (index $ls "defaultProvider" | default "") hub}}
+  {{hub- $defaultModel := (index $ls "defaultModel" | default "") hub}}
+  {{hub- $logLevel := (index $ls "logLevel" | default "INFO") hub}}
+  {{hub- $userDataCollection := (index $ls "userDataCollection" | default dict) hub}}
+  {{hub- $deployment := (index $ls "deployment" | default dict) hub}}
+  {{/* providers, defaultProvider and defaultModel are all required by the OLSConfig CRD. Emit
+       nothing unless every one is set — an incomplete CR is rejected by the API server and would
+       leave the policy permanently NonCompliant. musthave + enforce CREATES absent objects, so the
+       guard is what keeps an enabled-but-unconfigured cluster from getting a broken singleton. */}}
+  {{hub- if and $providers $defaultProvider $defaultModel hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: ols.openshift.io/v1alpha1
+      kind: OLSConfig
+      metadata:
+        # Singleton: the operator only reconciles an OLSConfig named "cluster".
+        name: cluster
+      spec:
+        llm:
+          {{/* Pass-through: every provider type (openai, azure_openai, watsonx, rhoai_vllm,
+               rhelai_vllm, google_vertex, google_vertex_anthropic, bedrock) needs a different field
+               set, so the list is handed to the CRD verbatim rather than modelled field by field. */}}
+          providers:
+            {{hub $providers | toYaml | autoindent hub}}
+        ols:
+          defaultProvider: '{{hub $defaultProvider hub}}'
+          defaultModel: '{{hub $defaultModel hub}}'
+          logLevel: '{{hub $logLevel hub}}'
+          {{hub- if (hasKey $ls "introspectionEnabled") hub}}
+          introspectionEnabled: {{hub index $ls "introspectionEnabled" hub}}
+          {{hub- end hub}}
+          {{hub- if $userDataCollection hub}}
+          {{/* feedbackDisabled / transcriptsDisabled — opt out of sending chats and feedback to
+               Red Hat. Cluster-wide telemetry still governs the rest. */}}
+          userDataCollection:
+            {{hub $userDataCollection | toYaml | autoindent hub}}
+          {{hub- end hub}}
+          {{hub- if $deployment hub}}
+          {{/* Per-component sizing (api, console, database, mcpServer, rhokp, otelCollector,
+               alertsAdapter, agenticConsole, dataCollector). There is no top-level replicas field. */}}
+          deployment:
+            {{hub $deployment | toYaml | autoindent hub}}
+          {{hub- end hub}}
+  {{hub- end hub}}

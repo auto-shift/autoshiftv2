@@ -1,0 +1,63 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: openshift-lightspeed
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`
+# runs. They live here and in placement.yaml — never in manifests/, whose hub templates contain
+# `$vars` that substitution would clobber. Keep placement.yaml OUT of manifests/ (a Placement inside
+# a wildcarded dir would be wrapped in as a managed object).
+placementBindingDefaults:
+  name: binding-policy-openshift-lightspeed
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # false: the credentials and OLSConfig manifests are object-templates-raw, which PG must leave as
+  # first-class ConfigurationPolicies rather than folding together.
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # All policies share one hand-authored Placement (predicate autoshift.io/openshift-lightspeed).
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  #    The Lightspeed CSV advertises OwnNamespace ONLY, so targetNamespaces is mandatory.
+  - name: policy-lightspeed-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) Copy the LLM API token from a hub Secret, when config.lightspeed.hubSecret names one.
+  #    fromSecret against a namespace other than the policy namespace needs a service account.
+  - name: policy-lightspeed-credentials
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-lightspeed-operator-install
+    manifests:
+      - path: manifests/llm-credentials.yaml
+  # 3) The OLSConfig singleton. Depends on the operator install, NOT on (2): in reference-only mode
+  #    (no hubSecret) (2) emits nothing, and chaining on a no-op policy would wedge this one. The pair
+  #    is eventually consistent instead — the operator errors until the Secret lands, then heals.
+  - name: policy-lightspeed-olsconfig
+    dependencies:
+      - name: policy-lightspeed-operator-install
+    manifests:
+      - path: manifests/olsconfig.yaml
+  # 4) Readiness gate. Separate inform policy so the enforce root above can't clobber the check.
+  - name: policy-lightspeed-olsconfig-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-lightspeed-olsconfig
+    manifests:
+      - path: test/olsconfig-ready.yaml

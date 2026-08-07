@@ -262,6 +262,10 @@ hubClusterSets:
       #   versions:
       #     - 'odf-operator.vX.Y.Z'
       #   startingCSV: 'odf-operator.vX.Y.Z'
+      # openshift-lightspeed:
+      #   versions:
+      #     - 'lightspeed-operator.vX.Y.Z'
+      #   startingCSV: 'lightspeed-operator.vX.Y.Z'
       # opentelemetry:
       #   versions:
       #     - 'opentelemetry-product.vX.Y.Z'
@@ -494,6 +498,51 @@ hubClusterSets:
           provider: openshift               # '' disables the declarative auth config
           minimumRole: None                 # minimum role for authenticated users
           adminGroup: cluster-admins        # group mapped to the Admin role
+
+      # =======================================================================
+      # OpenShift Lightspeed (Day-2 settings; enable the operator with the
+      # openshift-lightspeed label). The operator does NOT provide an LLM — you must already have a
+      # provider and an API token. x86_64 only; OCP 4.16-4.22.
+      #
+      # The OLSConfig CR is only created when providers, defaultProvider and defaultModel are ALL
+      # set — all three are required by the CRD. An enabled-but-unconfigured cluster gets the
+      # operator and nothing else.
+      # =======================================================================
+      openshift-lightspeed:
+        # Secret in openshift-lightspeed holding the LLM token under key `apitoken`. Referenced by
+        # providers[].credentialsSecretRef.name below.
+        credentialsSecretName: lightspeed-llm-credentials
+        # OPTIONAL. Name a hub Secret and AutoShift copies its token into credentialsSecretName on
+        # every selected cluster. Omit the whole block to reference a Secret that the cluster owner
+        # (or External Secrets) provides instead — AutoShift then creates no Secret at all.
+        hubSecret:
+          namespace: lightspeed-secrets
+          name: llm-apitoken
+          key: apitoken                     # key to read on the hub; always written as `apitoken`
+        defaultProvider: myOpenai           # must match a providers[].name below
+        defaultModel: gpt-4o-mini           # must match one of that provider's models[].name
+        logLevel: INFO                      # DEBUG | INFO | WARNING | ERROR | CRITICAL
+        introspectionEnabled: true          # Kubernetes MCP server; omit to take the operator default
+        userDataCollection:                 # opt out of sending chats/feedback to Red Hat
+          feedbackDisabled: true
+          transcriptsDisabled: true
+        # Per-component sizing. Valid components: api, console, database, mcpServer, rhokp,
+        # otelCollector, alertsAdapter, agenticConsole, dataCollector. There is no top-level
+        # replicas field. RHOKP (docs retrieval) wants ~75Gi ephemeral storage, 2 CPU, 2Gi memory.
+        deployment:
+          api:
+            replicas: 1
+        # Passed to spec.llm.providers verbatim, so any provider type works without a template
+        # change: openai, azure_openai, watsonx, rhoai_vllm, rhelai_vllm, google_vertex,
+        # google_vertex_anthropic, bedrock. Provider URLs must end in /v1.
+        providers:
+          - name: myOpenai
+            type: openai
+            url: https://api.openai.com/v1
+            credentialsSecretRef:
+              name: lightspeed-llm-credentials
+            models:
+              - name: gpt-4o-mini
     labels:
       # =======================================================================
       # Core Configuration
@@ -1105,3 +1154,13 @@ hubClusterSets:
       trident-source-namespace: openshift-marketplace
       trident-channel: stable
       trident-version: 'trident-operator.v25.06.0'   # optional CSV version pin
+
+      # =======================================================================
+      # Openshift Lightspeed
+      # =======================================================================
+      openshift-lightspeed: 'false'
+      openshift-lightspeed-subscription-name: lightspeed-operator
+      openshift-lightspeed-channel: stable          # stable | alpha
+      openshift-lightspeed-source: redhat-operators
+      openshift-lightspeed-source-namespace: openshift-marketplace
+      openshift-lightspeed-version: 'lightspeed-operator.v1.1.2'

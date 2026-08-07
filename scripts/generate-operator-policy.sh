@@ -567,6 +567,14 @@ add_labels_to_section() {
         if [[ "$is_commented" == "true" ]]; then
             version_line="#       $COMPONENT_NAME-version: '$VERSION'"
         fi
+    elif [[ "$is_example" == "true" ]]; then
+        # The generated operator-install ALWAYS reads autoshift.io/<component>-version, so the label
+        # contract requires it to be declared in an _example*.yaml even when no --version was given.
+        # Placeholder CSV: example files are documentation, never deployed.
+        version_line="      $COMPONENT_NAME-version: '$SUBSCRIPTION_NAME.vX.Y.Z'"
+        if [[ "$is_commented" == "true" ]]; then
+            version_line="#       $COMPONENT_NAME-version: '$SUBSCRIPTION_NAME.vX.Y.Z'"
+        fi
     fi
 
     if [[ "$is_commented" == "true" ]]; then
