@@ -1,0 +1,22 @@
+object-templates-raw: |
+  {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
+  {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
+  {{- /* current = latest Completed history version (only advances on a real completion — no flap). */ -}}
+  {{- $current := "" }}
+  {{- range $h := (index $status "history" | default list) }}
+  {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}{{- $current = (index $h "version") }}{{- end }}
+  {{- end }}
+  {{- $done := false }}
+  {{- if regexMatch "^[0-9]+[.][0-9]+[.][0-9]+" $target }}
+  {{-   $done = and (ne $current "") (semverCompare (printf ">= %s" $target) $current) }}
+  {{- end }}
+  {{- /* Compliant once the cluster has reached (or passed) the target. Until then force NonCompliant
+         via mustnothave on the ClusterVersion — a reliable existence check, not status-list matching. */ -}}
+  {{- if and (ne $target "") (not $done) }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: ClusterVersion
+      metadata:
+        name: version
+  {{- end }}
