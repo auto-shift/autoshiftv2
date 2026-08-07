@@ -21,8 +21,16 @@
 # Depends on: policy-global-observability-mcoa, policy-coo-operator-install
 #
 {{- $policyName := "policy-global-observability-prometheus" }}
-{{- $policyNamespace := .Values.policy_namespace }}
-{{- $rollup := .Values.globalObservability.spokeAgent.globalHubRollup }}
+{{- $policyNamespace := required "global-observability: policy_namespace is required (set via the ApplicationSet valuesObject)" .Values.policy_namespace }}
+{{- $obsNamespace := required "global-observability: globalObservability.namespace is required" .Values.globalObservability.namespace }}
+{{- $rollup := .Values.globalObservability.spokeAgent.globalHubRollup | required "global-observability: globalObservability.spokeAgent.globalHubRollup must be defined" }}
+{{- $_ := required "global-observability: globalObservability.spokeAgent.globalHubRollup.secretName is required" $rollup.secretName }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.secretNamespace is required" $rollup.secretNamespace }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.name is required" $rollup.name }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.remoteTimeout is required" $rollup.remoteTimeout }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.caFile is required" $rollup.caFile }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.certFile is required" $rollup.certFile }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.keyFile is required" $rollup.keyFile }}
 {{- $mcoaPolicyName := "policy-global-observability-mcoa" }}
 {{- $secretReplPolicyName := "policy-global-observability-secrets" }}
 
@@ -84,6 +92,8 @@ spec:
             # INDENTATION ANCHOR
             {{ "{{hub" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
             {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
+            {{ "{{hub-" }} $rollupSrc := lookup "v1" "Secret" "{{ $rollup.secretNamespace }}" "{{ $rollup.secretName }}" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} if not (index $rollupSrc "data") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: rollup secret {{ $rollup.secretName }} not found in namespace {{ $rollup.secretNamespace }} on the hub (is policy-global-observability-secrets Compliant?)" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
                 [
                   {
                     "complianceType": "musthave",
@@ -124,9 +134,15 @@ spec:
             {{ "{{hub-" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
             {{ "{{hub-" }} range $rw := $additionalRW {{ "hub}}" }}
               {{ "{{hub-" }} $secretRef := index $rw "secretRef" | default dict {{ "hub}}" }}
+              {{ "{{hub-" }} if not (empty $secretRef) {{ "hub}}" }}
+                {{ "{{hub-" }} if not (index $secretRef "name") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].secretRef.name is required when secretRef is set" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if not (index $secretRef "namespace") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].secretRef.namespace is required when secretRef is set" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
               {{ "{{hub-" }} $onSelfManaged := index $rw "onSelfManagedHub" | default false {{ "hub}}" }}
               {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) {{ "hub}}" }}
                 {{ "{{hub-" }} if not (empty $secretRef) {{ "hub}}" }}
+                {{ "{{hub-" }} $rwSrc := lookup "v1" "Secret" (index $secretRef "namespace") (index $secretRef "name") | default dict {{ "hub}}" }}
+                {{ "{{hub-" }} if not (index $rwSrc "data") {{ "hub}}" }}{{ "{{hub" }} fail (printf "global-observability: additionalRemoteWrites secretRef %s/%s not found on the hub" (index $secretRef "namespace") (index $secretRef "name")) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
               - complianceType: musthave
                 objectDefinition:
                   apiVersion: v1
@@ -199,10 +215,15 @@ spec:
                         cert: {}
                         certFile: {{ $rollup.certFile }}
                         keyFile: {{ $rollup.keyFile }}
-                      url: '{{ "{{" }} fromSecret "{{ $.Values.globalObservability.namespace }}" "{{ $rollup.secretName }}" "observatorium.url" | base64dec {{ "}}" }}'
+                      url: '{{ "{{" }} $u := fromSecret "{{ $.Values.globalObservability.namespace }}" "{{ $rollup.secretName }}" "observatorium.url" | base64dec {{ "}}" }}{{ "{{" }} if not $u {{ "}}" }}{{ "{{" }} fail "global-observability: key observatorium.url missing from secret {{ $rollup.secretName }} in {{ $.Values.globalObservability.namespace }} (rollup secret not yet replicated?)" {{ "}}" }}{{ "{{" }} end {{ "}}" }}{{ "{{" }} $u {{ "}}" }}'
                     {{ "{{hub-" }} end {{ "hub}}" }}
                     # Additional remote-writes (rendered-config)
                     {{ "{{hub-" }} range $rw := $additionalRW {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (index $rw "name") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].name is required" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (index $rw "url") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].url is required" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (index $rw "caFile") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].caFile is required" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (index $rw "certFile") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].certFile is required" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (index $rw "keyFile") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].keyFile is required" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
                       {{ "{{hub-" }} $onSelfManaged := index $rw "onSelfManagedHub" | default false {{ "hub}}" }}
                       {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) {{ "hub}}" }}
                     - name: '{{ "{{hub" }} index $rw "name" {{ "hub}}" }}'

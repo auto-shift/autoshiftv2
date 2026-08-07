@@ -1,195 +1,120 @@
 # Global Observability Policy
 
-Deploys and configures ACM MultiCluster Observability (MCO) on a global hub cluster, enabling centralized metrics collection from regional hubs via Thanos and Prometheus remote-write.
+Adds a three-tier metrics rollup — **global hub → intermediate hubs → workload clusters** — on top of ACM MultiCluster Observability (MCO). Patches MCOA-managed `PrometheusAgent` templates on intermediate hubs so every workload cluster remote-writes its metrics directly to the global hub's Observatorium over mTLS, in addition to its local hub.
+
+This chart owns only the global-rollup deltas. The base MCO lifecycle (namespace, pull secret, `thanos-object-storage`, the `MultiClusterObservability` CR with retention/storage settings) is owned by `policy-acm-observability` in the `advanced-cluster-management` chart.
+
+See [architecture.md](architecture.md) for how the rollup works and why.
 
 ## Policies
 
-| Policy | Description |
-|--------|-------------|
-| `policy-global-observability-mch` | Enables the `multicluster-observability` component on the MultiClusterHub |
-| `policy-global-observability-config` | Creates the MCO namespace, pull-secret, CA bundle secret, and Thanos object-storage secret |
-| `policy-global-observability-instance` | Creates the `MultiClusterObservability` CR with retention, storage, and addon settings |
-| `policy-global-observability-secrets` | Builds the `global-observability-secrets` Secret containing mTLS certs and the observatorium API URL |
-| `policy-global-observability-prometheus` | Patches PrometheusAgent templates on hub clusters with the built-in global hub rollup and any additional remote-write targets from rendered-config |
+| Policy | Runs on | Description |
+|--------|---------|-------------|
+| `policy-global-observability-mcoa` | All global-obs hubs | `musthave`-patches the `capabilities` block (platform analytics/logs/metrics, user-workload logs/metrics/traces) onto the existing `MultiClusterObservability` CR |
+| `policy-global-observability-secrets` | Global hub only | Assembles the coalesced `global-observability-secrets` Secret (mTLS client cert + CA + Observatorium URL) in the policy namespace |
+| `policy-global-observability-prometheus-exists` | Intermediate hubs | Inform-only gate: verifies the MCOA-created `PrometheusAgent` templates exist before patching |
+| `policy-global-observability-prometheus` | Intermediate hubs | Stages the rollup secret (and any additional remote-write secrets) into the observability namespace and patches the `PrometheusAgent` templates with `spec.secrets` + `spec.remoteWrite` entries |
 
 ## PolicySets and Placement
 
-| PolicySet | Targets | Placement Criteria |
-|-----------|---------|-------------------|
-| `policyset-global-observability-secrets` | Global hub only | `global-observability: 'true'` AND `self-managed: 'true'` |
-| `policyset-global-observability` | All hub clusters | `global-observability: 'true'` |
-| `policyset-global-observability-prometheus` | All hub clusters | `global-observability: 'true'` |
+| PolicySet | Policies | Placement criteria |
+|-----------|----------|--------------------|
+| `policyset-global-observability` | `*-mcoa` | `global-observability: 'true'` |
+| `policyset-global-observability-secrets` | `*-secrets` | `global-observability: 'true'` AND `self-managed: 'true'` |
+| `policyset-global-observability-prometheus` | `*-prometheus-exists`, `*-prometheus` | `global-observability: 'true'` AND `self-managed: 'false'` |
+
+## Dependencies
+
+| Policy | Depends on |
+|--------|-----------|
+| `policy-global-observability-mcoa` | `policy-acm-observability` |
+| `policy-global-observability-secrets` | `policy-global-observability-mcoa` |
+| `policy-global-observability-prometheus-exists` | `policy-global-observability-mcoa` |
+| `policy-global-observability-prometheus` | `policy-global-observability-mcoa`, `policy-coo-operator-install`, `policy-global-observability-prometheus-exists` |
 
 ## Labels
 
 All labels are prefixed with `autoshift.io/`.
 
-### Enable/Disable
-
 | Label | Type | Default | Description |
 |-------|------|---------|-------------|
-| `global-observability` | bool | `'false'` | Enable MultiCluster Observability on hub clusters |
+| `global-observability` | bool | `'false'` | Enable this chart on a hub cluster |
+| `self-managed` | bool | — | Discriminator: `'true'` = global hub (manages itself), `'false'` = intermediate hub (managed by the global hub). Drives placement and skip-on-global-hub logic. |
 
-### Placement Labels (used by PolicySet selectors)
+All other behavior is configured through the rendered-config ConfigMap (`config:` block in values files), not labels.
 
-| Label | Type | Description |
-|-------|------|-------------|
-| `self-managed` | bool | Distinguishes the global hub (`'true'`) from regional hubs (`'false'`). Controls which PolicySets target which hubs. |
+## Configuration (`config.globalObservability.*` in rendered-config)
 
-### Configuration Labels
-
-| Label | Type | Default | Description |
-|-------|------|---------|-------------|
-| `global-observability-storage-class` | string | cluster default | Storage class for Thanos persistent volumes |
-| `global-observability-retention-raw` | string | `'5d'` | Retention period for raw resolution metrics |
-| `global-observability-retention-5m` | string | `'14d'` | Retention period for 5-minute resolution metrics |
-| `global-observability-retention-1h` | string | `'30d'` | Retention period for 1-hour resolution metrics |
-| `global-observability-alertmanager-storage-size` | string | `'10Gi'` | Alertmanager PVC size |
-| `global-observability-compact-storage-size` | string | `'10Gi'` | Compactor PVC size |
-| `global-observability-receive-storage-size` | string | `'10Gi'` | Receiver PVC size |
-| `global-observability-rule-storage-size` | string | `'10Gi'` | Rule PVC size |
-| `global-observability-store-storage-size` | string | `'10Gi'` | Store gateway PVC size |
-
-## Chart Values (`globalObservability.*`)
-
-### General
-
-| Value | Type | Default | Description |
-|-------|------|---------|-------------|
-| `namespace` | string | `open-cluster-management-observability` | Namespace where MCO resources are created |
-
-### CA Bundle
-
-| Value | Type | Default | Description |
-|-------|------|---------|-------------|
-| `caBundle.sourceName` | string | `user-ca-bundle` | ConfigMap name in `openshift-config` containing the CA bundle |
-| `caBundle.sourceKey` | string | `ca-bundle.crt` | Key within the ConfigMap holding the CA certificate |
-
-### Thanos Object Storage
-
-| Value | Type | Default | Description |
-|-------|------|---------|-------------|
-| `thanosStorage.bucket` | string | `acm-dr` | S3 bucket name for Thanos metrics storage |
-| `thanosStorage.endpoint` | string | `""` | S3 endpoint hostname (e.g. `s3.example.com`) |
-| `thanosStorage.insecure` | bool | `false` | Whether to skip TLS verification for the S3 endpoint |
-| `thanosStorage.source.namespace` | string | `""` | Namespace of the source secret containing S3 credentials |
-| `thanosStorage.source.secretName` | string | `""` | Name of the source secret containing S3 credentials |
-| `thanosStorage.source.accessKeyField` | string | `AWS_ACCESS_KEY_ID` | Key in the source secret holding the access key |
-| `thanosStorage.source.secretKeyField` | string | `AWS_SECRET_ACCESS_KEY` | Key in the source secret holding the secret key |
-
-### Retention and Storage
-
-| Value | Type | Default | Description |
-|-------|------|---------|-------------|
-| `retentionResolutionRaw` | string | `5d` | Retention for raw resolution metrics |
-| `retentionResolution5m` | string | `14d` | Retention for 5-minute downsampled metrics |
-| `retentionResolution1h` | string | `30d` | Retention for 1-hour downsampled metrics |
-| `enableDownsampling` | bool | `true` | Enable Thanos downsampling of stored metrics |
-| `scrapeInterval` | string | `300s` | Prometheus scrape interval |
-| `scrapeSizeLimitBytes` | string | `1073741824` | Maximum scrape size in bytes (1 GiB) |
-| `workers` | int | `1` | Number of MCO addon workers |
-| `alertmanagerStorageSize` | string | `10Gi` | Alertmanager PVC size |
-| `compactStorageSize` | string | `10Gi` | Compactor PVC size |
-| `receiveStorageSize` | string | `10Gi` | Receiver PVC size |
-| `ruleStorageSize` | string | `10Gi` | Rule PVC size |
-| `storeStorageSize` | string | `10Gi` | Store gateway PVC size |
-
-### Spoke Agent
-
-Controls how hub clusters forward metrics via PrometheusAgent remote-write.
-
-#### Global Hub Rollup
-
-Built-in remote-write that forwards metrics from regional hubs to the self-managed hub's observatorium. Always deployed, automatically skipped on the self-managed hub (MCOA handles local writes).
-
-| Value | Type | Default | Description |
-|-------|------|---------|-------------|
-| `spokeAgent.prometheusAgentNames` | list | `[mcoa-default-platform-metrics-collector-global, mcoa-default-user-workload-metrics-collector-global]` | PrometheusAgent resources to patch on hubs |
-| `spokeAgent.globalHubRollup.name` | string | `acm-global-observability` | Name of the built-in remote-write entry |
-| `spokeAgent.globalHubRollup.secretName` | string | `global-observability-secrets` | Coalesced secret created by `policy-global-observability-secrets` |
-| `spokeAgent.globalHubRollup.secretNamespace` | string | `open-cluster-policies` | Namespace where the coalesced secret lives on the hub |
-| `spokeAgent.globalHubRollup.remoteTimeout` | string | `30s` | Timeout for remote-write requests |
-| `spokeAgent.globalHubRollup.caFile` | string | `/etc/prometheus/secrets/global-observability-secrets/ca.crt` | Path to the CA file inside the PrometheusAgent pod |
-| `spokeAgent.globalHubRollup.certFile` | string | `/etc/prometheus/secrets/global-observability-secrets/tls.crt` | Path to the client cert file |
-| `spokeAgent.globalHubRollup.keyFile` | string | `/etc/prometheus/secrets/global-observability-secrets/tls.key` | Path to the client key file |
-
-#### Additional Remote-Writes (rendered-config)
-
-Optional list of extra remote-write targets configured per-cluster/clusterset via the rendered-config ConfigMap under `globalObservability.additionalRemoteWrites`. These are added alongside the built-in rollup. Secrets are always replicated from the hub via `copySecretData`.
+Read by hub templates from `<cluster>.rendered-config`, falling back to chart `values.yaml` defaults.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `additionalRemoteWrites[].name` | string | — | Name of the remote-write entry |
-| `additionalRemoteWrites[].url` | string | — | Remote-write endpoint URL |
-| `additionalRemoteWrites[].remoteTimeout` | string | `30s` | Timeout for remote-write requests |
-| `additionalRemoteWrites[].onSelfManagedHub` | bool | `false` | When true, emit on the self-managed hub too |
-| `additionalRemoteWrites[].caFile` | string | — | CA file path in the PrometheusAgent pod |
-| `additionalRemoteWrites[].certFile` | string | — | Client cert file path |
-| `additionalRemoteWrites[].keyFile` | string | — | Client key file path |
-| `additionalRemoteWrites[].secretRef.name` | string | — | Secret name to replicate into the observability namespace |
-| `additionalRemoteWrites[].secretRef.namespace` | string | — | Source namespace of the secret on the hub |
+| `capabilities.platformAnalytics` | string bool | `"true"` | Incident detection + namespace/virtualization right-sizing |
+| `capabilities.platformLogs` | string bool | `"true"` | Platform log collection |
+| `capabilities.platformMetrics` | string bool | `"true"` | Platform metrics (default + UI) |
+| `capabilities.userWorkloadLogs` | string bool | `"true"` | User-workload log collection (ClusterLogForwarder) |
+| `capabilities.userWorkloadMetrics` | string bool | `"true"` | User-workload metrics |
+| `capabilities.userWorkloadTraces` | string bool | `"true"` | User-workload trace collection + instrumentation |
+| `scrapeInterval` | string | `300s` | `PrometheusAgent` scrape interval |
+| `logLevel` | string | `warn` | `PrometheusAgent` log level |
+| `additionalRemoteWrites` | list | `[]` | Extra remote-write targets (see below) |
 
-## Dependencies
+### `additionalRemoteWrites[]`
 
-| Policy | Depends On |
-|--------|-----------|
-| `policy-global-observability-prometheus` | `policy-global-observability-instance`, `policy-coo-operator-install` |
+Optional extra remote-write targets added alongside the built-in global rollup. Each entry:
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `name` | yes | — | Remote-write entry name |
+| `url` | yes | — | Remote-write endpoint URL |
+| `caFile` / `certFile` / `keyFile` | yes | — | TLS file paths inside the agent pod (`/etc/prometheus/secrets/<secret-name>/...`) |
+| `remoteTimeout` | no | `30s` | Remote-write timeout |
+| `onSelfManagedHub` | no | `false` | `false`: emitted on intermediate hubs only; `true`: emitted on every hub |
+| `secretRef.name` / `secretRef.namespace` | no | — | Hub secret replicated into the observability namespace via `copySecretData` and mounted into the agent |
+
+Keep secret names short and alphanumeric-terminated: MCOA generates `secret-<name>` volume names truncated to 63 chars, and a cut landing on a non-alphanumeric character silently breaks the agent StatefulSet.
+
+## Chart Values (`globalObservability.*`)
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `namespace` | `open-cluster-management-observability` | Hub observability namespace |
+| `capabilities.*` | all `"true"` | Defaults for the capability toggles above |
+| `scrapeInterval` / `logLevel` | `300s` / `warn` | Defaults for the agent settings above |
+| `spokeAgent.prometheusAgentNames` | `[mcoa-default-platform-metrics-collector-global, mcoa-default-user-workload-metrics-collector-global]` | MCOA `PrometheusAgent` templates to patch |
+| `spokeAgent.globalHubRollup.name` | `acm-global-observability` | Built-in rollup remote-write entry name |
+| `spokeAgent.globalHubRollup.secretName` | `global-observability-secrets` | Coalesced rollup secret name |
+| `spokeAgent.globalHubRollup.secretNamespace` | `policies-autoshift` | Namespace of the coalesced secret on the global hub (see caveat below) |
+| `spokeAgent.globalHubRollup.remoteTimeout` | `30s` | Rollup remote-write timeout |
+| `spokeAgent.globalHubRollup.caFile` / `certFile` / `keyFile` | `/etc/prometheus/secrets/global-observability-secrets/{ca.crt,tls.crt,tls.key}` | Mount paths for the rollup mTLS files |
+
+> **Caveat — `secretNamespace` must match the policy namespace.** The secrets policy writes into `policy_namespace` (computed by the ApplicationSet as `policies-<release-name>`, default `policies-autoshift`), but the rollup reads from the hardcoded `secretNamespace` default. If the AutoShift Application is released under any other name, override `spokeAgent.globalHubRollup.secretNamespace` to match or the rollup secret copy silently fails.
 
 ## Prerequisites
 
-- The MultiClusterHub must have `multicluster-observability` enabled (handled by the MCH policy)
-- A source secret with S3 credentials must exist at the location specified by `thanosStorage.source.*`
-- A CA bundle ConfigMap must exist in `openshift-config` (specified by `caBundle.*`)
-- For spoke agent functionality: the Cluster Observability Operator must be installed on hub clusters
-- For additional remote-writes: referenced secrets must exist on the hub in their specified namespace
+- `acm-observability: 'true'` on every participating hub — `policy-acm-observability` must be Compliant (base MCO CR + secrets)
+- `coo: 'true'` on every participating hub — Cluster Observability Operator runs the `PrometheusAgent`s
+- Do **not** set `acm.observability.enableMCOA: true` in rendered-config when using this chart's capability toggles — both policies `musthave`-patch `spec.capabilities`, and an additive patch cannot remove capabilities that `enableMCOA` already added. Leave it unset so this chart is the sole capabilities manager.
+- For `additionalRemoteWrites` with `secretRef`: the referenced secret must exist on the global hub in the given namespace
 
 ## Examples
 
-### Labels Only
+### Global hub (self-managed)
 
 ```yaml
-# In autoshift/values/clustersets/hub.yaml
+# autoshift/values/clustersets/<global-hub>.yaml
+selfManagedHubSet: hubofhubs
 hubClusterSets:
-  global-hub:
+  hubofhubs:
     labels:
-      global-observability: 'true'
       self-managed: 'true'
-      global-observability-storage-class: gp3-csi
-      global-observability-retention-raw: '7d'
-
-  regional-hub:
-    labels:
+      acm-observability: 'true'
+      coo: 'true'
       global-observability: 'true'
-      self-managed: 'false'
-```
-
-### Labels with Config
-
-```yaml
-# In autoshift/values/clustersets/hub.yaml or autoshift/values/clusters/<cluster>.yaml
-hubClusterSets:
-  global-hub:
-    labels:
-      global-observability: 'true'
-      self-managed: 'true'
     config:
       globalObservability:
-        useAlternateCA: false
-        storageClass: 'gp3-csi'
-        retentionResolutionRaw: '7d'
-        retentionResolution5m: '14d'
-        retentionResolution1h: '30d'
-        enableDownSampling: true
-        interval: 300
-        scrapeSizeLimitBytes: 1073741824
-        scrapeWorkers: 1
         scrapeInterval: '300s'
         logLevel: 'warn'
-        alertmanagerStorageSize: '10Gi'
-        compactStorageSize: '10Gi'
-        receiveStorageSize: '10Gi'
-        ruleStorageSize: '10Gi'
-        storeStorageSize: '10Gi'
         capabilities:
           platformAnalytics: 'true'
           platformLogs: 'true'
@@ -197,32 +122,35 @@ hubClusterSets:
           userWorkloadLogs: 'true'
           userWorkloadMetrics: 'true'
           userWorkloadTraces: 'true'
-        thanosStorage:
-          bucket: 'acm-dr'
-          endpoint: 's3.example.com'
-          insecure: false
-          caBundle:
-            sourceName: 'user-ca-bundle'
-            sourceKey: 'ca-bundle.crt'
-          source:
-            namespace: 'my-secrets-ns'
-            secretName: 'my-s3-secret'
-            accessKeyField: 'AWS_ACCESS_KEY_ID'
-            secretKeyField: 'AWS_SECRET_ACCESS_KEY'
+        # Optional: fan out to an external sink from every hub
         additionalRemoteWrites:
           - name: external-monitoring
-            remoteTimeout: 30s
             onSelfManagedHub: true
             url: https://external.example.com/api/v1/receive
+            remoteTimeout: 30s
             caFile: /etc/prometheus/secrets/external-certs/ca.crt
             certFile: /etc/prometheus/secrets/external-certs/tls.crt
             keyFile: /etc/prometheus/secrets/external-certs/tls.key
             secretRef:
               name: external-certs
               namespace: some-ns
-
-  regional-hub:
-    labels:
-      global-observability: 'true'
-      self-managed: 'false'
 ```
+
+### Intermediate hub (managed by the global hub)
+
+```yaml
+# autoshift/values/clustersets/hub1.yaml
+hubClusterSets:
+  hub1:
+    labels:
+      self-managed: 'false'
+      acm-observability: 'true'
+      coo: 'true'
+      global-observability: 'true'
+    config:
+      globalObservability:
+        capabilities:
+          userWorkloadTraces: 'false'
+```
+
+Workload clusters need no labels — the patched `PrometheusAgent` template and its secret arrive via MCOA replication from their intermediate hub. The minimal enablement for the whole rollup is two labels per hub (`global-observability` + the correct `self-managed` value).
