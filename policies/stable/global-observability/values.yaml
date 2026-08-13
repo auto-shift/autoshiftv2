@@ -1,0 +1,83 @@
+# Default values for global-observability.
+#
+# This chart owns the global-hub-specific pieces of MultiClusterObservability:
+#   * MCOA capability toggles (patches base MCO CR from policy-acm-observability)
+#   * PrometheusAgent remote-write patching (rollup to global hub + additional targets)
+#   * Global-hub rollup secret creation (self-managed hub)
+#
+# Base MCO lifecycle (namespace, pull secret, CA bundle, thanos-object-storage,
+# MCO CR with retention/storage/addon spec) is owned by policy-acm-observability
+# under the "acm.observability" key in the rendered-config ConfigMap.
+#
+policy_namespace: open-cluster-policies
+globalObservability:
+  namespace: open-cluster-management-observability
+  # MCOA capability toggles. Each accepts "true"/"false". Overridable per-cluster
+  # via rendered-config globalObservability.capabilities.*.
+  capabilities:
+    platformAnalytics: "true"
+    platformLogs: "true"
+    platformMetrics: "true"
+    userWorkloadLogs: "true"
+    userWorkloadMetrics: "true"
+    userWorkloadTraces: "true"
+  # Spoke PrometheusAgent scrape configuration
+  scrapeInterval: 300s
+  logLevel: warn
+  # Spoke agent — patches hub PrometheusAgent templates
+  spokeAgent:
+    # MCOA PrometheusAgent names to patch on hubs
+    prometheusAgentNames:
+      - mcoa-default-platform-metrics-collector-global
+      - mcoa-default-user-workload-metrics-collector-global
+    # Built-in global hub rollup — always deployed, skipped on self-managed hub
+    # Rolls up metrics from regional hubs to the self-managed hub's observatorium
+    globalHubRollup:
+      name: acm-global-observability
+      secretName: global-observability-secrets    # coalesced secret created by policy-global-observability-secrets
+      secretNamespace: policies-autoshift      # namespace where the coalesced secret lives on the hub
+      remoteTimeout: 30s
+      caFile: /etc/prometheus/secrets/global-observability-secrets/ca.crt
+      certFile: /etc/prometheus/secrets/global-observability-secrets/tls.crt
+      keyFile: /etc/prometheus/secrets/global-observability-secrets/tls.key
+    # Additional remote-write targets are configured per-cluster/clusterset
+    # via the rendered-config ConfigMap under globalObservability.additionalRemoteWrites.
+    # Secrets are always replicated from the hub via copySecretData.
+    #
+    # Example config block (in autoshift/values/clustersets/*.yaml or clusters/*.yaml):
+    #   config:
+    #     globalObservability:
+    #       additionalRemoteWrites:
+    #         - name: external-monitoring
+    #           remoteTimeout: 30s
+    #           onSelfManagedHub: true
+    #           url: https://external.example.com/api/v1/receive
+    #           caFile: /etc/prometheus/secrets/external-certs/ca.crt
+    #           certFile: /etc/prometheus/secrets/external-certs/tls.crt
+    #           keyFile: /etc/prometheus/secrets/external-certs/tls.key
+    #           secretRef:
+    #             name: external-certs
+    #             namespace: some-ns
+
+### AutoShift Labels Documentation
+# The following labels can be set at the cluster or clusterset level to configure this policy:
+#
+# Enable/Disable:
+# global-observability<bool>: 'true' or 'false' - Enable MCOA capabilities patching + rollup on the hub (default: 'false')
+#
+# Per-cluster overrides (via rendered-config ConfigMap under the "globalObservability" key):
+#   capabilities.{platformAnalytics,platformLogs,platformMetrics,
+#                 userWorkloadLogs,userWorkloadMetrics,userWorkloadTraces}: "true"|"false"
+#   scrapeInterval: '300s'
+#   logLevel: 'warn'
+#   additionalRemoteWrites: [...]
+#
+# Base MCO config (retention, storage, thanos, etc) lives under the "acm.observability"
+# key and is consumed by policy-acm-observability.
+#
+# Prerequisites:
+# - Cluster Observability Operator must be installed on reporting clusters
+# - policy-acm-observability must be Compliant (creates the base MCO CR and secrets)
+#
+# Examples:
+# autoshift.io/global-observability: 'true'
