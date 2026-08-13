@@ -646,6 +646,41 @@ hubClusterSets:
         # production. Pinning one tag across a fleet spanning minors deploys the wrong bundle to
         # all but one of them.
         image: ''
+      # =======================================================================
+      # Global Observability (three-tier metrics rollup: global hub -> intermediate
+      # hubs -> workload clusters). Enable with the global-observability label below;
+      # placement is driven by that label + self-managed ('true' = global hub,
+      # 'false' = intermediate hub). Base MCO config (retention, storage, thanos)
+      # stays under acm.observability / policy-acm-observability. Do NOT set
+      # acm.observability.enableMCOA when using these capability toggles.
+      # Prereqs on every participating hub: acm-observability: 'true', coo: 'true'.
+      # =======================================================================
+      globalObservability:
+        # MCOA capability toggles patched onto the MultiClusterObservability CR
+        capabilities:
+          platformAnalytics: 'true'         # incident detection + right-sizing
+          platformLogs: 'true'
+          platformMetrics: 'true'
+          userWorkloadLogs: 'true'
+          userWorkloadMetrics: 'true'
+          userWorkloadTraces: 'true'
+        scrapeInterval: '300s'              # PrometheusAgent scrape interval
+        logLevel: 'warn'                    # PrometheusAgent log level
+        # Optional extra remote-write targets alongside the built-in global rollup.
+        # Keep secret names short and alphanumeric-terminated: MCOA truncates
+        # secret-<name> volume names to 63 chars; a cut on a non-alphanumeric
+        # character silently breaks the agent StatefulSet.
+        # additionalRemoteWrites:
+        #   - name: external-monitoring
+        #     url: https://external.example.com/api/v1/receive
+        #     remoteTimeout: 30s                # optional (default 30s)
+        #     onSelfManagedHub: true            # true: every hub; false: intermediate hubs only (default)
+        #     caFile: /etc/prometheus/secrets/external-certs/ca.crt
+        #     certFile: /etc/prometheus/secrets/external-certs/tls.crt
+        #     keyFile: /etc/prometheus/secrets/external-certs/tls.key
+        #     secretRef:                        # hub secret replicated + mounted into the agent
+        #       name: external-certs
+        #       namespace: some-ns
     labels:
       # =======================================================================
       # Core Configuration
@@ -1096,6 +1131,15 @@ hubClusterSets:
       coo-channel: stable
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Global Observability (hub only — settings in config.globalObservability above)
+      # Enables MCOA capability patching + metrics rollup to the global hub.
+      # Placement discriminator is the self-managed label: 'true' = global hub
+      # (secrets policy), 'false' = intermediate hub (PrometheusAgent patching).
+      # Requires acm-observability: 'true' and coo: 'true' on the same hub.
+      # =======================================================================
+      global-observability: 'false'
 
       # =======================================================================
       # User Workload Monitoring (settings in config section above)
