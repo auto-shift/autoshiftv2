@@ -10,12 +10,15 @@ Complete documentation for AutoShift - Infrastructure as Code for OpenShift usin
 
 ### Configuration
 - **[Values Reference](values-reference.md)** - All cluster labels and configuration options
+- **[External Values Repository](external-values-repo.md)** - Keep site config in your own repo and combine it with the chart via a multi-source ArgoCD Application (recommended for production)
 - **[Hub-of-Hubs Topology](hub-of-hubs.md)** - Multi-tier (global hub) deployments: how AutoShift stacks per-hub and which tier manages what
 - **[Workload Partitioning](workload-partitioning.md)** - CPU isolation, PerformanceProfile sizing, NUMA topology
 
 ### Release & Operations
 - **[Release & OCI Guide](releases.md)** - Release process, OCI mode, private registries, disconnected environments, version management
 - **[Gradual Rollout](gradual-rollout.md)** - Deploy multiple versions side-by-side using ACM ClusterSets
+- **[ClusterSet Assignment](cluster-set-assignment.md)** - Move clusters between releases declaratively from git
+- **[OpenShift Fleet Upgrades](ocp-upgrade.md)** - Stage OpenShift upgrades in waves by clusterset membership
 
 ### Development
 - **[Developer Guide](developer-guide.md)** - Creating policies, contributing to AutoShift, and advanced configuration

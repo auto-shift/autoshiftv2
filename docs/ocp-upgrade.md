@@ -13,39 +13,69 @@ clustersets in waves, verifying compliance between waves.
 > Policies — `Policy`/`PlacementBinding` expose no rollout hook). So the staging lever that actually
 > fits AutoShift is clusterset membership, controlled by you.
 
-## The `openshift-upgrade` policy
+## The `openshift-upgrade` policies
 
-`policies/stable/openshift-upgrade/` renders one `ClusterVersion` policy driven by labels:
+`policies/stable/openshift-upgrade/` renders **four** policies, all sharing one placement gated on
+`autoshift.io/openshift-upgrade: 'true'`. They run as a staged sequence — set the channel, validate
+the target, drive the upgrade, report completion:
 
-- **`spec`** — `upstream` + `channel` + `desiredUpdate.version` from labels. When enforced, this sets
-  the desired version and the CVO upgrades.
-- **`status.history[].state: Completed`** — the completion gate. The policy is `Compliant` only once
-  the upgrade has actually **finished**, so compliance is a trustworthy "this cluster is upgraded"
-  signal. (`clusterversions/status` is a subresource, so `enforce` can't write it — it's compare-only.)
-- **Semver guard** — a spoke-side `semverCompare` only asserts when `target > current`, so clusters
-  already at/above the target are a Compliant no-op and downgrades are never attempted.
+| # | Policy | Mode | Role |
+|---|---|---|---|
+| 1 | `policy-openshift-upgrade-channel` | enforce | Sets the `ClusterVersion` channel first, so `availableUpdates` recomputes for the desired channel. Without this, a y-stream target could deadlock the check below. |
+| 2 | `policy-openshift-upgrade-allowed` | inform | Asserts the target is a valid, available update. **Policy 3 depends on it**, so an unreachable version blocks the upgrade instead of half-applying it. |
+| 3 | `policy-openshift-upgrade` | enforce | Sets `upstream` and `desiredUpdate.version`; the CVO does the upgrade. |
+| 4 | `policy-openshift-upgrade-status` | inform | The completion gate — Compliant only once the cluster has actually reached the target. **This is the one to watch for wave rollouts.** |
+
+Two guards keep this safe:
+
+- **Semver guard** (policy 3) — asserts `desiredUpdate` only when `target > current`, so clusters
+  already at or above the target are a Compliant no-op and downgrades are never attempted. It also
+  skips while the cluster is already `Progressing`, so it never fights an in-flight upgrade.
+- **Dependency gate** (policy 3 → policy 2) — a typo'd or unavailable `openshift-version` surfaces as
+  a clear NonCompliant message on policy 2 and policy 3 simply never fires.
+
+> **How completion is detected.** Policy 4 does *not* assert `status.history` as a policy field. ACM
+> does not reliably match status **lists** (`conditions`, `history`), so the policy computes the latest
+> `Completed` history entry in Go template logic and, until the target is reached, forces NonCompliant
+> with a `mustnothave` on the `ClusterVersion` — an object that always exists, making it a reliable
+> existence check rather than a flappy list match. `clusterversions/status` is a subresource, so
+> `enforce` could not write it in any case. Upgrade *failure* visibility comes from OpenShift's own
+> upgrade alerts, not from a policy check.
 
 ### Labels (set on the target clusterset)
 
 | Label | Purpose | Example |
 |---|---|---|
 | `autoshift.io/openshift-upgrade` | opt the cluster in to Day-2 upgrades | `'true'` |
-| `autoshift.io/openshift-version` | target version — shared with operator-channel tooling (upgrades only if `> current`) | `'4.20.28'` |
-| `autoshift.io/openshift-upgrade-channel` | ClusterVersion channel | `'stable-4.20'` |
+| `autoshift.io/openshift-version` | target version — shared with operator-channel tooling (upgrades only if `> current`) | `'4.22.8'` |
+| `autoshift.io/openshift-upgrade-channel` | ClusterVersion channel (default `stable-4.22`) | `'stable-4.22'` |
 | `autoshift.io/openshift-upgrade-upstream` | OSUS graph (local URL when disconnected) | `https://api.openshift.com/...` |
 
 ## Validation is free
 
-Because the policy is a normal ACM policy, you get fleet-wide validation with no extra tooling:
+Because these are normal ACM policies, you get fleet-wide validation with no extra tooling. Query
+**`policy-openshift-upgrade-status`** — the completion gate, not the enforcing policy:
 
 ```bash
-oc get policy -n policies-autoshift policy-openshift-upgrade \
+oc get policy -n policies-autoshift policy-openshift-upgrade-status \
   -o jsonpath='{range .status.status[*]}{.clustername}{"\t"}{.compliant}{"\n"}{end}'
 ```
 
-And ArgoCD surfaces it too: OpenShift GitOps ships a health check for `Policy`, so the
-`autoshift-openshift-upgrade` **Application is Healthy only when the policy is Compliant**. That's your
-"this wave is done, proceed" gate — watch it in the ArgoCD UI or via `oc get application`.
+`policy-openshift-upgrade` goes Compliant as soon as the desired fields are *set*, which happens long
+before the CVO finishes. Watching it would declare a wave done while clusters are still upgrading.
+
+To see the whole sequence for one cluster, including which stage is blocking:
+
+```bash
+oc get policy -n policies-autoshift -l '!policy.open-cluster-management.io/root-policy' \
+  -o custom-columns=NAME:.metadata.name,COMPLIANT:.status.compliant | grep openshift-upgrade
+```
+
+ArgoCD surfaces it too: OpenShift GitOps ships a health check for `Policy`, so the
+`autoshift-openshift-upgrade` **Application is Healthy only when all four policies are Compliant** —
+which, because policy 4 is included, means the upgrade has finished. That's your "this wave is done,
+proceed" gate. Expect the Application to sit Degraded for the duration of an upgrade; that is the
+gate working, not a fault.
 
 ## Rolling out an upgrade (or a new AutoShift version) in waves
 
@@ -54,9 +84,9 @@ The model is **blue/green clustersets** + **wave migration**:
 1. **Deploy the new version** as a versioned clusterset (see [gradual-rollout.md](gradual-rollout.md)).
    Its `openshift-version` targets the new OCP version. The clusterset starts empty (or with a
    canary).
-2. **Move a canary cluster** into the new clusterset. Its `openshift-upgrade` policy enforces → the
-   CVO upgrades it → the policy goes `Compliant` when finished.
-3. **Verify** the canary via policy compliance / ArgoCD health.
+2. **Move a canary cluster** into the new clusterset. The channel policy sets the channel, the allowed
+   check validates the target, the upgrade policy sets `desiredUpdate` → the CVO upgrades it.
+3. **Verify** the canary via `policy-openshift-upgrade-status` / ArgoCD health.
 4. **Move the next wave**, verify, repeat until the fleet is migrated.
 
 **Safety:** blast radius is controlled entirely by membership. **Never enable `openshift-upgrade` on
@@ -65,14 +95,20 @@ policy out with no staging). Always move clusters *into* the upgrading clusterse
 
 ### Making the waves Argo-native
 
-Rather than `oc label` by hand, keep clusterset membership **declarative in git** (a values-driven
-cluster→clusterset map). A rollout is then a series of **commits** moving N clusters per wave; Argo
-reconciles each; the ArgoCD compliance-health above tells you when to commit the next wave;
-`git revert` is your rollback. The only thing not automated is "auto-proceed when green" — that single
-gate is either your commit cadence or a thin script that reads compliance and moves the next wave.
+Rather than `oc label` by hand, keep clusterset membership **declarative in git** using the
+[cluster-set-assignment](cluster-set-assignment.md) policy: set `config.clusterSet` and
+`config.versionTag` on the cluster in `autoshift/values/clusters/<name>.yaml`, and the policy stamps
+the clusterset label for you.
 
-> *(A declarative clusterset-membership generator is a planned follow-up; today, membership is set via
-> `oc label` / cluster-install, and the wave discipline above still applies.)*
+A rollout is then a series of **commits** moving N clusters per wave; Argo reconciles each; the
+ArgoCD compliance-health above tells you when to commit the next wave; `git revert` is your rollback.
+The only thing not automated is "auto-proceed when green" — that gate is either your commit cadence
+or a thin script that reads compliance and moves the next wave.
+
+Assignment is **owner-guarded**: the policy only stamps clusters its own deployment already owns, so
+two AutoShift releases cannot fight over a cluster and a hand-labelled cluster is never stolen. Note
+the corollary — if a cluster is under cluster-set-assignment, `oc label` is not a durable override;
+the policy re-stamps it. Move it in git instead.
 
 ## Hub-of-hubs
 
@@ -84,4 +120,6 @@ each layer's waves in that order.
 ## See also
 
 - [gradual-rollout.md](gradual-rollout.md) — versioned-clusterset blue/green migration
+- [cluster-set-assignment.md](cluster-set-assignment.md) — declarative clusterset membership (the
+  GitOps way to move waves)
 - [hub-of-hubs.md](hub-of-hubs.md) — HoH topology and the one-ACM-per-cluster constraint
