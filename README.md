@@ -1,140 +1,123 @@
 # AutoShiftv2
 
-![OpenShift Version](https://img.shields.io/badge/OpenShift-4.20.29-red?logo=redhatopenshift&logoColor=white)
+**Build and run a fleet of OpenShift clusters from Git.**
+
+![OpenShift Version](https://img.shields.io/badge/OpenShift-4.22.8-red?logo=redhatopenshift&logoColor=white)
 ![ACM Version](https://img.shields.io/badge/ACM-2.17-blue?logo=redhat&logoColor=white)
 
-## What is AutoShift?
+AutoShiftv2 is an opinionated [Infrastructure-as-Code (IaC)](https://martinfowler.com/bliki/InfrastructureAsCode.html)
+framework for managing OpenShift at scale with Advanced Cluster Management (ACM) and OpenShift
+GitOps. It provides a modular, extensible model for the infrastructure components deployed on
+OpenShift — particularly those in
+[OpenShift Platform Plus](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet) —
+and emphasizes ease of adoption, configurable features (taggable on/off), and production-ready
+capabilities for installation, upgrades, and maintenance.
 
-AutoShiftv2 is an opinionated [Infrastructure-as-Code (IaC)](https://martinfowler.com/bliki/InfrastructureAsCode.html) framework designed to manage infrastructure components after an OpenShift installation using Advanced Cluster Management (ACM) and OpenShift GitOps. It provides a modular, extensible model to support infrastructure elements deployed on OpenShift — particularly those in [OpenShift Platform Plus](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet). AutoShiftv2 emphasizes ease of adoption, configurable features (taggable on/off), and production-ready capabilities for installation, upgrades, and maintenance.
+What AutoShift does is use OpenShift GitOps to declaratively manage RHACM, which in turn manages
+various OpenShift and Kubernetes cluster resources and components. This eliminates much of the
+operator toil associated with installing and managing day 2 tasks, by letting declarative GitOps do
+that for you.
 
-What AutoShift does is it uses OpenShift GitOps to declaratively manage RHACM which then manages various OpenShift and/or Kubernetes cluster resources and components. This eliminates much of the operator toil associated with installing and managing day 2 tasks, by letting declarative GitOps do that for you.
+It covers the whole life of a cluster, though, not just day 2. **New clusters are provisioned from
+the same values files that configure them** — baremetal through the Assisted Installer and
+SiteConfig, AWS and vSphere through Hive — and arrive with their operators and configuration
+already applied. Existing clusters are held at the state you described, so adding a capability to a
+hundred clusters is a label in a values file, and adding it to one is the same label on that
+cluster.
+
+**[Get started →](docs/quickstart.md)**  ·  [Browse the labels](docs/values-reference.md)  ·  [All documentation](docs/)
+
+## How it works
+
+Three phases:
+
+1. **Bootstrap** — install ACM and OpenShift GitOps with Helm.
+2. **Deploy AutoShift** — an ArgoCD Application pointing at the `autoshift` chart, which creates
+   an ApplicationSet.
+3. **Policies** — the ApplicationSet discovers every policy under `policies/` and deploys it. The
+   GitOps and ACM policies then take over managing the operators that bootstrapped them.
+
+RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass, with
+built-in governance, cluster lifecycle management, application lifecycle management, and
+observability. OpenShift GitOps provides declarative GitOps for multicluster continuous delivery.
+The **hub** is the cluster running both; everything else is a **managed cluster**.
+
+![Hub architecture](images/AutoShiftv2-Hub.jpg)
+
+Hubs stack. A global hub manages other hubs, each running its own AutoShift instance and managing
+only the clusters its own ACM can see — see [Hub-of-Hubs Topology](docs/hub-of-hubs.md)
+([RHACM MultiCluster Global Hub](https://www.youtube.com/watch?v=jg3Zr7hFzhM)).
+
+![Hub of hubs architecture](images/AutoShiftv2-HubOfHubs.jpg)
+
+## Key concepts
+
+**Cluster sets** group clusters that share configuration. A values file describes the set and
+every member inherits it; per-cluster files override individual settings. Configuration is
+composable — focused files under `autoshift/values/` that you combine in your ArgoCD Application.
+
+**Labels are the interface.** Values files are the source of truth — you author configuration
+there, not by editing clusters. The `cluster-labels` policy resolves them and stamps
+`autoshift.io/*` labels onto each `ManagedCluster`, with the merged config written to ConfigMaps
+on the hub. Every other policy uses a Placement to match those labels, so enabling a capability is
+one label. Precedence runs cluster-specific over cluster-set.
+
+Because the resolved state lands on the cluster, you can read back exactly what any cluster was
+told and where each setting came from — `oc get managedcluster <name> --show-labels`, or the
+rendered-config ConfigMap in the policy namespace.
+
+**Clusters come from the same source as their config.** A cluster definition in a values file is
+picked up by the cluster-install policies and provisioned — baremetal via ACM's Assisted Installer
+and the SiteConfig operator, AWS and vSphere via Hive. Because the definition sits beside the
+labels, a cluster is configured as it comes up rather than afterwards. See
+[Provisioning Clusters](docs/cluster-install.md).
+
+**Git or OCI.** Deploy from a Git repository with live policy discovery, or from version-pinned
+OCI artifacts with no Git dependency.
+
+## Installing
+
+Two ways in, both covered step by step in the
+**[Quick Start Guide](docs/quickstart.md)**:
+
+- **From source (Git)** — bootstrap ACM and GitOps with Helm from a clone, then deploy AutoShift
+  as an ArgoCD Application. Policies are discovered live from the repository.
+- **From OCI** — run the install scripts from a release. Version-pinned, prerendered, no Git
+  dependency. See the [Release & OCI Guide](docs/releases.md) for private registries and
+  disconnected environments.
+
+## Configuring
+
+Everything a cluster gets is driven by `autoshift.io/*` labels and `config` blocks in your values
+files. The [Values Reference](docs/values-reference.md) lists every one — including dry-run mode,
+custom ArgoCD namespaces, and per-operator channels and versions.
+
+To run a new AutoShift release against a few clusters before the whole fleet, see
+[Gradual Rollout](docs/gradual-rollout.md) and
+[ClusterSet Assignment](docs/cluster-set-assignment.md).
 
 ## Documentation
 
-📚 **[Complete Documentation](docs/)** - Start here for guides and tutorials
+📚 **[Complete Documentation](https://auto-shift.github.io/autoshiftv2/)** — also under
+[`docs/`](docs/) in this repository.
 
-**Quick Links:**
 - 🚀 [Quick Start Guide](docs/quickstart.md) - Full installation walkthrough (Source and OCI)
+- 🏗️ [Provisioning Clusters](docs/cluster-install.md) - Install new clusters from AutoShift
+- 📋 [Values Reference](docs/values-reference.md) - All cluster labels and configuration options
+- 🗂️ [External Values Repository](docs/external-values-repo.md) - Keep site config in your own repo
 - 📦 [Release & OCI Guide](docs/releases.md) - Release process, OCI mode, and version management
 - 📊 [Gradual Rollout](docs/gradual-rollout.md) - Multi-version deployments
-- 📋 [Values Reference](docs/values-reference.md) - All cluster labels and configuration options
 - 🔧 [Developer Guide](docs/developer-guide.md) - Contributing and advanced topics
 
-## Architecture
+## Contributing
 
-AutoShiftv2 is built on Red Hat Advanced Cluster Management for Kubernetes (RHACM) and OpenShift GitOps working in concert. RHACM provides visibility into OpenShift and Kubernetes clusters from a single pane of glass, with built-in governance, cluster lifecycle management, application lifecycle management, and observability features. OpenShift GitOps provides declarative GitOps for multicluster continuous delivery.
-
-The hub cluster is the main cluster with RHACM and its core components installed on it, and is also hosting the OpenShift GitOps instance that declaratively manages RHACM.
-
-### Hub Architecture
-![alt text](images/AutoShiftv2-Hub.jpg)
-
-### Hub of Hubs Architecture
-
-[Red Hat YouTube: RHACM MultiCluster Global Hub](https://www.youtube.com/watch?v=jg3Zr7hFzhM)
-
-![alt text](images/AutoShiftv2-HubOfHubs.jpg)
-
-## Values File Architecture
-
-AutoShift uses a **composable values file** pattern. Configuration is split into focused files under `autoshift/values/` that you combine in your ArgoCD Application. See the [Values Reference](docs/values-reference.md) for the full file structure, composition details, precedence rules, and all available cluster labels.
-
-## Quick Install
-
-For full step-by-step instructions, see the [Quick Start Guide](docs/quickstart.md).
-
-### From Source (Git)
-
-```bash
-# 1. Bootstrap ACM and GitOps — ACM MUST be installed FIRST. The GitOps repo-server sources the
-#    PolicyGenerator plugin's init-container image from ACM's multicluster-operators-hub-subscription
-#    deployment at install time; if GitOps goes first that image is empty and Argo CD fails to reconcile.
-#    NOTE: On clusters without the internal image registry (e.g. bare metal), add
-#    --set image=registry.redhat.io/openshift4/ose-cli:latest to both installs so the
-#    CRD-wait Job can pull a CLI image. See the Quick Start Guide for details.
-helm upgrade --install advanced-cluster-management advanced-cluster-management
-helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml
-
-# 2. Deploy AutoShift via ArgoCD Application
-# See Quick Start Guide for the full Application manifest
-
-# 3. Assign clusters to clustersets
-oc label managedcluster local-cluster cluster.open-cluster-management.io/clusterset=hub --overwrite
-```
-
-### From OCI (Registry)
-
-```bash
-# 1. Download latest release artifacts
-curl -sL https://github.com/auto-shift/autoshiftv2/releases/latest/download/install-bootstrap.sh -O
-curl -sL https://github.com/auto-shift/autoshiftv2/releases/latest/download/install-autoshift.sh -O
-chmod +x install-*.sh
-
-# To pin a specific version instead:
-# VERSION=X.Y.Z
-# curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-bootstrap.sh -O
-# curl -sL https://github.com/auto-shift/autoshiftv2/releases/download/v${VERSION}/install-autoshift.sh -O
-
-# 2. Bootstrap and install
-./install-bootstrap.sh
-oc get mch -A -w  # Wait for ACM to be ready
-./install-autoshift.sh
-```
-
-For full details, see the [Quick Start Guide](docs/quickstart.md) and [Release & OCI Guide](docs/releases.md).
-
-## Dry Run Mode
-
-AutoShift supports **dry run mode** for safe testing of policy deployments. Policies report violations without enforcing changes:
-
-```yaml
-autoshift:
-  dryRun: true  # Default: false
-```
-
-Add the `dryRun` override in your ArgoCD Application's `helm.values` field. See the [Quick Start Guide](docs/quickstart.md) for the full Application manifest.
-
-## Custom GitOps Namespace
-
-The ArgoCD namespace is controlled by `gitopsNamespace` in `autoshift/values/global.yaml` (defaults to `openshift-gitops`). To use a custom namespace, set it there or override it with `--set gitopsNamespace=<ns>`. The ArgoCD Application that deploys AutoShift should also have `destination.namespace` set to the same value:
-
-```yaml
-# autoshift/values/global.yaml
-gitopsNamespace: custom-gitops
-
-# ArgoCD Application
-spec:
-  destination:
-    namespace: custom-gitops  # Should match gitopsNamespace
-    server: https://kubernetes.default.svc
-```
-
-### Keeping the Default ArgoCD Instance
-
-When using a custom namespace, the GitOps operator's default ArgoCD instance in `openshift-gitops` is disabled by default. To keep it running alongside your custom instance, set the `gitops-disable-default-argocd` label to `'false'` on your hub clusterset:
-
-```yaml
-hubClusterSets:
-  hub:
-    labels:
-      gitops-disable-default-argocd: 'false'
-```
-
-## Versioned ClusterSets for Gradual Rollout
-
-AutoShift supports running multiple versions side-by-side using **versioned ClusterSets**:
-
-```yaml
-versionedClusterSets: true
-autoshiftOciVersion: "0.0.1"   # hub -> hub-0-0-1
-```
-
-See [Gradual Rollout Guide](docs/gradual-rollout.md) for detailed instructions.
+Issues and discussions are on [GitHub](https://github.com/auto-shift/autoshiftv2/issues). See the
+[Developer Guide](docs/developer-guide.md) to scaffold a policy and run the validation suite.
 
 ## References
 
-* [OpenShift Platform Plus DataShift](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet)
-* [Red Hat Training: DO480: Multicluster Management with Red Hat OpenShift Platform Plus](https://www.redhat.com/en/services/training/do480-multicluster-management-red-hat-openshift-platform-plus)
-* [Martin Fowler Blog: Infrastructure As Code](https://martinfowler.com/bliki/InfrastructureAsCode.html)
-* [helm Utility Installation Instructions](https://helm.sh/docs/intro/install/)
-* [OpenShift CLI Client `oc` Installation Instructions](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli)
+* [OpenShift Platform Plus datasheet](https://www.redhat.com/en/resources/openshift-platform-plus-datasheet)
+* [DO480: Multicluster Management with Red Hat OpenShift Platform Plus](https://www.redhat.com/en/services/training/do480-multicluster-management-red-hat-openshift-platform-plus)
+* [Infrastructure as Code — Martin Fowler](https://martinfowler.com/bliki/InfrastructureAsCode.html)
+* [Installing Helm](https://helm.sh/docs/intro/install/)
+* [Installing the OpenShift CLI](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli)

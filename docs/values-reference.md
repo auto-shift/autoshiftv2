@@ -245,6 +245,35 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-source`                 | string    | `redhat-operators`        | Operator catalog source |
 | `gitops-source-namespace`       | string    | `openshift-marketplace`   | Namespace for operator catalog |
 | `gitops-cluster-ca-bundle`      | bool      | `false`                   | Inject cluster trusted CA bundle into ArgoCD repo server |
+| `gitops-namespace`              | string    | (`gitopsNamespace`)       | Per-cluster override of the ArgoCD namespace, e.g. in hub-of-hubs setups |
+| `gitops-disable-default-argocd` | bool      | `true`                    | Controls `DISABLE_DEFAULT_ARGOCD_INSTANCE` on the operator Subscription |
+
+#### Using a custom ArgoCD namespace
+
+The ArgoCD namespace comes from `gitopsNamespace` in `autoshift/values/global.yaml` (default
+`openshift-gitops`). Override it there or with `--set gitopsNamespace=<ns>`, and point the ArgoCD
+Application that deploys AutoShift at the same namespace:
+
+```yaml
+# autoshift/values/global.yaml
+gitopsNamespace: custom-gitops
+
+# ArgoCD Application
+spec:
+  destination:
+    namespace: custom-gitops    # match gitopsNamespace
+    server: https://kubernetes.default.svc
+```
+
+With a custom namespace the operator's default ArgoCD instance in `openshift-gitops` is disabled.
+To keep it running alongside yours:
+
+```yaml
+hubClusterSets:
+  hub:
+    labels:
+      gitops-disable-default-argocd: 'false'
+```
 
 
 ### Master Nodes
