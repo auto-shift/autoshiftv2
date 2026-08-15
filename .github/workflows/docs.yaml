@@ -1,0 +1,54 @@
+name: Docs
+
+# Publishes the current main as the `dev` version of the site.
+#
+# release.yaml only deploys on a v*.*.* tag, so between releases the published docs describe
+# whatever shipped last — main sat months ahead of the site. This keeps a `dev` entry in mike's
+# version switcher alongside `latest`, so a documentation fix is visible without cutting a release.
+#
+# `latest` stays tag-only and remains the default, so the site root still serves released docs.
+
+on:
+  push:
+    # TEMPORARY: docs/rollout-and-values is here only to exercise this job before it reaches main.
+    # workflow_dispatch cannot be used for that — GitHub only offers the Run workflow button for
+    # workflows already on the default branch. REMOVE the branch before merging.
+    branches: [main, docs/rollout-and-values]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yaml'
+      - '.github/workflows/docs.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-dev:
+    runs-on: ubuntu-latest
+    # Shared with release.yaml's deploy-docs: both push to gh-pages with mike, and a concurrent
+    # push loses one of them. Queued rather than cancelled so a docs commit is never dropped.
+    concurrency:
+      group: gh-pages
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # mike reads and rewrites the gh-pages branch, so it needs the full history.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - run: pip install mkdocs-material mike mkdocs-same-dir
+
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # No --update-aliases: `dev` is the version itself, not an alias, so it never competes with
+      # `latest` for the default redirect.
+      - run: mike deploy --push dev
