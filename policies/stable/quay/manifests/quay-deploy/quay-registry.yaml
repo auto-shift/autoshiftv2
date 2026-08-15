@@ -158,7 +158,13 @@ object-templates-raw: |
           kind: {{ $issuerKind }}
           group: {{ $issuerGroup }}
   {{- end }}
-  - complianceType: musthave
+  {{/* mustonlyhave, NOT musthave. spec.components is a LIST, and musthave merges lists by APPENDING
+       entries that do not already match — so flipping postgres from managed:true to managed:false
+       leaves BOTH entries in place, the Quay Operator honours the last one, and the switch silently
+       does not happen while every policy still reports Compliant. Verified on a live cluster.
+       mustonlyhave replaces the list wholesale. Every field the Operator autofills into spec (it
+       autofills exactly this component list) must therefore be emitted here. */}}
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: quay.redhat.com/v1
       kind: QuayRegistry
