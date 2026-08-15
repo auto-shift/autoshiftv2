@@ -1,0 +1,45 @@
+# Default values for the autoshift
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global autoshift configuration
+autoshift:
+  # Set to true to deploy all policies in inform mode (dry run)
+  # When false, policies use their defined remediationAction
+  dryRun: false
+
+autoshiftGitRepo: https://github.com/auto-shift/autoshiftv2.git
+autoshiftGitBranchTag: main
+
+# ArgoCD namespace — single source of truth for all policy charts
+# Per-cluster overrides use the autoshift.io/gitops-namespace label
+gitopsNamespace: openshift-gitops
+
+# Does this deployment render policies through the policy-generator CMP sidecar?
+# - GIT/source mode RENDERS PolicyGenerator dirs live via the CMP, so it REQUIRES policyGenerator: true
+#   (validation fails otherwise). true installs the CMP sidecar in the infra ArgoCD repo-server.
+# - OCI mode ships PRERENDERED Helm charts (built in CI by `make render-policy-charts`) and never uses
+#   the CMP, so false is RECOMMENDED — it avoids configuring a sidecar nothing calls. It is NOT
+#   required and is not validated: the ApplicationSet branches on autoshiftOciRegistry, not on this
+#   flag, so an OCI deployment that leaves it true still deploys correctly.
+# The default below is true because the default deploy mode is git/source (no autoshiftOciRegistry).
+# This is the FLEET-WIDE default; a hub can override it in its self-managed clusterset under
+# config.gitops.policyGenerator (see clustersets/_example.yaml).
+policyGenerator: true
+
+# Optional: Enable versioned ClusterSet names for gradual rollout
+# When true, appends version/branch to all clusterset names
+# - OCI mode: uses autoshiftOciVersion (defaults to "latest", e.g., "hub" -> "hub-0-0-1")
+# - Git mode: uses autoshiftGitBranchTag (e.g., "hub" -> "hub-main" or "hub-feature-xyz")
+# Use this when deploying multiple AutoShift versions side-by-side
+# versionedClusterSets: false
+
+# Optional: Policies excluded from the ApplicationSet. cluster-labels and cluster-config-maps are deployed
+# as dedicated Applications with full label/config data to avoid sizing issues and are excluded already
+# excludePolicies:
+#   - infra-nodes
+#   - worker-nodes
+
+# Optional: Limit the number of history revisions kept for each application inside of gitops directly
+# Defaults to 3
+# revisionHistoryLimit: 3

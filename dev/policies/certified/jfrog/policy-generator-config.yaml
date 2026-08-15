@@ -1,0 +1,100 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: jfrog
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a
+# wildcard: drop a file in, no config edit). Keep placement*.yaml at the dir root, NOT inside a
+# wildcarded manifests dir. Per-deployment scalars (${...}) live here and in placement*.yaml only —
+# never in manifests/, whose hub templates contain $vars that substitution would clobber.
+#
+# remediationAction: ${REMEDIATION} is set once in policyDefaults (dry-run aware). Readiness/status
+# checks are their own policies[] entry (policy-*-test, remediationAction: inform, manifest under
+# test/) — a separate Policy so the enforce root of a config policy can't clobber the inform check.
+placementBindingDefaults:
+  name: binding-policy-jfrog
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-jfrog-operator-install
+    manifests:
+      - path: manifests/operator-install
+    placement:
+      placementPath: placement-jfrog.yaml
+  # 2) Readiness gate: the artifactory-keys Secret must exist (inform-only status check).
+  - name: policy-jfrog-keys
+    remediationAction: inform
+    dependencies:
+      - name: policy-jfrog-operator-install
+    manifests:
+      - path: test/jfrog-keys.yaml
+    placement:
+      placementPath: placement-jfrog.yaml
+  # 3) CNPG database for Artifactory (Cluster + ServiceMonitor + NetworkPolicy) plus readiness gate.
+  #    MIXED: apply manifests enforce, the readiness check informs.
+  - name: policy-cnpg-artifactory
+    dependencies:
+      - name: policy-cloudnative-pg-operator-install
+      - name: policy-jfrog-operator-install
+    manifests:
+      - path: manifests/cnpg-artifactory
+    placement:
+      placementPath: placement-jfrog-cnpg.yaml
+  # 4) CNPG connection poolers (rw + ro).
+  - name: policy-cnpg-artifactory-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-jfrog-cnpg.yaml
+    manifests:
+      - path: test/cnpg-artifactory-ready.yaml
+  - name: policy-cnpg-artifactory-pooler
+    dependencies:
+      - name: policy-cnpg-artifactory
+    manifests:
+      - path: manifests/cnpg-artifactory-pooler
+    placement:
+      placementPath: placement-jfrog-cnpg.yaml
+  # 5) Scheduled CNPG backups to NooBaa (requires odf). Own placement predicate.
+  - name: policy-cnpg-artifactory-backup
+    dependencies:
+      - name: policy-cnpg-artifactory
+      - name: policy-storage-cluster-test
+    manifests:
+      - path: manifests/cnpg-artifactory-backup
+    placement:
+      placementPath: placement-jfrog-backup.yaml
+  # 6) Artifactory instance (SCC + secrets + OpenshiftArtifactoryHa + Route) plus readiness gate.
+  #    MIXED: apply manifests enforce, the readiness check informs.
+  - name: policy-jfrog-instance
+    dependencies:
+      - name: policy-jfrog-operator-install
+      - name: policy-cnpg-artifactory
+      - name: policy-cnpg-artifactory-pooler
+      - name: policy-jfrog-keys
+    manifests:
+      - path: manifests/jfrog-instance
+    placement:
+      placementPath: placement-jfrog.yaml
+
+  - name: policy-jfrog-instance-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-jfrog.yaml
+    manifests:
+      - path: test/jfrog-instance-ready.yaml

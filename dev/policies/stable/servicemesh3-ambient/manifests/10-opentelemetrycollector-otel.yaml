@@ -1,0 +1,29 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: istio-system
+spec:
+  mode: deployment
+  observability:
+    metrics: {}
+  deploymentUpdateStrategy: {}
+  config:
+    exporters:
+      otlp:
+        endpoint: tempo-servicemesh-distributor.tracing-system.svc.cluster.local:4317
+        tls:
+          insecure: true
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http: {}
+    service:
+      pipelines:
+        traces:
+          exporters:
+          - otlp
+          receivers:
+          - otlp

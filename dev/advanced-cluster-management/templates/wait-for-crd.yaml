@@ -1,0 +1,26 @@
+{{- if not .Values.ignoreHelmHooks }}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: crd-check 
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  namespace: {{ .Values.acm.namespace }}
+spec:
+  containers:
+  - name: crd-check 
+    image: {{ .Values.image }}
+    imagePullPolicy: IfNotPresent
+    command: ['sh', '-c', 'while [ true ]; do oc get crd multiclusterhubs.operator.open-cluster-management.io; if [ $? -eq 0 ]; then break; fi ; sleep 5s; done']
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 0
+  serviceAccount: default
+  serviceAccountName: default
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+{{- end }}

@@ -1,0 +1,41 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: openshift-virtualization
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a wildcard:
+# drop a file in, no config edit). Keep placement.yaml at the dir root, NOT inside a wildcarded dir (a
+# Placement in a wildcarded dir would be wrapped into the Policy as a managed object).
+placementBindingDefaults:
+  name: binding-policy-virt
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # All policies share one hand-authored Placement (predicate autoshift.io/virt).
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  #    2 manifests -> a directory (wildcard).
+  - name: policy-virt-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) HyperConverged CR (first-class ConfigurationPolicy). Waits on the operator install.
+  - name: policy-virtualization-hyperconverged
+    dependencies:
+      - name: policy-virt-operator-install
+    manifests:
+      - path: manifests/hyperconverged.yaml
+        complianceType: mustonlyhave

@@ -1,0 +1,28 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-vault-autounseal
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Auto-unseal clusters only (transit + cloud KMS). Shamir clusters are excluded: they keep the manual
+  # init/unseal ceremony (Component D would produce unseal keys with nowhere safe to store them).
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/vault'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/vault-seal-type'
+              operator: In
+              values:
+                - 'transit'
+                - 'awskms'
+                - 'gcpckms'
+                - 'azurekeyvault'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

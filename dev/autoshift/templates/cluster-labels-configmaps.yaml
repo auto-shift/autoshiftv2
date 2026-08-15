@@ -1,0 +1,88 @@
+{{ if not (has "cluster-labels" ((.Values).excludePolicies | default list)) }}
+  {{- $clusterSetSuffix := include "autoshift.clusterSetSuffix" . }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: "{{ .Release.Name }}-cluster-labels"
+  namespace: {{ include "autoshift.gitopsNamespace" . }}
+  labels:
+    app: "{{ .Release.Name }}-policies"
+    velero.io/exclude-from-backup: "true"
+spec:
+  project: default
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit | default 3 }}
+  # Single source: the chart (git path or OCI) ships its own values.yaml; valuesObject layers the
+  # cross-cutting autoshift config on top. No per-chart $values git ref — top-level autoshift is the
+  # only chart that pulls external values files.
+  sources:
+    {{- if .Values.autoshiftOciRegistry }}
+    - path: .
+      repoURL: {{ .Values.autoshiftOciRepo }}/cluster-labels
+      targetRevision: {{ .Values.autoshiftOciVersion | default "latest" }}
+    {{- else }}
+    - path: policies/stable/cluster-labels
+      repoURL: {{ .Values.autoshiftGitRepo }}
+      targetRevision: {{ .Values.autoshiftGitBranchTag }}
+    {{- end }}
+      helm:
+        valuesObject:
+          gitopsNamespace: {{ include "autoshift.gitopsNamespace" . }}
+          policy_namespace: {{ printf "policies-%s" .Release.Name }}
+          clusterSetSuffix: {{ $clusterSetSuffix }}
+          autoshift:
+            dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
+            evaluationInterval:
+              compliant: {{ (((.Values.autoshift).evaluationInterval).compliant) | default "watch" }}
+              noncompliant: {{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "watch" }}
+          {{- /* cluster-type is derived from which bucket the set is declared in, not from
+                 values. It is emitted after the declared labels so it wins over any value a
+                 values file tries to set. */}}
+          {{- if .Values.hubClusterSets }}
+          hubClusterSets:
+          {{-  range $cluster, $clustervalue := .Values.hubClusterSets }}
+            {{ $cluster }}{{ $clusterSetSuffix }}:
+              labels:
+              {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
+                {{ $labelkey }}: '{{ $labelvalue }}'
+              {{- end }}
+                cluster-type: 'hub'
+          {{- end }}
+          {{- end }}
+          {{- if .Values.managedClusterSets }}
+          managedClusterSets:
+            {{-  range $cluster, $clustervalue := .Values.managedClusterSets }}
+            {{ $cluster }}{{ $clusterSetSuffix }}:
+              labels:
+              {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
+                {{ $labelkey }}: '{{ $labelvalue }}'
+              {{- end }}
+                cluster-type: 'spoke'
+          {{- end }}
+          {{- end }}
+          {{- if .Values.clusters }}
+          clusters:
+            {{-  range $cluster, $clustervalue := .Values.clusters }}
+            {{ $cluster }}:
+              labels:
+              {{-  range $labelkey, $labelvalue := $clustervalue.labels }}
+                {{ $labelkey }}: '{{ $labelvalue }}'
+              {{- end }}
+          {{- end }}
+          {{- end }}
+  ignoreDifferences:
+  - group: "apps"
+    kind: "Project"
+    jsonPointers:
+    - /metadata/annotations
+    - /metadata/labels
+  syncPolicy:
+    automated:
+      prune: {{ if ((.Values.autoshift).dryRun) }}false{{ else }}true{{ end }}
+      selfHeal: {{ if ((.Values.autoshift).dryRun) }}false{{ else }}true{{ end }}
+    syncOptions:
+    - RespectIgnoreDifferences=true
+    - CreateNamespace=true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ printf "policies-%s" .Release.Name }}
+{{ end }}

@@ -1,0 +1,1664 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Infrastructure as Code for OpenShift using GitOps and ACM">
+      
+      
+      
+      
+        <link rel="prev" href="../cluster-install/">
+      
+      
+        <link rel="next" href="../developer-guide/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Hub-of-Hubs Topology - AutoShift Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#hub-of-hubs-topology" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="AutoShift Documentation" class="md-header__button md-logo" aria-label="AutoShift Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AutoShift Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Hub-of-Hubs Topology
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/auto-shift/autoshiftv2" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    auto-shift/autoshiftv2
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quick Start
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../values-reference/" class="md-tabs__link">
+          
+  
+  
+  Configuration
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../releases/" class="md-tabs__link">
+          
+  
+  
+  Operations
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../developer-guide/" class="md-tabs__link">
+          
+  
+  
+  Development
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AutoShift Documentation" class="md-nav__button md-logo" aria-label="AutoShift Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AutoShift Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/auto-shift/autoshiftv2" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    auto-shift/autoshiftv2
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../values-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Values Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../external-values-repo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    External Values Repository
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../workload-partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workload Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releases & OCI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gradual-rollout/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gradual Rollout
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cluster-set-assignment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ClusterSet Assignment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ocp-upgrade/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenShift Fleet Upgrades
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cluster-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provisioning Clusters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub-of-Hubs Topology
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hub-of-Hubs Topology
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-rule-everything-follows-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The rule everything follows from
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acm-management-topology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ACM management topology
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#who-can-place-a-policy-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who can place a policy where
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cluster-labels-targets-across-the-tiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cluster-labels targets across the tiers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-the-lookups-are-not-namespace-bound" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why the lookups are not namespace-bound
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#standing-up-each-tier-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Standing up each tier (deployment)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#naming-and-namespaces-per-tier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Naming and namespaces per tier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#labeling-and-ownership-across-tiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Labeling and ownership across tiers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worked-example-following-one-config-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worked example: following one config change
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-pitfalls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common pitfalls
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../developer-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-rule-everything-follows-from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The rule everything follows from
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acm-management-topology" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ACM management topology
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#who-can-place-a-policy-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who can place a policy where
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cluster-labels-targets-across-the-tiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cluster-labels targets across the tiers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-the-lookups-are-not-namespace-bound" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why the lookups are not namespace-bound
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#standing-up-each-tier-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Standing up each tier (deployment)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#naming-and-namespaces-per-tier" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Naming and namespaces per tier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#labeling-and-ownership-across-tiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Labeling and ownership across tiers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worked-example-following-one-config-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worked example: following one config change
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-pitfalls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common pitfalls
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="hub-of-hubs-topology">Hub-of-Hubs Topology<a class="headerlink" href="#hub-of-hubs-topology" title="Permanent link">&para;</a></h1>
+<p>This document explains how AutoShift works in a <strong>hub-of-hubs</strong> (a.k.a. <em>global hub</em>)
+topology: one top-level hub that manages other hubs, each of which in turn manages its own
+spoke clusters.</p>
+<p>If you only run a single hub you don't need any of this — see
+<a href="../quickstart/">quickstart.md</a>. This document is for the multi-tier case, which trips
+people up because of one non-obvious ACM rule that reshapes everything.</p>
+<hr />
+<h2 id="the-rule-everything-follows-from">The rule everything follows from<a class="headerlink" href="#the-rule-everything-follows-from" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p><strong>A cluster can be managed by exactly one ACM.</strong></p>
+</blockquote>
+<p>A managed cluster runs a single agent (klusterlet) registered to a single hub. That means a
+spoke hub like <code>hub1</code>, which is imported into the <strong>hub-of-hubs (HoH)</strong> ACM, <strong>cannot also
+manage itself</strong>. <code>hub1</code> has <em>no</em> <code>local-cluster</code> entry in its own ACM. Its own ACM manages
+only <em>its</em> spokes (<code>spoke1</code>, <code>spoke2</code>) — never <code>hub1</code> itself.</p>
+<p>Two consequences flow from this, and they are the whole reason the architecture looks the
+way it does:</p>
+<ol>
+<li><strong>Anything that must land <em>on</em> <code>hub1</code> — operators, configuration, upgrades, and even the
+   policies that label or provision clusters from <code>hub1</code> — has to be deployed by the
+   <em>hub-of-hubs</em> AutoShift.</strong> Only the HoH's ACM manages <code>hub1</code>, so only the HoH can place
+   a policy onto it. <code>hub1</code>'s own AutoShift physically cannot target <code>hub1</code>.</li>
+<li><strong><code>hub1</code>'s own AutoShift is limited to two things:</strong> (a) configuring <code>hub1</code>'s <em>spokes</em>
+   (policies that <code>hub1</code>'s ACM distributes down to <code>spoke1</code>/<code>spoke2</code>), and (b) producing
+   <code>hub1</code>-local <strong>config resources</strong> — the <code>cluster-set.*</code> / <code>managed-cluster.*</code> /
+   rendered-config ConfigMaps — which ArgoCD applies directly to <code>hub1</code> (no ACM required).</li>
+</ol>
+<p>So the top hub manages itself and the hubs below it; every lower hub is managed <em>from above</em>
+and only reaches <em>downward</em> to its own spokes.</p>
+<hr />
+<h2 id="acm-management-topology">ACM management topology<a class="headerlink" href="#acm-management-topology" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>graph TD
+    subgraph HoH["🌐 Hub-of-Hubs (global hub)"]
+        HoHACM["ACM"]
+        HoHAS["AutoShift #quot;autoshift#quot;&lt;br/&gt;ns: policies-autoshift"]
+    end
+    subgraph H1["🏢 hub1 (spoke hub)"]
+        H1ACM["ACM"]
+        H1AS["AutoShift #quot;hub1#quot;&lt;br/&gt;ns: policies-hub1"]
+    end
+    subgraph H2["🏢 hub2 (spoke hub)"]
+        H2ACM["ACM"]
+        H2AS["AutoShift #quot;hub2#quot;&lt;br/&gt;ns: policies-hub2"]
+    end
+    S1["spoke1"]
+    S2["spoke2"]
+    S3["spoke3"]
+
+    HoHACM --&gt;|manages| HoHACM
+    HoHACM --&gt;|manages| H1ACM
+    HoHACM --&gt;|manages| H2ACM
+    H1ACM --&gt;|manages| S1
+    H1ACM --&gt;|manages| S2
+    H2ACM --&gt;|manages| S3
+
+    classDef hub fill:#e8f0fe,stroke:#4285f4,stroke-width:2px;
+    classDef spoke fill:#e6f4ea,stroke:#34a853;
+    class HoHACM,HoHAS,H1ACM,H1AS,H2ACM,H2AS hub;
+    class S1,S2,S3 spoke;</code></pre>
+<ul>
+<li>The HoH ACM manages <strong>itself</strong> (top hub — it is self-managed) plus <strong>hub1</strong> and <strong>hub2</strong>.</li>
+<li>hub1's ACM manages <strong>spoke1/spoke2</strong> but <strong>not hub1</strong> (hub1 is managed from above).</li>
+<li>hub2's ACM manages <strong>spoke3</strong> but <strong>not hub2</strong>.</li>
+<li>The HoH <strong>cannot see</strong> spoke1/spoke2/spoke3 at all — those are two boundaries away.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>hub-of-hubs   ── manages ──►  itself, hub1, hub2
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>hub1          ── manages ──►  spoke1, spoke2        (HoH cannot see these)
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>hub2          ── manages ──►  spoke3                (HoH cannot see this)
+</code></pre></div>
+<hr />
+<h2 id="who-can-place-a-policy-where">Who can place a policy where<a class="headerlink" href="#who-can-place-a-policy-where" title="Permanent link">&para;</a></h2>
+<p>This is the crux. An AutoShift instance can only place an ACM policy onto a cluster that
+<em>its</em> ACM manages. Map that onto the topology and you get a strict division of labor:</p>
+<table>
+<thead>
+<tr>
+<th>Target cluster</th>
+<th>Managed by</th>
+<th>So policies on it are deployed by</th>
+<th>hub1's own AutoShift can target it?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>hub-of-hubs (self)</td>
+<td>HoH ACM</td>
+<td>HoH AutoShift</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td><strong>hub1</strong> (the hub itself)</td>
+<td><strong>HoH ACM</strong></td>
+<td><strong>HoH AutoShift</strong></td>
+<td>❌ <strong>no</strong> — hub1's ACM doesn't manage hub1</td>
+</tr>
+<tr>
+<td>spoke1 / spoke2</td>
+<td>hub1 ACM</td>
+<td>hub1 AutoShift</td>
+<td>✅ yes (these are hub1's managed clusters)</td>
+</tr>
+</tbody>
+</table>
+<p>What each AutoShift instance is responsible for:</p>
+<ul>
+<li><strong>HoH AutoShift</strong> (<code>policies-autoshift</code>):</li>
+<li>Configures the HoH itself.</li>
+<li>Configures <strong>hub1/hub2 themselves</strong> — their operators, day-2 config, upgrades. The
+    feature labels in <code>hub1.yaml</code> (e.g. <code>odf</code>, <code>acs</code>) are consumed <em>here</em>, because the HoH
+    is what places those operator policies onto hub1.</li>
+<li>Deploys the <strong>cluster-labels</strong> and <strong>cluster-install</strong> policies that need to <em>execute on</em>
+    hub1 (placed there via the <code>managedHub</code> target — see below).</li>
+<li><strong>hub1 AutoShift</strong> (<code>policies-hub1</code>):</li>
+<li>Configures hub1's <strong>spokes</strong> — operator/config policies that hub1's ACM distributes down
+    to spoke1/spoke2.</li>
+<li>Produces hub1-local <strong>config ConfigMaps</strong> (via ArgoCD sync) describing hub1's clusterset
+    and its spokes. These are what the HoH-deployed policies read at runtime.</li>
+<li><strong>Does not, and cannot, configure hub1 itself.</strong></li>
+</ul>
+<hr />
+<h2 id="cluster-labels-targets-across-the-tiers"><code>cluster-labels</code> targets across the tiers<a class="headerlink" href="#cluster-labels-targets-across-the-tiers" title="Permanent link">&para;</a></h2>
+<p>The <code>cluster-labels</code> policy (<code>policies/stable/cluster-labels/templates/policy-cluster-labels.yaml</code>)
+reads each hub clusterset's <code>self-managed</code> label and generates two kinds of targets:</p>
+<table>
+<thead>
+<tr>
+<th><code>self-managed</code></th>
+<th>Target generated</th>
+<th>Placement</th>
+<th>Where it runs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>'true'</code></td>
+<td><code>selfManagedHub</code></td>
+<td>the instance's own <code>local-cluster</code></td>
+<td>on the hub running this AutoShift</td>
+</tr>
+<tr>
+<td><code>'false'</code></td>
+<td><code>managedHub</code></td>
+<td>the spoke hubs in this instance's values</td>
+<td>distributed down onto those spoke hubs</td>
+</tr>
+</tbody>
+</table>
+<p>In the HoH instance, <code>hubofhubs</code> is <code>self-managed: 'true'</code> and <code>hub1</code>/<code>hub2</code> are
+<code>self-managed: 'false'</code>, so the HoH generates <strong>both</strong> targets:</p>
+<pre class="mermaid"><code>graph TD
+    HoHAS["HoH AutoShift (policies-autoshift)"]
+    HoHAS --&gt; SMH["selfManagedHub policy&lt;br/&gt;placed on HoH local-cluster"]
+    HoHAS --&gt; MH["managedHub policy&lt;br/&gt;placed on hub1 / hub2"]
+
+    SMH --&gt; SMHrun["runs on HoH · loops every cluster HoH sees&lt;br/&gt;→ stamps HoH-self, hub1, hub2&lt;br/&gt;owning-namespace = policies-autoshift"]
+    MH --&gt; MHrun["runs on hub1 · loops every cluster hub1 sees&lt;br/&gt;→ stamps spoke1, spoke2&lt;br/&gt;owning-namespace = policies-hub1"]
+
+    classDef box fill:#e8f0fe,stroke:#4285f4;
+    class HoHAS,SMH,MH,SMHrun,MHrun box;</code></pre>
+<ul>
+<li>The <strong><code>selfManagedHub</code></strong> policy runs on the HoH and labels everything the HoH's ACM sees —
+  including <strong>hub1</strong> and <strong>hub2</strong> (they get <code>owning-namespace: policies-autoshift</code>).</li>
+<li>The <strong><code>managedHub</code></strong> policy is <strong>deployed by the HoH but executes on hub1</strong> (HoH's ACM
+  distributes it there). Running on hub1, it sees hub1's managed clusters (spoke1/spoke2) and
+  labels them. It reads the per-spoke config from <strong>hub1's own</strong> ConfigMaps.</li>
+</ul>
+<blockquote>
+<p>Leaf spokes are never a separate placement target — they get labeled simply because they
+are visible to whichever hub the policy is executing on.</p>
+</blockquote>
+<hr />
+<h2 id="why-the-lookups-are-not-namespace-bound">Why the lookups are not namespace-bound<a class="headerlink" href="#why-the-lookups-are-not-namespace-bound" title="Permanent link">&para;</a></h2>
+<p>This falls straight out of the rule above and is the single most important implementation
+detail to understand.</p>
+<p>The <code>managedHub</code> cluster-labels policy and the cluster-install policies <strong>execute on hub1</strong>
+but are <strong>authored and deployed by the HoH AutoShift</strong>. To do their job they must read the
+config that <strong>hub1's own AutoShift</strong> produced (which spokes exist, their site config, their
+labels). But the HoH-authored policy has <strong>no idea which namespace</strong> hub1's AutoShift uses —
+that's a decision made by a <em>different</em> AutoShift instance on a <em>different</em> cluster.</p>
+<p>So the policies never hard-code a namespace. They do a <strong>cluster-wide lookup filtered by a
+well-known label</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1">// not: lookup &quot;v1&quot; &quot;ConfigMap&quot; &quot;policies-hub1&quot; &quot;...&quot;   ← HoH can&#39;t know &quot;policies-hub1&quot;</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nx">lookup</span><span class="w"> </span><span class="s">&quot;v1&quot;</span><span class="w"> </span><span class="s">&quot;ConfigMap&quot;</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w"> </span><span class="s">&quot;autoshift.io/cluster-labels&quot;</span><span class="w">      </span><span class="c1">// cluster-labels reads these</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nx">lookup</span><span class="w"> </span><span class="s">&quot;v1&quot;</span><span class="w"> </span><span class="s">&quot;ConfigMap&quot;</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w"> </span><span class="s">&quot;autoshift.io/rendered-config-map&quot;</span><span class="w"> </span><span class="c1">// cluster-install reads these</span>
+</code></pre></div>
+<pre class="mermaid"><code>sequenceDiagram
+    participant HoH as HoH AutoShift&lt;br/&gt;(policies-autoshift)
+    participant H1ACM as HoH ACM
+    participant CPC as hub1 config-policy-controller
+    participant CM as hub1 ConfigMaps&lt;br/&gt;(policies-hub1)
+    participant SP as spoke1 / spoke2
+
+    Note over HoH: hub1 AutoShift (separately) syncs&lt;br/&gt;cluster-set.* / managed-cluster.* into policies-hub1
+    HoH-&gt;&gt;H1ACM: define managedHub / cluster-install policy
+    H1ACM-&gt;&gt;CPC: distribute policy onto hub1 (HoH manages hub1)
+    CPC-&gt;&gt;CM: lookup ConfigMap "" "" by autoshift.io/* label
+    Note right of CPC: cluster-wide — doesn't know the namespace
+    CM--&gt;&gt;CPC: hub1's clusterset + spoke config
+    CPC-&gt;&gt;SP: stamp labels / provision spokes</code></pre>
+<p>The flow:</p>
+<ol>
+<li><strong>hub1's own AutoShift</strong> syncs the config ConfigMaps (<code>cluster-set.*</code>,
+   <code>managed-cluster.*</code>, rendered-config) into <code>policies-hub1</code> via ArgoCD — plain ConfigMaps,
+   no ACM involved, so this works even though hub1's ACM doesn't manage hub1.</li>
+<li><strong>The HoH's AutoShift</strong> defines the cluster-labels/cluster-install policy and, because the
+   HoH's ACM manages hub1, distributes it onto hub1.</li>
+<li><strong>On hub1</strong>, the policy does a cluster-wide, label-selected lookup to find those
+   ConfigMaps wherever they happen to live, reads the config, and acts on hub1's managed
+   clusters (labeling spoke1/spoke2, provisioning new clusters, etc.).</li>
+</ol>
+<p>If those lookups were namespace-bound, the HoH-deployed policy would have to know the spoke
+hub's AutoShift namespace ahead of time — which it can't. The label-selected, cluster-wide
+lookup is what lets a policy authored on one hub consume config produced by an independent
+AutoShift instance on another.</p>
+<hr />
+<h2 id="standing-up-each-tier-deployment">Standing up each tier (deployment)<a class="headerlink" href="#standing-up-each-tier-deployment" title="Permanent link">&para;</a></h2>
+<p>Tier 1 (HoH) and tier 2 (hub1) are <strong>two separate AutoShift bootstraps</strong>. The second is not
+a side effect of the first.</p>
+<pre class="mermaid"><code>sequenceDiagram
+    participant Admin
+    participant HoH as Hub-of-Hubs AutoShift
+    participant H1 as hub1 cluster
+    participant H1AS as hub1 AutoShift
+
+    Note over Admin,HoH: Tier 1 — stand up the global hub
+    Admin-&gt;&gt;HoH: Bootstrap GitOps + ACM, create app "autoshift"
+    Note right of HoH: values: global.yaml + hubofhubs.yaml + hub1.yaml
+
+    Note over HoH,H1: HoH prepares AND configures hub1 (it manages it)
+    HoH-&gt;&gt;H1: provision/import hub1, install GitOps + ACM on it
+    HoH-&gt;&gt;H1: place hub1's operator/day-2/upgrade policies on it
+
+    Note over Admin,H1AS: Tier 2 — a SEPARATE bootstrap on hub1
+    Admin-&gt;&gt;H1AS: create app "hub1" targeting the hub1 cluster
+    Note right of H1AS: values: global.yaml + hub1.yaml + managed.yaml + spoke values
+    H1AS-&gt;&gt;H1: sync hub1-local config ConfigMaps (via ArgoCD)
+    H1AS-&gt;&gt;H1: deploy policies for hub1's SPOKES only</code></pre>
+<ol>
+<li><strong>Bootstrap the HoH</strong> like any single hub (GitOps + ACM), then create its AutoShift
+   Application (<code>autoshift</code>). Its policies live in <code>policies-autoshift</code>.</li>
+<li>The HoH's values include its own clusterset (<code>hubofhubs.yaml</code>, <code>self-managed: 'true'</code>)
+   <strong>and</strong> an entry per spoke hub (<code>hub1.yaml</code>, <code>self-managed: 'false'</code>). The HoH uses the
+   latter to manage and configure hub1.</li>
+<li>The HoH provisions/imports hub1 and installs <strong>GitOps + ACM</strong> on it, then places hub1's
+   own operator/config/upgrade policies onto it.</li>
+<li><strong>Separately bootstrap AutoShift on hub1</strong> — a <em>second</em> Application (<code>hub1</code>) whose
+   destination is the hub1 cluster, policies in <code>policies-hub1</code>. There is <strong>no policy in this
+   repo that auto-creates it</strong>; it's a deliberate step (re-run the bootstrap, or commit a
+   second Application in GitOps).</li>
+<li>hub1's AutoShift syncs its config ConfigMaps and deploys policies for <strong>its spokes</strong>.</li>
+<li>The HoH-deployed cluster-labels/cluster-install policies (executing on hub1) read those
+   ConfigMaps and manage hub1's spokes.</li>
+</ol>
+<hr />
+<h2 id="naming-and-namespaces-per-tier">Naming and namespaces per tier<a class="headerlink" href="#naming-and-namespaces-per-tier" title="Permanent link">&para;</a></h2>
+<p>Each AutoShift instance is identified by its ArgoCD Application name (<code>Release.Name</code>); its
+policy namespace is <code>policies-{Release.Name}</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>App (<code>Release.Name</code>)</th>
+<th>Policy namespace</th>
+<th>Destination</th>
+<th>Typical valueFiles</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hub-of-Hubs</td>
+<td><code>autoshift</code></td>
+<td><code>policies-autoshift</code></td>
+<td>the HoH (local-cluster)</td>
+<td><code>global.yaml</code>, <code>hubofhubs.yaml</code>, <code>hub1.yaml</code>, <code>hub2.yaml</code></td>
+</tr>
+<tr>
+<td>Spoke hub 1</td>
+<td><code>hub1</code></td>
+<td><code>policies-hub1</code></td>
+<td>hub1</td>
+<td><code>global.yaml</code>, <code>hub1.yaml</code>, <code>managed.yaml</code>, <code>clusters/spoke1.yaml</code></td>
+</tr>
+<tr>
+<td>Spoke hub 2</td>
+<td><code>hub2</code></td>
+<td><code>policies-hub2</code></td>
+<td>hub2</td>
+<td><code>global.yaml</code>, <code>hub2.yaml</code>, <code>managed.yaml</code>, <code>clusters/spoke3.yaml</code></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>Keep <code>policies-{Release.Name}</code> ≤ 20 characters (so <code>Release.Name</code> ≤ 11): the namespace
+prefixes ACM-generated object names that have a 62-character ceiling.</p>
+</blockquote>
+<p><code>hub1.yaml</code> appears in two instances with two meanings — and this is what makes the
+relationship feel complicated:</p>
+<ul>
+<li>On the <strong>HoH</strong>, the <code>hub1</code> clusterset is <code>self-managed: 'false'</code>: "a spoke hub I manage and
+  configure." Its operator labels drive what the HoH installs <em>onto</em> hub1.</li>
+<li>On <strong>hub1's own instance</strong>, hub1 is the cluster it runs on, but its ACM doesn't manage it —
+  so hub1's instance can't act on hub1. Its useful work is the spoke config and the local
+  ConfigMaps the HoH-deployed policies consume.</li>
+</ul>
+<hr />
+<h2 id="labeling-and-ownership-across-tiers">Labeling and ownership across tiers<a class="headerlink" href="#labeling-and-ownership-across-tiers" title="Permanent link">&para;</a></h2>
+<p><code>owning-namespace</code> / <code>owning-deployment</code> are auto-stamped by cluster-labels and identify
+which AutoShift instance owns a cluster:</p>
+<ul>
+<li>The HoH's <code>selfManagedHub</code> policy stamps <strong>hub1</strong> with
+  <code>autoshift.io/owning-namespace: policies-autoshift</code> (the HoH owns hub1).</li>
+<li>The HoH's <code>managedHub</code> policy, running on hub1, stamps <strong>spoke1/spoke2</strong> with
+  <code>autoshift.io/owning-namespace: policies-hub1</code> (read from hub1's own ConfigMaps).</li>
+<li>These are different namespaces on different clusters; there's no conflict, because each
+  instance only owns clusters its own ACM sees.</li>
+</ul>
+<p><code>cluster-install</code> uses <code>owning-namespace</code> (matched against the namespace of the
+rendered-config ConfigMap it found via the cross-namespace lookup) to decide whether it
+should manage a given cluster — the basis for migrating a cluster between instances.</p>
+<hr />
+<h2 id="worked-example-following-one-config-change">Worked example: following one config change<a class="headerlink" href="#worked-example-following-one-config-change" title="Permanent link">&para;</a></h2>
+<p>Set <code>acs: 'true'</code> for <strong>spoke1</strong>:</p>
+<ol>
+<li>Put it in spoke1's values (<code>clusters/spoke1.yaml</code> or the <code>managed</code> clusterset) loaded by
+   the <strong>hub1</strong> AutoShift app — <em>not</em> the HoH app. The HoH has never heard of spoke1.</li>
+<li>hub1's AutoShift syncs a <code>managed-cluster.spoke1</code> ConfigMap into <code>policies-hub1</code>.</li>
+<li>The HoH-deployed <code>managedHub</code> cluster-labels policy, executing on hub1, reads that
+   ConfigMap (cross-namespace lookup) and stamps <code>autoshift.io/acs: 'true'</code> onto spoke1.</li>
+<li>hub1's ACS policy (deployed by hub1's AutoShift, since hub1's ACM manages spoke1) matches
+   the label and installs ACS on spoke1.</li>
+</ol>
+<p>Now set <code>acs: 'true'</code> for <strong>hub1</strong>:</p>
+<ol>
+<li>Put it in the <code>hub1</code> clusterset in the <strong>HoH's</strong> values — because the HoH is what manages
+   and configures hub1. Putting it in hub1's own instance would do nothing, since hub1's ACM
+   can't place a policy on hub1.</li>
+</ol>
+<hr />
+<h2 id="common-pitfalls">Common pitfalls<a class="headerlink" href="#common-pitfalls" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Expecting hub1's own AutoShift to configure hub1.</strong> It can't — hub1's ACM doesn't manage
+  hub1. Configure hub1 from the HoH (the <code>hub1</code> clusterset in the HoH's values).</li>
+<li><strong>Expecting the HoH to configure leaf spokes.</strong> It can't see them. Configure them on the
+  spoke hub's AutoShift instance.</li>
+<li><strong>Forgetting to bootstrap AutoShift on the spoke hub.</strong> Installing ACM on hub1 via the HoH
+  does not give hub1 an AutoShift instance — that's a separate bootstrap.</li>
+<li><strong>Assuming lookups are namespace-scoped.</strong> They're cluster-wide and label-selected on
+  purpose, so a HoH-deployed policy can find a spoke hub's config without knowing its
+  namespace. Don't "fix" them to a fixed namespace.</li>
+<li><strong>Reusing a <code>Release.Name</code>/namespace across instances on one cluster.</strong> Keep them distinct
+  and ≤ 20 chars (<code>policies-{Release.Name}</code>).</li>
+</ul>
+<hr />
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../cluster-install/">cluster-install.md</a> — provisioning and <code>owning-namespace</code> ownership filtering</li>
+<li><a href="../values-reference/">values-reference.md</a> — full label/values reference</li>
+<li>Example value files: <code>autoshift/values/clustersets/hubofhubs.yaml</code>, <code>hub1.yaml</code>, <code>hub2.yaml</code>, <code>managed.yaml</code></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/auto-shift/autoshiftv2" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

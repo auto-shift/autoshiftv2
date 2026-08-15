@@ -1,0 +1,134 @@
+{{- $policyName := "policy-gitops-operator-install" }}
+{{- $placementName := "placement-policy-gitops-operator-install" }}
+
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-operator-ns
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates:
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ .Values.gitops.namespace }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1beta1
+        kind: OperatorPolicy
+        metadata:
+          name: install-operator-gitops
+        spec:
+          remediationAction: enforce
+          severity: high
+          complianceType: musthave
+          operatorGroup:
+            # if operator group exists in namespace use that, otherwise use namespace name as default
+            name: '{{ "{{" }} with (lookup "operators.coreos.com/v1" "OperatorGroup" "{{ .Values.gitops.namespace }}" "").items {{ "}}" }}{{ "{{" }} (index . 0).metadata.name {{ "}}" }}{{ "{{" }} else {{ "}}" }}{{ .Values.gitops.namespace }}{{ "{{" }} end {{ "}}" }}'
+            namespace: {{ .Values.gitops.namespace }}
+          subscription:
+            name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-subscription-name" | default "{{ .Values.gitops.name }}" {{ "hub}}" }}'
+            namespace: {{ .Values.gitops.namespace }}
+            # Source: base from label or helm default; if disconnected-mirror is true, appends -<suffix>
+            source: '{{ "{{hub" }} $base := (index .ManagedClusterLabels "autoshift.io/gitops-source" | default "{{ .Values.gitops.source }}") {{ "hub}}" }}{{ "{{hub" }} ternary (printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror")) $base (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") {{ "hub}}" }}'
+            config:
+              env:
+              # disableDefaultArgoCD default = not config.gitops.defaultInstance (from rendered-config);
+              # the gitops-disable-default-argocd label still overrides.
+              - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
+                value: >-
+                  {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+                  {{ "{{hub-" }} $renderedConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+                  {{ "{{hub-" }} $gitops := (index $renderedConfig "gitops" | default dict) {{ "hub}}" }}
+                  {{ "{{hub-" }} $defaultInstance := (index $gitops "defaultInstance" | default false) {{ "hub}}" }}
+                  {{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default (printf "%v" (not $defaultInstance)) {{ "hub}}" }}
+              # Base ArgoCD namespace, plus openshift-gitops-<team> for each cluster-scoped dev team on the cluster.
+              - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
+                value: >-
+                  {{ "{{hub-" }} $namespaces := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") {{ "hub}}" }}
+                  {{ "{{hub-" }} range $label, $val := .ManagedClusterLabels {{ "hub}}" }}
+                  {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/gitops-dev-team-") ($label | hasSuffix "-cluster-scoped") (eq $val "true") {{ "hub}}" }}
+                  {{ "{{hub-" }} $team := $label | replace "autoshift.io/gitops-dev-team-" "" | replace "-cluster-scoped" "" {{ "hub}}" }}
+                  {{ "{{hub-" }} $namespaces = printf "%s,openshift-gitops-%s" $namespaces $team {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} $namespaces {{ "hub}}" }}
+            sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-source-namespace" | default "{{ .Values.gitops.sourceNamespace }}" {{ "hub}}" }}'
+            channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-channel" | default "{{ .Values.gitops.channel }}" {{ "hub}}" }}'
+            # Version resolution (config in the rendered-config ConfigMap): config.gitops.versions/.startingCSV
+            # when set, else the gitops-version label. $vers computed here, reused by versions below.
+            startingCSV: >-
+              {{ "{{hub-" }} $cfg := (index (index (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) {{ "hub}}" }}
+              {{ "{{hub-" }} $cfgVers := (dig "versions" (list) $cfg) {{ "hub}}" }}
+              {{ "{{hub-" }} $isCfg := (not (empty $cfgVers)) {{ "hub}}" }}
+              {{ "{{hub-" }} $labelVer := (index .ManagedClusterLabels "autoshift.io/gitops-version" | default "") {{ "hub}}" }}
+              {{ "{{hub-" }} $vers := (ternary $cfgVers (ternary (list) (list $labelVer) (empty $labelVer)) $isCfg) {{ "hub}}" }}
+              {{ "{{hub-" }} (ternary (dig "startingCSV" "" $cfg) $labelVer $isCfg) {{ "hub}}" }}
+          # Upgrade approval for subscription will be set based on if version is set not this flag
+          # If version is set install plan is set to manual and only the version specified will be installed
+          upgradeApproval: Automatic
+          versions: '{{ "{{hub" }} $vers | toRawJson | toLiteral {{ "hub}}" }}'
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops'
+              operator: In
+              values:
+              - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: {{ $placementName }}
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: {{ $placementName }}
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: {{ $policyName }}
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy

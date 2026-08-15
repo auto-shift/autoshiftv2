@@ -1,0 +1,13 @@
+object-templates-raw: |
+  {{- $primary := (lookup "apps/v1" "StatefulSet" "jfrog-system" "openshiftartifactoryha-artifactory-ha-primary") | default dict }}
+  {{- $primarySpec := (index $primary "spec" | default dict) }}
+  {{- $primaryReplicas := (index $primarySpec "replicas" | default 1 | toInt) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: openshiftartifactoryha-artifactory-ha-primary
+        namespace: jfrog-system
+      status:
+        readyReplicas: {{ $primaryReplicas }}

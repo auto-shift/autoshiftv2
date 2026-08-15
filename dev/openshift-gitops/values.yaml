@@ -1,0 +1,118 @@
+# =============================================================================
+# AUTO-GENERATED - DO NOT EDIT DIRECTLY
+# =============================================================================
+# This file is generated from policies/stable/openshift-gitops/values.yaml
+# To modify defaults, edit the policy chart values and run:
+#   make sync-values
+# =============================================================================
+
+# Bootstrap-specific settings
+ignoreHelmHooks: false
+
+# Job image for waiting for CRD
+# Use internal registry for disconnected environments
+image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+
+# Git repository secrets (optional)
+secrets: []
+# EXAMPLE:
+# secrets:
+#   - name: git-auth
+#     username: 'user'
+#     password: 'pass1234'
+#     sshPrivateKey: ''
+
+# =============================================================================
+# Values synced from policies/stable/openshift-gitops/values.yaml
+# =============================================================================
+
+gitops:
+  namespace: openshift-gitops-operator
+  argoNamespace: openshift-gitops
+  group: openshift-gitops-operator
+  source: redhat-operators
+  channel: gitops-1.21
+  sourceNamespace: openshift-marketplace
+  name: openshift-gitops-operator
+  argoName: infra-gitops
+  disableDefaultArgoCD: true
+  # Disable the ArgoCD built-in admin account.
+  disableAdmin: false
+  policyGenerator:
+    # Install the policy-generator CMP sidecar in the infra ArgoCD repo-server. Required for git/source
+    # mode (renders PolicyGenerator dirs live); disabled for OCI-only deployments (prerendered Helm).
+    # The ApplicationSet forwards the effective value from the deployment's policyGenerator flag.
+    enabled: true
+  # Dev team cluster-scoped namespaces are auto-discovered from managed cluster labels
+  # matching autoshift.io/gitops-dev-team-<team>-cluster-scoped: 'true'
+  rbac_policies:
+    - 'g, openshift-systems, role:admin'
+  # OPTIONAL
+  controller:
+    # Scaling: increase processors for environments with many Applications
+    # Recommended: 50 status / 25 operation for 1000+ Applications
+    statusProcessors: 20 # concurrent status reconciliations (default: 20)
+    operationProcessors: 10 # concurrent sync operations (default: 10)
+    limits:
+      cpu: 2000m
+      memory: 6Gi
+    requests:
+      cpu: 250m
+      memory: 6Gi
+  ha:
+    enabled: false
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 250m
+      memory: 128Mi
+  redis:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 250m
+      memory: 128Mi
+  repo:
+    # If you're using a custom CA bundle and you have imported it into your OpenShift cluster
+    # enabling the cluster_ca_bundle will inject the cluster's trusted CA bundle into the repo
+    # server that Argo CD uses. This allows Argo CD to connect to repositories using custom certificates.
+    cluster_ca_bundle: false
+    # Multiple replicas so PolicyGenerator CMP renders spread across pods when the ApplicationSet
+    # fans out to every policies/* at once (a single repo-server thrashes and renders time out).
+    replicas: 3
+    limits:
+      cpu: 2000m
+      memory: 2048Mi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  # PolicyGenerator ConfigManagementPlugin (CMP) for rendering kustomize/PolicyGenerator
+  # policies in the hub repo-server. Required for GIT/source deployments. Adds an init
+  # container (stages the PG binary from the ACM subscription image) and a CMP sidecar that
+  # runs `kustomize build --enable-alpha-plugins` after substituting the per-deployment
+  # ${...} placeholders. See openshift-gitops/templates/argo-cd.yaml.
+  # Gated by gitops.policyGenerator.enabled (above): OCI-only deployments consume prerendered Helm
+  # charts and set it false to omit the sidecar. Its init/sidecar images are resolved at enforcement
+  # time via hub-template lookups in templates/policy-gitops-systems-argocd.yaml.
+  server:
+    autoscale:
+      enabled: true
+      maxReplicas: 5
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 125m
+      memory: 128Mi
+  dex:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 250m
+      memory: 128Mi
+
+# Disable default ArgoCD instance (we create our own)
+disableDefaultArgoCD: true

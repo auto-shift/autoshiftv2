@@ -1,0 +1,25 @@
+object-templates-raw: |
+  {{ $prom := (lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "prometheus-user-workload") | default dict }}
+  {{ $promSpec := (index $prom "spec" | default dict) }}
+  {{ $promReplicas := (index $promSpec "replicas" | default 1 | toInt) }}
+  {{ $thanos := (lookup "apps/v1" "StatefulSet" "openshift-user-workload-monitoring" "thanos-ruler-user-workload") | default dict }}
+  {{ $thanosSpec := (index $thanos "spec" | default dict) }}
+  {{ $thanosReplicas := (index $thanosSpec "replicas" | default 1 | toInt) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: prometheus-user-workload
+        namespace: openshift-user-workload-monitoring
+      status:
+        readyReplicas: {{ $promReplicas }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: thanos-ruler-user-workload
+        namespace: openshift-user-workload-monitoring
+      status:
+        readyReplicas: {{ $thanosReplicas }}

@@ -1,0 +1,427 @@
+# This policy verifies the installation of the official & supported version of
+# the GitOps Operator.
+#
+{{- if .Values.hubClusterSets }}
+{{- /* The CMP init/sidecar images are resolved at policy-enforcement time via hub-template lookups in
+       object-templates-raw below — a helm lookup here would not work, because ArgoCD's repo-server does
+       not execute helm lookups during rendering. The PolicyGenerator CMP is unconditional: the repo-server
+       cannot render any of the kustomize/PolicyGenerator policies without it. */}}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-gitops-systems-argocd
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-gitops-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-systems-argocd
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  labels:
+                    openshift.io/cluster-monitoring: "true"
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: ClusterRoleBinding
+                metadata:
+                  name: cluster-admin-{{ .Values.gitops.argoName }}-argocd-application-controller
+                  annotations:
+                    helm.sh/hook-weight: "3"
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: ClusterRole
+                  name: cluster-admin
+                subjects:
+                - kind: ServiceAccount
+                  name: {{ .Values.gitops.argoName }}-argocd-application-controller
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-systems-argocd-instance
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
+            {{/* Infra ArgoCD tuning (resources, autoscale, processors, rbac) comes from this cluster's
+                 rendered-config ConfigMap (config.gitops.infra), so one policy serves per-cluster values.
+                 Defaults below preserve the previous behavior when a field is unset. */}}
+            {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $infra := (index (index $cfg "gitops" | default dict) "infra" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $pgEnabled := (index (index $cfg "gitops" | default dict) "policyGenerator" | default false) {{ "hub}}" }}
+            {{ "{{hub-" }} $server := (index $infra "server" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $serverAutoscale := (index $server "autoscale" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $serverLimits := (index $server "limits" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $serverRequests := (index $server "requests" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $dex := (index $infra "dex" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $dexLimits := (index $dex "limits" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $dexRequests := (index $dex "requests" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $repo := (index $infra "repo" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $repoLimits := (index $repo "limits" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $repoRequests := (index $repo "requests" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $ha := (index $infra "ha" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $haLimits := (index $ha "limits" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $haRequests := (index $ha "requests" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $redis := (index $infra "redis" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $redisLimits := (index $redis "limits" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $redisRequests := (index $redis "requests" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $controller := (index $infra "controller" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $controllerLimits := (index $controller "limits" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $controllerRequests := (index $controller "requests" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $applicationSet := (index $infra "applicationSet" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $applicationSetLimits := (index $applicationSet "limits" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $applicationSetRequests := (index $applicationSet "requests" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $rbac := "g, cluster-admins, role:admin\ng, system:cluster-admins, role:admin\n" {{ "hub}}" }}
+            {{ "{{hub-" }} range (index $infra "rbac_policies" | default list) {{ "hub}}" }}
+            {{ "{{hub-" }} $rbac = printf "%s%s\n" $rbac . {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{/* The CMP sidecar image is the SAME image as the running argocd-repo-server (operator-set),
+                 resolved via a SPOKE-side lookup ({{ }}) — config-policy-controller runs it on the managed
+                 cluster (this self-managed hub), where the repo-server actually lives. A hub-side lookup
+                 ({{hub}}) is namespace-restricted to the policy namespace and would fail; a helm lookup
+                 returns nothing in ArgoCD's repo-server. No value fallback: if the repo-server isn't found
+                 the image resolves empty and the ArgoCD CR fails loudly rather than retrying a bad pinned
+                 tag. The repo-server always exists by the time this day-2 policy runs. */}}
+            {{ "{{" }} $argoRepoDep := (lookup "apps/v1" "Deployment" "{{ .Values.gitops.argoNamespace }}" "{{ .Values.gitops.argoName }}-repo-server") {{ "}}" }}
+            {{ "{{" }} $argoImageLive := "" {{ "}}" }}
+            {{ "{{" }} if $argoRepoDep {{ "}}" }}{{ "{{" }} $argoImageLive = (index $argoRepoDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
+            {{/* Same for the ACM subscription image (ships the PolicyGenerator binary): spoke-side lookup of
+                 the running multicluster-operators-hub-subscription so it matches the hub's ACM version.
+                 No value fallback — the lookup is the source of truth. */}}
+            {{ "{{" }} $acmSubDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "multicluster-operators-hub-subscription") {{ "}}" }}
+            {{ "{{" }} $acmImageLive := "" {{ "}}" }}
+            {{ "{{" }} if $acmSubDep {{ "}}" }}{{ "{{" }} $acmImageLive = (index $acmSubDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: argoproj.io/v1beta1
+                kind: ArgoCD
+                metadata:
+                  name: {{ .Values.gitops.argoName }}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                spec:
+                  disableAdmin: {{ "{{hub" }} index $infra "disableAdmin" | default false {{ "hub}}" }}
+                  server:
+                    {{ "{{hub-" }} if (index $serverAutoscale "enabled" | default false) {{ "hub}}" }}
+                    autoscale:
+                      enabled: true
+                      hpa:
+                        maxReplicas: {{ "{{hub" }} index $serverAutoscale "maxReplicas" | default 10 {{ "hub}}" }}
+                        scaleTargetRef:
+                          apiVersion: "apps/v1"
+                          kind: deployment
+                          name: {{ $.Values.gitops.argoName }}-server
+                        targetCPUUtilizationPercentage: {{ "{{hub" }} index $serverAutoscale "targetCPUUtilizationPercentage" | default 50 {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    resources:
+                      limits:
+                        cpu: {{ "{{hub" }} index $serverLimits "cpu" | default "500m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $serverLimits "memory" | default "256Mi" {{ "hub}}" }}
+                      requests:
+                        cpu: {{ "{{hub" }} index $serverRequests "cpu" | default "125m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $serverRequests "memory" | default "128Mi" {{ "hub}}" }}
+                    route:
+                      enabled: true
+                  monitoring:
+                    enabled: false
+                  kustomizeBuildOptions: --enable-helm --helm-command /usr/local/bin/helm --enable-alpha-plugins --load-restrictor LoadRestrictionsNone
+                  applicationInstanceLabelKey: argocd.argoproj.io/instance
+                  resourceTrackingMethod: annotation+label
+                  sso:
+                    dex:
+                      resources:
+                        limits:
+                          cpu: {{ "{{hub" }} index $dexLimits "cpu" | default "500m" {{ "hub}}" }}
+                          memory: {{ "{{hub" }} index $dexLimits "memory" | default "256Mi" {{ "hub}}" }}
+                        requests:
+                          cpu: {{ "{{hub" }} index $dexRequests "cpu" | default "125m" {{ "hub}}" }}
+                          memory: {{ "{{hub" }} index $dexRequests "memory" | default "128Mi" {{ "hub}}" }}
+                      openShiftOAuth: true
+                    provider: dex
+                  rbac:
+                    defaultPolicy: ''
+                    # cluster-admins + system:cluster-admins get Argo CD admin, plus any entries from
+                    # config.gitops.infra.rbac_policies ($rbac built at the top of this block).
+                    policy: {{ "{{hub" }} $rbac | toJson {{ "hub}}" }}
+                    scopes: '[groups]'
+                  repo:
+                    resources:
+                      limits:
+                        cpu: {{ "{{hub" }} index $repoLimits "cpu" | default "1000m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $repoLimits "memory" | default "1024Mi" {{ "hub}}" }}
+                      requests:
+                        cpu: {{ "{{hub" }} index $repoRequests "cpu" | default "250m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $repoRequests "memory" | default "256Mi" {{ "hub}}" }}
+                    {{ "{{hub-" }} if $pgEnabled {{ "hub}}" }}
+                    env:
+                      - name: POLICY_GEN_ENABLE_HELM
+                        value: "true"
+                      - name: KUSTOMIZE_PLUGIN_HOME
+                        value: /etc/kustomize/plugin
+                    initContainers:
+                      # Binary path inside the ACM image varies by version; search known locations.
+                      - name: policy-generator-install
+                        image: {{ "{{" }} $acmImageLive {{ "}}" }}
+                        command: [/bin/sh, -c]
+                        args:
+                          - |
+                            set -e
+                            for src in \
+                              /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator/PolicyGenerator \
+                              /policy-generator/PolicyGenerator \
+                              /policy-generator/PolicyGenerator-rhel8 \
+                              /policy-generator/PolicyGenerator-not-fips-compliant; do
+                              if [ -f "$src" ]; then
+                                cp "$src" /policy-generator-tmp/PolicyGenerator
+                                chmod +x /policy-generator-tmp/PolicyGenerator
+                                exit 0
+                              fi
+                            done
+                            echo "PolicyGenerator binary not found in ACM image" >&2
+                            exit 1
+                        volumeMounts:
+                          - name: policy-generator
+                            mountPath: /policy-generator-tmp
+                    sidecarContainers:
+                      - name: policy-generator
+                        command: [/var/run/argocd/argocd-cmp-server]
+                        image: {{ "{{" }} $argoImageLive {{ "}}" }}
+                        securityContext:
+                          runAsNonRoot: true
+                        env:
+                          - name: KUSTOMIZE_PLUGIN_HOME
+                            value: /etc/kustomize/plugin
+                        volumeMounts:
+                          - name: var-files
+                            mountPath: /var/run/argocd
+                          - name: plugins
+                            mountPath: /home/argocd/cmp-server/plugins
+                          - name: policy-generator-cmp-config
+                            mountPath: /home/argocd/cmp-server/config/plugin.yaml
+                            subPath: plugin.yaml
+                          - name: cmp-tmp
+                            mountPath: /tmp
+                          - name: policy-generator
+                            mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    volumeMounts:
+                      {{ "{{hub-" }} if $pgEnabled {{ "hub}}" }}
+                      - name: policy-generator
+                        mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default (printf "%v" (index $repo "cluster_ca_bundle" | default false))) "true" {{ "hub}}" }}
+                      - name: user-ca-bundle
+                        mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+                        subPath: ca-bundle.crt
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    volumes:
+                      {{ "{{hub-" }} if $pgEnabled {{ "hub}}" }}
+                      - name: policy-generator
+                        emptyDir: {}
+                      - name: policy-generator-cmp-config
+                        configMap:
+                          name: policy-generator-cmp-plugin
+                      - name: cmp-tmp
+                        emptyDir: {}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default (printf "%v" (index $repo "cluster_ca_bundle" | default false))) "true" {{ "hub}}" }}
+                      - name: user-ca-bundle
+                        configMap:
+                          name: user-ca-bundle
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                  ha:
+                    resources:
+                      limits:
+                        cpu: {{ "{{hub" }} index $haLimits "cpu" | default "500m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $haLimits "memory" | default "256Mi" {{ "hub}}" }}
+                      requests:
+                        cpu: {{ "{{hub" }} index $haRequests "cpu" | default "125m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $haRequests "memory" | default "128Mi" {{ "hub}}" }}
+                    enabled: {{ "{{hub" }} index $ha "enabled" | default "false" {{ "hub}}" }}
+                  redis:
+                    resources:
+                      limits:
+                        cpu: {{ "{{hub" }} index $redisLimits "cpu" | default "500m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $redisLimits "memory" | default "256Mi" {{ "hub}}" }}
+                      requests:
+                        cpu: {{ "{{hub" }} index $redisRequests "cpu" | default "125m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $redisRequests "memory" | default "128Mi" {{ "hub}}" }}
+                  controller:
+                    processors:
+                      status: {{ "{{hub" }} index $controller "statusProcessors" | default 20 {{ "hub}}" }}
+                      operation: {{ "{{hub" }} index $controller "operationProcessors" | default 10 {{ "hub}}" }}
+                    resources:
+                      limits:
+                        cpu: {{ "{{hub" }} index $controllerLimits "cpu" | default "2000m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $controllerLimits "memory" | default "2048Mi" {{ "hub}}" }}
+                      requests:
+                        cpu: {{ "{{hub" }} index $controllerRequests "cpu" | default "250m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $controllerRequests "memory" | default "1024Mi" {{ "hub}}" }}
+                  applicationSet:
+                    resources:
+                      limits:
+                        cpu: {{ "{{hub" }} index $applicationSetLimits "cpu" | default "2" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $applicationSetLimits "memory" | default "1Gi" {{ "hub}}" }}
+                      requests:
+                        cpu: {{ "{{hub" }} index $applicationSetRequests "cpu" | default "250m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $applicationSetRequests "memory" | default "512Mi" {{ "hub}}" }}
+                  resourceHealthChecks:
+                    - group: policy.open-cluster-management.io
+                      kind: Policy
+                      check: |
+                        hs = {}
+                        if obj.metadata.labels ~= nil and obj.metadata.labels["policy.open-cluster-management.io/root-policy"] ~= nil then
+                          hs.status = "Healthy"
+                          hs.message = "Replicated policy managed by ACM"
+                          return hs
+                        end
+                        if obj.status == nil or obj.status.compliant == nil then
+                          hs.status = "Healthy"
+                          hs.message = "No clusters matched by placement"
+                          return hs
+                        end
+                        if obj.status.compliant == "Compliant" then
+                          hs.status = "Healthy"
+                        elseif obj.status.compliant == "Pending" then
+                          hs.status = "Progressing"
+                        else
+                          hs.status = "Degraded"
+                        end
+                        hs.message = obj.status.compliant
+                        return hs
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-systems-argocd-cluster-config
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta1
+                kind: Placement
+                metadata:
+                  name: systems-argocd-cluster-placement
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                spec:
+                  clusterSets:
+                  {{- range $clusterSet, $value := .Values.hubClusterSets }}
+                    - {{ $clusterSet }}
+                  {{- end }}
+                  {{- range $clusterSet, $value := .Values.managedClusterSets }}
+                    - {{ $clusterSet }}
+                  {{- end }}
+                  tolerations:
+                    - key: cluster.open-cluster-management.io/unreachable
+                      operator: Exists
+                    - key: cluster.open-cluster-management.io/unavailable
+                      operator: Exists
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps.open-cluster-management.io/v1beta1
+                kind: GitOpsCluster
+                metadata:
+                  name: argo-acm-importer
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                spec:
+                  argoServer:
+                    cluster: notused
+                    argoNamespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  placementRef:
+                    kind: Placement
+                    apiVersion: cluster.open-cluster-management.io/v1beta1
+                    name: systems-argocd-cluster-placement
+                    namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+            {{- range $clusterSet, $value := .Values.managedClusterSets }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ $clusterSet }}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                spec:
+                  clusterSet: {{ $clusterSet }}
+            {{- end }}
+            {{- range $clusterSet, $value := .Values.hubClusterSets }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ $clusterSet }}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                spec:
+                  clusterSet: {{ $clusterSet }}
+            {{- end }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-gitops-systems-argocd
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-gitops-systems-argocd
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-gitops-systems-argocd
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-gitops-systems-argocd
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

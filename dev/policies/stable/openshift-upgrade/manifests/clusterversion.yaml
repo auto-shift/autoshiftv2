@@ -1,0 +1,29 @@
+object-templates-raw: |
+  {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
+  {{- $upstream := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-upstream" | default "https://api.openshift.com/api/upgrades_info/v1/graph" hub}}" }}
+  {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
+  {{- $current := "" }}
+  {{- range $h := (index $status "history" | default list) }}
+  {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}{{- $current = (index $h "version") }}{{- end }}
+  {{- end }}
+  {{- $progressing := false }}
+  {{- range $c := (index $status "conditions" | default list) }}
+  {{-   if and (eq (index $c "type") "Progressing") (eq (index $c "status") "True") }}{{- $progressing = true }}{{- end }}
+  {{- end }}
+  {{- /* Trigger only: assert scalar spec fields (upstream always; desiredUpdate only when a real
+         upgrade is needed and none is already in flight). Completion is reported by the separate
+         status policy — no status-list assertion here (ACM does not match those reliably). */ -}}
+  {{- if and (ne $target "") (or (eq $current "") (semverCompare (printf "> %s" $current) $target)) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: ClusterVersion
+      metadata:
+        name: version
+      spec:
+        upstream: '{{ $upstream }}'
+        {{- if not $progressing }}
+        desiredUpdate:
+          version: '{{ $target }}'
+        {{- end }}
+  {{- end }}
