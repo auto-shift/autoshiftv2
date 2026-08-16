@@ -63,8 +63,8 @@ graph TD
     H1ACM -->|manages| S2
     H2ACM -->|manages| S3
 
-    classDef hub fill:#e8f0fe,stroke:#4285f4,stroke-width:2px;
-    classDef spoke fill:#e6f4ea,stroke:#34a853;
+    classDef hub fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff;
+    classDef spoke fill:#198754,stroke:#0f5132,stroke-width:2px,color:#ffffff;
     class HoHACM,HoHAS,H1ACM,H1AS,H2ACM,H2AS hub;
     class S1,S2,S3 spoke;
 ```
@@ -133,7 +133,7 @@ graph TD
     SMH --> SMHrun["runs on HoH · loops every cluster HoH sees<br/>→ stamps HoH-self, hub1, hub2<br/>owning-namespace = policies-autoshift"]
     MH --> MHrun["runs on hub1 · loops every cluster hub1 sees<br/>→ stamps spoke1, spoke2<br/>owning-namespace = policies-hub1"]
 
-    classDef box fill:#e8f0fe,stroke:#4285f4;
+    classDef box fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff;
     class HoHAS,SMH,MH,SMHrun,MHrun box;
 ```
 
