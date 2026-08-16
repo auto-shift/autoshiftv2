@@ -17,7 +17,7 @@ This guide walks through a complete AutoShift installation from start to finish.
 All hub clusters **must** have the following configuration in their `hubClusterSets`:
 
 * `gitops: 'true'` - OpenShift GitOps (ArgoCD) is required to deploy AutoShift
-* ACM is automatically installed on all hub clustersets by policy (no labels required)
+* Red Hat Advanced Cluster Management is automatically installed on all hub clustersets by policy (no labels required)
 
 ## Choose Your Installation Method
 
@@ -35,7 +35,7 @@ All hub clusters **must** have the following configuration in their `hubClusterS
 
 ### Step 1: Login to the Hub Cluster
 
-Login to the **hub** cluster via the [`oc` utility](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#cli-logging-in_cli-developer-commands).
+Login to the **hub** cluster through the [`oc` utility](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#cli-logging-in_cli-developer-commands).
 
 ```console
 oc login --token=sha256~lQ...dI --server=https://api.cluster.example.com:6443
@@ -44,25 +44,25 @@ oc login --token=sha256~lQ...dI --server=https://api.cluster.example.com:6443
 > [!NOTE]
 > Alternatively you can use the devcontainer provided by this repository. By default the container will install the stable version of `oc` and the latest Red Hat provided version of `helm`. These versions can be specified by setting the `OCP_VERSION` and `HELM_VERSION` variables before building. From the container you can login as usual with `oc login` or copy your kubeconfig into the container `podman cp ${cluster_dir}/auth/kubeconfig ${container-name}:/workspaces/.kube/config`.
 
-If installing in a disconnected or internet-disadvantaged environment, update the values in `policies/stable/openshift-gitops/values.yaml` and `advanced-cluster-management/values.yaml` (the ACM bootstrap chart's own values — the ACM policy is a PolicyGenerator dir and no longer carries a `values.yaml`) with the source mirror registry, otherwise leave these values as is.
+If installing in a disconnected or internet-disadvantaged environment, update the values in `policies/stable/openshift-gitops/values.yaml` and `advanced-cluster-management/values.yaml` (the Red Hat Advanced Cluster Management bootstrap chart's own values — the Red Hat Advanced Cluster Management policy is a PolicyGenerator dir and no longer carries a `values.yaml`) with the source mirror registry, otherwise leave these values as is.
 
-If your clone of AutoShiftv2 requires credentials or you would like to add credentials to any other git repos you can do this in the `openshift-gitops/values` file before installing. This can also be done in the OpenShift GitOps GUI after install.
+If your clone of AutoShiftv2 requires credentials or you want to add credentials to any other git repos you can do this in the `openshift-gitops/values` file before installing. This can also be done in the OpenShift GitOps GUI after install.
 
-### Step 2: Install Advanced Cluster Management (ACM)
+### Step 2: Install Red Hat Advanced Cluster Management for Kubernetes
 
 > [!IMPORTANT]
-> Install ACM **before** OpenShift GitOps. The GitOps bootstrap chart wires the PolicyGenerator plugin into
-> Argo CD's repo-server using an init-container image it reads from ACM's `multicluster-operators-hub-subscription`
+> Install Red Hat Advanced Cluster Management **before** OpenShift GitOps. The GitOps bootstrap chart wires the PolicyGenerator plugin into
+> Argo CD's repo-server by using an init-container image it reads from Red Hat Advanced Cluster Management's `multicluster-operators-hub-subscription`
 > deployment at install time. If GitOps is installed first that image is empty and the Argo CD instance fails to
 > reconcile (`Deployment "<argo>-repo-server" is invalid: spec.template.spec.initContainers[1].image: Required value`),
 > so no policies ever render or sync. You do **not** need to wait for MultiClusterHub to reach `Running` — only for
-> ACM's operator to be installed (the `multicluster-operators-hub-subscription` deployment to exist).
+> Red Hat Advanced Cluster Management's operator to be installed (the `multicluster-operators-hub-subscription` deployment to exist).
 
 > [!IMPORTANT]
 > Both bootstrap charts run a short-lived Job that waits for CRDs, using a CLI image that defaults to the
 > in-cluster registry: `image-registry.openshift-image-registry.svc:5000/openshift/cli:latest`. On clusters
 > where the internal image registry is **not** enabled (e.g. bare metal, or when the registry
-> `managementState` is `Removed`), that image can't be pulled and the bootstrap Job hangs in
+> `managementState` is `Removed`), that image cannot be pulled and the bootstrap Job hangs in
 > `ImagePullBackOff`. Override it with an external CLI image on **both** bootstrap installs (this step and the
 > GitOps step):
 > ```console
@@ -73,7 +73,7 @@ If your clone of AutoShiftv2 requires credentials or you would like to add crede
 > ```
 > In a disconnected environment, use your mirrored equivalent of the `openshift4/ose-cli` image.
 
-Using helm, install OpenShift Advanced Cluster Management on the hub cluster:
+Using helm, install OpenShift Red Hat Advanced Cluster Management on the hub cluster:
 
 ```console
 helm upgrade --install advanced-cluster-management advanced-cluster-management
@@ -98,13 +98,13 @@ open-cluster-management   multiclusterhub   Running      6m28s   2.13.2         
 > [!NOTE]
 > MultiClusterHub takes roughly 10 min to reach `Running`. You can proceed to the GitOps step as soon as the
 > `multicluster-operators-hub-subscription` deployment exists (`oc get deploy multicluster-operators-hub-subscription -n open-cluster-management`),
-> and you can install AutoShift while ACM finishes — but you will not be able to verify AutoShift or select a
+> and you can install AutoShift while Red Hat Advanced Cluster Management finishes — but you will not be able to verify AutoShift or select a
 > `clusterset` until MultiClusterHub is `Running`.
 
 ### Step 3: Install OpenShift GitOps
 
 > [!NOTE]
-> Run this **after** the ACM step above — the GitOps repo-server needs ACM's subscription image (see the ordering note there).
+> Run this **after** the preceding Red Hat Advanced Cluster Management step — the GitOps repo-server needs Red Hat Advanced Cluster Management's subscription image (see the ordering note there).
 
 Using helm, install OpenShift GitOps:
 
@@ -166,14 +166,14 @@ If this is not the case you may need to run `helm upgrade ...` command again.
 ### Step 4: Install AutoShift
 
 > [!TIP]
-> The previously installed OpenShift GitOps and ACM will be controlled by AutoShift after it is installed for version upgrading
+> The previously installed OpenShift GitOps and Red Hat Advanced Cluster Management will be controlled by AutoShift after it is installed for version upgrading
 
 > [!TIP]
-> **Just developing or demoing?** Skip the ArgoCD Application below and install AutoShift with `helm` straight from your working copy. Edit a values file and re-apply, no commit/push/ArgoCD sync required. See [Alternative (development): Deploy directly with Helm](#alternative-development-deploy-directly-with-helm) just below.
+> **Just developing or demoing?** Skip the following ArgoCD Application and install AutoShift with `helm` straight from your working copy. Edit a values file and re-apply, no commit/push/ArgoCD sync required. See [Alternative (development): Deploy directly with Helm](#alternative-development-deploy-directly-with-helm) just below.
 
-Update your values file with desired feature flags and repo url as defined in the [Autoshift Cluster Labels Values Reference](values-reference.md).
+Update your values file with desired feature flags and repo URL as defined in the [Autoshift Cluster Labels Values Reference](values-reference.md).
 
-Using helm and the values you set for cluster labels, install AutoShift. Here is an example using the hub values file:
+Using helm and the values you set for cluster labels, install AutoShift. Here is an example that uses the hub values file:
 
 ```console
 export APP_NAME="autoshift"
@@ -218,9 +218,9 @@ EOF
 #### Alternative (development): Deploy directly with Helm
 
 > [!WARNING]
-> This path is for **development and demos only, not production**. It installs the AutoShift ApplicationSet with `helm` from your local working copy instead of creating the `autoshift` ArgoCD Application. Production deployments should use the ArgoCD Application above so that AutoShift is self-managed and reconciled by GitOps.
+> This path is for **development and demos only, not production**. It installs the AutoShift ApplicationSet with `helm` from your local working copy instead of creating the `autoshift` ArgoCD Application. Production deployments should use the preceding ArgoCD Application so that AutoShift is self-managed and reconciled by GitOps.
 
-Instead of pointing an ArgoCD Application at values files committed in Git, you can render the `autoshift` chart directly against your **local** values files. This lets you edit a values file and re-apply immediately — no commit, push, or ArgoCD sync round-trip — which is the fastest way to see how a values change behaves.
+Instead of pointing an ArgoCD Application at values files committed in Git, you can render the `autoshift` chart directly against your **local** values files. This you can edit a values file and re-apply immediately — no commit, push, or ArgoCD sync round-trip — which is the fastest way to see how a values change behaves.
 
 Run this from the **root of your clone**:
 
@@ -256,7 +256,7 @@ To remove it: `helm uninstall autoshift -n openshift-gitops`.
 
 ### Step 5: Assign Clusters to ClusterSets
 
-Given the labels and cluster sets specified in the supplied values file, ACM cluster sets will be created. Add the hub cluster (`local-cluster`) to the appropriate clusterset:
+Given the labels and cluster sets specified in the supplied values file, Red Hat Advanced Cluster Management cluster sets will be created. Add the hub cluster (`local-cluster`) to the appropriate clusterset:
 
 ```console
 # Replace 'hub' with the name of your clusterset
@@ -269,7 +269,7 @@ For managed clusters, assign them to their clusterset the same way:
 oc label managedcluster <cluster-name> cluster.open-cluster-management.io/clusterset=managed --overwrite
 ```
 
-Alternatively, you can assign clusters via the ACM Console at **All Clusters > Infrastructure > Clusters > Cluster Sets**. When provisioning a new cluster from ACM, you can also select the desired clusterset at time of creation.
+Alternatively, you can assign clusters through the Red Hat Advanced Cluster Management Console at **All Clusters > Infrastructure > Clusters > Cluster Sets**. When provisioning a new cluster from Red Hat Advanced Cluster Management, you can also select the desired clusterset at time of creation.
 
 ### Step 6: Verify
 
@@ -287,7 +287,7 @@ oc get policies -A
 oc get policies -n open-cluster-policies
 ```
 
-That's it. Welcome to OpenShift Platform Plus and all of its many capabilities!
+that is it. Welcome to OpenShift Platform Plus and all of its many capabilities!
 
 ---
 
@@ -327,9 +327,9 @@ oc login --token=sha256~lQ...dI --server=https://api.cluster.example.com:6443
 #### Step 2: Bootstrap GitOps from OCI
 
 > [!NOTE]
-> Unlike the Source install, OCI mode does **not** use the PolicyGenerator CMP — it deploys prerendered Helm
-> charts, so the GitOps repo-server has no dependency on ACM's image. GitOps and ACM can be bootstrapped in
-> either order here (the ACM-before-GitOps ordering only applies to Source/Git installs).
+> Unlike the Source install, OCI mode does **not** use the PolicyGenerator ConfigManagementPlugin — it deploys prerendered Helm
+> charts, so the GitOps repo-server has no dependency on Red Hat Advanced Cluster Management's image. GitOps and Red Hat Advanced Cluster Management can be bootstrapped in
+> either order here (the ordering rule that Red Hat Advanced Cluster Management comes before GitOps only applies to Source/Git installs).
 
 ```bash
 export OCI_REPO="oci://quay.io/autoshift"
@@ -355,7 +355,7 @@ oc get pods -n openshift-gitops
 oc get argocd -A
 ```
 
-#### Step 3: Bootstrap ACM from OCI
+#### Step 3: Bootstrap Red Hat Advanced Cluster Management from OCI
 
 ```bash
 helm upgrade --install advanced-cluster-management ${OCI_REPO}/bootstrap/advanced-cluster-management \
@@ -365,7 +365,7 @@ helm upgrade --install advanced-cluster-management ${OCI_REPO}/bootstrap/advance
     --timeout 15m
 ```
 
-Wait for ACM to be ready:
+Wait for Red Hat Advanced Cluster Management to be ready:
 
 ```console
 oc get mch -A -w
@@ -461,7 +461,7 @@ oc get applications.argoproj.io -n openshift-gitops | grep autoshift
 oc get policies -A
 ```
 
-For private registry credentials, custom CA certificates, and disconnected environments, see the [Release & OCI Guide](releases.md).
+For private registry credentials, custom CA certificates, and disconnected environments, see the [Release and OCI Guide](releases.md).
 
 ---
 
@@ -473,7 +473,7 @@ oc get pods -n openshift-gitops
 oc get events -n openshift-gitops --sort-by=.lastTimestamp
 ```
 
-### ACM not installing
+### Red Hat Advanced Cluster Management not installing
 ```bash
 oc get mch -A
 oc get pods -n open-cluster-management

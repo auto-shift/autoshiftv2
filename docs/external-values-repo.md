@@ -143,7 +143,7 @@ hubClusterSets:
 ```
 
 Note this cuts both ways: because maps merge rather than replace, omitting a label in a later file
-does **not** remove one an earlier file set. To unset it, give it an **empty value** — cluster-labels
+does **not** remove one an earlier file set. To unset it, give it an **empty value**: cluster-labels
 encodes that as a delete sentinel and strips the label from the `ManagedCluster`:
 
 ```yaml
@@ -159,7 +159,7 @@ coordinates, `versionedClusterSets`, `policyGenerator` — not for configuration
 ## Constraints that bite
 
 **`policyGenerator` is required for git mode, recommended-off for OCI.** Git mode renders
-PolicyGenerator directories through the CMP sidecar, so `policyGenerator: true` is mandatory —
+PolicyGenerator directories through the ConfigManagementPlugin (CMP) sidecar, so `policyGenerator: true` is mandatory —
 without it those directories never render and most policies never deploy. Setting it to `false` in
 git mode fails at render time:
 
@@ -177,11 +177,11 @@ characters and validated at render time. See [gradual-rollout.md](gradual-rollou
 
 **Private values repos need credentials.** Register the repo with ArgoCD before the Application
 references it. For an on-cluster GitLab with a self-signed certificate, the repo secret also needs
-`insecure: "true"`, and the certificate SAN must match the actual ingress domain.
+`insecure: "true"`, and the certificate Subject Alternative Name must match the actual ingress domain.
 
-**The values repo has no schema.** A typo in a label key is not a render error — it produces a label
+**The values repo has no schema.** A typing error in a label key is not a render error — it produces a label
 nothing consumes. The policy-validation suite only lints labels inside `autoshiftv2`. Compare against
-`autoshift/values/clustersets/_example.yaml`, which is the catalogue of every declared label.
+`autoshift/values/clustersets/_example.yaml`, which is the catalog of every declared label.
 
 ## Verifying before you commit
 
@@ -215,7 +215,7 @@ oc get application.argoproj.io -n openshift-gitops   # the ApplicationSet's chil
 1. Create the values repo and copy in the profiles you currently use from `autoshift/values/`.
 2. Move anything from the Application's inline `helm.values` into those files — keep only deployment
    identity inline.
-3. Render locally (above) and diff against what is live, so the migration is provably a no-op.
+3. Render locally (as described earlier) and diff against what is live, so the migration is provably a no-op.
 4. Convert `source:` to `sources:` with the `ref` block, and apply.
 
 Because step 3 proves the rendered output is unchanged, the switch itself should produce no policy

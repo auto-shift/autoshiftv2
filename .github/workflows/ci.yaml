@@ -187,3 +187,54 @@ jobs:
           name: label-contract-report
           path: label-contract-report.md
           if-no-files-found: warn
+
+  docs:
+    name: Documentation (build and prose lint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - name: Install documentation toolchain
+        run: pip install mkdocs-material mike mkdocs-same-dir mkdocs-callouts
+
+      # mkdocs.yaml sets strict: true, so a warning fails the build. This is what catches a broken
+      # relative link — nothing else does, and until now the site was only built at deploy time, so
+      # a bad link merged and surfaced in production.
+      - name: Build the site
+        run: mkdocs build --site-dir /tmp/site
+
+      # Installed and run directly rather than through an action, so CI runs the same command
+      # documented in .vale.ini and a developer can reproduce a failure locally verbatim.
+      - name: Install Vale
+        run: |
+          curl -sfL https://raw.githubusercontent.com/errata-ai/vale/v3.17.1/install.sh \
+            | sh -s -- -b "$HOME/.local/bin" v3.17.1
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch the Red Hat style
+        run: vale sync
+
+      # Errors only. The Red Hat style reports ~1100 further findings that are a backlog, not
+      # regressions, and gating on them would block every PR. .vale.ini records what is enforced.
+      - name: Prose lint
+        run: vale --minAlertLevel=error README.md docs/
+
+      # Not a gate: prints the backlog so progress is visible on every run.
+      - name: Report remaining style findings
+        if: always()
+        run: |
+          {
+            echo "### Documentation style backlog"
+            echo ""
+            echo "Not enforced. See \`.vale.ini\` for which rules gate CI."
+            echo ""
+            echo '```'
+            vale --output=line README.md docs/ 2>/dev/null \
+              | grep -oE 'RedHat\.[A-Za-z]+' | sort | uniq -c | sort -rn || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

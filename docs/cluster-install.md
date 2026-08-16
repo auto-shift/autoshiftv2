@@ -1,14 +1,14 @@
 # Provisioning Clusters with AutoShift
 
-This guide covers provisioning OpenShift clusters using AutoShift's cluster-install policies. AutoShift supports multiple platforms:
+This guide covers provisioning OpenShift clusters by using AutoShift's cluster-install policies. AutoShift supports multiple platforms:
 
-- **Baremetal** — ACM Assisted Installer + SiteConfig operator
-- **AWS** — Hive ClusterDeployment + IPI installer
-- **vSphere** — Hive ClusterDeployment + IPI installer (VMware)
+- **Baremetal**: Red Hat Advanced Cluster Management for Kubernetes Assisted Installer + SiteConfig operator
+- **AWS**: Hive ClusterDeployment, installer-provisioned infrastructure
+- **vSphere**: Hive ClusterDeployment, installer-provisioned infrastructure (VMware)
 
 ## Overview
 
-AutoShift provisions clusters through ACM policies that chain together. The `platform` field in `clusterInstall` determines which policies process the cluster:
+AutoShift provisions clusters through Red Hat Advanced Cluster Management policies that chain together. The `platform` field in `clusterInstall` determines which policies process the cluster:
 
 **Shared policies (all platforms):**
 1. **policy-cluster-install-prereqs** - Creates the cluster namespace, ClusterImageSet, and KlusterletAddonConfig
@@ -18,10 +18,10 @@ AutoShift provisions clusters through ACM policies that chain together. The `pla
 3. **policy-cluster-install-siteconfig** - Creates SiteConfig resources (ConfigMaps + ClusterInstance) that drive the Assisted Installer
 
 **AWS (`platform: aws`):**
-3. **policy-cluster-install-aws** - Creates Secrets, ClusterDeployment, MachinePool, and ManagedCluster for Hive IPI install
+3. **policy-cluster-install-aws** - Creates Secrets, ClusterDeployment, MachinePool, and ManagedCluster for Hive installer-provisioned infrastructure install
 
 **vSphere (`platform: vmware`):**
-3. **policy-cluster-install-vmware** - Creates Secrets (vCenter creds, CA, pull secret, install-config), ClusterDeployment, MachinePool, and ManagedCluster for Hive IPI install
+3. **policy-cluster-install-vmware** - Creates Secrets (vCenter credentials, CA, pull secret, install-config), ClusterDeployment, MachinePool, and ManagedCluster for Hive installer-provisioned infrastructure install
 
 Each policy depends on the previous one being Compliant before it runs.
 
@@ -57,12 +57,12 @@ raw ConfigMaps ----merge----> rendered-config ConfigMaps
                                 mirror-registry-config
 ```
 
-Cluster configuration is defined in values files and stored as ConfigMaps on the hub. ACM policies read these ConfigMaps at runtime via hub templates, merge clusterset defaults with per-cluster overrides, and generate all provisioning resources. This means adding a new cluster only requires adding a values file - no Helm re-rendering or ArgoCD sync needed.
+Cluster configuration is defined in values files and stored as ConfigMaps on the hub. Red Hat Advanced Cluster Management policies read these ConfigMaps at runtime through hub templates, merge clusterset defaults with per-cluster overrides, and generate all provisioning resources. This means adding a new cluster only requires adding a values file - no Helm re-rendering or ArgoCD sync needed.
 
 ## Prerequisites
 
-- A hub cluster running AutoShift with ACM
-- The `cluster-install: 'true'` label on the hub clusterset (enables SiteConfig component on MCH)
+- A hub cluster running AutoShift with Red Hat Advanced Cluster Management
+- The `cluster-install: 'true'` label on the hub clusterset (enables SiteConfig component on MultiClusterHub)
 - The `acm-enable-provisioning: 'true'` label on the hub clusterset (enables provisioning infrastructure)
 - Source secrets pre-created (see [Create Source Secrets and ConfigMaps](#step-2-create-source-secrets-and-configmaps))
 
@@ -86,7 +86,7 @@ clusters:
 
 ### networking
 
-Network configuration shared across policies (cluster-install, nmstate). Defines SDN networks, interface topology, routes, and DNS.
+Network configuration shared across policies (cluster-install, nmstate). Defines software-defined networking (SDN) networks, interface topology, routes, and DNS.
 
 ```yaml
 networking:
@@ -165,14 +165,14 @@ hosts:
                 prefixLength: 25
 ```
 
-**role** — Required for the SiteConfig ClusterInstance. Defaults to `master`. Set to `worker` for dedicated worker nodes. The number of hosts with `role: master` must match `controlPlaneAgents`.
+**role**: Required for the SiteConfig ClusterInstance. Defaults to `master`. Set to `worker` for dedicated worker nodes. The number of hosts with `role: master` must match `controlPlaneAgents`.
 
-**rootDeviceHints** — Optional hints for the Metal3 BareMetalHost to select the installation disk. Supported hints: `deviceName`, `serialNumber`, `model`, `vendor`, `wwn`, `hctl`, `rotational`, `minSizeGigabytes`.
+**rootDeviceHints**: Optional hints for the Metal3 BareMetalHost to select the installation disk. Supported hints: `deviceName`, `serialNumber`, `model`, `vendor`, `wwn`, `hctl`, `rotational`, `minSizeGigabytes`.
 
 
 ### disconnected
 
-Disconnected mirror registry configuration. This single block drives both install-time config (mirrorRegistryRef on AgentClusterInstall, CA in InfraEnv, ClusterImageSet releaseImage) and post-install config (IDMS/ICSP, CatalogSources via the disconnected-mirror policy).
+Disconnected mirror registry configuration. This single block drives both install-time config, including ImageContentSourcePolicy (ICSP), (mirrorRegistryRef on AgentClusterInstall, CA in InfraEnv, ClusterImageSet releaseImage) and postinstall config (ImageDigestMirrorSet (IDMS)/ICSP, CatalogSources through the disconnected-mirror policy).
 
 ```yaml
 disconnected:
@@ -226,15 +226,15 @@ When `disconnected.mirrorRegistry` is configured:
 - **ClusterInstance** gets `extraManifestsRefs` with an IDMS ConfigMap injected as an extra manifest
 - **InfraEnv** gets `mirrorRegistryRef`, `additionalTrustBundle`, `imageType: full-iso`, and `ignitionConfigOverride` (permissive `policy.json` for unsigned mirrored images)
 - **disconnected-mirror policy** reads the same config for:
-  - IDMS/ICSP — redirects image pulls from source registries to mirror
+  - ImageDigestMirrorSet and ImageContentSourcePolicy (ICSP) — redirects image pulls from source registries to mirror
   - CatalogSources — mirrored operator catalogs
   - OperatorHub disable — disables default catalog sources
-  - **Registry CA trust** — creates a ConfigMap in `openshift-config` with the CA and patches `image.config.openshift.io/cluster` so the managed cluster trusts the mirror registry post-install
-- **ACM provisioning policy** reads the hub's disconnected config for:
+  - **Registry CA trust**: creates a ConfigMap in `openshift-config` with the CA and patches `image.config.openshift.io/cluster` so the managed cluster trusts the mirror registry postinstall
+- **Red Hat Advanced Cluster Management provisioning policy** reads the hub's disconnected config for:
   - `mirrorRegistryRef` on AgentServiceConfig — so the Assisted Installer trusts the mirror
   - `osImages` — custom live ISO URL for disconnected boot
 
-**`osImages`** — For disconnected environments, the Assisted Installer can't download RHCOS images from `mirror.openshift.com`. Download them and host on a local HTTP server:
+**`osImages`** — For disconnected environments, the Assisted Installer cannot download Red Hat Enterprise Linux CoreOS (RHCOS) images from `mirror.openshift.com`. Download them and host on a local HTTP server:
 
 ```bash
 # Download the RHCOS live ISO for your OCP version
@@ -246,7 +246,7 @@ cp rhcos-live.x86_64.iso /var/www/html/rhcos/
 
 > **Note:** With `full-iso` (automatically set for disconnected), the rootfs is embedded in the ISO. You do not need to mirror the rootfs separately.
 
-The RHCOS version string (for the `version` field) can be found in the ISO filename or via `openshift-install coreos print-stream-json`.
+The RHCOS version string (for the `version` field) can be found in the ISO filename or through `openshift-install coreos print-stream-json`.
 
 **Labels still required** for operator catalog source switching (OperatorPolicy can only read labels):
 
@@ -471,13 +471,13 @@ clusters:
         secretSourceNamespace: 'cluster-install-secrets'
 ```
 
-See the [Configuration Structure](#configuration-structure) sections above for field details.
+See the [Configuration Structure](#configuration-structure) preceding sections for field details.
 
 #### vSphere specifics
 
-vSphere uses the Hive IPI flow (same as AWS). All vCenter connection details live under a `vsphere:` config block, and credentials are supplied through a single source secret. The policy renders the vCenter username/password from that secret into the install-config Secret (required by `openshift-install`; Hive does not inject vSphere credentials at provision time) and also copies the secret into the cluster namespace as `credentialsSecretRef`, which Hive uses for deprovision and day-2 operations.
+vSphere uses the Hive installer-provisioned infrastructure flow, the same as AWS. All vCenter connection details live under a `vsphere:` config block, and credentials are supplied through a single source secret. The policy renders the vCenter username/password from that secret into the install-config Secret (required by `openshift-install`; Hive does not inject vSphere credentials at provision time) and also copies the secret into the cluster namespace as `credentialsSecretRef`, which Hive uses for deprovision and Day 2 operations.
 
-Create the single source secret (matches the ACM console pattern):
+Create the single source secret (matches the Red Hat Advanced Cluster Management console pattern):
 
 ```bash
 oc create namespace cluster-install-secrets
@@ -534,7 +534,7 @@ clusters:
 
 **Networking — DHCP (default) or static IP:**
 
-By default, nodes get their addresses via **DHCP** — omit the `vsphere.hosts` block entirely and **no bootstrap host is needed**. This is the recommended path (the minimum config above is DHCP).
+By default, nodes get their addresses through **DHCP**: omit the `vsphere.hosts` block entirely and **no bootstrap host is needed**. This is the recommended path (the minimum config shown earlier is DHCP).
 
 To assign **static IPs** instead, add a `vsphere.hosts` list; each entry has a `role` (`bootstrap`, `control-plane`, or `compute`) and a `networkDevice` (`gateway`, `ipAddrs`, `nameservers`). Rules:
 
@@ -556,7 +556,7 @@ See `_example-cluster-install-vmware.yaml` for a complete (commented) static-IP 
 | `vcenter` | yes | `server`, `port` (default 443), `datacenters` |
 | `failureDomains[]` | yes | `name`, `region`, `zone`, `server`, and `topology` (`computeCluster`, `datacenter`, `datastore`, `networks`, `resourcePool`, optional `folder`) |
 | `controlPlane` / `workers` | no | `replicas`, `cpus`, `coresPerSocket`, `memoryMB`, `osDisk.diskSizeGB` |
-| `hosts[]` | no | Static IPs (see above); **omit for DHCP** |
+| `hosts[]` | no | Static IPs (described earlier); **omit for DHCP** |
 | `fips` / `networkType` | no | default `false` / `OVNKubernetes` |
 
 ### Step 4: Add the Values File to ArgoCD
@@ -675,7 +675,7 @@ disconnected:
       namespace: 'cluster-install-secrets' # optional, defaults to policy namespace
 ```
 
-The refs are resolved at runtime by ACM policies via hub template `lookup`. If the referenced ConfigMap does not exist, the policy will error. Ensure the ConfigMap is created before provisioning.
+The refs are resolved at runtime by Red Hat Advanced Cluster Management policies through hub template `lookup`. If the referenced ConfigMap does not exist, the policy will error. Ensure the ConfigMap is created before provisioning.
 
 This is a good candidate for clusterset defaults — define the refs once and all clusters inherit them:
 
@@ -709,7 +709,7 @@ hub1:
     acm-enable-provisioning: 'true'
 ```
 
-## SNO (Single Node OpenShift)
+## Single Node OpenShift (SNO) (Single Node OpenShift)
 
 For single-node clusters, set `controlPlaneAgents: 1` and define one host:
 
@@ -759,13 +759,13 @@ prereqs (Compliant) --> secrets (Compliant) --<
                                                  \--> cluster-install-aws (aws)
 ```
 
-- If source secrets don't exist, the secrets policy stays **NonCompliant** and siteconfig never runs
-- If the rendered-config ConfigMap doesn't exist yet (new cluster, no ManagedCluster object), the cluster-config-maps policy handles this via its second loop that checks for `createCluster: 'true'`
+- If source secrets do not exist, the secrets policy stays **NonCompliant** and siteconfig never runs
+- If the rendered-config ConfigMap does not exist yet (new cluster, no ManagedCluster object), the cluster-config-maps policy handles this through its second loop that checks for `createCluster: 'true'`
 - Setting `createCluster` to anything other than `'true'` (or removing it) stops provisioning for that cluster
 
 ## Validation
 
-AutoShift validates cluster-install configuration at Helm render time via `_validate-cluster-install.tpl`. This catches config errors before they reach ACM. Validated fields include:
+AutoShift validates cluster-install configuration at Helm render time through `_validate-cluster-install.tpl`. This catches config errors before they reach Red Hat Advanced Cluster Management. Validated fields include:
 
 - **Required fields**: `baseDomain`, `openshiftVersion` (or `clusterImageSet`), `pullSecretRef`, `bmcCredentialRef` (baremetal), `sshPublicKey` or ref (baremetal only)
 - **Multi-node**: `apiVip` and `ingressVip` required when `controlPlaneAgents > 1`
@@ -774,7 +774,7 @@ AutoShift validates cluster-install configuration at Helm render time via `_vali
 - **SNO**: Exactly 1 host when `controlPlaneAgents: 1`
 - **Disconnected**: `host` required when `mirrors` defined, `ca` or `caRef` required when `mirrors` defined, `host` required when `catalogs` defined
 - **Catalog entries**: `source`, `imagePath`, `tag` required for each catalog
-- **OS images**: `openshiftVersion`, `version`, `url` required for each osImage entry
+- **operating system images**: `openshiftVersion`, `version`, `url` required for each osImage entry
 - **rootDeviceHints**: Only valid hint keys accepted
 - **Networking**: Interface types, modes, VLAN base references, static IP addresses validated
 
@@ -796,7 +796,7 @@ oc describe configurationpolicy policy-cluster-install-secrets -n local-cluster
 
 ### Secrets policy NonCompliant
 
-The source secrets don't exist. Check they're in the right namespace:
+The source secrets do not exist. Check they are in the right namespace:
 
 ```bash
 oc get secrets -n cluster-install-secrets
@@ -818,7 +818,7 @@ The BMC is unreachable. Verify BMC IP, credentials, and network connectivity fro
 
 ## AWS Cluster Provisioning
 
-AutoShift provisions AWS clusters through Hive ClusterDeployment using the IPI (Installer-Provisioned Infrastructure) method. The cluster-install policies create all required resources from the rendered-config.
+AutoShift provisions AWS clusters through Hive ClusterDeployment by using installer-provisioned infrastructure. The cluster-install policies create all required resources from the rendered-config.
 
 ### Architecture
 
@@ -850,7 +850,7 @@ For a complete working example, see [`autoshift/values/clusters/_example-cluster
 | `sshPrivateKeyRef` | Yes | - | Secret name with `ssh-privatekey` key |
 | `sshPublicKey` | No | - | Inline SSH public key for install-config |
 | `sshKeyRef` | No | - | Secret ref (`name`, `key`, `namespace`) for SSH public key |
-| `fips` | No | `false` | Enable FIPS mode (requires RSA or ECDSA SSH keys, not ed25519) |
+| `fips` | No | `false` | Enable Federal Information Processing Standards (FIPS) mode (requires RSA or ECDSA SSH keys, not ed25519) |
 | `networkType` | No | `OVNKubernetes` | SDN type |
 | `controlPlane.instanceType` | No | `m5.xlarge` | Control plane EC2 instance type |
 | `controlPlane.rootVolume` | No | `{iops: 4000, size: 100, type: gp3}` | Control plane root volume config |
@@ -873,15 +873,15 @@ pullSecretRef:
 
 #### AWS Credentials
 
-The AWS account needs sufficient IAM permissions to create VPCs, EC2 instances, ELBs, Route53 records, S3 buckets, and IAM roles. See the [OpenShift AWS IAM requirements](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_aws/installing-aws-account) for the full list of required permissions.
+The AWS account needs sufficient IAM permissions to create virtual private clouds, EC2 instances, Elastic Load Balancers, Route53 records, S3 buckets, and IAM roles. See the [OpenShift AWS IAM requirements](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_aws/installing-aws-account) for the full list of required permissions.
 
 You can use either:
-- **Long-lived credentials** — IAM user with access key and secret key
-- **STS (temporary credentials)** — See [Installing with STS](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_aws/installing-aws-customizations#installing-aws-with-short-term-creds_installing-aws-customizations)
+- **Long-lived credentials**: IAM user with access key and secret key
+- **STS (temporary credentials)**: See [Installing with STS](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_aws/installing-aws-customizations#installing-aws-with-short-term-creds_installing-aws-customizations)
 
 #### Generate SSH Keys
 
-The installer needs an SSH key pair — the private key goes into the ClusterDeployment for Hive, and the public key goes into the install-config for node access.
+The installation program needs an SSH key pair — the private key goes into the ClusterDeployment for Hive, and the public key goes into the install-config for node access.
 
 ```bash
 # ECDSA (required if FIPS is enabled)
@@ -894,7 +894,7 @@ ssh-keygen -t rsa -b 4096 -N '' -f ~/.ssh/ocp-cluster
 
 #### Route53 Base Domain
 
-The `baseDomain` must be a Route53 hosted zone in the same AWS account. The installer creates DNS records for the API and ingress endpoints. Verify your hosted zone exists:
+The `baseDomain` must be a Route53 hosted zone in the same AWS account. The installation program creates DNS records for the API and ingress endpoints. Verify your hosted zone exists:
 
 ```bash
 aws route53 list-hosted-zones --query 'HostedZones[*].Name'
@@ -902,7 +902,7 @@ aws route53 list-hosted-zones --query 'HostedZones[*].Name'
 
 ### AWS Secrets
 
-All secrets can be in a single secret (matching the ACM GUI pattern) or separate secrets.
+All secrets can be in a single secret (matching the Red Hat Advanced Cluster Management GUI pattern) or separate secrets.
 
 #### Single Secret Pattern
 
@@ -951,11 +951,11 @@ oc create secret generic default-pull-secret \
   --type=kubernetes.io/dockerconfigjson
 ```
 
-> **Note:** When FIPS is enabled (`fips: true`), SSH keys must be RSA or ECDSA. Ed25519 keys are not supported in FIPS mode.
+> **Note:** When FIPS is enabled (`fips: true`), SSH keys must be RSA or Elliptic Curve Digital Signature Algorithm (ECDSA). Ed25519 keys are not supported in FIPS mode.
 
 ### AWS Disconnected Installation
 
-For disconnected AWS installs, add the `disconnected` config block. The disconnected config structure is the same as baremetal — see the [disconnected](#disconnected) section above for all fields. Both example files ([baremetal](../autoshift/values/clusters/_example-cluster-install-baremetal.yaml), [AWS](../autoshift/values/clusters/_example-cluster-install-aws.yaml)) include a commented-out disconnected block ready to uncomment.
+For disconnected AWS installs, add the `disconnected` config block. The disconnected config structure is the same as baremetal — see the [disconnected](#disconnected) preceding section for all fields. Both example files ([baremetal](../autoshift/values/clusters/_example-cluster-install-baremetal.yaml), [AWS](../autoshift/values/clusters/_example-cluster-install-aws.yaml)) include a commented-out disconnected block ready to uncomment.
 
 The install-config automatically includes `imageDigestSources` and `additionalTrustBundle` when mirrors are configured.
 

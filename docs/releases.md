@@ -1,4 +1,4 @@
-# AutoShift Release & OCI Guide
+# AutoShift Release and OCI Guide
 
 This guide covers how AutoShift releases are created, how OCI mode works, and how to manage OCI-based deployments. For step-by-step installation, see the [Quick Start Guide](quickstart.md).
 
@@ -77,7 +77,7 @@ autoshiftOciRepo: oci://quay.io/autoshift/policies
 AutoShift releases consist of multiple Helm charts:
 - **2 bootstrap charts**: `openshift-gitops`, `advanced-cluster-management`
 - **1 main chart**: `autoshift` (ApplicationSet)
-- **Policies**: ACM policies for Day 2 operations (one per `policies/` subdirectory) — mostly PolicyGenerator dirs, plus a few Helm charts (openshift-gitops, policy-foundation, cluster-labels, cluster-config-maps)
+- **Policies**: Red Hat Advanced Cluster Management for Kubernetes policies for Day 2 operations (one per `policies/` subdirectory) — mostly PolicyGenerator directories, plus a few Helm charts (openshift-gitops, policy-foundation, cluster-labels, cluster-config-maps)
 
 All artifacts are version-synchronized and published to an OCI registry. Released artifacts are completely self-contained with no Git repository access required at runtime.
 
@@ -236,7 +236,7 @@ hubClusterSets:
       gitops-cluster-ca-bundle: 'true'
 ```
 
-Alternatively, you can enable it globally via the Helm value in `policies/stable/openshift-gitops/values.yaml`:
+Alternatively, you can enable it globally through the Helm value in `policies/stable/openshift-gitops/values.yaml`:
 
 ```yaml
 gitops:
@@ -252,7 +252,7 @@ When enabled, AutoShift:
 3. Mounts the CA bundle into the ArgoCD repo server at `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`
 
 > [!NOTE]
-> Your custom CA must already be added to the cluster's trust store via the [cluster-wide proxy](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking/configuring-a-custom-pki) for the injection to include it.
+> Your custom CA must already be added to the cluster's truststore through the [cluster-wide proxy](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking/configuring-a-custom-pki) for the injection to include it.
 
 ## Disconnected / Air-Gapped Environments
 
@@ -261,7 +261,7 @@ For disconnected environments, mirror the released artifacts to an internal regi
 > **One artifact type.** Every AutoShift policy ships as a **Helm chart** under `oci://<registry>/policies/<name>`
 > — the hand-authored holdout charts and the PolicyGenerator policies (rendered to stock Helm charts in CI by
 > `make render-policy-charts`). All are listed in `policy-list.txt`; `helm pull` works on every one. The
-> policy-generator CMP is never used for OCI.
+> policy-generator ConfigManagementPlugin is never used for OCI.
 
 **Recommended — the ImageSet generator.** It discovers every AutoShift artifact (main chart, bootstrap charts,
 all policy charts, plus the operator images each enabled policy needs) and emits an
@@ -277,7 +277,7 @@ bash scripts/generate-imageset-config.sh \
 oc mirror --config imageset-config.yaml docker://registry.example.com
 ```
 
-**Manual alternative** — copy the OCI artifacts registry-to-registry with `oras` (all policies are Helm charts):
+**Manual alternative**: copy the OCI artifacts registry-to-registry with `oras` (all policies are Helm charts):
 
 ```bash
 VERSION="X.Y.Z"  # Replace with desired version
@@ -317,7 +317,7 @@ oc patch application.argoproj.io autoshift -n openshift-gitops \
 
 ### Gradual Rollouts
 
-AutoShift supports deploying multiple versions side-by-side using ACM ClusterSets. See the [Gradual Rollout Guide](gradual-rollout.md) for details.
+AutoShift supports deploying multiple versions side-by-side using Red Hat Advanced Cluster Management ClusterSets. See the [Gradual Rollout Guide](gradual-rollout.md) for details.
 
 ## Exclude Policies
 
@@ -331,7 +331,7 @@ excludePolicies:
 
 ## Troubleshooting
 
-### ArgoCD can't pull charts from OCI registry
+### ArgoCD cannot pull charts from OCI registry
 
 ```bash
 # Check if secret exists

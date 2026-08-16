@@ -4,10 +4,10 @@ Workload partitioning dedicates a set of CPUs to the OpenShift control plane and
 
 ## When to Use
 
-- **SNO (Single Node OpenShift)** — the single node runs everything; partitioning prevents user workloads from starving the control plane
-- **Compact 3-node clusters** — masters are also workers; same reasoning
-- **Masters doubling as infra nodes** — control plane + monitoring/logging/ingress share the same nodes alongside user workloads
-- **Telco / RAN / HPC** — latency-sensitive workloads that need deterministic CPU allocation
+- **Single Node OpenShift**: the single node runs everything; partitioning prevents user workloads from starving the control plane
+- **Compact 3-node clusters**: masters are also workers; same reasoning
+- **Masters doubling as infra nodes**: control plane + monitoring/logging/ingress share the same nodes alongside user workloads
+- **Telco / RAN / high-performance computing**: latency-sensitive workloads that need deterministic CPU allocation
 
 Dedicated worker nodes do **not** need workload partitioning — they already run only user workloads.
 
@@ -17,15 +17,15 @@ The workload-partitioning policy reads configuration from the rendered-config Co
 
 1. Creates a `MachineConfig` that configures CRI-O and kubelet CPU sets
 2. Applies the CPU manager policy (`static`) to the targeted nodes
-3. Pins platform pods to the reserved CPUs via CRI-O annotations
+3. Pins platform pods to the reserved CPUs through CRI-O annotations
 4. Makes isolated CPUs available exclusively for pods with CPU requests
 
-### Install-Time vs Post-Install
+### Install-Time compared to postinstall
 
-| | Install-Time (`cpuPartitioning: AllNodes`) | Post-Install (PerformanceProfile only) |
+| | Install-Time (`cpuPartitioning: AllNodes`) | postinstall (PerformanceProfile only) |
 |---|---|---|
 | Platform pod pinning | Full — CRI-O pins all platform pods to reserved CPUs from first boot | Partial — existing platform pods may not be pinned until restart |
-| When to set | In `clusterInstall` config before provisioning | Any time via the workload-partitioning policy |
+| When to set | In `clusterInstall` config before provisioning | Any time through the workload-partitioning policy |
 | Can be changed later | No — install-time only | Yes — update the PerformanceProfile |
 
 For new clusters, set **both** `cpuPartitioning: AllNodes` in the cluster-install config and configure the `workloadPartitioning` config block. For existing clusters, only the PerformanceProfile is needed.
@@ -58,7 +58,7 @@ clusters:
 
 ### 3. (Optional) Enable Install-Time Partitioning
 
-For new baremetal clusters provisioned via cluster-install:
+For new baremetal clusters provisioned through cluster-install:
 
 ```yaml
       clusterInstall:
@@ -69,18 +69,18 @@ For new baremetal clusters provisioned via cluster-install:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `reservedCpus` | string | **(required)** | CPU set for control plane, OS, and platform services |
+| `reservedCpus` | string | **(required)** | CPU set for control plane, operating system, and platform services |
 | `isolatedCpus` | string | **(required)** | CPU set for user workloads |
 | `nodeSelector` | map | `node-role.kubernetes.io/master: ''` | Which nodes the PerformanceProfile targets |
-| `numaTopology` | string | *(none)* | Topology Manager policy — see [NUMA Topology Policy](#numa-topology-policy) |
+| `numaTopology` | string | *(none)* | Topology Manager policy — see [Non-Uniform Memory Access (NUMA) Topology Policy](#numa-topology-policy) |
 | `realTimeKernel` | bool | `false` | Enable the real-time kernel |
-| `globallyDisableIrqLoadBalancing` | bool | `false` | Disable IRQ load balancing on isolated CPUs |
+| `globallyDisableIrqLoadBalancing` | bool | `false` | Disable interrupt request load balancing on isolated CPUs |
 | `hugepages.defaultSize` | string | *(none)* | Default huge page size (e.g., `1G`, `2M`) |
 | `hugepages.pages` | list | *(none)* | List of `{size, count, node}` huge page allocations |
 
 ## Understanding CPU Sets
 
-### Reserved vs Isolated
+### Reserved compared to Isolated
 
 - **Reserved** (`reservedCpus`) — CPUs dedicated to the operating system, kubelet, CRI-O, etcd, API server, and other core platform components. Nothing else runs on these CPUs.
 - **Isolated** (`isolatedCpus`) — CPUs available for everything else allowed to run on that node (user workloads, infra pods, operators, etc.). Core platform components will not run on these CPUs. The two sets must cover all CPUs on the node and must not overlap.
@@ -102,7 +102,7 @@ cat /sys/devices/system/cpu/cpu0/topology/thread_siblings_list
 
 ### Hyperthreading
 
-When hyperthreading is enabled, each physical core exposes two logical CPUs (siblings). Always reserve **both siblings together**. Splitting siblings across reserved and isolated causes jitter — the OS scheduler on the reserved sibling can preempt work on the isolated sibling.
+When Hyper-Threading is enabled, each physical core exposes two logical CPUs (siblings). Always reserve **both siblings together**. Splitting siblings across reserved and isolated causes jitter — the operating system scheduler on the reserved sibling can preempt work on the isolated sibling.
 
 The sibling numbering depends on the hardware. Common patterns:
 
@@ -132,9 +132,9 @@ The `numaTopology` field controls how the kubelet assigns CPUs and memory to **i
 
 | Policy | Behavior |
 |--------|----------|
-| `single-numa-node` | Pod's CPUs and memory must all come from the **same** NUMA node. The pod is rejected if it can't fit on one node. Provides the lowest latency but limits pod size to what fits on a single NUMA node. |
+| `single-numa-node` | Pod's CPUs and memory must all come from the **same** NUMA node. The pod is rejected if it cannot fit on one node. Provides the lowest latency but limits pod size to what fits on a single NUMA node. |
 | `best-effort` | Tries to align CPUs and memory on the same NUMA node, but will spread across nodes if needed. No pod rejection. Good default for general-purpose workloads. |
-| `restricted` | Like `best-effort` but **rejects** pods that request topology-aware resources (CPU/memory) if they can't be aligned on the same NUMA node. A middle ground between the other two. |
+| `restricted` | Like `best-effort` but **rejects** pods that request topology-aware resources (CPU/memory) if they cannot be aligned on the same NUMA node. A middle ground between the other two. |
 | *(not set)* | No topology awareness. The kubelet schedules CPUs from any NUMA node without preference. |
 
 On single-socket systems, this setting has no practical effect since all CPUs share one NUMA node.
@@ -143,7 +143,7 @@ On single-socket systems, this setting has no practical effect since all CPUs sh
 
 The reserved set must be large enough for the platform components running on that node. The more services sharing the node, the more reserved CPUs are needed.
 
-**Control plane services** (etcd, API server, controller-manager, scheduler) are the baseline. Etcd is typically the most resource-sensitive — it needs low-latency CPU access to maintain cluster health.
+**Control plane services** (etcd, API server, controller-manager, scheduler) are the baseline. etcd is typically the most resource-sensitive — it needs low-latency CPU access to maintain cluster health.
 
 A minimum of 4 physical cores (8 with HT) is needed for the reserved set on a pure control plane node. If infra workloads (monitoring, logging, ingress, etc.) are also running on those nodes, the isolated set needs to be large enough to handle them alongside any user workloads — both compete for the same isolated CPUs.
 
@@ -168,10 +168,10 @@ oc debug node/<node-name> -- chroot /host cat /etc/crio/crio.conf.d/99-workload-
 ## Troubleshooting
 
 ### Node stuck in NotReady after PerformanceProfile applied
-The MachineConfig rollout reboots nodes one at a time. If a node doesn't come back, the CPU set may be invalid (e.g., specifying CPUs that don't exist on the hardware). Check `oc describe node` and the MachineConfigPool status.
+The MachineConfig rollout reboots nodes one at a time. If a node does not come back, the CPU set may be invalid (e.g., specifying CPUs that do not exist on the hardware). Check `oc describe node` and the MachineConfigPool status.
 
 ### Pods rejected with TopologyAffinityError
-The `single-numa-node` topology policy rejects pods that can't fit entirely on one NUMA node. Either reduce the pod's CPU request or switch to `best-effort`.
+The `single-numa-node` topology policy rejects pods that cannot fit entirely on one NUMA node. Either reduce the pod's CPU request or switch to `best-effort`.
 
 ### PerformanceProfile degraded
 Check the Node Tuning Operator logs:

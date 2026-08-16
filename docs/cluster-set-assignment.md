@@ -33,7 +33,7 @@ being installed and then assigned never lands in two different clustersets.
 
 ## Ownership: hands off, never steals
 
-The policy only stamps a cluster it's **allowed to own** — the ManagedCluster is unowned (no
+The policy only stamps a cluster it is **allowed to own**: the ManagedCluster is unowned (no
 `autoshift.io/owning-namespace`) **or** already owned by this deployment. So one release can hand a
 cluster off, but a release can never yank a cluster another release owns. (`cluster-labels` then
 re-stamps `owning-namespace` to whichever deployment owns the new clusterset.)

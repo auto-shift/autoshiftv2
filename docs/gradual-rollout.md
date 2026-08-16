@@ -39,7 +39,7 @@ Release name 'autoshift-0-0-1' produces policy namespace 'policies-autoshift-0-0
 (24 chars, max 20). Shorten the Helm release name to 11 chars or fewer.
 ```
 
-So the Application name must be **11 characters or fewer**, which rules out the obvious
+Therefore the Application name must be **11 characters or fewer**, which rules out the obvious
 `autoshift-0-0-1`. This guide uses `as-0-0-1` / `as-0-0-2` — short enough, and the version stays
 visible in the namespace. `autoshift1` and `shift-0-0-1` also fit.
 
@@ -50,7 +50,7 @@ match, and nothing breaks if they differ.
 
 ## Prerequisites
 
-- OpenShift cluster with ACM and GitOps installed
+- OpenShift cluster with Red Hat Advanced Cluster Management for Kubernetes and GitOps installed
 - Access to OCI registry (`oci://quay.io/autoshift`)
 - Multiple managed clusters or self-managed hub
 
@@ -106,7 +106,7 @@ EOF
 
 ### 2. Assign Clusters to v0.0.1
 
-There are two ways to do this. The imperative form below is fine for a sandbox or a one-off, but for
+There are two ways to do this. The imperative form that follows is fine for a sandbox or a one-off, but for
 a real rollout prefer the **declarative** path — see
 [Declarative migration](#declarative-migration-preferred) before you start labelling by hand.
 
@@ -235,7 +235,7 @@ oc delete managedclusterset hub-0-0-1 managed-0-0-1
 
 ## Declarative migration (preferred)
 
-Everything above moves clusters with `oc label`, which is imperative and leaves no record of why a
+Everything described earlier moves clusters with `oc label`, which is imperative and leaves no record of why a
 cluster sits where it does. The [cluster-set-assignment](cluster-set-assignment.md) policy does the
 same job from git: set the target release on the cluster's own values file and let the policy stamp
 the label.
@@ -255,7 +255,7 @@ lowercased), so `0.0.2` resolves to `managed-0-0-2`.
 A wave is then a **commit** that bumps `versionTag` for N clusters; ArgoCD reconciles it; `git revert`
 is the rollback. Two properties matter for rollouts:
 
-- **Owner-guarded** — a deployment only re-stamps clusters it already owns, so two releases running
+- **Owner-guarded**: a deployment only re-stamps clusters it already owns, so two releases running
   side by side cannot fight over a cluster, and a cluster you assigned by hand is never stolen.
 - **`oc label` is not a durable override** for a cluster under cluster-set-assignment — the policy
   will re-stamp it. Move it in git instead.
@@ -270,7 +270,7 @@ Move clusters back to the old version — in git, by reverting the `versionTag` 
 git revert <wave-commit>
 ```
 
-Or imperatively, if the cluster is not under cluster-set-assignment:
+Alternatively, imperatively, if the cluster is not under cluster-set-assignment:
 
 ```bash
 oc label managedcluster spoke-cluster-1 cluster.open-cluster-management.io/clusterset=managed-0-0-1 --overwrite
@@ -319,9 +319,9 @@ With `versionedClusterSets: true`, names are automatically generated:
 
 1. **Start with one canary cluster** - Validate before broader rollout
 2. **Use dry run first** - Set `dryRun: true` on new version to preview changes
-3. **Keep old version running** - Don't delete until all clusters migrated
+3. **Keep old version running** - do not delete until all clusters migrated
 4. **Document configuration differences** - Track what changed between versions
-5. **Monitor ACM console** - Watch for policy violations during migration
+5. **Monitor Red Hat Advanced Cluster Management console** - Watch for policy violations during migration
 6. **Keep Application names ≤ 11 chars** - anything longer fails naming validation at render time
 7. **Move waves in git** - use [cluster-set-assignment](cluster-set-assignment.md) so each wave is a
    reviewable commit and `git revert` is the rollback
@@ -329,11 +329,11 @@ With `versionedClusterSets: true`, names are automatically generated:
 ## See also
 
 - [external-values-repo.md](external-values-repo.md) — keep these values in your own repo instead of
-  inline, and combine them with the chart via a multi-source Application
+  inline, and combine them with the chart through a multi-source Application
 - [cluster-set-assignment.md](cluster-set-assignment.md) — declarative clusterset membership
-- [ocp-upgrade.md](ocp-upgrade.md) — using this same wave model to stage OpenShift upgrades
+- [ocp-upgrade.md](ocp-upgrade.md) — by using this same wave model to stage OpenShift upgrades
 
 ## Support
 
 - **Issues**: https://github.com/auto-shift/autoshiftv2/issues
-- **ACM ClusterSets**: https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes
+- **Red Hat Advanced Cluster Management ClusterSets**: https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes
