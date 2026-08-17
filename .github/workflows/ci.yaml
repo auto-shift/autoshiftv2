@@ -212,9 +212,17 @@ jobs:
       # documented in .vale.ini and a developer can reproduce a failure locally verbatim.
       - name: Install Vale
         run: |
-          curl -sfL https://raw.githubusercontent.com/errata-ai/vale/v3.17.1/install.sh \
-            | sh -s -- -b "$HOME/.local/bin" v3.17.1
+          # pipefail matters: `curl -sfL ... | sh` swallows a failed download, because the
+          # pipeline exits with sh's status. That is how a 404 previously left Vale
+          # uninstalled while this step still reported success, failing the next step with
+          # an unexplained "vale: command not found".
+          set -euo pipefail
+          VALE_VERSION=3.17.1
+          mkdir -p "$HOME/.local/bin"
+          curl -sfL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
+            | tar -xz -C "$HOME/.local/bin" vale
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/vale" --version
 
       - name: Fetch the Red Hat style
         run: vale sync
