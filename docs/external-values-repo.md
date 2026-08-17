@@ -1,4 +1,4 @@
-# External Values Repository
+# External values repository
 
 AutoShift separates **code** from **configuration**. The `autoshiftv2` repo holds policy charts and
 the ApplicationSet; your values — which clusters exist, what each clusterset turns on — belong in a
@@ -48,7 +48,7 @@ site-config/
 Nothing enforces this layout — `valueFiles` paths are explicit — but matching the upstream shape
 makes it obvious which reference profile a file descends from.
 
-## The multi-source Application
+## The multi-source application
 
 Two sources: your values repo carries a `ref`, and the chart source refers to it with `$ref/`.
 
@@ -159,7 +159,7 @@ coordinates, `versionedClusterSets`, `policyGenerator` — not for configuration
 ## Constraints that bite
 
 **`policyGenerator` is required for git mode, recommended-off for OCI.** Git mode renders
-PolicyGenerator directories through the ConfigManagementPlugin (CMP) sidecar, so `policyGenerator: true` is mandatory —
+PolicyGenerator directories through the `ConfigManagementPlugin` (CMP) sidecar, so `policyGenerator: true` is mandatory —
 without it those directories never render and most policies never deploy. Setting it to `false` in
 git mode fails at render time:
 

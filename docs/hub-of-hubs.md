@@ -1,4 +1,4 @@
-# Hub-of-Hubs Topology
+# Hub-of-hubs topology
 
 This document explains how AutoShift works in a **hub-of-hubs** (a.k.a. *global hub*)
 topology: one top-level hub that manages other hubs, each of which in turn manages its own
@@ -84,7 +84,7 @@ hub2          ── manages ──►  spoke3                (HoH cannot see th
 
 ## Who can place a policy where
 
-This is the crux. An AutoShift instance can only place an Red Hat Advanced Cluster Management policy onto a cluster that
+This is the crux. An AutoShift instance can only place a Red Hat Advanced Cluster Management policy onto a cluster that
 *its* Red Hat Advanced Cluster Management manages. Map that onto the topology and you get a strict division of labor:
 
 | Target cluster | Managed by | Policies on it are deployed by | hub1's own AutoShift can target it? |
@@ -252,7 +252,7 @@ sequenceDiagram
 Each AutoShift instance is identified by its ArgoCD Application name (`Release.Name`); its
 policy namespace is `policies-{Release.Name}`.
 
-| Tier | App (`Release.Name`) | Policy namespace | Destination | Typical valueFiles |
+| Tier | App (`Release.Name`) | Policy namespace | Destination | Typical `valueFiles` |
 |---|---|---|---|---|
 | Hub-of-Hubs | `autoshift` | `policies-autoshift` | the hub-of-hubs (local-cluster) | `global.yaml`, `hubofhubs.yaml`, `hub1.yaml`, `hub2.yaml` |
 | Spoke hub 1 | `hub1` | `policies-hub1` | hub1 | `global.yaml`, `hub1.yaml`, `managed.yaml`, `clusters/spoke1.yaml` |

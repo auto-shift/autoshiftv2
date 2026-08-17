@@ -40,20 +40,33 @@ Three phases:
    GitOps and Red Hat Advanced Cluster Management policies then take over managing the operators that
    bootstrapped them.
 
+One commit reaches the whole fleet. Git or an Open Container Initiative (OCI) registry feeds
+GitOps, the ApplicationSet fans out one Application per policy, and Red Hat Advanced Cluster
+Management distributes the result to every cluster whose labels match, including the hub itself.
+
+[![How AutoShift deploys configuration to a fleet](docs/diagrams/autoshift-schematic.drawio.svg)](docs/diagrams/autoshift-schematic.drawio.svg)
+
 Red Hat Advanced Cluster Management provides visibility into OpenShift and Kubernetes clusters from a
 single pane of glass, with built-in governance, cluster lifecycle management, application lifecycle
 management, and observability. OpenShift GitOps provides declarative GitOps for multicluster
 continuous delivery. The **hub** is the cluster running both; everything else is a
 **managed cluster**.
 
-![Hub architecture](images/AutoShiftv2-Hub.jpg)
+The hub is self-managed, so it receives the same Day 2 policies as any spoke. Roughly fifty
+capabilities ship as policies, from storage and security through to developer services, and each
+one is a label in a values file.
+
+[![What AutoShift manages on the hub and on a managed cluster](docs/diagrams/autoshift-logical.drawio.svg)](docs/diagrams/autoshift-logical.drawio.svg)
 
 Hubs stack. A global hub manages other hubs, each running its own AutoShift instance and managing
 only the clusters its own Red Hat Advanced Cluster Management instance can see. See
 [Hub-of-Hubs Topology](docs/hub-of-hubs.md)
 ([MultiCluster Global Hub](https://www.youtube.com/watch?v=jg3Zr7hFzhM)).
 
-![Hub of hubs architecture](images/AutoShiftv2-HubOfHubs.jpg)
+[![Hub-of-hubs topology](docs/diagrams/autoshift-hub-of-hubs.drawio.svg)](docs/diagrams/autoshift-hub-of-hubs.drawio.svg)
+
+Two more diagrams cover the label flow and gradual rollout. See
+[Architecture diagrams](docs/architecture.md).
 
 ## Key concepts
 

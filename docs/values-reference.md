@@ -1,6 +1,6 @@
-# AutoShift Values Reference
+# AutoShift values reference
 
-## Values File Architecture
+## Values file architecture
 
 AutoShift uses a **composable values file** pattern. Instead of a single monolithic values file, configuration is split into focused files under `autoshift/values/` that you combine in your ArgoCD Application:
 
@@ -22,7 +22,7 @@ autoshift/values/
     _example.yaml                    # Reference: ALL per-cluster override options
 ```
 
-### How Composition Works
+### How composition works
 
 Helm **deep-merges** multiple `-f` value files in order. Each clusterset file defines a unique key (e.g., `hubClusterSets.hub`, `managedClusterSets.managed`), so they combine without conflict:
 
@@ -40,7 +40,7 @@ Labels follow this override precedence (highest to lowest):
 2. **Clusterset labels** (`values/clustersets/hub.yaml`)
 3. **Helm chart defaults** (`values.yaml`)
 
-### Creating Custom Profiles
+### Creating custom profiles
 
 Copy `_example.yaml` and make two edits (top-level key and clusterset name):
 
@@ -60,28 +60,28 @@ cp autoshift/values/clusters/_example.yaml autoshift/values/clusters/my-cluster.
 
 See `autoshift/README.md` for detailed chart documentation.
 
-## Cluster Labels
+## Cluster labels
 
 Values can be set on a per cluster and clusterset level to decide what features of AutoShift will be applied to each cluster. If a value is defined in helm values, a clusterset label and a cluster label precedence will be **cluster > clusterset > helm** values where helm values is the least.
 
 Most policies are PolicyGenerator directories (no `values.yaml`); their configurable labels and default values are documented in `autoshift/values/clustersets/_example.yaml` — the canonical label catalog. The few policies that remain Helm charts (e.g. `policies/stable/openshift-gitops/`) also carry a `values.yaml` with chart defaults. Either way, values are set through clusterset labels in your `autoshift/values/clustersets/` files and further overridden by per-cluster labels in `autoshift/values/clusters/`.
 
-## Operator Version Control
+## Operator version control
 
 AutoShift v2 provides comprehensive version control for all managed operators through cluster labels. This feature you can pin operators to specific versions while maintaining automatic upgrade capabilities when desired.
 
-### Version Control Behavior
+### Version control behavior
 
 When you specify a version for an operator:
 - **Manual Install Plan Approval**: The operator subscription is automatically set to manual approval mode
-- **Version Pinning**: Red Hat Advanced Cluster Management for Kubernetes will only approve install plans for the exact CSV (ClusterServiceVersion) specified
+- **Version Pinning**: Red Hat Advanced Cluster Management for Kubernetes will only approve install plans for the exact CSV (`ClusterServiceVersion`) specified
 - **Controlled Upgrades**: Operators will not automatically upgrade beyond the specified version
 
 When no version is specified:
 - **Automatic Upgrades**: Operators use automatic install plan approval and follow normal upgrade paths
 - **Channel-based Updates**: Operators receive updates based on their configured channel (stable, latest, etc.)
 
-### Setting Operator Versions
+### Setting operator versions
 
 Operator versions are controlled through the AutoShift values files (e.g., `autoshift/values/clustersets/hub.yaml`, `autoshift/values/clustersets/sbx.yaml`, etc.) using cluster labels with the pattern `autoshift.io/OPERATOR_NAME-version`:
 
@@ -109,7 +109,7 @@ managedClusterSets:
 
 Labels can also be set at the individual cluster level in the `clusters:` section to override cluster set defaults.
 
-### Available Version Labels
+### Available version labels
 
 Every managed operator supports version control through its respective label:
 
@@ -134,7 +134,7 @@ Every managed operator supports version control through its respective label:
 | NMState                     | `nmstate-version`       | `kubernetes-nmstate-operator.v4.18.0-202410091522` |
 | OpenShift Virtualization    | `virt-version`          | `kubevirt-hyperconverged.v4.18.0`                  |
 
-### Finding Available CSV Versions
+### Finding available CSV versions
 
 To find available CSV versions for operators, use the OpenShift CLI:
 
@@ -150,7 +150,7 @@ oc get packagemanifests openshift-pipelines-operator-rh -o yaml | grep currentCS
 
 ---
 
-## Policy Label Reference
+## Policy label reference
 
 ### Red Hat Advanced Cluster Management
 
@@ -161,13 +161,13 @@ oc get packagemanifests openshift-pipelines-operator-rh -o yaml | grep currentCS
 |-----------------------------|-----------|---------------------------|-------|
 | `self-managed`              | bool      | `true` or `false`         |       |
 | `acm-enable-provisioning`   | bool      | `false`                   | Configures Red Hat Advanced Cluster Management to provision clusters |
-| `acm-provisioning-storage-class` | string |                         | (optional) name of StorageClass to use if non default is desired |
-| `acm-provisioning-database-size` | string | `10Gi`                  | DatabaseStorage defines the spec of the PersistentVolumeClaim to be
+| `acm-provisioning-storage-class` | string |                         | (optional) name of `StorageClass` to use if non default is desired |
+| `acm-provisioning-database-size` | string | `10Gi`                  | `DatabaseStorage` defines the spec of the `PersistentVolumeClaim` to be
 created for the database's filesystem. Minimum 10GiB is recommended. |
-| `acm-provisioning-filesystem-storage-size` | string | `100Gi`       | FileSystemStorage defines the spec of the PersistentVolumeClaim to be
+| `acm-provisioning-filesystem-storage-size` | string | `100Gi`       | `FileSystemStorage` defines the spec of the `PersistentVolumeClaim` to be
 created for the assisted-service's filesystem (logs, etc). Minimum 100GiB recommended |
-| `acm-provisioning-image-storage-size` | string | `50Gi`             | ImageStorage defines the spec of the PersistentVolumeClaim to be
-created for each replica of the image service. 2GiB per OSImage entry is required. |
+| `acm-provisioning-image-storage-size` | string | `50Gi`             | `ImageStorage` defines the spec of the `PersistentVolumeClaim` to be
+created for each replica of the image service. 2GiB per `OSImage` entry is required. |
 | `acm-channel`               | string    | `release-2.14`            |       |
 | `acm-version`               | string    | (optional)                | Specific CSV version for controlled upgrades |
 | `acm-source`                | string    | `redhat-operators`        |       |
@@ -210,9 +210,9 @@ created for each replica of the image service. 2GiB per OSImage entry is require
 - **Large (200-500 clusters)**: Consider `acm-addon-cpc-eval-concurrency: '10'`, `acm-addon-cpc-mem-limit: '2Gi'`
 - **Very Large (500+ clusters)**: Consider `acm-addon-cpc-eval-concurrency: '15'`, `acm-addon-cpc-client-qps: '150'`, `acm-addon-cpc-mem-limit: '4Gi'`
 
-> **Note:** Increased concurrency/QPS increases CPU and memory on the controller pods, the Kubernetes API server, and the OpenShift API server. Concurrency/QPS/burst are set through ManagedClusterAddOn annotations per Red Hat Advanced Cluster Management 2.17 docs. Resource limits are set through AddOnDeploymentConfig.
+> **Note:** Increased concurrency/QPS increases CPU and memory on the controller pods, the Kubernetes API server, and the OpenShift API server. Concurrency/QPS/burst are set through `ManagedClusterAddOn` annotations per Red Hat Advanced Cluster Management 2.17 docs. Resource limits are set through `AddOnDeploymentConfig`.
 
-### Cluster Labels
+### Cluster labels
 
 Manages the automated cluster labeling system that applies `autoshift.io/` prefixed labels to clusters and cluster sets. This policy automatically propagates labels from cluster sets to individual clusters and manages the label hierarchy.
 
@@ -276,7 +276,7 @@ hubClusterSets:
 ```
 
 
-### Master Nodes
+### Master nodes
 
 Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. You may have to increase the number of pods per node in these resource constrained environments.
 
@@ -285,7 +285,7 @@ Single Node OpenShift clusters as well as Compact Clusters have to rely on their
 | `master-nodes`                    | bool              | `false`                   |       |
 | `master-max-pods`                 | int               | `250`                     | The number of maximum pods per node. Up to 2500 supported dependent on hardware |
 
-### Workload Partitioning
+### Workload partitioning
 
 CPU isolation through PerformanceProfile. Dedicates CPUs to the control plane (reserved) and makes the rest available for user workloads (isolated). See [workload-partitioning.md](workload-partitioning.md) for sizing guidelines, Non-Uniform Memory Access topology, and examples.
 
@@ -301,30 +301,30 @@ CPU isolation through PerformanceProfile. Dedicates CPUs to the control plane (r
 |-------|------|---------|-------------|
 | `reservedCpus` | string | **(required)** | CPU set for control plane / operating system / platform (e.g., `0-11,60-71`) |
 | `isolatedCpus` | string | **(required)** | CPU set for user workloads (e.g., `12-59,72-119`) |
-| `nodeSelector` | map | `node-role.kubernetes.io/master: ''` | Which nodes the PerformanceProfile targets |
+| `nodeSelector` | map | `node-role.kubernetes.io/master: ''` | Which nodes the `PerformanceProfile` targets |
 | `numaTopology` | string | | `single-numa-node`, `best-effort`, or `restricted` |
 | `realTimeKernel` | bool | `false` | Enable the real-time kernel |
 | `globallyDisableIrqLoadBalancing` | bool | `false` | Disable interrupt request load balancing on isolated CPUs |
 | `hugepages.defaultSize` | string | | Default huge page size (`1G`, `2M`) |
 | `hugepages.pages` | list | | List of `{size, count, node}` allocations |
 
-### Machine Health Checks
+### Machine health checks
 
 Automated node health monitoring and remediation.
 
 | Variable                          | Type   | Default | Notes |
 |-----------------------------------|--------|---------|-------|
-| `machine-health-checks`           | bool   |         | Enable the MachineHealthCheck policy |
-| `machine-health-checks-worker`    | bool   |         | Enable MachineHealthCheck (MHC) for all worker MachineSets (timeout=300s, maxUnhealthy=40%) |
-| `machine-health-checks-infra`     | bool   |         | Enable MHC for all infra MachineSets (timeout=300s, maxUnhealthy=40%) |
-| `machine-health-checks-storage`   | bool   |         | Enable MHC for storage MachineSets (timeout=600s, maxUnhealthy=1) |
+| `machine-health-checks`           | bool   |         | Enable the `MachineHealthCheck` policy |
+| `machine-health-checks-worker`    | bool   |         | Enable `MachineHealthCheck` (MHC) for all worker `MachineSets` (timeout=300s, `maxUnhealthy`=40%) |
+| `machine-health-checks-infra`     | bool   |         | Enable MHC for all infra `MachineSets` (timeout=300s, `maxUnhealthy`=40%) |
+| `machine-health-checks-storage`   | bool   |         | Enable MHC for storage `MachineSets` (timeout=600s, `maxUnhealthy`=1) |
 
 **Notes:**
 - Storage nodes are identified by `cluster.ocs.openshift.io/openshift-storage` label (same as OpenShift Data Foundation)
-- Storage uses longer timeouts and maxUnhealthy=1 to allow Ceph recovery
-- Never create MachineHealthChecks for control plane nodes
+- Storage uses longer timeouts and `maxUnhealthy`=1 to allow Ceph recovery
+- Never create `MachineHealthChecks` for control plane nodes
 
-### Infra Nodes
+### Infra nodes
 
 | Variable                            | Type              | Default Value             | Notes |
 |-------------------------------------|-------------------|---------------------------|-------|
@@ -338,7 +338,7 @@ Automated node health monitoring and remediation.
 
 
 
-### Worker Nodes
+### Worker nodes
 
 | Variable                            | Type              | Default Value             | Notes |
 |-------------------------------------|-------------------|---------------------------|-------|
@@ -348,7 +348,7 @@ Automated node health monitoring and remediation.
 | `worker-nodes-numcores-per-socket`  | int               |                           | Number of CPU Cores per socket |
 | `worker-nodes-zones`                | <list<String>>    |                           | List of availability zones |
 
-### Storage Nodes
+### Storage nodes
 
 | Variable                            | Type           | Default Value | Notes |
 | ----------------------------------- | -------------- | ------------- | ----- |
@@ -359,9 +359,9 @@ Automated node health monitoring and remediation.
 | `storage-nodes-zone-[number]`       | string         |               | Availability zone (e.g., storage-nodes-zone-1: 'us-east-2a') |
 | `storage-nodes-instance-type`       | string         |               | Instance type for cloud provider |
 | `storage-nodes-provider`            | string         |               | Provider type; valid choices: aws, vmware, baremetal |
-| `storage-nodes-node-[iterator]`     | <list<String>> |               | List of node names to apply storage label to. Used for baremetal where MachineSets are not used. |
+| `storage-nodes-node-[iterator]`     | <list<String>> |               | List of node names to apply storage label to. Used for baremetal where `MachineSets` are not used. |
 
-### Advanced Cluster Security
+### Red Hat Advanced Cluster Security
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
@@ -372,16 +372,16 @@ Automated node health monitoring and remediation.
 | `acs-source`                      | string            | `redhat-operators`        |       |
 | `acs-source-namespace`            | string            | `openshift-marketplace`   |       |
 | `acs-scanner-v4`                  | string            | `Enabled`                 | Scanner V4 component state (`Enabled` or `Disabled`) |
-| `acs-monitoring`                  | bool              | `true`                    | Enable OpenShift monitoring integration for Central and SecuredCluster |
+| `acs-monitoring`                  | bool              | `true`                    | Enable OpenShift monitoring integration for Central and `SecuredCluster` |
 | `acs-vm-scanning`                 | bool              |                           | Enable VM scanning (Developer Preview, opt-in) |
-| `acs-admission-control`           | bool              |                           | Enable admission control enforcement on SecuredCluster (opt-in, can block deployments) |
+| `acs-admission-control`           | bool              |                           | Enable admission control enforcement on `SecuredCluster` (opt-in, can block deployments) |
 | `acs-network-policies`            | string            |                           | Network policy generation (`Enabled` or `Disabled`), only set when explicit control needed |
 | `acs-auth-provider`               | string            | `openshift`               | Auth provider type (`openshift`). Hub only. Configures declarative RBAC |
 | `acs-auth-min-role`               | string            | `None`                    | Minimum role for authenticated users. Hub only |
 | `acs-auth-admin-group`            | string            | `cluster-admins`          | Group mapped to Admin role. Hub only |
-| `acs-default-policies`            | bool              |                           | Deploy baseline SecurityPolicy CRDs (no privilege escalation, no root, no shell). Hub only |
+| `acs-default-policies`            | bool              |                           | Deploy baseline `SecurityPolicy` CRDs (no privilege escalation, no root, no shell). Hub only |
 
-### Developer Spaces
+### Developer spaces
 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
@@ -391,7 +391,7 @@ Automated node health monitoring and remediation.
 | `dev-spaces-source`                   | string            | `redhat-operators`        |       |
 | `dev-spaces-source-namespace`         | string            | `openshift-marketplace`   |       |
 
-### Developer Hub
+### Developer hub
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
@@ -401,7 +401,7 @@ Automated node health monitoring and remediation.
 | `dev-hub-source`                  | string            | `redhat-operators`        |       |
 | `dev-hub-source-namespace`        | string            | `openshift-marketplace`   |       |
 
-### OpenShift Pipelines
+### OpenShift pipelines
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
@@ -411,7 +411,7 @@ Automated node health monitoring and remediation.
 | `pipelines-source`                | string            | `redhat-operators`        |       |
 | `pipelines-source-namespace`      | string            | `openshift-marketplace`   |       |
 
-### Trusted Artifact Signer
+### Trusted artifact signer
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
@@ -431,7 +431,7 @@ Automated node health monitoring and remediation.
 | `quay-source`                     | string            | `redhat-operators`        |       |
 | `quay-source-namespace`           | string            | `openshift-marketplace`   |       |
 
-### OpenShift Virtualization
+### OpenShift virtualization
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
@@ -441,7 +441,7 @@ Automated node health monitoring and remediation.
 | `virt-source`                     | string            | `redhat-operators`        |       |
 | `virt-source-namespace`           | string            | `openshift-marketplace`   |       |
 
-### Developer OpenShift Gitops
+### Developer OpenShift gitops
 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
@@ -461,7 +461,7 @@ Automated node health monitoring and remediation.
 | `loki-storageclass`               | string            | `gp3-csi`                 |       |
 | `loki-lokistack-name`             | string            | `logging-lokistack`       |       |
 
-### OpenShift Logging
+### OpenShift logging
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
@@ -481,20 +481,20 @@ Automated node health monitoring and remediation.
 | `coo-source`                      | string            | `redhat-operators`        |       |
 | `coo-source-namespace`            | string            | `openshift-marketplace`   |       |
 
-### Compliance Operator Security Technical Implementation Guide Apply
+### Compliance Operator: apply a Security Technical Implementation Guide
 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `compliance`                          | bool              |                           | If not set Compliance Operator will not be managed. Helm chart config map must be set with profiles and remediations |
 | `compliance-auto-remediate`           | bool              | `true`                    |       |
-| `compliance-storage-class`            | string            |                           | StorageClass for compliance scan raw results. Use when default StorageClass is not available on master nodes (e.g., Ceph RBD) |
+| `compliance-storage-class`            | string            |                           | `StorageClass` for compliance scan raw results. Use when default `StorageClass` is not available on master nodes (e.g., Ceph RBD) |
 | `compliance-subscription-name`        | string            | `compliance-operator`     |       |
 | `compliance-version`                  | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `compliance-source`                   | string            | `redhat-operators`        |       |
 | `compliance-source-namespace`         | string            | `openshift-marketplace`   |       |
 | `compliance-channel`                  | string            | `stable`                  |       |
 
-### LVM Operator
+### LVM Storage Operator
 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
@@ -518,7 +518,7 @@ Automated node health monitoring and remediation.
 | `local-storage-source`                | string            | `redhat-operators`        | Operator catalog source |
 | `local-storage-source-namespace`      | string            | `openshift-marketplace`   | Catalog namespace |
 
-### Ansible Automation Platform
+### Ansible automation platform
 
 | Variable                         | Type      | Default Value              | Notes |
 |----------------------------------|-----------|----------------------------|-------|
@@ -528,16 +528,16 @@ Automated node health monitoring and remediation.
 | `aap-source`                     | string    | `redhat-operators`         |  |
 | `aap-hub-disabled`               | bool      | `true` or `false`          | 'false' will include Hub content storage in your deployment, 'true' will omit.       |
 | `aap-file-storage`               | bool      | `true` or `false`          | 'false' will use file storage for Hub content storage in your deployment, 'true' will omit. |
-| `aap-file_storage_storage_class` | string    | `ocs-storagecluster-cephfs`| you will set the storage class for your file storage, defaults to OpenShift Data Foundation. you must have a ReadWriteMany capable storage class if using anything else. |
+| `aap-file_storage_storage_class` | string    | `ocs-storagecluster-cephfs`| you will set the storage class for your file storage, defaults to OpenShift Data Foundation. you must have a `ReadWriteMany` capable storage class if using anything else. |
 | `aap-file_storage_size`          | bool      | `10G`                      | set the pvc claim size for your file storage.  |
-| `aap-s3-storage`                 | bool      | `true` or `false`          | 'false' will use OpenShift Data Foundation NooBa for Hub content storage in your deployment, 'true' will omit. |
+| `aap-s3-storage`                 | bool      | `true` or `false`          | 'false' will use OpenShift Data Foundation `NooBa` for Hub content storage in your deployment, 'true' will omit. |
 | `aap-eda-disabled`               | bool      | `true` or `false`          | 'false' will include Event-Driven Ansible in your deployment, 'true' will omit. |
 | `aap-lightspeed-disabled`        | bool      | `true` or `false`          | 'false' will include Red Hat Ansible Lightspeed in your deployment, 'true' will omit. |
 | `aap-version`                    | bool      | `aap-operator.v2.6.0-0.1762261205`          | Specific CSV version for controlled upgrades  |
 | `aap-custom-cabundle`            | bool      | `true` or `false`          | 'true' will inject cluster CA Bundle into AAP CRD |
 | `aap-cabundle-name`              | string    | `user-ca-bundle`           |  name of the secret to be created for CA Bundle injection |
 
-### OpenShift Data Foundation
+### OpenShift data foundation
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
@@ -549,7 +549,7 @@ Automated node health monitoring and remediation.
 | `odf-ocs-storage-class-name`      | string            |                           | if not using local-storage, storage class to use for ocs |
 | `odf-ocs-storage-size`            | string            |                           | storage size per nvme |
 | `odf-ocs-storage-count`           | string            |                           | number of replica sets of nvme drives, note total amount will count * replicas |
-| `odf-ocs-storage-replicas`        | string            |                           | replicas, `3` is recommended; if using flexibleScaling use `1` |
+| `odf-ocs-storage-replicas`        | string            |                           | replicas, `3` is recommended; if using `flexibleScaling` use `1` |
 | `odf-ocs-flexible-scaling`        | bool              | `false`*                  | Sets failure domain to host and evenly spreads Object Storage Daemons over hosts. Defaults to true on baremetal with several storage nodes that is not a multiple of 3 |
 | `odf-resource-profile`            | string            | `balanced`                | `lean`: suitable for clusters with limited resources, `balanced`: suitable for most use cases, `performance`: suitable for clusters with high amount of resources |
 | `odf-default-storageclass`        | string            | `ocs-storagecluster-ceph-rbd` | Sets specified storage class as default and all others as non-default |
@@ -560,7 +560,7 @@ Automated node health monitoring and remediation.
 | `odf-source-namespace`            | string            | `openshift-marketplace`   |       |
 | `odf-default-storageclass`        | string            | `ocs-storagecluster-ceph-rbd` | Sets specified storage class as default and all others as non-default |
 
-### OpenShift Internal Registry
+### OpenShift internal registry
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `imageregistry`                   | bool              | `false`                   | If not set OpenShift Internal Image Registry will not be managed |
@@ -587,7 +587,7 @@ The Kubernetes NMState Operator declaratively configures Red Hat CoreOS network 
 
 See [policies/stable/nmstate/README.md](../policies/stable/nmstate/README.md) for detailed documentation and examples.
 
-#### Operator Labels
+#### Operator labels
 
 | Label                           | Type           | Default Value         | Notes                                                                             |
 | ------------------------------- | -------------- | --------------------- | --------------------------------------------------------------------------------- |
@@ -597,7 +597,7 @@ See [policies/stable/nmstate/README.md](../policies/stable/nmstate/README.md) fo
 | `nmstate-source`                | string         | `redhat-operators`    | Operator catalog source                                                           |
 | `nmstate-source-namespace`      | string         | `openshift-marketplace` | Catalog namespace                                                               |
 
-#### NNCP Configuration
+#### NNCP configuration
 
 NNCPs are generated from `config.networking` in values files. Each interface gets its own NNCP for fault isolation.
 
@@ -607,10 +607,10 @@ NNCPs are generated from `config.networking` in values files. Each interface get
 | `networking.interfaces.{id}` (VLAN) | `nmstate-vlan-{id}` | One per VLAN |
 | `networking.interfaces.{id}` (ethernet) | `nmstate-ethernet-{id}` | One per ethernet |
 | `networking.ovsBridges.{id}` | `nmstate-ovs-bridge-{id}` | One per OVS bridge |
-| routes + DNS + ovnMappings | `nmstate-network-config` | Combined |
-| `hosts.{name}.networking` | `nmstate-host-{name}` | Per-host nodeSelector |
+| routes + DNS + `ovnMappings` | `nmstate-network-config` | Combined |
+| `hosts.{name}.networking` | `nmstate-host-{name}` | Per-host `nodeSelector` |
 
-#### Interface Properties
+#### Interface properties
 
 | Property | Type | Required | Notes |
 |----------|------|----------|-------|
@@ -627,7 +627,7 @@ NNCPs are generated from `config.networking` in values files. Each interface get
 | `id` | int | VLAN only | VLAN ID |
 | `base` | string | VLAN only | Parent interface name |
 
-#### NMState Example: Bond + VLAN with Static IPs
+#### NMState example: bond + VLAN with static IPs
 
 ```yaml
 config:
@@ -665,7 +665,7 @@ config:
                   prefixLength: 25
 ```
 
-### Manual Remediations
+### Manual remediations
 
 Provides manual fixes and configurations that cannot be automated through operators, including managing allowed image registries for enhanced security.
 

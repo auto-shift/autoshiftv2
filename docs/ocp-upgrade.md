@@ -1,4 +1,4 @@
-# OpenShift Fleet Upgrades
+# OpenShift fleet upgrades
 
 AutoShift performs Day 2 OpenShift upgrades the same way it does everything else: **label-driven
 policies + clusterset membership**, reconciled by GitOps. There is no separate orchestration operator
@@ -32,11 +32,11 @@ Two guards keep this safe:
   already at or above the target are a Compliant no-op and downgrades are never attempted. It also
   skips while the cluster is already `Progressing`, so it never fights an in-flight upgrade.
 - **Dependency gate** (policy 3 → policy 2) — a typing error'd or unavailable `openshift-version` surfaces as
-  a clear NonCompliant message on policy 2 and policy 3 simply never fires.
+  a clear `NonCompliant` message on policy 2 and policy 3 simply never fires.
 
 > **How completion is detected.** Policy 4 does *not* assert `status.history` as a policy field. Red Hat Advanced Cluster Management
 > does not reliably match status **lists** (`conditions`, `history`), so the policy computes the latest
-> `Completed` history entry in Go template logic and, until the target is reached, forces NonCompliant
+> `Completed` history entry in Go template logic and, until the target is reached, forces `NonCompliant`
 > with a `mustnothave` on the `ClusterVersion` — an object that always exists, making it a reliable
 > existence check rather than a flappy list match. `clusterversions/status` is a subresource, so
 > `enforce` could not write it in any case. Upgrade *failure* visibility comes from OpenShift's own
@@ -48,7 +48,7 @@ Two guards keep this safe:
 |---|---|---|
 | `autoshift.io/openshift-upgrade` | opt the cluster in to Day 2 upgrades | `'true'` |
 | `autoshift.io/openshift-version` | target version — shared with operator-channel tooling (upgrades only if `> current`) | `'4.22.8'` |
-| `autoshift.io/openshift-upgrade-channel` | ClusterVersion channel (default `stable-4.22`) | `'stable-4.22'` |
+| `autoshift.io/openshift-upgrade-channel` | `ClusterVersion` channel (default `stable-4.22`) | `'stable-4.22'` |
 | `autoshift.io/openshift-upgrade-upstream` | OpenShift Update Service graph (local URL when disconnected) | `https://api.openshift.com/...` |
 
 ## Validation is free

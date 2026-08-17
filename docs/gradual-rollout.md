@@ -1,4 +1,4 @@
-# Gradual Rollout with Multiple Versions
+# Gradual rollout with multiple versions
 
 This guide shows how to deploy multiple versions of AutoShift side-by-side for gradual rollouts.
 
@@ -10,18 +10,18 @@ Deploy two AutoShift releases simultaneously using the `versionedClusterSets` fe
 
 Migrate clusters by moving them from one clusterset to another.
 
-## How It Works
+## How it works
 
 When `versionedClusterSets: true`, the version/branch is automatically appended to all ClusterSet names:
 
 **OCI Mode** (uses `autoshiftOciVersion`):
-| Values Definition | autoshiftOciVersion | Resulting ClusterSet |
+| Values Definition | `autoshiftOciVersion` | Resulting ClusterSet |
 |-------------------|---------------------|----------------------|
 | `hubClusterSets.hub` | `0.0.1` | `hub-0-0-1` |
 | `managedClusterSets.managed` | `0.0.2` | `managed-0-0-2` |
 
 **Git Mode** (uses `autoshiftGitBranchTag`):
-| Values Definition | autoshiftGitBranchTag | Resulting ClusterSet |
+| Values Definition | `autoshiftGitBranchTag` | Resulting ClusterSet |
 |-------------------|----------------------|----------------------|
 | `hubClusterSets.hub` | `main` | `hub-main` |
 | `hubClusterSets.hub` | `feature/new-policy` | `hub-feature-new-policy` |
@@ -29,7 +29,7 @@ When `versionedClusterSets: true`, the version/branch is automatically appended 
 
 The value is sanitized for DNS compatibility (dots, slashes replaced with dashes, lowercased).
 
-### Naming constraint: keep the Application name short
+### Naming constraint: keep the application name short
 
 The policy namespace is derived from the **ArgoCD Application name** (`policies-<app-name>`) and the
 chart validates it at render time:
@@ -54,9 +54,9 @@ match, and nothing breaks if they differ.
 - Access to OCI registry (`oci://quay.io/autoshift`)
 - Multiple managed clusters or self-managed hub
 
-## Step-by-Step Guide
+## Step-by-step guide
 
-### 1. Deploy Current Version (v0.0.1)
+### 1. Deploy current version (v0.0.1)
 
 ```bash
 cat <<'EOF' | oc apply -f -
@@ -104,7 +104,7 @@ spec:
 EOF
 ```
 
-### 2. Assign Clusters to v0.0.1
+### 2. Assign clusters to v0.0.1
 
 There are two ways to do this. The imperative form that follows is fine for a sandbox or a one-off, but for
 a real rollout prefer the **declarative** path — see
@@ -120,7 +120,7 @@ oc label managedcluster spoke-cluster-2 cluster.open-cluster-management.io/clust
 oc label managedcluster spoke-cluster-3 cluster.open-cluster-management.io/clusterset=managed-0-0-1 --overwrite
 ```
 
-### 3. Verify v0.0.1 Deployment
+### 3. Verify v0.0.1 deployment
 
 ```bash
 # Check Application synced
@@ -138,7 +138,7 @@ oc get managedclusters -l cluster.open-cluster-management.io/clusterset=hub-0-0-
 oc get managedclusters -l cluster.open-cluster-management.io/clusterset=managed-0-0-1
 ```
 
-### 4. Deploy New Version (v0.0.2)
+### 4. Deploy new version (v0.0.2)
 
 ```bash
 cat <<'EOF' | oc apply -f -
@@ -190,7 +190,7 @@ spec:
 EOF
 ```
 
-### 5. Migrate Canary Cluster
+### 5. Migrate canary cluster
 
 Move one cluster to test the new version:
 
@@ -202,7 +202,7 @@ oc label managedcluster spoke-cluster-1 cluster.open-cluster-management.io/clust
 oc get managedclusters -l cluster.open-cluster-management.io/clusterset=managed-0-0-2
 ```
 
-### 6. Validate and Continue Migration
+### 6. Validate and continue migration
 
 ```bash
 # Check policy compliance on canary cluster
@@ -216,7 +216,7 @@ oc label managedcluster spoke-cluster-3 cluster.open-cluster-management.io/clust
 oc label managedcluster local-cluster cluster.open-cluster-management.io/clusterset=hub-0-0-2 --overwrite
 ```
 
-### 7. Cleanup Old Version
+### 7. Cleanup old version
 
 After all clusters are migrated:
 
@@ -281,7 +281,7 @@ membership moving back — no redeploy.
 
 ## Monitoring
 
-### View Cluster Distribution
+### View cluster distribution
 
 ```bash
 echo "=== v0.0.1 Clusters ==="
@@ -293,7 +293,7 @@ oc get managedclusters -l cluster.open-cluster-management.io/clusterset=hub-0-0-
 oc get managedclusters -l cluster.open-cluster-management.io/clusterset=managed-0-0-2 -o name
 ```
 
-### Check Policy Compliance
+### Check policy compliance
 
 ```bash
 # Old version
@@ -303,19 +303,19 @@ oc get policies -n policies-as-0-0-1 -o custom-columns=NAME:.metadata.name,COMPL
 oc get policies -n policies-as-0-0-2 -o custom-columns=NAME:.metadata.name,COMPLIANCE:.status.compliant
 ```
 
-## Naming Summary
+## Naming summary
 
 With `versionedClusterSets: true`, names are automatically generated:
 
 | Component | v0.0.1 | v0.0.2 |
 |-----------|--------|--------|
 | ArgoCD Application | `as-0-0-1` | `as-0-0-2` |
-| autoshiftOciVersion | `0.0.1` | `0.0.2` |
+| `autoshiftOciVersion` | `0.0.1` | `0.0.2` |
 | Hub ClusterSet | `hub-0-0-1` (auto) | `hub-0-0-2` (auto) |
 | Managed ClusterSet | `managed-0-0-1` (auto) | `managed-0-0-2` (auto) |
 | Policy Namespace | `policies-as-0-0-1` | `policies-as-0-0-2` |
 
-## Best Practices
+## Best practices
 
 1. **Start with one canary cluster** - Validate before broader rollout
 2. **Use dry run first** - Set `dryRun: true` on new version to preview changes
