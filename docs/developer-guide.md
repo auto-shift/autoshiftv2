@@ -724,7 +724,7 @@ oc get policyreports -A
 - ✅ Use policy generators for new policies (`generate-operator-policy.sh` for operators, `generate-policy.sh` for configuration)
 - ✅ Include comprehensive README.md for each policy
 - ✅ Follow existing naming conventions
-- ✅ Test with `helm template` before committing
+- ✅ Validate with `cd tools && go test -tags integration ./internal/resolver/...` before committing
 - ✅ Add subscription-name labels for all operators
 - ✅ Document any special configuration requirements
 
@@ -734,7 +734,7 @@ oc get policyreports -A
 - [ ] Subscription name and channel specified
 - [ ] Configuration policies added if needed
 - [ ] README.md updated with usage instructions
-- [ ] Tested with `helm template`
+- [ ] Validated with `cd tools && go test -tags integration ./internal/resolver/...`
 - [ ] Deployed and validated in test environment
 - [ ] No hard-coded values (use templates)
 - [ ] Add Labels to AutoShift Values files
