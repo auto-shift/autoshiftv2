@@ -268,7 +268,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../hub-of-hubs/" class="md-tabs__link">
+        <a href="../architecture/" class="md-tabs__link">
           
   
   
@@ -584,6 +584,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -1301,17 +1329,17 @@
   
 
 
-<h1 id="openshift-fleet-upgrades">OpenShift Fleet Upgrades<a class="headerlink" href="#openshift-fleet-upgrades" title="Permanent link">&para;</a></h1>
-<p>AutoShift performs Day-2 OpenShift upgrades the same way it does everything else: <strong>label-driven
+<h1 id="openshift-fleet-upgrades">OpenShift fleet upgrades<a class="headerlink" href="#openshift-fleet-upgrades" title="Permanent link">&para;</a></h1>
+<p>AutoShift performs Day 2 OpenShift upgrades the same way it does everything else: <strong>label-driven
 policies + clusterset membership</strong>, reconciled by GitOps. There is no separate orchestration operator
 — the rollout unit is the <strong>clusterset</strong>, and you stage a fleet upgrade by moving clusters between
 clustersets in waves, verifying compliance between waves.</p>
 <blockquote>
-<p><strong>Why not TALM?</strong> The Topology Aware Lifecycle Manager orchestrates per-cluster policy enforcement,
+<p><strong>Why not Topology Aware Lifecycle Manager?</strong> It orchestrates per-cluster policy enforcement,
 but it requires literal upgrade coordinates baked into the root policy and cannot consume
 AutoShift's hub-template labels (it validates the hub-side policy, where <code>{{hub}}</code> values are
-unresolved). It's also a maintenance-mode, ZTP-oriented operator. ACM has no native progressive
-<em>policy</em> rollout either (the <code>RolloutStrategy</code> API is consumed by addons/ManifestWork, not
+unresolved). it is also a maintenance-mode, ZTP-oriented operator. Red Hat Advanced Cluster Management for Kubernetes has no native progressive
+<em>policy</em> rollout either (the <code>RolloutStrategy</code> API is consumed by add-ons/ManifestWork, not
 Policies — <code>Policy</code>/<code>PlacementBinding</code> expose no rollout hook). So the staging lever that actually
 fits AutoShift is clusterset membership, controlled by you.</p>
 </blockquote>
@@ -1333,7 +1361,7 @@ the target, drive the upgrade, report completion:</p>
 <td>1</td>
 <td><code>policy-openshift-upgrade-channel</code></td>
 <td>enforce</td>
-<td>Sets the <code>ClusterVersion</code> channel first, so <code>availableUpdates</code> recomputes for the desired channel. Without this, a y-stream target could deadlock the check below.</td>
+<td>Sets the <code>ClusterVersion</code> channel first, so <code>availableUpdates</code> recomputes for the desired channel. Without this, a y-stream target could deadlock the following check.</td>
 </tr>
 <tr>
 <td>2</td>
@@ -1345,7 +1373,7 @@ the target, drive the upgrade, report completion:</p>
 <td>3</td>
 <td><code>policy-openshift-upgrade</code></td>
 <td>enforce</td>
-<td>Sets <code>upstream</code> and <code>desiredUpdate.version</code>; the CVO does the upgrade.</td>
+<td>Sets <code>upstream</code> and <code>desiredUpdate.version</code>; the Cluster Version Operator (CVO) does the upgrade.</td>
 </tr>
 <tr>
 <td>4</td>
@@ -1360,13 +1388,13 @@ the target, drive the upgrade, report completion:</p>
 <li><strong>Semver guard</strong> (policy 3) — asserts <code>desiredUpdate</code> only when <code>target &gt; current</code>, so clusters
   already at or above the target are a Compliant no-op and downgrades are never attempted. It also
   skips while the cluster is already <code>Progressing</code>, so it never fights an in-flight upgrade.</li>
-<li><strong>Dependency gate</strong> (policy 3 → policy 2) — a typo'd or unavailable <code>openshift-version</code> surfaces as
-  a clear NonCompliant message on policy 2 and policy 3 simply never fires.</li>
+<li><strong>Dependency gate</strong> (policy 3 → policy 2) — a typing error'd or unavailable <code>openshift-version</code> surfaces as
+  a clear <code>NonCompliant</code> message on policy 2 and policy 3 simply never fires.</li>
 </ul>
 <blockquote>
-<p><strong>How completion is detected.</strong> Policy 4 does <em>not</em> assert <code>status.history</code> as a policy field. ACM
+<p><strong>How completion is detected.</strong> Policy 4 does <em>not</em> assert <code>status.history</code> as a policy field. Red Hat Advanced Cluster Management
 does not reliably match status <strong>lists</strong> (<code>conditions</code>, <code>history</code>), so the policy computes the latest
-<code>Completed</code> history entry in Go template logic and, until the target is reached, forces NonCompliant
+<code>Completed</code> history entry in Go template logic and, until the target is reached, forces <code>NonCompliant</code>
 with a <code>mustnothave</code> on the <code>ClusterVersion</code> — an object that always exists, making it a reliable
 existence check rather than a flappy list match. <code>clusterversions/status</code> is a subresource, so
 <code>enforce</code> could not write it in any case. Upgrade <em>failure</em> visibility comes from OpenShift's own
@@ -1384,7 +1412,7 @@ upgrade alerts, not from a policy check.</p>
 <tbody>
 <tr>
 <td><code>autoshift.io/openshift-upgrade</code></td>
-<td>opt the cluster in to Day-2 upgrades</td>
+<td>opt the cluster in to Day 2 upgrades</td>
 <td><code>'true'</code></td>
 </tr>
 <tr>
@@ -1394,46 +1422,46 @@ upgrade alerts, not from a policy check.</p>
 </tr>
 <tr>
 <td><code>autoshift.io/openshift-upgrade-channel</code></td>
-<td>ClusterVersion channel (default <code>stable-4.22</code>)</td>
+<td><code>ClusterVersion</code> channel (default <code>stable-4.22</code>)</td>
 <td><code>'stable-4.22'</code></td>
 </tr>
 <tr>
 <td><code>autoshift.io/openshift-upgrade-upstream</code></td>
-<td>OSUS graph (local URL when disconnected)</td>
+<td>OpenShift Update Service graph (local URL when disconnected)</td>
 <td><code>https://api.openshift.com/...</code></td>
 </tr>
 </tbody>
 </table>
 <h2 id="validation-is-free">Validation is free<a class="headerlink" href="#validation-is-free" title="Permanent link">&para;</a></h2>
-<p>Because these are normal ACM policies, you get fleet-wide validation with no extra tooling. Query
+<p>Because these are normal Red Hat Advanced Cluster Management policies, you get fleet-wide validation with no extra tooling. Query
 <strong><code>policy-openshift-upgrade-status</code></strong> — the completion gate, not the enforcing policy:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>oc<span class="w"> </span>get<span class="w"> </span>policy<span class="w"> </span>-n<span class="w"> </span>policies-autoshift<span class="w"> </span>policy-openshift-upgrade-status<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">&#39;{range .status.status[*]}{.clustername}{&quot;\t&quot;}{.compliant}{&quot;\n&quot;}{end}&#39;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">'{range .status.status[*]}{.clustername}{"\t"}{.compliant}{"\n"}{end}'</span>
 </code></pre></div>
 <p><code>policy-openshift-upgrade</code> goes Compliant as soon as the desired fields are <em>set</em>, which happens long
 before the CVO finishes. Watching it would declare a wave done while clusters are still upgrading.</p>
 <p>To see the whole sequence for one cluster, including which stage is blocking:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>oc<span class="w"> </span>get<span class="w"> </span>policy<span class="w"> </span>-n<span class="w"> </span>policies-autoshift<span class="w"> </span>-l<span class="w"> </span><span class="s1">&#39;!policy.open-cluster-management.io/root-policy&#39;</span><span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>oc<span class="w"> </span>get<span class="w"> </span>policy<span class="w"> </span>-n<span class="w"> </span>policies-autoshift<span class="w"> </span>-l<span class="w"> </span><span class="s1">'!policy.open-cluster-management.io/root-policy'</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-o<span class="w"> </span>custom-columns<span class="o">=</span>NAME:.metadata.name,COMPLIANT:.status.compliant<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>openshift-upgrade
 </code></pre></div>
 <p>ArgoCD surfaces it too: OpenShift GitOps ships a health check for <code>Policy</code>, so the
 <code>autoshift-openshift-upgrade</code> <strong>Application is Healthy only when all four policies are Compliant</strong> —
-which, because policy 4 is included, means the upgrade has finished. That's your "this wave is done,
+which, because policy 4 is included, means the upgrade has finished. that is your "this wave is done,
 proceed" gate. Expect the Application to sit Degraded for the duration of an upgrade; that is the
 gate working, not a fault.</p>
 <h2 id="rolling-out-an-upgrade-or-a-new-autoshift-version-in-waves">Rolling out an upgrade (or a new AutoShift version) in waves<a class="headerlink" href="#rolling-out-an-upgrade-or-a-new-autoshift-version-in-waves" title="Permanent link">&para;</a></h2>
 <p>The model is <strong>blue/green clustersets</strong> + <strong>wave migration</strong>:</p>
 <ol>
 <li><strong>Deploy the new version</strong> as a versioned clusterset (see <a href="../gradual-rollout/">gradual-rollout.md</a>).
-   Its <code>openshift-version</code> targets the new OCP version. The clusterset starts empty (or with a
+   Its <code>openshift-version</code> targets the new OpenShift Container Platform version. The clusterset starts empty (or with a
    canary).</li>
 <li><strong>Move a canary cluster</strong> into the new clusterset. The channel policy sets the channel, the allowed
    check validates the target, the upgrade policy sets <code>desiredUpdate</code> → the CVO upgrades it.</li>
-<li><strong>Verify</strong> the canary via <code>policy-openshift-upgrade-status</code> / ArgoCD health.</li>
+<li><strong>Verify</strong> the canary through <code>policy-openshift-upgrade-status</code> / ArgoCD health.</li>
 <li><strong>Move the next wave</strong>, verify, repeat until the fleet is migrated.</li>
 </ol>
 <p><strong>Safety:</strong> blast radius is controlled entirely by membership. <strong>Never enable <code>openshift-upgrade</code> on
-an already-populated clusterset</strong> — every opted-in cluster in it would upgrade at once (ACM fans the
+an already-populated clusterset</strong> — every opted-in cluster in it would upgrade at once (Red Hat Advanced Cluster Management fans the
 policy out with no staging). Always move clusters <em>into</em> the upgrading clusterset in controlled waves.</p>
 <h3 id="making-the-waves-argo-native">Making the waves Argo-native<a class="headerlink" href="#making-the-waves-argo-native" title="Permanent link">&para;</a></h3>
 <p>Rather than <code>oc label</code> by hand, keep clusterset membership <strong>declarative in git</strong> using the
@@ -1441,16 +1469,16 @@ policy out with no staging). Always move clusters <em>into</em> the upgrading cl
 <code>config.versionTag</code> on the cluster in <code>autoshift/values/clusters/&lt;name&gt;.yaml</code>, and the policy stamps
 the clusterset label for you.</p>
 <p>A rollout is then a series of <strong>commits</strong> moving N clusters per wave; Argo reconciles each; the
-ArgoCD compliance-health above tells you when to commit the next wave; <code>git revert</code> is your rollback.
+ArgoCD compliance-health described earlier tells you when to commit the next wave; <code>git revert</code> is your rollback.
 The only thing not automated is "auto-proceed when green" — that gate is either your commit cadence
 or a thin script that reads compliance and moves the next wave.</p>
 <p>Assignment is <strong>owner-guarded</strong>: the policy only stamps clusters its own deployment already owns, so
-two AutoShift releases cannot fight over a cluster and a hand-labelled cluster is never stolen. Note
+two AutoShift releases cannot fight over a cluster and a hand-labeled cluster is never stolen. Note
 the corollary — if a cluster is under cluster-set-assignment, <code>oc label</code> is not a durable override;
 the policy re-stamps it. Move it in git instead.</p>
 <h2 id="hub-of-hubs">Hub-of-hubs<a class="headerlink" href="#hub-of-hubs" title="Permanent link">&para;</a></h2>
-<p>Each layer's ACM only sees its own clusters, so a fleet upgrade is still <strong>per-layer, top-down</strong>
-(hoh → spoke-hubs → leaf spokes): the ACM hub must run a version that supports the clusters it
+<p>Each layer's Red Hat Advanced Cluster Management only sees its own clusters, so a fleet upgrade is still <strong>per-layer, top-down</strong>
+(hub-of-hubs → spoke-hubs → leaf spokes): the Red Hat Advanced Cluster Management hub must run a version that supports the clusters it
 manages. Apply the <code>openshift-upgrade</code> labels on the appropriate clusterset at each layer, and roll
 each layer's waves in that order.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
@@ -1458,7 +1486,7 @@ each layer's waves in that order.</p>
 <li><a href="../gradual-rollout/">gradual-rollout.md</a> — versioned-clusterset blue/green migration</li>
 <li><a href="../cluster-set-assignment/">cluster-set-assignment.md</a> — declarative clusterset membership (the
   GitOps way to move waves)</li>
-<li><a href="../hub-of-hubs/">hub-of-hubs.md</a> — HoH topology and the one-ACM-per-cluster constraint</li>
+<li><a href="../hub-of-hubs/">hub-of-hubs.md</a> — hub-of-hubs topology and the one-instance-per-cluster Red Hat Advanced Cluster Management constraint</li>
 </ul>
 
 

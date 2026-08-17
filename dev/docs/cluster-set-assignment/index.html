@@ -268,7 +268,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../hub-of-hubs/" class="md-tabs__link">
+        <a href="../architecture/" class="md-tabs__link">
           
   
   
@@ -584,6 +584,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -1211,7 +1239,7 @@
   
 
 
-<h1 id="declarative-clusterset-assignment">Declarative ClusterSet Assignment<a class="headerlink" href="#declarative-clusterset-assignment" title="Permanent link">&para;</a></h1>
+<h1 id="declarative-clusterset-assignment">Declarative ClusterSet assignment<a class="headerlink" href="#declarative-clusterset-assignment" title="Permanent link">&para;</a></h1>
 <p>Assign a cluster to a <code>ManagedClusterSet</code> — and therefore to an AutoShift deployment/release that owns
 it — declaratively from the cluster's values, instead of <code>oc label</code>. This is the GitOps mechanism for
 the versioned blue/green <strong>rollover</strong>: move a cluster from one release to the next with a commit.</p>
@@ -1220,14 +1248,14 @@ the versioned blue/green <strong>rollover</strong>: move a cluster from one rele
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">clusters</span><span class="p">:</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">spoke1</span><span class="p">:</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">config</span><span class="p">:</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">clusterSet</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;managed&#39;</span><span class="w">          </span><span class="c1"># base clusterset name (omit to manage the clusterset manually)</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">versionTag</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;0.0.2&#39;</span><span class="w">            </span><span class="c1"># OPTIONAL release that should own this cluster</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">clusterSet</span><span class="p">:</span><span class="w"> </span><span class="s">'managed'</span><span class="w">          </span><span class="c1"># base clusterset name (omit to manage the clusterset manually)</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">versionTag</span><span class="p">:</span><span class="w"> </span><span class="s">'0.0.2'</span><span class="w">            </span><span class="c1"># OPTIONAL release that should own this cluster</span>
 </code></pre></div>
 <p><code>versionTag</code> is the same kind of value the deployment derives its own suffix from — an OCI version in
 OCI mode, a branch or tag in git mode (<code>feature/x</code> → <code>-feature-x</code>). It is sanitized identically:
 dots and slashes become dashes, lowercased.</p>
 <p>The <code>cluster-set-assignment</code> policy composes the target clusterset and stamps
-<code>cluster.open-cluster-management.io/clusterset</code> on the ManagedCluster:</p>
+<code>cluster.open-cluster-management.io/clusterset</code> on the <code>ManagedCluster</code>:</p>
 <ul>
 <li><strong><code>versionTag</code> set</strong> → target = <code>&lt;clusterSet&gt;-&lt;sanitized versionTag&gt;</code> (e.g. <code>managed-0-0-2</code>). The
   suffix comes from this value, <strong>not</strong> from the deployment's own release.</li>
@@ -1237,7 +1265,7 @@ dots and slashes become dashes, lowercased.</p>
 <p><code>cluster-install</code> composes the clusterset for a cluster it provisions with the <strong>same rule</strong>, so a cluster
 being installed and then assigned never lands in two different clustersets.</p>
 <h2 id="ownership-hands-off-never-steals">Ownership: hands off, never steals<a class="headerlink" href="#ownership-hands-off-never-steals" title="Permanent link">&para;</a></h2>
-<p>The policy only stamps a cluster it's <strong>allowed to own</strong> — the ManagedCluster is unowned (no
+<p>The policy only stamps a cluster it is <strong>allowed to own</strong>: the <code>ManagedCluster</code> is unowned (no
 <code>autoshift.io/owning-namespace</code>) <strong>or</strong> already owned by this deployment. So one release can hand a
 cluster off, but a release can never yank a cluster another release owns. (<code>cluster-labels</code> then
 re-stamps <code>owning-namespace</code> to whichever deployment owns the new clusterset.)</p>
