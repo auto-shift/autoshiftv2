@@ -628,6 +628,12 @@ add_to_autoshift_values() {
             fi
         done
     else
+        # Non-interactive (CI, scripted runs, no TTY): skip the profile picker and fall through
+        # to the _example*.yaml files, which are always included below. Those are the files the
+        # label contract checks, so a scaffold validates cleanly without a human at the prompt.
+        if [[ ! -t 0 ]]; then
+            log_step "Non-interactive run: declaring labels in _example*.yaml only"
+        else
         # Interactive: let user select which values files to update
         # Search clustersets/ AND parent values/ for single-file setups
         # Use newline-based find (no -print0/-z) for Git Bash compatibility
@@ -667,6 +673,7 @@ add_to_autoshift_values() {
             fi
         fi
     fi
+        fi
 
     # Always include example files that have a labels: section
     while IFS= read -r file; do
@@ -791,7 +798,10 @@ elif [[ $rc -eq 2 ]]; then
     log_warning "Install it with: make install-policy-generator"
 else
     log_error "Generated policy fails PolicyGenerator render"
-    echo "Run: KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR"
+    echo "The raw kustomize command cannot be run as-is: the manifests still contain"
+    echo "\${REMEDIATION}/\${EVAL_COMPLIANT} tokens that PolicyGenerator rejects. Re-run this"
+    echo "script (it substitutes them internally), or validate with:"
+    echo "  cd tools && go test -tags integration -count=1 ./internal/resolver/..."
     exit 1
 fi
 
@@ -831,7 +841,7 @@ echo -e "${BLUE}📋 Next Steps:${NC}"
 echo "1. Edit $OUTPUT_FILE"
 echo "   - Replace the placeholder ConfigMap with your actual bare resource (no ConfigurationPolicy wrapper)"
 echo "   - For hub templates / loops / conditionals, use a bare 'object-templates-raw:' manifest instead"
-echo "2. Test locally: KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR"
+echo "2. Validate: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
 echo "   Full validation: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
 if [[ "$TARGET" != "all" ]]; then
     if [[ "$ADD_TO_AUTOSHIFT" == "true" ]]; then

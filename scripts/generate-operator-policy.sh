@@ -301,7 +301,10 @@ validate_generated_policy() {
         return 0
     else
         log_error "Generated policy fails PolicyGenerator render"
-        echo "Run: KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR"
+        echo "The raw kustomize command cannot be run as-is: the manifests still contain"
+        echo "\${REMEDIATION}/\${EVAL_COMPLIANT} tokens that PolicyGenerator rejects. Re-run this"
+        echo "script (it substitutes them internally), or validate with:"
+        echo "  cd tools && go test -tags integration -count=1 ./internal/resolver/..."
         return 1
     fi
 }
@@ -394,6 +397,12 @@ add_to_autoshift_values() {
             fi
         done
     else
+        # Non-interactive (CI, scripted runs, no TTY): skip the profile picker and fall through
+        # to the _example*.yaml files, which are always included below. Those are the files the
+        # label contract checks, so a scaffold validates cleanly without a human at the prompt.
+        if [[ ! -t 0 ]]; then
+            log_step "Non-interactive run: declaring labels in _example*.yaml only"
+        else
         # Interactive: let user select which values files to update
         # Search clustersets/ AND the parent values/ directory for single-file setups
         # Use newline-based find (no -print0/-z) for Git Bash compatibility
@@ -433,6 +442,7 @@ add_to_autoshift_values() {
             fi
         fi
     fi
+        fi
 
     # Always include example files that have a labels: section
     while IFS= read -r file; do
@@ -567,6 +577,14 @@ add_labels_to_section() {
         if [[ "$is_commented" == "true" ]]; then
             version_line="#       $COMPONENT_NAME-version: '$VERSION'"
         fi
+    elif [[ "$is_example" == "true" ]]; then
+        # The generated OperatorPolicy always reads autoshift.io/<component>-version
+        # (index .ManagedClusterLabels ... | default ""), so the key has to be declared in
+        # _example*.yaml or the label contract fails with "consumed but missing". Emitted
+        # empty, which the template treats as "no pin — let OLM pick". Curated profiles are
+        # left alone: an empty pin there would be noise, and they are not what the
+        # contract checks.
+        version_line="      $COMPONENT_NAME-version: ''"
     fi
 
     if [[ "$is_commented" == "true" ]]; then
@@ -733,7 +751,7 @@ main() {
         # Show next steps
         echo -e "${BLUE}📋 Next Steps:${NC}"
         echo "1. Review generated files in $POLICY_DIR/"
-        echo -e "2. Test locally: ${YELLOW}KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR${NC}"
+        echo -e "2. Validate: ${YELLOW}cd tools && go test -tags integration -count=1 ./internal/resolver/...${NC}"
         echo "3. Add operator CRs as bare manifests under $POLICY_DIR/manifests/ (PG wraps them — no ConfigurationPolicy boilerplate)"
         echo "4. Validate everything: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
         echo "5. Commit and push — ApplicationSet auto-discovers $POLICY_SUBDIR/*"
