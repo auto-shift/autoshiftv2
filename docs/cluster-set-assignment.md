@@ -1,4 +1,4 @@
-# Declarative ClusterSet Assignment
+# Declarative ClusterSet assignment
 
 Assign a cluster to a `ManagedClusterSet` — and therefore to an AutoShift deployment/release that owns
 it — declaratively from the cluster's values, instead of `oc label`. This is the GitOps mechanism for
@@ -21,7 +21,7 @@ OCI mode, a branch or tag in git mode (`feature/x` → `-feature-x`). It is sani
 dots and slashes become dashes, lowercased.
 
 The `cluster-set-assignment` policy composes the target clusterset and stamps
-`cluster.open-cluster-management.io/clusterset` on the ManagedCluster:
+`cluster.open-cluster-management.io/clusterset` on the `ManagedCluster`:
 
 - **`versionTag` set** → target = `<clusterSet>-<sanitized versionTag>` (e.g. `managed-0-0-2`). The
   suffix comes from this value, **not** from the deployment's own release.
@@ -33,7 +33,7 @@ being installed and then assigned never lands in two different clustersets.
 
 ## Ownership: hands off, never steals
 
-The policy only stamps a cluster it's **allowed to own** — the ManagedCluster is unowned (no
+The policy only stamps a cluster it is **allowed to own**: the `ManagedCluster` is unowned (no
 `autoshift.io/owning-namespace`) **or** already owned by this deployment. So one release can hand a
 cluster off, but a release can never yank a cluster another release owns. (`cluster-labels` then
 re-stamps `owning-namespace` to whichever deployment owns the new clusterset.)
