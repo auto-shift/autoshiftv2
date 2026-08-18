@@ -11,8 +11,10 @@ This policy installs the tempo-product operator using AutoShift patterns.
 
 ### Test Locally
 ```bash
-# Validate policy renders correctly
-helm template policies/tempo/
+# A PolicyGenerator directory, not a Helm chart: rendering it needs the ${...}
+# placeholders substituted first. The validation suite does that, resolves hub and
+# spoke templates, and is what CI runs.
+cd tools && go test -tags integration ./internal/resolver/...
 ```
 
 ### Enable on Clusters
@@ -247,9 +249,9 @@ For operators that need installation verification:
 3. Verify operator source exists: `oc get catalogsource -n openshift-marketplace`
 
 ### Template Rendering Issues
-1. Test locally: `helm template policies/tempo/`
+1. Validate rendering: `cd tools && go test -tags integration ./internal/resolver/...`
 2. Check hub escaping: Look for `{{ "{{hub" }} ... {{ "hub}}" }}` patterns
-3. Validate YAML: `helm lint policies/tempo/`
+3. Read the failure: the suite names the chart and the stage that failed (render, hub resolution, spoke resolution, YAML validation, label contract)
 
 ## Resources
 - [Operator Documentation](https://operatorhub.io/operator/tempo-product) - Find your operator details
