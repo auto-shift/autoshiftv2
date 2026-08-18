@@ -59,38 +59,9 @@ TEMPLATE_DIR="$SCRIPT_DIR/templates"
 # per-deployment ${...} tokens into a throwaway copy (never mutate the source), then run
 # kustomize + the PolicyGenerator plugin. Returns 0 on success, 1 on render failure, 2 if the
 # toolchain is not installed.
-pg_render() {
-    local dir="$1"
-    local kbin plugin_home
-    if [[ -x "$PROJECT_ROOT/.tools/kustomize" ]]; then
-        kbin="$PROJECT_ROOT/.tools/kustomize"
-        plugin_home="$PROJECT_ROOT/.tools/kustomize-plugin"
-    elif command -v kustomize >/dev/null 2>&1; then
-        kbin="kustomize"
-        plugin_home="${KUSTOMIZE_PLUGIN_HOME:-}"
-    else
-        return 2
-    fi
-
-    local tmp
-    tmp="$(mktemp -d)"
-    cp -R "$dir"/. "$tmp"/
-    local f
-    while IFS= read -r f; do
-        sed -e 's/\${POLICY_NAMESPACE}/policies-autoshift/g' \
-            -e 's/\${REMEDIATION}/enforce/g' \
-            -e 's/\${EVAL_COMPLIANT}/2h/g' \
-            -e 's/\${EVAL_NONCOMPLIANT}/45s/g' \
-            -e 's/\${CLUSTER_SET_SUFFIX}//g' \
-            "$f" > "$f.sub" && mv "$f.sub" "$f"
-    done < <(find "$tmp" -name '*.yaml')
-
-    KUSTOMIZE_PLUGIN_HOME="$plugin_home" "$kbin" build \
-        --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone "$tmp" >/dev/null 2>&1
-    local rc=$?
-    rm -rf "$tmp"
-    return $rc
-}
+# Shared with the other generators and runnable on its own as `scripts/pg-render.sh <dir>`.
+# Defines pg_render(); see that script for why a bare `kustomize build` cannot work here.
+source "$SCRIPT_DIR/pg-render.sh"
 
 # Parse arguments
 POLICY_NAME=""
