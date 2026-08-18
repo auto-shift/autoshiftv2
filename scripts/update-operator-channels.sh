@@ -602,7 +602,30 @@ get_channels() {
 get_best_channel() {
     local channels="$1"
     local package="$2"
+    local current="$3"
     local best=""
+
+    # Prefer the newest channel in the SAME family as the one already configured. The channel
+    # name carries deliberate intent (loki runs stable-6.x although the catalog's defaultChannel
+    # is alpha), so the family is preserved and only the version advances.
+    #
+    # Derived from the current channel rather than matched against a list of known prefixes: the
+    # old case list had no pattern for a "v"-prefixed version (mtv's release-v2.11), so five of
+    # 32 operators fell through to "first channel in the list" and were reported up to date
+    # without any comparison happening.
+    if [[ -n "$current" && "$current" != "-" ]]; then
+        local fam="" ver_re=""
+        if [[ "$current" =~ ^(.+)-v[0-9]+(\.[0-9]+)*$ ]]; then
+            fam="${BASH_REMATCH[1]}"; ver_re="v[0-9]+(\.[0-9]+)*"
+        elif [[ "$current" =~ ^(.+)-[0-9]+(\.[0-9]+)*$ ]]; then
+            fam="${BASH_REMATCH[1]}"; ver_re="[0-9]+(\.[0-9]+)*"
+        fi
+        if [[ -n "$fam" ]]; then
+            # sort -V ignores a leading "v" per component, so release-v2.12 > release-v2.11.
+            best=$(echo "$channels" | grep -E "^${fam}-${ver_re}$" | sort -Vr | head -1)
+            [[ -n "$best" ]] && { echo "$best"; return 0; }
+        fi
+    fi
 
     # Try version-specific patterns based on package name hints
     case "$package" in
@@ -710,6 +733,28 @@ update_autoshift_channel() {
     done < <(get_update_files)
 
     return $updated
+}
+
+# Report values files whose <label>-channel disagrees with the channel we settled on.
+#
+# get_current_channel() returns the FIRST match from get_values_files(), which deliberately skips
+# _example*.yaml. A stale example therefore never surfaced: mtv-channel sat at release-v2.9 in
+# _example.yaml while every curated profile said release-v2.11, and the script reported "up to
+# date" for months. _example*.yaml is the reference users copy from and the file the label
+# contract checks, so drift there matters more than in any single profile.
+channels_out_of_sync() {
+    local label="$1" want="$2" f cur
+    for f in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml \
+             "$PROJECT_ROOT"/autoshift/values/clusters/*.yaml; do
+        [[ -f "$f" ]] || continue
+        # Strip any trailing comment before reading the value: several profiles park a channel
+        # as `dev-spaces-channel: '' #stable`, i.e. deliberately unset with the intended value
+        # noted alongside. Without this the comment is read as the value and reported as drift.
+        cur=$(grep -E "^[[:space:]]*${label}-channel:" "$f" 2>/dev/null | head -1 | \
+              sed 's/#.*$//' | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+        [[ -n "$cur" && "$cur" != "$want" ]] && echo "${f#$PROJECT_ROOT/}|$cur"
+    done
+    return 0
 }
 
 # Update policy helm chart values.yaml
@@ -835,22 +880,40 @@ main() {
             continue
         fi
 
+        # Current channel first: get_best_channel uses it to stay in the same channel family.
+        local current_channel
+        current_channel=$(get_current_channel "$label")
+        [[ -z "$current_channel" ]] && current_channel="-"
+
         # Get the best channel
         local best_channel
-        best_channel=$(get_best_channel "$channels" "$package")
+        best_channel=$(get_best_channel "$channels" "$package" "$current_channel")
         if [[ -z "$best_channel" ]]; then
             printf "%-35s %-20s %-20s %s\n" "$package" "-" "-" "${YELLOW}no suitable channel${NC}"
             continue
         fi
 
-        # Get current channel
-        local current_channel
-        current_channel=$(get_current_channel "$label")
-        [[ -z "$current_channel" ]] && current_channel="-"
-
         # Compare and update
         if [[ "$current_channel" == "$best_channel" ]]; then
-            printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${GREEN}up to date${NC}"
+            # Matching the first curated profile is not enough — check every values file.
+            local drift
+            drift=$(channels_out_of_sync "$label" "$best_channel")
+            if [[ -n "$drift" ]]; then
+                printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${YELLOW}drift${NC}"
+                while IFS='|' read -r dfile dchan; do
+                    [[ -z "$dfile" ]] && continue
+                    echo "    $dfile has ${label}-channel: $dchan"
+                done <<< "$drift"
+                updates_available=1
+                if ! $CHECK_ONLY; then
+                    update_autoshift_channel "$label" "$best_channel" || true
+                    if ! $DRY_RUN; then
+                        ((updates_made++)) || true
+                    fi
+                fi
+            else
+                printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${GREEN}up to date${NC}"
+            fi
         elif [[ "$current_channel" == "-" ]]; then
             printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${CYAN}not configured${NC}"
         elif is_newer_channel "$current_channel" "$best_channel"; then
