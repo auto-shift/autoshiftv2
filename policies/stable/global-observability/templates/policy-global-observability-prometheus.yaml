@@ -1,0 +1,241 @@
+# Patches MCOA-managed PrometheusAgent templates on hub clusters to add
+# remote-write targets pointing to the global hub's observatorium API and
+# optionally to additional external endpoints.
+#
+# Two concerns:
+#   1. Built-in global hub rollup — hardcoded from globalHubRollup values,
+#      skipped on self-managed hub (MCOA already handles local writes).
+#   2. Additional remote-writes — driven by additionalRemoteWrites list,
+#      each with its own secrets, onSelfManagedHub, and fromHub controls.
+#
+# MCOA replicates PrometheusAgent templates + their spec.secrets from
+# open-cluster-management-observability on the hub to
+# open-cluster-management-addon on each managed cluster.
+#
+# WARNING: Secret names are translated to truncated mount names like
+# secret-<secret-name> cut off at 63 chars. If the cut occurs at a
+# non-alphanumeric character it will break the StatefulSet spec due to
+# RFC 1123 regex violations with no clear error message.
+#
+# Placement: via policyset-global-observability-prometheus
+# Depends on: policy-global-observability-mcoa, policy-coo-operator-install
+#
+{{- $policyName := "policy-global-observability-prometheus" }}
+{{- $policyNamespace := required "global-observability: policy_namespace is required (set via the ApplicationSet valuesObject)" .Values.policy_namespace }}
+{{- $obsNamespace := required "global-observability: globalObservability.namespace is required" .Values.globalObservability.namespace }}
+{{- $rollup := .Values.globalObservability.spokeAgent.globalHubRollup | required "global-observability: globalObservability.spokeAgent.globalHubRollup must be defined" }}
+{{- $_ := required "global-observability: globalObservability.spokeAgent.globalHubRollup.secretName is required" $rollup.secretName }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.secretNamespace is required" $rollup.secretNamespace }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.name is required" $rollup.name }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.remoteTimeout is required" $rollup.remoteTimeout }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.caFile is required" $rollup.caFile }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.certFile is required" $rollup.certFile }}
+{{- $_ = required "global-observability: globalObservability.spokeAgent.globalHubRollup.keyFile is required" $rollup.keyFile }}
+{{- $mcoaPolicyName := "policy-global-observability-mcoa" }}
+{{- $secretReplPolicyName := "policy-global-observability-secrets" }}
+
+{{- if .Values.hubClusterSets }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management, CA Security Assessment and Authorization
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration, CA-7 Continuous Monitoring
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: {{ $mcoaPolicyName }}
+      namespace: {{ $policyNamespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+      #    - name: {{ $secretReplPolicyName }}
+      #      namespace: {{ $policyNamespace }}
+      #      apiVersion: policy.open-cluster-management.io/v1
+      #      compliance: Compliant
+      #      kind: Policy
+    - name: policy-coo-operator-install
+      namespace: {{ $policyNamespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+    - name: policy-global-observability-prometheus-exists
+      namespace: {{ $policyNamespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    #####################################################################
+    # Built-in: replicate the coalesced global-observability secret
+    # from the hub's policy namespace to the observability namespace.
+    # On self-managed hub: Do nothing, the MCOA already handles this functionality
+    # On regional hubs: hub template copy (secret lives on the global hub).
+    #####################################################################
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-rollup-secret-repl
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            # INDENTATION ANCHOR
+            {{ "{{hub" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
+            {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
+            {{ "{{hub-" }} $rollupSrc := lookup "v1" "Secret" "{{ $rollup.secretNamespace }}" "{{ $rollup.secretName }}" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} if not (index $rollupSrc "data") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: rollup secret {{ $rollup.secretName }} not found in namespace {{ $rollup.secretNamespace }} on the hub (is policy-global-observability-secrets Compliant?)" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                [
+                  {
+                    "complianceType": "musthave",
+                    "objectDefinition": {
+                      "kind": "Secret",
+                      "apiVersion": "v1",
+                      "metadata": {
+                        "name": "{{ $rollup.secretName }}",
+                        "namespace": "{{ $.Values.globalObservability.namespace }}",
+                      },
+                      "data": {{ "{{hub" }} copySecretData "{{ $rollup.secretNamespace }}" "{{ $rollup.secretName }}" {{ "hub}}" }},
+                      "type": "Opaque"
+
+                    }
+                  }
+                ]
+            {{ "{{hub-" }} end {{ "hub}}" }}
+
+    #####################################################################
+    # Additional: replicate secrets for each additionalRemoteWrites entry
+    # from the rendered-config ConfigMap
+    #####################################################################
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-additional-secrets
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            # INDENTATION ANCHOR
+            {{ "{{hub" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $additionalRW := index $obsConfig "additionalRemoteWrites" | default list {{ "hub}}" }}
+            {{ "{{hub-" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
+            {{ "{{hub-" }} range $rw := $additionalRW {{ "hub}}" }}
+              {{ "{{hub-" }} $secretRef := index $rw "secretRef" | default dict {{ "hub}}" }}
+              {{ "{{hub-" }} if not (empty $secretRef) {{ "hub}}" }}
+                {{ "{{hub-" }} if not (index $secretRef "name") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].secretRef.name is required when secretRef is set" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                {{ "{{hub-" }} if not (index $secretRef "namespace") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].secretRef.namespace is required when secretRef is set" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} $onSelfManaged := index $rw "onSelfManagedHub" | default false {{ "hub}}" }}
+              {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) {{ "hub}}" }}
+                {{ "{{hub-" }} if not (empty $secretRef) {{ "hub}}" }}
+                {{ "{{hub-" }} $rwSrc := lookup "v1" "Secret" (index $secretRef "namespace") (index $secretRef "name") | default dict {{ "hub}}" }}
+                {{ "{{hub-" }} if not (index $rwSrc "data") {{ "hub}}" }}{{ "{{hub" }} fail (printf "global-observability: additionalRemoteWrites secretRef %s/%s not found on the hub" (index $secretRef "namespace") (index $secretRef "name")) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+              - complianceType: musthave
+                objectDefinition:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: '{{ "{{hub" }} index $secretRef "name" {{ "hub}}" }}'
+                    namespace: {{ .Values.globalObservability.namespace }}
+                  type: Opaque
+                  data: '{{ "{{hub" }} copySecretData (index $secretRef "namespace") (index $secretRef "name") {{ "hub}}" }}'
+                {{ "{{hub-" }} end {{ "hub}}" }}
+              {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+
+    #####################################################################
+    # Patch PrometheusAgent templates with secrets + remoteWrite entries
+    #####################################################################
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: global-observability-prometheus
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            # INDENTATION ANCHOR
+            {{ "{{hub-" }} $obsConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $scrapeInterval := index $obsConfig "scrapeInterval" | default "{{ .Values.globalObservability.scrapeInterval }}" {{ "hub}}" }}
+            {{ "{{hub-" }} $logLevel := index $obsConfig "logLevel" | default "{{ .Values.globalObservability.logLevel }}" | default "warn" {{ "hub}}" }}
+            {{ "{{hub-" }} $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") {{ "hub}}" }}
+            {{ "{{hub-" }} $additionalRW := index $obsConfig "additionalRemoteWrites" | default list {{ "hub}}" }}
+            {{ range $idx, $name := (.Values.globalObservability.spokeAgent.prometheusAgentNames | default (list "mcoa-default-platform-metrics-collector-global" "mcoa-default-user-workload-metrics-collector-global")) }}
+            - complianceType: musthave
+              recreateOption: IfRequired
+              objectDefinition:
+                apiVersion: monitoring.rhobs/v1alpha1
+                kind: PrometheusAgent
+                metadata:
+                  name: {{ $name }}
+                  namespace: {{ $.Values.globalObservability.namespace }}
+                spec:
+                  scrapeInterval: {{ "{{hub" }} $scrapeInterval {{ "hub}}" }}
+                  logLevel: {{ "{{hub" }} $logLevel {{ "hub}}" }}
+                  secrets:
+                    # Built-in: global hub rollup secret — skipped on self-managed hub
+                    {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
+                    - {{ $rollup.secretName }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    # Additional: secrets from additionalRemoteWrites (rendered-config)
+                    {{ "{{hub-" }} range $rw := $additionalRW {{ "hub}}" }}
+                      {{ "{{hub-" }} $secretRef := index $rw "secretRef" | default dict {{ "hub}}" }}
+                      {{ "{{hub-" }} $onSelfManaged := index $rw "onSelfManagedHub" | default false {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) {{ "hub}}" }}
+                        {{ "{{hub-" }} if not (empty $secretRef) {{ "hub}}" }}
+                    - '{{ "{{hub" }} index $secretRef "name" {{ "hub}}" }}'
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  remoteWrite:
+                    # Built-in: global hub rollup — skipped on self-managed hub
+                    {{ "{{hub-" }} if ne $isSelfManaged "true" {{ "hub}}" }}
+                    - name: {{ $rollup.name }}
+                      remoteTimeout: {{ $rollup.remoteTimeout }}
+                      tlsConfig:
+                        ca: {}
+                        caFile: {{ $rollup.caFile }}
+                        cert: {}
+                        certFile: {{ $rollup.certFile }}
+                        keyFile: {{ $rollup.keyFile }}
+                      url: '{{ "{{" }} $u := fromSecret "{{ $.Values.globalObservability.namespace }}" "{{ $rollup.secretName }}" "observatorium.url" | base64dec {{ "}}" }}{{ "{{" }} if not $u {{ "}}" }}{{ "{{" }} fail "global-observability: key observatorium.url missing from secret {{ $rollup.secretName }} in {{ $.Values.globalObservability.namespace }} (rollup secret not yet replicated?)" {{ "}}" }}{{ "{{" }} end {{ "}}" }}{{ "{{" }} $u {{ "}}" }}'
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    # Additional remote-writes (rendered-config)
+                    {{ "{{hub-" }} range $rw := $additionalRW {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (index $rw "name") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].name is required" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (index $rw "url") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].url is required" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (index $rw "caFile") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].caFile is required" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (index $rw "certFile") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].certFile is required" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (index $rw "keyFile") {{ "hub}}" }}{{ "{{hub" }} fail "global-observability: additionalRemoteWrites[].keyFile is required" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                      {{ "{{hub-" }} $onSelfManaged := index $rw "onSelfManagedHub" | default false {{ "hub}}" }}
+                      {{ "{{hub-" }} if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) {{ "hub}}" }}
+                    - name: '{{ "{{hub" }} index $rw "name" {{ "hub}}" }}'
+                      remoteTimeout: '{{ "{{hub" }} index $rw "remoteTimeout" | default "30s" {{ "hub}}" }}'
+                      tlsConfig:
+                        ca: {}
+                        caFile: '{{ "{{hub" }} index $rw "caFile" {{ "hub}}" }}'
+                        cert: {}
+                        certFile: '{{ "{{hub" }} index $rw "certFile" {{ "hub}}" }}'
+                        keyFile: '{{ "{{hub" }} index $rw "keyFile" {{ "hub}}" }}'
+                      url: '{{ "{{hub" }} index $rw "url" {{ "hub}}" }}'
+                      {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+            {{- end }}
+{{- end }}
