@@ -69,19 +69,6 @@ GITOPS_NAMESPACE="${GITOPS_NAMESPACE:-openshift-gitops}"
 #   CLI_IMAGE=registry.redhat.io/openshift4/ose-cli:latest ./install-bootstrap.sh   (or a mirror)
 CLI_IMAGE="${CLI_IMAGE:-}"
 
-log "Installing OpenShift GitOps..."
-helm upgrade --install openshift-gitops ${OCI_BOOTSTRAP_REPO}/openshift-gitops \
-    --version ${VERSION} \
-    --set gitops.argoNamespace="${GITOPS_NAMESPACE}" \
-    ${CLI_IMAGE:+--set image="${CLI_IMAGE}"} \
-    -n "${GITOPS_NAMESPACE}-operator" \
-    --create-namespace \
-    --wait \
-    --timeout 10m
-
-log "✓ OpenShift GitOps installed"
-echo ""
-
 log "Installing Advanced Cluster Management..."
 helm upgrade --install advanced-cluster-management ${OCI_BOOTSTRAP_REPO}/advanced-cluster-management \
     --version ${VERSION} \
@@ -98,14 +85,28 @@ oc wait --for=condition=Complete multiclusterhub multiclusterhub \
     -n open-cluster-management --timeout=900s 2>/dev/null || \
     warn "MultiClusterHub readiness check timed out - check status manually with: oc get mch -n open-cluster-management"
 
+log "Installing OpenShift GitOps..."
+helm upgrade --install openshift-gitops ${OCI_BOOTSTRAP_REPO}/openshift-gitops \
+    --version ${VERSION} \
+    --set gitops.argoNamespace="${GITOPS_NAMESPACE}" \
+    ${CLI_IMAGE:+--set image="${CLI_IMAGE}"} \
+    -n "${GITOPS_NAMESPACE}-operator" \
+    --create-namespace \
+    --wait \
+    --timeout 10m
+
+log "✓ OpenShift GitOps installed"
+echo ""
+
+
 echo ""
 log "========================================="
 log "Bootstrap installation complete!"
 log "========================================="
 echo ""
 log "Next steps:"
-echo "  1. Verify GitOps: oc get pods -n openshift-gitops"
-echo "  2. Verify ACM: oc get mch -n open-cluster-management"
+echo "  1. Verify ACM: oc get mch -n open-cluster-management"
+echo "  2. Verify GitOps: oc get pods -n openshift-gitops"
 echo "  3. Install AutoShift: ./install-autoshift.sh"
 INSTALL_EOF
 

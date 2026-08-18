@@ -187,3 +187,62 @@ jobs:
           name: label-contract-report
           path: label-contract-report.md
           if-no-files-found: warn
+
+  docs:
+    name: Documentation (build and prose lint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - name: Install documentation toolchain
+        run: pip install mkdocs-material mike mkdocs-same-dir mkdocs-callouts
+
+      # mkdocs.yaml sets strict: true, so a warning fails the build. This is what catches a broken
+      # relative link — nothing else does, and until now the site was only built at deploy time, so
+      # a bad link merged and surfaced in production.
+      - name: Build the site
+        run: mkdocs build --site-dir /tmp/site
+
+      # Installed and run directly rather than through an action, so CI runs the same command
+      # documented in .vale.ini and a developer can reproduce a failure locally verbatim.
+      - name: Install Vale
+        run: |
+          # pipefail matters: `curl -sfL ... | sh` swallows a failed download, because the
+          # pipeline exits with sh's status. That is how a 404 previously left Vale
+          # uninstalled while this step still reported success, failing the next step with
+          # an unexplained "vale: command not found".
+          set -euo pipefail
+          VALE_VERSION=3.17.1
+          mkdir -p "$HOME/.local/bin"
+          curl -sfL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
+            | tar -xz -C "$HOME/.local/bin" vale
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/vale" --version
+
+      - name: Fetch the Red Hat style
+        run: vale sync
+
+      # Gates on error-level findings only. Which rules are set to error, and why the rest are
+      # left reporting, is recorded in .vale.ini next to each rule.
+      - name: Prose lint
+        run: vale --minAlertLevel=error README.md docs/
+
+      # Not a gate: prints the backlog so progress is visible on every run.
+      - name: Report remaining style findings
+        if: always()
+        run: |
+          {
+            echo "### Documentation style backlog"
+            echo ""
+            echo "Not enforced. See \`.vale.ini\` for which rules gate CI."
+            echo ""
+            echo '```'
+            vale --output=line README.md docs/ 2>/dev/null \
+              | grep -oE 'RedHat\.[A-Za-z]+' | sort | uniq -c | sort -rn || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
