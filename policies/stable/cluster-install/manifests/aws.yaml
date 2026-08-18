@@ -46,7 +46,9 @@ object-templates-raw: |
   {{- $cpSize := (index $cpRootVolume "size" | default 100 | toInt) }}
   {{- $cpVolType := (index $cpRootVolume "type" | default "gp3") }}
   {{- $workers := (index $aws "workers" | default dict) }}
-  {{- $workerReplicas := (index $workers "replicas" | default 3 | toInt) }}
+  {{- /* `default` treats 0 as empty, so an explicit 0 would become 3 and SNO would be unreachable */ -}}
+  {{- $workerReplicas := 3 }}
+  {{- if hasKey $workers "replicas" }}{{- $workerReplicas = (index $workers "replicas" | toInt) }}{{- end }}
   {{- $wkInstanceType := (index $workers "instanceType" | default "m5.xlarge") }}
   {{- $wkRootVolume := (index $workers "rootVolume" | default dict) }}
   {{- $wkIops := (index $wkRootVolume "iops" | default 2000 | toInt) }}
