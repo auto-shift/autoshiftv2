@@ -873,6 +873,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Single Node OpenShift (SNO)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#aws-and-vsphere-hive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AWS and vSphere (Hive)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#baremetal-siteconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Baremetal (SiteConfig)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2032,6 +2060,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Single Node OpenShift (SNO)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#aws-and-vsphere-hive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AWS and vSphere (Hive)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#baremetal-siteconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Baremetal (SiteConfig)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2956,45 +3012,65 @@
 <a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a><span class="w">    </span><span class="nt">acm-enable-provisioning</span><span class="p">:</span><span class="w"> </span><span class="s">'true'</span>
 </code></pre></div>
 <h2 id="single-node-openshift-sno">Single Node OpenShift (SNO)<a class="headerlink" href="#single-node-openshift-sno" title="Permanent link">&para;</a></h2>
+<p>The setting differs by platform. Baremetal installs go through SiteConfig and use
+<code>controlPlaneAgents</code>. AWS and vSphere installs go through Hive and use replica counts.</p>
+<h3 id="aws-and-vsphere-hive">AWS and vSphere (Hive)<a class="headerlink" href="#aws-and-vsphere-hive" title="Permanent link">&para;</a></h3>
+<p>Set <code>controlPlane.replicas: 1</code> and <code>workers.replicas: 0</code> under the platform block:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="w">      </span><span class="nt">aws</span><span class="p">:</span><span class="w">                       </span><span class="c1"># or vmware:</span>
+<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="w">        </span><span class="nt">controlPlane</span><span class="p">:</span>
+<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="w">          </span><span class="nt">replicas</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="w">          </span><span class="nt">instanceType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">m5.2xlarge</span>
+<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a><span class="w">        </span><span class="nt">workers</span><span class="p">:</span>
+<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="w">          </span><span class="nt">replicas</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+</code></pre></div>
+<p>The single node runs the control plane and all workloads, so size the control plane
+accordingly — <code>m5.2xlarge</code> is the practical minimum on AWS.</p>
+<p>SNO also provisions into a single availability zone, so it needs one NAT gateway and
+one Elastic IP rather than one per zone. That matters on sandbox AWS accounts, where
+the Elastic IP quota is commonly 5 and a multi-zone install fails partway through
+network creation with <code>AddressLimitExceeded</code>.</p>
+<p><code>workers.replicas: 0</code> produces a worker MachinePool with 0 replicas. That is expected
+and harmless: no MachineSets scale up.</p>
+<h3 id="baremetal-siteconfig">Baremetal (SiteConfig)<a class="headerlink" href="#baremetal-siteconfig" title="Permanent link">&para;</a></h3>
 <p>For single-node clusters, set <code>controlPlaneAgents: 1</code> and define one host:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="nt">clusters</span><span class="p">:</span>
-<a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="w">  </span><span class="nt">my-sno</span><span class="p">:</span>
-<a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="w">    </span><span class="nt">config</span><span class="p">:</span>
-<a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="w">      </span><span class="nt">networking</span><span class="p">:</span>
-<a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a><span class="w">        </span><span class="nt">clusterNetwork</span><span class="p">:</span>
-<a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="w">          </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.128.0.0/14</span>
-<a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a><span class="w">          </span><span class="nt">hostPrefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">23</span>
-<a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a><span class="w">        </span><span class="nt">machineNetwork</span><span class="p">:</span>
-<a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a><span class="w">          </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="s">'10.0.0.0/25'</span>
-<a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a><span class="w">        </span><span class="nt">serviceNetwork</span><span class="p">:</span>
-<a id="__codelineno-31-11" name="__codelineno-31-11" href="#__codelineno-31-11"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">172.30.0.0/16</span>
-<a id="__codelineno-31-12" name="__codelineno-31-12" href="#__codelineno-31-12"></a><span class="w">        </span><span class="nt">interfaces</span><span class="p">:</span>
-<a id="__codelineno-31-13" name="__codelineno-31-13" href="#__codelineno-31-13"></a><span class="w">          </span><span class="nt">mgmt</span><span class="p">:</span>
-<a id="__codelineno-31-14" name="__codelineno-31-14" href="#__codelineno-31-14"></a><span class="w">            </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ethernet</span>
-<a id="__codelineno-31-15" name="__codelineno-31-15" href="#__codelineno-31-15"></a><span class="w">            </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">eno1</span>
-<a id="__codelineno-31-16" name="__codelineno-31-16" href="#__codelineno-31-16"></a><span class="w">            </span><span class="nt">ipv4</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dhcp</span>
-<a id="__codelineno-31-17" name="__codelineno-31-17" href="#__codelineno-31-17"></a><span class="w">            </span><span class="nt">ipv6</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">disabled</span>
-<a id="__codelineno-31-18" name="__codelineno-31-18" href="#__codelineno-31-18"></a><span class="w">      </span><span class="nt">hosts</span><span class="p">:</span>
-<a id="__codelineno-31-19" name="__codelineno-31-19" href="#__codelineno-31-19"></a><span class="w">        </span><span class="nt">master-0</span><span class="p">:</span>
-<a id="__codelineno-31-20" name="__codelineno-31-20" href="#__codelineno-31-20"></a><span class="w">          </span><span class="nt">bmcIP</span><span class="p">:</span><span class="w"> </span><span class="s">'192.168.1.10'</span>
-<a id="__codelineno-31-21" name="__codelineno-31-21" href="#__codelineno-31-21"></a><span class="w">          </span><span class="nt">bmcPrefix</span><span class="p">:</span><span class="w"> </span><span class="s">'redfish-virtualmedia'</span>
-<a id="__codelineno-31-22" name="__codelineno-31-22" href="#__codelineno-31-22"></a><span class="w">          </span><span class="nt">bootMACAddress</span><span class="p">:</span><span class="w"> </span><span class="s">'aa:bb:cc:dd:ee:01'</span>
-<a id="__codelineno-31-23" name="__codelineno-31-23" href="#__codelineno-31-23"></a><span class="w">          </span><span class="nt">interfaces</span><span class="p">:</span>
-<a id="__codelineno-31-24" name="__codelineno-31-24" href="#__codelineno-31-24"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">macAddress</span><span class="p">:</span><span class="w"> </span><span class="s">'aa:bb:cc:dd:ee:01'</span>
-<a id="__codelineno-31-25" name="__codelineno-31-25" href="#__codelineno-31-25"></a><span class="w">              </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">'eno1'</span>
-<a id="__codelineno-31-26" name="__codelineno-31-26" href="#__codelineno-31-26"></a><span class="w">      </span><span class="nt">clusterInstall</span><span class="p">:</span>
-<a id="__codelineno-31-27" name="__codelineno-31-27" href="#__codelineno-31-27"></a><span class="w">        </span><span class="nt">createCluster</span><span class="p">:</span><span class="w"> </span><span class="s">'true'</span>
-<a id="__codelineno-31-28" name="__codelineno-31-28" href="#__codelineno-31-28"></a><span class="w">        </span><span class="nt">baseDomain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">example.com</span>
-<a id="__codelineno-31-29" name="__codelineno-31-29" href="#__codelineno-31-29"></a><span class="w">        </span><span class="nt">openshiftVersion</span><span class="p">:</span><span class="w"> </span><span class="s">'4.20.29'</span>
-<a id="__codelineno-31-30" name="__codelineno-31-30" href="#__codelineno-31-30"></a><span class="w">        </span><span class="nt">controlPlaneAgents</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
-<a id="__codelineno-31-31" name="__codelineno-31-31" href="#__codelineno-31-31"></a><span class="w">        </span><span class="nt">sshPublicKey</span><span class="p">:</span><span class="w"> </span><span class="s">'ssh-rsa</span><span class="nv"> </span><span class="s">...'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="nt">clusters</span><span class="p">:</span>
+<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a><span class="w">  </span><span class="nt">my-sno</span><span class="p">:</span>
+<a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a><span class="w">    </span><span class="nt">config</span><span class="p">:</span>
+<a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a><span class="w">      </span><span class="nt">networking</span><span class="p">:</span>
+<a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a><span class="w">        </span><span class="nt">clusterNetwork</span><span class="p">:</span>
+<a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a><span class="w">          </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.128.0.0/14</span>
+<a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a><span class="w">          </span><span class="nt">hostPrefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">23</span>
+<a id="__codelineno-32-8" name="__codelineno-32-8" href="#__codelineno-32-8"></a><span class="w">        </span><span class="nt">machineNetwork</span><span class="p">:</span>
+<a id="__codelineno-32-9" name="__codelineno-32-9" href="#__codelineno-32-9"></a><span class="w">          </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="s">'10.0.0.0/25'</span>
+<a id="__codelineno-32-10" name="__codelineno-32-10" href="#__codelineno-32-10"></a><span class="w">        </span><span class="nt">serviceNetwork</span><span class="p">:</span>
+<a id="__codelineno-32-11" name="__codelineno-32-11" href="#__codelineno-32-11"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">172.30.0.0/16</span>
+<a id="__codelineno-32-12" name="__codelineno-32-12" href="#__codelineno-32-12"></a><span class="w">        </span><span class="nt">interfaces</span><span class="p">:</span>
+<a id="__codelineno-32-13" name="__codelineno-32-13" href="#__codelineno-32-13"></a><span class="w">          </span><span class="nt">mgmt</span><span class="p">:</span>
+<a id="__codelineno-32-14" name="__codelineno-32-14" href="#__codelineno-32-14"></a><span class="w">            </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ethernet</span>
+<a id="__codelineno-32-15" name="__codelineno-32-15" href="#__codelineno-32-15"></a><span class="w">            </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">eno1</span>
+<a id="__codelineno-32-16" name="__codelineno-32-16" href="#__codelineno-32-16"></a><span class="w">            </span><span class="nt">ipv4</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dhcp</span>
+<a id="__codelineno-32-17" name="__codelineno-32-17" href="#__codelineno-32-17"></a><span class="w">            </span><span class="nt">ipv6</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">disabled</span>
+<a id="__codelineno-32-18" name="__codelineno-32-18" href="#__codelineno-32-18"></a><span class="w">      </span><span class="nt">hosts</span><span class="p">:</span>
+<a id="__codelineno-32-19" name="__codelineno-32-19" href="#__codelineno-32-19"></a><span class="w">        </span><span class="nt">master-0</span><span class="p">:</span>
+<a id="__codelineno-32-20" name="__codelineno-32-20" href="#__codelineno-32-20"></a><span class="w">          </span><span class="nt">bmcIP</span><span class="p">:</span><span class="w"> </span><span class="s">'192.168.1.10'</span>
+<a id="__codelineno-32-21" name="__codelineno-32-21" href="#__codelineno-32-21"></a><span class="w">          </span><span class="nt">bmcPrefix</span><span class="p">:</span><span class="w"> </span><span class="s">'redfish-virtualmedia'</span>
+<a id="__codelineno-32-22" name="__codelineno-32-22" href="#__codelineno-32-22"></a><span class="w">          </span><span class="nt">bootMACAddress</span><span class="p">:</span><span class="w"> </span><span class="s">'aa:bb:cc:dd:ee:01'</span>
+<a id="__codelineno-32-23" name="__codelineno-32-23" href="#__codelineno-32-23"></a><span class="w">          </span><span class="nt">interfaces</span><span class="p">:</span>
+<a id="__codelineno-32-24" name="__codelineno-32-24" href="#__codelineno-32-24"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">macAddress</span><span class="p">:</span><span class="w"> </span><span class="s">'aa:bb:cc:dd:ee:01'</span>
+<a id="__codelineno-32-25" name="__codelineno-32-25" href="#__codelineno-32-25"></a><span class="w">              </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">'eno1'</span>
+<a id="__codelineno-32-26" name="__codelineno-32-26" href="#__codelineno-32-26"></a><span class="w">      </span><span class="nt">clusterInstall</span><span class="p">:</span>
+<a id="__codelineno-32-27" name="__codelineno-32-27" href="#__codelineno-32-27"></a><span class="w">        </span><span class="nt">createCluster</span><span class="p">:</span><span class="w"> </span><span class="s">'true'</span>
+<a id="__codelineno-32-28" name="__codelineno-32-28" href="#__codelineno-32-28"></a><span class="w">        </span><span class="nt">baseDomain</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">example.com</span>
+<a id="__codelineno-32-29" name="__codelineno-32-29" href="#__codelineno-32-29"></a><span class="w">        </span><span class="nt">openshiftVersion</span><span class="p">:</span><span class="w"> </span><span class="s">'4.20.29'</span>
+<a id="__codelineno-32-30" name="__codelineno-32-30" href="#__codelineno-32-30"></a><span class="w">        </span><span class="nt">controlPlaneAgents</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-32-31" name="__codelineno-32-31" href="#__codelineno-32-31"></a><span class="w">        </span><span class="nt">sshPublicKey</span><span class="p">:</span><span class="w"> </span><span class="s">'ssh-rsa</span><span class="nv"> </span><span class="s">...'</span>
 </code></pre></div>
 <p>SNO clusters automatically get <code>userManagedNetworking: true</code> and do not require <code>apiVip</code>/<code>ingressVip</code>.</p>
 <h2 id="dependency-chain-and-safety">Dependency chain and safety<a class="headerlink" href="#dependency-chain-and-safety" title="Permanent link">&para;</a></h2>
 <p>The policy dependency chain prevents partial deployments:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>                                                 /--&gt; siteconfig (baremetal)
-<a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>prereqs (Compliant) --&gt; secrets (Compliant) --&lt;
-<a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>                                                 \--&gt; cluster-install-aws (aws)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>                                                 /--&gt; siteconfig (baremetal)
+<a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>prereqs (Compliant) --&gt; secrets (Compliant) --&lt;
+<a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>                                                 \--&gt; cluster-install-aws (aws)
 </code></pre></div>
 <ul>
 <li>If source secrets do not exist, the secrets policy stays <strong><code>NonCompliant</code></strong> and siteconfig never runs</li>
@@ -3016,20 +3092,20 @@
 <li><strong>Networking</strong>: Interface types, modes, VLAN base references, static IP addresses validated</li>
 </ul>
 <p>Test your config locally before deploying:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>helm<span class="w"> </span>template<span class="w"> </span>autoshift/<span class="w"> </span>-f<span class="w"> </span>autoshift/values/clusters/my-cluster.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>helm<span class="w"> </span>template<span class="w"> </span>autoshift/<span class="w"> </span>-f<span class="w"> </span>autoshift/values/clusters/my-cluster.yaml
 </code></pre></div>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="policies-stuck-at-pending">Policies stuck at pending<a class="headerlink" href="#policies-stuck-at-pending" title="Permanent link">&para;</a></h3>
 <p>Check the dependency chain - a downstream policy stays Pending until its dependency is Compliant:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>oc<span class="w"> </span>describe<span class="w"> </span>configurationpolicy<span class="w"> </span>policy-cluster-install-secrets<span class="w"> </span>-n<span class="w"> </span>local-cluster
+<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>oc<span class="w"> </span>describe<span class="w"> </span>configurationpolicy<span class="w"> </span>policy-cluster-install-secrets<span class="w"> </span>-n<span class="w"> </span>local-cluster
 </code></pre></div>
 <h3 id="secrets-policy-noncompliant">Secrets policy <code>NonCompliant</code><a class="headerlink" href="#secrets-policy-noncompliant" title="Permanent link">&para;</a></h3>
 <p>The source secrets do not exist. Check they are in the right namespace:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>oc<span class="w"> </span>get<span class="w"> </span>secrets<span class="w"> </span>-n<span class="w"> </span>cluster-install-secrets
+<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>oc<span class="w"> </span>get<span class="w"> </span>secrets<span class="w"> </span>-n<span class="w"> </span>cluster-install-secrets
 </code></pre></div>
 <h3 id="clusterinstance-not-created"><code>ClusterInstance</code> not created<a class="headerlink" href="#clusterinstance-not-created" title="Permanent link">&para;</a></h3>
 <p>Check the siteconfig policy for template errors:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>oc<span class="w"> </span>describe<span class="w"> </span>configurationpolicy<span class="w"> </span>policy-cluster-install-siteconfig<span class="w"> </span>-n<span class="w"> </span>local-cluster
+<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a>oc<span class="w"> </span>describe<span class="w"> </span>configurationpolicy<span class="w"> </span>policy-cluster-install-siteconfig<span class="w"> </span>-n<span class="w"> </span>local-cluster
 </code></pre></div>
 <h3 id="baremetalhosts-stuck-in-registering">BareMetalHosts stuck in registering<a class="headerlink" href="#baremetalhosts-stuck-in-registering" title="Permanent link">&para;</a></h3>
 <p>The BMC is unreachable. Verify BMC IP, credentials, and network connectivity from the hub cluster.</p>
@@ -3037,16 +3113,16 @@
 <h2 id="aws-cluster-provisioning">AWS cluster provisioning<a class="headerlink" href="#aws-cluster-provisioning" title="Permanent link">&para;</a></h2>
 <p>AutoShift provisions AWS clusters through Hive <code>ClusterDeployment</code> by using installer-provisioned infrastructure. The cluster-install policies create all required resources from the rendered-config.</p>
 <h3 id="architecture_1">Architecture<a class="headerlink" href="#architecture_1" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a>values files → cluster-config-maps policy → rendered-config ConfigMaps
-<a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>                                                    |
-<a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>                                                    v
-<a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a>                                      cluster-install-aws policy
-<a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a>                                                    |
-<a id="__codelineno-37-6" name="__codelineno-37-6" href="#__codelineno-37-6"></a>                                                    v
-<a id="__codelineno-37-7" name="__codelineno-37-7" href="#__codelineno-37-7"></a>                                      Secrets (AWS creds, SSH key, pull secret, install-config)
-<a id="__codelineno-37-8" name="__codelineno-37-8" href="#__codelineno-37-8"></a>                                      ClusterDeployment
-<a id="__codelineno-37-9" name="__codelineno-37-9" href="#__codelineno-37-9"></a>                                      MachinePool
-<a id="__codelineno-37-10" name="__codelineno-37-10" href="#__codelineno-37-10"></a>                                      ManagedCluster
+<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a>values files → cluster-config-maps policy → rendered-config ConfigMaps
+<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>                                                    |
+<a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a>                                                    v
+<a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a>                                      cluster-install-aws policy
+<a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a>                                                    |
+<a id="__codelineno-38-6" name="__codelineno-38-6" href="#__codelineno-38-6"></a>                                                    v
+<a id="__codelineno-38-7" name="__codelineno-38-7" href="#__codelineno-38-7"></a>                                      Secrets (AWS creds, SSH key, pull secret, install-config)
+<a id="__codelineno-38-8" name="__codelineno-38-8" href="#__codelineno-38-8"></a>                                      ClusterDeployment
+<a id="__codelineno-38-9" name="__codelineno-38-9" href="#__codelineno-38-9"></a>                                      MachinePool
+<a id="__codelineno-38-10" name="__codelineno-38-10" href="#__codelineno-38-10"></a>                                      ManagedCluster
 </code></pre></div>
 <h3 id="aws-configuration-structure">AWS configuration structure<a class="headerlink" href="#aws-configuration-structure" title="Permanent link">&para;</a></h3>
 <p>For a complete working example, see <a href="../../autoshift/values/clusters/_example-cluster-install-aws.yaml"><code>autoshift/values/clusters/_example-cluster-install-aws.yaml</code></a>. The example file includes all available fields with comments explaining each option.</p>
@@ -3138,10 +3214,10 @@
 </table>
 <h4 id="pullsecretref-aws">pullSecretRef (AWS)<a class="headerlink" href="#pullsecretref-aws" title="Permanent link">&para;</a></h4>
 <p>For AWS, <code>pullSecretRef</code> supports an object format to specify which key in the secret contains the pull secret:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a><span class="nt">pullSecretRef</span><span class="p">:</span>
-<a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">'aws-creds'</span><span class="w">                </span><span class="c1"># secret name</span>
-<a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a><span class="w">  </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="s">'pullSecret'</span><span class="w">                 </span><span class="c1"># key in secret (default: .dockerconfigjson)</span>
-<a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="s">'cluster-install-secrets'</span><span class="w">  </span><span class="c1"># optional</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a><span class="nt">pullSecretRef</span><span class="p">:</span>
+<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">'aws-creds'</span><span class="w">                </span><span class="c1"># secret name</span>
+<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a><span class="w">  </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="s">'pullSecret'</span><span class="w">                 </span><span class="c1"># key in secret (default: .dockerconfigjson)</span>
+<a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="s">'cluster-install-secrets'</span><span class="w">  </span><span class="c1"># optional</span>
 </code></pre></div>
 <h3 id="aws-prerequisites">AWS prerequisites<a class="headerlink" href="#aws-prerequisites" title="Permanent link">&para;</a></h3>
 <h4 id="aws-credentials">AWS credentials<a class="headerlink" href="#aws-credentials" title="Permanent link">&para;</a></h4>
@@ -3151,58 +3227,58 @@
 - <strong>STS (temporary credentials)</strong>: See <a href="https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_aws/installing-aws-customizations#installing-aws-with-short-term-creds_installing-aws-customizations">Installing with STS</a></p>
 <h4 id="generate-ssh-keys">Generate SSH keys<a class="headerlink" href="#generate-ssh-keys" title="Permanent link">&para;</a></h4>
 <p>The installation program needs an SSH key pair — the private key goes into the <code>ClusterDeployment</code> for Hive, and the public key goes into the install-config for node access.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a><span class="c1"># ECDSA (required if FIPS is enabled)</span>
-<a id="__codelineno-39-2" name="__codelineno-39-2" href="#__codelineno-39-2"></a>ssh-keygen<span class="w"> </span>-t<span class="w"> </span>ecdsa<span class="w"> </span>-b<span class="w"> </span><span class="m">521</span><span class="w"> </span>-N<span class="w"> </span><span class="s1">''</span><span class="w"> </span>-f<span class="w"> </span>~/.ssh/ocp-cluster
-<a id="__codelineno-39-3" name="__codelineno-39-3" href="#__codelineno-39-3"></a><span class="c1"># Or RSA</span>
-<a id="__codelineno-39-4" name="__codelineno-39-4" href="#__codelineno-39-4"></a>ssh-keygen<span class="w"> </span>-t<span class="w"> </span>rsa<span class="w"> </span>-b<span class="w"> </span><span class="m">4096</span><span class="w"> </span>-N<span class="w"> </span><span class="s1">''</span><span class="w"> </span>-f<span class="w"> </span>~/.ssh/ocp-cluster
+<div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a><span class="c1"># ECDSA (required if FIPS is enabled)</span>
+<a id="__codelineno-40-2" name="__codelineno-40-2" href="#__codelineno-40-2"></a>ssh-keygen<span class="w"> </span>-t<span class="w"> </span>ecdsa<span class="w"> </span>-b<span class="w"> </span><span class="m">521</span><span class="w"> </span>-N<span class="w"> </span><span class="s1">''</span><span class="w"> </span>-f<span class="w"> </span>~/.ssh/ocp-cluster
+<a id="__codelineno-40-3" name="__codelineno-40-3" href="#__codelineno-40-3"></a><span class="c1"># Or RSA</span>
+<a id="__codelineno-40-4" name="__codelineno-40-4" href="#__codelineno-40-4"></a>ssh-keygen<span class="w"> </span>-t<span class="w"> </span>rsa<span class="w"> </span>-b<span class="w"> </span><span class="m">4096</span><span class="w"> </span>-N<span class="w"> </span><span class="s1">''</span><span class="w"> </span>-f<span class="w"> </span>~/.ssh/ocp-cluster
 </code></pre></div>
 <blockquote>
 <p><strong>Warning:</strong> Ed25519 keys are NOT supported when <code>fips: true</code>. Use ECDSA or RSA.</p>
 </blockquote>
 <h4 id="route53-base-domain">Route53 base domain<a class="headerlink" href="#route53-base-domain" title="Permanent link">&para;</a></h4>
 <p>The <code>baseDomain</code> must be a Route53 hosted zone in the same AWS account. The installation program creates DNS records for the API and ingress endpoints. Verify your hosted zone exists:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-40-1" name="__codelineno-40-1" href="#__codelineno-40-1"></a>aws<span class="w"> </span>route53<span class="w"> </span>list-hosted-zones<span class="w"> </span>--query<span class="w"> </span><span class="s1">'HostedZones[*].Name'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a>aws<span class="w"> </span>route53<span class="w"> </span>list-hosted-zones<span class="w"> </span>--query<span class="w"> </span><span class="s1">'HostedZones[*].Name'</span>
 </code></pre></div>
 <h3 id="aws-secrets">AWS secrets<a class="headerlink" href="#aws-secrets" title="Permanent link">&para;</a></h3>
 <p>All secrets can be in a single secret (matching the Red Hat Advanced Cluster Management GUI pattern) or separate secrets.</p>
 <h4 id="single-secret-pattern">Single secret pattern<a class="headerlink" href="#single-secret-pattern" title="Permanent link">&para;</a></h4>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a>oc<span class="w"> </span>create<span class="w"> </span>secret<span class="w"> </span>generic<span class="w"> </span>aws-creds<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a><span class="w">  </span>-n<span class="w"> </span>cluster-install-secrets<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">aws_access_key_id</span><span class="o">=</span>&lt;key&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-41-4" name="__codelineno-41-4" href="#__codelineno-41-4"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">aws_secret_access_key</span><span class="o">=</span>&lt;secret&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-41-5" name="__codelineno-41-5" href="#__codelineno-41-5"></a><span class="w">  </span>--from-file<span class="o">=</span>ssh-privatekey<span class="o">=</span><span class="nv">$HOME</span>/.ssh/ocp-cluster<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-41-6" name="__codelineno-41-6" href="#__codelineno-41-6"></a><span class="w">  </span>--from-file<span class="o">=</span>ssh-publickey<span class="o">=</span><span class="nv">$HOME</span>/.ssh/ocp-cluster.pub<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-41-7" name="__codelineno-41-7" href="#__codelineno-41-7"></a><span class="w">  </span>--from-file<span class="o">=</span><span class="nv">pullSecret</span><span class="o">=</span><span class="nv">$HOME</span>/pull-secret.json<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-41-8" name="__codelineno-41-8" href="#__codelineno-41-8"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">baseDomain</span><span class="o">=</span>example.com
+<div class="highlight"><pre><span></span><code><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a>oc<span class="w"> </span>create<span class="w"> </span>secret<span class="w"> </span>generic<span class="w"> </span>aws-creds<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a><span class="w">  </span>-n<span class="w"> </span>cluster-install-secrets<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-42-3" name="__codelineno-42-3" href="#__codelineno-42-3"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">aws_access_key_id</span><span class="o">=</span>&lt;key&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-42-4" name="__codelineno-42-4" href="#__codelineno-42-4"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">aws_secret_access_key</span><span class="o">=</span>&lt;secret&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-42-5" name="__codelineno-42-5" href="#__codelineno-42-5"></a><span class="w">  </span>--from-file<span class="o">=</span>ssh-privatekey<span class="o">=</span><span class="nv">$HOME</span>/.ssh/ocp-cluster<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-42-6" name="__codelineno-42-6" href="#__codelineno-42-6"></a><span class="w">  </span>--from-file<span class="o">=</span>ssh-publickey<span class="o">=</span><span class="nv">$HOME</span>/.ssh/ocp-cluster.pub<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-42-7" name="__codelineno-42-7" href="#__codelineno-42-7"></a><span class="w">  </span>--from-file<span class="o">=</span><span class="nv">pullSecret</span><span class="o">=</span><span class="nv">$HOME</span>/pull-secret.json<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-42-8" name="__codelineno-42-8" href="#__codelineno-42-8"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">baseDomain</span><span class="o">=</span>example.com
 </code></pre></div>
 <p>Then reference the same secret for all fields:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a><span class="nt">aws</span><span class="p">:</span>
-<a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a><span class="w">  </span><span class="nt">credentialRef</span><span class="p">:</span><span class="w"> </span><span class="s">'aws-creds'</span>
-<a id="__codelineno-42-3" name="__codelineno-42-3" href="#__codelineno-42-3"></a><span class="w">  </span><span class="nt">sshPrivateKeyRef</span><span class="p">:</span><span class="w"> </span><span class="s">'aws-creds'</span>
-<a id="__codelineno-42-4" name="__codelineno-42-4" href="#__codelineno-42-4"></a><span class="w">  </span><span class="nt">sshKeyRef</span><span class="p">:</span>
-<a id="__codelineno-42-5" name="__codelineno-42-5" href="#__codelineno-42-5"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">'aws-creds'</span>
-<a id="__codelineno-42-6" name="__codelineno-42-6" href="#__codelineno-42-6"></a><span class="w">    </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="s">'ssh-publickey'</span>
-<a id="__codelineno-42-7" name="__codelineno-42-7" href="#__codelineno-42-7"></a><span class="nt">pullSecretRef</span><span class="p">:</span>
-<a id="__codelineno-42-8" name="__codelineno-42-8" href="#__codelineno-42-8"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">'aws-creds'</span>
-<a id="__codelineno-42-9" name="__codelineno-42-9" href="#__codelineno-42-9"></a><span class="w">  </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="s">'pullSecret'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-43-1" name="__codelineno-43-1" href="#__codelineno-43-1"></a><span class="nt">aws</span><span class="p">:</span>
+<a id="__codelineno-43-2" name="__codelineno-43-2" href="#__codelineno-43-2"></a><span class="w">  </span><span class="nt">credentialRef</span><span class="p">:</span><span class="w"> </span><span class="s">'aws-creds'</span>
+<a id="__codelineno-43-3" name="__codelineno-43-3" href="#__codelineno-43-3"></a><span class="w">  </span><span class="nt">sshPrivateKeyRef</span><span class="p">:</span><span class="w"> </span><span class="s">'aws-creds'</span>
+<a id="__codelineno-43-4" name="__codelineno-43-4" href="#__codelineno-43-4"></a><span class="w">  </span><span class="nt">sshKeyRef</span><span class="p">:</span>
+<a id="__codelineno-43-5" name="__codelineno-43-5" href="#__codelineno-43-5"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">'aws-creds'</span>
+<a id="__codelineno-43-6" name="__codelineno-43-6" href="#__codelineno-43-6"></a><span class="w">    </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="s">'ssh-publickey'</span>
+<a id="__codelineno-43-7" name="__codelineno-43-7" href="#__codelineno-43-7"></a><span class="nt">pullSecretRef</span><span class="p">:</span>
+<a id="__codelineno-43-8" name="__codelineno-43-8" href="#__codelineno-43-8"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">'aws-creds'</span>
+<a id="__codelineno-43-9" name="__codelineno-43-9" href="#__codelineno-43-9"></a><span class="w">  </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="s">'pullSecret'</span>
 </code></pre></div></p>
 <h4 id="separate-secrets-pattern">Separate secrets pattern<a class="headerlink" href="#separate-secrets-pattern" title="Permanent link">&para;</a></h4>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-43-1" name="__codelineno-43-1" href="#__codelineno-43-1"></a><span class="c1"># AWS credentials</span>
-<a id="__codelineno-43-2" name="__codelineno-43-2" href="#__codelineno-43-2"></a>oc<span class="w"> </span>create<span class="w"> </span>secret<span class="w"> </span>generic<span class="w"> </span>aws-creds<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-43-3" name="__codelineno-43-3" href="#__codelineno-43-3"></a><span class="w">  </span>-n<span class="w"> </span>cluster-install-secrets<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-43-4" name="__codelineno-43-4" href="#__codelineno-43-4"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">aws_access_key_id</span><span class="o">=</span>&lt;key&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-43-5" name="__codelineno-43-5" href="#__codelineno-43-5"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">aws_secret_access_key</span><span class="o">=</span>&lt;secret&gt;
-<a id="__codelineno-43-6" name="__codelineno-43-6" href="#__codelineno-43-6"></a>
-<a id="__codelineno-43-7" name="__codelineno-43-7" href="#__codelineno-43-7"></a><span class="c1"># SSH key</span>
-<a id="__codelineno-43-8" name="__codelineno-43-8" href="#__codelineno-43-8"></a>oc<span class="w"> </span>create<span class="w"> </span>secret<span class="w"> </span>generic<span class="w"> </span>ssh-private-key<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-43-9" name="__codelineno-43-9" href="#__codelineno-43-9"></a><span class="w">  </span>-n<span class="w"> </span>cluster-install-secrets<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-43-10" name="__codelineno-43-10" href="#__codelineno-43-10"></a><span class="w">  </span>--from-file<span class="o">=</span>ssh-privatekey<span class="o">=</span><span class="nv">$HOME</span>/.ssh/ocp-cluster
-<a id="__codelineno-43-11" name="__codelineno-43-11" href="#__codelineno-43-11"></a>
-<a id="__codelineno-43-12" name="__codelineno-43-12" href="#__codelineno-43-12"></a><span class="c1"># Pull secret</span>
-<a id="__codelineno-43-13" name="__codelineno-43-13" href="#__codelineno-43-13"></a>oc<span class="w"> </span>create<span class="w"> </span>secret<span class="w"> </span>generic<span class="w"> </span>default-pull-secret<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-43-14" name="__codelineno-43-14" href="#__codelineno-43-14"></a><span class="w">  </span>-n<span class="w"> </span>cluster-install-secrets<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-43-15" name="__codelineno-43-15" href="#__codelineno-43-15"></a><span class="w">  </span>--from-file<span class="o">=</span>.dockerconfigjson<span class="o">=</span><span class="nv">$HOME</span>/pull-secret.json<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-43-16" name="__codelineno-43-16" href="#__codelineno-43-16"></a><span class="w">  </span>--type<span class="o">=</span>kubernetes.io/dockerconfigjson
+<div class="highlight"><pre><span></span><code><a id="__codelineno-44-1" name="__codelineno-44-1" href="#__codelineno-44-1"></a><span class="c1"># AWS credentials</span>
+<a id="__codelineno-44-2" name="__codelineno-44-2" href="#__codelineno-44-2"></a>oc<span class="w"> </span>create<span class="w"> </span>secret<span class="w"> </span>generic<span class="w"> </span>aws-creds<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-44-3" name="__codelineno-44-3" href="#__codelineno-44-3"></a><span class="w">  </span>-n<span class="w"> </span>cluster-install-secrets<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-44-4" name="__codelineno-44-4" href="#__codelineno-44-4"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">aws_access_key_id</span><span class="o">=</span>&lt;key&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-44-5" name="__codelineno-44-5" href="#__codelineno-44-5"></a><span class="w">  </span>--from-literal<span class="o">=</span><span class="nv">aws_secret_access_key</span><span class="o">=</span>&lt;secret&gt;
+<a id="__codelineno-44-6" name="__codelineno-44-6" href="#__codelineno-44-6"></a>
+<a id="__codelineno-44-7" name="__codelineno-44-7" href="#__codelineno-44-7"></a><span class="c1"># SSH key</span>
+<a id="__codelineno-44-8" name="__codelineno-44-8" href="#__codelineno-44-8"></a>oc<span class="w"> </span>create<span class="w"> </span>secret<span class="w"> </span>generic<span class="w"> </span>ssh-private-key<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-44-9" name="__codelineno-44-9" href="#__codelineno-44-9"></a><span class="w">  </span>-n<span class="w"> </span>cluster-install-secrets<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-44-10" name="__codelineno-44-10" href="#__codelineno-44-10"></a><span class="w">  </span>--from-file<span class="o">=</span>ssh-privatekey<span class="o">=</span><span class="nv">$HOME</span>/.ssh/ocp-cluster
+<a id="__codelineno-44-11" name="__codelineno-44-11" href="#__codelineno-44-11"></a>
+<a id="__codelineno-44-12" name="__codelineno-44-12" href="#__codelineno-44-12"></a><span class="c1"># Pull secret</span>
+<a id="__codelineno-44-13" name="__codelineno-44-13" href="#__codelineno-44-13"></a>oc<span class="w"> </span>create<span class="w"> </span>secret<span class="w"> </span>generic<span class="w"> </span>default-pull-secret<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-44-14" name="__codelineno-44-14" href="#__codelineno-44-14"></a><span class="w">  </span>-n<span class="w"> </span>cluster-install-secrets<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-44-15" name="__codelineno-44-15" href="#__codelineno-44-15"></a><span class="w">  </span>--from-file<span class="o">=</span>.dockerconfigjson<span class="o">=</span><span class="nv">$HOME</span>/pull-secret.json<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-44-16" name="__codelineno-44-16" href="#__codelineno-44-16"></a><span class="w">  </span>--type<span class="o">=</span>kubernetes.io/dockerconfigjson
 </code></pre></div>
 <blockquote>
 <p><strong>Note:</strong> When FIPS is enabled (<code>fips: true</code>), SSH keys must be RSA or Elliptic Curve Digital Signature Algorithm (ECDSA). Ed25519 keys are not supported in FIPS mode.</p>
@@ -3211,18 +3287,18 @@
 <p>For disconnected AWS installs, add the <code>disconnected</code> config block. The disconnected config structure is the same as baremetal — see the <a href="#disconnected">disconnected</a> preceding section for all fields. Both example files (<a href="../../autoshift/values/clusters/_example-cluster-install-baremetal.yaml">baremetal</a>, <a href="../../autoshift/values/clusters/_example-cluster-install-aws.yaml">AWS</a>) include a commented-out disconnected block ready to uncomment.</p>
 <p>The install-config automatically includes <code>imageDigestSources</code> and <code>additionalTrustBundle</code> when mirrors are configured.</p>
 <h3 id="monitoring-aws-installation">Monitoring AWS installation<a class="headerlink" href="#monitoring-aws-installation" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-44-1" name="__codelineno-44-1" href="#__codelineno-44-1"></a><span class="c1"># Check policy status</span>
-<a id="__codelineno-44-2" name="__codelineno-44-2" href="#__codelineno-44-2"></a>oc<span class="w"> </span>get<span class="w"> </span>policies<span class="w"> </span>-A<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>cluster-install
-<a id="__codelineno-44-3" name="__codelineno-44-3" href="#__codelineno-44-3"></a>
-<a id="__codelineno-44-4" name="__codelineno-44-4" href="#__codelineno-44-4"></a><span class="c1"># Check ClusterDeployment</span>
-<a id="__codelineno-44-5" name="__codelineno-44-5" href="#__codelineno-44-5"></a>oc<span class="w"> </span>get<span class="w"> </span>clusterdeployment<span class="w"> </span>-n<span class="w"> </span>my-aws-cluster<span class="w"> </span>-o<span class="w"> </span>yaml
-<a id="__codelineno-44-6" name="__codelineno-44-6" href="#__codelineno-44-6"></a>
-<a id="__codelineno-44-7" name="__codelineno-44-7" href="#__codelineno-44-7"></a><span class="c1"># Check provision pod logs</span>
-<a id="__codelineno-44-8" name="__codelineno-44-8" href="#__codelineno-44-8"></a>oc<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>my-aws-cluster<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>provision
-<a id="__codelineno-44-9" name="__codelineno-44-9" href="#__codelineno-44-9"></a>oc<span class="w"> </span>logs<span class="w"> </span>-n<span class="w"> </span>my-aws-cluster<span class="w"> </span>&lt;provision-pod&gt;<span class="w"> </span>-c<span class="w"> </span>hive
-<a id="__codelineno-44-10" name="__codelineno-44-10" href="#__codelineno-44-10"></a>
-<a id="__codelineno-44-11" name="__codelineno-44-11" href="#__codelineno-44-11"></a><span class="c1"># Check ManagedCluster</span>
-<a id="__codelineno-44-12" name="__codelineno-44-12" href="#__codelineno-44-12"></a>oc<span class="w"> </span>get<span class="w"> </span>managedcluster<span class="w"> </span>my-aws-cluster
+<div class="highlight"><pre><span></span><code><a id="__codelineno-45-1" name="__codelineno-45-1" href="#__codelineno-45-1"></a><span class="c1"># Check policy status</span>
+<a id="__codelineno-45-2" name="__codelineno-45-2" href="#__codelineno-45-2"></a>oc<span class="w"> </span>get<span class="w"> </span>policies<span class="w"> </span>-A<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>cluster-install
+<a id="__codelineno-45-3" name="__codelineno-45-3" href="#__codelineno-45-3"></a>
+<a id="__codelineno-45-4" name="__codelineno-45-4" href="#__codelineno-45-4"></a><span class="c1"># Check ClusterDeployment</span>
+<a id="__codelineno-45-5" name="__codelineno-45-5" href="#__codelineno-45-5"></a>oc<span class="w"> </span>get<span class="w"> </span>clusterdeployment<span class="w"> </span>-n<span class="w"> </span>my-aws-cluster<span class="w"> </span>-o<span class="w"> </span>yaml
+<a id="__codelineno-45-6" name="__codelineno-45-6" href="#__codelineno-45-6"></a>
+<a id="__codelineno-45-7" name="__codelineno-45-7" href="#__codelineno-45-7"></a><span class="c1"># Check provision pod logs</span>
+<a id="__codelineno-45-8" name="__codelineno-45-8" href="#__codelineno-45-8"></a>oc<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>my-aws-cluster<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>provision
+<a id="__codelineno-45-9" name="__codelineno-45-9" href="#__codelineno-45-9"></a>oc<span class="w"> </span>logs<span class="w"> </span>-n<span class="w"> </span>my-aws-cluster<span class="w"> </span>&lt;provision-pod&gt;<span class="w"> </span>-c<span class="w"> </span>hive
+<a id="__codelineno-45-10" name="__codelineno-45-10" href="#__codelineno-45-10"></a>
+<a id="__codelineno-45-11" name="__codelineno-45-11" href="#__codelineno-45-11"></a><span class="c1"># Check ManagedCluster</span>
+<a id="__codelineno-45-12" name="__codelineno-45-12" href="#__codelineno-45-12"></a>oc<span class="w"> </span>get<span class="w"> </span>managedcluster<span class="w"> </span>my-aws-cluster
 </code></pre></div>
 <h3 id="aws-troubleshooting">AWS troubleshooting<a class="headerlink" href="#aws-troubleshooting" title="Permanent link">&para;</a></h3>
 <table>
