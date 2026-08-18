@@ -15,6 +15,9 @@ object-templates-raw: |
   {{- $bucketName := (index $obcCMData "BUCKET_NAME" | default "") }}
   {{- $bucketHost := (index $obcCMData "BUCKET_HOST" | default "") }}
   {{- $bucketPort := (index $obcCMData "BUCKET_PORT" | default "443") }}
+  {{/* Both values MUST be quoted. A cron expression that begins with an asterisk is a YAML alias
+       when unquoted, and the whole policy then fails to render with
+       "did not find expected alphabetic or numeric character". */}}
   {{- $retention := "{{hub index $quayCfg "dbBackupRetention" | default "30d" hub}}" }}
   {{- $schedule := "{{hub index $quayCfg "dbBackupSchedule" | default "0 4 * * *" hub}}" }}
   {{- $caCM := (lookup "v1" "ConfigMap" "quay-enterprise" "openshift-service-ca") | default dict }}
@@ -52,7 +55,7 @@ object-templates-raw: |
         namespace: quay-enterprise
       spec:
         backup:
-          retentionPolicy: {{ $retention }}
+          retentionPolicy: '{{ $retention }}'
           barmanObjectStore:
             destinationPath: s3://{{ $bucketName }}/{{ $db }}
             endpointURL: https://{{ $bucketHost }}:{{ $bucketPort }}
@@ -78,7 +81,7 @@ object-templates-raw: |
         name: {{ $db }}-scheduled-backup
         namespace: quay-enterprise
       spec:
-        schedule: {{ $schedule }}
+        schedule: '{{ $schedule }}'
         backupOwnerReference: cluster
         cluster:
           name: {{ $db }}

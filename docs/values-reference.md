@@ -121,7 +121,7 @@ Every managed operator supports version control via its respective label:
 | OpenShift Pipelines         | `pipelines-version`     | `openshift-pipelines-operator-rh.v1.18.1`          |
 | OpenShift Data Foundation   | `odf-version`           | `odf-operator.v4.18.11-rhodf`                      |
 | MetalLB                     | `metallb-version`       | `metallb-operator.v4.18.0-202509240837`            |
-| Quay                        | `quay-version`          | `quay-operator.v3.15.0`                            |
+| Quay                        | `quay-version`          | `quay-operator.v3.18.0`                            |
 | Developer Hub               | `dev-hub-version`       | `rhdh.v1.5.0`                                      |
 | Developer Spaces            | `dev-spaces-version`    | `devspaces.v3.21.0`                                |
 | Trusted Artifact Signer     | `tas-version`           | `rhtas-operator.v1.2.0`                            |
@@ -191,7 +191,7 @@ created for each replica of the image service. 2GiB per OSImage entry is require
 | `acm-addon-gpf-cpu-request`  | string   | `100m`                   | governance-policy-framework CPU request |
 | `acm-addon-gpf-mem-limit`    | string   | `512Mi`                  | governance-policy-framework memory limit |
 
-**ACM Default vs AutoShift Tuned Values:**
+**ACM default compared to AutoShift tuned values:**
 
 | Parameter | ACM Default | AutoShift Tuned |
 |---|---|---|
@@ -394,13 +394,65 @@ Automated node health monitoring and remediation.
 
 ### Quay
 
+Red Hat Quay is a container registry. The policy installs the operator, deploys a `QuayRegistry`,
+and optionally provisions its databases through CloudNativePG.
+
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `quay`                            | bool              |                           | If not set Quay will not be managed |
-| `quay-channel`                    | string            | `stable-3.13`             |       |
+| `quay-channel`                    | string            | `stable-3.18`             |       |
 | `quay-version`                    | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `quay-source`                     | string            | `redhat-operators`        |       |
 | `quay-source-namespace`           | string            | `openshift-marketplace`   |       |
+| `quay-db-mode`                    | string            | `bundled`                 | `bundled`, `managed`, or `external`. See the following table |
+| `quay-db-instances`               | int               | `2`                       | CloudNativePG replicas for the Quay database |
+| `quay-clair-db-instances`         | int               | `2`                       | CloudNativePG replicas for the Clair database |
+| `quay-db-backups`                 | bool              | `false`                   | Scheduled database backups. Requires `quay-db-mode: managed` and `odf` |
+
+**Database modes** (`quay-db-mode`):
+
+| Mode | Behavior |
+|------|----------|
+| `bundled` | The Quay Operator runs its own PostgreSQL deployments. The shipped default, and appropriate for proof of concept clusters |
+| `managed` | AutoShift provisions two CloudNativePG clusters, `quay-db` and `clair-db`. Requires `cloudnative-pg: 'true'` on the same cluster |
+| `external` | You supply `DB_URI` and the Clair connection strings yourself. See `configSecretRef` in the following section |
+
+> [!NOTE]
+> Red Hat Quay and Clair must not share a database, so `managed` mode creates two separate
+> CloudNativePG clusters. PgBouncer is not supported with Red Hat Quay or Clair, so neither
+> database gets a connection pooler.
+
+**Config block** (`config.quay`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `versions` | list | | Permitted operator CSV versions |
+| `startingCSV` | string | | Initial install pin. An empty value lets Operator Lifecycle Manager choose |
+| `superUsers` | list | `[quayadmin]` | Registry superusers. With OpenID Connect these are the OpenID Connect user names |
+| `components.<kind>` | bool | `true` | Per component `managed` flag. Omit a component to leave it managed by the operator |
+| `overrides.<kind>` | map | | Passed through to `spec.components[].overrides`. Accepts `affinity`, `annotations`, `env`, `labels`, `replicas`, `resources`, `securityContext`, `storageClassName`, `tls`, and `volumeSize` |
+| `bootstrap.userInitialize` | bool | `false` | `FEATURE_USER_INITIALIZE`. Enables the unauthenticated first user endpoint |
+| `bootstrap.xhrOnly` | bool | `true` | `BROWSER_API_CALLS_XHR_ONLY`. Restricts the registry API to browser calls |
+| `bootstrap.userCreation` | bool | `false` | `FEATURE_USER_CREATION`. When false, only superusers create users |
+| `bootstrap.programmatic` | bool | `false` | `FEATURE_PROGRAMMATIC_BOOTSTRAP`. Technology Preview in Red Hat Quay 3.18 |
+| `tls.secretName` | string | | Name of a `kubernetes.io/tls` Secret for the registry certificate |
+| `tls.certificate.issuerRef` | map | | Optional. Creates a cert-manager `Certificate` from this issuer |
+| `tls.certificate.dnsNames` | list | | Optional. Defaults to the registry route host |
+| `config` | map | | Extra `config.yaml` keys, merged after the preceding fields. Non-sensitive values only |
+| `configSecretRef` | map | | `{name, namespace, key}` of a Secret holding sensitive `config.yaml` keys |
+| `dbBackupSchedule` | string | `0 4 * * *` | Cron schedule for database backups |
+| `dbBackupRetention` | string | `30d` | Backup retention period |
+
+> [!IMPORTANT]
+> Values files are stored in Git, so credentials must never appear in `config.quay.config`. Put
+> object storage keys, `DB_URI` for `external` mode, and OpenID Connect client secrets in a Secret
+> that you create on the cluster, and reference it with `configSecretRef`. That Secret is merged
+> last, so it overrides everything else.
+
+The default configuration is secure: the unauthenticated first user endpoint is disabled and the
+registry API is restricted to browser calls. A cluster with no OpenID Connect provider therefore has
+no interactive administrator until you either configure OpenID Connect and list administrators in `superUsers`, or set
+`bootstrap.userInitialize` and `bootstrap.xhrOnly` to bootstrap a local account by hand.
 
 ### OpenShift Virtualization
 
@@ -521,7 +573,7 @@ Automated node health monitoring and remediation.
 | `odf-ocs-storage-size`            | string            |                           | storage size per nvme |
 | `odf-ocs-storage-count`           | string            |                           | number of replica sets of nvme drives, note total amount will count * replicas |
 | `odf-ocs-storage-replicas`        | string            |                           | replicas, `3` is recommended; if using flexibleScaling use `1` |
-| `odf-ocs-flexible-scaling`        | bool              | `false`*                  | Sets failure domain to host and evenly spreads OSDs over hosts. Defaults to true on baremetal with a number of storage nodes that isn't a multiple of 3 |
+| `odf-ocs-flexible-scaling`        | bool              | `false`*                  | Sets failure domain to host and evenly spreads OSDs over hosts. Defaults to true on baremetal with several storage nodes that isn't a multiple of 3 |
 | `odf-resource-profile`            | string            | `balanced`                | `lean`: suitable for clusters with limited resources, `balanced`: suitable for most use cases, `performance`: suitable for clusters with high amount of resources |
 | `odf-default-storageclass`        | string            | `ocs-storagecluster-ceph-rbd` | Sets specified storage class as default and all others as non-default |
 | `odf-csi-all-nodes`              | bool              | `false`                   | `true` runs CSI plugins on all nodes (masters, infra, storage) allowing PVCs on non-storage nodes. `false` restricts CSI plugins to storage-labeled nodes only |
