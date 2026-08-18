@@ -113,9 +113,14 @@ hubClusterSets:
       # =======================================================================
       disconnected:
         mirrorRegistry:
-          host: 'registry.example.com'
-          port: '5000'
+          host: 'registry.example.com:5000'    # host:port — there is no separate port key
           path: 'openshift'
+          # ca (inline bundle) or caRef (hub ConfigMap) is required once mirrors/tagMirrors or
+          # catalogs are defined; the mirrored registry is not in the cluster's default trust.
+          caRef:
+            name: 'cluster-ca-bundle'
+            key: 'ca-bundle.crt'
+            namespace: 'cluster-install-secrets'
           mirrors:
             - source: 'registry.redhat.io'
               mirror: 'registry.example.com:5000/rhel'
@@ -127,11 +132,16 @@ hubClusterSets:
           tagMirrors:
             - source: 'docker.io/hashicorp'
               mirror: 'registry.example.com:5000/hashicorp'
+        # imagePath and tag, not a single image string — the host comes from mirrorRegistry above.
         catalogs:
           - source: redhat-operators
-            image: 'registry.example.com:5000/redhat/redhat-operator-index:v4.22'
+            imagePath: redhat/redhat-operator-index
+            tag: v4.22
+            publisher: Red Hat
           - source: certified-operators
-            image: 'registry.example.com:5000/redhat/certified-operator-index:v4.22'
+            imagePath: redhat/certified-operator-index
+            tag: v4.22
+            publisher: Red Hat
         useIDMS: true
         disableDefaultCatalogs: true
       # =======================================================================
@@ -300,7 +310,7 @@ hubClusterSets:
           node-role.kubernetes.io/worker: ''
         numaTopology: 'restricted'
         hugepages:
-          defaultHugepagesSize: '1G'
+          defaultSize: '1G'
           pages:
             - size: '1G'
               count: 4
@@ -496,6 +506,23 @@ hubClusterSets:
           provider: openshift               # '' disables the declarative auth config
           minimumRole: None                 # minimum role for authenticated users
           adminGroup: cluster-admins        # group mapped to the Admin role
+      # =======================================================================
+      # AutoShift Console Plugin (hub only; ENABLE flag is the autoshift-console label).
+      # Read-only OpenShift console plugin that surfaces AutoShift clustersets, the resolution
+      # chain behind each setting, and policy compliance. Both keys are optional.
+      # =======================================================================
+      autoshiftConsole:
+        # Built per OpenShift minor — the console supplies react and react-router as shared
+        # singletons, so one bundle cannot span releases. The tag names the minor it targets and
+        # there is no bare :latest. Pin a digest in production.
+        image: 'quay.io/autoshift/autoshift-console-plugin:ocp4.22'
+        replicas: 2
+        # Minimum OpenShift version the plugin can run on. The policy reads the cluster's ACTUAL
+        # running version and deploys nothing below this, because an incompatible console skips
+        # the plugin silently — the pod runs and serves assets but nothing appears in the UI.
+        # Must match @console/pluginAPI in the plugin's package.json; ACM templates cannot read
+        # that file, so the two are kept in step by CI rather than derived.
+        minOpenShiftVersion: '4.22.0-0'
     labels:
       # =======================================================================
       # Core Configuration
@@ -530,6 +557,12 @@ hubClusterSets:
       gitops-source-namespace: openshift-marketplace
       gitops-namespace: 'openshift-gitops'          # Override ArgoCD namespace per-cluster
       gitops-cluster-ca-bundle: 'true'              # Inject cluster trusted CA bundle into ArgoCD repo server
+
+      # =======================================================================
+      # AutoShift Console Plugin (hub only — reads hub-side AutoShift ConfigMaps)
+      # Image and replicas are set under config.autoshiftConsole above.
+      # =======================================================================
+      autoshift-console: 'true'                     # add the AutoShift section to the console sidebar
 
       # =======================================================================
       # Advanced Cluster Management (hub only — not installed on managed clusters)
