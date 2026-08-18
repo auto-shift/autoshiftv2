@@ -133,6 +133,7 @@ Every managed operator supports version control via its respective label:
 | Local Storage               | `local-storage-version` | `local-storage-operator.v4.18.0-202410091522`      |
 | NMState                     | `nmstate-version`       | `kubernetes-nmstate-operator.v4.18.0-202410091522` |
 | OpenShift Virtualization    | `virt-version`          | `kubevirt-hyperconverged.v4.18.0`                  |
+| Multicluster Global Hub     | `global-hub-version`    | `multicluster-global-hub-operator-rh.v1.8.0`       |
 
 ### Finding Available CSV Versions
 
