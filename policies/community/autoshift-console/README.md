@@ -1,8 +1,9 @@
 # AutoShift Console Plugin
 
 Deploys the AutoShift OpenShift console dynamic plugin — a read-only **AutoShift** section in the
-Administrator sidebar (Fleet / Cluster Sets / Clusters / Stacks) that surfaces AutoShift's clustersets,
-resolved configuration, label drift and version tracking.
+**Fleet management** perspective (Fleet / Cluster Sets / Clusters / Stacks) that surfaces AutoShift's
+clustersets, resolved configuration and OpenShift version tracking. It sits alongside Red Hat Advanced
+Cluster Management's own views, after Governance.
 
 Plugin source lives in a separate repository: `auto-shift/autoshift-console-plugin`.
 
@@ -80,4 +81,4 @@ oc get pods -n autoshift-console
 oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins}'
 ```
 
-Then reload the console: an **AutoShift** section appears in the Administrator sidebar.
+Then reload the console: an **AutoShift** section appears in the **Fleet management** perspective.
