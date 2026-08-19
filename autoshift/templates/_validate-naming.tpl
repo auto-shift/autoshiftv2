@@ -84,9 +84,13 @@ This is the single source of truth — autoshift-app-set.yaml and the configmap 
 
 {{/*
 autoshift.validate-gitops enforces the policyGenerator / deploy-mode contract:
-  - Git/source mode renders PolicyGenerator dirs live via the CMP, so it REQUIRES policyGenerator: true
-    (the ArgoCD repo-server must carry the policy-generator CMP sidecar).
-  - OCI mode ships prerendered Helm charts and never uses the CMP, so policyGenerator MUST be false.
+  - Git/source mode renders PolicyGenerator dirs live via the CMP, so it REQUIRES policyGenerator:
+    true (the ArgoCD repo-server must carry the policy-generator CMP sidecar). Without it the
+    PolicyGenerator directories never render and most policies simply never deploy — a hard failure.
+  - OCI mode ships prerendered Helm charts and never uses the CMP, so policyGenerator: false is
+    RECOMMENDED but not required. Leaving it true only configures a sidecar nothing calls; the
+    ApplicationSet branches on autoshiftOciRegistry, not on this flag, so deployment is unaffected.
+    It is therefore not validated — an OCI deployment that inherits the git default still works.
 Effective value = global .Values.policyGenerator, overridden by the self-managed hub clusterset's
 config.gitops.policyGenerator.
 */}}
@@ -96,11 +100,7 @@ config.gitops.policyGenerator.
 {{- if hasKey $gitopsCfg "policyGenerator" -}}
   {{- $pg = (index $gitopsCfg "policyGenerator") -}}
 {{- end -}}
-{{- if .Values.autoshiftOciRegistry -}}
-  {{- if $pg -}}
-    {{- fail "\n\npolicyGenerator must be false in OCI mode.\nOCI deployments consume prerendered Helm charts (rendered in CI by `make render-policy-charts`) and never use the policy-generator CMP.\nSet policyGenerator: false in global.yaml, or config.gitops.policyGenerator: false on the self-managed hub clusterset.\n" -}}
-  {{- end -}}
-{{- else -}}
+{{- if not .Values.autoshiftOciRegistry -}}
   {{- if not $pg -}}
     {{- fail "\n\nGit/source mode requires policyGenerator: true.\nThe ArgoCD repo-server needs the policy-generator CMP sidecar to render PolicyGenerator dirs from git.\nSet policyGenerator: true in global.yaml, or config.gitops.policyGenerator: true on the self-managed hub clusterset.\n" -}}
   {{- end -}}

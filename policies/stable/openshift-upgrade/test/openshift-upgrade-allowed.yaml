@@ -1,0 +1,26 @@
+object-templates-raw: |
+  {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
+  {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
+  {{- $desired := (index (index $status "desired" | default dict) "version" | default "") }}
+  {{- $current := "" }}
+  {{- range $h := (index $status "history" | default list) }}
+  {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}{{- $current = (index $h "version") }}{{- end }}
+  {{- end }}
+  {{- $inAvail := false }}
+  {{- range $u := (index $status "availableUpdates" | default list) }}
+  {{-   if eq (index $u "version") $target }}{{- $inAvail = true }}{{- end }}
+  {{- end }}
+  {{- $valid := false }}
+  {{- if regexMatch "^[0-9]+[.][0-9]+[.][0-9]+" $target }}
+  {{-   $valid = or $inAvail (eq $desired $target) (and (ne $current "") (semverCompare (printf ">= %s" $target) $current)) }}
+  {{- end }}
+  {{- /* Validity is decided in Go (reliable). When invalid, force NonCompliant with a mustnothave on
+         the ClusterVersion (which always exists) — a scalar existence check, not status-list matching. */ -}}
+  {{- if and (ne $target "") (not $valid) }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: ClusterVersion
+      metadata:
+        name: version
+  {{- end }}

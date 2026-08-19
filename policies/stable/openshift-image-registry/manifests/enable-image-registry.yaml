@@ -3,8 +3,18 @@ object-templates-raw: |
   {{- $noobaaHost := (index ($noobaaRoute.spec | default dict) "host" | default "") }}
   {{- $caBundleCert := fromConfigMap "openshift-image-registry" "openshift-service-ca.crt" "service-ca.crt" }}
   {{- if not (empty $noobaaHost) }}
-  {{- $routerCA := (lookup "v1" "Secret" "openshift-ingress-operator" "router-ca") | default dict }}
-  {{- $caBundleCert = (index ($routerCA.data | default dict) "tls.crt" | default "" | base64dec) }}
+  {{- /* The NooBaa S3 endpoint is an apps route, so the bundle also needs whatever signs the default
+         ingress cert. openshift-config-managed/default-ingress-cert is published by the ingress
+         operator and tracks the cert actually in use, custom or operator-generated; the router-ca
+         secret only matches while the cluster still uses the operator's self-signed cert, so it goes
+         stale on any cluster with a replaced defaultCertificate — including one set by AutoShift's own
+         cert-manager policy. Append rather than replace, so the service CA stays as a floor and a
+         missing ConfigMap can never produce an empty bundle. */ -}}
+  {{- $ingressCA := (lookup "v1" "ConfigMap" "openshift-config-managed" "default-ingress-cert") | default dict }}
+  {{- $ingressPEM := (index ($ingressCA.data | default dict) "ca-bundle.crt" | default "") }}
+  {{- if not (empty $ingressPEM) }}
+  {{- $caBundleCert = printf "%s\n%s" (trim $caBundleCert) (trim $ingressPEM) }}
+  {{- end }}
   {{- end }}
   {{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "s3" hub}}
   - complianceType: musthave
