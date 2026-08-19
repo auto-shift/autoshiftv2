@@ -1,25 +1,14 @@
 object-templates-raw: |
-  {{- /* The console plugin bundles React 18 / PatternFly 6. OCP 4.20-4.21 consoles share React 17,
-         so the plugin is silently skipped there — the pod runs, serves assets, and nothing appears.
-         Gate on the ACTUAL running version (ClusterVersion history) rather than the desired
-         autoshift.io/openshift-version label, so a cluster mid-upgrade is judged on what it is
-         running now. Same semverCompare approach as the openshift-upgrade policy. */}}
-  {{- $minVersion := "{{hub- $cmv := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}{{hub- $cfgv := (index ($cmv | default dict) "data" | default dict) hub}}{{hub- $ymlv := (index $cfgv "config" | default "" | fromYaml | default dict) hub}}{{hub- $consolev := (index $ymlv "autoshiftConsole" | default dict) hub}}{{hub index $consolev "minOpenShiftVersion" | default "4.22.0-0" hub}}" }}
-  {{- $cvStatus := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
-  {{- $current := "" }}
-  {{- range $h := (index $cvStatus "history" | default list) }}
-  {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}{{- $current = (index $h "version") }}{{- end }}
-  {{- end }}
   {{- /* Readiness gate. The Policy dependency on policy-autoshift-console only proves the
          Deployment OBJECT exists — a Deployment stuck in ImagePullBackOff is still Compliant, and
          enabling a plugin whose Service has no endpoints degrades EVERY console page, not just the
          AutoShift routes, because the console fetches each enabled plugin's manifest at bootstrap.
-         So gate on availableReplicas instead. Until then this policy emits nothing and is
-         trivially compliant. */}}
+         So gate on availableReplicas instead. Until then this policy emits nothing;
+         policy-autoshift-console-available is what reports the wait. */}}
   {{- $deploy := (lookup "apps/v1" "Deployment" "autoshift-console" "autoshift-console" | default dict) }}
   {{- $deployStatus := (index ($deploy | default dict) "status" | default dict) }}
   {{- $available := (index $deployStatus "availableReplicas" | default 0 | int) }}
-  {{- if and (ne $current "") (semverCompare (printf ">= %s" $minVersion) $current) (gt $available 0) }}
+  {{- if gt $available 0 }}
   {{/* musthave on spec.plugins APPENDS to the list. mustonlyhave would evict every other
        console plugin on the cluster, including ACM's — never change this complianceType. */}}
   - complianceType: musthave

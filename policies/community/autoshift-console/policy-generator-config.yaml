@@ -44,3 +44,16 @@ policies:
       - name: policy-autoshift-console
     manifests:
       - path: manifests/console-enable.yaml
+  # 3) Availability (inform) — reports when the plugin has no running pods; (1) is satisfied by the
+  #    Deployment object alone and (2) goes quiet until pods are up.
+  - name: policy-autoshift-console-available
+    remediationAction: inform
+    manifests:
+      - path: test/autoshift-console-available.yaml
+    customMessage:
+      noncompliant: >-
+        AutoShift console plugin has no available pods. The image tag is derived from this cluster's
+        OpenShift minor, so the usual causes are that no plugin build is published for that minor,
+        or that the image is not mirrored in a disconnected environment. Check the Deployment and
+        pod events in the autoshift-console namespace, or set autoshift.io/autoshift-console to
+        'false' to stop requesting the plugin. This is expected briefly while pods roll out.

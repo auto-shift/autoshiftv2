@@ -1,21 +1,25 @@
 object-templates-raw: |
-  {{- /* The console plugin bundles React 18 / PatternFly 6. OCP 4.20-4.21 consoles share React 17,
-         so the plugin is silently skipped there — the pod runs, serves assets, and nothing appears.
-         Gate on the ACTUAL running version (ClusterVersion history) rather than the desired
-         autoshift.io/openshift-version label, so a cluster mid-upgrade is judged on what it is
-         running now. Same semverCompare approach as the openshift-upgrade policy. */}}
-  {{- $minVersion := "{{hub- $cmv := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}{{hub- $cfgv := (index ($cmv | default dict) "data" | default dict) hub}}{{hub- $ymlv := (index $cfgv "config" | default "" | fromYaml | default dict) hub}}{{hub- $consolev := (index $ymlv "autoshiftConsole" | default dict) hub}}{{hub index $consolev "minOpenShiftVersion" | default "4.22.0-0" hub}}" }}
+  {{- /* The tag names the OpenShift minor it targets, so it comes from the ACTUAL running version
+         (ClusterVersion history), not the desired autoshift.io/openshift-version label. A minor
+         with no published build has no tag; policy-autoshift-console-available reports the
+         failed pull. */}}
   {{- $cvStatus := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
   {{- $current := "" }}
   {{- range $h := (index $cvStatus "history" | default list) }}
   {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}{{- $current = (index $h "version") }}{{- end }}
   {{- end }}
-  {{- if and (ne $current "") (semverCompare (printf ">= %s" $minVersion) $current) }}
+  {{- if ne $current "" }}
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $config := (index ($cm | default dict) "data" | default dict) hub}}
   {{hub- $configYaml := (index $config "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $console := (index $configYaml "autoshiftConsole" | default dict) hub}}
-  {{hub- $image := (index $console "image" | default "quay.io/autoshift/autoshift-console-plugin:ocp4.22") hub}}
+  {{hub- $repository := (index $console "repository" | default "quay.io/autoshift/autoshift-console-plugin") hub}}
+  {{hub- $imageOverride := (index $console "image" | default "") hub}}
+  {{- /* An explicit config.autoshiftConsole.image wins, so a digest can be pinned in production. */ -}}
+  {{- $image := "{{hub $imageOverride hub}}" }}
+  {{- if eq $image "" }}
+  {{-   $image = printf "%s:ocp%s" "{{hub $repository hub}}" (regexFind "^[0-9]+[.][0-9]+" $current) }}
+  {{- end }}
   {{hub- $replicas := (index $console "replicas" | default 2) hub}}
   - complianceType: musthave
     objectDefinition:
@@ -74,7 +78,7 @@ object-templates-raw: |
           spec:
             containers:
               - name: autoshift-console
-                image: {{hub $image hub}}
+                image: {{ $image }}
                 ports:
                   - containerPort: 9443
                     protocol: TCP

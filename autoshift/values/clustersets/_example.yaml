@@ -499,20 +499,21 @@ hubClusterSets:
       # =======================================================================
       # AutoShift Console Plugin (hub only; ENABLE flag is the autoshift-console label).
       # Read-only OpenShift console plugin that surfaces AutoShift clustersets, the resolution
-      # chain behind each setting, and policy compliance. Both keys are optional.
+      # chain behind each setting, and policy compliance. All keys are optional.
       # =======================================================================
       autoshiftConsole:
         # Built per OpenShift minor — the console supplies react and react-router as shared
-        # singletons, so one bundle cannot span releases. The tag names the minor it targets and
-        # there is no bare :latest. Pin a digest in production.
-        image: 'quay.io/autoshift/autoshift-console-plugin:ocp4.22'
+        # singletons, so one bundle cannot span releases. The policy appends ':ocp<minor>' using
+        # the cluster's ACTUAL running version, so a cluster always pulls its own build and a
+        # minor with no published build fails the pull rather than rendering nothing. Which minors
+        # are published is whatever is tagged in the repository:
+        # https://quay.io/repository/autoshift/autoshift-console-plugin?tab=tags
+        repository: 'quay.io/autoshift/autoshift-console-plugin'
         replicas: 2
-        # Minimum OpenShift version the plugin can run on. The policy reads the cluster's ACTUAL
-        # running version and deploys nothing below this, because an incompatible console skips
-        # the plugin silently — the pod runs and serves assets but nothing appears in the UI.
-        # Must match @console/pluginAPI in the plugin's package.json; ACM templates cannot read
-        # that file, so the two are kept in step by CI rather than derived.
-        minOpenShiftVersion: '4.22.0-0'
+        # Optional. Overrides repository and the derived tag outright — set it to pin a digest in
+        # production. Pinning one tag across a fleet spanning minors deploys the wrong bundle to
+        # all but one of them.
+        image: ''
     labels:
       # =======================================================================
       # Core Configuration
@@ -550,7 +551,7 @@ hubClusterSets:
 
       # =======================================================================
       # AutoShift Console Plugin (hub only — reads hub-side AutoShift ConfigMaps)
-      # Image and replicas are set under config.autoshiftConsole above.
+      # Repository and replicas are set under config.autoshiftConsole.
       # =======================================================================
       autoshift-console: 'true'                     # AutoShift section in the Fleet management perspective
 
