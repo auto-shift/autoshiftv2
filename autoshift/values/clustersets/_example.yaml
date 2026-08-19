@@ -129,9 +129,9 @@ hubClusterSets:
               mirror: 'registry.example.com:5000/hashicorp'
         catalogs:
           - source: redhat-operators
-            image: 'registry.example.com:5000/redhat/redhat-operator-index:v4.20'
+            image: 'registry.example.com:5000/redhat/redhat-operator-index:v4.22'
           - source: certified-operators
-            image: 'registry.example.com:5000/redhat/certified-operator-index:v4.20'
+            image: 'registry.example.com:5000/redhat/certified-operator-index:v4.22'
         useIDMS: true
         disableDefaultCatalogs: true
       # =======================================================================
@@ -462,9 +462,11 @@ hubClusterSets:
       # =======================================================================
       gitops:
         # Does THIS hub render policies via the policy-generator CMP? Overrides the fleet-wide
-        # policyGenerator in global.yaml for this hub's Argo CD. GIT/source hubs set true (installs the
-        # CMP sidecar in the infra ArgoCD repo-server); OCI-only hubs set false. Read only from the
-        # self-managed hub clusterset (self-managed: 'true').
+        # policyGenerator in global.yaml for this hub's Argo CD. GIT/source hubs MUST set true (it
+        # installs the CMP sidecar in the infra ArgoCD repo-server, without which PolicyGenerator
+        # dirs never render); OCI-only hubs should set false, though it is only a recommendation —
+        # true merely configures a sidecar nothing calls. Read only from the self-managed hub
+        # clusterset (self-managed: 'true').
         # policyGenerator: true
         #
         # Gitops namespace for the WHOLE deployment (default openshift-gitops). Overrides gitopsNamespace.
@@ -588,7 +590,7 @@ hubClusterSets:
       # DERIVED — do not set: cluster-type ('hub' for hubClusterSets entries, 'spoke' for
       # managedClusterSets entries). Injected by the top-level chart, so a value set here is
       # overwritten. A self-managed hub is cluster-type 'hub' plus self-managed 'true'.
-      openshift-version: '4.20.29'       # desired OCP version: operator-catalog alignment (tooling) + upgrade target (openshift-upgrade policy)
+      openshift-version: '4.22.8'       # desired OCP version: operator-catalog alignment (tooling) + upgrade target (openshift-upgrade policy)
       policy-namespace: ''               # hub only — overrides the ACM policy namespace
 
       # =======================================================================
@@ -598,7 +600,7 @@ hubClusterSets:
       # controlled by clusterset membership — roll out in waves; never enable on a populated clusterset.
       # =======================================================================
       openshift-upgrade: 'false'                    # opt cluster in to Day-2 platform upgrades
-      openshift-upgrade-channel: 'stable-4.20'      # ClusterVersion channel
+      openshift-upgrade-channel: 'stable-4.22'      # ClusterVersion channel
       openshift-upgrade-upstream: 'https://api.openshift.com/api/upgrades_info/v1/graph'  # OSUS graph (local URL when disconnected)
 
       # =======================================================================
@@ -692,7 +694,7 @@ hubClusterSets:
       # =======================================================================
       metallb: 'false'
       metallb-subscription-name: metallb-operator
-      metallb-version: 'metallb-operator.v4.20.0-202602021426'
+      metallb-version: 'metallb-operator.v4.22.0-202607272042'
       metallb-source: redhat-operators
       metallb-source-namespace: openshift-marketplace
       metallb-channel: stable
@@ -818,12 +820,12 @@ hubClusterSets:
       # =======================================================================
       lvm: 'false'
       lvm-subscription-name: lvms-operator
-      lvm-version: 'lvms-operator.v4.20.0'
+      lvm-version: 'lvms-operator.v4.22.0'
       lvm-default: 'true'                   # Set as default StorageClass
       lvm-fstype: xfs                        # 'xfs' or 'ext4'
       lvm-size-percent: 90                   # Percentage of VG for thinpool
       lvm-overprovision-ratio: 10
-      lvm-channel: stable-4.20
+      lvm-channel: stable-4.22
       lvm-source: redhat-operators
       lvm-source-namespace: openshift-marketplace
 
@@ -832,7 +834,7 @@ hubClusterSets:
       # =======================================================================
       local-storage: 'false'
       local-storage-subscription-name: local-storage-operator
-      local-storage-version: 'local-storage-operator.v4.20.0-202602032049'
+      local-storage-version: 'local-storage-operator.v4.22.0-202607272042'
       local-storage-channel: stable
       local-storage-source: redhat-operators
       local-storage-source-namespace: openshift-marketplace
@@ -842,7 +844,7 @@ hubClusterSets:
       # =======================================================================
       odf: 'false'
       odf-subscription-name: odf-operator
-      odf-version: 'odf-operator.v4.20.5-rhodf'
+      odf-version: 'odf-operator.v4.22.1-rhodf'
       odf-multi-cloud-gateway: standalone    # 'standalone' (noobaa only) or 'standard' (full ODF)
       odf-noobaa-pvpool: ''                  # Use PV pool for noobaa backing store
       odf-noobaa-store-size: ''              # e.g., '500Gi' - size of noobaa backing store
@@ -855,7 +857,7 @@ hubClusterSets:
       odf-resource-profile: balanced         # 'lean', 'balanced', or 'performance'
       odf-default-storageclass: 'ocs-storagecluster-ceph-rbd'  # Sets as default StorageClass
       odf-csi-all-nodes: 'false'            # 'true' to run CSI plugins on all nodes (masters, infra, storage)
-      odf-channel: stable-4.20
+      odf-channel: stable-4.22
       odf-source: redhat-operators
       odf-source-namespace: openshift-marketplace
 
@@ -881,7 +883,7 @@ hubClusterSets:
       nmstate-channel: stable
       nmstate-source: redhat-operators
       nmstate-source-namespace: openshift-marketplace
-      nmstate-version: 'kubernetes-nmstate-operator.4.20.0-202601292039'
+      nmstate-version: 'kubernetes-nmstate-operator.4.22.0-202607280824'
       #
       # =======================================================================
       # Advanced Cluster Security
@@ -1043,7 +1045,7 @@ hubClusterSets:
       virt: 'false'
       virt-subscription-name: kubevirt-hyperconverged
       virt-channel: stable
-      virt-version: 'kubevirt-hyperconverged-operator.v4.20.6'
+      virt-version: 'kubevirt-hyperconverged-operator.v4.22.2'
       virt-source: redhat-operators
       virt-source-namespace: openshift-marketplace
 
@@ -1052,7 +1054,7 @@ hubClusterSets:
       # =======================================================================
       mtv: 'false'
       mtv-subscription-name: mtv-operator
-      mtv-channel: release-v2.9
+      mtv-channel: release-v2.12
       mtv-source: redhat-operators
       mtv-source-namespace: openshift-marketplace
       mtv-version: 'mtv-operator.v2.9.6'
@@ -1065,7 +1067,7 @@ hubClusterSets:
       node-feature-discovery-channel: stable
       node-feature-discovery-source: redhat-operators
       node-feature-discovery-source-namespace: openshift-marketplace
-      node-feature-discovery-version: 'nfd.4.20.0-202601292039'
+      node-feature-discovery-version: 'nfd.4.22.0-202607272042'
 
       # =======================================================================
       # SR-IOV Network Operator

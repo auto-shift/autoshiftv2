@@ -445,13 +445,15 @@ The `_validate-cluster-install.tpl` validates at Helm render time:
 
 ## Testing
 
-```bash
-# Render nmstate chart
-helm template test policies/stable/nmstate/ -f policies/nmstate/values.yaml
+This is a PolicyGenerator directory, not a Helm chart — there is no `values.yaml` to pass. Config
+reaches the policy at enforcement time through the cluster's `rendered-config` ConfigMap, built from
+`autoshift/values/`, so the suite seeds that from the `_example*.yaml` files rather than taking a
+values file on the command line.
 
-# Render with cluster values
-helm template test policies/stable/nmstate/ -f policies/nmstate/values.yaml \
-  -f autoshift/values/global.yaml \
-  -f autoshift/values/clustersets/hub.yaml \
-  -f autoshift/values/clusters/test-cluster.yaml
+```bash
+# Render every policy, resolve hub and spoke templates, check the label contract. What CI runs.
+cd tools && go test -tags integration ./internal/resolver/...
 ```
+
+Per-cluster nmstate config is exercised through `autoshift/values/clusters/_example-cluster-install-*.yaml`
+— one managed-cluster profile is generated per file, so adding one adds a profile automatically.
