@@ -107,25 +107,21 @@ servicemesh3-ambient: 'true'
 - **ServiceMonitor**: Prometheus scraping for istiod metrics
 - **PodMonitor**: Prometheus scraping for ZTunnel metrics
 
-## Values Configuration
+## Configuration
 
-Key values in `policies/servicemesh3-ambient/values.yaml`:
+This is a PolicyGenerator directory — there is no `values.yaml`. Configuration comes from
+`autoshift.io/*` labels, read at enforcement time by hub templates in `manifests/`:
 
-```yaml
-servicemesh3operator:
-  namespace: openshift-operators
-  istioNamespace: istio-system
-  istioCNINamespace: istio-cni
-  ztunnelNamespace: ztunnel
-  istioVersion: v1.28-latest
-  updateStrategy: InPlace
-  tempoNamespace: tracing-system
-  pilot:
-    cpuRequest: "100m"
-    memoryRequest: "256Mi"
-  tempo:
-    storageSize: 10Gi
-```
+| Label | Default | Effect |
+|---|---|---|
+| `servicemesh3-ambient` | `false` | Gates the Placement — nothing deploys unless `true` |
+| `servicemesh3operator-istio-version` | `v1.28-latest` | `version` on the Istio and IstioCNI CRs |
+| `servicemesh3operator-tempo` | `false` | Wires Kiali to Tempo for distributed tracing |
+
+Set them in a clusterset or per-cluster values file; see `autoshift/values/clustersets/_example.yaml`.
+
+The mesh namespaces (`istio-system`, `istio-cni`, `ztunnel`) are fixed in `manifests/` and are not
+configurable — the manifests reference them directly, and the operator expects `ztunnel` by name.
 
 ## Using the Mesh
 

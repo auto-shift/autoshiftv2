@@ -19,7 +19,12 @@ object-templates-raw: |
   {{- $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) }}
   {{- $secretSourceNs := (index $ci "secretSourceNamespace" | default "cluster-install-secrets") }}
   {{- $pullSecretRef := (index $ci "pullSecretRef") }}
-  {{- $managedClusterSet := (printf "%s${CLUSTER_SET_SUFFIX}" (index $config "clusterSet" | default "default")) }}
+  {{- /* config.versionTag pins the clusterset to a specific release; otherwise this
+         deployment's own suffix is used. cluster-set-assignment applies the identical rule. */ -}}
+  {{- $versionTag := (printf "%v" (index $config "versionTag" | default "")) }}
+  {{- $csSuffix := "${CLUSTER_SET_SUFFIX}" }}
+  {{- if ne $versionTag "" }}{{- $csSuffix = printf "-%s" ($versionTag | replace "." "-" | replace "/" "-" | lower) }}{{- end }}
+  {{- $managedClusterSet := (printf "%s%s" (index $config "clusterSet" | default "default") $csSuffix) }}
   {{- $aws := (index $config "aws" | default dict) }}
   {{- $region := (index $aws "region") }}
   {{- $credentialRef := (index $aws "credentialRef") }}
@@ -41,7 +46,9 @@ object-templates-raw: |
   {{- $cpSize := (index $cpRootVolume "size" | default 100 | toInt) }}
   {{- $cpVolType := (index $cpRootVolume "type" | default "gp3") }}
   {{- $workers := (index $aws "workers" | default dict) }}
-  {{- $workerReplicas := (index $workers "replicas" | default 3 | toInt) }}
+  {{- /* `default` treats 0 as empty, so an explicit 0 would become 3 and SNO would be unreachable */ -}}
+  {{- $workerReplicas := 3 }}
+  {{- if hasKey $workers "replicas" }}{{- $workerReplicas = (index $workers "replicas" | toInt) }}{{- end }}
   {{- $wkInstanceType := (index $workers "instanceType" | default "m5.xlarge") }}
   {{- $wkRootVolume := (index $workers "rootVolume" | default dict) }}
   {{- $wkIops := (index $wkRootVolume "iops" | default 2000 | toInt) }}

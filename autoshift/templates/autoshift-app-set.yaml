@@ -60,6 +60,14 @@ spec:
       - path: 'policies/stable/*/kustomization.yaml'
       - path: 'policies/certified/*/kustomization.yaml'
       - path: 'policies/community/*/kustomization.yaml'
+      # The files-generator glob crosses '/', so the patterns above also match nested
+      # kustomization.yaml (manifests/, operator-install/, ...). Those basenames collide, and
+      # Argo CD skips EVERY Application whose name collides — including a real policy that
+      # happens to share a nested dir name. Exclude anything below the policy directory.
+      - path: 'policies/*/*/*/kustomization.yaml'
+        exclude: true
+      - path: 'policies/*/*/*/*/kustomization.yaml'
+        exclude: true
       {{- if .Values.excludePolicies }}
       {{- range .Values.excludePolicies }}
       - path: 'policies/*/{{ . }}/kustomization.yaml'
@@ -106,6 +114,12 @@ spec:
       - path: 'policies/stable/*/Chart.yaml'
       - path: 'policies/certified/*/Chart.yaml'
       - path: 'policies/community/*/Chart.yaml'
+      # Same glob caveat as the kustomization generator above: the pattern crosses '/', so a
+      # subchart (charts/*/Chart.yaml) would collide on basename and silently drop a policy.
+      - path: 'policies/*/*/*/Chart.yaml'
+        exclude: true
+      - path: 'policies/*/*/*/*/Chart.yaml'
+        exclude: true
       # Config generators are deployed by dedicated handling, not this ApplicationSet.
       - path: 'policies/stable/cluster-config-maps/Chart.yaml'
         exclude: true

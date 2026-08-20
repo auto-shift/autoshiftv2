@@ -15,7 +15,12 @@ object-templates-raw: |
   {{- $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) }}
   {{- $secretSourceNs := (index $ci "secretSourceNamespace" | default "cluster-install-secrets") }}
   {{- $pullSecretRef := (index $ci "pullSecretRef") }}
-  {{- $managedClusterSet := (printf "%s${CLUSTER_SET_SUFFIX}" (index $config "clusterSet" | default "default")) }}
+  {{- /* config.versionTag pins the clusterset to a specific release; otherwise this
+         deployment's own suffix is used. cluster-set-assignment applies the identical rule. */ -}}
+  {{- $versionTag := (printf "%v" (index $config "versionTag" | default "")) }}
+  {{- $csSuffix := "${CLUSTER_SET_SUFFIX}" }}
+  {{- if ne $versionTag "" }}{{- $csSuffix = printf "-%s" ($versionTag | replace "." "-" | replace "/" "-" | lower) }}{{- end }}
+  {{- $managedClusterSet := (printf "%s%s" (index $config "clusterSet" | default "default") $csSuffix) }}
   {{- $vsphere := (index $config "vsphere" | default dict) }}
   {{- $credentialRef := (index $vsphere "credentialRef") }}
   {{- $certRef := (index $vsphere "certificatesRef" | default dict) }}
@@ -45,7 +50,9 @@ object-templates-raw: |
   {{- $cpMem := (index $controlPlane "memoryMB" | default 16384 | toInt) }}
   {{- $cpDisk := (index (index $controlPlane "osDisk" | default dict) "diskSizeGB" | default 120 | toInt) }}
   {{- $workers := (index $vsphere "workers" | default dict) }}
-  {{- $wkReplicas := (index $workers "replicas" | default 3 | toInt) }}
+  {{- /* `default` treats 0 as empty, so an explicit 0 would become 3 and SNO would be unreachable */ -}}
+  {{- $wkReplicas := 3 }}
+  {{- if hasKey $workers "replicas" }}{{- $wkReplicas = (index $workers "replicas" | toInt) }}{{- end }}
   {{- $wkCores := (index $workers "coresPerSocket" | default 2 | toInt) }}
   {{- $wkCpus := (index $workers "cpus" | default 8 | toInt) }}
   {{- $wkMem := (index $workers "memoryMB" | default 24576 | toInt) }}
