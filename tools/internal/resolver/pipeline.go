@@ -399,6 +399,11 @@ func RunPipeline(
 			`key: 'autoshift.io/`,
 			`key: "autoshift.io/`,
 			`key: autoshift.io/`, // unquoted: kustomize/PolicyGenerator placement predicates
+			// Labels read off a ManagedCluster fetched with `lookup`, rather than from the
+			// hub-template .ManagedClusterLabels context. cluster-install does this to read
+			// the runtime-stamped autoshift.io/owning-namespace. Without this pattern such a
+			// label is consumed but reported neither missing nor orphaned.
+			`dig "metadata" "labels" "autoshift.io/`,
 		} {
 			remaining := rawYAML
 			for {

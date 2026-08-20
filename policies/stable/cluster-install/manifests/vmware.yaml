@@ -50,7 +50,9 @@ object-templates-raw: |
   {{- $cpMem := (index $controlPlane "memoryMB" | default 16384 | toInt) }}
   {{- $cpDisk := (index (index $controlPlane "osDisk" | default dict) "diskSizeGB" | default 120 | toInt) }}
   {{- $workers := (index $vsphere "workers" | default dict) }}
-  {{- $wkReplicas := (index $workers "replicas" | default 3 | toInt) }}
+  {{- /* `default` treats 0 as empty, so an explicit 0 would become 3 and SNO would be unreachable */ -}}
+  {{- $wkReplicas := 3 }}
+  {{- if hasKey $workers "replicas" }}{{- $wkReplicas = (index $workers "replicas" | toInt) }}{{- end }}
   {{- $wkCores := (index $workers "coresPerSocket" | default 2 | toInt) }}
   {{- $wkCpus := (index $workers "cpus" | default 8 | toInt) }}
   {{- $wkMem := (index $workers "memoryMB" | default 24576 | toInt) }}

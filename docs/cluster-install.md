@@ -711,6 +711,35 @@ hub1:
 
 ## Single Node OpenShift (SNO)
 
+The setting differs by platform. Baremetal installs go through SiteConfig and use
+`controlPlaneAgents`. AWS and vSphere installs go through Hive and use replica counts.
+
+### AWS and vSphere (Hive)
+
+Set `controlPlane.replicas: 1` and `workers.replicas: 0` under the platform block:
+
+```yaml
+      aws:                       # or vmware:
+        controlPlane:
+          replicas: 1
+          instanceType: m5.2xlarge
+        workers:
+          replicas: 0
+```
+
+The single node runs the control plane and all workloads, so size the control plane
+accordingly — `m5.2xlarge` is the practical minimum on AWS.
+
+SNO also provisions into a single availability zone, so it needs one NAT gateway and
+one Elastic IP rather than one per zone. That matters on sandbox AWS accounts, where
+the Elastic IP quota is commonly 5 and a multi-zone install fails partway through
+network creation with `AddressLimitExceeded`.
+
+`workers.replicas: 0` produces a worker MachinePool with 0 replicas. That is expected
+and harmless: no MachineSets scale up.
+
+### Baremetal (SiteConfig)
+
 For single-node clusters, set `controlPlaneAgents: 1` and define one host:
 
 ```yaml
