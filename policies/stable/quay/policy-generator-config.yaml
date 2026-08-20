@@ -94,6 +94,21 @@ policies:
     manifests:
       - path: test/quay-registry-ready.yaml
   # 4) Console link + registry host ConfigMap. Waits on the registry actually serving.
+  # TLS status (inform) — config.quay.tls names an issuer, but the deploy policy emits the
+  # Certificate only when that issuer exists and leaves tls managed while the secret is absent.
+  - name: policy-quay-tls-issuer
+    remediationAction: inform
+    dependencies:
+      - name: policy-quay-test
+    manifests:
+      - path: test/quay-tls-issuer.yaml
+    customMessage:
+      noncompliant: >-
+        Quay is not serving the cert-manager certificate you configured. Either the issuer named in
+        config.quay.tls.certificate.issuerRef does not exist on this cluster, or the Certificate has
+        not produced its secret yet. Until it does, the tls component stays Operator-managed and Quay
+        serves a self-signed certificate. Check the ClusterIssuer or Issuer exists, then the
+        Certificate quay-registry-tls in quay-enterprise. Expected briefly during first issuance.
   - name: policy-quay-configure
     dependencies:
       - name: policy-quay-test

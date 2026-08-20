@@ -9,6 +9,131 @@ databases through CloudNativePG. Label and `config.quay` reference lives in
 Enable it with `quay: 'true'` in a clusterset or cluster values file. Everything else is optional
 and the shipped defaults reproduce a single all-managed registry.
 
+## Before you start
+
+Everything except credentials is declared in values files. You create by hand only what carries a
+secret, plus the operators Quay depends on.
+
+| You need | When | How |
+|---|---|---|
+| Object storage | Always | `odf: 'true'` with `odf-multi-cloud-gateway: 'standalone'` for the object gateway only, `odf: 'true'` alone for full ODF, or bring your own S3-compatible bucket and set `components.objectstorage: false` |
+| CloudNativePG | `quay-db-mode: managed` | `cloudnative-pg: 'true'` |
+| cert-manager and an issuer | Only if you set `config.quay.tls` | `cert-manager: 'true'`. The policy emits the `Certificate` only when the named issuer already exists. `policy-quay-tls-issuer` reports if it does not |
+| ODF | `quay-db-backups: 'true'` | Backups go to a NooBaa bucket through an ObjectBucketClaim |
+
+## Getting started
+
+### 1. Pick a database mode
+
+`autoshift.io/quay-db-mode` decides which policies land on the cluster:
+
+| Mode | Runs PostgreSQL | Also needs |
+|---|---|---|
+| `bundled` (default) | The Quay Operator | Nothing |
+| `managed` | CloudNativePG, as `quay-db` and `clair-db` | `cloudnative-pg: 'true'`, and unlocks `quay-db-backups` |
+| `external` | You | `DB_URI`, supplied in the Secret in step 3 |
+
+### 2. Decide where images are stored
+
+The Quay Operator manages object storage by default. Managed storage needs the `ObjectBucketClaim`
+API, which is provided by NooBaa or by Red Hat OpenShift Data Foundation, so the full Ceph stack is
+not required.
+
+The lighter option is the object gateway on its own:
+
+```yaml
+labels:
+  odf: 'true'
+  odf-multi-cloud-gateway: 'standalone'
+```
+
+That deploys a NooBaa-only `StorageCluster` with no Ceph block or file storage. Set
+`odf-multi-cloud-gateway: 'standard'` for full OpenShift Data Foundation instead. The two are
+entitled differently, so pick the one your subscription covers. Either satisfies Quay, because both
+create `ocs-storagecluster`, which is what the readiness gate Quay depends on checks.
+
+To use your own bucket instead, set `components.objectstorage: false` and supply
+`DISTRIBUTED_STORAGE_CONFIG` in the Secret in step 3. Managed and unmanaged components are explained
+in [Introduction to the Red Hat Quay Operator](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/deploying_the_red_hat_quay_operator_on_openshift_container_platform/operator-concepts).
+
+### 3. Create the configuration Secret
+
+Non-sensitive keys go in `config.quay.config` in your values file. Anything secret goes in a Secret
+you create on the cluster, because values files live in git. AutoShift merges that Secret into the
+config bundle last, so it wins over everything declared in values.
+
+This is where object-storage credentials, `DB_URI` for `quay-db-mode: external`, and OIDC client
+secrets belong.
+
+`policy-quay-deploy` creates the `quay-enterprise` namespace, so create it yourself first if you
+want the Secret in place before Quay rolls out. The policy adopts an existing namespace.
+
+```bash
+oc create namespace quay-enterprise
+
+cat > /tmp/quay-secrets.yaml <<'EOF'
+DISTRIBUTED_STORAGE_CONFIG:
+  default:
+    - RadosGWStorage
+    - access_key: '<key>'
+      secret_key: '<secret>'
+      bucket_name: 'quay-registry'
+      hostname: 's3.example.com'
+      is_secure: true
+      port: 443
+      storage_path: /datastorage/registry
+DISTRIBUTED_STORAGE_PREFERENCE:
+  - default
+EOF
+
+oc create secret generic quay-config-extra -n quay-enterprise \
+  --from-file=config.yaml=/tmp/quay-secrets.yaml
+rm -f /tmp/quay-secrets.yaml
+```
+
+Then point at it from your values file:
+
+```yaml
+config:
+  quay:
+    configSecretRef:
+      name: quay-config-extra
+      namespace: quay-enterprise
+      key: config.yaml
+```
+
+The file is a `config.yaml` fragment, not a whole configuration. Field names and accepted values are
+in [Required configuration fields](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-fields-required-intro).
+
+### 4. Enable Quay
+
+```yaml
+labels:
+  quay: 'true'
+  # only when quay-db-mode is managed
+  cloudnative-pg: 'true'
+  quay-db-mode: 'managed'
+```
+
+Everything else is optional, and the shipped defaults produce a single all-managed registry.
+
+### 5. Watch it come up
+
+```bash
+oc get policy -n policies-<release> | grep -E 'quay|cnpg'
+oc get quayregistry registry -n quay-enterprise
+oc get pods -n quay-enterprise
+oc get route registry-quay -n quay-enterprise -o jsonpath='{.spec.host}{"\n"}'
+```
+
+`policy-quay-test` stays NonCompliant until the `QuayRegistry` reports available with every
+component created, so it is the one to watch.
+
+### 6. Sign in
+
+No user exists yet. Creating the first one is an API-only operation in Red Hat Quay, so it happens
+either through OIDC or through a one-time API call. Both paths are in [No Jobs](#no-jobs).
+
 ## Policies
 
 | Policy | Placement | Purpose |
@@ -19,6 +144,7 @@ and the shipped defaults reproduce a single all-managed registry.
 | `policy-quay-deploy` | `quay` + `quay-db-mode` not `managed` | Config bundle, certificate, `QuayRegistry` |
 | `policy-quay-deploy-cnpg` | `quay` + `quay-db-mode: managed` | Same manifests, additionally gated on database readiness |
 | `policy-quay-test` | `quay` | Registry readiness gate (inform) |
+| `policy-quay-tls-issuer` | `quay` | Reports when cert-manager TLS was requested but is not in effect (inform) |
 | `policy-quay-configure` | `quay` | Console link and registry host ConfigMap |
 | `policy-cnpg-quay-backup` | `quay` + `quay-db-mode: managed` + `quay-db-backups` + `odf` | Scheduled backups to a NooBaa bucket |
 
@@ -159,3 +285,13 @@ account, before upgrading a registry whose only administrator was created by the
 > Switching `quay-db-mode` from `bundled` to `managed` provisions empty databases. It is a
 > migration, not a live cutover: Red Hat Quay will not start against an empty schema that holds no
 > registry data. Move the data with PostgreSQL tooling, or make the switch on a new registry.
+
+
+## Red Hat documentation
+
+- [Deploying the Red Hat Quay Operator on OpenShift Container Platform](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/deploying_the_red_hat_quay_operator_on_openshift_container_platform/index)
+- [Introduction to the Red Hat Quay Operator](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/deploying_the_red_hat_quay_operator_on_openshift_container_platform/operator-concepts), for managed compared with unmanaged components and the config bundle Secret
+- [Configure Red Hat Quay](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/index)
+- [Required configuration fields](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-fields-required-intro), including object storage and database fields
+- [Automation configuration options](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-preconfigure-automation-intro), for `SUPER_USERS`, `FEATURE_USER_INITIALIZE` and `BROWSER_API_CALLS_XHR_ONLY`
+- [Configuring OIDC for Red Hat Quay](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/configuring-oidc-authentication)
