@@ -500,7 +500,6 @@ hubClusterSets:
         # environment variable. It only enables the platform side: scanning also needs a VM agent
         # installed inside each guest, which is in-guest software AutoShift does not manage.
         vmScanning: false
-        defaultPolicies: false              # deploy the baseline SecurityPolicy CRs
         configAsCode: ''                    # Enabled | Disabled — Central Config-as-Code component
         telemetry: false                    # Central telemetry reporting
         notifierSecretsEncryption: false    # encrypt notifier secrets at rest
@@ -533,15 +532,13 @@ hubClusterSets:
           bypass: BreakGlassAnnotation      # BreakGlassAnnotation | Disabled
           replicas: 3                       # admission control pod replicas
           failurePolicy: Ignore             # Ignore (fail-open, safe) | Fail (fail-closed, strict)
+        # The provider itself is the acs-auth-provider label; these tune it.
         auth:
-          provider: openshift               # '' disables the declarative auth config
           minimumRole: None                 # minimum role for authenticated users
           adminGroup: cluster-admins        # group mapped to the Admin role
-        # Where Central lives. A hub with deploy:false runs SecuredCluster only and
-        # registers with someone else's Central — the model where one Central serves the
-        # fleet, or where spoke hubs each run one and the hub-of-hubs does not.
+        # Where Central lives. Whether this cluster runs one is the acs-central LABEL,
+        # because it decides which policies are placed; this is only its address.
         central:
-          deploy: true                      # false = do not deploy Central on this cluster
           endpoint: ''                      # blank = discover Central's route on this hub
         # How secured clusters authenticate to Central for the first time.
         # Mode itself is the acs-registration LABEL, because it selects which policies are
@@ -884,6 +881,13 @@ hubClusterSets:
       acs: 'false'                           # enable toggle (placement gate)
       # crs (default, also when unset) | manual | initBundle (legacy). Selects which
       # registration policies are placed on the cluster.
+      # Whether this cluster runs Central. 'false' means SecuredCluster only, registering
+      # with an external Central named by config.acs.central.endpoint.
+      acs-central: 'true'
+      # openshift (default) enables the declarative auth config; 'none' skips it entirely.
+      acs-auth-provider: 'openshift'
+      # Deploy the baseline SecurityPolicy resources. Hub only, opt-in.
+      acs-default-policies: 'false'
       acs-registration: 'crs'
       acs-subscription-name: rhacs-operator
       acs-version: 'rhacs-operator.v4.11.2'

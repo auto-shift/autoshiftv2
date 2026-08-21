@@ -2,8 +2,6 @@ object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $acs := (index $config "acs" | default dict) hub}}
-  {{hub- $central := (index $acs "central" | default dict) hub}}
-  {{hub- $centralDeploy := (index $central "deploy" | default true) hub}}
   {{hub- $scannerV4 := (index $acs "scannerV4" | default "Enabled") hub}}
   {{hub- $egress := (index $acs "egressConnectivity" | default "Online") hub}}
   {{hub- $networkPolicies := (index $acs "networkPolicies" | default "") hub}}
@@ -21,8 +19,7 @@ object-templates-raw: |
   {{hub- $dbSize := (index $db "size" | default "") hub}}
   {{hub- $dbStorageClass := (index $db "storageClassName" | default "") hub}}
   {{hub- $auth := (index $acs "auth" | default dict) hub}}
-  {{hub- $authProvider := (index $auth "provider" | default "openshift") hub}}
-  {{hub- if $centralDeploy hub}}
+  {{hub- $authProvider := (index .ManagedClusterLabels "autoshift.io/acs-auth-provider" | default "openshift") hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: platform.stackrox.io/v1alpha1
@@ -63,7 +60,7 @@ object-templates-raw: |
           monitoring:
             exposeEndpoint: '{{hub $exposeMetrics hub}}'
           {{hub- end hub}}
-          {{hub- if $authProvider hub}}
+          {{hub- if ne $authProvider "none" hub}}
           declarativeConfiguration:
             configMaps:
               - name: acs-declarative-configs
@@ -130,4 +127,3 @@ object-templates-raw: |
             {{hub- end hub}}
           {{hub- end hub}}
         {{hub- end hub}}
-  {{hub- end hub}}

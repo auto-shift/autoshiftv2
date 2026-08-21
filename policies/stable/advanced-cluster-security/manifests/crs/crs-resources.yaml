@@ -3,7 +3,6 @@ object-templates-raw: |
   {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $acs := (index $config "acs" | default dict) hub}}
   {{hub- $reg := (index $acs "registration" | default dict) hub}}
-  {{hub- $centralDeploy := (index (index $acs "central" | default dict) "deploy" | default true) hub}}
   {{hub- $validFor := (index $reg "validFor" | default "8760h") hub}}
   {{hub- $maxClusters := (index $reg "maxClusters" | default 0) hub}}
   {{hub- $subName := (index .ManagedClusterLabels "autoshift.io/acs-subscription-name" | default "rhacs-operator") hub}}
@@ -12,7 +11,6 @@ object-templates-raw: |
   {{hub- $acsVersion := (index .ManagedClusterLabels "autoshift.io/acs-version" | default $installedCSV) hub}}
   {{hub- $roxctlTag := ($acsVersion | replace "rhacs-operator.v" "") hub}}
   {{hub- $roxctlImage := (index $reg "roxctlImage" | default (printf "registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9:%s" $roxctlTag)) hub}}
-  {{hub- if $centralDeploy hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -109,8 +107,11 @@ object-templates-raw: |
                   echo "skipping generation"
                   exit 0
                 fi
+                # Central tracks CRSs by name and rejects a duplicate, and deleting the
+                # Secret here does not remove Central's record. A stable name would make a
+                # re-mint impossible after the Secret is lost, so stamp the name.
                 roxctl -e central.stackrox.svc:443 --insecure-skip-tls-verify \
-                  central crs generate autoshift \
+                  central crs generate "autoshift-$(date -u +%Y%m%d%H%M%S)" \
                   --valid-for '{{hub $validFor hub}}' \
                   --max-clusters '{{hub $maxClusters | toInt hub}}' \
                   --output /shared/crs.yaml
@@ -140,4 +141,3 @@ object-templates-raw: |
               volumeMounts:
               - name: shared
                 mountPath: /shared
-  {{hub- end hub}}

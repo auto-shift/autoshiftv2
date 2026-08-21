@@ -1,10 +1,10 @@
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-crs-mint-hub
+  name: placement-default-policies-hub
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Mints the CRS. crs mode only; NotIn also matches clusters with no acs-registration label, which is the default.
+  # Baseline SecurityPolicy resources. Opt-in, so In 'true' rather than NotIn.
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -21,11 +21,10 @@ spec:
               operator: NotIn
               values:
                 - 'false'
-            - key: 'autoshift.io/acs-registration'
-              operator: NotIn
+            - key: 'autoshift.io/acs-default-policies'
+              operator: In
               values:
-                - 'initBundle'
-                - 'manual'
+                - 'true'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

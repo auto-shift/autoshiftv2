@@ -1,10 +1,10 @@
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-crs-mint-hub
+  name: placement-auth-hub
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Mints the CRS. crs mode only; NotIn also matches clusters with no acs-registration label, which is the default.
+  # Declarative auth config. Skipped entirely when acs-auth-provider is 'none'.
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -21,11 +21,10 @@ spec:
               operator: NotIn
               values:
                 - 'false'
-            - key: 'autoshift.io/acs-registration'
+            - key: 'autoshift.io/acs-auth-provider'
               operator: NotIn
               values:
-                - 'initBundle'
-                - 'manual'
+                - 'none'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists
