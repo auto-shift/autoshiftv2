@@ -2,13 +2,27 @@ object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $acs := (index $config "acs" | default dict) hub}}
+  {{hub- $central := (index $acs "central" | default dict) hub}}
+  {{hub- $centralDeploy := (index $central "deploy" | default true) hub}}
   {{hub- $scannerV4 := (index $acs "scannerV4" | default "Enabled") hub}}
   {{hub- $egress := (index $acs "egressConnectivity" | default "Online") hub}}
   {{hub- $networkPolicies := (index $acs "networkPolicies" | default "") hub}}
   {{hub- $vmScanning := (index $acs "vmScanning" | default false) hub}}
   {{hub- $monitoring := (index $acs "monitoring") hub}}
+  {{hub- $exposeMetrics := (index $acs "exposeMetrics" | default "") hub}}
+  {{hub- $configAsCode := (index $acs "configAsCode" | default "") hub}}
+  {{hub- $telemetry := (index $acs "telemetry") hub}}
+  {{hub- $notifierEncryption := (index $acs "notifierSecretsEncryption" | default false) hub}}
+  {{hub- $pinToNodes := (index $acs "pinToNodes" | default "") hub}}
+  {{hub- $nodeSelector := (index $acs "nodeSelector" | default dict) hub}}
+  {{hub- $tolerations := (index $acs "tolerations" | default list) hub}}
+  {{hub- $additionalCAs := (index $acs "additionalCAs" | default list) hub}}
+  {{hub- $db := (index $acs "db" | default dict) hub}}
+  {{hub- $dbSize := (index $db "size" | default "") hub}}
+  {{hub- $dbStorageClass := (index $db "storageClassName" | default "") hub}}
   {{hub- $auth := (index $acs "auth" | default dict) hub}}
   {{hub- $authProvider := (index $auth "provider" | default "openshift") hub}}
+  {{hub- if $centralDeploy hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: platform.stackrox.io/v1alpha1
@@ -26,9 +40,29 @@ object-templates-raw: |
               enabled: false
             route:
               enabled: true
-          persistence:
-            persistentVolumeClaim:
-              claimName: stackrox-db
+          # spec.central.persistence is obsolete (unused since 4.6); Central DB storage lives here.
+          db:
+            persistence:
+              persistentVolumeClaim:
+                claimName: stackrox-db
+                {{hub- if $dbSize hub}}
+                size: '{{hub $dbSize hub}}'
+                {{hub- end hub}}
+                {{hub- if $dbStorageClass hub}}
+                storageClassName: '{{hub $dbStorageClass hub}}'
+                {{hub- end hub}}
+          {{hub- if $telemetry hub}}
+          telemetry:
+            enabled: true
+          {{hub- end hub}}
+          {{hub- if $notifierEncryption hub}}
+          notifierSecretsEncryption:
+            enabled: true
+          {{hub- end hub}}
+          {{hub- if $exposeMetrics hub}}
+          monitoring:
+            exposeEndpoint: '{{hub $exposeMetrics hub}}'
+          {{hub- end hub}}
           {{hub- if $authProvider hub}}
           declarativeConfiguration:
             configMaps:
@@ -44,9 +78,21 @@ object-templates-raw: |
               minReplicas: 2
               replicas: 3
           scannerComponent: Enabled
+          {{hub- if $exposeMetrics hub}}
+          monitoring:
+            exposeEndpoint: '{{hub $exposeMetrics hub}}'
+          {{hub- end hub}}
         scannerV4:
           # Central enum is Enabled|Disabled|Default; treat anything other than Disabled as Enabled.
           scannerComponent: '{{hub ternary "Disabled" "Enabled" (eq $scannerV4 "Disabled") hub}}'
+          {{hub- if $exposeMetrics hub}}
+          monitoring:
+            exposeEndpoint: '{{hub $exposeMetrics hub}}'
+          {{hub- end hub}}
+        {{hub- if $configAsCode hub}}
+        configAsCode:
+          configAsCodeComponent: '{{hub $configAsCode hub}}'
+        {{hub- end hub}}
         {{hub- if ne $monitoring false hub}}
         monitoring:
           openshift:
@@ -56,9 +102,32 @@ object-templates-raw: |
         network:
           policies: '{{hub $networkPolicies hub}}'
         {{hub- end hub}}
-        {{hub- if $vmScanning hub}}
+        {{hub- if $additionalCAs hub}}
+        tls:
+          additionalCAs: {{hub $additionalCAs | toRawJson hub}}
+        {{hub- end hub}}
+        {{hub- if or $vmScanning $pinToNodes $nodeSelector $tolerations hub}}
         customize:
+          {{hub- if $vmScanning hub}}
           envVars:
             - name: ROX_VIRTUAL_MACHINES
               value: "true"
+          {{hub- end hub}}
+          {{hub- if or $pinToNodes $nodeSelector $tolerations hub}}
+          # Applies to Deployment-based components only; the Collector DaemonSet is not
+          # affected. pinToNodes is a shorthand that sets nodeSelector and tolerations itself,
+          # so the CRD forbids combining it with them — pinToNodes wins when both are given.
+          deploymentDefaults:
+            {{hub- if $pinToNodes hub}}
+            pinToNodes: '{{hub $pinToNodes hub}}'
+            {{hub- else hub}}
+            {{hub- if $nodeSelector hub}}
+            nodeSelector: {{hub $nodeSelector | toRawJson hub}}
+            {{hub- end hub}}
+            {{hub- if $tolerations hub}}
+            tolerations: {{hub $tolerations | toRawJson hub}}
+            {{hub- end hub}}
+            {{hub- end hub}}
+          {{hub- end hub}}
         {{hub- end hub}}
+  {{hub- end hub}}

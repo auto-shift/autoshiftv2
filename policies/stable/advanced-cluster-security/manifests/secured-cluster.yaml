@@ -2,16 +2,36 @@ object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $acs := (index $config "acs" | default dict) hub}}
+  {{hub- $central := (index $acs "central" | default dict) hub}}
+  {{hub- $centralDeploy := (index $central "deploy" | default true) hub}}
+  {{hub- $centralEndpoint := (index $central "endpoint" | default "") hub}}
   {{hub- $scannerV4 := (index $acs "scannerV4" | default "Enabled") hub}}
+  {{hub- $scanner := (index $acs "scanner" | default "AutoSense") hub}}
   {{hub- $collector := (index $acs "collector" | default dict) hub}}
   {{hub- $collection := (index $collector "collection" | default "CORE_BPF") hub}}
   {{hub- $ac := (index $acs "admissionControl" | default dict) hub}}
   {{hub- $acEnabled := (index $ac "enabled" | default false) hub}}
-  {{hub- $contactImageScanners := (index $ac "contactImageScanners" | default "ScanIfMissing") hub}}
+  {{hub- $acBypass := (index $ac "bypass" | default "BreakGlassAnnotation") hub}}
+  {{hub- $acReplicas := (index $ac "replicas" | default 3) hub}}
   {{hub- $failurePolicy := (index $ac "failurePolicy" | default "Ignore") hub}}
+  {{hub- $auditLogs := (index $acs "auditLogs" | default "Auto") hub}}
+  {{hub- $fileActivity := (index $acs "fileActivityMonitoring" | default "Disabled") hub}}
+  {{hub- $pb := (index $acs "processBaselines" | default dict) hub}}
+  {{hub- $pbAutoLock := (index $pb "autoLock" | default "Disabled") hub}}
+  {{hub- $pi := (index $acs "processIndicators" | default dict) hub}}
+  {{hub- $piPersistence := (index $pi "persistence" | default "Enabled") hub}}
+  {{hub- $piExcludeOcp := (index $pi "excludeOpenshiftNs" | default "Disabled") hub}}
+  {{hub- $piExcludeRegex := (index $pi "excludeNamespaceRegex" | default "") hub}}
+  {{hub- $registryOverride := (index $acs "registryOverride" | default "") hub}}
+  {{hub- $pinToNodes := (index $acs "pinToNodes" | default "") hub}}
+  {{hub- $nodeSelector := (index $acs "nodeSelector" | default dict) hub}}
+  {{hub- $tolerations := (index $acs "tolerations" | default list) hub}}
+  {{hub- $additionalCAs := (index $acs "additionalCAs" | default list) hub}}
   {{hub- $networkPolicies := (index $acs "networkPolicies" | default "") hub}}
   {{hub- $vmScanning := (index $acs "vmScanning" | default false) hub}}
   {{hub- $monitoring := (index $acs "monitoring") hub}}
+  {{hub- $route := (lookup "route.openshift.io/v1" "Route" "stackrox" "central") | default dict hub}}
+  {{hub- $centralHost := (index (index $route "spec" | default dict) "host" | default "") hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: platform.stackrox.io/v1alpha1
@@ -22,27 +42,40 @@ object-templates-raw: |
       spec:
         clusterName: '{{ fromSecret "open-cluster-management-agent" "hub-kubeconfig-secret" "cluster-name" | base64dec }}'
         auditLogs:
-          collection: Auto
-        centralEndpoint: '{{ fromSecret "stackrox" "sensor-tls" "acs-host" | base64dec }}'
+          collection: '{{hub $auditLogs hub}}'
+        # Central's route on the hub. Replaces the old sensor-tls acs-host key, which only
+        # existed because the init-bundle Job patched it in; with CRS there is no sensor-tls.
+        centralEndpoint: '{{hub $centralEndpoint | default (printf "%s:443" $centralHost) hub}}'
         admissionControl:
-          {{hub- if $acEnabled hub}}
-          listenOnCreates: true
-          listenOnUpdates: true
-          {{hub- else hub}}
-          listenOnCreates: false
-          listenOnUpdates: false
-          {{hub- end hub}}
-          listenOnEvents: true
-          contactImageScanners: '{{hub $contactImageScanners hub}}'
+          # listenOnCreates/listenOnUpdates/listenOnEvents and contactImageScanners are deprecated
+          # in 4.11; enforcement replaces the listen-on pair.
+          enforcement: '{{hub ternary "Enabled" "Disabled" $acEnabled hub}}'
+          bypass: '{{hub $acBypass hub}}'
+          replicas: '{{hub $acReplicas | toInt hub}}'
           failurePolicy: '{{hub $failurePolicy hub}}'
+        scanner:
+          # SecuredCluster enum is AutoSense|Disabled (no "Enabled").
+          scannerComponent: '{{hub $scanner hub}}'
         scannerV4:
           # SecuredCluster enum is Default|AutoSense|Disabled (no "Enabled"); map Enabled -> AutoSense.
           scannerComponent: '{{hub ternary "AutoSense" $scannerV4 (eq $scannerV4 "Enabled") hub}}'
         perNode:
           collector:
             collection: '{{hub $collection hub}}'
-            imageFlavor: Regular
           taintToleration: TolerateTaints
+          fileActivityMonitoring:
+            mode: '{{hub $fileActivity hub}}'
+        processBaselines:
+          autoLock: '{{hub $pbAutoLock hub}}'
+        processIndicators:
+          persistence: '{{hub $piPersistence hub}}'
+          excludeOpenshiftNs: '{{hub $piExcludeOcp hub}}'
+          {{hub- if $piExcludeRegex hub}}
+          excludeNamespaceRegex: '{{hub $piExcludeRegex hub}}'
+          {{hub- end hub}}
+        {{hub- if $registryOverride hub}}
+        registryOverride: '{{hub $registryOverride hub}}'
+        {{hub- end hub}}
         {{hub- if ne $monitoring false hub}}
         monitoring:
           openshift:
@@ -52,9 +85,31 @@ object-templates-raw: |
         network:
           policies: '{{hub $networkPolicies hub}}'
         {{hub- end hub}}
-        {{hub- if $vmScanning hub}}
+        {{hub- if $additionalCAs hub}}
+        tls:
+          additionalCAs: {{hub $additionalCAs | toRawJson hub}}
+        {{hub- end hub}}
+        {{hub- if or $vmScanning $pinToNodes $nodeSelector $tolerations hub}}
         customize:
+          {{hub- if $vmScanning hub}}
           envVars:
             - name: ROX_VIRTUAL_MACHINES
               value: "true"
+          {{hub- end hub}}
+          {{hub- if or $pinToNodes $nodeSelector $tolerations hub}}
+          # Applies to Deployment-based components only; the Collector DaemonSet is not
+          # affected. pinToNodes is a shorthand that sets nodeSelector and tolerations itself,
+          # so the CRD forbids combining it with them — pinToNodes wins when both are given.
+          deploymentDefaults:
+            {{hub- if $pinToNodes hub}}
+            pinToNodes: '{{hub $pinToNodes hub}}'
+            {{hub- else hub}}
+            {{hub- if $nodeSelector hub}}
+            nodeSelector: {{hub $nodeSelector | toRawJson hub}}
+            {{hub- end hub}}
+            {{hub- if $tolerations hub}}
+            tolerations: {{hub $tolerations | toRawJson hub}}
+            {{hub- end hub}}
+            {{hub- end hub}}
+          {{hub- end hub}}
         {{hub- end hub}}

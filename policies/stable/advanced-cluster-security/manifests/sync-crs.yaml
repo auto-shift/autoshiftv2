@@ -1,0 +1,15 @@
+object-templates-raw: |
+  # One CRS registers any number of clusters, so the hub mints once and every secured
+  # cluster receives the same bootstrap token. Unlike an init bundle this carries no
+  # service certificates: Central issues each cluster its own on registration and renews
+  # them, and the CRS can be revoked afterwards without disconnecting anyone.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      type: Opaque
+      metadata:
+        name: cluster-registration-secret
+        namespace: stackrox
+      data:
+        crs: '{{hub fromSecret "stackrox" "cluster-registration-secret" "crs" hub}}'

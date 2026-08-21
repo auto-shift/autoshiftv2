@@ -56,13 +56,38 @@ policies:
       - path: test/central-ready.yaml
   - name: policy-acs-sync-bundle
     placement:
-      placementPath: placement-managed.yaml
+      placementPath: placement-init-bundle-managed.yaml
     hubTemplateOptions:
       serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-acs-operator-install
     manifests:
       - path: manifests/sync-bundle.yaml
+  # 3b) Cluster registration secret (CRS) minted on the hub. HUB-only.
+  #     Replaces the init bundle: one revocable token instead of three long-lived certs.
+  - name: policy-acs-crs
+    placement:
+      placementPath: placement-crs-mint-hub.yaml
+    dependencies:
+      - name: policy-acs-central
+    manifests:
+      - path: manifests/crs/crs-resources.yaml
+  - name: policy-acs-crs-test
+    placement:
+      placementPath: placement-crs-hub.yaml
+    remediationAction: inform
+    manifests:
+      - path: test/crs-ready.yaml
+  # 3c) Sync the CRS to every secured cluster.
+  - name: policy-acs-sync-crs
+    placement:
+      placementPath: placement-crs-managed.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-acs-operator-install
+    manifests:
+      - path: manifests/sync-crs.yaml
   # 4) Declarative auth-provider config for Central. HUB-only.
   - name: policy-acs-declarative-config
     placement:
@@ -82,7 +107,7 @@ policies:
   # 6) Cluster init-bundle generation (RBAC + Job) + Job-succeeded gate. MIXED: resources enforce, check informs. HUB-only.
   - name: policy-acs-init-bundle
     placement:
-      placementPath: placement-hub.yaml
+      placementPath: placement-init-bundle-hub.yaml
     dependencies:
       - name: policy-acs-central
     manifests:
@@ -91,14 +116,14 @@ policies:
   - name: policy-acs-init-bundle-test
     remediationAction: inform
     placement:
-      placementPath: placement-hub.yaml
+      placementPath: placement-init-bundle-hub.yaml
     manifests:
       - path: test/init-bundle-ready.yaml
   - name: policy-acs-secured-cluster-hub
     placement:
       placementPath: placement-hub.yaml
     dependencies:
-      - name: policy-acs-init-bundle
+      - name: policy-acs-central
     manifests:
       - path: manifests/secured-cluster-hub.yaml
   # 8) SecuredCluster on managed clusters + readiness gate. MIXED: SecuredCluster enforce, check informs. MANAGED-only.
@@ -112,7 +137,7 @@ policies:
     placement:
       placementPath: placement-managed.yaml
     dependencies:
-      - name: policy-acs-sync-bundle
+      - name: policy-acs-operator-install
     manifests:
       - path: manifests/secured-cluster.yaml
   # 9) Console link to the ACS portal.

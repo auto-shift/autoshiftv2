@@ -119,6 +119,97 @@ acs-source-namespace: openshift-marketplace
 acs-monitoring: 'true'
 ```
 
+> [!WARNING]
+> `config.acs.defaultPolicies: true` depends on the Config-as-Code component. The
+> `configAsCode` Central setting deploys a `config-controller` pod whose only role grants access to
+> `securitypolicies` in the `config.stackrox.io` API group, which is what reconciles `SecurityPolicy`
+> custom resources into Central. Setting `configAsCode: Disabled` leaves those resources applied to
+> the cluster and reporting compliant while Central never receives them. Leave `configAsCode` unset
+> unless you also set `defaultPolicies: false`.
+
+## Cluster registration
+
+Secured clusters authenticate to Central for the first time with a **cluster registration
+secret (CRS)**. A CRS is a single bootstrap token: Central issues each cluster its own service
+certificates on registration and renews them automatically, and the CRS can be revoked afterwards
+without disconnecting any cluster that already registered. Init bundles, the older mechanism, ship
+long-lived service certificates that are copied to the whole fleet, so one cluster cannot be
+revoked without breaking the others. Init bundles are deprecated as of Red Hat Advanced Cluster
+Security 4.10.
+
+The mode is the `autoshift.io/acs-registration` label, because it selects which policies are
+placed on a cluster rather than how one behaves. Clusters with no such label get the `crs` path.
+
+| Label value | Behaviour | Policies placed |
+|-------------|-----------|-----------------|
+| unset or `crs` | The hub mints a CRS with a Job and syncs it to every secured cluster | mint Job, readiness test, CRS sync |
+| `manual` | No Job runs. You supply `cluster-registration-secret` yourself | readiness test, CRS sync |
+| `initBundle` | Legacy. Mints an init bundle and syncs the three certificate secrets | init bundle Job, bundle sync |
+
+```yaml
+labels:
+  acs-registration: 'crs'    # crs (default when unset) | manual | initBundle
+
+config:
+  acs:
+    registration:
+      validFor: 8760h        # CRS lifetime; roxctl's own default is only 24h
+      maxClusters: 0         # 0 = no limit
+      roxctlImage: ''        # blank = tag matched to the installed operator version
+```
+
+The mint Job runs `roxctl`, the documented way to generate a CRS. When `roxctlImage` is blank the
+tag is taken from the `acs-version` label, or from the installed operator's current cluster service
+version when that label is unset. **In a disconnected environment set `roxctlImage` to the digest
+recorded in the operator's related images**, because that is what `oc-mirror` copies; a floating tag
+might not resolve in a mirrored registry.
+
+### Creating a CRS by hand
+
+Use `manual` mode when policy should not hold Central credentials, or when the CRS is issued by a
+Central this deployment does not manage. Either method produces the same
+`cluster-registration-secret`, which you apply to the `stackrox` namespace on the hub.
+
+From the ACS Console: **Platform Configuration > Clusters**, then **Create cluster registration
+secret**, name it, and download the YAML.
+
+With the CLI, from a machine that can reach Central:
+
+```bash
+export ROX_API_TOKEN=<api token with the Admin role>
+roxctl -e "<central-host>:443" central crs generate autoshift \
+  --valid-for 8760h --output crs.yaml
+oc apply -n stackrox -f crs.yaml
+```
+
+> [!IMPORTANT]
+> A CRS cannot be retrieved after it is generated, so store the file securely. The Job takes the
+> same care: it never re-mints while a live `cluster-registration-secret` exists. Rotating one is a
+> deliberate act, delete the secret and the `acs-crs-generate` Job.
+
+## Where Central runs
+
+`config.acs.central` decides whether this deployment runs its own Central or registers with
+someone else's. This matters at fleet scale, because one Central is sized by the total number of
+monitored deployments across every cluster connected to it.
+
+```yaml
+config:
+  acs:
+    central:
+      deploy: true      # false = no Central here, register with an external one
+      endpoint: ''      # blank = discover Central's route on this hub
+```
+
+With `deploy: false` the Central custom resource, its declarative configuration, the security
+policies and the CRS Job are all skipped, and the cluster runs `SecuredCluster` only. That supports
+a single Central for the whole fleet, a Central on each spoke hub, or a Central on the hub-of-hubs
+only. When `deploy` is `false`, set `endpoint` and label the cluster
+`acs-registration: manual`, because there is no local Central to mint from.
+
+`centralEndpoint` resolves in this order: an explicit `endpoint`, then the in-cluster service on a
+hub that runs Central, then a lookup of Central's route on the owning hub.
+
 ## Policy Templates
 
 | Template | Scope | Description |
@@ -127,15 +218,17 @@ acs-monitoring: 'true'
 | `policy-acs-central` | Hub | Creates Central CR with Day 2 config |
 | `policy-acs-secured-cluster` | Managed | Deploys SecuredCluster on managed clusters |
 | `policy-acs-secured-cluster-hub` | Hub | Deploys SecuredCluster on the hub itself |
-| `policy-acs-init-bundle` | Hub | Generates the sensor init bundle |
-| `policy-acs-sync-bundle` | Managed | Syncs the init bundle to managed clusters |
+| `policy-acs-crs` | Hub | Mints the cluster registration secret (`acs-registration: crs`) |
+| `policy-acs-sync-crs` | Managed | Syncs the CRS to managed clusters (`crs` and `manual`) |
+| `policy-acs-init-bundle` | Hub | Legacy. Generates the sensor init bundle (`acs-registration: initBundle`) |
+| `policy-acs-sync-bundle` | Managed | Legacy. Syncs the init bundle certificates to managed clusters |
 | `policy-acs-declarative-config` | Hub | Creates auth provider ConfigMap |
-| `policy-acs-security-policies` | Hub | Deploys SecurityPolicy CRDs |
+| `policy-acs-security-policies` | Hub | Deploys SecurityPolicy CRs (requires the Config-as-Code component) |
 | `policy-acs-console-link` | Hub | Adds RHACS console link |
 
 ## Further Reading
 
-- [Values Reference](../../../docs/values-reference.md#advanced-cluster-security) - Complete label reference table
+- [Values Reference](../../../docs/values-reference.md#red-hat-advanced-cluster-security) - Complete label reference table
 - [Developer Guide](../../../docs/developer-guide.md) - How to create and modify policies
 - [Gradual Rollout](../../../docs/gradual-rollout.md) - Version pinning and staged rollout
 - [RHACS Documentation](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_security_for_kubernetes) - Red Hat Advanced Cluster Security documentation (select your version, then see *Configuring > Declarative Configuration* and *Operating > Managing Security Policies*)

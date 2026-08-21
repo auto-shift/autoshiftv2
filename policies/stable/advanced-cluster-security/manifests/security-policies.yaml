@@ -1,8 +1,9 @@
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $centralDeploy := (index (index (index $config "acs" | default dict) "central" | default dict) "deploy" | default true) hub}}
   {{hub- $defaultPolicies := (index (index $config "acs" | default dict) "defaultPolicies" | default false) hub}}
-  {{hub- if $defaultPolicies hub}}
+  {{hub- if and $centralDeploy $defaultPolicies hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: config.stackrox.io/v1alpha1

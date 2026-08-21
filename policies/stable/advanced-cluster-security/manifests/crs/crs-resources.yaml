@@ -1,0 +1,143 @@
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $acs := (index $config "acs" | default dict) hub}}
+  {{hub- $reg := (index $acs "registration" | default dict) hub}}
+  {{hub- $centralDeploy := (index (index $acs "central" | default dict) "deploy" | default true) hub}}
+  {{hub- $validFor := (index $reg "validFor" | default "8760h") hub}}
+  {{hub- $maxClusters := (index $reg "maxClusters" | default 0) hub}}
+  {{hub- $subName := (index .ManagedClusterLabels "autoshift.io/acs-subscription-name" | default "rhacs-operator") hub}}
+  {{hub- $sub := (lookup "operators.coreos.com/v1alpha1" "Subscription" "rhacs-operator" $subName) | default dict hub}}
+  {{hub- $installedCSV := (index (index $sub "status" | default dict) "currentCSV" | default "") hub}}
+  {{hub- $acsVersion := (index .ManagedClusterLabels "autoshift.io/acs-version" | default $installedCSV) hub}}
+  {{hub- $roxctlTag := ($acsVersion | replace "rhacs-operator.v" "") hub}}
+  {{hub- $roxctlImage := (index $reg "roxctlImage" | default (printf "registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9:%s" $roxctlTag)) hub}}
+  {{hub- if $centralDeploy hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        annotations:
+          argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+        name: acs-crs-generate
+        namespace: stackrox
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: acs-crs-generate
+        namespace: stackrox
+      rules:
+      - apiGroups:
+        - ''
+        resources:
+        - secrets
+        verbs:
+        - get
+        - list
+        - create
+        - patch
+        - update
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        annotations:
+          argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+        name: acs-crs-generate
+        namespace: stackrox
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: acs-crs-generate
+      subjects:
+      - kind: ServiceAccount
+        name: acs-crs-generate
+        namespace: stackrox
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: acs-crs-generate
+        namespace: stackrox
+        labels:
+          app.kubernetes.io/name: acs-crs-generate
+      spec:
+        backoffLimit: 4
+        template:
+          metadata:
+            annotations:
+              argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+            labels:
+              app.kubernetes.io/name: acs-crs-generate
+          spec:
+            restartPolicy: Never
+            serviceAccountName: acs-crs-generate
+            volumes:
+            - name: shared
+              emptyDir: {}
+            initContainers:
+            # 1. Decide whether a CRS is needed. A CRS cannot be retrieved after generation,
+            #    so never re-mint while a live one exists.
+            - name: check
+              image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+              command: ["/bin/bash","-c"]
+              args:
+              - |
+                set -eu
+                if oc get secret cluster-registration-secret -n stackrox >/dev/null 2>&1; then
+                  echo "cluster-registration-secret already exists, nothing to do"
+                  echo no > /shared/needed
+                else
+                  echo yes > /shared/needed
+                fi
+              volumeMounts:
+              - name: shared
+                mountPath: /shared
+            # 2. Mint it. roxctl ships in the ACS CSV relatedImages, so it mirrors with ACS.
+            - name: mint
+              image: '{{hub $roxctlImage hub}}'
+              command: ["/bin/sh","-c"]
+              args:
+              - |
+                set -eu
+                if [ "$(cat /shared/needed)" != "yes" ]; then
+                  echo "skipping generation"
+                  exit 0
+                fi
+                roxctl -e central.stackrox.svc:443 --insecure-skip-tls-verify \
+                  central crs generate autoshift \
+                  --valid-for '{{hub $validFor hub}}' \
+                  --max-clusters '{{hub $maxClusters | toInt hub}}' \
+                  --output /shared/crs.yaml
+              env:
+              - name: ROX_ADMIN_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: central-htpasswd
+                    key: password
+              volumeMounts:
+              - name: shared
+                mountPath: /shared
+            containers:
+            # 3. Apply whatever was minted. roxctl writes a plain Secret manifest.
+            - name: apply
+              image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+              command: ["/bin/bash","-c"]
+              args:
+              - |
+                set -eu
+                if [ ! -f /shared/crs.yaml ]; then
+                  echo "no CRS to apply"
+                  exit 0
+                fi
+                oc apply -n stackrox -f /shared/crs.yaml
+                echo "cluster-registration-secret applied"
+              volumeMounts:
+              - name: shared
+                mountPath: /shared
+  {{hub- end hub}}
