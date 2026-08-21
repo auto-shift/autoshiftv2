@@ -1,16 +1,37 @@
 object-templates-raw: |
-  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
-  {{hub- $acs := (index $config "acs" | default dict) hub}}
-  {{hub- $reg := (index $acs "registration" | default dict) hub}}
-  {{hub- $validFor := (index $reg "validFor" | default "8760h") hub}}
-  {{hub- $maxClusters := (index $reg "maxClusters" | default 0) hub}}
-  {{hub- $subName := (index .ManagedClusterLabels "autoshift.io/acs-subscription-name" | default "rhacs-operator") hub}}
-  {{hub- $sub := (lookup "operators.coreos.com/v1alpha1" "Subscription" "rhacs-operator" $subName) | default dict hub}}
-  {{hub- $installedCSV := (index (index $sub "status" | default dict) "currentCSV" | default "") hub}}
-  {{hub- $acsVersion := (index .ManagedClusterLabels "autoshift.io/acs-version" | default $installedCSV) hub}}
-  {{hub- $roxctlTag := ($acsVersion | replace "rhacs-operator.v" "") hub}}
-  {{hub- $roxctlImage := (index $reg "roxctlImage" | default (printf "registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9:%s" $roxctlTag)) hub}}
+  {{- /* Spoke-side templates throughout, like cluster-install and cluster-labels. A hub
+     template resolves on the ACM hub that OWNS the policy, so on a managed hub it would
+     see the hub-of-hubs' clusters rather than the ones this hub manages. Resolving here
+     means the loop sees whatever clusters the cluster it runs on manages. */ -}}
+  {{- $subName := "rhacs-operator" }}
+  {{- $sub := (lookup "operators.coreos.com/v1alpha1" "Subscription" "rhacs-operator" $subName) | default dict }}
+  {{- $installedCSV := (dig "status" "currentCSV" "" $sub) }}
+  {{- $roxctlTag := ($installedCSV | replace "rhacs-operator.v" "") }}
+  {{- $defaultImage := (printf "registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9:%s" $roxctlTag) }}
+  {{- $roxctlImage := "" }}
+  {{- $specs := list }}
+  {{- $names := list }}
+  {{- $configMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/rendered-config-map") | default dict }}
+  {{- range $_, $cm := ($configMaps.items | default list) }}
+  {{- $clusterName := (replace ".rendered-config" "" $cm.metadata.name) }}
+  {{- $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" $clusterName) | default dict }}
+  {{- $mcOwningNs := dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc }}
+  {{- $acsOn := dig "metadata" "labels" "autoshift.io/acs" "" $mc }}
+  {{- $config := ($cm.data.config | fromYaml) | default dict }}
+  {{- $reg := (index ($config.acs | default dict) "registration" | default dict) }}
+  {{- /* Only clusters this deployment owns: with versionedClusterSets two deployments run
+     against one hub and would otherwise mint for each other's clusters. */ -}}
+  {{- if and (eq $acsOn "true") (or (empty $mc) (eq $mcOwningNs $cm.metadata.namespace)) }}
+  {{- $validFor := (index $reg "validFor" | default "168h") }}
+  {{- $maxClusters := (index $reg "maxClusters" | default 1) }}
+  {{- $roxctlImage = (index $reg "roxctlImage" | default $defaultImage) }}
+  {{- $names = append $names $clusterName }}
+  {{- $specs = append $specs (printf "%s|%s|%v" $clusterName $validFor $maxClusters) }}
+  {{- end }}
+  {{- end }}
+  {{- $specList := ($specs | join " ") }}
+  {{- $jobName := (printf "acs-crs-generate-%s" (($names | join " ") | sha256sum | trunc 8)) }}
+  {{- if $names }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -60,12 +81,17 @@ object-templates-raw: |
       apiVersion: batch/v1
       kind: Job
       metadata:
-        name: acs-crs-generate
+        # Named after the set of secured clusters. musthave never updates an existing Job,
+        # so a stable name would never pick up a newly joined cluster.
+        name: '{{ $jobName }}'
         namespace: stackrox
         labels:
           app.kubernetes.io/name: acs-crs-generate
       spec:
         backoffLimit: 4
+        # No ttlSecondsAfterFinished on purpose: expiring the Job would have the policy
+        # recreate it forever. A failed Job stays failed and policy-acs-crs-test is the
+        # alarm for it; delete the Job to retry.
         template:
           metadata:
             annotations:
@@ -79,42 +105,45 @@ object-templates-raw: |
             - name: shared
               emptyDir: {}
             initContainers:
-            # 1. Decide whether a CRS is needed. A CRS cannot be retrieved after generation,
-            #    so never re-mint while a live one exists.
+            # 1. Which clusters still need one. A CRS cannot be retrieved after generation,
+            #    so only mint where none exists or the existing one has expired.
             - name: check
               image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
               command: ["/bin/bash","-c"]
               args:
               - |
                 set -eu
-                if oc get secret cluster-registration-secret -n stackrox >/dev/null 2>&1; then
-                  echo "cluster-registration-secret already exists, nothing to do"
-                  echo no > /shared/needed
-                else
-                  echo yes > /shared/needed
-                fi
+                : > /shared/needed
+                now=$(date -u +%s)
+                for spec in {{ $specList }}; do
+                  c="${spec%%|*}"
+                  exp=$(oc get secret "crs-$c" -n stackrox -o jsonpath='{.metadata.annotations.crs\.platform\.stackrox\.io/expires-at}' 2>/dev/null || true)
+                  if [ -z "$exp" ]; then
+                    echo "$spec" >> /shared/needed
+                  elif [ "$(date -u -d "$exp" +%s 2>/dev/null || echo 0)" -le "$now" ]; then
+                    echo "$spec" >> /shared/needed
+                  fi
+                done
+                echo "clusters needing a CRS: $(wc -l < /shared/needed)"
               volumeMounts:
               - name: shared
                 mountPath: /shared
-            # 2. Mint it. roxctl ships in the ACS CSV relatedImages, so it mirrors with ACS.
+            # 2. One CRS per cluster, so a leaked token registers exactly one cluster and
+            #    revoking it affects only that cluster.
             - name: mint
-              image: '{{hub $roxctlImage hub}}'
+              image: '{{ $roxctlImage }}'
               command: ["/bin/sh","-c"]
               args:
               - |
                 set -eu
-                if [ "$(cat /shared/needed)" != "yes" ]; then
-                  echo "skipping generation"
-                  exit 0
-                fi
-                # Central tracks CRSs by name and rejects a duplicate, and deleting the
-                # Secret here does not remove Central's record. A stable name would make a
-                # re-mint impossible after the Secret is lost, so stamp the name.
-                roxctl -e central.stackrox.svc:443 --insecure-skip-tls-verify \
-                  central crs generate "autoshift-$(date -u +%Y%m%d%H%M%S)" \
-                  --valid-for '{{hub $validFor hub}}' \
-                  --max-clusters '{{hub $maxClusters | toInt hub}}' \
-                  --output /shared/crs.yaml
+                while IFS='|' read -r c validfor maxc; do
+                  [ -n "$c" ] || continue
+                  roxctl -e central.stackrox.svc:443 --insecure-skip-tls-verify \
+                    central crs generate "autoshift-$c-$(date -u +%Y%m%d%H%M%S)" \
+                    --valid-for "$validfor" \
+                    --max-clusters "$maxc" \
+                    --output "/shared/crs-$c.yaml"
+                done < /shared/needed
               env:
               - name: ROX_ADMIN_PASSWORD
                 valueFrom:
@@ -125,19 +154,21 @@ object-templates-raw: |
               - name: shared
                 mountPath: /shared
             containers:
-            # 3. Apply whatever was minted. roxctl writes a plain Secret manifest.
+            # 3. Store each as crs-<cluster>; sync-crs hands each cluster its own.
             - name: apply
               image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
               command: ["/bin/bash","-c"]
               args:
               - |
                 set -eu
-                if [ ! -f /shared/crs.yaml ]; then
-                  echo "no CRS to apply"
-                  exit 0
-                fi
-                oc apply -n stackrox -f /shared/crs.yaml
-                echo "cluster-registration-secret applied"
+                while IFS='|' read -r c validfor maxc; do
+                  [ -n "$c" ] || continue
+                  f="/shared/crs-$c.yaml"
+                  [ -f "$f" ] || continue
+                  sed "s|^  name: cluster-registration-secret$|  name: crs-$c|" "$f" | oc apply -n stackrox -f -
+                  echo "stored crs-$c"
+                done < /shared/needed
               volumeMounts:
               - name: shared
                 mountPath: /shared
+  {{- end }}
