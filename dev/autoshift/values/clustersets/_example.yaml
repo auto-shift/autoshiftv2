@@ -113,9 +113,14 @@ hubClusterSets:
       # =======================================================================
       disconnected:
         mirrorRegistry:
-          host: 'registry.example.com'
-          port: '5000'
+          host: 'registry.example.com:5000'    # host:port — there is no separate port key
           path: 'openshift'
+          # ca (inline bundle) or caRef (hub ConfigMap) is required once mirrors/tagMirrors or
+          # catalogs are defined; the mirrored registry is not in the cluster's default trust.
+          caRef:
+            name: 'cluster-ca-bundle'
+            key: 'ca-bundle.crt'
+            namespace: 'cluster-install-secrets'
           mirrors:
             - source: 'registry.redhat.io'
               mirror: 'registry.example.com:5000/rhel'
@@ -127,11 +132,16 @@ hubClusterSets:
           tagMirrors:
             - source: 'docker.io/hashicorp'
               mirror: 'registry.example.com:5000/hashicorp'
+        # imagePath and tag, not a single image string — the host comes from mirrorRegistry above.
         catalogs:
           - source: redhat-operators
-            image: 'registry.example.com:5000/redhat/redhat-operator-index:v4.22'
+            imagePath: redhat/redhat-operator-index
+            tag: v4.22
+            publisher: Red Hat
           - source: certified-operators
-            image: 'registry.example.com:5000/redhat/certified-operator-index:v4.22'
+            imagePath: redhat/certified-operator-index
+            tag: v4.22
+            publisher: Red Hat
         useIDMS: true
         disableDefaultCatalogs: true
       # =======================================================================
@@ -156,9 +166,94 @@ hubClusterSets:
       # =======================================================================
       quay:
         versions:                              # allowed CSV versions (compliance constraint)
-          - 'quay-operator.v3.17.0'
-          - 'quay-operator.v3.17.1'
-        startingCSV: 'quay-operator.v3.17.0'   # explicit initial install pin (optional; '' = let OLM pick)
+          - 'quay-operator.v3.18.0'
+        startingCSV: 'quay-operator.v3.18.0'   # explicit initial install pin (optional; '' = let OLM pick)
+        # --- Registry production settings (everything below is optional) ----------------
+        # Superusers. With OIDC these are the OIDC usernames and they get admin on FIRST LOGIN
+        # with no bootstrap step — that is the supported zero-Job admin path. Changing this
+        # after deployment requires a registry restart to take effect.
+        superUsers:
+          - quayadmin
+        # Bootstrap/automation flags. The shipped defaults are the SECURE ones: the registry API
+        # is browser-only and the unauthenticated /api/v1/user/initialize endpoint is off. For a
+        # PoC with no OIDC, set userInitialize + xhrOnly to bootstrap a local quayadmin by hand,
+        # then set them back.
+        bootstrap:
+          userInitialize: false                # FEATURE_USER_INITIALIZE
+          xhrOnly: true                        # BROWSER_API_CALLS_XHR_ONLY
+          userCreation: false                  # FEATURE_USER_CREATION (false = superusers only)
+          # TECH PREVIEW (Quay 3.18) — not covered by Red Hat production SLAs, may be functionally
+          # incomplete, and Red Hat does not recommend it in production. The ONLY Tech Preview
+          # feature this chart can turn on, and it is off by default. Mints a high-privilege
+          # automation OAuth token into a Secret; still requires a superuser to ALREADY exist
+          # (BOOTSTRAP_TOKEN_OWNER must be in superUsers), so it does not remove the need for OIDC.
+          programmatic: false                  # FEATURE_PROGRAMMATIC_BOOTSTRAP
+        # Per-component managed flags. Omit a kind to leave it managed by the Quay Operator
+        # (the shipped default). postgres/clairpostgres are driven by the quay-db-mode label —
+        # do not set them here.
+        components:
+          objectstorage: false               # then supply DISTRIBUTED_STORAGE_CONFIG below
+        # Per-component overrides, passed straight through to spec.components[].overrides.
+        # Valid keys: affinity, annotations, env, labels, replicas, resources, securityContext,
+        # storageClassName, tls, volumeSize.
+        overrides:
+          quay:
+            replicas: 3
+          clair:
+            volumeSize: 50Gi                 # 3.18: Clair scratch space for layer extraction;
+            storageClassName: fast-ssd       # the 20Gi default is exhaustible by large images
+          redis:
+            resources:                       # 3.18: redis resource overrides
+              limits:
+                cpu: 400m
+                memory: 400Mi
+        # Registry serving certificate. Provider-agnostic: point secretName at ANY
+        # kubernetes.io/tls Secret (cert-manager with any issuer, Vault, or hand-made) and the
+        # Quay Operator watches it and rolling-restarts on rotation. Optionally let AutoShift
+        # create the cert-manager Certificate too. Without this, Quay keeps the Operator-managed
+        # cert and clients need --tls-verify=false on clusters with no trusted wildcard.
+        tls:
+          secretName: quay-tls
+          certificate:                       # omit to bring your own Secret
+            issuerRef:
+              name: autoshift-ca
+              kind: ClusterIssuer            # or Issuer
+            dnsNames: []                     # default: the registry route host
+        # Free-form config.yaml keys, merged LAST so they win over everything above. This is
+        # where OIDC (*_LOGIN_CONFIG, multi-issuer as of 3.18), DISTRIBUTED_STORAGE_CONFIG for
+        # unmanaged objectstorage, and DB_URI for quay-db-mode: external belong.
+        # NOTE: do not set SSL_PROTOCOLS/SSL_CIPHERS unless you mean to override — with
+        # unmanaged TLS, 3.18 inherits the cluster TLS security profile only when NEITHER is set.
+        # NEVER put credentials here — this file lives in git. Non-sensitive keys only.
+        config:
+          REGISTRY_TITLE: 'Red Hat Quay'
+          FEATURE_REPO_MIRROR: true
+          DEFAULT_TAG_EXPIRATION: '2w'
+        # Sensitive config.yaml keys come from a Secret an administrator creates ON THE CLUSTER,
+        # so they never enter git. Merged into the config bundle LAST, so it wins over `config`
+        # above. This is where object-storage credentials (DISTRIBUTED_STORAGE_CONFIG), DB_URI for
+        # quay-db-mode: external, and OIDC client secrets belong.
+        #
+        #   oc create secret generic quay-config-extra -n quay-enterprise \
+        #     --from-file=config.yaml=./quay-secrets.yaml
+        #
+        # where quay-secrets.yaml is a config.yaml FRAGMENT, e.g.:
+        #   DISTRIBUTED_STORAGE_CONFIG:
+        #     default:
+        #       - RadosGWStorage
+        #       - access_key: '...'
+        #         secret_key: '...'
+        #         bucket_name: 'quay-registry'
+        #         hostname: 's3.example.com'
+        #         is_secure: true
+        #         port: 443
+        #         storage_path: /datastorage/registry
+        #   DISTRIBUTED_STORAGE_PREFERENCE:
+        #     - default
+        configSecretRef:
+          name: quay-config-extra
+          namespace: quay-enterprise            # default: quay-enterprise
+          key: config.yaml                      # default: config.yaml
       # Every other operator supports the SAME block — uncomment and set real CSV(s) to pin.
       # Config key = the operator's <key>-version label base (shown). CSV name usually
       # <package>.vX.Y.Z — confirm with `oc get packagemanifest <name> -o jsonpath='{.status.channels}'`.
@@ -300,7 +395,7 @@ hubClusterSets:
           node-role.kubernetes.io/worker: ''
         numaTopology: 'restricted'
         hugepages:
-          defaultHugepagesSize: '1G'
+          defaultSize: '1G'
           pages:
             - size: '1G'
               count: 4
@@ -496,6 +591,24 @@ hubClusterSets:
           provider: openshift               # '' disables the declarative auth config
           minimumRole: None                 # minimum role for authenticated users
           adminGroup: cluster-admins        # group mapped to the Admin role
+      # =======================================================================
+      # AutoShift Console Plugin (hub only; ENABLE flag is the autoshift-console label).
+      # Read-only OpenShift console plugin that surfaces AutoShift clustersets, the resolution
+      # chain behind each setting, and policy compliance. All keys are optional.
+      # =======================================================================
+      autoshiftConsole:
+        # Built per OpenShift minor — the console supplies react and react-router as shared
+        # singletons, so one bundle cannot span releases. The policy appends ':ocp<minor>' using
+        # the cluster's ACTUAL running version, so a cluster always pulls its own build and a
+        # minor with no published build fails the pull rather than rendering nothing. Which minors
+        # are published is whatever is tagged in the repository:
+        # https://quay.io/repository/autoshift/autoshift-console-plugin?tab=tags
+        repository: 'quay.io/autoshift/autoshift-console-plugin'
+        replicas: 2
+        # Optional. Overrides repository and the derived tag outright — set it to pin a digest in
+        # production. Pinning one tag across a fleet spanning minors deploys the wrong bundle to
+        # all but one of them.
+        image: ''
     labels:
       # =======================================================================
       # Core Configuration
@@ -525,17 +638,23 @@ hubClusterSets:
       gitops-subscription-name: openshift-gitops-operator
       gitops-disable-default-argocd: 'true'
       gitops-channel: gitops-1.21
-      gitops-version: 'openshift-gitops-operator.v1.19.1'
+      gitops-version: 'openshift-gitops-operator.v1.21.3'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
       gitops-namespace: 'openshift-gitops'          # Override ArgoCD namespace per-cluster
       gitops-cluster-ca-bundle: 'true'              # Inject cluster trusted CA bundle into ArgoCD repo server
 
       # =======================================================================
+      # AutoShift Console Plugin (hub only — reads hub-side AutoShift ConfigMaps)
+      # Repository and replicas are set under config.autoshiftConsole.
+      # =======================================================================
+      autoshift-console: 'true'                     # AutoShift section in the Fleet management perspective
+
+      # =======================================================================
       # Advanced Cluster Management (hub only — not installed on managed clusters)
       # =======================================================================
       acm-subscription-name: advanced-cluster-management
-      acm-version: 'advanced-cluster-management.v2.16.2'
+      acm-version: 'advanced-cluster-management.v2.17.0'
       acm-channel: release-2.17
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
@@ -579,7 +698,7 @@ hubClusterSets:
       tempo-channel: stable
       tempo-source: redhat-operators
       tempo-source-namespace: openshift-marketplace
-      tempo-version: 'tempo-operator.v0.19.0-3'
+      tempo-version: 'tempo-operator.v0.21.0-3'
 
       # =======================================================================
       # Kiali
@@ -589,7 +708,7 @@ hubClusterSets:
       kiali-channel: stable
       kiali-source: redhat-operators
       kiali-source-namespace: openshift-marketplace
-      kiali-version: 'kiali-operator.v2.17.3'
+      kiali-version: 'kiali-operator.v2.27.2'
 
       # =======================================================================
       # Service Mesh 3
@@ -597,7 +716,7 @@ hubClusterSets:
       servicemesh3operator: 'false'
       servicemesh3operator-subscription-name: servicemeshoperator3
       servicemesh3operator-channel: stable
-      servicemesh3operator-version: 'servicemeshoperator3.v3.3.1'
+      servicemesh3operator-version: 'servicemeshoperator3.v3.4.1'
       servicemesh3operator-istio-version: '1.24.3'  # Istio control plane version
       servicemesh3operator-tempo: 'false'            # Enable Tempo distributed tracing
       servicemesh3operator-source: redhat-operators
@@ -609,7 +728,7 @@ hubClusterSets:
       # =======================================================================
       metallb: 'false'
       metallb-subscription-name: metallb-operator
-      metallb-version: 'metallb-operator.v4.22.0-202607272042'
+      metallb-version: 'metallb-operator.v4.22.0-202608122145'
       metallb-source: redhat-operators
       metallb-source-namespace: openshift-marketplace
       metallb-channel: stable
@@ -630,7 +749,7 @@ hubClusterSets:
       aap-install-plan-approval: Automatic
       aap-source: redhat-operators
       aap-source-namespace: openshift-marketplace
-      aap-version: 'aap-operator.v2.6.0-0.1768951413'
+      aap-version: 'aap-operator.v2.7.0-0.1785438985'
       aap-hub-disabled: 'false'              # 'true' omits Hub content storage
       aap-storage-type: 's3'                 # 's3', 'pvc', or 'none' (default: none)
       ### AAP Hub Content File Storage (select file OR s3, not both)
@@ -749,7 +868,7 @@ hubClusterSets:
       # =======================================================================
       local-storage: 'false'
       local-storage-subscription-name: local-storage-operator
-      local-storage-version: 'local-storage-operator.v4.22.0-202607272042'
+      local-storage-version: 'local-storage-operator.v4.22.0-202608122145'
       local-storage-channel: stable
       local-storage-source: redhat-operators
       local-storage-source-namespace: openshift-marketplace
@@ -798,14 +917,14 @@ hubClusterSets:
       nmstate-channel: stable
       nmstate-source: redhat-operators
       nmstate-source-namespace: openshift-marketplace
-      nmstate-version: 'kubernetes-nmstate-operator.4.22.0-202607280824'
+      nmstate-version: 'kubernetes-nmstate-operator.4.22.0-202608130510'
       #
       # =======================================================================
       # Advanced Cluster Security
       # =======================================================================
       acs: 'false'                           # enable toggle (placement gate)
       acs-subscription-name: rhacs-operator
-      acs-version: 'rhacs-operator.v4.9.2'
+      acs-version: 'rhacs-operator.v4.11.2'
       acs-channel: stable
       acs-source: redhat-operators
       acs-source-namespace: openshift-marketplace
@@ -817,7 +936,7 @@ hubClusterSets:
       # =======================================================================
       dev-spaces: 'false'
       dev-spaces-subscription-name: devspaces
-      dev-spaces-version: 'devspacesoperator.v3.26.0'
+      dev-spaces-version: 'devspacesoperator.v3.29.1'
       dev-spaces-channel: stable
       dev-spaces-source: redhat-operators
       dev-spaces-source-namespace: openshift-marketplace
@@ -827,7 +946,7 @@ hubClusterSets:
       # =======================================================================
       dev-hub: 'false'
       dev-hub-subscription-name: rhdh
-      dev-hub-version: 'rhdh-operator.v1.8.3'
+      dev-hub-version: 'rhdh-operator.v1.10.3'
       dev-hub-channel: fast-1.10
       dev-hub-source: redhat-operators
       dev-hub-source-namespace: openshift-marketplace
@@ -837,7 +956,7 @@ hubClusterSets:
       # =======================================================================
       pipelines: 'false'
       pipelines-subscription-name: openshift-pipelines-operator-rh
-      pipelines-version: 'openshift-pipelines-operator-rh.v1.21.0'
+      pipelines-version: 'openshift-pipelines-operator-rh.v1.23.1'
       pipelines-channel: pipelines-1.23
       pipelines-source: redhat-operators
       pipelines-source-namespace: openshift-marketplace
@@ -847,7 +966,7 @@ hubClusterSets:
       # =======================================================================
       tas: 'false'
       tas-subscription-name: rhtas-operator
-      tas-version: 'rhtas-operator.v1.3.2'
+      tas-version: 'rhtas-operator.v1.4.3'
       tas-channel: stable
       tas-source: redhat-operators
       tas-source-namespace: openshift-marketplace
@@ -857,10 +976,19 @@ hubClusterSets:
       # =======================================================================
       quay: 'false'
       quay-subscription-name: quay-operator
-      quay-version: 'quay-operator.v3.8.15'
+      quay-version: 'quay-operator.v3.18.0'
       quay-channel: stable-3.18
       quay-source: redhat-operators
       quay-source-namespace: openshift-marketplace
+      # Registry database backing. bundled = the Quay Operator's own PostgreSQL Deployment
+      # (the shipped default, fine for PoC); managed = CNPG HA clusters provisioned by AutoShift
+      # (requires cloudnative-pg: 'true'); external = bring your own, set DB_URI + the Clair
+      # connstrings in config.quay.config. Quay and Clair each get their OWN database — Red Hat
+      # does not support sharing one between them.
+      quay-db-mode: 'bundled'                   # bundled | managed | external
+      quay-db-instances: '2'                    # CNPG replicas for the Quay database
+      quay-clair-db-instances: '2'              # CNPG replicas for the Clair database
+      quay-db-backups: 'false'                  # CNPG scheduled backups (needs db-mode managed + odf)
 
       # =======================================================================
       # HashiCorp Vault (community: third-party Helm chart integrated via PolicyGenerator)
@@ -900,7 +1028,7 @@ hubClusterSets:
       # =======================================================================
       loki: 'false'
       loki-subscription-name: loki-operator
-      loki-version: 'loki-operator.v6.4.2'
+      loki-version: 'loki-operator.v6.6.0'
       loki-channel: stable-6.6
       loki-source: redhat-operators
       loki-source-namespace: openshift-marketplace
@@ -913,7 +1041,7 @@ hubClusterSets:
       # =======================================================================
       logging: 'false'
       logging-subscription-name: cluster-logging
-      logging-version: 'cluster-logging.v6.4.2'
+      logging-version: 'cluster-logging.v6.6.0'
       logging-channel: stable-6.6
       logging-source: redhat-operators
       logging-source-namespace: openshift-marketplace
@@ -923,7 +1051,7 @@ hubClusterSets:
       # =======================================================================
       coo: 'false'
       coo-subscription-name: cluster-observability-operator
-      coo-version: 'cluster-observability-operator.v1.3.1'
+      coo-version: 'cluster-observability-operator.v1.5.1'
       coo-channel: stable
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
@@ -940,7 +1068,7 @@ hubClusterSets:
       compliance-auto-remediate: 'true'
       compliance-storage-class: ''           # StorageClass for compliance scan results (optional)
       compliance-subscription-name: compliance-operator
-      compliance-version: 'compliance-operator.v1.8.2'
+      compliance-version: 'compliance-operator.v1.9.2'
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
@@ -951,7 +1079,7 @@ hubClusterSets:
       virt: 'false'
       virt-subscription-name: kubevirt-hyperconverged
       virt-channel: stable
-      virt-version: 'kubevirt-hyperconverged-operator.v4.22.2'
+      virt-version: 'kubevirt-hyperconverged-operator.v4.22.6'
       virt-source: redhat-operators
       virt-source-namespace: openshift-marketplace
 
@@ -963,7 +1091,7 @@ hubClusterSets:
       mtv-channel: release-v2.12
       mtv-source: redhat-operators
       mtv-source-namespace: openshift-marketplace
-      mtv-version: 'mtv-operator.v2.9.6'
+      mtv-version: 'mtv-operator.v2.12.5'
 
       # =======================================================================
       # Node Feature Discovery
@@ -973,7 +1101,7 @@ hubClusterSets:
       node-feature-discovery-channel: stable
       node-feature-discovery-source: redhat-operators
       node-feature-discovery-source-namespace: openshift-marketplace
-      node-feature-discovery-version: 'nfd.4.22.0-202607272042'
+      node-feature-discovery-version: 'nfd.4.22.0-202608122145'
 
       # =======================================================================
       # SR-IOV Network Operator
@@ -990,7 +1118,7 @@ hubClusterSets:
       cert-manager: 'false'
       cert-manager-subscription-name: openshift-cert-manager-operator
       cert-manager-channel: stable-v1
-      cert-manager-version: 'cert-manager-operator.v1.15.1'
+      cert-manager-version: 'cert-manager-operator.v1.20.0'
       cert-manager-source: redhat-operators
       cert-manager-source-namespace: openshift-marketplace
       # Enable flags (LABELS, drive placement). Issuer refs + SANs are DATA -> config.certManager (above).
@@ -1009,7 +1137,7 @@ hubClusterSets:
       cloudnative-pg: 'false'
       cloudnative-pg-subscription-name: cloudnative-pg
       cloudnative-pg-channel: stable-v1
-      cloudnative-pg-version: 'cloudnative-pg.v1.25.1'
+      cloudnative-pg-version: 'cloudnative-pg.v1.30.0'
       cloudnative-pg-source: certified-operators
       cloudnative-pg-source-namespace: openshift-marketplace
 
@@ -1019,7 +1147,7 @@ hubClusterSets:
       gitlab: 'false'
       gitlab-subscription-name: gitlab-operator-kubernetes
       gitlab-channel: stable
-      gitlab-version: 'gitlab-operator-kubernetes.v1.5.1'
+      gitlab-version: 'gitlab-operator-kubernetes.v3.2.4'
       gitlab-source: certified-operators
       gitlab-source-namespace: openshift-marketplace
       # Service modes: managed (default), external, or bundled
@@ -1088,7 +1216,7 @@ hubClusterSets:
       node-maintenance-channel: stable
       node-maintenance-source: redhat-operators
       node-maintenance-source-namespace: openshift-marketplace
-      node-maintenance-version: 'node-maintenance-operator.v5.5.0'
+      node-maintenance-version: 'node-maintenance-operator.v5.7.1'
 
       # =======================================================================
       # External Secrets Operator
@@ -1096,7 +1224,7 @@ hubClusterSets:
       external-secrets-operator: 'false'
       external-secrets-operator-subscription-name: openshift-external-secrets-operator
       external-secrets-operator-channel: stable-v1
-      external-secrets-operator-version: 'openshift-external-secrets-operator.v0.12.1'
+      external-secrets-operator-version: 'openshift-external-secrets-operator.v1.2.0'
       external-secrets-operator-source: redhat-operators
       external-secrets-operator-source-namespace: openshift-marketplace
       # Opentelemetry
@@ -1104,7 +1232,7 @@ hubClusterSets:
       opentelemetry: 'false'
       opentelemetry-subscription-name: opentelemetry-product
       opentelemetry-channel: stable
-      opentelemetry-version: 'opentelemetry-operator.v0.120.0'
+      opentelemetry-version: 'opentelemetry-operator.v0.152.0-3'
       opentelemetry-source: redhat-operators
       opentelemetry-source-namespace: openshift-marketplace
 

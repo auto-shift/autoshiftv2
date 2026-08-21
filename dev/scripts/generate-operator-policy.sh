@@ -242,49 +242,9 @@ substitute_template() {
 # per-deployment ${...} tokens into a throwaway copy (never mutate the source), then run
 # kustomize + the PolicyGenerator plugin. Returns 0 on success, 1 on render failure, 2 if the
 # toolchain is not installed.
-pg_render() {
-    local dir="$1"
-    local kbin plugin_home
-    if [[ -x "$PROJECT_ROOT/.tools/kustomize" ]]; then
-        kbin="$PROJECT_ROOT/.tools/kustomize"
-        plugin_home="$PROJECT_ROOT/.tools/kustomize-plugin"
-    elif command -v kustomize >/dev/null 2>&1; then
-        kbin="kustomize"
-        plugin_home="${KUSTOMIZE_PLUGIN_HOME:-}"
-    else
-        return 2
-    fi
-
-    # Stage the policy at its repo-relative path and copy components/ alongside, so the
-    # operator-install caller's `chartHome: ../../../../../components/` resolves in the isolated
-    # tree (mirrors the e2e harness).
-    local tmp rel
-    tmp="$(mktemp -d)"
-    rel="${dir#"$PROJECT_ROOT"/}"; rel="${rel#./}"
-    mkdir -p "$tmp/$(dirname "$rel")"
-    cp -R "$PROJECT_ROOT/$rel" "$tmp/$rel"
-    [[ -d "$PROJECT_ROOT/components" ]] && cp -R "$PROJECT_ROOT/components" "$tmp/components"
-    # Substitute the 5 exact tokens (mirrors the CMP sed / e2e replacer). Hub vars like $base
-    # have no braces, so these anchored ${...} patterns never touch them.
-    local f
-    while IFS= read -r f; do
-        sed -e 's/\${POLICY_NAMESPACE}/policies-autoshift/g' \
-            -e 's/\${REMEDIATION}/enforce/g' \
-            -e 's/\${EVAL_COMPLIANT}/2h/g' \
-            -e 's/\${EVAL_NONCOMPLIANT}/45s/g' \
-            -e 's/\${CLUSTER_SET_SUFFIX}//g' \
-            "$f" > "$f.sub" && mv "$f.sub" "$f"
-    done < <(find "$tmp/$rel" -name '*.yaml')
-
-    # POLICY_GEN_* env vars configure PolicyGenerator's nested `kustomize build` for the chart
-    # (the outer flags don't reach it).
-    KUSTOMIZE_PLUGIN_HOME="$plugin_home" \
-    POLICY_GEN_ENABLE_HELM=true POLICY_GEN_DISABLE_LOAD_RESTRICTORS=true \
-        "$kbin" build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone "$tmp/$rel" >/dev/null 2>&1
-    local rc=$?
-    rm -rf "$tmp"
-    return $rc
-}
+# Shared with the other generators and runnable on its own as `scripts/pg-render.sh <dir>`.
+# Defines pg_render(); see that script for why a bare `kustomize build` cannot work here.
+source "$SCRIPT_DIR/pg-render.sh"
 
 # Validation function
 validate_generated_policy() {
@@ -301,7 +261,10 @@ validate_generated_policy() {
         return 0
     else
         log_error "Generated policy fails PolicyGenerator render"
-        echo "Run: KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR"
+        echo "The raw kustomize command cannot be run as-is: the manifests still contain"
+        echo "\${REMEDIATION}/\${EVAL_COMPLIANT} tokens that PolicyGenerator rejects. Re-run this"
+        echo "script (it substitutes them internally), or validate with:"
+        echo "  cd tools && go test -tags integration -count=1 ./internal/resolver/..."
         return 1
     fi
 }
@@ -394,6 +357,12 @@ add_to_autoshift_values() {
             fi
         done
     else
+        # Non-interactive (CI, scripted runs, no TTY): skip the profile picker and fall through
+        # to the _example*.yaml files, which are always included below. Those are the files the
+        # label contract checks, so a scaffold validates cleanly without a human at the prompt.
+        if [[ ! -t 0 ]]; then
+            log_step "Non-interactive run: declaring labels in _example*.yaml only"
+        else
         # Interactive: let user select which values files to update
         # Search clustersets/ AND the parent values/ directory for single-file setups
         # Use newline-based find (no -print0/-z) for Git Bash compatibility
@@ -433,6 +402,7 @@ add_to_autoshift_values() {
             fi
         fi
     fi
+        fi
 
     # Always include example files that have a labels: section
     while IFS= read -r file; do
@@ -567,6 +537,14 @@ add_labels_to_section() {
         if [[ "$is_commented" == "true" ]]; then
             version_line="#       $COMPONENT_NAME-version: '$VERSION'"
         fi
+    elif [[ "$is_example" == "true" ]]; then
+        # The generated OperatorPolicy always reads autoshift.io/<component>-version
+        # (index .ManagedClusterLabels ... | default ""), so the key has to be declared in
+        # _example*.yaml or the label contract fails with "consumed but missing". Emitted
+        # empty, which the template treats as "no pin — let OLM pick". Curated profiles are
+        # left alone: an empty pin there would be noise, and they are not what the
+        # contract checks.
+        version_line="      $COMPONENT_NAME-version: ''"
     fi
 
     if [[ "$is_commented" == "true" ]]; then
@@ -733,7 +711,7 @@ main() {
         # Show next steps
         echo -e "${BLUE}📋 Next Steps:${NC}"
         echo "1. Review generated files in $POLICY_DIR/"
-        echo -e "2. Test locally: ${YELLOW}KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR${NC}"
+        echo -e "2. Validate: ${YELLOW}cd tools && go test -tags integration -count=1 ./internal/resolver/...${NC}"
         echo "3. Add operator CRs as bare manifests under $POLICY_DIR/manifests/ (PG wraps them — no ConfigurationPolicy boilerplate)"
         echo "4. Validate everything: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
         echo "5. Commit and push — ApplicationSet auto-discovers $POLICY_SUBDIR/*"

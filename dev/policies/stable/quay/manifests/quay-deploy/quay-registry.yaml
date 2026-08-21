@@ -1,0 +1,204 @@
+# Config bundle Secret + optional serving Certificate + the QuayRegistry CR.
+#
+# These live in ONE file because they are interdependent: unmanaged postgres/clairpostgres require
+# DB_URI and clair-config.yaml in the bundle, and unmanaged tls requires the Secret to already exist.
+#
+# Shipped defaults reproduce today's all-managed deployment — every production path is opt-in via
+# config.quay (hub, from rendered-config) or the quay-db-mode label.
+#
+# The config.yaml is GitOps-owned. Add keys through config.quay.config rather than Quay's built-in
+# config editor, which writes a different Secret this policy will not follow.
+#
+# Credentials never come from git. config.quay.config is for non-sensitive keys; anything secret
+# (object-storage keys, DB_URI for db-mode external, OIDC client secrets) goes in a Secret an
+# administrator creates on the cluster and names via config.quay.configSecretRef.
+#
+# Boolean defaults use hasKey, not `| default`: Sprig treats false as empty, so `false | default true`
+# would silently flip an explicit opt-out back on.
+object-templates-raw: |
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $quayCfg := (index $rcmConfig "quay" | default dict) hub}}
+  {{hub- $components := (index $quayCfg "components" | default dict) hub}}
+  {{hub- $overrides := (index $quayCfg "overrides" | default dict) hub}}
+  {{hub- $bootstrap := (index $quayCfg "bootstrap" | default dict) hub}}
+  {{hub- $tlsCfg := (index $quayCfg "tls" | default dict) hub}}
+  {{hub- $certCfg := (index $tlsCfg "certificate" | default dict) hub}}
+  {{hub- $issuerRef := (index $certCfg "issuerRef" | default dict) hub}}
+  {{hub- $superUsers := (index $quayCfg "superUsers" | default (list "quayadmin")) hub}}
+  {{hub- $extra := (index $quayCfg "config" | default dict) hub}}
+  {{hub- $secretRef := (index $quayCfg "configSecretRef" | default dict) hub}}
+  {{hub- $dbModeHub := (index .ManagedClusterLabels "autoshift.io/quay-db-mode" | default "bundled") hub}}
+  {{hub- $userInit := false hub}}
+  {{hub- if hasKey $bootstrap "userInitialize" hub}}{{hub- $userInit = index $bootstrap "userInitialize" hub}}{{hub- end hub}}
+  {{hub- $xhrOnly := true hub}}
+  {{hub- if hasKey $bootstrap "xhrOnly" hub}}{{hub- $xhrOnly = index $bootstrap "xhrOnly" hub}}{{hub- end hub}}
+  {{hub- $userCreation := false hub}}
+  {{hub- if hasKey $bootstrap "userCreation" hub}}{{hub- $userCreation = index $bootstrap "userCreation" hub}}{{hub- end hub}}
+  {{hub- $programmatic := false hub}}
+  {{hub- if hasKey $bootstrap "programmatic" hub}}{{hub- $programmatic = index $bootstrap "programmatic" hub}}{{hub- end hub}}
+  {{hub- $cfg := dict hub}}
+  {{hub- $_ := set $cfg "FEATURE_USER_INITIALIZE" $userInit hub}}
+  {{hub- $_ := set $cfg "BROWSER_API_CALLS_XHR_ONLY" $xhrOnly hub}}
+  {{hub- $_ := set $cfg "FEATURE_USER_CREATION" $userCreation hub}}
+  {{hub- $_ := set $cfg "SUPER_USERS" $superUsers hub}}
+  {{/* TECH PREVIEW (Quay 3.18): FEATURE_PROGRAMMATIC_BOOTSTRAP is not covered by Red Hat production
+       SLAs and Red Hat does not recommend it in production. Opt-in only — default false above, and
+       the only Tech Preview feature this chart can enable. The Operator injects the
+       PROGRAMMATIC_TOKEN_K8S_* fields itself, so they are deliberately not set here. */}}
+  {{hub- if $programmatic hub}}
+  {{hub- $_ := set $cfg "FEATURE_PROGRAMMATIC_BOOTSTRAP" true hub}}
+  {{hub- $_ := set $cfg "BOOTSTRAP_TOKEN_OWNER" (index $superUsers 0) hub}}
+  {{hub- end hub}}
+  {{hub- $cfg = merge $extra $cfg hub}}
+  {{- $secretName := "{{hub index $secretRef "name" | default "" hub}}" }}
+  {{- $secretNs := "{{hub index $secretRef "namespace" | default "quay-enterprise" hub}}" }}
+  {{- $secretKey := "{{hub index $secretRef "key" | default "config.yaml" hub}}" }}
+  {{- $base := (`{{hub $cfg | toRawJson hub}}` | fromJson) }}
+  {{/* Sensitive config.yaml keys (storage credentials, DB_URI for db-mode external, OIDC client
+       secrets) come from a Secret an administrator creates on the cluster — never from git. Merged
+       last so it wins over config.quay.config, which is for non-sensitive keys only. */}}
+  {{- $fromSecret := dict }}
+  {{- if $secretName }}
+  {{- $sec := (index ((lookup "v1" "Secret" $secretNs $secretName) | default dict) "data" | default dict) }}
+  {{- $rawCfg := (index $sec $secretKey | default "") }}
+  {{- if $rawCfg }}
+  {{- $fromSecret = ($rawCfg | base64dec | fromYaml) | default dict }}
+  {{- end }}
+  {{- end }}
+  {{- $base = merge $fromSecret $base }}
+  {{- $dbMode := "{{hub $dbModeHub hub}}" }}
+  {{- $tlsSecretName := "{{hub index $tlsCfg "secretName" | default "" hub}}" }}
+  {{- $issuerName := "{{hub index $issuerRef "name" | default "" hub}}" }}
+  {{- $issuerKind := "{{hub index $issuerRef "kind" | default "ClusterIssuer" hub}}" }}
+  {{- $issuerGroup := "{{hub index $issuerRef "group" | default "cert-manager.io" hub}}" }}
+  {{- $ingress := (lookup "config.openshift.io/v1" "Ingress" "" "cluster") | default dict }}
+  {{- $appsDomain := (index (index $ingress "spec" | default dict) "domain" | default "") }}
+  {{- $routeHost := printf "registry-quay-quay-enterprise.%s" $appsDomain }}
+  {{- $quayDb := (index ((lookup "v1" "Secret" "quay-enterprise" "quay-db-app") | default dict) "data" | default dict) }}
+  {{- $clairDb := (index ((lookup "v1" "Secret" "quay-enterprise" "clair-db-app") | default dict) "data" | default dict) }}
+  {{- $quayUri := (index $quayDb "uri" | default "" | base64dec) }}
+  {{- $clairHost := (index $clairDb "host" | default "" | base64dec) }}
+  {{- $clairPort := (index $clairDb "port" | default "" | base64dec) }}
+  {{- $clairName := (index $clairDb "dbname" | default "" | base64dec) }}
+  {{- $clairUser := (index $clairDb "username" | default "" | base64dec) }}
+  {{- $clairPass := (index $clairDb "password" | default "" | base64dec) }}
+  {{- $clairConn := printf "host=%s port=%s dbname=%s user=%s password=%s sslmode=require" $clairHost $clairPort $clairName $clairUser $clairPass }}
+  {{- $cnpgReady := and (ne $dbMode "bundled") (not (empty $quayUri)) (not (empty $clairHost)) }}
+  {{- $external := eq $dbMode "external" }}
+  {{- $dbUnmanaged := or $external $cnpgReady }}
+  {{/* Gate-closed: in managed mode with the CNPG app Secrets not yet present, emit nothing rather
+       than write a bundle with an empty DB_URI. policy-cnpg-quay-test orders this normally; this
+       only covers the Secret being deleted out from under a running registry. */}}
+  {{- if or (ne $dbMode "managed") $cnpgReady }}
+  {{- $issuerFound := false }}
+  {{- if $issuerName }}
+  {{- if eq $issuerKind "ClusterIssuer" }}
+  {{- $issuerFound = not (empty ((lookup "cert-manager.io/v1" "ClusterIssuer" "" $issuerName) | default dict)) }}
+  {{- else }}
+  {{- $issuerFound = not (empty ((lookup "cert-manager.io/v1" "Issuer" "quay-enterprise" $issuerName) | default dict)) }}
+  {{- end }}
+  {{- end }}
+  {{- $tlsSecretReady := and (ne $tlsSecretName "") (not (empty ((lookup "v1" "Secret" "quay-enterprise" $tlsSecretName) | default dict))) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: quay-registry-config-bundle
+        namespace: quay-enterprise
+      type: Opaque
+      stringData:
+        config.yaml: |
+          {{ $base | toYaml | autoindent }}
+          {{- if $cnpgReady }}
+          DB_URI: {{ $quayUri }}
+          {{- end }}
+        {{- if $cnpgReady }}
+        clair-config.yaml: |
+          indexer:
+            connstring: {{ $clairConn }}
+            layer_scan_concurrency: 6
+            migrations: true
+          matcher:
+            connstring: {{ $clairConn }}
+            migrations: true
+          notifier:
+            connstring: {{ $clairConn }}
+            migrations: true
+          metrics:
+            name: prometheus
+        {{- end }}
+  {{- if and $issuerName $issuerFound }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: quay-registry-tls
+        namespace: quay-enterprise
+      spec:
+        secretName: {{ $tlsSecretName }}
+        duration: 8760h
+        renewBefore: 720h
+        privateKey:
+          algorithm: ECDSA
+          size: 384
+        dnsNames:
+        {{hub- $names := (index $certCfg "dnsNames" | default list) hub}}
+        {{hub- if $names hub}}
+        {{hub- range $n := $names hub}}
+          - {{hub $n hub}}
+        {{hub- end hub}}
+        {{hub- else hub}}
+          - {{ $routeHost }}
+        {{hub- end hub}}
+        issuerRef:
+          name: {{ $issuerName }}
+          kind: {{ $issuerKind }}
+          group: {{ $issuerGroup }}
+  {{- end }}
+  {{/* mustonlyhave, NOT musthave. spec.components is a LIST, and musthave merges lists by APPENDING
+       entries that do not already match — so flipping postgres from managed:true to managed:false
+       leaves BOTH entries in place, the Quay Operator honours the last one, and the switch silently
+       does not happen while every policy still reports Compliant. Verified on a live cluster.
+       mustonlyhave replaces the list wholesale. Every field the Operator autofills into spec (it
+       autofills exactly this component list) must therefore be emitted here. */}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: quay.redhat.com/v1
+      kind: QuayRegistry
+      metadata:
+        name: registry
+        namespace: quay-enterprise
+      spec:
+        configBundleSecret: quay-registry-config-bundle
+        components:
+        {{hub- range $kind := (list "quay" "postgres" "clair" "clairpostgres" "redis" "horizontalpodautoscaler" "objectstorage" "route" "mirror" "monitoring") hub}}
+        {{hub- $managed := true hub}}
+        {{hub- if hasKey $components $kind hub}}
+        {{hub- $managed = index $components $kind hub}}
+        {{hub- end hub}}
+        {{hub- if eq $kind "quay" hub}}
+        {{hub- $managed = true hub}}
+        {{hub- end hub}}
+        {{hub- $ov := (index $overrides $kind | default dict) hub}}
+        {{hub- if or (eq $kind "postgres") (eq $kind "clairpostgres") hub}}
+          - kind: {{hub $kind hub}}
+            managed: {{ ternary "false" "true" $dbUnmanaged }}
+        {{hub- else hub}}
+          - kind: {{hub $kind hub}}
+            managed: {{hub $managed hub}}
+        {{hub- end hub}}
+        {{hub- if not (empty $ov) hub}}
+            overrides:
+              {{hub $ov | toYaml | autoindent hub}}
+        {{hub- end hub}}
+        {{hub- end hub}}
+          - kind: tls
+            managed: {{ ternary "false" "true" $tlsSecretReady }}
+          {{- if $tlsSecretReady }}
+            secretRef:
+              name: {{ $tlsSecretName }}
+          {{- end }}
+  {{- end }}

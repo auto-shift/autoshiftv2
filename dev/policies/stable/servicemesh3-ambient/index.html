@@ -1198,10 +1198,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#values-configuration" class="md-nav__link">
+  <a href="#configuration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Values Configuration
+        Configuration
       
     </span>
   </a>
@@ -1462,43 +1462,59 @@
 <li><strong>ServiceMonitor</strong>: Prometheus scraping for istiod metrics</li>
 <li><strong>PodMonitor</strong>: Prometheus scraping for ZTunnel metrics</li>
 </ul>
-<h2 id="values-configuration">Values Configuration<a class="headerlink" href="#values-configuration" title="Permanent link">&para;</a></h2>
-<p>Key values in <code>policies/servicemesh3-ambient/values.yaml</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">servicemesh3operator</span><span class="p">:</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openshift-operators</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">istioNamespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">istio-system</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">istioCNINamespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">istio-cni</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">ztunnelNamespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ztunnel</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">istioVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1.28-latest</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">updateStrategy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">InPlace</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="nt">tempoNamespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tracing-system</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span><span class="nt">pilot</span><span class="p">:</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="nt">cpuRequest</span><span class="p">:</span><span class="w"> </span><span class="s">"100m"</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="nt">memoryRequest</span><span class="p">:</span><span class="w"> </span><span class="s">"256Mi"</span>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">  </span><span class="nt">tempo</span><span class="p">:</span>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="nt">storageSize</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10Gi</span>
-</code></pre></div>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<p>This is a PolicyGenerator directory — there is no <code>values.yaml</code>. Configuration comes from
+<code>autoshift.io/*</code> labels, read at enforcement time by hub templates in <code>manifests/</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Label</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>servicemesh3-ambient</code></td>
+<td><code>false</code></td>
+<td>Gates the Placement — nothing deploys unless <code>true</code></td>
+</tr>
+<tr>
+<td><code>servicemesh3operator-istio-version</code></td>
+<td><code>v1.28-latest</code></td>
+<td><code>version</code> on the Istio and IstioCNI CRs</td>
+</tr>
+<tr>
+<td><code>servicemesh3operator-tempo</code></td>
+<td><code>false</code></td>
+<td>Wires Kiali to Tempo for distributed tracing</td>
+</tr>
+</tbody>
+</table>
+<p>Set them in a clusterset or per-cluster values file; see <code>autoshift/values/clustersets/_example.yaml</code>.</p>
+<p>The mesh namespaces (<code>istio-system</code>, <code>istio-cni</code>, <code>ztunnel</code>) are fixed in <code>manifests/</code> and are not
+configurable — the manifests reference them directly, and the operator expects <code>ztunnel</code> by name.</p>
 <h2 id="using-the-mesh">Using the Mesh<a class="headerlink" href="#using-the-mesh" title="Permanent link">&para;</a></h2>
 <p>Add namespaces to the ambient mesh:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>kubectl<span class="w"> </span>label<span class="w"> </span>namespace<span class="w"> </span>myapp<span class="w"> </span>istio.io/dataplane-mode<span class="o">=</span>ambient
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>kubectl<span class="w"> </span>label<span class="w"> </span>namespace<span class="w"> </span>myapp<span class="w"> </span>istio.io/dataplane-mode<span class="o">=</span>ambient
 </code></pre></div>
 <p>Access Kiali dashboard:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>oc<span class="w"> </span>get<span class="w"> </span>route<span class="w"> </span>kiali<span class="w"> </span>-n<span class="w"> </span>istio-system
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>oc<span class="w"> </span>get<span class="w"> </span>route<span class="w"> </span>kiali<span class="w"> </span>-n<span class="w"> </span>istio-system
 </code></pre></div>
 <h2 id="verification">Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Check core components</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>kubectl<span class="w"> </span>get<span class="w"> </span>istio,istiocni,ztunnel
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>istio-system
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>istio-cni
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>ztunnel
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="c1"># Check observability</span>
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>kubectl<span class="w"> </span>get<span class="w"> </span>kiali<span class="w"> </span>-n<span class="w"> </span>istio-system
-<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>kubectl<span class="w"> </span>get<span class="w"> </span>tempostack<span class="w"> </span>-n<span class="w"> </span>tracing-system
-<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>kubectl<span class="w"> </span>get<span class="w"> </span>otelcol<span class="w"> </span>-n<span class="w"> </span>istio-system
-<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>
-<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="c1"># Verify Tempo storage</span>
-<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>kubectl<span class="w"> </span>get<span class="w"> </span>objectbucketclaim<span class="w"> </span>tempo-bucket-odf<span class="w"> </span>-n<span class="w"> </span>tracing-system
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Check core components</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>kubectl<span class="w"> </span>get<span class="w"> </span>istio,istiocni,ztunnel
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>istio-system
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>istio-cni
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>ztunnel
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="c1"># Check observability</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>kubectl<span class="w"> </span>get<span class="w"> </span>kiali<span class="w"> </span>-n<span class="w"> </span>istio-system
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>kubectl<span class="w"> </span>get<span class="w"> </span>tempostack<span class="w"> </span>-n<span class="w"> </span>tracing-system
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>kubectl<span class="w"> </span>get<span class="w"> </span>otelcol<span class="w"> </span>-n<span class="w"> </span>istio-system
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="c1"># Verify Tempo storage</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>kubectl<span class="w"> </span>get<span class="w"> </span>objectbucketclaim<span class="w"> </span>tempo-bucket-odf<span class="w"> </span>-n<span class="w"> </span>tracing-system
 </code></pre></div>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="policy-not-applied">Policy Not Applied<a class="headerlink" href="#policy-not-applied" title="Permanent link">&para;</a></h3>
@@ -1507,30 +1523,30 @@
 <li>Verify placement: <code>oc get placement -n open-cluster-policies</code></li>
 <li>Check policy status: <code>oc describe policy policy-servicemesh3-ambient -n open-cluster-policies</code></li>
 <li>Verify operator dependencies are Compliant:
-   <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>oc<span class="w"> </span>get<span class="w"> </span>policy<span class="w"> </span>-n<span class="w"> </span>open-cluster-policies<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">'servicemesh3operator|kiali|tempo|opentelemetry'</span>
+   <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>oc<span class="w"> </span>get<span class="w"> </span>policy<span class="w"> </span>-n<span class="w"> </span>open-cluster-policies<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">'servicemesh3operator|kiali|tempo|opentelemetry'</span>
 </code></pre></div></li>
 </ol>
 <h3 id="tempo-storage-issues">Tempo Storage Issues<a class="headerlink" href="#tempo-storage-issues" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Check ODF is installed</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>oc<span class="w"> </span>get<span class="w"> </span>storagecluster<span class="w"> </span>-n<span class="w"> </span>openshift-storage
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># Check ObjectBucketClaim status</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>kubectl<span class="w"> </span>describe<span class="w"> </span>objectbucketclaim<span class="w"> </span>tempo-bucket-odf<span class="w"> </span>-n<span class="w"> </span>tracing-system
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="c1"># Verify generated secret exists</span>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>kubectl<span class="w"> </span>get<span class="w"> </span>secret<span class="w"> </span>tempo-s3-secret<span class="w"> </span>-n<span class="w"> </span>tracing-system
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Check ODF is installed</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>oc<span class="w"> </span>get<span class="w"> </span>storagecluster<span class="w"> </span>-n<span class="w"> </span>openshift-storage
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># Check ObjectBucketClaim status</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>kubectl<span class="w"> </span>describe<span class="w"> </span>objectbucketclaim<span class="w"> </span>tempo-bucket-odf<span class="w"> </span>-n<span class="w"> </span>tracing-system
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="c1"># Verify generated secret exists</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>kubectl<span class="w"> </span>get<span class="w"> </span>secret<span class="w"> </span>tempo-s3-secret<span class="w"> </span>-n<span class="w"> </span>tracing-system
 </code></pre></div>
 <h3 id="cni-or-ztunnel-issues">CNI or ZTunnel Issues<a class="headerlink" href="#cni-or-ztunnel-issues" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Check CNI pods logs</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>kubectl<span class="w"> </span>logs<span class="w"> </span>-n<span class="w"> </span>istio-cni<span class="w"> </span>-l<span class="w"> </span>k8s-app<span class="o">=</span>istio-cni-node
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1"># Check ZTunnel logs</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>kubectl<span class="w"> </span>logs<span class="w"> </span>-n<span class="w"> </span>ztunnel<span class="w"> </span>-l<span class="w"> </span><span class="nv">app</span><span class="o">=</span>ztunnel
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="c1"># Common issues:</span>
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="c1"># - Certificate issues with istiod</span>
-<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="c1"># - Network policy blocking control plane traffic</span>
-<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="c1"># - CNI conflicts with other network plugins</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Check CNI pods logs</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>kubectl<span class="w"> </span>logs<span class="w"> </span>-n<span class="w"> </span>istio-cni<span class="w"> </span>-l<span class="w"> </span>k8s-app<span class="o">=</span>istio-cni-node
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># Check ZTunnel logs</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>kubectl<span class="w"> </span>logs<span class="w"> </span>-n<span class="w"> </span>ztunnel<span class="w"> </span>-l<span class="w"> </span><span class="nv">app</span><span class="o">=</span>ztunnel
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="c1"># Common issues:</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="c1"># - Certificate issues with istiod</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="c1"># - Network policy blocking control plane traffic</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="c1"># - CNI conflicts with other network plugins</span>
 </code></pre></div>
 <h3 id="kiali-not-showing-traces">Kiali Not Showing Traces<a class="headerlink" href="#kiali-not-showing-traces" title="Permanent link">&para;</a></h3>
 <p>Ensure the <code>servicemesh3operator-tempo: 'true'</code> label is set on the cluster to enable Tempo integration in Kiali.</p>

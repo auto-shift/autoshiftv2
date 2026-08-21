@@ -1865,15 +1865,15 @@
 <li>Routes require <code>destination</code>, <code>gateway</code>, and <code>interface</code></li>
 </ul>
 <h2 id="testing">Testing<a class="headerlink" href="#testing" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Render nmstate chart</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>helm<span class="w"> </span>template<span class="w"> </span><span class="nb">test</span><span class="w"> </span>policies/stable/nmstate/<span class="w"> </span>-f<span class="w"> </span>policies/nmstate/values.yaml
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
-<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="c1"># Render with cluster values</span>
-<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>helm<span class="w"> </span>template<span class="w"> </span><span class="nb">test</span><span class="w"> </span>policies/stable/nmstate/<span class="w"> </span>-f<span class="w"> </span>policies/nmstate/values.yaml<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">  </span>-f<span class="w"> </span>autoshift/values/global.yaml<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">  </span>-f<span class="w"> </span>autoshift/values/clustersets/hub.yaml<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="w">  </span>-f<span class="w"> </span>autoshift/values/clusters/test-cluster.yaml
+<p>This is a PolicyGenerator directory, not a Helm chart — there is no <code>values.yaml</code> to pass. Config
+reaches the policy at enforcement time through the cluster's <code>rendered-config</code> ConfigMap, built from
+<code>autoshift/values/</code>, so the suite seeds that from the <code>_example*.yaml</code> files rather than taking a
+values file on the command line.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Render every policy, resolve hub and spoke templates, check the label contract. What CI runs.</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nb">cd</span><span class="w"> </span>tools<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-tags<span class="w"> </span>integration<span class="w"> </span>./internal/resolver/...
 </code></pre></div>
+<p>Per-cluster nmstate config is exercised through <code>autoshift/values/clusters/_example-cluster-install-*.yaml</code>
+— one managed-cluster profile is generated per file, so adding one adds a profile automatically.</p>
 
 
 

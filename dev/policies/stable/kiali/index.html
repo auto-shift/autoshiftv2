@@ -1392,8 +1392,10 @@
 🔧 <strong>Configuration</strong>: Requires operator-specific setup (see below)</p>
 <h2 id="quick-deploy">Quick Deploy<a class="headerlink" href="#quick-deploy" title="Permanent link">&para;</a></h2>
 <h3 id="test-locally">Test Locally<a class="headerlink" href="#test-locally" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Validate policy renders correctly</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>helm<span class="w"> </span>template<span class="w"> </span>policies/kiali/
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># A PolicyGenerator directory, not a Helm chart: rendering it needs the ${...}</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1"># placeholders substituted first. The validation suite does that, resolves hub and</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># spoke templates, and is what CI runs.</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nb">cd</span><span class="w"> </span>tools<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-tags<span class="w"> </span>integration<span class="w"> </span>./internal/resolver/...
 </code></pre></div>
 <h3 id="enable-on-clusters">Enable on Clusters<a class="headerlink" href="#enable-on-clusters" title="Permanent link">&para;</a></h3>
 <p>Edit AutoShift values files to add the operator labels:</p>
@@ -1605,9 +1607,9 @@
 </ol>
 <h3 id="template-rendering-issues">Template Rendering Issues<a class="headerlink" href="#template-rendering-issues" title="Permanent link">&para;</a></h3>
 <ol>
-<li>Test locally: <code>helm template policies/kiali/</code></li>
+<li>Validate rendering: <code>cd tools &amp;&amp; go test -tags integration ./internal/resolver/...</code></li>
 <li>Check hub escaping: Look for <code>{{ "{{hub" }} ... {{ "hub}}" }}</code> patterns</li>
-<li>Validate YAML: <code>helm lint policies/kiali/</code></li>
+<li>Read the failure: the suite names the chart and the stage that failed (render, hub resolution, spoke resolution, YAML validation, label contract)</li>
 </ol>
 <h2 id="resources">Resources<a class="headerlink" href="#resources" title="Permanent link">&para;</a></h2>
 <ul>

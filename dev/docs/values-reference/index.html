@@ -2350,7 +2350,7 @@
 <tr>
 <td>Quay</td>
 <td><code>quay-version</code></td>
-<td><code>quay-operator.v3.15.0</code></td>
+<td><code>quay-operator.v3.18.0</code></td>
 </tr>
 <tr>
 <td>Developer Hub</td>
@@ -3439,6 +3439,8 @@ To keep it running alongside yours:</p>
 </tbody>
 </table>
 <h3 id="quay">Quay<a class="headerlink" href="#quay" title="Permanent link">&para;</a></h3>
+<p>Red Hat Quay is a container registry. The policy installs the operator, deploys a <code>QuayRegistry</code>,
+and optionally provisions its databases through CloudNativePG.</p>
 <table>
 <thead>
 <tr>
@@ -3458,7 +3460,7 @@ To keep it running alongside yours:</p>
 <tr>
 <td><code>quay-channel</code></td>
 <td>string</td>
-<td><code>stable-3.13</code></td>
+<td><code>stable-3.18</code></td>
 <td></td>
 </tr>
 <tr>
@@ -3479,8 +3481,189 @@ To keep it running alongside yours:</p>
 <td><code>openshift-marketplace</code></td>
 <td></td>
 </tr>
+<tr>
+<td><code>quay-db-mode</code></td>
+<td>string</td>
+<td><code>bundled</code></td>
+<td><code>bundled</code>, <code>managed</code>, or <code>external</code>. See the following table</td>
+</tr>
+<tr>
+<td><code>quay-db-instances</code></td>
+<td>int</td>
+<td><code>2</code></td>
+<td>CloudNativePG replicas for the Quay database</td>
+</tr>
+<tr>
+<td><code>quay-clair-db-instances</code></td>
+<td>int</td>
+<td><code>2</code></td>
+<td>CloudNativePG replicas for the Clair database</td>
+</tr>
+<tr>
+<td><code>quay-db-backups</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Scheduled database backups. Requires <code>quay-db-mode: managed</code> and <code>odf</code></td>
+</tr>
 </tbody>
 </table>
+<p><strong>Database modes</strong> (<code>quay-db-mode</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bundled</code></td>
+<td>The Quay Operator runs its own PostgreSQL deployments. The shipped default, and appropriate for proof of concept clusters</td>
+</tr>
+<tr>
+<td><code>managed</code></td>
+<td>AutoShift provisions two CloudNativePG clusters, <code>quay-db</code> and <code>clair-db</code>. Requires <code>cloudnative-pg: 'true'</code> on the same cluster</td>
+</tr>
+<tr>
+<td><code>external</code></td>
+<td>You supply <code>DB_URI</code> and the Clair connection strings yourself. See <code>configSecretRef</code> in the following section</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Red Hat Quay and Clair must not share a database, so <code>managed</code> mode creates two separate
+CloudNativePG clusters. PgBouncer is not supported with Red Hat Quay or Clair, so neither
+database gets a connection pooler.</p>
+</div>
+<p><strong>Config block</strong> (<code>config.quay</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>versions</code></td>
+<td>list</td>
+<td></td>
+<td>Permitted operator CSV versions</td>
+</tr>
+<tr>
+<td><code>startingCSV</code></td>
+<td>string</td>
+<td></td>
+<td>Initial install pin. An empty value lets Operator Lifecycle Manager choose</td>
+</tr>
+<tr>
+<td><code>superUsers</code></td>
+<td>list</td>
+<td><code>[quayadmin]</code></td>
+<td>Registry superusers. With OpenID Connect these are the OpenID Connect user names</td>
+</tr>
+<tr>
+<td><code>components.&lt;kind&gt;</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Per component <code>managed</code> flag. Omit a component to leave it managed by the operator</td>
+</tr>
+<tr>
+<td><code>overrides.&lt;kind&gt;</code></td>
+<td>map</td>
+<td></td>
+<td>Passed through to <code>spec.components[].overrides</code>. Accepts <code>affinity</code>, <code>annotations</code>, <code>env</code>, <code>labels</code>, <code>replicas</code>, <code>resources</code>, <code>securityContext</code>, <code>storageClassName</code>, <code>tls</code>, and <code>volumeSize</code>. See the warning that follows about <code>replicas</code></td>
+</tr>
+<tr>
+<td><code>bootstrap.userInitialize</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td><code>FEATURE_USER_INITIALIZE</code>. Enables the unauthenticated first user endpoint</td>
+</tr>
+<tr>
+<td><code>bootstrap.xhrOnly</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td><code>BROWSER_API_CALLS_XHR_ONLY</code>. Restricts the registry API to browser calls</td>
+</tr>
+<tr>
+<td><code>bootstrap.userCreation</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td><code>FEATURE_USER_CREATION</code>. When false, only superusers create users</td>
+</tr>
+<tr>
+<td><code>bootstrap.programmatic</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td><code>FEATURE_PROGRAMMATIC_BOOTSTRAP</code>. Technology Preview in Red Hat Quay 3.18</td>
+</tr>
+<tr>
+<td><code>tls.secretName</code></td>
+<td>string</td>
+<td></td>
+<td>Name of a <code>kubernetes.io/tls</code> Secret for the registry certificate</td>
+</tr>
+<tr>
+<td><code>tls.certificate.issuerRef</code></td>
+<td>map</td>
+<td></td>
+<td>Optional. Creates a cert-manager <code>Certificate</code> from this issuer</td>
+</tr>
+<tr>
+<td><code>tls.certificate.dnsNames</code></td>
+<td>list</td>
+<td></td>
+<td>Optional. Defaults to the registry route host</td>
+</tr>
+<tr>
+<td><code>config</code></td>
+<td>map</td>
+<td></td>
+<td>Extra <code>config.yaml</code> keys, merged after the preceding fields. Non-sensitive values only</td>
+</tr>
+<tr>
+<td><code>configSecretRef</code></td>
+<td>map</td>
+<td></td>
+<td><code>{name, namespace, key}</code> of a Secret holding sensitive <code>config.yaml</code> keys</td>
+</tr>
+<tr>
+<td><code>dbBackupSchedule</code></td>
+<td>string</td>
+<td><code>0 4 * * *</code></td>
+<td>Cron schedule for database backups</td>
+</tr>
+<tr>
+<td><code>dbBackupRetention</code></td>
+<td>string</td>
+<td><code>30d</code></td>
+<td>Backup retention period</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Setting <code>overrides.&lt;kind&gt;.replicas</code> while the horizontal pod autoscaler is managed is rejected by
+Red Hat Quay with <code>cannot override replicas with managed HPA</code>. This blocks the whole rollout: the
+<code>QuayRegistry</code> reports <code>RolloutBlocked</code> and no registry pods are created, even though the custom
+resource itself is valid. To pin replica counts, also set
+<code>components.horizontalpodautoscaler: false</code> in the same <code>config.quay</code> block.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Important</p>
+<p>Values files are stored in Git, so credentials must never appear in <code>config.quay.config</code>. Put
+object storage keys, <code>DB_URI</code> for <code>external</code> mode, and OpenID Connect client secrets in a Secret
+that you create on the cluster, and reference it with <code>configSecretRef</code>. That Secret is merged
+last, so it overrides everything else.</p>
+</div>
+<p>The default configuration is secure: the unauthenticated first user endpoint is disabled and the
+registry API is restricted to browser calls. A cluster with no OpenID Connect provider therefore has
+no interactive administrator until you either configure OpenID Connect and list administrators in <code>superUsers</code>, or set
+<code>bootstrap.userInitialize</code> and <code>bootstrap.xhrOnly</code> to bootstrap a local account by hand.</p>
 <h3 id="openshift-virtualization">OpenShift virtualization<a class="headerlink" href="#openshift-virtualization" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
