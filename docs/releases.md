@@ -258,6 +258,8 @@ When enabled, AutoShift:
 
 For disconnected environments, mirror the released artifacts to an internal registry.
 
+[![AutoShift disconnected delivery](diagrams/autoshift-oci-disconnected.drawio.svg)](diagrams/autoshift-oci-disconnected.drawio.svg)
+
 > **One artifact type.** Every AutoShift policy ships as a **Helm chart** under `oci://<registry>/policies/<name>`
 > — the hand-authored holdout charts and the PolicyGenerator policies (rendered to stock Helm charts in CI by
 > `make render-policy-charts`). All are listed in `policy-list.txt`; `helm pull` works on every one. The
