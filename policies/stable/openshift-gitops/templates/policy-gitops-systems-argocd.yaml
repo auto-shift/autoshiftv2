@@ -2,10 +2,6 @@
 # the GitOps Operator.
 #
 {{- if .Values.hubClusterSets }}
-{{- /* The CMP init/sidecar images are resolved at policy-enforcement time via hub-template lookups in
-       object-templates-raw below — a helm lookup here would not work, because ArgoCD's repo-server does
-       not execute helm lookups during rendering. The PolicyGenerator CMP is unconditional: the repo-server
-       cannot render any of the kustomize/PolicyGenerator policies without it. */}}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -181,11 +177,11 @@ spec:
                   repo:
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $repoLimits "cpu" | default "1000m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $repoLimits "memory" | default "1024Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $repoLimits "cpu" | default "2000m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $repoLimits "memory" | default "2048Mi" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $repoRequests "cpu" | default "250m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $repoRequests "memory" | default "256Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $repoRequests "cpu" | default "500m" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $repoRequests "memory" | default "512Mi" {{ "hub}}" }}
                     {{ "{{hub-" }} if $pgEnabled {{ "hub}}" }}
                     env:
                       - name: POLICY_GEN_ENABLE_HELM
@@ -287,7 +283,7 @@ spec:
                     resources:
                       limits:
                         cpu: {{ "{{hub" }} index $controllerLimits "cpu" | default "2000m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $controllerLimits "memory" | default "2048Mi" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $controllerLimits "memory" | default "4096Mi" {{ "hub}}" }}
                       requests:
                         cpu: {{ "{{hub" }} index $controllerRequests "cpu" | default "250m" {{ "hub}}" }}
                         memory: {{ "{{hub" }} index $controllerRequests "memory" | default "1024Mi" {{ "hub}}" }}
