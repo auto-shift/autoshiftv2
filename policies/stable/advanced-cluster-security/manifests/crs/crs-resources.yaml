@@ -26,10 +26,10 @@ object-templates-raw: |
   {{- $maxClusters := (index $reg "maxClusters" | default 1) }}
   {{- $roxctlImage = (index $reg "roxctlImage" | default $defaultImage) }}
   {{- $names = append $names $clusterName }}
-  {{- $specs = append $specs (printf "%s|%s|%v" $clusterName $validFor $maxClusters) }}
+  {{- $specs = append $specs (printf "'%s %s %v'" $clusterName $validFor $maxClusters) }}
   {{- end }}
   {{- end }}
-  {{- $specList := ($specs | join " ") }}
+  {{- $specArgs := ($specs | join " ") }}
   {{- $jobName := (printf "acs-crs-generate-%s" (($names | join " ") | sha256sum | trunc 8)) }}
   {{- if $names }}
   - complianceType: musthave
@@ -113,17 +113,17 @@ object-templates-raw: |
               args:
               - |
                 set -eu
+                # one "<cluster> <validFor> <maxClusters>" line per cluster this deployment owns
+                printf '%s\n' {{ $specArgs }} > /shared/all
                 : > /shared/needed
                 now=$(date -u +%s)
-                for spec in {{ $specList }}; do
-                  c="${spec%%|*}"
+                while read -r c validfor maxc; do
+                  [ -n "$c" ] || continue
                   exp=$(oc get secret "crs-$c" -n stackrox -o jsonpath='{.metadata.annotations.crs\.platform\.stackrox\.io/expires-at}' 2>/dev/null || true)
-                  if [ -z "$exp" ]; then
-                    echo "$spec" >> /shared/needed
-                  elif [ "$(date -u -d "$exp" +%s 2>/dev/null || echo 0)" -le "$now" ]; then
-                    echo "$spec" >> /shared/needed
+                  if [ -z "$exp" ] || [ "$(date -u -d "$exp" +%s 2>/dev/null || echo 0)" -le "$now" ]; then
+                    echo "$c $validfor $maxc" >> /shared/needed
                   fi
-                done
+                done < /shared/all
                 echo "clusters needing a CRS: $(wc -l < /shared/needed)"
               volumeMounts:
               - name: shared
@@ -136,7 +136,7 @@ object-templates-raw: |
               args:
               - |
                 set -eu
-                while IFS='|' read -r c validfor maxc; do
+                while read -r c validfor maxc; do
                   [ -n "$c" ] || continue
                   roxctl -e central.stackrox.svc:443 --insecure-skip-tls-verify \
                     central crs generate "autoshift-$c-$(date -u +%Y%m%d%H%M%S)" \
@@ -161,7 +161,7 @@ object-templates-raw: |
               args:
               - |
                 set -eu
-                while IFS='|' read -r c validfor maxc; do
+                while read -r c validfor maxc; do
                   [ -n "$c" ] || continue
                   f="/shared/crs-$c.yaml"
                   [ -f "$f" ] || continue
