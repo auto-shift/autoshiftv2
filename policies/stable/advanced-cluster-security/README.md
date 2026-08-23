@@ -135,7 +135,7 @@ acs-monitoring: 'true'
 
 ## Further Reading
 
-- [Values Reference](../../../docs/values-reference.md#advanced-cluster-security) - Complete label reference table
+- [Values Reference](../../../docs/values-reference.md#red-hat-advanced-cluster-security) - Complete label reference table
 - [Developer Guide](../../../docs/developer-guide.md) - How to create and modify policies
 - [Gradual Rollout](../../../docs/gradual-rollout.md) - Version pinning and staged rollout
 - [RHACS Documentation](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_security_for_kubernetes) - Red Hat Advanced Cluster Security documentation (select your version, then see *Configuring > Declarative Configuration* and *Operating > Managing Security Policies*)

@@ -2,6 +2,7 @@
 
 **Build and run a fleet of OpenShift clusters from Git.**
 
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 ![OpenShift Version](https://img.shields.io/badge/OpenShift-4.22-red?logo=redhatopenshift&logoColor=white)
 ![Red Hat Advanced Cluster Management Version](https://img.shields.io/badge/Advanced_Cluster_Management-2.17-blue?logo=redhat&logoColor=white)
 
@@ -27,7 +28,7 @@ vSphere through Hive. A cluster arrives with its operators and configuration alr
 Once running, it stays at the state its values files describe. Adding a capability to a hundred
 clusters is one label; adding it to a single cluster is the same label on that cluster.
 
-**[Get started →](docs/quickstart.md)**  ·  [Browse the labels](docs/values-reference.md)  ·  [All documentation](docs/)
+**[Get started →](docs/quickstart.md)**  ·  [Browse the labels](docs/values-reference.md)  ·  [All documentation](#documentation)
 
 ## How it works
 
@@ -117,8 +118,9 @@ To run a new AutoShift release against a few clusters before the whole fleet, se
 
 ## Documentation
 
-📚 **[Complete Documentation](https://auto-shift.github.io/autoshiftv2/)**, also under
-[`docs/`](docs/) in this repository.
+📚 Every page here is published at
+**[auto-shift.github.io/autoshiftv2](https://auto-shift.github.io/autoshiftv2/)** and lives under
+`docs/` in this repository.
 
 - 🚀 [Quick Start Guide](docs/quickstart.md) - Full installation walkthrough (Source and OCI)
 - 🏗️ [Provisioning Clusters](docs/cluster-install.md) - Install new clusters from AutoShift

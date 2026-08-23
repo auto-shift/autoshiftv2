@@ -1,9 +1,5 @@
 # AutoShiftv2 - developer guide
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![OpenShift](https://img.shields.io/badge/OpenShift-4.22-red)](https://www.openshift.com/)
-[![Red Hat Advanced Cluster Management for Kubernetes](https://img.shields.io/badge/Advanced_Cluster_Management-2.17-purple)](https://www.redhat.com/en/technologies/management/advanced-cluster-management)
-
 **Build and manage OpenShift Platform Plus infrastructure as code with policy-driven automation**
 
 ## 🚀 Quick start - create your first policy
@@ -12,14 +8,14 @@ Generate and deploy an operator policy in under 5 minutes:
 
 ```bash
 # 1. Generate a new operator policy with AutoShift integration and version pinning
-./scripts/generate-operator-policy.sh cert-manager cert-manager-operator --channel stable --namespace cert-manager --version cert-manager.v1.14.4 --add-to-autoshift
+./scripts/generate-operator-policy.sh my-component my-operator-package --channel stable --namespace my-component --version my-operator.v1.0.0 --add-to-autoshift
 
 # 2. Validate the generated policy renders and resolves
 (cd tools && go test -tags integration ./internal/resolver/...)
 
 # 3. Commit and push - AutoShift will automatically deploy via GitOps
-git add policies/stable/cert-manager/
-git commit -m "Add cert-manager operator policy"
+git add policies/stable/my-component/
+git commit -m "Add my-component operator policy"
 git push origin main  # or your branch if contributing
 ```
 
@@ -34,6 +30,7 @@ Your operator is now being deployed across your clusters. Check the ArgoCD dashb
 - [Common Development Tasks](#common-development-tasks)
 - [Testing and Validation](#testing-and-validation)
 - [Contributing](#contributing)
+- [Forking This Repository](#forking-this-repository)
 - [Troubleshooting](#troubleshooting)
 - [Additional Resources](#additional-resources)
 
@@ -54,9 +51,9 @@ flowchart TD
     AutoShift -->|Creates| Apps
     Apps -->|Deploys| Policies
 
-    classDef git fill:#dc3545,stroke:#721c24,stroke-width:2px,color:#ffffff
-    classDef argo fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff
-    classDef policy fill:#198754,stroke:#0f5132,stroke-width:2px,color:#ffffff
+    classDef git fill:#4C4C4C,stroke:#4C4C4C,color:#ffffff
+    classDef argo fill:#1D4174,stroke:#1D4174,color:#ffffff
+    classDef policy fill:#43ADAF,stroke:#43ADAF,color:#151515
 
     class Git git
     class AutoShift,Apps argo
@@ -83,8 +80,8 @@ flowchart TD
     Processed -->|ACM propagates| SpokePolicy
     SpokePolicy -->|Applies locally| Resources
 
-    classDef hub fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff
-    classDef spoke fill:#198754,stroke:#0f5132,stroke-width:2px,color:#ffffff
+    classDef hub fill:#1D4174,stroke:#1D4174,color:#ffffff
+    classDef spoke fill:#43ADAF,stroke:#43ADAF,color:#151515
 
     class HubPolicy,Labels,Processed hub
     class SpokePolicy,Resources spoke
@@ -113,9 +110,9 @@ flowchart TD
     Placement -.->|Connected by| Binding
     Binding -->|Targets| Clusters
 
-    classDef config fill:#f0ab00,stroke:#b07700,stroke-width:2px,color:#151515
-    classDef policy fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff
-    classDef target fill:#198754,stroke:#0f5132,stroke-width:2px,color:#ffffff
+    classDef config fill:#689B7A,stroke:#689B7A,color:#151515
+    classDef policy fill:#43ADAF,stroke:#43ADAF,color:#151515
+    classDef target fill:#43ADAF,stroke:#43ADAF,color:#151515
 
     class Values,ConfigMaps,ClusterLabels config
     class Policy,Placement,Binding policy
@@ -145,12 +142,123 @@ flowchart TD
 
 ### Prerequisites
 
-| Tool | Version | Installation |
-|------|---------|-------------|
-| OpenShift CLI | Latest | [Download oc](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli) |
-| Helm | 3.x | [Install Helm](https://helm.sh/docs/intro/install/) |
-| Git | 2.x+ | Pre-installed on most systems |
-| Access to Hub Cluster | - | Admin or developer access required |
+None of these are vendored in the repository. Until they are present, the validation suite and the
+documentation checks cannot run.
+
+| Tool | Version | Needed for | Installation |
+|------|---------|------------|-------------|
+| Git | 2.x or later | Everything | Pre-installed on most systems |
+| Helm | 3.x | Rendering charts, `make lint` | [Install Helm](https://helm.sh/docs/intro/install/) |
+| Go | As declared in `tools/go.mod` | The validation suite, and installing kustomize | [Install Go](https://go.dev/doc/install) |
+| kustomize and PolicyGenerator | kustomize v5.8.1 | Rendering any PolicyGenerator policy | `make install-policy-generator` |
+| yq | Latest | Release tooling | `brew install yq` |
+| gitleaks | 8.24.3 | The pre-commit secret scan | [Releases](https://github.com/gitleaks/gitleaks/releases) |
+| Vale | 3.17.1 | The prose check | `brew install vale`, then `vale sync` |
+| Zensical | Pinned in `docs/requirements.txt` | The documentation site build | `pip install -r docs/requirements.txt` |
+| OpenShift CLI | Latest | Working against a live cluster | [Download oc](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/cli_tools/openshift-cli-oc#installing-openshift-cli) |
+| Access to a hub cluster | - | Deploying and debugging | Administrator or developer access |
+
+Only Git, Helm, Go, and kustomize are needed to create a policy and validate it. The OpenShift CLI
+and cluster access are needed to deploy one.
+
+`make validate` checks for Helm, yq, and Git only, so a passing result does not mean the validation
+suite can run. Confirm Go separately.
+
+#### kustomize and the PolicyGenerator plugin
+
+Most policies are PolicyGenerator directories, and rendering one needs both kustomize and the
+PolicyGenerator plugin. Do not install these by hand. One target stages both into a repository-local
+`.tools/` directory:
+
+```bash
+make install-policy-generator
+```
+
+The target uses `go install`, so Go has to be present first. The validation suite looks for
+`$KUSTOMIZE_BIN` and `$KUSTOMIZE_PLUGIN_HOME`, and falls back to the repository-local `.tools/`
+directory, so after running the target no environment variables are needed. Export them only when
+kustomize lives somewhere else.
+
+Without this step, the pre-commit hook prints a warning and every PolicyGenerator policy fails to
+render.
+
+Both versions are pinned in the `Makefile` and carry a `# renovate:` annotation, so Renovate raises
+a pull request when a new release appears and continuous integration validates the bump before it
+merges. Override either for a one-off test:
+
+```bash
+make install-policy-generator POLICY_GENERATOR_VERSION=<tag>
+```
+
+#### The devcontainer
+
+The devcontainer in `.devcontainer/` carries the whole toolchain: Git, Helm, Go, yq, gitleaks, Vale,
+Zensical, and the OpenShift CLI. Its `postCreateCommand` points `core.hooksPath` at `.githooks` and
+runs `make install-policy-generator`, so the hooks and the plugin are ready on first open. Opening
+the repository in the devcontainer is the shortest path to running every check the build runs.
+
+The image builds with the repository root as its context, so it reads the Go version from
+`tools/go.mod` and the Zensical version from `docs/requirements.txt` rather than pinning either a
+second time. Vale itself is in the image, but the rule package is not: run `vale sync` once in the
+workspace.
+
+Outside the devcontainer, enable the hooks once:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+#### Keeping versions current
+
+Every version is pinned exactly, and a bot proposes each bump so that continuous integration
+validates it before it merges. Nothing floats, because a floating version lands its breakage on an
+unrelated pull request and blames the wrong change.
+
+| What | Where the version lives | Updated by |
+|---|---|---|
+| Go module dependencies | `tools/go.mod` | Dependabot |
+| GitHub Actions | `.github/workflows/` | Dependabot |
+| Zensical | `docs/requirements.txt` | Dependabot |
+| Helm, gitleaks, Vale | `# renovate:` annotations in the Containerfile, GitLab CI, and workflows | Renovate |
+| kustomize, PolicyGenerator | `# renovate:` annotations in the `Makefile` | Renovate |
+| Go in the devcontainer | derived from `tools/go.mod` | nothing to update |
+
+Helm is pinned in four places: the devcontainer Containerfile, GitLab CI, and the two
+`azure/setup-helm` steps in `.github/workflows/ci.yaml`. All four carry the same annotation, so they
+move together. Dependabot bumps the action itself but never a `with:` input, which is why the two
+workflow pins need the annotation.
+
+> [!IMPORTANT]
+> Helm and kustomize are compatibility pins, not currency pins. The Red Hat OpenShift GitOps
+> repository server renders the charts that reach a cluster, so rendering locally with a different
+> version is how local output starts diverging from the cluster. Match the versions that the
+> deployed OpenShift GitOps ships:
+>
+> | OpenShift GitOps | Argo CD | Helm | Kustomize |
+> |---|---|---|---|
+> | 1.21 | 3.4.3 | 3.19.4 | 5.8.1 |
+> | 1.20 | 3.3.2 | 3.19.4 | 5.8.1 |
+> | 1.19 | 3.1.9 | 3.18.4 | 5.7.0 |
+>
+> `renovate.json` constrains both with `allowedVersions`, so Renovate proposes patches inside the
+> current line and cannot raise Helm to 4. When `gitops-channel` moves, check the compatibility
+> matrix in the OpenShift GitOps release notes, then update the pins and those ranges together.
+
+Two versions are deliberately not pinned. `OCP_VERSION` is a release channel, so the OpenShift CLI
+follows the latest patch, and the minor needs a manual bump. The Vale rule package resolves to the
+latest `vale-at-red-hat` release on every `vale sync`, which is covered in
+[Documentation style](documentation-style.md#getting-vale).
+
+> [!IMPORTANT]
+> The Renovate annotations only take effect when the Renovate GitHub App is installed on the
+> repository. Dependabot is configured through `.github/dependabot.yml` and needs nothing further.
+
+Every pull request runs the full build, because `.github/workflows/ci.yaml` triggers on any pull
+request to `main` with no path filters. A bump proposed by either bot is therefore validated by
+policy rendering, the label contract, the prose check, and the site build before it can merge.
+
+When adding a version anywhere, put it in a manifest or give it a `# renovate:` annotation. A
+version written inline in a workflow `run:` step is frozen forever, because neither bot reads one.
 
 ### Repository setup
 
@@ -232,10 +340,15 @@ policies/stable/my-component/
 ├── policy-generator-config.yaml        # PolicyGenerator (policy graph, remediation, eval interval)
 ├── placement.yaml                      # Placement predicate + tolerations
 ├── README.md                           # Policy documentation
-└── manifests/                          # bare resources — PG wraps each into a ConfigurationPolicy
-    ├── namespace.yaml                  #   the operator Namespace (raw)
-    └── operator.yaml                   #   the OperatorPolicy (first-class; carries ${REMEDIATION})
+├── manifests/                          # bare resources — PG wraps each into a ConfigurationPolicy
+│   ├── namespace.yaml                  #   the operator Namespace (raw)
+│   └── operator.yaml                   #   the OperatorPolicy (first-class; carries ${REMEDIATION})
+└── test/                               # inform-only checks, added when you need to gate on state
 ```
+
+`manifests` is a **directory** path in `policy-generator-config.yaml`, so a new file dropped into
+it is picked up with no edit to that file. Edit `policy-generator-config.yaml` only to change the
+policy graph itself: names, dependencies, placement, or per-policy remediation.
 
 ### Step 4: add operator configuration
 
@@ -381,14 +494,20 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 {{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
 ```
 
-**`trimPrefix` and `trimSuffix` are not available** in Red Hat Advanced Cluster Management hub templates. Use `replace` instead:
+**The available Sprig functions depend on the Red Hat Advanced Cluster Management version.** Version 2.15 and earlier expose an explicit allowlist that omits `trimPrefix`, `trimSuffix`, `compact`, and `toString`. Version 2.16 and later expose the whole Sprig function map and deny only `env` and `expandenv`, so all four work.
+
+Calling a function the hub does not have is not a local failure. It aborts hub resolution for the entire policy, so every `{{hub}}` expression stays raw, the wrapped policy is never created, and the operator silently never installs.
+
+Where a deployment has to span hubs older than 2.16, prefer the portable form, which works on every version:
 
 ```yaml
-# Use this:
+# Portable on every version:
 {{ "{{hub" }} $name := (replace "managed-cluster-config." "" $cmName) {{ "hub}}" }}
-# Not this (will error):
+# Requires 2.16 or later:
 {{ "{{hub" }} $name := (trimPrefix "managed-cluster-config." $cmName) {{ "hub}}" }}
 ```
+
+The same applies to `compact`, where `ternary (list) (list $v) (empty $v)` is the portable form, and to `toString`, where `printf "%v" $v` is portable. For the full picture, see [Policy behavior at runtime](policy-behavior.md#template-engine-limits).
 
 **`lookup` returns a Go map, not a string.** Use `| default dict` to safely handle missing resources:
 
@@ -459,39 +578,76 @@ Configuration precedence: **Individual Cluster > ClusterSet > Default Values**
 
 ### Dependency Management
 
-AutoShift handles dependencies through logical ordering and shared placement rules. For explicit dependencies, add to policy spec.dependencies section like the example below:
+A policy that requires another policy to be satisfied first declares it in the `dependencies` key
+of its entry in `policy-generator-config.yaml`. PolicyGenerator fills in the API version, kind, and
+namespace, so only the name is needed:
 
 ```yaml
-# In policies/stable/my-component/README.md
-## Dependencies
+policies:
+  - name: policy-my-component-config
+    dependencies:
+      - name: policy-my-component-operator-install
+    manifests:
+      - path: manifests/config
+```
 
-This policy depends on:
-- OpenShift Data Foundation (OpenShift Data Foundation) - provides storage for my-component
-- Loki - provides logging infrastructure
+A dependency blocks the dependent policy until the named policy reports Compliant. Add
+`compliance: Compliant` when you want that state written out explicitly:
 
-apiVersion: policy.open-cluster-management.io/v1
-kind: Policy
-metadata:
-  name: policy-my-component-install
-  namespace: {{ .Values.policy_namespace }}
-spec:
-  dependencies:
-    - name: policy-storage-cluster-test
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-    - name: policy-loki-operator-install
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
+```yaml
+    dependencies:
+      - name: policy-infra-machineconfigpool
+        compliance: Compliant
+```
+
+Two rules follow from this:
+
+- **Depend on a policy, not on a resource.** To gate on something the cluster has to reach, such as
+  an operator becoming ready, write an inform policy that checks for it and depend on that. See
+  [Gating on cluster state](#gating-on-cluster-state).
+- **Name the dependency exactly.** The value is the generated policy name, which is the `name`
+  field of the other entry in `policies`, not the directory name and not the manifest file name.
+
+Record the reasoning in the policy's `README.md` so the next reader knows why the order matters.
+
+### Gating on cluster state
+
+A check that only reports, and never changes anything, belongs in the policy directory's `test/`
+subdirectory as its own policy with `remediationAction: inform`. Nineteen policy directories use
+this pattern.
+
+```
+policies/stable/my-component/
+├── policy-generator-config.yaml
+├── manifests/                 # enforcing content
+└── test/                      # inform-only checks, one file per assertion
+    └── my-component-ready.yaml
+```
+
+```yaml
+policies:
+  - name: policy-my-component-test
+    remediationAction: inform
+    manifests:
+      - path: test/my-component-ready.yaml
+  - name: policy-my-component-config
+    dependencies:
+      - name: policy-my-component-test
+    manifests:
+      - path: manifests/config
+```
+
+> [!IMPORTANT]
+> Do not bundle an inform-only check into an enforcing policy. A `remediationAction` set at the
+> root of a policy overrides the setting on its children, so the check stops reporting and starts
+> enforcing. That is why these live in a separate policy, and why `test/` is a separate directory
+> rather than another file under `manifests/`.
 
 ## Deployment order
 
-1. OpenShift Data Foundation must be running before deploying my-component
-2. Loki should be installed
-```
+Placement decides which clusters get a policy. Dependencies decide the order in which they settle
+on a given cluster. Neither is a global sequencer: policies are distributed in parallel, and a
+dependency only holds back the policy that declares it.
 
 ## 🔧 Common Development Tasks
 
@@ -594,7 +750,8 @@ AutoShift includes scripts that dynamically discover operators from your values 
 
 #### Required Labels for Operators
 
-For each enabled operator, you **must** define all of these labels:
+One label is required. The others have defaults in the policy templates, so set them only when the
+operator differs from the default catalog:
 
 ```yaml
 hubClusterSets:
@@ -603,11 +760,13 @@ hubClusterSets:
       # Enable the operator
       my-operator: 'true'
 
-      # REQUIRED: These labels are needed for scripts to detect the operator
+      # REQUIRED: the canonical key that scripts use to detect the operator
       my-operator-subscription-name: 'my-operator-package'  # OLM package name
+
+      # Optional: set only to override the template default
       my-operator-channel: 'stable'                          # Operator channel
-      my-operator-source: 'redhat-operators'                 # Catalog source
-      my-operator-source-namespace: 'openshift-marketplace'  # Catalog namespace
+      my-operator-source: 'redhat-operators'                 # defaults to redhat-operators
+      my-operator-source-namespace: 'openshift-marketplace'  # defaults to openshift-marketplace
 ```
 
 #### Scripts That Use These Labels
@@ -635,14 +794,14 @@ Without the subscription-name label, scripts cannot:
 # Correct - scripts will detect this operator
 gitops: 'true'
 gitops-subscription-name: openshift-gitops-operator
-gitops-channel: gitops-1.18
+gitops-channel: gitops-1.21
 gitops-source: redhat-operators
 gitops-source-namespace: openshift-marketplace
 
 # Incorrect - scripts will NOT detect this operator (subscription-name missing)
 gitops: 'true'
 # gitops-subscription-name: openshift-gitops-operator  # Commented out!
-gitops-channel: gitops-1.18
+gitops-channel: gitops-1.21
 ```
 
 ## 🧪 Testing and Validation
@@ -738,6 +897,34 @@ oc get policyreports -A
 - [ ] Deployed and validated in test environment
 - [ ] No hard-coded values (use templates)
 - [ ] Add Labels to AutoShift Values files
+
+## 🍴 Forking this repository
+
+A fork publishes its own documentation site with almost no configuration. The publish workflow
+pushes to whichever repository it runs in, and both workflows derive `site_url` from that
+repository's owner and name, so canonical URLs and the sitemap are correct in a fork without any
+edit. Two settings are required on the fork itself: enable GitHub Pages with `gh-pages` as the
+source, and enable Actions, which GitHub turns off on new forks.
+
+Three values in `mkdocs.yaml` still name this repository. A fork that leaves them sends its own
+readers here:
+
+| Value | What it controls |
+|-------|------------------|
+| `repo_name` | The repository name shown in the site header |
+| `repo_url` | The header link, and the edit link on every page |
+| `extra.social` | The icon in the site footer |
+
+Change the reviewers in `.github/dependabot.yml` as well, because they name a maintainer of this
+repository rather than of the fork.
+
+A fork serving documentation from a custom domain sets the `SITE_URL` environment variable in
+`.github/workflows/docs.yaml` rather than accepting the derived value, because the derivation
+assumes a GitHub Pages project address.
+
+The brand fonts and palette in `docs/assets/red-hat.css` are a deliberate choice for this project.
+A fork that is not a Red Hat project should replace that file. Red Hat brand fonts carry an open
+font license and are free to reuse, but the Red Hat name and logo are trademarks.
 
 ## 🔍 Troubleshooting
 
@@ -871,4 +1058,4 @@ oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 
 ---
 
-**Ready to contribute?** Start by [creating your first policy](#creating-your-first-policy) or explore our [existing policies](../policies/) for examples!
+**Ready to contribute?** Start by [creating your first policy](#creating-your-first-policy) or explore our [existing policies](../policies/README.md) for examples!

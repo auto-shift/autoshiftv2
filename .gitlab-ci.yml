@@ -9,16 +9,28 @@ stages:
 
 variables:
   # renovate: datasource=github-releases depName=helm/helm
-  HELM_VERSION: "v3.16.3"
+  HELM_VERSION: "v3.19.4"
   # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
   GITLEAKS_VERSION: "8.24.3"
+  # renovate: datasource=github-releases depName=errata-ai/vale extractVersion=^v(?<version>.+)$
+  VALE_VERSION: "3.17.1"
+  # ubi10's system Python is 3.12, which is what zensical needs. It requires 3.10 or newer, and
+  # on ubi9 pip resolved the pin back to zensical 0.0.2 rather than failing, which is part of why
+  # the whole pipeline is on ubi10.
+  #
+  # Override in a disconnected pipeline with an image that already carries the toolchain: the
+  # devcontainer image builds exactly this set. pip reads PIP_INDEX_URL from the environment on
+  # its own, so an internal Python mirror needs no change here.
+  DOCS_IMAGE: "registry.access.redhat.com/ubi10/ubi:latest"
+  # Where a prebuilt image keeps the Vale rule package, so `vale sync` never reaches the network.
+  VALE_STYLES_DIR: "/opt/vale-styles"
   OCP_VERSION: "stable"
   REGISTRY: "quay.io"
   REGISTRY_NAMESPACE: "autoshift"
 
 # Common setup for all jobs using Red Hat UBI
 .setup-tools: &setup-tools
-  image: registry.access.redhat.com/ubi9/ubi:latest
+  image: registry.access.redhat.com/ubi10/ubi:latest
   before_script:
     - |
       # Install dependencies and yq from EPEL
@@ -26,7 +38,7 @@ variables:
         jq \
         git \
         findutils \
-        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+        https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm
       dnf -y install yq
     - |
       # Install Helm from official releases
@@ -41,7 +53,7 @@ variables:
 
 secret-scan:
   stage: lint
-  image: registry.access.redhat.com/ubi9/ubi:latest
+  image: registry.access.redhat.com/ubi10/ubi:latest
   before_script:
     - |
       curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz | tar xz -C /tmp
@@ -131,7 +143,7 @@ dry-run-packaging:
 
 verify-chart-discovery:
   stage: validate
-  image: registry.access.redhat.com/ubi9/ubi:latest
+  image: registry.access.redhat.com/ubi10/ubi:latest
   needs:
     - dry-run-packaging
   script:
@@ -167,7 +179,7 @@ verify-chart-discovery:
 
 verify-policy-list:
   stage: validate
-  image: registry.access.redhat.com/ubi9/ubi:latest
+  image: registry.access.redhat.com/ubi10/ubi:latest
   needs:
     - dry-run-packaging
   script:
@@ -252,13 +264,63 @@ validate-policies:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
 
+docs:
+  stage: lint
+  # Equivalent to the `docs` job in .github/workflows/ci.yaml. Builds the site, prunes what must
+  # not be published, verifies the result, and lints the prose.
+  #
+  # Three things reach the network here in a connected pipeline: zensical from PyPI, the Vale
+  # binary from GitHub releases, and the Vale rule package from `vale sync`. Each sits behind a
+  # presence check, so a pipeline that supplies them another way fetches nothing. Nothing extra
+  # is needed to run this connected, which is the point: one job, both environments.
+  image: ${DOCS_IMAGE}
+  before_script:
+    - |
+      # scripts/build-docs.sh derives what to prune from `git ls-files` and walks the output with
+      # find. Neither is in the base image.
+      dnf -y install git findutils python3-pip
+    - |
+      if ! command -v zensical >/dev/null 2>&1; then
+        pip3 install --no-cache-dir -r docs/requirements.txt
+      fi
+      zensical --version
+    - |
+      if ! command -v vale >/dev/null 2>&1; then
+        curl -sfL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
+          | tar xz -C /usr/local/bin vale
+        chmod +x /usr/local/bin/vale
+      fi
+      vale --version
+    - |
+      # The rule package, in order of preference: already in the workspace, then a directory the
+      # image carries, then the network. Only the last of those needs a connected pipeline.
+      mkdir -p .vale/styles
+      if [ ! -d .vale/styles/RedHat ]; then
+        if [ -d "${VALE_STYLES_DIR}/RedHat" ]; then
+          echo "Using the Vale rule package from ${VALE_STYLES_DIR}"
+          cp -r "${VALE_STYLES_DIR}/RedHat" .vale/styles/
+        else
+          vale sync
+        fi
+      fi
+  script:
+    - |
+      echo "=== Building the documentation site ==="
+      ./scripts/build-docs.sh
+    - |
+      echo "=== Prose lint ==="
+      vale --minAlertLevel=error README.md docs/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
 # =============================================================================
 # Release Pipeline (runs on tag push)
 # =============================================================================
 
 release:
   stage: release
-  image: registry.access.redhat.com/ubi9/ubi:latest
+  image: registry.access.redhat.com/ubi10/ubi:latest
   before_script:
     - |
       # Install dependencies and yq from EPEL
@@ -266,7 +328,7 @@ release:
         make \
         jq \
         git \
-        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+        https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm
       dnf -y install yq
     - |
       # Install Helm from official releases

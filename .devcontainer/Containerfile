@@ -1,12 +1,24 @@
-FROM registry.access.redhat.com/ubi9/ubi
+FROM registry.access.redhat.com/ubi10/ubi
 
-ARG OCP_VERSION=stable-4.20
+# A release channel, not a version: oc self-updates to the latest 4.22 patch on every rebuild.
+# The MINOR is frozen here and Renovate cannot track a channel name. Keep it aligned with
+# `openshift-version` in autoshift/values/clustersets/_example.yaml (the version the fleet is
+# provisioned and upgraded to); an oc more than one minor from the cluster is unsupported skew.
+ARG OCP_VERSION=stable-4.22
+# Helm and kustomize are COMPATIBILITY pins, not "keep current" pins: they must match what the
+# Red Hat OpenShift GitOps repo-server renders with, or local output diverges from the cluster.
+# GitOps 1.21 ships Helm 3.19.4 and kustomize 5.8.1. Bump these when gitops-channel moves, and
+# update allowedVersions in renovate.json at the same time.
 # renovate: datasource=github-releases depName=helm/helm
-ARG HELM_VERSION=v3.16.3
-# renovate: datasource=golang-version depName=golang
-ARG GO_VERSION=1.25.0
+ARG HELM_VERSION=v3.19.4
 # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v(?<version>.+)$
 ARG GITLEAKS_VERSION=8.24.3
+# renovate: datasource=github-releases depName=errata-ai/vale extractVersion=^v(?<version>.+)$
+ARG VALE_VERSION=3.17.1
+
+# Go is NOT pinned here. It is read from tools/go.mod at build time so the image cannot drift from
+# what the module requires and from what CI resolves through `go-version-file: tools/go.mod`.
+# Zensical is likewise read from docs/requirements.txt. One pin per tool, one place.
 
 LABEL description="A container for administrating OpenShift Clusters."
 
@@ -16,10 +28,12 @@ RUN dnf -y update &&\
         bash-completion \
         git \
         jq \
+        make \
         ncurses \
         procps-ng \
+        python3-pip \
         python3-pyyaml \
-        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm &&\
+        https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm &&\
     dnf -y install yq &&\
     dnf clean all
 
@@ -34,8 +48,12 @@ RUN curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OCP_VER
     chmod +x /usr/local/bin/helm &&\
     rm -rf /tmp/linux-amd64
 
-# Install Go
-RUN curl -sL https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz | tar xz -C /usr/local
+# Install Go at the version tools/go.mod declares
+COPY tools/go.mod /tmp/go.mod
+RUN GO_VERSION="$(awk '/^go /{print $2; exit}' /tmp/go.mod)" &&\
+    echo "Installing Go ${GO_VERSION} (from tools/go.mod)" &&\
+    curl -sL "https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz" | tar xz -C /usr/local &&\
+    rm -f /tmp/go.mod
 
 ENV PATH="/usr/local/go/bin:${PATH}"
 
@@ -43,6 +61,21 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 RUN curl -sL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz \
     | tar xz -C /usr/local/bin gitleaks &&\
     chmod +x /usr/local/bin/gitleaks
+
+# Install Vale. The rule package is NOT baked in: `vale sync` fetches it into the workspace, so the
+# image does not freeze a style version.
+RUN curl -sfL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
+    | tar xz -C /usr/local/bin vale &&\
+    chmod +x /usr/local/bin/vale
+
+# Install the documentation site generator at the version docs/requirements.txt pins.
+# Zensical requires Python >=3.10, which ubi10 satisfies by default (3.12). On ubi9 this needed an
+# explicit python3.12, because pip on 3.9 resolves back to zensical 0.0.2 and the exact pin fails.
+# The version check is a build-time smoke test: fail here rather than ship a broken image.
+COPY docs/requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt &&\
+    rm -f /tmp/requirements.txt &&\
+    zensical --version
 
 # Create vscode user
 RUN mkdir -p /workspaces/.kube &&\
@@ -54,4 +87,4 @@ USER vscode
 # Make prompt nicer
 RUN curl -sL https://raw.githubusercontent.com/git/git/refs/heads/master/contrib/completion/git-prompt.sh \
         -o ~/.git-prompt.sh
-COPY bashrc /workspaces/.bashrc
+COPY .devcontainer/bashrc /workspaces/.bashrc
