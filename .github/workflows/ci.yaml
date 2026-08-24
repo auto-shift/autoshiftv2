@@ -30,7 +30,10 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v5
         with:
-          version: v3.16.3
+          # Dependabot bumps the action (azure/setup-helm@v5) but never a `with:` input, so this
+          # pin is Renovate's. Keep it identical to the Containerfile and GitLab CI pins.
+          # renovate: datasource=github-releases depName=helm/helm
+          version: v3.19.4
 
       - name: Dry-run packaging
         run: |
@@ -158,7 +161,10 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v5
         with:
-          version: v3.16.3
+          # Dependabot bumps the action (azure/setup-helm@v5) but never a `with:` input, so this
+          # pin is Renovate's. Keep it identical to the Containerfile and GitLab CI pins.
+          # renovate: datasource=github-releases depName=helm/helm
+          version: v3.19.4
 
       - name: Run govulncheck
         working-directory: tools
@@ -199,17 +205,18 @@ jobs:
         with:
           python-version: '3.x'
 
+      # The same manifest docs.yaml publishes with, so the two cannot drift.
       - name: Install documentation toolchain
-        run: pip install mkdocs-material mike mkdocs-same-dir mkdocs-callouts
+        run: pip install -r docs/requirements.txt
 
       # mkdocs.yaml sets strict: true, so a warning fails the build. This is what catches a broken
-      # relative link — nothing else does, and until now the site was only built at deploy time, so
-      # a bad link merged and surfaced in production.
-      - name: Build the site
-        run: mkdocs build --site-dir /tmp/site
+      # link — nothing else does, and the site is only otherwise built at deploy time, so a bad
+      # link would merge and surface in production. Zensical also validates heading anchors, which
+      # MkDocs never did.
+      # The same script docs.yaml publishes with, so this cannot pass on a build the deploy fails.
+      - name: Build and verify the site
+        run: ./scripts/build-docs.sh
 
-      # Installed and run directly rather than through an action, so CI runs the same command
-      # documented in .vale.ini and a developer can reproduce a failure locally verbatim.
       - name: Install Vale
         run: |
           # pipefail matters: `curl -sfL ... | sh` swallows a failed download, because the
@@ -217,6 +224,7 @@ jobs:
           # uninstalled while this step still reported success, failing the next step with
           # an unexplained "vale: command not found".
           set -euo pipefail
+          # renovate: datasource=github-releases depName=errata-ai/vale extractVersion=^v(?<version>.+)$
           VALE_VERSION=3.17.1
           mkdir -p "$HOME/.local/bin"
           curl -sfL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
