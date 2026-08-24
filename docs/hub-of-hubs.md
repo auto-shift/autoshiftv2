@@ -38,36 +38,7 @@ and only reaches *downward* to its own spokes.
 
 ## Management topology
 
-```mermaid
-graph TD
-    subgraph HoH["🌐 Hub-of-Hubs (global hub)"]
-        HoHACM["ACM"]
-        HoHAS["AutoShift #quot;autoshift#quot;<br/>ns: policies-autoshift"]
-    end
-    subgraph H1["🏢 hub1 (spoke hub)"]
-        H1ACM["ACM"]
-        H1AS["AutoShift #quot;hub1#quot;<br/>ns: policies-hub1"]
-    end
-    subgraph H2["🏢 hub2 (spoke hub)"]
-        H2ACM["ACM"]
-        H2AS["AutoShift #quot;hub2#quot;<br/>ns: policies-hub2"]
-    end
-    S1["spoke1"]
-    S2["spoke2"]
-    S3["spoke3"]
-
-    HoHACM -->|manages| HoHACM
-    HoHACM -->|manages| H1ACM
-    HoHACM -->|manages| H2ACM
-    H1ACM -->|manages| S1
-    H1ACM -->|manages| S2
-    H2ACM -->|manages| S3
-
-    classDef hub fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff;
-    classDef spoke fill:#198754,stroke:#0f5132,stroke-width:2px,color:#ffffff;
-    class HoHACM,HoHAS,H1ACM,H1AS,H2ACM,H2AS hub;
-    class S1,S2,S3 spoke;
-```
+[![AutoShift hub-of-hubs schematic](diagrams/autoshift-hub-of-hubs.drawio.svg)](diagrams/autoshift-hub-of-hubs.drawio.svg)
 
 - The hub-of-hubs Red Hat Advanced Cluster Management manages **itself** (top hub — it is self-managed) plus **hub1** and **hub2**.
 - hub1's Red Hat Advanced Cluster Management manages **spoke1/spoke2** but **not hub1** (hub1 is managed from above).
@@ -133,7 +104,7 @@ graph TD
     SMH --> SMHrun["runs on HoH · loops every cluster HoH sees<br/>→ stamps HoH-self, hub1, hub2<br/>owning-namespace = policies-autoshift"]
     MH --> MHrun["runs on hub1 · loops every cluster hub1 sees<br/>→ stamps spoke1, spoke2<br/>owning-namespace = policies-hub1"]
 
-    classDef box fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff;
+    classDef box fill:#1D4174,stroke:#1D4174,color:#ffffff;
     class HoHAS,SMH,MH,SMHrun,MHrun box;
 ```
 

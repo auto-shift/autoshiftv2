@@ -1,20 +1,52 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "_comment": "Scoped to ONLY the custom regex manager so Renovate does not overlap Dependabot (which handles gomod in /tools and github-actions). Renovate keeps the curl-pinned tool versions in the devcontainer Containerfile and GitLab CI current, driven by the `# renovate:` annotations next to each pin.",
-  "enabledManagers": ["custom.regex"],
+  "extends": [
+    "config:recommended"
+  ],
+  "_comment": "Scoped to ONLY the custom regex manager so Renovate does not overlap Dependabot (which handles gomod in /tools, github-actions, and pip in /docs). Renovate keeps the versions that live outside a package manifest current: the curl-pinned tools in the devcontainer Containerfile, GitLab CI, and GitHub Actions, plus the Go module versions the Makefile installs. Every one is driven by the `# renovate:` annotation above it. Go and Zensical are deliberately absent: they are derived from tools/go.mod and docs/requirements.txt, which Dependabot already manages.",
+  "enabledManagers": [
+    "custom.regex"
+  ],
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Tool versions pinned in the devcontainer Containerfile and GitLab CI",
+      "description": "Tool versions pinned in the devcontainer Containerfile, GitLab CI, and GitHub Actions",
       "fileMatch": [
         "^\\.devcontainer/Containerfile$",
-        "^\\.gitlab-ci\\.yml$"
+        "^\\.gitlab-ci\\.yml$",
+        "^\\.github/workflows/[^/]+\\.ya?ml$"
       ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+ARG \\w+=(?<currentValue>\\S+)",
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+\\w+: \"(?<currentValue>[^\"]+)\""
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+\\w+: \"(?<currentValue>[^\"]+)\"",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s*\\n\\s*\\w+=(?<currentValue>\\S+)",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s*\\n(?:\\s*#[^\\n]*\\n)*\\s*\\w+: (?<currentValue>[^\"\\s][^\\s]*)"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Go module versions that the Makefile installs into .tools/",
+      "fileMatch": [
+        "^Makefile$"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+\\w+ \\?= (?<currentValue>\\S+)"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Helm and kustomize are compatibility pins, not currency pins. They must match the versions the Red Hat OpenShift GitOps repo-server renders with, or local and CI output diverges from what lands on a cluster. GitOps 1.21 ships Helm 3.19.4 and kustomize 5.8.1. Renovate may propose patches inside those lines; a minor or major bump is a deliberate change made when gitops-channel moves, so widen these ranges by hand at that point.",
+      "matchPackageNames": [
+        "helm/helm"
+      ],
+      "allowedVersions": ">=3.19.0 <3.20.0"
+    },
+    {
+      "matchPackageNames": [
+        "sigs.k8s.io/kustomize/kustomize/v5"
+      ],
+      "allowedVersions": ">=5.8.0 <5.9.0"
     }
   ]
 }

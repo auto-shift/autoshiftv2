@@ -134,7 +134,7 @@ networking:
     servers: [10.0.0.53]
 ```
 
-See [policies/stable/nmstate/README.md](../policies/stable/nmstate/README.md) for the full interface config reference.
+See `policies/stable/nmstate/README.md` for the full interface config reference.
 
 ### hosts
 
@@ -866,7 +866,7 @@ values files → cluster-config-maps policy → rendered-config ConfigMaps
 
 ### AWS configuration structure
 
-For a complete working example, see [`autoshift/values/clusters/_example-cluster-install-aws.yaml`](../autoshift/values/clusters/_example-cluster-install-aws.yaml). The example file includes all available fields with comments explaining each option.
+For a complete working example, see `autoshift/values/clusters/_example-cluster-install-aws.yaml`. The example file includes all available fields with comments explaining each option.
 
 ### AWS-specific fields
 
@@ -984,7 +984,7 @@ oc create secret generic default-pull-secret \
 
 ### AWS disconnected installation
 
-For disconnected AWS installs, add the `disconnected` config block. The disconnected config structure is the same as baremetal — see the [disconnected](#disconnected) preceding section for all fields. Both example files ([baremetal](../autoshift/values/clusters/_example-cluster-install-baremetal.yaml), [AWS](../autoshift/values/clusters/_example-cluster-install-aws.yaml)) include a commented-out disconnected block ready to uncomment.
+For disconnected AWS installs, add the `disconnected` config block. The disconnected config structure is the same as baremetal — see the [disconnected](#disconnected) preceding section for all fields. Both example files (`_example-cluster-install-baremetal.yaml`, `_example-cluster-install-aws.yaml`) include a commented-out disconnected block ready to uncomment.
 
 The install-config automatically includes `imageDigestSources` and `additionalTrustBundle` when mirrors are configured.
 

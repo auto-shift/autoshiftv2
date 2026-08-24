@@ -644,7 +644,7 @@ no interactive administrator until you either configure OpenID Connect and list 
 
 The Kubernetes NMState Operator declaratively configures Red Hat CoreOS network settings including bonds, virtual local area networks, static routes, and DNS. Network configuration is defined through structured YAML under `config.networking` in clusterset or cluster values files.
 
-See [policies/stable/nmstate/README.md](../policies/stable/nmstate/README.md) for detailed documentation and examples.
+See `policies/stable/nmstate/README.md` for detailed documentation and examples.
 
 #### Operator labels
 
