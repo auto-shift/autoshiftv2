@@ -179,6 +179,8 @@ Using helm and the values you set for cluster labels, install AutoShift. Here is
 
 ```console
 export APP_NAME="autoshift"
+# Running a fork? Set this to your fork. It becomes both the source of the chart and the
+# repository every generated Application clones for policies.
 export REPO_URL="https://github.com/auto-shift/autoshiftv2.git"
 export TARGET_REVISION="main"
 export VALUES_FILE="values/global.yaml"

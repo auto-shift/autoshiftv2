@@ -20,8 +20,15 @@ ARTIFACTS_DIR := release-artifacts
 
 # PolicyGenerator toolchain (for rendering kustomize/PolicyGenerator policies).
 # Installed into a repo-local .tools/ dir by `make install-policy-generator`.
+# Matches the kustomize that Red Hat OpenShift GitOps 1.21 ships (5.8.1). This is a compatibility
+# pin: rendering locally with a different kustomize than the repo-server uses is how output
+# diverges from the cluster. Bump with the gitops-channel, not with upstream releases.
+# renovate: datasource=go depName=sigs.k8s.io/kustomize/kustomize/v5
 KUSTOMIZE_VERSION ?= v5.8.1
-POLICY_GENERATOR_VERSION ?= latest
+# Pinned, not `latest`: this plugin renders every PolicyGenerator policy, so an unpinned version
+# can change rendered output with no change in this repository.
+# renovate: datasource=go depName=open-cluster-management.io/policy-generator-plugin
+POLICY_GENERATOR_VERSION ?= v1.19.0
 TOOLS_DIR := $(CURDIR)/.tools
 KUSTOMIZE_PLUGIN_HOME ?= $(TOOLS_DIR)/kustomize-plugin
 PG_PLUGIN_DIR := $(KUSTOMIZE_PLUGIN_HOME)/policy.open-cluster-management.io/v1/policygenerator

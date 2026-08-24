@@ -95,6 +95,11 @@ spec:
 The `ref` source must be a **git** repo — you cannot `$ref` a Helm/OCI source. The values repo is
 fetched but never rendered, so it needs no `path` and produces no resources of its own.
 
+`repoURL` is the only place the repository is named. Argo CD injects it into `autoshiftGitRepo`,
+which is where every Application the chart generates reads policies from, so a fork points one
+value at itself and the policies follow. In a multi-source Application these resolve to the source
+that declares them, not to the values repository.
+
 Requires ArgoCD 2.8+ (OpenShift GitOps 1.9+). AutoShift targets `gitops-1.21`, so this is
 comfortably available.
 
