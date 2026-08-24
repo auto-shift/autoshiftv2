@@ -22,7 +22,7 @@ to build a policy once you know where it goes, read the [Developer guide](develo
 | Change validation, or add a stub for a hub resource | `tools/internal/resolver/`, `tools/testdata/` |
 | Change a generator or release step | `scripts/`, `Makefile` |
 | Change what runs before a commit | `.githooks/pre-commit` |
-| Change published documentation | `README.md`, `docs/`, and the policy `README.md` files |
+| Change published documentation | `README.md` and `docs/`, which are the site. A policy `README.md` is read in the repository, beside its policy |
 
 ## The parts worth knowing
 
@@ -38,7 +38,7 @@ validation suite treats them as the contract. A label a policy reads must be dec
 them or the build fails.
 
 **`policies/`** holds one policy per directory, in three tiers named for the operator catalog the
-policy installs from. See [the policies README](../policies/README.md). Most are PolicyGenerator
+policy installs from. See `policies/README.md`. Most are PolicyGenerator
 directories; four are still Helm charts.
 
 **`components/`** holds charts shared by many policies, currently the operator install interface.

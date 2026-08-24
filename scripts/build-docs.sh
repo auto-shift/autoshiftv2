@@ -2,10 +2,11 @@
 #
 # Builds the documentation site, removes what must not be published, and verifies the result.
 #
-# One script so continuous integration and a developer run the same steps. Two properties of this
-# site make the prune necessary rather than optional: docs_dir is the repository root, so every
-# file in the working tree is copied into the output, and Zensical accepts mkdocs.yaml's
-# exclude_docs key while silently ignoring it. Pruning afterwards is the only control there is.
+# One script so continuous integration and a developer run the same steps. The prune is not
+# optional: docs_dir is the repository root, so Zensical copies the whole working tree into the
+# output, and it accepts mkdocs.yaml's exclude_docs key while silently ignoring it. docs_dir has
+# to stay the root, because that is what makes README.md the home page and lets its links resolve
+# identically on GitHub and on the site.
 #
 # Usage: scripts/build-docs.sh
 set -euo pipefail
@@ -15,14 +16,28 @@ SITE_DIR=site
 
 fail() { echo "::error::$1"; exit 1; }
 
-# Derived so a fork publishes its own canonical URLs and sitemap without editing mkdocs.yaml.
-# Outside continuous integration the fallback in mkdocs.yaml applies, which is this site's real
-# address, so a local build matches production.
-if [ -n "${GITHUB_REPOSITORY:-}" ]; then
-  owner=$(echo "${GITHUB_REPOSITORY%%/*}" | tr '[:upper:]' '[:lower:]')
+# Resolved by precedence rather than by platform, so one script is correct upstream, in a GitHub
+# fork, and in a GitLab copy including a self-managed or disconnected one. A fork that publishes
+# with the upstream address would tell search engines its own documentation is a duplicate.
+#
+#   SITE_URL           an explicit override: a custom domain, or an internal host
+#   CI_PAGES_URL       GitLab, predefined per job on gitlab.com and self-managed alike
+#   GITHUB_REPOSITORY  GitHub Pages, derived from the owner and repository
+#   mkdocs.yaml        the fallback, used outside continuous integration where nothing publishes
+if [ -n "${SITE_URL:-}" ]; then
+  echo "Building with site_url=${SITE_URL} (explicit)"
+elif [ -n "${CI_PAGES_URL:-}" ]; then
+  SITE_URL="${CI_PAGES_URL%/}/"
+  export SITE_URL
+  echo "Building with site_url=${SITE_URL} (GitLab Pages)"
+elif [ -n "${GITHUB_REPOSITORY:-}" ]; then
+  # Pages hostnames are lowercase; the owner segment is not guaranteed to be.
+  owner=$(printf '%s' "${GITHUB_REPOSITORY%%/*}" | tr '[:upper:]' '[:lower:]')
   SITE_URL="https://${owner}.github.io/${GITHUB_REPOSITORY#*/}/"
   export SITE_URL
-  echo "Building with site_url=${SITE_URL}"
+  echo "Building with site_url=${SITE_URL} (GitHub Pages)"
+else
+  echo "Building with site_url from mkdocs.yaml"
 fi
 
 # Always clean. Zensical's incremental build is not coherent with an output directory that
@@ -33,77 +48,95 @@ fi
 # mkdocs.yaml sets strict: true, so a broken link or a broken heading anchor fails here.
 zensical build --clean -f mkdocs.yaml
 
-# Two different problems, handled two different ways.
+# The site is the README, rendered as the home page, plus docs/. Nothing else.
 #
-# 1. Output with no source in the repository. A working tree holds what a fresh checkout does not:
-#    a pull secret, a personal instructions file, downloaded tool binaries, caches. Git already
-#    knows which files those are, so this is derived rather than listed. Deriving it matters: a
-#    list only excludes what someone remembered to add.
-#
-#    The set is "tracked, plus new files, minus ignored files", so work in progress still previews
-#    before it is committed. In continuous integration the two are the same thing, because a fresh
-#    checkout has nothing untracked.
-python3 - "$SITE_DIR" <<'PRUNE_UNTRACKED'
-import pathlib, subprocess, sys
+# An allow-list rather than a deny-list, and the direction is the point. docs_dir is the
+# repository root, so Zensical copies every file in the working tree into the output, and it
+# accepts mkdocs.yaml's exclude_docs key while silently ignoring it. Default-deny means a new file
+# at the root, a credential or a tool cache included, is never published because nobody
+# remembered to exclude it.
+python3 - "$SITE_DIR" <<'PRUNE_TO_DOCS'
+import json
+import pathlib
+import sys
 
 site = pathlib.Path(sys.argv[1])
-known = set(subprocess.run(
-    ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-    capture_output=True, text=True, check=True).stdout.split("\n"))
 
-# Produced by the generator, so there is no source file to match against.
-generated = {"search.json", "sitemap.xml", "sitemap.xml.gz", "404.html", "objects.inv", ".nojekyll"}
+# Emitted by the generator, so there is no source file behind them.
+KEEP_FILES = {
+    "index.html", "404.html", "search.json",
+    "sitemap.xml", "sitemap.xml.gz", "objects.inv", ".nojekyll",
+}
+KEEP_TREES = ("docs/", "assets/")
 
 removed = 0
 for path in sorted(site.rglob("*")):
     if not path.is_file():
         continue
     rel = path.relative_to(site).as_posix()
-    if rel in generated or rel.startswith("assets/"):
-        continue
-    if path.name == "index.html":
-        # A rendered page. Keep it only if the Markdown it came from is in the repository,
-        # otherwise a gitignored file such as CLAUDE.md publishes as a page.
-        parent = path.parent.relative_to(site).as_posix()
-        sources = ["README.md"] if parent == "." else [f"{parent}.md", f"{parent}/README.md"]
-        if any(source in known for source in sources):
-            continue
-    elif rel in known:
+    if rel in KEEP_FILES or rel.startswith(KEEP_TREES):
         continue
     path.unlink()
     removed += 1
 
-print(f"Removed {removed} files with no source in the repository")
-PRUNE_UNTRACKED
+# The search index is generated before this script prunes anything, so it still carries an entry,
+# with the page's full body text, for every page just removed. Left alone it both serves results
+# that 404 and republishes the content of pages deliberately taken off the site.
+index = site / "search.json"
+if index.exists():
+    data = json.loads(index.read_text())
+    items = data.get("items", [])
 
-# 2. Files that are in the repository but are plumbing rather than documentation. These have to be
-#    named, because nothing distinguishes them automatically. They change rarely.
-PRUNE=(
-  .git .github .devcontainer
-  .gitattributes .gitignore .gitlab-ci.yml .gitleaks.toml .shellcheckrc .vale.ini
-  Makefile renovate.json mkdocs.yaml
-  # Instructions for coding agents, not documentation for readers. Nothing links to them, so
-  # removing the rendered pages leaves no broken link behind.
-  AGENTS CLAUDE
-)
-for path in "${PRUNE[@]}"; do
-  rm -rf "${SITE_DIR:?}/${path}"
-done
+    def published(location: str) -> bool:
+        path = location.split("#")[0]
+        return (site / (path + "index.html" if path.endswith("/") or not path else path)).exists()
+
+    kept = [i for i in items if published(i.get("location", ""))]
+    if len(kept) != len(items):
+        data["items"] = kept
+        index.write_text(json.dumps(data))
+        print(f"Dropped {len(items) - len(kept)} search entries for pages that are not published")
+
+print(f"Removed {removed} files that are neither the home page nor docs/")
+PRUNE_TO_DOCS
+
 find "$SITE_DIR" -type d -empty -delete
 
-for path in "${PRUNE[@]}"; do
-  [ ! -e "${SITE_DIR}/${path}" ] || fail "prune did not remove ${path} from the output"
-done
+# Fails closed. Recomputed from the output rather than assumed, so a change in what Zensical emits
+# shows up here as an error instead of as a surprise on the published site.
+unexpected=$(cd "$SITE_DIR" && find . -type f | sed 's|^\./||' \
+  | grep -vE '^(docs|assets)/' \
+  | grep -vE '^(index|404)\.html$|^(search\.json|sitemap\.xml|sitemap\.xml\.gz|objects\.inv|\.nojekyll)$' \
+  || true)
+[ -z "$unexpected" ] || fail "unexpected files in the published tree: ${unexpected}"
 
-# Zensical copies files that have an extension and skips ones that do not, so LICENSE is never
-# published and the README badge that links to it 404s. The strict build does not catch this: its
-# link validation only covers pages. Copy it after the prune so nothing can remove it again.
-cp LICENSE "$SITE_DIR/LICENSE"
-[ -f "$SITE_DIR/LICENSE" ] || fail "LICENSE was not published, so the README badge will 404"
+# The crawl that found this: search results pointed at pages the prune had removed, and carried
+# their body text with them. Asserted rather than trusted, because the index is generated upstream
+# of the prune and will drift again if Zensical changes what it emits.
+python3 - "$SITE_DIR" <<'CHECK_SEARCH_INDEX'
+import json
+import pathlib
+import sys
 
-# Guards the case the sweep cannot: a credential that someone committed, so git considers it a
-# legitimate tracked file. gitleaks is the real defence there; this is one cheap layer more.
-leaked=$(find "$SITE_DIR" -maxdepth 1 -type f \
+site = pathlib.Path(sys.argv[1])
+index = site / "search.json"
+
+missing = []
+if index.exists():
+    for item in json.loads(index.read_text()).get("items", []):
+        location = item.get("location", "").split("#")[0]
+        page = location + "index.html" if location.endswith("/") or not location else location
+        if not (site / page).exists():
+            missing.append(location)
+
+if missing:
+    print(f"::error::search index references unpublished pages: {sorted(set(missing))[:5]}")
+    sys.exit(1)
+CHECK_SEARCH_INDEX
+
+# Everything published now comes from docs/, so this only guards a credential committed there.
+# gitleaks is the real defence; this is one cheap layer more.
+leaked=$(find "$SITE_DIR/docs" -type f \
   \( -name '*secret*' -o -name '*.key' -o -name '*.pem' -o -name 'kubeconfig*' \) \
   ! -name '*.html' -print)
 [ -z "$leaked" ] || fail "a credential-shaped file reached the output: ${leaked}"

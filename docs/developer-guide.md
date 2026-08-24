@@ -30,7 +30,6 @@ Your operator is now being deployed across your clusters. Check the ArgoCD dashb
 - [Common Development Tasks](#common-development-tasks)
 - [Testing and Validation](#testing-and-validation)
 - [Contributing](#contributing)
-- [Forking This Repository](#forking-this-repository)
 - [Troubleshooting](#troubleshooting)
 - [Additional Resources](#additional-resources)
 
@@ -382,7 +381,7 @@ For a resource needing hub templates, loops, or conditionals, replace the placeh
 ./scripts/generate-policy.sh
 ```
 
-See [generate-policy.sh documentation](../scripts/README.md#generate-policysh) for all options including placement targets (`hub`, `spoke`, `both`, `all`) and dependency management.
+See the `generate-policysh` section of `scripts/README.md` for all options including placement targets (`hub`, `spoke`, `both`, `all`) and dependency management.
 
 ### Step 5: test and deploy
 
@@ -898,34 +897,6 @@ oc get policyreports -A
 - [ ] No hard-coded values (use templates)
 - [ ] Add Labels to AutoShift Values files
 
-## 🍴 Forking this repository
-
-A fork publishes its own documentation site with almost no configuration. The publish workflow
-pushes to whichever repository it runs in, and both workflows derive `site_url` from that
-repository's owner and name, so canonical URLs and the sitemap are correct in a fork without any
-edit. Two settings are required on the fork itself: enable GitHub Pages with `gh-pages` as the
-source, and enable Actions, which GitHub turns off on new forks.
-
-Three values in `mkdocs.yaml` still name this repository. A fork that leaves them sends its own
-readers here:
-
-| Value | What it controls |
-|-------|------------------|
-| `repo_name` | The repository name shown in the site header |
-| `repo_url` | The header link, and the edit link on every page |
-| `extra.social` | The icon in the site footer |
-
-Change the reviewers in `.github/dependabot.yml` as well, because they name a maintainer of this
-repository rather than of the fork.
-
-A fork serving documentation from a custom domain sets the `SITE_URL` environment variable in
-`.github/workflows/docs.yaml` rather than accepting the derived value, because the derivation
-assumes a GitHub Pages project address.
-
-The brand fonts and palette in `docs/assets/red-hat.css` are a deliberate choice for this project.
-A fork that is not a Red Hat project should replace that file. Red Hat brand fonts carry an open
-font license and are free to reuse, but the Red Hat name and logo are trademarks.
-
 ## 🔍 Troubleshooting
 
 ### Common Issues and Solutions
@@ -1045,7 +1016,7 @@ oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 ## 📖 Additional Resources
 
 ### Documentation
-- [Policy Quick Start Documentation](../scripts/README.md)
+- `scripts/README.md`
 - [OpenShift GitOps Documentation](https://docs.openshift.com/container-platform/latest/cicd/gitops/understanding-openshift-gitops.html)
 - [Red Hat Advanced Cluster Management Policy Framework](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes/)
 
@@ -1058,4 +1029,4 @@ oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 
 ---
 
-**Ready to contribute?** Start by [creating your first policy](#creating-your-first-policy) or explore our [existing policies](../policies/README.md) for examples!
+**Ready to contribute?** Start by [creating your first policy](#creating-your-first-policy) or explore our the policies under `policies/` for examples!

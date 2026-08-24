@@ -318,6 +318,31 @@ docs:
 # Release Pipeline (runs on tag push)
 # =============================================================================
 
+pages:
+  stage: release
+  # Publishes the site to GitLab Pages, the equivalent of .github/workflows/docs.yaml. A fork that
+  # lives in GitLab has no gh-pages to push to, so without this it would validate its documentation
+  # on every merge request and then throw it away.
+  #
+  # scripts/build-docs.sh reads CI_PAGES_URL, which GitLab defines per job on gitlab.com and on
+  # self-managed alike, so canonical URLs and the sitemap describe this instance rather than
+  # upstream. Where Pages is not enabled, the job still produces a downloadable artifact.
+  image: ${DOCS_IMAGE}
+  before_script:
+    - |
+      dnf -y install git findutils python3-pip
+      command -v zensical >/dev/null 2>&1 || pip3 install --no-cache-dir -r docs/requirements.txt
+  script:
+    - ./scripts/build-docs.sh
+    # GitLab serves whatever the job leaves in public/. Removed first: mv into an existing
+    # directory nests the build inside it instead of replacing it, and serves a stale site.
+    - rm -rf public && mv site public
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
 release:
   stage: release
   image: registry.access.redhat.com/ubi10/ubi:latest
