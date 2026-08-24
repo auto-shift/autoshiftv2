@@ -166,9 +166,94 @@ hubClusterSets:
       # =======================================================================
       quay:
         versions:                              # allowed CSV versions (compliance constraint)
-          - 'quay-operator.v3.17.0'
-          - 'quay-operator.v3.17.1'
-        startingCSV: 'quay-operator.v3.17.0'   # explicit initial install pin (optional; '' = let OLM pick)
+          - 'quay-operator.v3.18.0'
+        startingCSV: 'quay-operator.v3.18.0'   # explicit initial install pin (optional; '' = let OLM pick)
+        # --- Registry production settings (everything below is optional) ----------------
+        # Superusers. With OIDC these are the OIDC usernames and they get admin on FIRST LOGIN
+        # with no bootstrap step — that is the supported zero-Job admin path. Changing this
+        # after deployment requires a registry restart to take effect.
+        superUsers:
+          - quayadmin
+        # Bootstrap/automation flags. The shipped defaults are the SECURE ones: the registry API
+        # is browser-only and the unauthenticated /api/v1/user/initialize endpoint is off. For a
+        # PoC with no OIDC, set userInitialize + xhrOnly to bootstrap a local quayadmin by hand,
+        # then set them back.
+        bootstrap:
+          userInitialize: false                # FEATURE_USER_INITIALIZE
+          xhrOnly: true                        # BROWSER_API_CALLS_XHR_ONLY
+          userCreation: false                  # FEATURE_USER_CREATION (false = superusers only)
+          # TECH PREVIEW (Quay 3.18) — not covered by Red Hat production SLAs, may be functionally
+          # incomplete, and Red Hat does not recommend it in production. The ONLY Tech Preview
+          # feature this chart can turn on, and it is off by default. Mints a high-privilege
+          # automation OAuth token into a Secret; still requires a superuser to ALREADY exist
+          # (BOOTSTRAP_TOKEN_OWNER must be in superUsers), so it does not remove the need for OIDC.
+          programmatic: false                  # FEATURE_PROGRAMMATIC_BOOTSTRAP
+        # Per-component managed flags. Omit a kind to leave it managed by the Quay Operator
+        # (the shipped default). postgres/clairpostgres are driven by the quay-db-mode label —
+        # do not set them here.
+        components:
+          objectstorage: false               # then supply DISTRIBUTED_STORAGE_CONFIG below
+        # Per-component overrides, passed straight through to spec.components[].overrides.
+        # Valid keys: affinity, annotations, env, labels, replicas, resources, securityContext,
+        # storageClassName, tls, volumeSize.
+        overrides:
+          quay:
+            replicas: 3
+          clair:
+            volumeSize: 50Gi                 # 3.18: Clair scratch space for layer extraction;
+            storageClassName: fast-ssd       # the 20Gi default is exhaustible by large images
+          redis:
+            resources:                       # 3.18: redis resource overrides
+              limits:
+                cpu: 400m
+                memory: 400Mi
+        # Registry serving certificate. Provider-agnostic: point secretName at ANY
+        # kubernetes.io/tls Secret (cert-manager with any issuer, Vault, or hand-made) and the
+        # Quay Operator watches it and rolling-restarts on rotation. Optionally let AutoShift
+        # create the cert-manager Certificate too. Without this, Quay keeps the Operator-managed
+        # cert and clients need --tls-verify=false on clusters with no trusted wildcard.
+        tls:
+          secretName: quay-tls
+          certificate:                       # omit to bring your own Secret
+            issuerRef:
+              name: autoshift-ca
+              kind: ClusterIssuer            # or Issuer
+            dnsNames: []                     # default: the registry route host
+        # Free-form config.yaml keys, merged LAST so they win over everything above. This is
+        # where OIDC (*_LOGIN_CONFIG, multi-issuer as of 3.18), DISTRIBUTED_STORAGE_CONFIG for
+        # unmanaged objectstorage, and DB_URI for quay-db-mode: external belong.
+        # NOTE: do not set SSL_PROTOCOLS/SSL_CIPHERS unless you mean to override — with
+        # unmanaged TLS, 3.18 inherits the cluster TLS security profile only when NEITHER is set.
+        # NEVER put credentials here — this file lives in git. Non-sensitive keys only.
+        config:
+          REGISTRY_TITLE: 'Red Hat Quay'
+          FEATURE_REPO_MIRROR: true
+          DEFAULT_TAG_EXPIRATION: '2w'
+        # Sensitive config.yaml keys come from a Secret an administrator creates ON THE CLUSTER,
+        # so they never enter git. Merged into the config bundle LAST, so it wins over `config`
+        # above. This is where object-storage credentials (DISTRIBUTED_STORAGE_CONFIG), DB_URI for
+        # quay-db-mode: external, and OIDC client secrets belong.
+        #
+        #   oc create secret generic quay-config-extra -n quay-enterprise \
+        #     --from-file=config.yaml=./quay-secrets.yaml
+        #
+        # where quay-secrets.yaml is a config.yaml FRAGMENT, e.g.:
+        #   DISTRIBUTED_STORAGE_CONFIG:
+        #     default:
+        #       - RadosGWStorage
+        #       - access_key: '...'
+        #         secret_key: '...'
+        #         bucket_name: 'quay-registry'
+        #         hostname: 's3.example.com'
+        #         is_secure: true
+        #         port: 443
+        #         storage_path: /datastorage/registry
+        #   DISTRIBUTED_STORAGE_PREFERENCE:
+        #     - default
+        configSecretRef:
+          name: quay-config-extra
+          namespace: quay-enterprise            # default: quay-enterprise
+          key: config.yaml                      # default: config.yaml
       # Every other operator supports the SAME block — uncomment and set real CSV(s) to pin.
       # Config key = the operator's <key>-version label base (shown). CSV name usually
       # <package>.vX.Y.Z — confirm with `oc get packagemanifest <name> -o jsonpath='{.status.channels}'`.
@@ -836,7 +921,7 @@ hubClusterSets:
       # =======================================================================
       odf: 'false'
       odf-subscription-name: odf-operator
-      odf-version: 'odf-operator.v4.22.1-rhodf'
+      odf-version: 'odf-operator.v4.22.2-rhodf'
       odf-multi-cloud-gateway: standalone    # 'standalone' (noobaa only) or 'standard' (full ODF)
       odf-noobaa-pvpool: ''                  # Use PV pool for noobaa backing store
       odf-noobaa-store-size: ''              # e.g., '500Gi' - size of noobaa backing store
@@ -948,6 +1033,15 @@ hubClusterSets:
       quay-channel: stable-3.18
       quay-source: redhat-operators
       quay-source-namespace: openshift-marketplace
+      # Registry database backing. bundled = the Quay Operator's own PostgreSQL Deployment
+      # (the shipped default, fine for PoC); managed = CNPG HA clusters provisioned by AutoShift
+      # (requires cloudnative-pg: 'true'); external = bring your own, set DB_URI + the Clair
+      # connstrings in config.quay.config. Quay and Clair each get their OWN database — Red Hat
+      # does not support sharing one between them.
+      quay-db-mode: 'bundled'                   # bundled | managed | external
+      quay-db-instances: '2'                    # CNPG replicas for the Quay database
+      quay-clair-db-instances: '2'              # CNPG replicas for the Clair database
+      quay-db-backups: 'false'                  # CNPG scheduled backups (needs db-mode managed + odf)
 
       # =======================================================================
       # HashiCorp Vault (community: third-party Helm chart integrated via PolicyGenerator)
@@ -1050,7 +1144,7 @@ hubClusterSets:
       mtv-channel: release-v2.12
       mtv-source: redhat-operators
       mtv-source-namespace: openshift-marketplace
-      mtv-version: 'mtv-operator.v2.12.5'
+      mtv-version: 'mtv-operator.v2.12.6'
 
       # =======================================================================
       # Node Feature Discovery
@@ -1106,7 +1200,7 @@ hubClusterSets:
       gitlab: 'false'
       gitlab-subscription-name: gitlab-operator-kubernetes
       gitlab-channel: stable
-      gitlab-version: 'gitlab-operator-kubernetes.v3.2.4'
+      gitlab-version: 'gitlab-operator-kubernetes.v3.3.0'
       gitlab-source: certified-operators
       gitlab-source-namespace: openshift-marketplace
       # Service modes: managed (default), external, or bundled

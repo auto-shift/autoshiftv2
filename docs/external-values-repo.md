@@ -76,6 +76,7 @@ spec:
           - $siteValues/clustersets/hub.yaml
           - $siteValues/clusters/spoke1.yaml
         values: |
+          # Must match repoURL above. See the note below.
           autoshiftGitRepo: https://github.com/auto-shift/autoshiftv2.git
           autoshiftGitBranchTag: main
   destination:
@@ -89,6 +90,13 @@ spec:
 
 The `ref` source must be a **git** repo — you cannot `$ref` a Helm/OCI source. The values repo is
 fetched but never rendered, so it needs no `path` and produces no resources of its own.
+
+`repoURL` and `autoshiftGitRepo` are the same repository written twice: the first is where this
+Application reads the chart from, the second is where every Application the chart generates reads
+policies from. **If you run a fork, both must point at your fork.** Repointing only the first is
+the failure worth knowing about, because nothing reports it: the chart renders, the sync succeeds,
+and your clusters carry on deploying policies from the repository you forked. Edits to your own
+policies never arrive, and the symptom looks like a broken AutoShift rather than a missed value.
 
 Requires ArgoCD 2.8+ (OpenShift GitOps 1.9+). AutoShift targets `gitops-1.21`, so this is
 comfortably available.

@@ -1,24 +1,36 @@
+# Read by Zensical, which consumes the mkdocs.yml schema natively. MkDocs still renders it too.
 site_name: AutoShift Documentation
 site_description: Infrastructure as Code for OpenShift using GitOps and ACM
 
+# Required: without it sitemap.xml is empty, navigation.instant reads that sitemap so it goes
+# inert, and pages get no canonical URL. scripts/build-docs.sh sets SITE_URL per repository; this
+# fallback is used outside continuous integration.
+site_url: !ENV [SITE_URL, 'https://auto-shift.github.io/autoshiftv2/']
+
 repo_name: auto-shift/autoshiftv2
 repo_url: https://github.com/auto-shift/autoshiftv2
-edit_uri: edit/main/docs/
+# docs_dir is the repository root, so a page's source path already carries its directory.
+edit_uri: edit/main/
 
 theme:
   name: material
+  # Brand fonts, on Google Fonts under the SIL Open Font License. Red Hat Display has no theme
+  # setting and is imported by docs/assets/red-hat.css.
+  font:
+    text: Red Hat Text
+    code: Red Hat Mono
   palette:
     # Light mode
     - scheme: default
-      primary: indigo
-      accent: indigo
+      primary: black
+      accent: red
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     # Dark mode
     - scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: black
+      accent: red
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -35,29 +47,28 @@ theme:
     - content.code.copy
     - content.code.annotate
     - content.tabs.link
+    - content.action.edit
 
   icon:
     repo: fontawesome/brands/github
 
 docs_dir: .
 
-# Warnings fail the build. A broken relative link is a 404 in the published site and nothing else
-# catches it — the policy READMEs carried 12 for months, written when policies lived at
-# policies/<name>/ and never updated for policies/<tier>/<name>/.
+# Zensical accepts exclude_docs and ignores it, so scripts/build-docs.sh prunes after the build.
+
+
+# The only gate on links. Zensical checks internal links and heading anchors on its own terms and
+# ignores a `validation:` block, so strict decides whether a finding aborts the build.
 strict: true
 
-validation:
-  nav:
-    omitted_files: ignore
-  links:
-    not_found: warn
-
+# Zensical handles docs_dir: '.' and search natively and ignores this. Kept so MkDocs can still
+# render the config; note MkDocs alone emits the whole tree, since the prune is in the script.
 plugins:
   - search
-  - callouts
   - same-dir
-  - mike:
-      version_selector: true
+
+extra_css:
+  - docs/assets/red-hat.css
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -70,6 +81,10 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
   - admonition
+  # Renders GitHub callout syntax (> [!NOTE]). An extension rather than a plugin, because
+  # Zensical ignores plugins and the callouts would degrade to bare blockquotes.
+  - pymdownx.quotes:
+      callouts: true
   - pymdownx.details
   - attr_list
   - md_in_html
@@ -78,8 +93,6 @@ markdown_extensions:
       permalink: true
 
 extra:
-  version:
-    provider: mike
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/auto-shift/autoshiftv2
@@ -97,6 +110,7 @@ nav:
     - Overview: docs/architecture.md
     - Hub-of-Hubs Topology: docs/hub-of-hubs.md
   - Configuration:
+    - Config and Labels: docs/config-and-labels.md
     - Values Reference: docs/values-reference.md
     - External Values Repository: docs/external-values-repo.md
     - Workload Partitioning: docs/workload-partitioning.md
@@ -107,3 +121,7 @@ nav:
     - Releases & OCI: docs/releases.md
   - Development:
     - Developer Guide: docs/developer-guide.md
+    - Repository Layout: docs/repository-layout.md
+    - Policy Behavior: docs/policy-behavior.md
+    - Documentation Style: docs/documentation-style.md
+    - Diagram Style: docs/diagrams/README.md
