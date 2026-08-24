@@ -4,7 +4,7 @@ metadata:
   name: placement-auth-hub
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Declarative auth config. Skipped entirely when acs-auth-provider is 'none'.
+  # Declarative auth config. Placed only when acs-auth-provider names a provider.
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -21,10 +21,13 @@ spec:
               operator: NotIn
               values:
                 - 'false'
+            # Opt in by naming the provider. An absent label configures no auth at all: the auth
+            # config grants Admin on Central to a group, which should never follow from enabling
+            # ACS alone. Add new providers here alongside their branch in declarative-config.yaml.
             - key: 'autoshift.io/acs-auth-provider'
-              operator: NotIn
+              operator: In
               values:
-                - 'none'
+                - 'openshift'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

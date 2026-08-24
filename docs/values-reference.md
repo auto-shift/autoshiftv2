@@ -373,6 +373,8 @@ placed on a cluster.
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `acs`                             | bool              |                           | If not set Advanced Cluster Security will not be managed |
+| `acs-central`                     | bool              | `true`                    | Deploys Central on this hub. Opt out with `false`; a cluster with no such label still gets Central |
+| `acs-auth-provider`               | string            | (unset)                   | Identity provider for Central. `openshift` configures OpenShift auth, which grants Admin to `config.acs.auth.adminGroup`. A cluster with no such label gets no auth configuration at all |
 | `acs-registration`                | string            | `crs`                     | How secured clusters first authenticate to Central: `crs`, `manual`, or `initBundle` (legacy). Selects which registration policies are placed. Clusters with no such label get `crs` |
 | `acs-subscription-name`           | string            | `rhacs-operator`          |       |
 | `acs-channel`                     | string            | `stable`                  |       |
