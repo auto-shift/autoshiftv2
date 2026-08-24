@@ -205,9 +205,15 @@ spec:
         - $VALUES_FILE
         - $VALUES_FILE_2
         - $VALUES_FILE_3
-      values: |-
-        autoshiftGitRepo: $REPO_URL
-        autoshiftGitBranchTag: $TARGET_REVISION
+      # Injected by Argo CD from this Application's own source, so the repository and revision
+      # are declared once. Substitution works in parameters, not in a `values:` block.
+      # The backslashes keep the shell from expanding these before oc sees them; in a plain
+      # manifest file, write them as $ARGOCD_APP_SOURCE_REPO_URL with no backslash.
+      parameters:
+        - name: autoshiftGitRepo
+          value: \$ARGOCD_APP_SOURCE_REPO_URL
+        - name: autoshiftGitBranchTag
+          value: \$ARGOCD_APP_SOURCE_TARGET_REVISION
   sources: []
   project: $ARGO_PROJECT
   syncPolicy:
@@ -380,7 +386,7 @@ oc get argocd -A
 
 #### Step 4: deploy AutoShift from OCI
 
-Create the ArgoCD Application pointing to the OCI registry. The key difference from source mode is the OCI values (`autoshiftOciRegistry`, `autoshiftOciRepo`, `autoshiftOciVersion`) which tell the ApplicationSet to pull policies from the registry instead of Git. `autoshiftOciVersion` is required, because a mutable `latest` tag is unreliable with Argo CD OCI:
+Create the ArgoCD Application pointing to the OCI registry. The key difference from source mode is `autoshiftOciRepo`, which both selects OCI mode and says where the policy charts are published. Change it if you release your own charts. `autoshiftOciVersion` is required, because a mutable `latest` tag is unreliable with Argo CD OCI, and is injected from the Application's own `targetRevision`:
 
 ```console
 export OCI_REGISTRY="quay.io/autoshift"
@@ -403,9 +409,13 @@ spec:
         - values/clustersets/hub.yaml
         - values/clustersets/managed.yaml
       values: |
-        autoshiftOciRegistry: true
+        # Where the policy charts are published. Change this if you release your own charts.
         autoshiftOciRepo: oci://${OCI_REGISTRY}/policies
-        autoshiftOciVersion: "${VERSION}"
+      # Injected from this Application's own targetRevision, so the release is pinned once.
+      # The backslash keeps the shell from expanding it; in a plain manifest file, drop it.
+      parameters:
+        - name: autoshiftOciVersion
+          value: \$ARGOCD_APP_SOURCE_TARGET_REVISION
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops

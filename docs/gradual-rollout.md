@@ -83,9 +83,8 @@ spec:
         autoshift:
           dryRun: false
 
-        autoshiftOciRegistry: true
+        # Where the policy charts are published. Change this if you release your own charts.
         autoshiftOciRepo: oci://quay.io/autoshift/policies
-        autoshiftOciVersion: "0.0.1"
 
         # Recommended in OCI mode: prerendered charts never use the policy-generator CMP, and
         # values/global.yaml defaults it to true for git mode. Not required — leaving it true
@@ -94,6 +93,12 @@ spec:
 
         # Automatically append version to clusterset names
         versionedClusterSets: true
+      # Injected from this Application's targetRevision, so the release is pinned in one place.
+      # This is what keeps a side-by-side rollout honest: the chart version and the policy version
+      # cannot drift apart.
+      parameters:
+        - name: autoshiftOciVersion
+          value: $ARGOCD_APP_SOURCE_TARGET_REVISION
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops
@@ -162,9 +167,8 @@ spec:
         autoshift:
           dryRun: false
 
-        autoshiftOciRegistry: true
+        # Where the policy charts are published. Change this if you release your own charts.
         autoshiftOciRepo: oci://quay.io/autoshift/policies
-        autoshiftOciVersion: "0.0.2"
 
         policyGenerator: false
         versionedClusterSets: true
@@ -180,6 +184,12 @@ spec:
           managed:
             labels:
               tempo: 'true'
+      # Injected from this Application's targetRevision, so the release is pinned in one place.
+      # This is what keeps a side-by-side rollout honest: the chart version and the policy version
+      # cannot drift apart.
+      parameters:
+        - name: autoshiftOciVersion
+          value: $ARGOCD_APP_SOURCE_TARGET_REVISION
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops
