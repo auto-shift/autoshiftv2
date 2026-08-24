@@ -1,30 +1,21 @@
-# Read by Zensical, which builds the site. The filename and mkdocs.yml schema are what Zensical
-# consumes natively, so it stays as it is; MkDocs also still builds this file unchanged, which is
-# the fallback while Zensical is pre-1.0.
+# Read by Zensical, which consumes the mkdocs.yml schema natively. MkDocs still renders it too.
 site_name: AutoShift Documentation
 site_description: Infrastructure as Code for OpenShift using GitOps and ACM
 
-# Required, not cosmetic: sitemap.xml is generated empty without it, and instant loading reads
-# sitemap.xml to decide which links it can swap in place, so navigation.instant is inert until
-# this is set. It also supplies the canonical URL on every page.
-#
-# The workflows derive SITE_URL from the repository they run in, so a fork publishes its own
-# canonical URLs rather than pointing search engines at this repository. The fallback is the real
-# address of this site, so a local build matches production. A fork on a custom domain sets
-# SITE_URL itself.
+# Required: without it sitemap.xml is empty, navigation.instant reads that sitemap so it goes
+# inert, and pages get no canonical URL. scripts/build-docs.sh sets SITE_URL per repository; this
+# fallback is used outside continuous integration.
 site_url: !ENV [SITE_URL, 'https://auto-shift.github.io/autoshiftv2/']
 
 repo_name: auto-shift/autoshiftv2
 repo_url: https://github.com/auto-shift/autoshiftv2
-# docs_dir is the repo root, so a page's source path already carries its directory (docs/,
-# policies/...). Pointing this at docs/ produced edit/main/docs/docs/quickstart.md.
+# docs_dir is the repository root, so a page's source path already carries its directory.
 edit_uri: edit/main/
 
 theme:
   name: material
-  # Red Hat Text and Red Hat Mono are the brand fonts and are on Google Fonts under the SIL Open
-  # Font License. Red Hat Display, the heading face, has no theme setting and is imported by
-  # docs/assets/red-hat.css.
+  # Brand fonts, on Google Fonts under the SIL Open Font License. Red Hat Display has no theme
+  # setting and is imported by docs/assets/red-hat.css.
   font:
     text: Red Hat Text
     code: Red Hat Mono
@@ -63,22 +54,15 @@ theme:
 
 docs_dir: .
 
-# Note for anyone reaching for exclude_docs: Zensical accepts the key and silently ignores it, so
-# every file in the working tree is copied into the output. scripts/build-docs.sh prunes what must
-# not be published, and fails if anything on that list survives.
+# Zensical accepts exclude_docs and ignores it, so scripts/build-docs.sh prunes after the build.
 
 
-# Warnings fail the build. This is the only gate on links: Zensical checks every internal link and
-# every heading anchor on its own terms, and a `validation:` block is ignored the way exclude_docs
-# and plugins are, so strict is what decides whether a finding aborts. Measured, not assumed: a
-# broken link builds clean with strict false and exits 1 with strict true.
-#
-# It earns its place. A broken link is a 404 in the published site and nothing else catches it, and
-# the anchor check found a link into a heading that a product-name rename had moved.
+# The only gate on links. Zensical checks internal links and heading anchors on its own terms and
+# ignores a `validation:` block, so strict decides whether a finding aborts the build.
 strict: true
 
-# Zensical ignores this block: it handles docs_dir: '.' and search natively. It is kept so
-# MkDocs still builds the same tree as a fallback while Zensical is pre-1.0.
+# Zensical handles docs_dir: '.' and search natively and ignores this. Kept so MkDocs can still
+# render the config; note MkDocs alone emits the whole tree, since the prune is in the script.
 plugins:
   - search
   - same-dir
@@ -97,10 +81,8 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
   - admonition
-  # Renders GitHub callout syntax (> [!NOTE]). Replaces the mkdocs-callouts plugin: identical
-  # source syntax, but an extension rather than a plugin, so Zensical renders it too. Zensical
-  # ignores unknown plugins without warning, so under the plugin every callout silently
-  # degraded to a bare blockquote with a literal [!NOTE] line.
+  # Renders GitHub callout syntax (> [!NOTE]). An extension rather than a plugin, because
+  # Zensical ignores plugins and the callouts would degrade to bare blockquotes.
   - pymdownx.quotes:
       callouts: true
   - pymdownx.details

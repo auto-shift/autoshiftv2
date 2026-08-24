@@ -1,5 +1,5 @@
 # GitLab CI/CD Configuration for AutoShift
-# Equivalent to .github/workflows/ci.yaml and release.yaml
+# Equivalent to .github/workflows/ci.yaml, docs.yaml and release.yaml
 
 stages:
   - lint
@@ -14,13 +14,8 @@ variables:
   GITLEAKS_VERSION: "8.24.3"
   # renovate: datasource=github-releases depName=errata-ai/vale extractVersion=^v(?<version>.+)$
   VALE_VERSION: "3.17.1"
-  # ubi10's system Python is 3.12, which is what zensical needs. It requires 3.10 or newer, and
-  # on ubi9 pip resolved the pin back to zensical 0.0.2 rather than failing, which is part of why
-  # the whole pipeline is on ubi10.
-  #
-  # Override in a disconnected pipeline with an image that already carries the toolchain: the
-  # devcontainer image builds exactly this set. pip reads PIP_INDEX_URL from the environment on
-  # its own, so an internal Python mirror needs no change here.
+  # ubi10 for its Python 3.12, which zensical requires. In a disconnected pipeline, override with
+  # an image that already carries the toolchain; pip reads PIP_INDEX_URL on its own.
   DOCS_IMAGE: "registry.access.redhat.com/ubi10/ubi:latest"
   # Where a prebuilt image keeps the Vale rule package, so `vale sync` never reaches the network.
   VALE_STYLES_DIR: "/opt/vale-styles"
@@ -46,6 +41,15 @@ variables:
       mv /tmp/linux-amd64/helm /usr/local/bin/helm
       chmod +x /usr/local/bin/helm
       helm version
+
+# Shared by the docs and pages jobs, so the check and the publish install the same toolchain.
+# `find` is not in the base image, and Zensical is only present already in a prebuilt DOCS_IMAGE.
+.docs-toolchain:
+  before_script:
+    - |
+      dnf -y install git findutils python3-pip
+      command -v zensical >/dev/null 2>&1 || pip3 install --no-cache-dir -r docs/requirements.txt
+      zensical --version
 
 # =============================================================================
 # CI Pipeline (runs on push to main/feature branches and merge requests)
@@ -266,24 +270,13 @@ validate-policies:
 
 docs:
   stage: lint
-  # Equivalent to the `docs` job in .github/workflows/ci.yaml. Builds the site, prunes what must
-  # not be published, verifies the result, and lints the prose.
+  # Equivalent to the `docs` job in .github/workflows/ci.yaml.
   #
-  # Three things reach the network here in a connected pipeline: zensical from PyPI, the Vale
-  # binary from GitHub releases, and the Vale rule package from `vale sync`. Each sits behind a
-  # presence check, so a pipeline that supplies them another way fetches nothing. Nothing extra
-  # is needed to run this connected, which is the point: one job, both environments.
+  # Zensical, the Vale binary and the Vale rules each sit behind a presence check, so a
+  # disconnected pipeline that supplies them through DOCS_IMAGE fetches nothing.
   image: ${DOCS_IMAGE}
   before_script:
-    - |
-      # scripts/build-docs.sh derives what to prune from `git ls-files` and walks the output with
-      # find. Neither is in the base image.
-      dnf -y install git findutils python3-pip
-    - |
-      if ! command -v zensical >/dev/null 2>&1; then
-        pip3 install --no-cache-dir -r docs/requirements.txt
-      fi
-      zensical --version
+    - !reference [.docs-toolchain, before_script]
     - |
       if ! command -v vale >/dev/null 2>&1; then
         curl -sfL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
@@ -320,22 +313,16 @@ docs:
 
 pages:
   stage: release
-  # Publishes the site to GitLab Pages, the equivalent of .github/workflows/docs.yaml. A fork that
-  # lives in GitLab has no gh-pages to push to, so without this it would validate its documentation
-  # on every merge request and then throw it away.
+  # Equivalent of .github/workflows/docs.yaml, for a copy of this repository living in GitLab.
   #
-  # scripts/build-docs.sh reads CI_PAGES_URL, which GitLab defines per job on gitlab.com and on
-  # self-managed alike, so canonical URLs and the sitemap describe this instance rather than
-  # upstream. Where Pages is not enabled, the job still produces a downloadable artifact.
+  # scripts/build-docs.sh reads CI_PAGES_URL, so the site describes this instance. Where Pages is
+  # not enabled the job still produces a downloadable artifact.
   image: ${DOCS_IMAGE}
   before_script:
-    - |
-      dnf -y install git findutils python3-pip
-      command -v zensical >/dev/null 2>&1 || pip3 install --no-cache-dir -r docs/requirements.txt
+    - !reference [.docs-toolchain, before_script]
   script:
     - ./scripts/build-docs.sh
-    # GitLab serves whatever the job leaves in public/. Removed first: mv into an existing
-    # directory nests the build inside it instead of replacing it, and serves a stale site.
+    # GitLab serves public/. Removed first, or mv nests the build inside the previous one.
     - rm -rf public && mv site public
   artifacts:
     paths:

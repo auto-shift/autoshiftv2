@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 #
-# Builds the documentation site, removes what must not be published, and verifies the result.
-#
-# One script so continuous integration and a developer run the same steps. The prune is not
-# optional: docs_dir is the repository root, so Zensical copies the whole working tree into the
-# output, and it accepts mkdocs.yaml's exclude_docs key while silently ignoring it. docs_dir has
-# to stay the root, because that is what makes README.md the home page and lets its links resolve
-# identically on GitHub and on the site.
+# Builds the documentation site, prunes it to what should be published, and verifies the result.
+# Run by continuous integration and by hand, so both do the same thing.
 #
 # Usage: scripts/build-docs.sh
 set -euo pipefail
@@ -16,14 +11,8 @@ SITE_DIR=site
 
 fail() { echo "::error::$1"; exit 1; }
 
-# Resolved by precedence rather than by platform, so one script is correct upstream, in a GitHub
-# fork, and in a GitLab copy including a self-managed or disconnected one. A fork that publishes
-# with the upstream address would tell search engines its own documentation is a duplicate.
-#
-#   SITE_URL           an explicit override: a custom domain, or an internal host
-#   CI_PAGES_URL       GitLab, predefined per job on gitlab.com and self-managed alike
-#   GITHUB_REPOSITORY  GitHub Pages, derived from the owner and repository
-#   mkdocs.yaml        the fallback, used outside continuous integration where nothing publishes
+# By precedence, so a fork publishes its own canonical URLs rather than pointing search engines
+# at upstream. Explicit SITE_URL wins, then GitLab, then GitHub, then the mkdocs.yaml fallback.
 if [ -n "${SITE_URL:-}" ]; then
   echo "Building with site_url=${SITE_URL} (explicit)"
 elif [ -n "${CI_PAGES_URL:-}" ]; then
@@ -40,21 +29,12 @@ else
   echo "Building with site_url from mkdocs.yaml"
 fi
 
-# Always clean. Zensical's incremental build is not coherent with an output directory that
-# changed underneath it, and this script prunes that directory on every run: an incremental build
-# afterwards reported eighteen pages as missing that were present, then none on a second run.
-# With strict: true that surfaces as a failing build for no reason. A clean build costs a second.
-#
-# mkdocs.yaml sets strict: true, so a broken link or a broken heading anchor fails here.
+# --clean is required: an incremental build is incoherent with the output directory this script
+# prunes, and reports phantom missing pages. strict: true fails the build on a bad link or anchor.
 zensical build --clean -f mkdocs.yaml
 
-# The site is the README, rendered as the home page, plus docs/. Nothing else.
-#
-# An allow-list rather than a deny-list, and the direction is the point. docs_dir is the
-# repository root, so Zensical copies every file in the working tree into the output, and it
-# accepts mkdocs.yaml's exclude_docs key while silently ignoring it. Default-deny means a new file
-# at the root, a credential or a tool cache included, is never published because nobody
-# remembered to exclude it.
+# The site is the home page plus docs/. Prune after the build because Zensical copies the whole
+# working tree and ignores exclude_docs. Allow-list, so anything new at the root stays unpublished.
 python3 - "$SITE_DIR" <<'PRUNE_TO_DOCS'
 import json
 import pathlib
@@ -62,7 +42,7 @@ import sys
 
 site = pathlib.Path(sys.argv[1])
 
-# Emitted by the generator, so there is no source file behind them.
+# Generator output, with no source file behind it.
 KEEP_FILES = {
     "index.html", "404.html", "search.json",
     "sitemap.xml", "sitemap.xml.gz", "objects.inv", ".nojekyll",
@@ -79,9 +59,8 @@ for path in sorted(site.rglob("*")):
     path.unlink()
     removed += 1
 
-# The search index is generated before this script prunes anything, so it still carries an entry,
-# with the page's full body text, for every page just removed. Left alone it both serves results
-# that 404 and republishes the content of pages deliberately taken off the site.
+# search.json is generated before the prune and keeps an entry, with body text, for every page
+# removed. Filter it or search returns 404s and republishes unpublished content.
 index = site / "search.json"
 if index.exists():
     data = json.loads(index.read_text())
@@ -102,17 +81,14 @@ PRUNE_TO_DOCS
 
 find "$SITE_DIR" -type d -empty -delete
 
-# Fails closed. Recomputed from the output rather than assumed, so a change in what Zensical emits
-# shows up here as an error instead of as a surprise on the published site.
+# Fails closed if Zensical starts emitting something new at the root.
 unexpected=$(cd "$SITE_DIR" && find . -type f | sed 's|^\./||' \
   | grep -vE '^(docs|assets)/' \
   | grep -vE '^(index|404)\.html$|^(search\.json|sitemap\.xml|sitemap\.xml\.gz|objects\.inv|\.nojekyll)$' \
   || true)
 [ -z "$unexpected" ] || fail "unexpected files in the published tree: ${unexpected}"
 
-# The crawl that found this: search results pointed at pages the prune had removed, and carried
-# their body text with them. Asserted rather than trusted, because the index is generated upstream
-# of the prune and will drift again if Zensical changes what it emits.
+# The index is generated upstream of the prune, so verify it rather than trust the filter above.
 python3 - "$SITE_DIR" <<'CHECK_SEARCH_INDEX'
 import json
 import pathlib
@@ -134,18 +110,16 @@ if missing:
     sys.exit(1)
 CHECK_SEARCH_INDEX
 
-# Everything published now comes from docs/, so this only guards a credential committed there.
-# gitleaks is the real defence; this is one cheap layer more.
+# A cheap second layer under gitleaks, for a credential committed into docs/.
 leaked=$(find "$SITE_DIR/docs" -type f \
   \( -name '*secret*' -o -name '*.key' -o -name '*.pem' -o -name 'kubeconfig*' \) \
   ! -name '*.html' -print)
 [ -z "$leaked" ] || fail "a credential-shaped file reached the output: ${leaked}"
 
-# The build only fails on links and anchors, so a Markdown extension or theme setting that stops
-# applying still produces a clean build and a wrong site. Each check stands for one such setting,
-# and each was confirmed to fail when that setting is removed.
+# A theme or extension setting that stops applying still builds clean and ships a wrong site.
+# One check per setting.
 
-# The style guide documents the syntax literally, so it legitimately holds the marker.
+# The style guide documents the syntax literally, so it holds the marker legitimately.
 raw=$(grep -rlE '\[!(NOTE|TIP|WARNING|IMPORTANT|CAUTION)\]' "$SITE_DIR" --include='*.html' \
   | grep -v 'docs/documentation-style/' || true)
 [ -z "$raw" ] || fail "callout syntax reached the output (${raw}): pymdownx.quotes is not applying"
