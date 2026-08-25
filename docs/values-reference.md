@@ -212,6 +212,44 @@ created for each replica of the image service. 2GiB per `OSImage` entry is requi
 
 > **Note:** Increased concurrency/QPS increases CPU and memory on the controller pods, the Kubernetes API server, and the OpenShift API server. Concurrency/QPS/burst are set through `ManagedClusterAddOn` annotations per Red Hat Advanced Cluster Management 2.17 docs. Resource limits are set through `AddOnDeploymentConfig`.
 
+### Managed AutoShift
+
+> [!WARNING]
+> Hub Clusters Only
+
+Deploys a nested AutoShift onto each managed hub. The policy runs on that hub and creates an Argo CD
+Application in the hub's own GitOps instance, so the hub goes on to configure its own spokes. Nothing
+is created on the hub above it. See
+[policies/stable/managed-autoshift](../policies/stable/managed-autoshift/README.md) and
+[Hub of hubs](hub-of-hubs.md).
+
+| Variable | Type | Default Value | Notes |
+|----------|------|---------------|-------|
+| `autoshift-enable-install` | bool | `false` | Opt this hub in. Requires `self-managed: 'false'`: `'true'` marks the hub the current AutoShift instance runs on, which is already deployed |
+
+**Config block** (`config.managedAutoshift`), a list with one entry per deployment:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `appName` | string | the hub's cluster name | Argo CD Application name, and the `Release.Name` of the nested AutoShift. Max 11 characters, since it becomes `policies-<appName>` and that namespace is capped at 20. Never `autoshift`, which belongs to the top-level deployment |
+| `repoUrl` | string | | Git repository holding the chart. Required in git mode, with `targetRevision` |
+| `targetRevision` | string | `main` | Git branch or tag |
+| `ociRepo` | string | | Registry namespace, for example `quay.io/autoshift`, **without** the `oci://` scheme. Setting it selects OCI mode instead of git. Policy charts are read from `<ociRepo>/policies` |
+| `ociVersion` | string | | Chart version. Required whenever `ociRepo` is set |
+| `gitopsNamespace` | string | `openshift-gitops` | Namespace on the managed hub for the Application and repository Secrets |
+| `argoProject` | string | `default` | Argo CD project |
+| `argoServer` | string | `https://kubernetes.default.svc` | Destination server, the managed hub itself |
+| `valuesFiles` | list | `["values.<clusterName>.yaml"]` | Values files passed to the chart |
+| `valuesRepoUrl` | string | | Keep values in their own repository, mounted as a second Argo CD source |
+| `valuesTargetRevision` | string | `main` | Branch or tag of the values repository |
+| `versionedClusterSets` | bool | `false` | Suffix clusterset names with the version tag |
+| `useRepoSecret` | bool | `false` | Copy a repository Secret into the hub's Argo CD namespace, for private repositories |
+| `repoSecretRef` | map | `{name: autoshift-repo-secret, namespace: <policy namespace>}` | Source Secret to copy |
+| `valuesRepoSecretRef` | map | `{name: autoshift-values-repo-secret, namespace: <policy namespace>}` | Source Secret for the values repository |
+
+An entry that names a reserved or over-long `appName`, or that sets `ociRepo` without `ociVersion`,
+creates nothing rather than a broken Application.
+
 ### Cluster labels
 
 Manages the automated cluster labeling system that applies `autoshift.io/` prefixed labels to clusters and cluster sets. This policy automatically propagates labels from cluster sets to individual clusters and manages the label hierarchy.

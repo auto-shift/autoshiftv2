@@ -1,0 +1,48 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: managed-autoshift
+# Deploys a nested AutoShift onto each MANAGED hub. The policy runs on that hub and creates an Argo CD
+# Application there, so the hub goes on to configure its own spokes. Every deployment is described by
+# an entry in config.managedAutoshift in the cluster's rendered-config ConfigMap, read at enforcement
+# time, so one hub can carry several. See README.md and docs/hub-of-hubs.md.
+placementBindingDefaults:
+  name: binding-policy-managed-autoshift
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Repository Secrets, copied into the hub's Argo CD namespace so it can reach private repos.
+  - name: policy-managed-autoshift-repo
+    manifests:
+      - path: manifests/repo-secrets.yaml
+    dependencies:
+      - name: policy-gitops-systems-argocd
+      - name: policy-acm-mch-install
+  # 2) The namespace the nested deployment's own policies live in.
+  - name: policy-managed-autoshift-ns
+    manifests:
+      - path: manifests/namespace.yaml
+  # 3) The Argo CD Application itself. mustonlyhave, so it owns the spec outright — which is why the
+  #    name `autoshift` is refused: that belongs to the top-level deployment.
+  - name: policy-managed-autoshift
+    manifests:
+      - path: manifests/deployment.yaml
+    dependencies:
+      - name: policy-gitops-systems-argocd
+      # Without this the Application can be created before its repository Secret,
+      # so a private repo fails its first sync until the Secret catches up.
+      - name: policy-managed-autoshift-repo

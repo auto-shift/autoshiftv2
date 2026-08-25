@@ -10,13 +10,19 @@ Deploys an AutoShift ArgoCD Application on managed hub clusters (spoke hubs), en
 | `policy-managed-autoshift-repo` | Replicates an ArgoCD repository Secret to the managed hub's GitOps namespace (when `useRepoSecret` is enabled) |
 | `policy-managed-autoshift` | Creates the ArgoCD Application on the managed hub pointing to the `autoshift/` chart with the configured values files and repo |
 
-## PolicySet and Placement
+## Placement
 
-| PolicySet | Targets | Placement Criteria |
-|-----------|---------|-------------------|
-| `managed-autoshift` | Non-self-managed hub clusters | `gitops: 'true'` AND `autoshift-enable-install: 'true'` AND `self-managed` is not `'true'` (unless `enableSelfManagement` is set) |
+All three policies share one Placement (`placement.yaml`); PolicyGenerator emits the PlacementBinding.
 
-The repo policy has its own Placement with the same label criteria but always excludes self-managed hubs (`self-managed: 'false'`).
+| Label | Required value | Why |
+|-------|----------------|-----|
+| `cluster-type` | `hub` | Only a hub runs a nested AutoShift |
+| `gitops` | `true` | The policy creates an Argo CD Application, so GitOps must be present |
+| `autoshift-enable-install` | `true` | Opt in per hub |
+| `self-managed` | `false` | The label marks the hub this AutoShift instance itself runs on. That hub already has a top-level Application; this policy bootstraps the other hubs the deployment governs |
+
+Every predicate uses `In` rather than `NotIn`. `NotIn` also matches clusters where the label is
+absent, which would select hubs that never opted in.
 
 ## Labels
 
@@ -26,42 +32,31 @@ All labels are prefixed with `autoshift.io/`.
 |-------|------|---------|-------------|
 | `autoshift-enable-install` | bool | Placement selector, hub template guard | Must be `'true'` for the managed AutoShift Application to be created |
 | `gitops` | bool | Placement selector | Must be `'true'` — ensures GitOps is available on the target cluster |
-| `self-managed` | bool | Placement selector | When `'true'`, excludes the cluster from placement (unless `enableSelfManagement` is set in chart values) |
+| `self-managed` | bool | Placement selector | Must be `'false'`. `'true'` marks the hub this AutoShift instance runs on, which is already deployed |
 
-## Rendered-Config Variables (`autoshift.*`)
+## Rendered-Config Variables (`config.managedAutoshift[]`)
 
 These values are read from the per-cluster `rendered-config` ConfigMap on the hub via hub templates. They allow per-cluster override of the AutoShift deployment settings.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `appName` | string | `managed-autoshift` | Name of the ArgoCD Application created on the managed hub. Also used to derive the policy namespace (`policies-<appName>`) |
-| `repoUrl` | string | Chart value / `""` | Git repository URL for the AutoShift source |
+| `appName` | string | the hub's cluster name | Name of the generated Argo CD Application, and the `Release.Name` of the nested AutoShift. **Max 11 characters**, because it becomes `policies-<appName>` and that namespace is capped at 20. The name `autoshift` is refused: it belongs to the top-level deployment, and this policy uses `mustonlyhave`, so it would overwrite it. An entry breaking either rule creates nothing |
+| `repoUrl` | string | `""` | Git repository URL for the AutoShift source. Required in git mode, alongside `targetRevision` |
 | `gitopsNamespace` | string | `openshift-gitops` | Namespace where the ArgoCD Application and repo Secret are created |
 | `valuesFiles` | list | `["values.<clusterName>.yaml"]` | List of Helm values files passed to the ArgoCD Application source |
 | `argoProject` | string | `default` | ArgoCD project for the Application |
-| `argoServer` | string | `https://kubernetes.default.svc` | (Currently unused) Destination server is hard-coded in the Application template |
+| `argoServer` | string | `https://kubernetes.default.svc` | Destination server for the generated Application |
 | `targetRevision` | string | `main` | Git branch or tag to track |
+| `ociRepo` | string | `""` | Registry namespace holding the AutoShift charts, for example `quay.io/autoshift`. Give it **without** the `oci://` scheme: Argo CD's Helm-OCI source takes a bare `host/path`. Setting it selects OCI mode. The nested deployment reads its policy charts from `<ociRepo>/policies`, derived automatically. Mutually exclusive with `repoUrl`/`targetRevision` |
+| `ociVersion` | string | `""` | Chart version to pin. Required whenever `ociRepo` is set; without it no Application is created |
 | `useRepoSecret` | bool | `false` | When `true`, replicates a git repo Secret to the managed hub for private repo access |
 | `repoSecretRef.name` | string | `autoshift-repo-secret` | Name of the source Secret on the hub to replicate |
-| `repoSecretRef.namespace` | string | `<policy_namespace>` | Namespace of the source Secret on the hub |
+| `repoSecretRef.namespace` | string | the policy namespace | Namespace of the source Secret on the hub |
 | `valuesRepoUrl` | string | Undefined | URL for the values repo to pull the values from if different from the code repo |
 | `valuesRepoSecretRef` | object | undefined | Object containing name and namespace reference for a repositor secret allowing argo to sync with the `valuesRepoUrl` |
 | `valuesRepoSecretRef.name` | string | undefined | Name of the the argo repo secret containing the values repo creds |
 | `valuesRepoSecretRef.namespace` | string | undefined | Name of the the argo repo secret containing the values repo creds |
 
-
-## Chart Values (`autoshift.*`)
-
-These are Helm chart-level defaults. Per-cluster rendered-config values take precedence at runtime.
-
-| Value | Type | Default | Description |
-|-------|------|---------|-------------|
-| `appName` | string | `autoshift` | Default ArgoCD Application name |
-| `repoUrl` | string | `https://github.com/auto-shift/autoshiftv2.git` | Default git repository URL |
-| `valuesFile` | string | `values.hubofhubs.yaml` | Default values file |
-| `argoProject` | string | `default` | Default ArgoCD project |
-| `gitopsNamespace` | string | `openshift-gitops` | Default GitOps namespace |
-| `enableSelfManagement` | bool | `false` | When `true`, allows the policy to also target the self-managed hub (removes the `self-managed` exclusion from placement) |
 
 ## Dependencies
 
@@ -88,7 +83,7 @@ hubClusterSets:
       autoshift-enable-install: 'true'
       self-managed: 'false'
     config:
-      autoshift:
+      managedAutoshift:
         - appName: 'managed-autoshift'
           repoUrl: 'https://github.com/my-org/autoshiftv2.git'
           targetRevision: 'release-1.0'

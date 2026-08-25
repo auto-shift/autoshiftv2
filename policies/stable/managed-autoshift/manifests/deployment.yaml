@@ -1,0 +1,102 @@
+object-templates-raw: |
+  #Indentation anchor
+  {{hub- $autoshiftConfigs := index (index (fromConfigMap "${POLICY_NAMESPACE}" (print  .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "managedAutoshift" | default (list) hub}}
+  {{hub if not (empty $autoshiftConfigs) hub}}
+    {{hub $clusterLabels := .ManagedClusterLabels hub}}
+    {{hub $clusterName := .ManagedClusterName hub}}
+    {{hub range $autoshiftConfig := $autoshiftConfigs hub}}
+      {{hub $appName := index $autoshiftConfig "appName" | default $clusterName hub}}
+      {{hub- $repoUrl := index $autoshiftConfig "repoUrl" | default "" hub}}
+      {{hub- $gitopsNamespace := index $autoshiftConfig "gitopsNamespace" | default "openshift-gitops" hub}}
+      {{hub- $defaultValuesFile := (print "values." $clusterName ".yaml") | list hub}}
+      {{hub- $valuesFiles := index $autoshiftConfig "valuesFiles" | default $defaultValuesFile hub}}
+      {{hub- $argoProject := index $autoshiftConfig "argoProject" | default "default"  hub}}
+      {{hub- $argoServer := index $autoshiftConfig "argoServer" | default "https://kubernetes.default.svc" hub}}
+      {{hub- $targetRevision := index $autoshiftConfig "targetRevision" | default "main" hub}}
+      {{hub- $ociRepo := index $autoshiftConfig "ociRepo" | default "" hub}}
+      {{hub- $ociVersion := index $autoshiftConfig "ociVersion" | default "" hub}}
+      {{hub- $ociMode := (ne $ociRepo "") hub}}
+      {{hub- $valuesRepoUrl := index $autoshiftConfig "valuesRepoUrl" | default "" hub}}
+      {{hub- $valuesTargetRevision := index $autoshiftConfig "valuesTargetRevision" | default "main" hub}}
+      {{hub- $versionedClusterSets := index $autoshiftConfig "versionedClusterSets" | default "false" hub}}
+      {{hub- $autoshiftEnabled := (index $clusterLabels "autoshift.io/autoshift-enable-install" | default "false") hub}}
+      {{hub- $sourceReady := ternary (ne $ociVersion "") (and (ne $repoUrl "") (ne $targetRevision "")) $ociMode hub}}
+      {{hub- if and (ne $appName "autoshift") (le (len $appName) 11) (ne $gitopsNamespace "") (eq $autoshiftEnabled "true") (not (empty $valuesFiles)) $sourceReady hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: {{hub $appName hub}}
+        namespace: {{hub $gitopsNamespace hub}}
+      spec:
+        syncPolicy:
+          automated:
+            prune: false
+            selfHeal: true
+        destination:
+          namespace: ''
+          server: {{hub $argoServer hub}}
+        {{hub- if (eq $valuesRepoUrl "") hub}}
+        source:
+          {{hub- if $ociMode hub}}
+          chart: autoshift
+          repoURL: {{hub $ociRepo hub}}
+          targetRevision: {{hub $ociVersion hub}}
+          {{hub- else hub}}
+          path: autoshift
+          repoURL: {{hub $repoUrl hub}}
+          targetRevision: {{hub $targetRevision hub}}
+          {{hub- end hub}}
+          helm:
+            valueFiles:
+            {{hub- range $file := $valuesFiles hub}}
+            - {{hub $file hub}}
+            {{hub- end hub}}
+            values: |-
+              {{hub- if $ociMode hub}}
+              autoshiftOciRepo: oci://{{hub $ociRepo hub}}/policies
+              autoshiftOciVersion: {{hub $ociVersion hub}}
+              {{hub- else hub}}
+              autoshiftGitRepo: {{hub $repoUrl hub}}
+              autoshiftGitBranchTag: {{hub $targetRevision hub}}
+              {{hub- end hub}}
+              {{hub- if eq $versionedClusterSets "true" hub}}
+              versionedClusterSets: "true"
+              {{hub- end hub}}
+        project: {{hub $argoProject hub}}
+        {{hub- else hub}}
+        sources:
+          - ref: values
+            repoURL: {{hub $valuesRepoUrl hub}}
+            targetRevision: {{hub $valuesTargetRevision hub}}
+          - helm:
+              valueFiles:
+              {{hub- range $file := $valuesFiles hub}}
+              - "$values/{{hub $file hub}}"
+              {{hub- end hub}}
+              values: |-
+                {{hub- if $ociMode hub}}
+                autoshiftOciRepo: oci://{{hub $ociRepo hub}}/policies
+                autoshiftOciVersion: {{hub $ociVersion hub}}
+                {{hub- else hub}}
+                autoshiftGitRepo: {{hub $repoUrl hub}}
+                autoshiftGitBranchTag: {{hub $targetRevision hub}}
+                {{hub- end hub}}
+                {{hub- if eq $versionedClusterSets "true" hub}}
+                versionedClusterSets: "true"
+                {{hub- end hub}}
+            {{hub- if $ociMode hub}}
+            chart: autoshift
+            repoURL: {{hub $ociRepo hub}}
+            targetRevision: {{hub $ociVersion hub}}
+            {{hub- else hub}}
+            path: autoshift
+            repoURL: {{hub $repoUrl hub}}
+            targetRevision: {{hub $targetRevision hub}}
+            {{hub- end hub}}
+        project: {{hub $argoProject hub}}
+        {{hub- end hub}}
+      {{hub- end hub}}
+  {{hub end hub}}
+  {{hub end hub}}

@@ -1,0 +1,17 @@
+object-templates-raw: |
+  {{hub- $clusterName := .ManagedClusterName hub}}
+  {{hub- $autoshiftConfigs := index (index (fromConfigMap "${POLICY_NAMESPACE}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "managedAutoshift" | default (list) hub}}
+  {{hub- range $autoshiftConfig := $autoshiftConfigs hub}}
+  {{hub- $appName := index $autoshiftConfig "appName" | default $clusterName hub}}
+  {{hub- if (le (len $appName) 11) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub print "policies-" $appName hub}}
+        labels:
+          autoshift.io/createdByAutoshift: "true"
+          openshift.io/cluster-monitoring: "true"
+  {{hub- end hub}}
+  {{hub- end hub}}
