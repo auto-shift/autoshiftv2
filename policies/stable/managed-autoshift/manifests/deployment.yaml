@@ -1,6 +1,9 @@
 object-templates-raw: |
   #Indentation anchor
-  {{hub- $autoshiftConfigs := index (index (fromConfigMap "${POLICY_NAMESPACE}" (print  .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "managedAutoshift" | default (list) hub}}
+  {{hub- $policyNs := .PolicyMetadata.namespace hub}}
+  {{hub- $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $autoshiftConfigs := (index $rcConfig "managedAutoshift" | default list) hub}}
   {{hub if not (empty $autoshiftConfigs) hub}}
     {{hub $clusterLabels := .ManagedClusterLabels hub}}
     {{hub $clusterName := .ManagedClusterName hub}}

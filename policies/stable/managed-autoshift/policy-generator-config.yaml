@@ -46,3 +46,19 @@ policies:
       # Without this the Application can be created before its repository Secret,
       # so a private repo fails its first sync until the Secret catches up.
       - name: policy-managed-autoshift-repo
+  # 4) Inform-only: assert every configured deployment actually produced its Application. An entry
+  #    with a reserved or over-long appName, or ociRepo without ociVersion, creates nothing, and
+  #    policy-managed-autoshift is then Compliant for wanting nothing. This is what surfaces it.
+  - name: policy-managed-autoshift-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-managed-autoshift
+    manifests:
+      - path: test/managed-autoshift-app.yaml
+    customMessage:
+      noncompliant: >-
+        A config.managedAutoshift entry did not produce a synced Argo CD Application on this hub.
+        Either the entry was skipped, or its source will not resolve. Check that appName is at most
+        11 characters and is not 'autoshift', that exactly one of repoUrl or ociRepo is set, that
+        ociVersion accompanies ociRepo, and that ociRepo carries no oci:// scheme. If the entry
+        looks right, read the Application's status conditions for a repository or registry error.
