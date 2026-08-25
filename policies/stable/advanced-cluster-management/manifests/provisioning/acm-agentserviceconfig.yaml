@@ -86,8 +86,11 @@ object-templates-raw: |
           - ReadWriteOnce
           resources:
             requests:
-              storage: {{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-image-storage-size" | default "50Gi" hub}}
-        {{hub- $osImages := (index $disconnected "osImages" | default list) hub}}
+              storage: {{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-image-storage-size" | default "100Gi" hub}}
+        {{hub- $osImages := (dig "acm" "provisioning" "osImages" (list) $rcConfig) hub}}
+        {{hub- if (eq (len $osImages) 0) hub}}
+        {{hub- $osImages = (dig "osImages" (list) $disconnected) hub}}
+        {{hub- end hub}}
         {{hub- if (gt (len $osImages) 0) hub}}
         osImages:
         {{hub- range $_, $img := $osImages hub}}

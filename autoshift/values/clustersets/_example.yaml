@@ -109,6 +109,22 @@ hubClusterSets:
               cpu: '100m'
               memory: '256Mi'
       # =======================================================================
+      # ACM Provisioning — Assisted Installer image catalog (read via rendered-config)
+      # =======================================================================
+      # Pin the Red Hat Enterprise Linux CoreOS images the hub downloads. Left unset, Red Hat
+      # Advanced Cluster Management offers its whole default catalog: every supported version for
+      # x86_64, arm64, s390x and ppc64le. Red Hat recommends 100Gi of image storage to hold that,
+      # which is the default here. Pin the architectures and versions you provision to run a
+      # smaller volume. This is the canonical path; a disconnected deployment can still set
+      # disconnected.osImages below, which is deprecated and read only when this list is absent.
+      acm:
+        provisioning:
+          osImages:
+            - openshiftVersion: '4.22'             # Major.Minor
+              version: '4.22.0'                    # Red Hat Enterprise Linux CoreOS version string
+              cpuArchitecture: x86_64              # x86_64, arm64, s390x or ppc64le
+              url: 'https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.22/4.22.0/rhcos-4.22.0-x86_64-live.x86_64.iso'
+      # =======================================================================
       # Disconnected Mirror (read via rendered-config ConfigMap)
       # =======================================================================
       disconnected:
@@ -670,7 +686,7 @@ hubClusterSets:
       acm-provisioning-storage-class: ''             # StorageClass name
       acm-provisioning-database-size: 10Gi           # Min 10GiB recommended
       acm-provisioning-filesystem-storage-size: 100Gi # Min 100GiB recommended
-      acm-provisioning-image-storage-size: 50Gi      # 2GiB per OSImage entry
+      acm-provisioning-image-storage-size: 100Gi     # Red Hat recommended default; less if osImages is pinned
       # ACM Addon Tuning (for scale)
       acm-addon-tuning: 'true'
       # config-policy-controller tuning (annotations on ManagedClusterAddOn)

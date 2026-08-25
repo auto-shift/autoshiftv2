@@ -119,8 +119,8 @@ Every managed operator supports version control through its respective label:
 | Advanced Cluster Security   | `acs-version`           | `rhacs-operator.v4.6.1`                            |
 | OpenShift GitOps            | `gitops-version`        | `openshift-gitops-operator.v1.18.0`                |
 | OpenShift Pipelines         | `pipelines-version`     | `openshift-pipelines-operator-rh.v1.18.1`          |
-| OpenShift Data Foundation   | `odf-version`           | `odf-operator.v4.18.11-rhodf`                      |
-| MetalLB                     | `metallb-version`       | `metallb-operator.v4.18.0-202509240837`            |
+| OpenShift Data Foundation   | `odf-version`           | `odf-operator.v4.22.2-rhodf`                       |
+| MetalLB                     | `metallb-version`       | `metallb-operator.v4.22.0-202608122145`            |
 | Quay                        | `quay-version`          | `quay-operator.v3.18.0`                            |
 | Developer Hub               | `dev-hub-version`       | `rhdh.v1.5.0`                                      |
 | Developer Spaces            | `dev-spaces-version`    | `devspaces.v3.21.0`                                |
@@ -129,10 +129,10 @@ Every managed operator supports version control through its respective label:
 | OpenShift Logging           | `logging-version`       | `cluster-logging.v6.3.0`                           |
 | Cluster Observability       | `coo-version`           | `cluster-observability-operator.v0.4.0`            |
 | Compliance Operator         | `compliance-version`    | `compliance-operator.v1.8.0`                       |
-| LVM Storage                 | `lvm-version`           | `lvms-operator.v4.18.0-202410091522`               |
-| Local Storage               | `local-storage-version` | `local-storage-operator.v4.18.0-202410091522`      |
-| NMState                     | `nmstate-version`       | `kubernetes-nmstate-operator.v4.18.0-202410091522` |
-| OpenShift Virtualization    | `virt-version`          | `kubevirt-hyperconverged.v4.18.0`                  |
+| LVM Storage                 | `lvm-version`           | `lvms-operator.v4.22.0`                            |
+| Local Storage               | `local-storage-version` | `local-storage-operator.v4.22.0-202608122145`      |
+| NMState                     | `nmstate-version`       | `kubernetes-nmstate-operator.4.22.0-202608130510`  |
+| OpenShift Virtualization    | `virt-version`          | `kubevirt-hyperconverged-operator.v4.22.6`         |
 
 ### Finding available CSV versions
 
@@ -166,8 +166,9 @@ oc get packagemanifests openshift-pipelines-operator-rh -o yaml | grep currentCS
 created for the database's filesystem. Minimum 10GiB is recommended. |
 | `acm-provisioning-filesystem-storage-size` | string | `100Gi`       | `FileSystemStorage` defines the spec of the `PersistentVolumeClaim` to be
 created for the assisted-service's filesystem (logs, etc). Minimum 100GiB recommended |
-| `acm-provisioning-image-storage-size` | string | `50Gi`             | `ImageStorage` defines the spec of the `PersistentVolumeClaim` to be
-created for each replica of the image service. 2GiB per `OSImage` entry is required. |
+| `acm-provisioning-image-storage-size` | string | `100Gi`            | `ImageStorage` defines the spec of the `PersistentVolumeClaim` to be
+created for each replica of the image service. Sized to hold the image catalog: 2GiB per `OSImage` entry. Red Hat recommends
+`100Gi` when the list is not pinned. Pin `config.acm.provisioning.osImages` to run a smaller volume. |
 | `acm-channel`               | string    | `release-2.14`            |       |
 | `acm-version`               | string    | (optional)                | Specific CSV version for controlled upgrades |
 | `acm-source`                | string    | `redhat-operators`        |       |
@@ -190,6 +191,27 @@ created for each replica of the image service. 2GiB per `OSImage` entry is requi
 | `acm-addon-gpf-mem-request`  | string   | `128Mi`                  | governance-policy-framework memory request |
 | `acm-addon-gpf-cpu-request`  | string   | `100m`                   | governance-policy-framework CPU request |
 | `acm-addon-gpf-mem-limit`    | string   | `512Mi`                  | governance-policy-framework memory limit |
+
+**Config block** (`config.acm.provisioning`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `osImages` | list | | Red Hat Enterprise Linux CoreOS images the hub offers to the Assisted Installer. Each entry takes `openshiftVersion`, `version`, `cpuArchitecture` and `url`, plus an optional `rootFSUrl` |
+
+Left unset, Red Hat Advanced Cluster Management offers its full default image catalog: every
+supported Red Hat OpenShift Container Platform version for x86_64, arm64, s390x and ppc64le. That
+catalog grows as releases are added, so Red Hat recommends `100Gi` of image storage to hold it,
+which is what `acm-provisioning-image-storage-size` defaults to. Pin `osImages` to the
+architectures and versions you provision to run a smaller volume. The image service downloads
+every entry it is offered before it reports ready, so a volume smaller than the catalog it is
+given leaves `assisted-image-service` unable to start.
+
+This is the canonical path for every hub, connected or disconnected. A disconnected deployment
+points the `url` of each entry at its mirror rather than at `mirror.openshift.com`.
+
+`disconnected.osImages` is the earlier location for the same list. It is deprecated and still read,
+but only when `config.acm.provisioning.osImages` is absent. Both paths are schema checked at
+template time, so a misspelled field fails the build rather than being ignored.
 
 **Red Hat Advanced Cluster Management Default compared to AutoShift Tuned Values:**
 
@@ -558,7 +580,7 @@ no interactive administrator until you either configure OpenID Connect and list 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
 | `lvm`                                 | bool              | `false`                   | If not set the LVM Operator will not be managed |
-| `lvm-channel`                         | string            | `stable-4.18`             | Operator channel |
+| `lvm-channel`                         | string            | `stable-4.22`             | Operator channel |
 | `lvm-version`                         | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `lvm-source`                          | string            | `redhat-operators`        | Operator catalog source |
 | `lvm-source-namespace`                | string            | `openshift-marketplace`   | Catalog namespace |
@@ -613,7 +635,7 @@ no interactive administrator until you either configure OpenID Connect and list 
 | `odf-resource-profile`            | string            | `balanced`                | `lean`: suitable for clusters with limited resources, `balanced`: suitable for most use cases, `performance`: suitable for clusters with high amount of resources |
 | `odf-default-storageclass`        | string            | `ocs-storagecluster-ceph-rbd` | Sets specified storage class as default and all others as non-default |
 | `odf-csi-all-nodes`              | bool              | `false`                   | `true` runs CSI plugins on all nodes (masters, infra, storage) allowing PVCs on non-storage nodes. `false` restricts CSI plugins to storage-labeled nodes only |
-| `odf-channel`                     | string            | `stable-4.20`             |       |
+| `odf-channel`                     | string            | `stable-4.22`             |       |
 | `odf-version`                     | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `odf-source`                      | string            | `redhat-operators`        |       |
 | `odf-source-namespace`            | string            | `openshift-marketplace`   |       |
