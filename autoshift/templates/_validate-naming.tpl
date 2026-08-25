@@ -19,8 +19,8 @@ This is the single source of truth — autoshift-app-set.yaml and the configmap 
 {{- define "autoshift.clusterSetSuffix" -}}
 {{- if .Values.versionedClusterSets -}}
   {{- $versionTag := "" -}}
-  {{- if .Values.autoshiftOciRegistry -}}
-    {{- $versionTag = .Values.autoshiftOciVersion | default "latest" -}}
+  {{- if eq (include "autoshift.ociMode" .) "true" -}}
+    {{- $versionTag = .Values.autoshiftOciVersion -}}
   {{- else -}}
     {{- $versionTag = .Values.autoshiftGitBranchTag | default "main" -}}
   {{- end -}}
@@ -89,7 +89,7 @@ autoshift.validate-gitops enforces the policyGenerator / deploy-mode contract:
     PolicyGenerator directories never render and most policies simply never deploy — a hard failure.
   - OCI mode ships prerendered Helm charts and never uses the CMP, so policyGenerator: false is
     RECOMMENDED but not required. Leaving it true only configures a sidecar nothing calls; the
-    ApplicationSet branches on autoshiftOciRegistry, not on this flag, so deployment is unaffected.
+    deploy mode is chosen by autoshiftOciRepo, not by this flag, so deployment is unaffected.
     It is therefore not validated — an OCI deployment that inherits the git default still works.
 Effective value = global .Values.policyGenerator, overridden by the self-managed hub clusterset's
 config.gitops.policyGenerator.
@@ -100,7 +100,7 @@ config.gitops.policyGenerator.
 {{- if hasKey $gitopsCfg "policyGenerator" -}}
   {{- $pg = (index $gitopsCfg "policyGenerator") -}}
 {{- end -}}
-{{- if not .Values.autoshiftOciRegistry -}}
+{{- if ne (include "autoshift.ociMode" .) "true" -}}
   {{- if not $pg -}}
     {{- fail "\n\nGit/source mode requires policyGenerator: true.\nThe ArgoCD repo-server needs the policy-generator CMP sidecar to render PolicyGenerator dirs from git.\nSet policyGenerator: true in global.yaml, or config.gitops.policyGenerator: true on the self-managed hub clusterset.\n" -}}
   {{- end -}}

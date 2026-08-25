@@ -2,6 +2,7 @@
 {{- include "autoshift.validate-naming" . }}
 {{- include "autoshift.validate-gitops" . }}
 {{- include "autoshift.validate-clustersets" . }}
+{{- include "autoshift.deprecations" . }}
 {{- $gitopsNamespace := include "autoshift.gitopsNamespace" . -}}
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -10,11 +11,16 @@ metadata:
   namespace: {{ $gitopsNamespace }}
   labels:
     velero.io/exclude-from-backup: "true"
+  {{- $deprecated := include "autoshift.deprecationAnnotation" . }}
+  {{- if $deprecated }}
+  annotations:
+    {{ $deprecated }}
+  {{- end }}
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-  {{- if .Values.autoshiftOciRegistry }}
+  {{- if eq (include "autoshift.ociMode" .) "true" }}
   # OCI Registry mode - deploy every policy as a published Helm chart. files/policy-list.txt (generated at
   # release time) holds them all: the hand-authored holdout charts AND the PolicyGenerator policies rendered
   # to stock Helm charts in CI by `make render-policy-charts`. The policy-generator CMP is NEVER used for OCI
@@ -44,7 +50,7 @@ spec:
             repoURL: {{ .Values.autoshiftOciRepo }}/{{"{{"}} .name {{"}}"}}
             # Pin an explicit release version — a mutable tag like 'latest' is not reliably tracked by Argo CD's
             # OCI resolver and breaks GitOps determinism. Set autoshiftOciVersion to the release you deployed.
-            targetRevision: {{ required "autoshiftOciVersion is required in OCI mode — pin the release version (a mutable 'latest' tag is unreliable with Argo CD OCI)." .Values.autoshiftOciVersion }}
+            targetRevision: {{ .Values.autoshiftOciVersion }}
             helm:
               valuesObject:
                 {{- include "autoshift.policyValuesObject" . | nindent 16 }}
