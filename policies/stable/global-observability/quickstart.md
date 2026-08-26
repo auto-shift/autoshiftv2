@@ -122,7 +122,7 @@ oc get policies -n policies-autoshift | grep -E 'acm-observability|coo|global-ob
 2. `policy-coo-operator-install` → Compliant on every hub
 3. `policy-global-observability-mcoa` → Compliant (capabilities patched; MCOA starts creating `PrometheusAgent` templates)
 4. `policy-global-observability-secrets` → Compliant (global hub only — rollup secret assembled)
-5. `policy-global-observability-prometheus-exists` → Compliant per intermediate hub once MCOA has created its templates (this can lag a few minutes — it's the gate)
+5. `policy-global-observability-prom-test` → Compliant per intermediate hub once MCOA has created its templates (this can lag a few minutes — it's the gate)
 6. `policy-global-observability-prometheus` → Compliant (templates patched)
 
 ## Step 5 — Verify the rollup
@@ -152,7 +152,7 @@ On the **global hub** — metrics from workload clusters of intermediate hubs ar
 | Symptom | Cause / fix |
 |---------|-------------|
 | `policy-acm-observability` NonCompliant with "access key … could not be pulled" | Step 1 secret missing/misnamed **on that hub** — it's read locally on each hub, not from the global hub |
-| `*-prometheus-exists` stays NonCompliant | MCOA hasn't created its `PrometheusAgent` templates yet — verify MCOA is running and capabilities were patched (`oc get mco observability -o yaml`). This is the gate working as intended. |
+| `*-prom-test` stays NonCompliant | MCOA hasn't created its `PrometheusAgent` templates yet — verify MCOA is running and capabilities were patched (`oc get mco observability -o yaml`). This is the gate working as intended. |
 | `*-prometheus` NonCompliant: "rollup secret … not found" | The chart's `spokeAgent.globalHubRollup.secretNamespace` (default `policies-autoshift`) doesn't match your policy namespace — override it if your AutoShift release is not named `autoshift` |
 | Agent pod fails to roll out silently after adding `additionalRemoteWrites` | Secret-name truncation: MCOA volume names are `secret-<name>` cut at 63 chars; keep secret names short and alphanumeric-terminated |
 | Disabling a capability toggle has no effect | `acm.observability.enableMCOA` is set — unset it so this chart is the sole capabilities manager |

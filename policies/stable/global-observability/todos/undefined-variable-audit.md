@@ -147,7 +147,7 @@ secret) so the broken URL is never persisted.
 > **DONE 2026-06-15.** `policy_namespace` wrapped in `required` in all four
 > policy templates and asserted at the top of `policysets.yaml`.
 > `globalObservability.namespace` asserted via `required` in prometheus.yaml
-> (`$obsNamespace`) and prometheus-exists.yaml; `globalHubRollup.secretName`
+> (`$obsNamespace`) and prom-test.yaml; `globalHubRollup.secretName`
 > asserted in secrets.yaml. mcoa.yaml capabilities parent made nil-safe with
 > `$caps := dig "capabilities" dict (.Values.globalObservability | default dict)`
 > and the six inline defaults switched to `index $caps "<x>" | default "true"`.
@@ -169,7 +169,7 @@ empty namespace silently. Harden with `required "<msg>" <value>`.
 | `policy-global-observability-secrets.yaml` | 3, 46 | `.Values.policy_namespace` |
 | `policy-global-observability-secrets.yaml` | 45 | `$.Values.globalObservability.spokeAgent.globalHubRollup.secretName` (deep chain — panics if any parent nil) |
 | `policy-global-observability-mcoa.yaml` | 15 | `.Values.policy_namespace` |
-| `policy-global-observability-prometheus-exists.yaml` | 15, 58 | `.Values.policy_namespace`, `$.Values.globalObservability.namespace` |
+| `policy-global-observability-prom-test.yaml` | 15, 58 | `.Values.policy_namespace`, `$.Values.globalObservability.namespace` |
 | `policysets.yaml` | multiple | `.Values.policy_namespace` (empty → PolicySet/Placement/Binding land in default ns) |
 
 `policy-global-observability-mcoa.yaml:53-58` — `.Values.globalObservability.capabilities.<x> | default "true"`: the `| default` saves the value but **not** the parent access; if `globalObservability.capabilities` is nil the field read panics before `default` applies. Guard the parent.
@@ -186,7 +186,7 @@ Listed so the audit is re-runnable.
 - `$capabilities := index $obsConfig "capabilities" | default dict`. (mcoa.yaml:52)
 - `$scrapeInterval`, `$logLevel`, `$additionalRW`, `$secretRef`, `$onSelfManaged`, `$isSelfManaged` — all `| default …`. (prometheus.yaml:123-127,160-163,182-184)
 - `index .ManagedClusterLabels "autoshift.io/self-managed" | default "false"`. (prometheus.yaml:85,124,162)
-- `.Values.globalObservability.spokeAgent.prometheusAgentNames | default (list …)`. (prometheus.yaml:164; prometheus-exists.yaml:17)
+- `.Values.globalObservability.spokeAgent.prometheusAgentNames | default (list …)`. (prometheus.yaml:164; prom-test.yaml:17)
 - `index $rw "remoteTimeout" | default "30s"`, `index $rw "onSelfManagedHub" | default false`. (prometheus.yaml:209,127,184,206)
 
 ---

@@ -119,15 +119,15 @@ This chart owns the global-hub-specific deltas on top of MCO. The base MCO lifec
 |--------|-----------------------|------------|--------------|
 | `policy-global-observability-mcoa` | `policyset-global-observability` — all global-obs hubs | `policy-acm-observability` | `musthave`-patches the `capabilities` block onto the existing `MultiClusterObservability` CR. Toggles from rendered-config, defaulting to all `"true"`. Conditional all the way down — if every toggle is `false`, no `capabilities` block is emitted. |
 | `policy-global-observability-secrets` | `policyset-global-observability-secrets` — global hub only | `policy-global-observability-mcoa` | Assembles the coalesced rollup secret in the policy namespace — the source of truth that intermediate-hub hub-templates read via `copySecretData` |
-| `policy-global-observability-prometheus-exists` | `policyset-global-observability-prometheus` — intermediate hubs | `policy-global-observability-mcoa` | Inform-only gate: asserts the MCOA-created `PrometheusAgent` templates exist. Never creates or modifies them. |
-| `policy-global-observability-prometheus` | `policyset-global-observability-prometheus` — intermediate hubs | `policy-global-observability-mcoa`, `policy-coo-operator-install`, `policy-global-observability-prometheus-exists` | The core patcher: stages the rollup secret + any additional remote-write secrets into the obs namespace, then `musthave`-patches the `PrometheusAgent` templates with `spec.secrets` + `spec.remoteWrite` |
+| `policy-global-observability-prom-test` | `policyset-global-observability-prometheus` — intermediate hubs | `policy-global-observability-mcoa` | Inform-only gate: asserts the MCOA-created `PrometheusAgent` templates exist. Never creates or modifies them. |
+| `policy-global-observability-prometheus` | `policyset-global-observability-prometheus` — intermediate hubs | `policy-global-observability-mcoa`, `policy-coo-operator-install`, `policy-global-observability-prom-test` | The core patcher: stages the rollup secret + any additional remote-write secrets into the obs namespace, then `musthave`-patches the `PrometheusAgent` templates with `spec.secrets` + `spec.remoteWrite` |
 
 ```mermaid
 graph LR
     acm["policy-acm-observability<br/>(base MCO CR — external chart)"]:::ext
     mcoa["policy-global-observability-mcoa<br/>(capabilities patch)"]
     sec["policy-global-observability-secrets<br/>(global hub only)"]
-    exists["policy-global-observability-prometheus-exists<br/>(inform gate)"]
+    exists["policy-global-observability-prom-test<br/>(inform gate)"]
     coo["policy-coo-operator-install<br/>(external)"]:::ext
     prom["policy-global-observability-prometheus<br/>(patch PrometheusAgent)"]
 
@@ -147,12 +147,12 @@ graph LR
 Consequences:
 
 1. **Patch, never create.** The patching ConfigurationPolicy uses `complianceType: musthave` with `recreateOption: IfRequired` against templates that already exist, merging our `remoteWrite`/`secrets` into MCOA's resource rather than owning it.
-2. **Wait for MCOA to produce the templates first.** That is the entire purpose of `policy-global-observability-prometheus-exists`: an inform-only ConfigurationPolicy asserting the named `PrometheusAgent` objects exist. The patcher lists it as a `Compliant` dependency, so it does not fire until MCOA has created its templates.
+2. **Wait for MCOA to produce the templates first.** That is the entire purpose of `policy-global-observability-prom-test`: an inform-only ConfigurationPolicy asserting the named `PrometheusAgent` objects exist. The patcher lists it as a `Compliant` dependency, so it does not fire until MCOA has created its templates.
 
 ```mermaid
 sequenceDiagram
     participant MCOA as MCOA addon-manager (intermediate hub)
-    participant Gate as policy-…-prometheus-exists (inform)
+    participant Gate as policy-…-prom-test (inform)
     participant Patch as policy-…-prometheus (enforce)
     participant Tmpl as PrometheusAgent template
     MCOA->>Tmpl: create mcoa-default-*-collector-global

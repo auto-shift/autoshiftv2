@@ -12,7 +12,7 @@ See [architecture.md](architecture.md) for how the rollup works and why.
 |--------|---------|-------------|
 | `policy-global-observability-mcoa` | All global-obs hubs | `musthave`-patches the `capabilities` block (platform analytics/logs/metrics, user-workload logs/metrics/traces) onto the existing `MultiClusterObservability` CR |
 | `policy-global-observability-secrets` | Global hub only | Assembles the coalesced `global-observability-secrets` Secret (mTLS client cert + CA + Observatorium URL) in the policy namespace |
-| `policy-global-observability-prometheus-exists` | Intermediate hubs | Inform-only gate: verifies the MCOA-created `PrometheusAgent` templates exist before patching |
+| `policy-global-observability-prom-test` | Intermediate hubs | Inform-only gate: verifies the MCOA-created `PrometheusAgent` templates exist before patching |
 | `policy-global-observability-prometheus` | Intermediate hubs | Stages the rollup secret (and any additional remote-write secrets) into the observability namespace and patches the `PrometheusAgent` templates with `spec.secrets` + `spec.remoteWrite` entries |
 
 ## PolicySets and Placement
@@ -21,7 +21,7 @@ See [architecture.md](architecture.md) for how the rollup works and why.
 |-----------|----------|--------------------|
 | `policyset-global-observability` | `*-mcoa` | `global-observability: 'true'` |
 | `policyset-global-observability-secrets` | `*-secrets` | `global-observability: 'true'` AND `self-managed: 'true'` |
-| `policyset-global-observability-prometheus` | `*-prometheus-exists`, `*-prometheus` | `global-observability: 'true'` AND `self-managed: 'false'` |
+| `policyset-global-observability-prometheus` | `*-prom-test`, `*-prometheus` | `global-observability: 'true'` AND `self-managed: 'false'` |
 
 ## Dependencies
 
@@ -29,8 +29,8 @@ See [architecture.md](architecture.md) for how the rollup works and why.
 |--------|-----------|
 | `policy-global-observability-mcoa` | `policy-acm-observability` |
 | `policy-global-observability-secrets` | `policy-global-observability-mcoa` |
-| `policy-global-observability-prometheus-exists` | `policy-global-observability-mcoa` |
-| `policy-global-observability-prometheus` | `policy-global-observability-mcoa`, `policy-coo-operator-install`, `policy-global-observability-prometheus-exists` |
+| `policy-global-observability-prom-test` | `policy-global-observability-mcoa` |
+| `policy-global-observability-prometheus` | `policy-global-observability-mcoa`, `policy-coo-operator-install`, `policy-global-observability-prom-test` |
 
 ## Labels
 
