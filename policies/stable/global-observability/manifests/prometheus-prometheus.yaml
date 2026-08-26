@@ -1,0 +1,68 @@
+object-templates-raw: |
+  # INDENTATION ANCHOR
+  {{hub- $obsConfig := index (index (fromConfigMap "${POLICY_NAMESPACE}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict hub}}
+  {{hub- $scrapeInterval := index $obsConfig "scrapeInterval" | default "300s" hub}}
+  {{hub- $logLevel := index $obsConfig "logLevel" | default "warn" | default "warn" hub}}
+  {{hub- $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") hub}}
+  {{hub- $additionalRW := index $obsConfig "additionalRemoteWrites" | default list hub}}
+  {{hub- range $idx, $name := (list "mcoa-default-platform-metrics-collector-global" "mcoa-default-user-workload-metrics-collector-global") hub}}
+  - complianceType: musthave
+    recreateOption: IfRequired
+    objectDefinition:
+      apiVersion: monitoring.rhobs/v1alpha1
+      kind: PrometheusAgent
+      metadata:
+        name: {{hub $name hub}}
+        namespace: open-cluster-management-observability
+      spec:
+        scrapeInterval: {{hub $scrapeInterval hub}}
+        logLevel: {{hub $logLevel hub}}
+        secrets:
+          # Built-in: global hub rollup secret — skipped on self-managed hub
+          {{hub- if ne $isSelfManaged "true" hub}}
+          - global-observability-secrets
+          {{hub- end hub}}
+          # Additional: secrets from additionalRemoteWrites (rendered-config)
+          {{hub- range $rw := $additionalRW hub}}
+            {{hub- $secretRef := index $rw "secretRef" | default dict hub}}
+            {{hub- $onSelfManaged := index $rw "onSelfManagedHub" | default false hub}}
+            {{hub- if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) hub}}
+              {{hub- if not (empty $secretRef) hub}}
+          - '{{hub index $secretRef "name" hub}}'
+              {{hub- end hub}}
+            {{hub- end hub}}
+          {{hub- end hub}}
+        remoteWrite:
+          # Built-in: global hub rollup — skipped on self-managed hub
+          {{hub- if ne $isSelfManaged "true" hub}}
+          - name: acm-global-observability
+            remoteTimeout: 30s
+            tlsConfig:
+              ca: {}
+              caFile: /etc/prometheus/secrets/global-observability-secrets/ca.crt
+              cert: {}
+              certFile: /etc/prometheus/secrets/global-observability-secrets/tls.crt
+              keyFile: /etc/prometheus/secrets/global-observability-secrets/tls.key
+            url: '{{ $u := fromSecret "open-cluster-management-observability" "global-observability-secrets" "observatorium.url" | base64dec }}{{ if not $u }}{{ fail "global-observability: key observatorium.url missing from secret global-observability-secrets in open-cluster-management-observability (rollup secret not yet replicated?)" }}{{ end }}{{ $u }}'
+          {{hub- end hub}}
+          # Additional remote-writes (rendered-config)
+          {{hub- range $rw := $additionalRW hub}}
+            {{hub- if not (index $rw "name") hub}}{{hub fail "global-observability: additionalRemoteWrites[].name is required" hub}}{{hub- end hub}}
+            {{hub- if not (index $rw "url") hub}}{{hub fail "global-observability: additionalRemoteWrites[].url is required" hub}}{{hub- end hub}}
+            {{hub- if not (index $rw "caFile") hub}}{{hub fail "global-observability: additionalRemoteWrites[].caFile is required" hub}}{{hub- end hub}}
+            {{hub- if not (index $rw "certFile") hub}}{{hub fail "global-observability: additionalRemoteWrites[].certFile is required" hub}}{{hub- end hub}}
+            {{hub- if not (index $rw "keyFile") hub}}{{hub fail "global-observability: additionalRemoteWrites[].keyFile is required" hub}}{{hub- end hub}}
+            {{hub- $onSelfManaged := index $rw "onSelfManagedHub" | default false hub}}
+            {{hub- if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) hub}}
+          - name: '{{hub index $rw "name" hub}}'
+            remoteTimeout: '{{hub index $rw "remoteTimeout" | default "30s" hub}}'
+            tlsConfig:
+              ca: {}
+              caFile: '{{hub index $rw "caFile" hub}}'
+              cert: {}
+              certFile: '{{hub index $rw "certFile" hub}}'
+              keyFile: '{{hub index $rw "keyFile" hub}}'
+            url: '{{hub index $rw "url" hub}}'
+            {{hub- end hub}}
+          {{hub- end hub}}
+  {{hub- end hub}}
