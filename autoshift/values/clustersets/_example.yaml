@@ -109,6 +109,43 @@ hubClusterSets:
               cpu: '100m'
               memory: '256Mi'
       # =======================================================================
+      # Managed AutoShift — nested deployments onto the hubs this hub governs
+      # =======================================================================
+      # One entry per AutoShift deployment to create on each MANAGED hub selected by the
+      # autoshift-enable-install label. The policy runs on that hub and creates an Argo CD
+      # Application there. Set either the git pair or the OCI pair, not both: ociRepo selects
+      # OCI mode and requires ociVersion, matching the top-level chart's own rule.
+      # appName may not be 'autoshift'; that name belongs to the top-level deployment.
+      managedAutoshift:
+        - appName: 'hub1'       # Argo CD Application name; defaults to the hub's cluster name.
+          # Max 11 chars (policies-<appName> must fit 20) and never 'autoshift'.
+          repoUrl: 'https://github.com/auto-shift/autoshiftv2.git'
+          targetRevision: 'main'             # git branch or tag
+          # ociRepo: 'quay.io/autoshift'      # registry namespace, NO oci:// scheme: Argo CD's Helm-OCI
+          #                                 # source takes a bare host/path. The policy charts are read
+          #                                 # from <ociRepo>/policies, derived automatically.
+          # ociVersion: '0.0.5'             # required whenever ociRepo is set
+          gitopsNamespace: 'openshift-gitops'
+          argoProject: 'default'
+          argoServer: 'https://kubernetes.default.svc'
+          valuesFiles:
+            - 'values/global.yaml'
+            - 'values/clustersets/hub.yaml'
+          versionedClusterSets: 'false'
+          # Arbitrary values merged into the generated Application, for anything the fields above
+          # do not cover.
+          # helmValues:
+          #   autoshift:
+          #     dryRun: true
+          # Values kept in their own repository, mounted as a second Argo CD source.
+          # valuesRepoUrl: 'https://github.com/my-org/site-config.git'
+          # valuesTargetRevision: 'main'
+          # Copy a repository Secret into the managed hub's Argo CD namespace for private repos.
+          # useRepoSecret: true
+          # repoSecretRef:
+          #   name: 'autoshift-repo-secret'
+          #   namespace: 'policies-autoshift'
+      # =======================================================================
       # Disconnected Mirror (read via rendered-config ConfigMap)
       # =======================================================================
       disconnected:
@@ -615,6 +652,10 @@ hubClusterSets:
       # =======================================================================
       self-managed: 'true'                # hub only — registers hub as a self-managed cluster.
                                           # Declaring it under managedClusterSets fails the render.
+      # Deploy a nested AutoShift from this hub to each MANAGED hub it governs. Requires the
+      # target hub clusterset to carry self-managed: 'false'. That label marks the hub this
+      # deployment runs on, which already has its own AutoShift.
+      autoshift-enable-install: 'false'   # hub only — see policies/stable/managed-autoshift
       # DERIVED — do not set: cluster-type ('hub' for hubClusterSets entries, 'spoke' for
       # managedClusterSets entries). Injected by the top-level chart, so a value set here is
       # overwritten. A self-managed hub is cluster-type 'hub' plus self-managed 'true'.

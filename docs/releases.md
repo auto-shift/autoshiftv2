@@ -4,7 +4,7 @@ This guide covers how AutoShift releases are created, how OCI mode works, and ho
 
 ## How OCI mode works
 
-AutoShift has two deployment modes controlled by the `autoshiftOciRegistry` value:
+AutoShift has two deployment modes. Setting `autoshiftOciRepo` selects OCI; without it, policies come from git.
 
 ### Git mode (default)
 ```
@@ -17,7 +17,7 @@ Auto-discovers policies/ directories in Git
 Deploys each policy as an ArgoCD Application
 ```
 
-### OCI mode (`autoshiftOciRegistry: true`)
+### OCI mode (`autoshiftOciRepo` set)
 ```
 AutoShift Chart (from OCI)
     |
@@ -61,16 +61,24 @@ All charts share the same version number, set during the release process.
 
 ## OCI configuration values
 
-When deploying from OCI, three values control the behavior. These are set automatically by the `install-autoshift.sh` script generated during the release:
+When deploying from OCI, two values control the behavior. These are set automatically by the `install-autoshift.sh` script generated during the release:
 
 ```yaml
-# Enable OCI mode (boolean, not a URL)
-autoshiftOciRegistry: true
-
-# OCI path where policies are published (Helm charts + PolicyGenerator artifacts)
+# Where the policy charts are published, and the value that selects OCI mode.
+# Change this if you release your own charts.
 autoshiftOciRepo: oci://quay.io/autoshift/policies
 
+# The release to deploy. Argo CD does not reliably track a mutable tag, so pin it.
+# In an ArgoCD Application, inject it from the Application's own targetRevision:
+#   parameters:
+#     - name: autoshiftOciVersion
+#       value: $ARGOCD_APP_SOURCE_TARGET_REVISION
+autoshiftOciVersion: "0.0.5"
 ```
+
+> [!NOTE]
+> `autoshiftOciRegistry` was a separate boolean that selected the mode. It still works and still
+> decides, but it is redundant now and should be deleted from your values.
 
 ## Overview
 
@@ -297,12 +305,14 @@ for policy in $(cat policy-list.txt); do
 done
 ```
 
-Update the OCI values to point to your internal registry:
+Point `autoshiftOciRepo` at your internal registry. This is the one value to change when you
+publish your own charts, whether to a mirror or to your own namespace:
 
 ```yaml
-autoshiftOciRegistry: true
 autoshiftOciRepo: oci://registry.example.com/autoshift/policies
 ```
+
+`autoshiftOciVersion` needs no change if the Application injects it from its own `targetRevision`.
 
 ## Version management
 
