@@ -2,6 +2,13 @@
 
 Deploys an AutoShift ArgoCD Application on managed hub clusters (spoke hubs), enabling them to run their own AutoShift instance managed from a hub-of-hubs. Handles namespace creation, optional git repo secret replication, and the ArgoCD Application itself.
 
+> **Scope: the managed hub runs its own instance.** The Application is created in the managed hub's
+> own Argo CD, pointing at that hub. The alternative "push" shape — an Application on the hub above,
+> targeting the managed hub remotely — is deliberately not supported here: it would mean relaxing the
+> Placement so the policy also lands on the self-managed hub, moving the safety check out of a
+> declarative predicate and into a template guard. Use the manual second Application for that
+> topology (see [Hub of hubs](../../../docs/hub-of-hubs.md)), pending Argo CD agent support.
+
 ## Policies
 
 | Policy | Description |
@@ -54,8 +61,10 @@ These values are read from the per-cluster `rendered-config` ConfigMap on the hu
 | `repoSecretRef.namespace` | string | the policy namespace | Namespace of the source Secret on the hub |
 | `valuesRepoUrl` | string | Undefined | URL for the values repo to pull the values from if different from the code repo |
 | `valuesRepoSecretRef` | object | undefined | Object containing name and namespace reference for a repositor secret allowing argo to sync with the `valuesRepoUrl` |
-| `valuesRepoSecretRef.name` | string | undefined | Name of the the argo repo secret containing the values repo creds |
-| `valuesRepoSecretRef.namespace` | string | undefined | Name of the the argo repo secret containing the values repo creds |
+| `valuesRepoSecretRef.name` | string | undefined | Name of the Argo CD repository Secret containing the values repo creds |
+| `valuesRepoSecretRef.namespace` | string | undefined | Name of the Argo CD repository Secret containing the values repo creds |
+| `versionedClusterSets` | bool | `false` | Suffix clusterset names with the version tag on the nested instance |
+| `helmValues` | map | | Arbitrary values merged into the generated Application's `helm.values`, for anything the fields above do not cover, such as `autoshift.dryRun` |
 
 
 ## Dependencies
