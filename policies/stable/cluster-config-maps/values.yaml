@@ -1,0 +1,84 @@
+# Config template variables: substituted into each cluster's rendered config by
+# policy-cluster-configs at materialization time. Anchors appearing anywhere in the
+# merged config (cluster > clusterSet > default) are replaced with the per-cluster
+# value before the <cluster>.rendered-config ConfigMap is written, so every consumer
+# reads fully resolved config.
+#
+# Schema (map key = variable name; alphanumeric/camelCase only — it becomes a
+# template variable name inside the generated policy):
+#   anchor: the token to replace. MUST be delimiter-wrapped (e.g. %NAME%) so anchors
+#           can never prefix-clobber each other; convention is uppercase %...%.
+#           Must not contain '{{', '}}', backticks, or double quotes, and must not
+#           collide with the policy-gen CMP tokens (${POLICY_NAMESPACE}, ${REMEDIATION},
+#           ${EVAL_COMPLIANT}, ${EVAL_NONCOMPLIANT}).
+#   expr:   ACM runtime template expression evaluated per cluster on the hub.
+#           Context: $cluster = the full ManagedCluster object (metadata.labels,
+#           status.clusterClaims, ...) and $clusterClaims = dict of the cluster's
+#           clusterclaim names -> values (built from $cluster.status.clusterClaims).
+#           The result is stringified with printf "%v".
+#   value:  literal string used verbatim. Mutually exclusive with expr.
+#
+# Replacement runs on the JSON encoding of the merged config, so resolved values
+# must be JSON-string-safe (no double quotes or backslashes). Cluster names, label
+# values, and clusterclaim values all are.
+#
+# Configs pre-seeded for clusters that have no ManagedCluster object yet keep their
+# anchors raw; they resolve on the first evaluation after the cluster exists.
+configVariables:
+  clusterName:
+    anchor: '%CLUSTER_NAME%'
+    expr: '$cluster.metadata.name'
+  clusterSet:
+    anchor: '%CLUSTER_SET%'
+    expr: 'index ($cluster.metadata.labels | default dict) "cluster.open-cluster-management.io/clusterset" | default ""'
+  # Universal clusterclaims — created by OCM/ACM on every OpenShift managed cluster
+  # and always synced into ManagedCluster status (reserved claims are exempt from the
+  # klusterlet's custom-claim sync cap; custom *.autoshift.io claims are NOT, so they
+  # are deliberately absent here). Missing claim resolves to "".
+  # Not included on purpose: infrastructure.openshift.io (JSON value — not
+  # JSON-string-safe), name (duplicates %CLUSTER_NAME%), local-cluster (hub-only),
+  # oauthredirecturis/schedulable (no substitution utility).
+  clusterApiUrl:
+    anchor: '%CLUSTER_API_URL%'
+    expr: 'dig "apiserverurl.openshift.io" "" $clusterClaims'
+  clusterConsoleUrl:
+    anchor: '%CLUSTER_CONSOLE_URL%'
+    expr: 'dig "consoleurl.cluster.open-cluster-management.io" "" $clusterClaims'
+  clusterId:
+    anchor: '%CLUSTER_ID%'
+    expr: 'dig "id.k8s.io" "" $clusterClaims'
+  clusterOcpId:
+    anchor: '%CLUSTER_OCP_ID%'
+    expr: 'dig "id.openshift.io" "" $clusterClaims'
+  clusterOcpVersion:
+    anchor: '%CLUSTER_OCP_VERSION%'
+    expr: 'dig "version.openshift.io" "" $clusterClaims'
+  clusterKubeVersion:
+    anchor: '%CLUSTER_KUBE_VERSION%'
+    expr: 'dig "kubeversion.open-cluster-management.io" "" $clusterClaims'
+  clusterPlatform:
+    anchor: '%CLUSTER_PLATFORM%'
+    expr: 'dig "platform.open-cluster-management.io" "" $clusterClaims'
+  clusterProduct:
+    anchor: '%CLUSTER_PRODUCT%'
+    expr: 'dig "product.open-cluster-management.io" "" $clusterClaims'
+  clusterRegion:
+    anchor: '%CLUSTER_REGION%'
+    expr: 'dig "region.open-cluster-management.io" "" $clusterClaims'
+  clusterCpTopology:
+    anchor: '%CLUSTER_CP_TOPOLOGY%'
+    expr: 'dig "controlplanetopology.openshift.io" "" $clusterClaims'
+  # Hub-self values — read from the HUB's own local clusterclaims at materialization
+  # time (the policy's runtime executes on whichever hub renders the configs), so on
+  # a managed hub every spoke gets THAT hub's values: the address to talk back to.
+  # lookup-based rather than fromClusterClaim so a missing claim resolves to ""
+  # instead of erroring the whole policy (which would stall all rendered-configs).
+  hubApiUrl:
+    anchor: '%HUB_API_URL%'
+    expr: 'dig "spec" "value" "" ((lookup "cluster.open-cluster-management.io/v1alpha1" "ClusterClaim" "" "apiserverurl.openshift.io") | default dict)'
+  hubConsoleUrl:
+    anchor: '%HUB_CONSOLE_URL%'
+    expr: 'dig "spec" "value" "" ((lookup "cluster.open-cluster-management.io/v1alpha1" "ClusterClaim" "" "consoleurl.cluster.open-cluster-management.io") | default dict)'
+  hubName:
+    anchor: '%HUB_NAME%'
+    expr: 'dig "spec" "value" "" ((lookup "cluster.open-cluster-management.io/v1alpha1" "ClusterClaim" "" "name") | default dict)'
