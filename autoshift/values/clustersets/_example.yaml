@@ -77,6 +77,53 @@ hubClusterSets:
             kind: 'ClusterIssuer'
             group: 'cert-manager.io'
           extraSANs: []
+        # ACME ClusterIssuer — opt-in (cert-manager-acme-issuer label below). Creates the ClusterIssuer,
+        # its supporting secrets, and configures the CertManager CR for DNS01 recursive nameservers.
+        # The issuer.spec is a full pass-through (toYaml) so any ACME provider/solver works.
+        # Example: ZeroSSL with Cloudflare DNS01 validation.
+        # acmeIssuer:
+        #   # CertManager operator overrides — only needed for DNS01 (forces public recursive DNS
+        #   # so challenge TXT records resolve correctly on private/split-horizon clusters). Omit
+        #   # entirely for HTTP01-only issuers.
+        #   certManagerCR:
+        #     overrideArgs:
+        #       - '--dns01-recursive-nameservers=8.8.8.8:53,1.1.1.1:53'
+        #       - '--dns01-recursive-nameservers-only'
+        #   # Secrets created in cert-manager ns (e.g. ACME EAB creds, DNS/cloud provider tokens).
+        #   # Omit for issuers that need no secrets (e.g. Let's Encrypt HTTP01).
+        #   secrets:
+        #     - name: zero-ssl-eabsecret
+        #       stringData:
+        #         secret: '<EAB HMAC key from zerossl.com/developer>'
+        #     - name: cloudflare-api-token-secret
+        #       stringData:
+        #         api-token: '<Cloudflare API token with Zone:DNS:Edit>'
+        #   # ClusterIssuer — full spec pass-through (toYaml). Any ACME provider + solver works.
+        #   # Example: ZeroSSL + Cloudflare DNS01.
+        #   issuer:
+        #     name: zerossl-production
+        #     spec:
+        #       acme:
+        #         server: https://acme.zerossl.com/v2/DV90
+        #         email: user@example.com
+        #         privateKeySecretRef:
+        #           name: zerossl-prod
+        #         externalAccountBinding:
+        #           keyID: '<EAB key ID from zerossl.com/developer>'
+        #           keySecretRef:
+        #             name: zero-ssl-eabsecret
+        #             key: secret
+        #           keyAlgorithm: HS256
+        #         solvers:
+        #           - dns01:
+        #               cloudflare:
+        #                 email: user@example.com
+        #                 apiTokenSecretRef:
+        #                   name: cloudflare-api-token-secret
+        #                   key: api-token
+        #             selector:
+        #               dnsZones:
+        #                 - example.com
       # =======================================================================
       # User Workload Monitoring (config section - read via rendered-config)
       # =======================================================================
@@ -1164,6 +1211,7 @@ hubClusterSets:
       cert-manager-source-namespace: openshift-marketplace
       # Enable flags (LABELS, drive placement). Issuer refs + SANs are DATA -> config.certManager (above).
       cert-manager-ca: 'true'          # 'false' skips the built-in autoshift-ca (bring fully-external issuers)
+      cert-manager-acme-issuer: 'false'  # Opt-in ACME ClusterIssuer from config.certManager.acmeIssuer
       # Opt-in cert-manager management of the cluster's serving certs (default OFF; safe — only applied once
       # the Certificate is Ready). API = additive namedCertificate (api.<domain>, SNI, low risk). Ingress =
       # replaces the *.apps wildcard (higher risk). Issuer/SANs per cert live in config.certManager.
