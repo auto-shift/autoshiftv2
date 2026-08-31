@@ -1,0 +1,34 @@
+object-templates-raw: |
+  {{hub- $policyNs := .PolicyMetadata.namespace hub}}
+  {{hub- $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $gh := (index $rcConfig "global-hub" | default dict) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.open-cluster-management.io/v1alpha4
+      kind: MulticlusterGlobalHub
+      metadata:
+        name: multiclusterglobalhub
+        namespace: multicluster-global-hub
+        {{hub- if (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}
+        annotations:
+          global-hub.open-cluster-management.io/strimzi-catalog-source-name: '{{hub printf "%s-%s" (index .ManagedClusterLabels "autoshift.io/global-hub-source" | default "redhat-operators") (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror") hub}}'
+          global-hub.open-cluster-management.io/strimzi-catalog-source-namespace: '{{hub index .ManagedClusterLabels "autoshift.io/global-hub-source-namespace" | default "openshift-marketplace" hub}}'
+          global-hub.open-cluster-management.io/strimzi-subscription-package-name: amq-streams
+          global-hub.open-cluster-management.io/strimzi-subscription-channel: '{{hub index $gh "strimziChannel" | default "amq-streams-3.1.x" hub}}'
+        {{hub- end hub}}
+      spec:
+        availabilityConfig: '{{hub index $gh "availabilityConfig" | default "High" hub}}'
+        enableMetrics: {{hub index $gh "enableMetrics" | default "true" hub}}
+        installAgentOnLocal: {{hub index $gh "installAgentOnLocal" | default "true" hub}}
+        dataLayer:
+          kafka:
+            topics:
+              specTopic: gh-spec
+              statusTopic: 'gh-status.*'
+            {{hub- $cgp := (index $gh "consumerGroupPrefix" | default "") hub}}
+            {{hub- if $cgp hub}}
+            consumerGroupPrefix: {{hub $cgp hub}}
+            {{hub- end hub}}
+          postgres:
+            retention: '{{hub index $gh "postgresRetention" | default "18m" hub}}'
