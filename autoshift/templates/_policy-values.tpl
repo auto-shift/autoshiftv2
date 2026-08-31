@@ -42,6 +42,7 @@ clusterSetSuffix: {{ $clusterSetSuffix }}
 autoshift:
   dryRun: {{ ((.Values.autoshift).dryRun) | default false }}
   policyStandard: {{ ((.Values.autoshift).policyStandard) | default "NIST SP 800-53" }}
+  policyStandardHub: {{ ((.Values.autoshift).policyStandardHub) | default (((.Values.autoshift).policyStandard) | default "NIST SP 800-53") }}
   evaluationInterval:
     compliant: {{ (((.Values.autoshift).evaluationInterval).compliant) | default "watch" }}
     noncompliant: {{ (((.Values.autoshift).evaluationInterval).noncompliant) | default "watch" }}

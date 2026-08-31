@@ -71,6 +71,7 @@ clusterSetSuffix: ""
 autoshift:
   dryRun: false
   policyStandard: "NIST SP 800-53"
+  policyStandardHub: "NIST SP 800-53"
   evaluationInterval:
     compliant: 10m
     noncompliant: 30s
@@ -82,6 +83,7 @@ EOF
     | replace "${EVAL_COMPLIANT}"     (((.Values.autoshift).evaluationInterval).compliant | default "10m")
     | replace "${EVAL_NONCOMPLIANT}"  (((.Values.autoshift).evaluationInterval).noncompliant | default "30s")
     | replace "${CLUSTER_SET_SUFFIX}" (.Values.clusterSetSuffix | default "")
+    | replace "${POLICY_STANDARD_HUB}" (((.Values.autoshift).policyStandardHub) | default (((.Values.autoshift).policyStandard) | default "NIST SP 800-53"))
     | replace "${POLICY_STANDARD}"   (((.Values.autoshift).policyStandard) | default "NIST SP 800-53") }}
 EOF
 
