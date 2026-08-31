@@ -33,6 +33,7 @@ REMEDIATION="${REMEDIATION:-enforce}"
 EVAL_COMPLIANT="${EVAL_COMPLIANT:-watch}"
 EVAL_NONCOMPLIANT="${EVAL_NONCOMPLIANT:-watch}"
 CLUSTER_SET_SUFFIX="${CLUSTER_SET_SUFFIX:-}"
+POLICY_STANDARD="${POLICY_STANDARD:-NIST SP 800-53}"
 
 pg_render() {
     local dir="$1"
@@ -62,6 +63,7 @@ pg_render() {
             -e "s|\${EVAL_COMPLIANT}|${EVAL_COMPLIANT}|g" \
             -e "s|\${EVAL_NONCOMPLIANT}|${EVAL_NONCOMPLIANT}|g" \
             -e "s|\${CLUSTER_SET_SUFFIX}|${CLUSTER_SET_SUFFIX}|g" \
+            -e "s|\${POLICY_STANDARD}|${POLICY_STANDARD}|g" \
             "$f" > "$f.sub" && mv "$f.sub" "$f"
     done < <(find "$tmp/$rel" -name '*.yaml')
 
