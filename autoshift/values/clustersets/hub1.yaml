@@ -1,7 +1,19 @@
 # Hub1 - Spoke hub managed by hub-of-hubs
 hubClusterSets:
   hub1:
-    config: {}
+    config:
+      # Deploy a nested AutoShift onto this hub, as an Argo CD Application it runs itself.
+      managedAutoshift:
+        - appName: 'hub1'
+          repoUrl: 'https://github.com/auto-shift/autoshiftv2.git'
+          targetRevision: 'main'
+          gitopsNamespace: 'openshift-gitops'
+          argoProject: 'default'
+          argoServer: 'https://kubernetes.default.svc'
+          valuesFiles:
+            - 'values/global.yaml'
+            - 'values/clustersets/managed.yaml'
+          versionedClusterSets: 'false'
     labels:
       # OpenShift version for cluster deployment and image mirroring
       openshift-version: '4.22.8'
@@ -13,6 +25,8 @@ hubClusterSets:
       gitops-source-namespace: openshift-marketplace
       # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
       self-managed: 'false'
+      # Opt in to the nested AutoShift above; the placement requires this label.
+      autoshift-enable-install: 'true'
       cluster-install: 'true'
       acm-enable-provisioning: 'true'
       # Single-node hub: run ACM components with a single replica (no HA scheduling)
