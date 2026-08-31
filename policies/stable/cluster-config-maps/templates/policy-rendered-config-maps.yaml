@@ -126,6 +126,30 @@ spec:
                 data:
                   config: |
                     {{ "{{" }} $config | toYaml | autoindent {{ "}}" }}
+            {{- /*
+            Per-component ConfigMaps, emitted alongside the merged one above. The merged object stays for
+            backwards compatibility — 80 files still read it. A policy migrates by reading
+            <cluster>.rendered-config-<component>, which ACM then watches on its own, so editing one
+            component's config no longer re-evaluates every policy that reads any config.
+
+            The label is deliberately NOT autoshift.io/rendered-config-map: cluster-install and
+            cluster-set-assignment select on that label and derive the cluster name by stripping
+            ".rendered-config" off the object name, so a suffixed object would resolve to a bogus cluster.
+            */}}
+            {{ "{{-" }} range $component, $componentConfig := ($config | default dict) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: {{ "{{" }} (printf "%s.rendered-config-%s" $clusterName ($component | kebabcase)) {{ "}}" }}
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+                  labels:
+                    autoshift.io/rendered-config-component: {{ "{{" }} $component | kebabcase {{ "}}" }}
+                data:
+                  config: |
+                    {{ "{{" }} $componentConfig | toYaml | autoindent {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
               {{ "{{" }} end {{ "}}" }}
             {{ "{{" }} end {{ "}}" }}
 

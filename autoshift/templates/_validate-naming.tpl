@@ -9,6 +9,8 @@ AutoShift enforces:
   - clusterset names with versioning suffix: <= 63 chars
       (Kubernetes label value limit for cluster.open-cluster-management.io/clusterset)
   - policy names: <= 40 chars
+  - config keys: must kebabcase to a valid RFC1123 name, and must not collide with each
+      other, because each becomes a ConfigMap <cluster>.rendered-config-<key>
 */}}
 
 {{/*
@@ -28,6 +30,34 @@ This is the single source of truth — autoshift-app-set.yaml and the configmap 
 {{- end -}}
 {{- end -}}
 
+{{/*
+Validate that every config key can become a Kubernetes object name.
+
+Each top-level config key is emitted as a per-component ConfigMap named
+<cluster>.rendered-config-<key|kebabcase> by policies/stable/cluster-config-maps. A key the API
+server will not accept (a dot, or a leading/trailing hyphen — kebabcase handles case and underscores) produces an invalid name, and the failure surfaces as a confusing apply error on the MANAGED
+cluster rather than here. Catching it at render time keeps it next to the values file that caused it.
+
+Also catches two keys that collapse to the SAME name (certManager and cert-manager, Thing and
+thing): both would emit the same ConfigMap and one would silently overwrite the other.
+
+Called with dict "path" (error prefix) "config" (the config dict).
+*/}}
+{{- define "autoshift.validate-config-keys" -}}
+  {{- $path := .path -}}
+  {{- $seen := dict -}}
+  {{- range $key, $_ := (.config | default dict) -}}
+    {{- $dns := $key | kebabcase -}}
+    {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $dns) }}
+{{ printf "%s: config key '%s' cannot be a Kubernetes object name (becomes '%s'). Config keys are emitted as ConfigMaps named <cluster>.rendered-config-<key>; use lowerCamelCase or kebab-case; dots and leading/trailing hyphens are not allowed." $path $key $dns }}
+    {{- else if hasKey $seen $dns }}
+{{ printf "%s: config keys '%s' and '%s' both become '%s', so they would produce the same ConfigMap <cluster>.rendered-config-%s and one would silently overwrite the other. Keep one spelling." $path (index $seen $dns) $key $dns $dns }}
+    {{- else -}}
+      {{- $_ := set $seen $dns $key -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
 {{- define "autoshift.validate-naming" -}}
 {{- $errors := list }}
 {{- $suffix := include "autoshift.clusterSetSuffix" . }}
@@ -39,6 +69,18 @@ This is the single source of truth — autoshift-app-set.yaml and the configmap 
 {{- end }}
 
 {{/* Validate hubClusterSets keys <= 20 chars, and key+suffix <= 63 chars when versioning is enabled */}}
+{{/* Config keys become ConfigMap names (<cluster>.rendered-config-<key>), so they are a naming
+       constraint like the ones above: valid RFC1123 after kebabcase, and unique after it. */}}
+{{- range $bucket := (list "hubClusterSets" "managedClusterSets" "clusters") }}
+  {{- range $name, $entry := (index $.Values $bucket | default dict) }}
+    {{- $keyErr := (include "autoshift.validate-config-keys" (dict "path" (printf "%s.%s" $bucket $name) "config" (($entry).config | default dict))) | trim }}
+    {{- if $keyErr }}
+      {{- range splitList "\n" $keyErr }}
+        {{- $errors = append $errors . }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}
 {{- range $name, $_ := .Values.hubClusterSets }}
   {{- if gt (len $name) 20 }}
     {{- $errors = append $errors (printf "hubClusterSets key '%s' is %d chars (max 20)" $name (len $name)) }}
