@@ -314,7 +314,59 @@ hubClusterSets:
 ```
 
 
-### Master nodes
+### Unschedulable Control Plane
+
+Taints specific master nodes with `NoSchedule` so they run only control plane components (etcd, API server, controllers, scheduler). Designed for compact clusters where most masters should remain schedulable but one or more should be marked unschedulable.
+
+**Why a custom taint key?** On compact clusters, the OpenShift scheduler operator has `mastersSchedulable: true` and actively removes the standard `node-role.kubernetes.io/control-plane:NoSchedule` taint. Using the standard key would create a reconciliation loop between ACM and the scheduler operator. The custom key `autoshift.io/unschedulable-control-plane` avoids this conflict entirely.
+
+**Impact on workloads:**
+- **Application workloads**: No changes needed. Pods without a toleration for the custom taint simply won't schedule on the dedicated node.
+- **System DaemonSets** (OVN-Kubernetes, CSI plugins, machine-config-daemon, etc.): Unaffected. These use `operator: Exists` tolerations that tolerate all taints.
+- **Control plane components** (etcd, API server, scheduler, controllers): Unaffected. These run as static pods with all-taint tolerations.
+
+| Variable                                | Type   | Default | Notes |
+|-----------------------------------------|--------|---------|-------|
+| `unschedulable-control-plane`               | bool   | `false` | Enable unschedulable control plane tainting |
+| `unschedulable-control-plane-node-[number]` | string |         | Node hostname to taint (e.g., `master-4.my-cluster.example.com`). Add additional nodes with `-node-2`, `-node-3`, etc. |
+
+**Example: 5-node compact cluster with 1 unschedulable control plane node**
+
+Install the cluster as a compact 5-node topology (`controlPlaneAgents: 5`, `workerAgents: 0`) so all masters are schedulable. Then use this policy to taint the node that should be dedicated:
+
+```yaml
+managedClusterSets:
+  my-clusters:
+    labels:
+      unschedulable-control-plane: 'true'
+      unschedulable-control-plane-node-1: 'master-4.my-cluster.example.com'
+```
+
+To also run ODF on the 4 schedulable nodes, combine with `storage-nodes` (baremetal) to label them explicitly:
+
+```yaml
+managedClusterSets:
+  my-clusters:
+    labels:
+      # Dedicated control plane
+      unschedulable-control-plane: 'true'
+      unschedulable-control-plane-node-1: 'master-4.my-cluster.example.com'
+      # Storage nodes (exclude the dedicated CP node)
+      storage-nodes: '4'
+      storage-nodes-provider: 'baremetal'
+      storage-nodes-node-1: 'master-0.my-cluster.example.com'
+      storage-nodes-node-2: 'master-1.my-cluster.example.com'
+      storage-nodes-node-3: 'master-2.my-cluster.example.com'
+      storage-nodes-node-4: 'master-3.my-cluster.example.com'
+      # Local storage + ODF
+      local-storage: 'true'
+      odf: 'true'
+      odf-resource-profile: 'lean'
+```
+
+ODF auto-enables `flexibleScaling` for 4 nodes (not a multiple of 3) and distributes OSDs across all 4 hosts.
+
+### Master Nodes
 
 Single Node OpenShift clusters as well as Compact Clusters have to rely on their master nodes to handle workloads. You may have to increase the number of pods per node in these resource constrained environments.
 
