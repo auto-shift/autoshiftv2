@@ -88,7 +88,7 @@ install-policy-generator: ## Install kustomize + ACM PolicyGenerator plugin (rep
 .PHONY: lint
 lint: ## Lint all Helm charts
 	@printf "$(BLUE)[INFO]$(NC) Linting Helm charts...\n"
-	@helm lint autoshift/ --quiet && printf "$(GREEN)✓$(NC) autoshift/ passed\n"
+	@helm lint autoshift/ --quiet -f autoshift/values/global.yaml && printf "$(GREEN)✓$(NC) autoshift/ passed\n"
 	@failed=0; \
 	for chart in policies/stable/*/ policies/certified/*/ policies/community/*/; do \
 		if [ -f "$$chart/Chart.yaml" ]; then \
