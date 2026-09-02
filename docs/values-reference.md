@@ -659,6 +659,7 @@ no interactive administrator until you either configure OpenID Connect and list 
 | `odf-default-storageclass`        | string            | `ocs-storagecluster-ceph-rbd` | Sets specified storage class as default and all others as non-default |
 
 ### OpenShift internal registry
+
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `imageregistry`                   | bool              | `false`                   | If not set OpenShift Internal Image Registry will not be managed |
