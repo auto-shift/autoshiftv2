@@ -1,0 +1,28 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-crs-managed
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Syncs the CRS to secured clusters, for both crs and manual modes.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acs'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'spoke'
+            - key: 'autoshift.io/acs-registration'
+              operator: NotIn
+              values:
+                - 'initBundle'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
