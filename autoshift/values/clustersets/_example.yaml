@@ -118,12 +118,57 @@ hubClusterSets:
       # smaller volume. This is the canonical path; a disconnected deployment can still set
       # disconnected.osImages below, which is deprecated and read only when this list is absent.
       acm:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'advanced-cluster-management.vX.Y.Z'
+        # startingCSV: 'advanced-cluster-management.vX.Y.Z'
         provisioning:
+          storageClass: ''                       # unset -> the cluster default StorageClass
+          databaseSize: 10Gi                     # Min 10GiB recommended
+          filesystemStorageSize: 100Gi           # Min 100GiB recommended
+          imageStorageSize: 100Gi                # Red Hat recommended default; less if osImages is pinned
           osImages:
             - openshiftVersion: '4.22'             # Major.Minor
               version: '4.22.0'                    # Red Hat Enterprise Linux CoreOS version string
               cpuArchitecture: x86_64              # x86_64, arm64, s390x or ppc64le
               url: 'https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.22/4.22.0/rhcos-4.22.0-x86_64-live.x86_64.iso'
+      # =======================================================================
+      # Managed AutoShift — nested deployments onto the hubs this hub governs
+      # =======================================================================
+      # One entry per AutoShift deployment to create on each MANAGED hub selected by the
+      # autoshift-enable-install label. The policy runs on that hub and creates an Argo CD
+      # Application there. Set either the git pair or the OCI pair, not both: ociRepo selects
+      # OCI mode and requires ociVersion, matching the top-level chart's own rule.
+      # appName may not be 'autoshift'; that name belongs to the top-level deployment.
+      managedAutoshift:
+        - appName: 'hub1'       # Argo CD Application name; defaults to the hub's cluster name.
+          # Max 11 chars (policies-<appName> must fit 20) and never 'autoshift'.
+          repoUrl: 'https://github.com/auto-shift/autoshiftv2.git'
+          targetRevision: 'main'             # git branch or tag
+          # ociRepo: 'quay.io/autoshift'      # registry namespace, NO oci:// scheme: Argo CD's Helm-OCI
+          #                                 # source takes a bare host/path. The policy charts are read
+          #                                 # from <ociRepo>/policies, derived automatically.
+          # ociVersion: '0.0.5'             # required whenever ociRepo is set
+          gitopsNamespace: 'openshift-gitops'
+          argoProject: 'default'
+          argoServer: 'https://kubernetes.default.svc'
+          valuesFiles:
+            - 'values/global.yaml'
+            - 'values/clustersets/hub.yaml'
+          versionedClusterSets: 'false'
+          # Arbitrary values merged into the generated Application, for anything the fields above
+          # do not cover.
+          # helmValues:
+          #   autoshift:
+          #     dryRun: true
+          # Values kept in their own repository, mounted as a second Argo CD source.
+          # valuesRepoUrl: 'https://github.com/my-org/site-config.git'
+          # valuesTargetRevision: 'main'
+          # Copy a repository Secret into the managed hub's Argo CD namespace for private repos.
+          # useRepoSecret: true
+          # repoSecretRef:
+          #   name: 'autoshift-repo-secret'
+          #   namespace: 'policies-autoshift'
       # =======================================================================
       # Disconnected Mirror (read via rendered-config ConfigMap)
       # =======================================================================
@@ -164,12 +209,20 @@ hubClusterSets:
       # GitLab (values with / or spaces that can't be labels)
       # =======================================================================
       gitlab:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'gitlab-operator-kubernetes.vX.Y.Z'
+        # startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
         dbBackupSchedule: '0 2 * * *'
         dbBackupRetention: '30d'
       # =======================================================================
       # JFrog Artifactory
       # =======================================================================
       jfrog:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'openshiftartifactoryha-operator.vX.Y.Z'
+        # startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
         dbBackupSchedule: '0 3 * * *'
         dbBackupRetention: '30d'
       # =======================================================================
@@ -277,14 +330,6 @@ hubClusterSets:
       #   versions:
       #     - 'ansible-automation-platform-operator.vX.Y.Z'
       #   startingCSV: 'ansible-automation-platform-operator.vX.Y.Z'
-      # acm:
-      #   versions:
-      #     - 'advanced-cluster-management.vX.Y.Z'
-      #   startingCSV: 'advanced-cluster-management.vX.Y.Z'
-      # acs:
-      #   versions:
-      #     - 'rhacs-operator.vX.Y.Z'
-      #   startingCSV: 'rhacs-operator.vX.Y.Z'
       # cert-manager:
       #   versions:
       #     - 'openshift-cert-manager-operator.vX.Y.Z'
@@ -313,22 +358,10 @@ hubClusterSets:
       #   versions:
       #     - 'openshift-external-secrets-operator.vX.Y.Z'
       #   startingCSV: 'openshift-external-secrets-operator.vX.Y.Z'
-      # gitlab:
-      #   versions:
-      #     - 'gitlab-operator-kubernetes.vX.Y.Z'
-      #   startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
       # gitlab-runner:
       #   versions:
       #     - 'gitlab-runner-operator.vX.Y.Z'
       #   startingCSV: 'gitlab-runner-operator.vX.Y.Z'
-      # gitops:
-      #   versions:
-      #     - 'openshift-gitops-operator.vX.Y.Z'
-      #   startingCSV: 'openshift-gitops-operator.vX.Y.Z'
-      # jfrog:
-      #   versions:
-      #     - 'openshiftartifactoryha-operator.vX.Y.Z'
-      #   startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
       # kiali:
       #   versions:
       #     - 'kiali-ossm.vX.Y.Z'
@@ -393,10 +426,6 @@ hubClusterSets:
       #   versions:
       #     - 'tempo-product.vX.Y.Z'
       #   startingCSV: 'tempo-product.vX.Y.Z'
-      # trident:
-      #   versions:
-      #     - 'trident-operator.vX.Y.Z'
-      #   startingCSV: 'trident-operator.vX.Y.Z'
       # virt:
       #   versions:
       #     - 'kubevirt-hyperconverged.vX.Y.Z'
@@ -468,6 +497,10 @@ hubClusterSets:
           search:
             - 'example.com'
       trident:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'trident-operator.vX.Y.Z'
+        # startingCSV: 'trident-operator.vX.Y.Z'
         storage:
           - backendName: "trident-backend-name"
             secretName: "openshift-secret"
@@ -487,6 +520,10 @@ hubClusterSets:
       # label. All fields are optional; omitted values fall back to defaults.
       # =======================================================================
       gitops:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'openshift-gitops-operator.vX.Y.Z'
+        # startingCSV: 'openshift-gitops-operator.vX.Y.Z'
         # Does THIS hub render policies via the policy-generator CMP? Overrides the fleet-wide
         # policyGenerator in global.yaml for this hub's Argo CD. GIT/source hubs MUST set true (it
         # installs the CMP sidecar in the infra ArgoCD repo-server, without which PolicyGenerator
@@ -591,6 +628,10 @@ hubClusterSets:
       # Advanced Cluster Security (Day-2 settings; enable the stack with the acs label)
       # =======================================================================
       acs:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'rhacs-operator.vX.Y.Z'
+        # startingCSV: 'rhacs-operator.vX.Y.Z'
         egressConnectivity: Online          # Online | Offline (disconnected)
         scannerV4: Enabled                  # Enabled | Disabled | Default (SecuredCluster maps Enabled -> AutoSense)
         monitoring: true                    # OpenShift monitoring integration
@@ -631,6 +672,10 @@ hubClusterSets:
       # =======================================================================
       self-managed: 'true'                # hub only — registers hub as a self-managed cluster.
                                           # Declaring it under managedClusterSets fails the render.
+      # Deploy a nested AutoShift from this hub to each MANAGED hub it governs. Requires the
+      # target hub clusterset to carry self-managed: 'false'. That label marks the hub this
+      # deployment runs on, which already has its own AutoShift.
+      autoshift-enable-install: 'false'   # hub only — see policies/stable/managed-autoshift
       # DERIVED — do not set: cluster-type ('hub' for hubClusterSets entries, 'spoke' for
       # managedClusterSets entries). Injected by the top-level chart, so a value set here is
       # overwritten. A self-managed hub is cluster-type 'hub' plus self-managed 'true'.
@@ -683,10 +728,12 @@ hubClusterSets:
       # Cluster provisioning (hive-based cluster install flow)
       cluster-install: 'false'                     # hub only — enables the cluster-install policy set
       acm-enable-provisioning: 'false'            # hub only
-      acm-provisioning-storage-class: ''             # StorageClass name
-      acm-provisioning-database-size: 10Gi           # Min 10GiB recommended
-      acm-provisioning-filesystem-storage-size: 100Gi # Min 100GiB recommended
-      acm-provisioning-image-storage-size: 100Gi     # Red Hat recommended default; less if osImages is pinned
+      # DEPRECATED: superseded by config.acm.provisioning.*, which wins when set.
+      # Still honoured so existing deployments keep working; move to config and remove these.
+      acm-provisioning-storage-class: ''             # -> config.acm.provisioning.storageClass
+      acm-provisioning-database-size: 10Gi           # -> config.acm.provisioning.databaseSize
+      acm-provisioning-filesystem-storage-size: 100Gi # -> config.acm.provisioning.filesystemStorageSize
+      acm-provisioning-image-storage-size: 100Gi     # -> config.acm.provisioning.imageStorageSize
       # ACM Addon Tuning (for scale)
       acm-addon-tuning: 'true'
       # config-policy-controller tuning (annotations on ManagedClusterAddOn)

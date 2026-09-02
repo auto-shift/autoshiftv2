@@ -208,10 +208,17 @@ sequenceDiagram
    latter to manage and configure hub1.
 3. The hub-of-hubs provisions/imports hub1 and installs **GitOps + Red Hat Advanced Cluster Management** on it, then places hub1's
    own operator/config/upgrade policies onto it.
-4. **Separately bootstrap AutoShift on hub1**: a *second* Application (`hub1`) whose
-   destination is the hub1 cluster, policies in `policies-hub1`. There is **no policy in this
-   repo that auto-creates it**; it is a deliberate step (re-run the bootstrap, or commit a
-   second Application in GitOps).
+4. **Bootstrap AutoShift on hub1**, either way round:
+   - *Push*: create a *second* Application on the hub-of-hubs (`hub1`) whose destination is the
+     hub1 cluster, policies in `policies-hub1`. A deliberate step: re-run the bootstrap, or commit
+     a second Application in GitOps.
+   - *Per-hub*: label hub1 with `autoshift.io/autoshift-enable-install: 'true'` and describe the
+     deployment in `config.managedAutoshift`. The `managed-autoshift` policy then runs **on hub1**
+     and creates the Application in hub1's **own** Argo CD, pointing at hub1 itself. Nothing is
+     created on the hub-of-hubs. See
+     [policies/stable/managed-autoshift](../policies/stable/managed-autoshift/README.md).
+
+   Use one or the other. Both would give hub1 two AutoShift instances.
 5. hub1's AutoShift syncs its config ConfigMaps and deploys policies for **its spokes**.
 6. The hub-of-hubs-deployed cluster-labels/cluster-install policies (executing on hub1) read those
    ConfigMaps and manage hub1's spokes.

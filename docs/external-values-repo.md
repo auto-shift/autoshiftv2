@@ -75,10 +75,14 @@ spec:
           - $siteValues/global.yaml
           - $siteValues/clustersets/hub.yaml
           - $siteValues/clusters/spoke1.yaml
-        values: |
-          # Must match repoURL above. See the note below.
-          autoshiftGitRepo: https://github.com/auto-shift/autoshiftv2.git
-          autoshiftGitBranchTag: main
+        # Injected by Argo CD from this source, so the repository is named once. In a
+        # multi-source Application these resolve to the source that declares them, not to the
+        # values repository above.
+        parameters:
+          - name: autoshiftGitRepo
+            value: $ARGOCD_APP_SOURCE_REPO_URL
+          - name: autoshiftGitBranchTag
+            value: $ARGOCD_APP_SOURCE_TARGET_REVISION
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops
@@ -91,12 +95,10 @@ spec:
 The `ref` source must be a **git** repo — you cannot `$ref` a Helm/OCI source. The values repo is
 fetched but never rendered, so it needs no `path` and produces no resources of its own.
 
-`repoURL` and `autoshiftGitRepo` are the same repository written twice: the first is where this
-Application reads the chart from, the second is where every Application the chart generates reads
-policies from. **If you run a fork, both must point at your fork.** Repointing only the first is
-the failure worth knowing about, because nothing reports it: the chart renders, the sync succeeds,
-and your clusters carry on deploying policies from the repository you forked. Edits to your own
-policies never arrive, and the symptom looks like a broken AutoShift rather than a missed value.
+`repoURL` is the only place the repository is named. Argo CD injects it into `autoshiftGitRepo`,
+which is where every Application the chart generates reads policies from, so a fork points one
+value at itself and the policies follow. In a multi-source Application these resolve to the source
+that declares them, not to the values repository.
 
 Requires ArgoCD 2.8+ (OpenShift GitOps 1.9+). AutoShift targets `gitops-1.21`, so this is
 comfortably available.
@@ -119,10 +121,13 @@ Same shape, with the chart pulled from the registry instead of git:
           - $siteValues/global.yaml
           - $siteValues/clustersets/hub.yaml
         values: |
-          autoshiftOciRegistry: true
+          # Where the policy charts are published. Change this if you release your own charts.
           autoshiftOciRepo: oci://quay.io/autoshift/policies
-          autoshiftOciVersion: "0.0.1"
           policyGenerator: false
+        # Injected from this source's targetRevision, so the release is pinned once.
+        parameters:
+          - name: autoshiftOciVersion
+            value: $ARGOCD_APP_SOURCE_TARGET_REVISION
 ```
 
 ## Merge semantics
@@ -177,7 +182,7 @@ Git/source mode requires policyGenerator: true.
 
 OCI ships prerendered charts and never calls the CMP, so `false` is **recommended but not required**.
 The shipped `global.yaml` defaults to `true` for git mode; an OCI deployment that inherits it still
-works correctly — the ApplicationSet branches on `autoshiftOciRegistry`, not on this flag. Overriding
+works correctly — the deploy mode is chosen by `autoshiftOciRepo`, not by this flag. Overriding
 to `false` simply avoids configuring a sidecar nothing uses.
 
 **Application name ≤ 11 characters.** The policy namespace is `policies-<app-name>`, capped at 20
