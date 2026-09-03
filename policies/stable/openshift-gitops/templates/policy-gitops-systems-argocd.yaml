@@ -101,10 +101,13 @@ spec:
             {{ "{{hub-" }} $controller := (index $infra "controller" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $controllerLimits := (index $controller "limits" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $controllerRequests := (index $controller "requests" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $pgSidecar := (index $infra "policyGenerator" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $pgSidecarLimits := (index $pgSidecar "limits" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $pgSidecarRequests := (index $pgSidecar "requests" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $applicationSet := (index $infra "applicationSet" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $applicationSetLimits := (index $applicationSet "limits" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $applicationSetRequests := (index $applicationSet "requests" | default dict) {{ "hub}}" }}
-            {{ "{{hub-" }} $rbac := "g, cluster-admins, role:admin\ng, system:cluster-admins, role:admin\n" {{ "hub}}" }}
+            {{ "{{hub-" }} $rbac := "" {{ "hub}}" }}
             {{ "{{hub-" }} range (index $infra "rbac_policies" | default (list{{ range $.Values.gitops.rbac_policies }} {{ . | quote }}{{ end }})) {{ "hub}}" }}
             {{ "{{hub-" }} $rbac = printf "%s%s\n" $rbac . {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
@@ -172,15 +175,19 @@ spec:
                     provider: dex
                   rbac:
                     defaultPolicy: ''
-                    # cluster-admins + system:cluster-admins get Argo CD admin, plus any entries from
-                    # config.gitops.infra.rbac_policies ($rbac built at the top of this block).
+                    # Every line comes from config.gitops.infra.rbac_policies, falling back to this
+                    # chart's gitops.rbac_policies ($rbac built at the top of this block). Nothing is
+                    # granted implicitly: defaultPolicy is empty, so an empty list means no access
+                    # apart from the built-in admin account. A `g` line takes a user or a group,
+                    # but OpenShift login yields an opaque sub, so groups are the practical unit.
                     policy: {{ "{{hub" }} $rbac | toJson {{ "hub}}" }}
                     scopes: '[groups]'
                   repo:
-                    # Multiple replicas so PolicyGenerator CMP renders spread across pods when the
-                    # ApplicationSet fans out to every policies/* at once (a single repo-server
-                    # thrashes and renders time out).
-                    replicas: {{ "{{hub" }} index $repo "replicas" | default {{ $.Values.gitops.repo.replicas }} {{ "hub}}" }}
+                    # With the CMP the render is heavy, so spread it across pods; a single
+                    # repo-server thrashes and renders time out when the ApplicationSet fans out to
+                    # every policies/* at once. Without it the repo-server only pulls prerendered
+                    # Helm charts, so one pod is enough.
+                    replicas: {{ "{{hub" }} index $repo "replicas" | default (ternary {{ $.Values.gitops.policyGenerator.repo.replicas }} {{ $.Values.gitops.repo.replicas }} $pgEnabled) {{ "hub}}" }}
                     resources:
                       limits:
                         cpu: {{ "{{hub" }} index $repoLimits "cpu" | default "{{ $.Values.gitops.repo.limits.cpu }}" {{ "hub}}" }}
@@ -227,6 +234,15 @@ spec:
                         env:
                           - name: KUSTOMIZE_PLUGIN_HOME
                             value: /etc/kustomize/plugin
+                        # The sidecar runs the actual kustomize/PolicyGenerator/Helm render, so it
+                        # needs real CPU. Without resources it competes unbounded and renders time out.
+                        resources:
+                          limits:
+                            cpu: {{ "{{hub" }} index $pgSidecarLimits "cpu" | default "{{ $.Values.gitops.policyGenerator.limits.cpu }}" {{ "hub}}" }}
+                            memory: {{ "{{hub" }} index $pgSidecarLimits "memory" | default "{{ $.Values.gitops.policyGenerator.limits.memory }}" {{ "hub}}" }}
+                          requests:
+                            cpu: {{ "{{hub" }} index $pgSidecarRequests "cpu" | default "{{ $.Values.gitops.policyGenerator.requests.cpu }}" {{ "hub}}" }}
+                            memory: {{ "{{hub" }} index $pgSidecarRequests "memory" | default "{{ $.Values.gitops.policyGenerator.requests.memory }}" {{ "hub}}" }}
                         volumeMounts:
                           - name: var-files
                             mountPath: /var/run/argocd
@@ -283,16 +299,18 @@ spec:
                         cpu: {{ "{{hub" }} index $redisRequests "cpu" | default "{{ $.Values.gitops.redis.requests.cpu }}" {{ "hub}}" }}
                         memory: {{ "{{hub" }} index $redisRequests "memory" | default "{{ $.Values.gitops.redis.requests.memory }}" {{ "hub}}" }}
                   controller:
+                    # Source mode drives the controller far harder than consuming prerendered
+                    # charts does, so the sizing follows the PolicyGenerator gate like repo.replicas.
                     processors:
                       status: {{ "{{hub" }} index $controller "statusProcessors" | default {{ $.Values.gitops.controller.statusProcessors }} {{ "hub}}" }}
                       operation: {{ "{{hub" }} index $controller "operationProcessors" | default {{ $.Values.gitops.controller.operationProcessors }} {{ "hub}}" }}
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $controllerLimits "cpu" | default "{{ $.Values.gitops.controller.limits.cpu }}" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $controllerLimits "memory" | default "{{ $.Values.gitops.controller.limits.memory }}" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $controllerLimits "cpu" | default (ternary "{{ $.Values.gitops.policyGenerator.controller.limits.cpu }}" "{{ $.Values.gitops.controller.limits.cpu }}" $pgEnabled) {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $controllerLimits "memory" | default (ternary "{{ $.Values.gitops.policyGenerator.controller.limits.memory }}" "{{ $.Values.gitops.controller.limits.memory }}" $pgEnabled) {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $controllerRequests "cpu" | default "{{ $.Values.gitops.controller.requests.cpu }}" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $controllerRequests "memory" | default "{{ $.Values.gitops.controller.requests.memory }}" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $controllerRequests "cpu" | default (ternary "{{ $.Values.gitops.policyGenerator.controller.requests.cpu }}" "{{ $.Values.gitops.controller.requests.cpu }}" $pgEnabled) {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $controllerRequests "memory" | default (ternary "{{ $.Values.gitops.policyGenerator.controller.requests.memory }}" "{{ $.Values.gitops.controller.requests.memory }}" $pgEnabled) {{ "hub}}" }}
                   applicationSet:
                     resources:
                       limits:

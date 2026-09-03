@@ -39,25 +39,24 @@ spec:
     provider: dex
   rbac:
     defaultPolicy: ''
-    # All cluster admins get Argo CD admin: system:cluster-admins is the built-in kubeadmin group;
-    # cluster-admins is the OpenShift group users are added to for cluster-admin. Grant both.
+    # Every line comes from gitops.rbac_policies. Nothing is granted implicitly: defaultPolicy is
+    # empty, so an empty list means no access apart from the built-in admin account.
     policy: |
-      g, system:cluster-admins, role:admin
-      g, cluster-admins, role:admin
-    {{- range .Values.gitops.rbac_policies}}
+    {{- range .Values.gitops.rbac_policies }}
       {{ . }}
     {{- end }}
     scopes: '[groups]'
   repo:
-    # Multiple repo-server replicas so PolicyGenerator CMP renders (kustomize --enable-helm + PG +
-    # nested Helm — CPU/memory heavy) spread across pods instead of thrashing a single one when the
-    # ApplicationSet fans out to all policies/* at once.
-    replicas: {{ ((.Values.gitops.repo).replicas) | default 3 }}
     {{- $caBundle := .Values.gitops.repo.cluster_ca_bundle }}
     {{- $pg := (.Values.gitops.policyGenerator | default dict) }}
     {{- /* Install the policy-generator CMP sidecar only when enabled (git/source bootstrap); OCI-only
            bootstrap sets false. Default true for backwards compatibility. */}}
     {{- $pgEnabled := ternary ($pg.enabled) true (hasKey $pg "enabled") }}
+    {{- /* With the CMP the render (kustomize --enable-helm + PolicyGenerator + nested Helm) is
+           CPU and memory heavy, so spread it across pods instead of thrashing a single repo-server
+           when the ApplicationSet fans out to all policies/* at once. Without it the repo-server
+           only pulls prerendered Helm charts, so one pod is enough. */}}
+    replicas: {{ ternary ((($pg.repo).replicas) | default 3) (((.Values.gitops.repo).replicas) | default 1) $pgEnabled }}
     {{- /* Declared at repo scope so they're visible in the initContainers/sidecar blocks below. */}}
     {{- $acmImage := ($pg).subscriptionImage }}
     {{- $argoImage := ($pg).sidecarImage }}
@@ -166,11 +165,11 @@ spec:
         # Without resources it competes unbounded and renders time out under fan-out load.
         resources:
           limits:
-            cpu: {{ (((.Values.gitops.policyGenerator).resources).limits).cpu | default "2000m" }}
-            memory: {{ (((.Values.gitops.policyGenerator).resources).limits).memory | default "2048Mi" }}
+            cpu: {{ ((.Values.gitops.policyGenerator).limits).cpu | default "2000m" }}
+            memory: {{ ((.Values.gitops.policyGenerator).limits).memory | default "2048Mi" }}
           requests:
-            cpu: {{ (((.Values.gitops.policyGenerator).resources).requests).cpu | default "500m" }}
-            memory: {{ (((.Values.gitops.policyGenerator).resources).requests).memory | default "512Mi" }}
+            cpu: {{ ((.Values.gitops.policyGenerator).requests).cpu | default "500m" }}
+            memory: {{ ((.Values.gitops.policyGenerator).requests).memory | default "512Mi" }}
     {{- end }}
     resources:
       limits:
@@ -199,12 +198,12 @@ spec:
   controller:
     resources:
       limits:
-        cpu: {{ ((.Values.gitops.controller).limits).cpu | default "2000m" }}
+        cpu: {{ ternary (((($pg.controller).limits).cpu) | default "2000m") (((.Values.gitops.controller).limits).cpu | default "2000m") $pgEnabled }}
         # 4Gi: the controller OOMKills at 2Gi once the ApplicationSet has fanned out to all policies/*.
-        memory: {{ ((.Values.gitops.controller).limits).memory | default "4096Mi" }}
+        memory: {{ ternary (((($pg.controller).limits).memory) | default "4096Mi") (((.Values.gitops.controller).limits).memory | default "4096Mi") $pgEnabled }}
       requests:
-        cpu: {{ ((.Values.gitops.controller).requests).cpu | default "250m" }}
-        memory: {{ ((.Values.gitops.controller).requests).memory | default "1024Mi" }}
+        cpu: {{ ternary (((($pg.controller).requests).cpu) | default "250m") (((.Values.gitops.controller).requests).cpu | default "250m") $pgEnabled }}
+        memory: {{ ternary (((($pg.controller).requests).memory) | default "1024Mi") (((.Values.gitops.controller).requests).memory | default "1024Mi") $pgEnabled }}
   applicationSet:
     resources:
       limits:

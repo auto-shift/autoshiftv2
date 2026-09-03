@@ -19,9 +19,46 @@ gitops:
     # mode (renders PolicyGenerator dirs live); disabled for OCI-only deployments (prerendered Helm).
     # The ApplicationSet forwards the effective value from the deployment's policyGenerator flag.
     enabled: true
+    repo:
+      # PolicyGenerator rendering (kustomize --enable-helm plus a nested Helm render) is heavy, so
+      # spread it across pods instead of thrashing a single repo-server when the ApplicationSet
+      # fans out to every policies/* at once.
+      replicas: 3
+    controller:
+      # Source mode fans the ApplicationSet out to an Application per policies/* directory, which
+      # drives the application controller far harder than consuming prerendered charts does. The
+      # controller OOMKills below this.
+      limits:
+        cpu: 2000m
+        memory: 6Gi
+      requests:
+        cpu: 250m
+        memory: 6Gi
+    # The CMP sidecar's own container resources. It runs the actual kustomize/PolicyGenerator/Helm
+    # render, so it needs real CPU; without resources it competes unbounded and renders time out
+    # under fan-out load. Override per cluster with config.gitops.infra.policyGenerator.
+    limits:
+      cpu: 2000m
+      memory: 2048Mi
+    requests:
+      cpu: 500m
+      memory: 512Mi
   # Dev team cluster-scoped namespaces are auto-discovered from managed cluster labels
   # matching autoshift.io/gitops-dev-team-<team>-cluster-scoped: 'true'
+  # Argo CD RBAC. A `g` line assigns a subject to a role; the subject may be a user or a group. What
+  # makes groups the practical unit is the identity: scopes is '[groups]', checked alongside the
+  # always-matched sub claim, and with OpenShift login sub is an opaque Dex identifier rather than a
+  # username. Naming a user means pasting that opaque value.
+  #   system:cluster-admins - carried by kubeadmin (kube:admin)
+  #   cluster-admins        - the group Red Hat's OpenShift login procedure creates:
+  #                           oc adm groups new cluster-admins
+  # defaultPolicy is empty, so this list is the only access apart from the built-in admin account.
+  # Overridable per cluster with config.gitops.infra.rbac_policies, which REPLACES this list rather
+  # than appending to it. Avoid names containing commas (an LDAP group DN) - the comma is the field
+  # separator and the line is rejected as an invalid RBAC policy.
   rbac_policies:
+  - 'g, system:cluster-admins, role:admin'
+  - 'g, cluster-admins, role:admin'
   - 'g, openshift-systems, role:admin'
   # OPTIONAL
   controller:
@@ -31,10 +68,10 @@ gitops:
     operationProcessors: 10     # concurrent sync operations (default: 10)
     limits:
       cpu: 2000m
-      memory: 6Gi
+      memory: 2048Mi
     requests:
       cpu: 250m
-      memory: 6Gi
+      memory: 1024Mi
   ha:
     enabled: false
     limits:
@@ -55,9 +92,9 @@ gitops:
     # enabling the cluster_ca_bundle will inject the cluster's trusted CA bundle into the repo
     # server that Argo CD uses. This allows Argo CD to connect to repositories using custom certificates.
     cluster_ca_bundle: false
-    # Multiple replicas so PolicyGenerator CMP renders spread across pods when the ApplicationSet
-    # fans out to every policies/* at once (a single repo-server thrashes and renders time out).
-    replicas: 3
+    # Repo-server replicas WITHOUT the PolicyGenerator CMP: the repo-server only pulls prerendered
+    # Helm charts, so one pod is enough. The heavier source-mode count is policyGenerator.repo.replicas.
+    replicas: 1
     limits:
       cpu: 2000m
       memory: 2048Mi

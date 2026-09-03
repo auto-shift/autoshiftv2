@@ -523,32 +523,100 @@ hubClusterSets:
         # infra-gitops instance). Drives gitops-disable-default-argocd (disable = not defaultInstance).
         # defaultInstance: false
         #
-        # Infra (main) ArgoCD instance config — same knobs as teams.<team> below, plus infra-only fields
-        # (server.autoscale, controller.statusProcessors/operationProcessors, repo.cluster_ca_bundle).
-        # The openshift-gitops policy reads these from this cluster's rendered-config at enforcement time
-        # (like the teams instances), so one policy serves per-cluster values; omit any field to keep default.
+        # Infra (main) ArgoCD instance config: the same knobs as teams.<team> below, plus the
+        # infra-only fields server.autoscale, controller.statusProcessors,
+        # controller.operationProcessors, repo.replicas and repo.cluster_ca_bundle. The
+        # openshift-gitops policy reads these from this cluster's rendered-config at enforcement
+        # time, so one policy serves per-cluster values.
+        #
+        # Every field is optional. Omit one and it falls back to the chart default in
+        # policies/stable/openshift-gitops/values.yaml, the same file the bootstrap chart reads, so
+        # bootstrap and day 2 agree. The block below is those defaults, so uncommenting it as is
+        # changes nothing.
+        #
+        # rbac_policies is the COMPLETE Argo CD RBAC policy and replaces the chart default rather
+        # than appending to it, so carry the cluster-admin lines over unless you mean to drop them.
+        # A `g` line takes a user or a group, but with OpenShift login the user identity is an
+        # opaque Dex sub rather than a username, so name OpenShift Groups here.
+        # repo.replicas and the controller memory both default higher with the
+        # PolicyGenerator plugin (3 replicas and 6Gi) than without (1 replica, 2048Mi limit and
+        # 1024Mi request), and setting either here overrides both modes. The gitops-cluster-ca-bundle label overrides
+        # repo.cluster_ca_bundle. Raise the controller processors to 50 status and 25 operation for
+        # 1000 or more Applications. policyGenerator sizes the CMP sidecar that performs the render,
+        # so raise it when manifest generation times out; it applies only where the plugin is on.
+        #
+        # Full table: docs/values-reference.md, "OpenShift GitOps".
         # infra:
         #   rbac_policies:
+        #     - 'g, system:cluster-admins, role:admin'
+        #     - 'g, cluster-admins, role:admin'
         #     - 'g, my-admins, role:admin'
-        #   disableAdmin: true
+        #   disableAdmin: false
         #   server:
-        #     limits: { cpu: '500m', memory: '256Mi' }
-        #     requests: { cpu: '125m', memory: '128Mi' }
-        #     autoscale: { enabled: false, maxReplicas: 3 }
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '125m'
+        #       memory: '128Mi'
+        #     autoscale:
+        #       enabled: true
+        #       maxReplicas: 5
+        #       targetCPUUtilizationPercentage: 50
         #   repo:
-        #     limits: { cpu: '1000m', memory: '1024Mi' }
-        #     requests: { cpu: '250m', memory: '256Mi' }
         #     replicas: 3
         #     cluster_ca_bundle: false
+        #     limits:
+        #       cpu: '2000m'
+        #       memory: '2048Mi'
+        #     requests:
+        #       cpu: '500m'
+        #       memory: '512Mi'
         #   controller:
-        #     limits: { cpu: '2000m', memory: '2048Mi' }
-        #     requests: { cpu: '250m', memory: '1024Mi' }
         #     statusProcessors: 20
         #     operationProcessors: 10
-        #   ha: { enabled: false }
-        #   redis: {}
-        #   dex: {}
-        #   applicationSet: {}
+        #     limits:
+        #       cpu: '2000m'
+        #       memory: '6Gi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '1024Mi'
+        #   ha:
+        #     enabled: false
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '128Mi'
+        #   redis:
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '128Mi'
+        #   dex:
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '128Mi'
+        #   applicationSet:
+        #     limits:
+        #       cpu: '2'
+        #       memory: '1Gi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '512Mi'
+        #   policyGenerator:
+        #     limits:
+        #       cpu: '2000m'
+        #       memory: '2048Mi'
+        #     requests:
+        #       cpu: '500m'
+        #       memory: '512Mi'
         teams:
           dev:
             gitops_rbac_policies:

@@ -244,8 +244,8 @@ is created on the hub above it. See
 | `valuesTargetRevision` | string | `main` | Branch or tag of the values repository |
 | `versionedClusterSets` | bool | `false` | Suffix clusterset names with the version tag |
 | `useRepoSecret` | bool | `false` | Copy a repository Secret into the hub's Argo CD namespace, for private repositories |
-| `repoSecretRef` | map | `{name: autoshift-repo-secret, namespace: <policy namespace>}` | Source Secret to copy |
-| `valuesRepoSecretRef` | map | `{name: autoshift-values-repo-secret, namespace: <policy namespace>}` | Source Secret for the values repository |
+| `repoSecretRef` | map | name `autoshift-repo-secret`, namespace `<policy namespace>` | Source Secret to copy |
+| `valuesRepoSecretRef` | map | name `autoshift-values-repo-secret`, namespace `<policy namespace>` | Source Secret for the values repository |
 
 An entry that names a reserved or over-long `appName`, or that sets `ociRepo` without `ociVersion`,
 creates nothing rather than a broken Application.
@@ -285,6 +285,64 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-cluster-ca-bundle`      | bool      | `false`                   | Inject cluster trusted CA bundle into ArgoCD repo server |
 | `gitops-namespace`              | string    | (`gitopsNamespace`)       | Per-cluster override of the ArgoCD namespace, e.g. in hub-of-hubs setups |
 | `gitops-disable-default-argocd` | bool      | `true`                    | Controls `DISABLE_DEFAULT_ARGOCD_INSTANCE` on the operator Subscription |
+
+**Config block** (`config.gitops`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `namespace` | string | (`gitopsNamespace`) | Argo CD namespace for the whole deployment. Overrides `gitopsNamespace` |
+| `defaultInstance` | bool | `false` | Keep the operator default Argo CD instance in `openshift-gitops`. Drives `gitops-disable-default-argocd` |
+| `policyGenerator` | bool | (deployment flag) | Install the PolicyGenerator plugin sidecar in the infra repo server. Git and source hubs must set `true`. Read only from the self-managed hub cluster set |
+| `teams` | map | | Developer Argo CD instances, one entry per team. See [Developer OpenShift gitops](#developer-openshift-gitops) |
+| `infra` | map | | Tuning for the infra Argo CD instance. See the table below |
+
+**Config block** (`config.gitops.infra`):
+
+Every field is optional. A field left unset falls back to the chart default in
+`policies/stable/openshift-gitops/values.yaml`, which is the same file the bootstrap chart reads, so
+bootstrap and Day 2 agree. Set a field here to override it for one cluster or cluster set.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `rbac_policies` | list | admin for `system:cluster-admins`, `cluster-admins` and `openshift-systems` | The complete Argo CD RBAC policy. Setting it replaces the default list rather than appending. A `g` line assigns a subject to a role and accepts a user or a group, but OpenShift login identifies users by an opaque Dex `sub` claim rather than a username, so name OpenShift Groups here. `defaultPolicy` is empty, so an empty list leaves no access apart from the built-in admin account |
+| `disableAdmin` | bool | `false` | Disable the Argo CD built-in admin account |
+| `server.limits` | map | cpu `500m`, memory `256Mi` | Argo CD server resource limits |
+| `server.requests` | map | cpu `125m`, memory `128Mi` | Argo CD server resource requests |
+| `server.autoscale.enabled` | bool | `true` | Horizontal pod autoscaling for the server |
+| `server.autoscale.maxReplicas` | int | `5` | Upper bound for server autoscaling |
+| `server.autoscale.targetCPUUtilizationPercentage` | int | `50` | CPU target that triggers server autoscaling |
+| `repo.replicas` | int | `3` with the PolicyGenerator plugin, `1` without | Repo server replicas. The plugin render is heavy, so source mode spreads it across pods rather than thrashing a single repo server when the `ApplicationSet` fans out to every policy at once. Setting this overrides both modes |
+| `repo.limits` | map | cpu `2000m`, memory `2048Mi` | Repo server resource limits |
+| `repo.requests` | map | cpu `500m`, memory `512Mi` | Repo server resource requests |
+| `repo.cluster_ca_bundle` | bool | `false` | Inject the cluster trusted certificate authority bundle into the repo server. The `gitops-cluster-ca-bundle` label overrides this |
+| `controller.statusProcessors` | int | `20` | Concurrent status reconciliations. Consider 50 for 1000 or more Applications |
+| `controller.operationProcessors` | int | `10` | Concurrent sync operations. Consider 25 for 1000 or more Applications |
+| `controller.limits` | map | cpu `2000m`, memory `6Gi` with the PolicyGenerator plugin, `2048Mi` without | Application controller resource limits |
+| `controller.requests` | map | cpu `250m`, memory `6Gi` with the PolicyGenerator plugin, `1024Mi` without | Application controller resource requests. Source mode fans the `ApplicationSet` out to an Application per policy directory, which drives the controller far harder than consuming prerendered charts does |
+| `ha.enabled` | bool | `false` | Run Argo CD in high availability mode |
+| `ha.limits` | map | cpu `500m`, memory `256Mi` | High availability resource limits |
+| `ha.requests` | map | cpu `250m`, memory `128Mi` | High availability resource requests |
+| `redis.limits` | map | cpu `500m`, memory `256Mi` | Redis resource limits |
+| `redis.requests` | map | cpu `250m`, memory `128Mi` | Redis resource requests |
+| `dex.limits` | map | cpu `500m`, memory `256Mi` | Dex resource limits |
+| `dex.requests` | map | cpu `250m`, memory `128Mi` | Dex resource requests |
+| `policyGenerator.limits` | map | cpu `2000m`, memory `2048Mi` | PolicyGenerator plugin sidecar resource limits. Present only when the plugin is enabled |
+| `policyGenerator.requests` | map | cpu `500m`, memory `512Mi` | PolicyGenerator plugin sidecar resource requests. This container runs the render, so it is the one to raise when manifest generation times out |
+| `applicationSet.limits` | map | cpu `2`, memory `1Gi` | ApplicationSet controller resource limits |
+| `applicationSet.requests` | map | cpu `250m`, memory `512Mi` | ApplicationSet controller resource requests |
+
+```yaml
+clusterSets:
+  hub:
+    config:
+      gitops:
+        infra:
+          controller:
+            statusProcessors: 50
+            operationProcessors: 25
+          repo:
+            replicas: 5
+```
 
 #### Using a custom ArgoCD namespace
 
