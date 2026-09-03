@@ -57,6 +57,16 @@ spec:
            when the ApplicationSet fans out to all policies/* at once. Without it the repo-server
            only pulls prerendered Helm charts, so one pod is enough. */}}
     replicas: {{ ternary ((($pg.repo).replicas) | default 3) (((.Values.gitops.repo).replicas) | default 1) $pgEnabled }}
+    {{- if $pgEnabled }}
+    extraRepoCommandArgs:
+      {{- range ($pg.tarExclusions | default list) }}
+      - --plugin-tar-exclude
+      - {{ . | quote }}
+      {{- end }}
+      {{- if $pg.useManifestGeneratePaths }}
+      - --plugin-use-manifest-generate-paths
+      {{- end }}
+    {{- end }}
     {{- /* Declared at repo scope so they're visible in the initContainers/sidecar blocks below. */}}
     {{- $acmImage := ($pg).subscriptionImage }}
     {{- $argoImage := ($pg).sidecarImage }}

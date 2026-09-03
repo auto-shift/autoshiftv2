@@ -58,6 +58,21 @@ gitops:
       requests:
         cpu: 250m
         memory: 6Gi
+    # Excluded from the repository tarball the repo-server streams to a CMP sidecar. This setting is
+    # repo-server WIDE, so it hits every plugin-rendered Application on this Argo CD, not just
+    # AutoShift's. Only .git is listed because no repository serves manifests out of it; do not add
+    # generic names like docs/ or scripts/ unless this Argo CD serves AutoShift alone, or another
+    # team's plugin app that keeps manifests there will silently render empty. AutoShift scopes its
+    # own tarball per Application with useManifestGeneratePaths below instead.
+    # Go filepath.Match syntax, one --plugin-tar-exclude repo-server arg per entry.
+    tarExclusions:
+      - '.git/*'
+    # Honour the argocd.argoproj.io/manifest-generate-paths annotation, which the AutoShift
+    # ApplicationSet stamps on every generated policy Application so each one ships only its own
+    # directory plus components/ rather than the whole repository. Verified on a live hub: the flag
+    # is inert for Applications that do not carry the annotation, so other workloads on this Argo CD
+    # are unaffected.
+    useManifestGeneratePaths: true
     # The CMP sidecar's own container resources. It runs the actual kustomize/PolicyGenerator/Helm
     # render, so it needs real CPU; without resources it competes unbounded and renders time out
     # under fan-out load. Override per cluster with config.gitops.infra.policyGenerator.

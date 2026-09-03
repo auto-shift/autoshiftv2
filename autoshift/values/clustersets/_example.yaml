@@ -543,7 +543,10 @@ hubClusterSets:
         # 1024Mi request), and setting either here overrides both modes. The gitops-cluster-ca-bundle label overrides
         # repo.cluster_ca_bundle. Raise the controller processors to 50 status and 25 operation for
         # 1000 or more Applications. policyGenerator sizes the CMP sidecar that performs the render,
-        # so raise it when manifest generation times out; it applies only where the plugin is on.
+        # so raise it when manifest generation times out, and its tarExclusions trim the repository
+        # tarball streamed to that sidecar. tarExclusions is repo-server WIDE, so keep it to .git;
+        # per-Application scoping comes from useManifestGeneratePaths. All apply only where the
+        # plugin is on.
         #
         # Full table: docs/values-reference.md, "OpenShift GitOps".
         # infra:
@@ -617,6 +620,9 @@ hubClusterSets:
         #     requests:
         #       cpu: '500m'
         #       memory: '512Mi'
+        #     tarExclusions:
+        #       - '.git/*'
+        #     useManifestGeneratePaths: true
         teams:
           dev:
             gitops_rbac_policies:

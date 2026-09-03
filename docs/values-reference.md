@@ -327,6 +327,8 @@ bootstrap and Day 2 agree. Set a field here to override it for one cluster or cl
 | `dex.limits` | map | cpu `500m`, memory `256Mi` | Dex resource limits |
 | `dex.requests` | map | cpu `250m`, memory `128Mi` | Dex resource requests |
 | `policyGenerator.limits` | map | cpu `2000m`, memory `2048Mi` | PolicyGenerator plugin sidecar resource limits. Present only when the plugin is enabled |
+| `policyGenerator.tarExclusions` | list | `.git/*` | Paths excluded from the repository tarball the repo server streams to a plugin sidecar. This setting is repo server wide, so it affects every plugin rendered Application on this Argo CD. Only `.git` is listed because no repository serves manifests from it. Adding generic names such as `docs/` risks silently emptying another team's Application |
+| `policyGenerator.useManifestGeneratePaths` | bool | `true` | Honour the `argocd.argoproj.io/manifest-generate-paths` annotation that the AutoShift `ApplicationSet` stamps on each generated policy Application, so a policy ships only its own directory and `components/`. The flag has no effect on Applications without the annotation |
 | `policyGenerator.requests` | map | cpu `500m`, memory `512Mi` | PolicyGenerator plugin sidecar resource requests. This container runs the render, so it is the one to raise when manifest generation times out |
 | `applicationSet.limits` | map | cpu `2`, memory `1Gi` | ApplicationSet controller resource limits |
 | `applicationSet.requests` | map | cpu `250m`, memory `512Mi` | ApplicationSet controller resource requests |
