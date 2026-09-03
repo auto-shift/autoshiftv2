@@ -75,7 +75,9 @@ spec:
             {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
             {{/* Infra ArgoCD tuning (resources, autoscale, processors, rbac) comes from this cluster's
                  rendered-config ConfigMap (config.gitops.infra), so one policy serves per-cluster values.
-                 Defaults below preserve the previous behavior when a field is unset. */}}
+                 When a field is unset there, the default is this chart's values.yaml, rendered in at Helm
+                 time, so bootstrap and day 2 read the same numbers. No inline literals: every key the
+                 templates below reference must exist in values.yaml or the render fails. */}}
             {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
             {{ "{{hub-" }} $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $infra := (index (index $cfg "gitops" | default dict) "infra" | default dict) {{ "hub}}" }}
@@ -103,7 +105,7 @@ spec:
             {{ "{{hub-" }} $applicationSetLimits := (index $applicationSet "limits" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $applicationSetRequests := (index $applicationSet "requests" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $rbac := "g, cluster-admins, role:admin\ng, system:cluster-admins, role:admin\n" {{ "hub}}" }}
-            {{ "{{hub-" }} range (index $infra "rbac_policies" | default list) {{ "hub}}" }}
+            {{ "{{hub-" }} range (index $infra "rbac_policies" | default (list{{ range $.Values.gitops.rbac_policies }} {{ . | quote }}{{ end }})) {{ "hub}}" }}
             {{ "{{hub-" }} $rbac = printf "%s%s\n" $rbac . {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{/* The CMP sidecar image is the SAME image as the running argocd-repo-server (operator-set),
@@ -130,26 +132,26 @@ spec:
                   name: {{ .Values.gitops.argoName }}
                   namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
-                  disableAdmin: {{ "{{hub" }} index $infra "disableAdmin" | default false {{ "hub}}" }}
+                  disableAdmin: {{ "{{hub" }} ternary (index $infra "disableAdmin") {{ $.Values.gitops.disableAdmin }} (hasKey $infra "disableAdmin") {{ "hub}}" }}
                   server:
-                    {{ "{{hub-" }} if (index $serverAutoscale "enabled" | default false) {{ "hub}}" }}
+                    {{ "{{hub-" }} if (ternary (index $serverAutoscale "enabled") {{ $.Values.gitops.server.autoscale.enabled }} (hasKey $serverAutoscale "enabled")) {{ "hub}}" }}
                     autoscale:
                       enabled: true
                       hpa:
-                        maxReplicas: {{ "{{hub" }} index $serverAutoscale "maxReplicas" | default 10 {{ "hub}}" }}
+                        maxReplicas: {{ "{{hub" }} index $serverAutoscale "maxReplicas" | default {{ $.Values.gitops.server.autoscale.maxReplicas }} {{ "hub}}" }}
                         scaleTargetRef:
                           apiVersion: "apps/v1"
                           kind: deployment
                           name: {{ $.Values.gitops.argoName }}-server
-                        targetCPUUtilizationPercentage: {{ "{{hub" }} index $serverAutoscale "targetCPUUtilizationPercentage" | default 50 {{ "hub}}" }}
+                        targetCPUUtilizationPercentage: {{ "{{hub" }} index $serverAutoscale "targetCPUUtilizationPercentage" | default {{ $.Values.gitops.server.autoscale.targetCPUUtilizationPercentage }} {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $serverLimits "cpu" | default "500m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $serverLimits "memory" | default "256Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $serverLimits "cpu" | default "{{ $.Values.gitops.server.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $serverLimits "memory" | default "{{ $.Values.gitops.server.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $serverRequests "cpu" | default "125m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $serverRequests "memory" | default "128Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $serverRequests "cpu" | default "{{ $.Values.gitops.server.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $serverRequests "memory" | default "{{ $.Values.gitops.server.requests.memory }}" {{ "hub}}" }}
                     route:
                       enabled: true
                   monitoring:
@@ -161,11 +163,11 @@ spec:
                     dex:
                       resources:
                         limits:
-                          cpu: {{ "{{hub" }} index $dexLimits "cpu" | default "500m" {{ "hub}}" }}
-                          memory: {{ "{{hub" }} index $dexLimits "memory" | default "256Mi" {{ "hub}}" }}
+                          cpu: {{ "{{hub" }} index $dexLimits "cpu" | default "{{ $.Values.gitops.dex.limits.cpu }}" {{ "hub}}" }}
+                          memory: {{ "{{hub" }} index $dexLimits "memory" | default "{{ $.Values.gitops.dex.limits.memory }}" {{ "hub}}" }}
                         requests:
-                          cpu: {{ "{{hub" }} index $dexRequests "cpu" | default "125m" {{ "hub}}" }}
-                          memory: {{ "{{hub" }} index $dexRequests "memory" | default "128Mi" {{ "hub}}" }}
+                          cpu: {{ "{{hub" }} index $dexRequests "cpu" | default "{{ $.Values.gitops.dex.requests.cpu }}" {{ "hub}}" }}
+                          memory: {{ "{{hub" }} index $dexRequests "memory" | default "{{ $.Values.gitops.dex.requests.memory }}" {{ "hub}}" }}
                       openShiftOAuth: true
                     provider: dex
                   rbac:
@@ -175,13 +177,17 @@ spec:
                     policy: {{ "{{hub" }} $rbac | toJson {{ "hub}}" }}
                     scopes: '[groups]'
                   repo:
+                    # Multiple replicas so PolicyGenerator CMP renders spread across pods when the
+                    # ApplicationSet fans out to every policies/* at once (a single repo-server
+                    # thrashes and renders time out).
+                    replicas: {{ "{{hub" }} index $repo "replicas" | default {{ $.Values.gitops.repo.replicas }} {{ "hub}}" }}
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $repoLimits "cpu" | default "2000m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $repoLimits "memory" | default "2048Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $repoLimits "cpu" | default "{{ $.Values.gitops.repo.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $repoLimits "memory" | default "{{ $.Values.gitops.repo.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $repoRequests "cpu" | default "500m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $repoRequests "memory" | default "512Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $repoRequests "cpu" | default "{{ $.Values.gitops.repo.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $repoRequests "memory" | default "{{ $.Values.gitops.repo.requests.memory }}" {{ "hub}}" }}
                     {{ "{{hub-" }} if $pgEnabled {{ "hub}}" }}
                     env:
                       - name: POLICY_GEN_ENABLE_HELM
@@ -239,7 +245,7 @@ spec:
                       - name: policy-generator
                         mountPath: /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator
                       {{ "{{hub-" }} end {{ "hub}}" }}
-                      {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default (printf "%v" (index $repo "cluster_ca_bundle" | default false))) "true" {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default (printf "%v" (ternary (index $repo "cluster_ca_bundle") {{ $.Values.gitops.repo.cluster_ca_bundle }} (hasKey $repo "cluster_ca_bundle")))) "true" {{ "hub}}" }}
                       - name: user-ca-bundle
                         mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
                         subPath: ca-bundle.crt
@@ -254,7 +260,7 @@ spec:
                       - name: cmp-tmp
                         emptyDir: {}
                       {{ "{{hub-" }} end {{ "hub}}" }}
-                      {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default (printf "%v" (index $repo "cluster_ca_bundle" | default false))) "true" {{ "hub}}" }}
+                      {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-cluster-ca-bundle" | default (printf "%v" (ternary (index $repo "cluster_ca_bundle") {{ $.Values.gitops.repo.cluster_ca_bundle }} (hasKey $repo "cluster_ca_bundle")))) "true" {{ "hub}}" }}
                       - name: user-ca-bundle
                         configMap:
                           name: user-ca-bundle
@@ -262,39 +268,39 @@ spec:
                   ha:
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $haLimits "cpu" | default "500m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $haLimits "memory" | default "256Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $haLimits "cpu" | default "{{ $.Values.gitops.ha.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $haLimits "memory" | default "{{ $.Values.gitops.ha.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $haRequests "cpu" | default "125m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $haRequests "memory" | default "128Mi" {{ "hub}}" }}
-                    enabled: {{ "{{hub" }} index $ha "enabled" | default "false" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $haRequests "cpu" | default "{{ $.Values.gitops.ha.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $haRequests "memory" | default "{{ $.Values.gitops.ha.requests.memory }}" {{ "hub}}" }}
+                    enabled: {{ "{{hub" }} ternary (index $ha "enabled") {{ $.Values.gitops.ha.enabled }} (hasKey $ha "enabled") {{ "hub}}" }}
                   redis:
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $redisLimits "cpu" | default "500m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $redisLimits "memory" | default "256Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $redisLimits "cpu" | default "{{ $.Values.gitops.redis.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $redisLimits "memory" | default "{{ $.Values.gitops.redis.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $redisRequests "cpu" | default "125m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $redisRequests "memory" | default "128Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $redisRequests "cpu" | default "{{ $.Values.gitops.redis.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $redisRequests "memory" | default "{{ $.Values.gitops.redis.requests.memory }}" {{ "hub}}" }}
                   controller:
                     processors:
-                      status: {{ "{{hub" }} index $controller "statusProcessors" | default 20 {{ "hub}}" }}
-                      operation: {{ "{{hub" }} index $controller "operationProcessors" | default 10 {{ "hub}}" }}
+                      status: {{ "{{hub" }} index $controller "statusProcessors" | default {{ $.Values.gitops.controller.statusProcessors }} {{ "hub}}" }}
+                      operation: {{ "{{hub" }} index $controller "operationProcessors" | default {{ $.Values.gitops.controller.operationProcessors }} {{ "hub}}" }}
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $controllerLimits "cpu" | default "2000m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $controllerLimits "memory" | default "4096Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $controllerLimits "cpu" | default "{{ $.Values.gitops.controller.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $controllerLimits "memory" | default "{{ $.Values.gitops.controller.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $controllerRequests "cpu" | default "250m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $controllerRequests "memory" | default "1024Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $controllerRequests "cpu" | default "{{ $.Values.gitops.controller.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $controllerRequests "memory" | default "{{ $.Values.gitops.controller.requests.memory }}" {{ "hub}}" }}
                   applicationSet:
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $applicationSetLimits "cpu" | default "2" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $applicationSetLimits "memory" | default "1Gi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $applicationSetLimits "cpu" | default "{{ $.Values.gitops.applicationSet.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $applicationSetLimits "memory" | default "{{ $.Values.gitops.applicationSet.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $applicationSetRequests "cpu" | default "250m" {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $applicationSetRequests "memory" | default "512Mi" {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $applicationSetRequests "cpu" | default "{{ $.Values.gitops.applicationSet.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $applicationSetRequests "memory" | default "{{ $.Values.gitops.applicationSet.requests.memory }}" {{ "hub}}" }}
                   resourceHealthChecks:
                     - group: policy.open-cluster-management.io
                       kind: Policy
