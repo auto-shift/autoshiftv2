@@ -84,6 +84,15 @@ spec:
       template:
         metadata:
           name: '{{ .Release.Name }}-{{"{{"}} .path.basename {{"}}"}}'
+          annotations:
+            # Ship only this policy's own directory plus the shared charts it renders, instead of the
+            # whole repository, to the PolicyGenerator CMP sidecar. Honoured only when the repo-server
+            # runs with --plugin-use-manifest-generate-paths (gitops.policyGenerator.useManifestGeneratePaths).
+            # components/ is required: a policy's operator-install kustomization sets
+            # chartHome: ../../../../../components/, and dropping it fails the render outright.
+            # This also gates refresh, so a path a policy reads but that is not listed here means that
+            # policy silently stops picking up changes.
+            argocd.argoproj.io/manifest-generate-paths: '.;/components'
         # project + destination are required by the CRD on each generator template (they don't merge
         # from the top-level template for schema validation); the rest merges from spec.template below.
         spec:

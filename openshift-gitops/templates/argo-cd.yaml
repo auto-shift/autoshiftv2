@@ -39,25 +39,30 @@ spec:
     provider: dex
   rbac:
     defaultPolicy: ''
-    # All cluster admins get Argo CD admin: system:cluster-admins is the built-in kubeadmin group;
-    # cluster-admins is the OpenShift group users are added to for cluster-admin. Grant both.
+    # Every line comes from gitops.rbac_policies. Nothing is granted implicitly: defaultPolicy is
+    # empty, so an empty list means no access apart from the built-in admin account.
     policy: |
-      g, system:cluster-admins, role:admin
-      g, cluster-admins, role:admin
-    {{- range .Values.gitops.rbac_policies}}
+    {{- range .Values.gitops.rbac_policies }}
       {{ . }}
     {{- end }}
     scopes: '[groups]'
   repo:
-    # Multiple repo-server replicas so PolicyGenerator CMP renders (kustomize --enable-helm + PG +
-    # nested Helm — CPU/memory heavy) spread across pods instead of thrashing a single one when the
-    # ApplicationSet fans out to all policies/* at once.
-    replicas: {{ ((.Values.gitops.repo).replicas) | default 3 }}
     {{- $caBundle := .Values.gitops.repo.cluster_ca_bundle }}
     {{- $pg := (.Values.gitops.policyGenerator | default dict) }}
     {{- /* Install the policy-generator CMP sidecar only when enabled (git/source bootstrap); OCI-only
            bootstrap sets false. Default true for backwards compatibility. */}}
     {{- $pgEnabled := ternary ($pg.enabled) true (hasKey $pg "enabled") }}
+    replicas: {{ ((.Values.gitops.repo).replicas) | default 1 }}
+    {{- if $pgEnabled }}
+    extraRepoCommandArgs:
+      {{- range ($pg.tarExclusions | default list) }}
+      - --plugin-tar-exclude
+      - {{ . | quote }}
+      {{- end }}
+      {{- if $pg.useManifestGeneratePaths }}
+      - --plugin-use-manifest-generate-paths
+      {{- end }}
+    {{- end }}
     {{- /* Declared at repo scope so they're visible in the initContainers/sidecar blocks below. */}}
     {{- $acmImage := ($pg).subscriptionImage }}
     {{- $argoImage := ($pg).sidecarImage }}
@@ -166,11 +171,11 @@ spec:
         # Without resources it competes unbounded and renders time out under fan-out load.
         resources:
           limits:
-            cpu: {{ (((.Values.gitops.policyGenerator).resources).limits).cpu | default "2000m" }}
-            memory: {{ (((.Values.gitops.policyGenerator).resources).limits).memory | default "2048Mi" }}
+            cpu: {{ ((.Values.gitops.policyGenerator).limits).cpu | default "2000m" }}
+            memory: {{ ((.Values.gitops.policyGenerator).limits).memory | default "2048Mi" }}
           requests:
-            cpu: {{ (((.Values.gitops.policyGenerator).resources).requests).cpu | default "500m" }}
-            memory: {{ (((.Values.gitops.policyGenerator).resources).requests).memory | default "512Mi" }}
+            cpu: {{ ((.Values.gitops.policyGenerator).requests).cpu | default "500m" }}
+            memory: {{ ((.Values.gitops.policyGenerator).requests).memory | default "512Mi" }}
     {{- end }}
     resources:
       limits:
