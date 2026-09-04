@@ -109,14 +109,23 @@ hubClusterSets:
               cpu: '100m'
               memory: '256Mi'
       # =======================================================================
-      # ACM Provisioning — Assisted Installer image catalog (read via rendered-config)
+      # Red Hat Advanced Cluster Management
       # =======================================================================
-      # Pin the Red Hat Enterprise Linux CoreOS images the hub downloads. Left unset, Red Hat
+      # versions and startingCSV pin the operator, overriding the acm-version label.
+      #
+      # provisioning configures the Assisted Installer image catalog. Left unset, Red Hat
       # Advanced Cluster Management offers its whole default catalog: every supported version for
-      # x86_64, arm64, s390x and ppc64le. Red Hat recommends 100Gi of image storage to hold that,
-      # which is the default here. Pin the architectures and versions you provision to run a
-      # smaller volume. This is the canonical path; a disconnected deployment can still set
-      # disconnected.osImages below, which is deprecated and read only when this list is absent.
+      # x86_64, arm64, s390x and ppc64le, which is why 100Gi of image storage is the recommended
+      # default. Pin the architectures and versions you provision to run a smaller volume. A
+      # disconnected deployment can still set disconnected.osImages below, which is deprecated
+      # and read only when this list is absent.
+      #
+      # observability.customMetrics collects metrics beyond the fixed default set, enabled by the
+      # acm-observability-custom-metrics label. Two delivery mechanisms are rendered from this one
+      # block and which is live depends on the collector the hub runs, so if a metric never
+      # arrives check the collector before suspecting this config. Cardinality cost, recording
+      # rules, virtual machine metrics and storage sizing: docs/observability-metrics.md
+      # =======================================================================
       acm:
         # Pin to specific CSV(s). Omit to track the channel.
         # versions:
@@ -132,51 +141,14 @@ hubClusterSets:
               version: '4.22.0'                    # Red Hat Enterprise Linux CoreOS version string
               cpuArchitecture: x86_64              # x86_64, arm64, s390x or ppc64le
               url: 'https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.22/4.22.0/rhcos-4.22.0-x86_64-live.x86_64.iso'
-        # =======================================================================
-        # =======================================================================
-        # Red Hat Advanced Cluster Management
-        # versions and startingCSV pin the operator, overriding the acm-version label.
-        #
-        # observability.customMetrics collects metrics beyond the fixed default set. Enable
-        # it with the acm-observability-custom-metrics label. The base MCO lifecycle
-        # (namespace, pull secret, bucket, the MCO CR) is owned by policy-acm-observability
-        # and needs no config here.
-        #
-        # TWO delivery mechanisms are rendered from this one block, because which one is
-        # live depends on the collector the hub runs:
-        #   classic MultiCluster Observability -> observability-metrics-custom-allowlist ConfigMap
-        #   multicluster observability add-on  -> ScrapeConfig federated by the PrometheusAgent,
-        #                                         referenced from the ClusterManagementAddOn
-        # The add-on REPLACES the legacy collector, so where it is on the ConfigMap is
-        # written and read by nothing. If a metric never arrives, check which collector the
-        # hub runs before suspecting this config.
-        #
-        # names become {__name__="<metric>"} federation selectors; matches pass through
-        # verbatim so a label selector can be written directly. The classic path also takes
-        # renames, recording_rules and collect_rules, which are Red Hat Advanced Cluster
-        # Management's own schema. Older docs call recording_rules "rules"; the operator
-        # uses recording_rules.
-        #
-        # recording_rules work on BOTH paths: the ConfigMap on the classic path, a PrometheusRule
-        # on the add-on. Each record: name is added to the ScrapeConfig selectors automatically.
-        # A recording rule aggregates ON the managed cluster before remote-write, which is the only
-        # real control on cardinality for pod-scoped and VM metrics.
-        #
-        # Both objects are written mustonlyhave, so removing a metric here stops its
-        # collection and hand edits are reverted. The add-on reference is appended to the
-        # live ClusterManagementAddOn and preserves anything not named autoshift-custom-*,
-        # but a removed tier leaves a dangling reference to clear by hand.
-        #
-        # In a multitiered rollup a metric is only forwarded if it is allowed on the hub
-        # whose collectors gather it: set this on every participating hub clusterset.
-        # =======================================================================
         observability:
           customMetrics:
             platform:
-              # node exporter metric that is NOT in the default allowlist, so enabling it
-              # is observable. node_memory_MemTotal_bytes would not be: it ships by default.
+              # not in the default allowlist, so turning it on is observable
               names:
                 - node_vmstat_pgfault
+              # aggregates on the managed cluster before remote-write; the record: name is
+              # added to the ScrapeConfig selectors automatically
               recording_rules:
                 - record: apiserver_request_duration_seconds:histogram_quantile_90
                   expr: 'histogram_quantile(0.90, sum(rate(apiserver_request_duration_seconds_bucket{job="apiserver",verb!="WATCH"}[5m])) by (verb,le))'
