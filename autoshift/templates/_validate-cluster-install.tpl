@@ -116,7 +116,7 @@ Returns newline-separated error strings (empty string = no errors).
 {{- define "autoshift.validate-workload-partitioning" -}}
   {{- $path := .path -}}
   {{- $wp := .config -}}
-  {{- $validWpKeys := list "reservedCpus" "isolatedCpus" "nodeSelector" "numaTopology" "realTimeKernel" "globallyDisableIrqLoadBalancing" "hugepages" -}}
+  {{- $validWpKeys := list "performanceProfile" "reservedCpus" "isolatedCpus" "nodeSelector" "machineConfigPoolSelector" "numaTopology" "realTimeKernel" "globallyDisableIrqLoadBalancing" "hugepages" -}}
   {{- $validWpHugepagesKeys := list "defaultSize" "pages" -}}
   {{- $validWpPageKeys := list "size" "count" "node" -}}
   {{- $validNumaTopologies := list "single-numa-node" "best-effort" "restricted" -}}
@@ -125,11 +125,14 @@ Returns newline-separated error strings (empty string = no errors).
 {{ printf "%s: workloadPartitioning.%s is not a recognized field (valid: %s)" $path $key (join ", " $validWpKeys) }}
     {{- end -}}
   {{- end -}}
+  {{- $hasPerformanceProfile := (index $wp "performanceProfile" | default dict) -}}
+  {{- if not (gt (len (keys $hasPerformanceProfile)) 0) -}}
   {{- if and (index $wp "reservedCpus") (not (index $wp "isolatedCpus")) }}
 {{ printf "%s: workloadPartitioning.isolatedCpus is required when reservedCpus is set" $path }}
   {{- end -}}
   {{- if and (index $wp "isolatedCpus") (not (index $wp "reservedCpus")) }}
 {{ printf "%s: workloadPartitioning.reservedCpus is required when isolatedCpus is set" $path }}
+  {{- end -}}
   {{- end -}}
   {{- $wpNuma := (index $wp "numaTopology" | default "") -}}
   {{- if and (not (empty $wpNuma)) (not (has (toString $wpNuma) $validNumaTopologies)) }}
