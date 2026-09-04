@@ -43,3 +43,48 @@ ACM is a **bootstrap operator**: the root-level `advanced-cluster-management/` H
 
 Standard: `config.acm.versions` (and optional `config.acm.startingCSV`) pins the permitted CSV(s), else
 the `autoshift.io/acm-version` label is used — the dual-mode block lives in the operator-install caller.
+
+## Custom metrics
+
+MultiCluster Observability collects a fixed default set of metrics. To collect more, enable
+`autoshift.io/acm-observability-custom-metrics` and set `config.acm.observability.customMetrics`:
+
+```yaml
+config:
+  acm:
+    observability:
+      customMetrics:
+        platform:
+          names:
+            - node_vmstat_pgfault
+        userWorkload:
+          names:
+            - my_app_requests_total
+```
+
+There are **two** delivery mechanisms and which one is live depends on the collector:
+
+| Collector | Mechanism | Policy |
+|---|---|---|
+| Classic MultiCluster Observability | `observability-metrics-custom-allowlist` ConfigMap | `policy-acm-custom-metrics` |
+| Multicluster observability add-on (MCOA) | `ScrapeConfig` federated by the `PrometheusAgent`, referenced from the `ClusterManagementAddOn` | `policy-acm-custom-metrics` and `policy-acm-custom-metrics-addon` |
+
+Both are emitted from the same config, so the same values work either way and the inactive one is
+inert. MCOA replaces the legacy collector, so on an MCOA hub the ConfigMap is applied and read by
+nothing: if a metric does not arrive, check which collector the hub runs before debugging the
+config.
+
+`names` become `{__name__="<metric>"}` federation selectors; `matches` pass through verbatim so a
+label selector can be written directly.
+
+Two limits worth knowing:
+
+- `recording_rules` work on the classic path only. MCOA has no `ScrapeConfig` equivalent; those need
+  a `PrometheusRule`, which this policy does not create.
+- `policy-acm-custom-metrics-addon` reads the live `ClusterManagementAddOn`, appends its references
+  and writes the object back whole. It preserves anything not named `autoshift-custom-*`, so MCOA's
+  own configs survive. Removing a metric tier from config removes its `ScrapeConfig` contents, but
+  the dangling reference in the add-on has to be cleared by hand.
+
+In a multitiered rollup a metric is only forwarded if it is allowed on the hub whose collectors
+gather it, so set this on every participating hub cluster set, not only the top one.

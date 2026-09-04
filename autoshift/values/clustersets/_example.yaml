@@ -650,21 +650,35 @@ hubClusterSets:
       # Red Hat Advanced Cluster Management
       # versions and startingCSV pin the operator, overriding the acm-version label.
       #
-      # observability.customMetrics renders the observability-metrics-custom-allowlist
-      # ConfigMap that MultiCluster Observability reads alongside its own default
-      # allowlist. Base MCO lifecycle (namespace, pull secret, bucket, the MCO CR) is
-      # owned by policy-acm-observability and needs no config here.
+      # observability.customMetrics collects metrics beyond the fixed default set. Enable
+      # it with the acm-observability-custom-metrics label. The base MCO lifecycle
+      # (namespace, pull secret, bucket, the MCO CR) is owned by policy-acm-observability
+      # and needs no config here.
       #
-      # Keys under platform and userWorkload are Red Hat Advanced Cluster Management's
-      # own schema and pass through verbatim: names, matches, renames, recording_rules
-      # and collect_rules. platform becomes metrics_list.yaml, userWorkload becomes
-      # uwl_metrics_list.yaml. Older documentation calls recording_rules "rules"; the
-      # operator uses recording_rules.
+      # TWO delivery mechanisms are rendered from this one block, because which one is
+      # live depends on the collector the hub runs:
+      #   classic MultiCluster Observability -> observability-metrics-custom-allowlist ConfigMap
+      #   multicluster observability add-on  -> ScrapeConfig federated by the PrometheusAgent,
+      #                                         referenced from the ClusterManagementAddOn
+      # The add-on REPLACES the legacy collector, so where it is on the ConfigMap is
+      # written and read by nothing. If a metric never arrives, check which collector the
+      # hub runs before suspecting this config.
       #
-      # The ConfigMap is written mustonlyhave, so removing a metric here stops its
-      # collection, and hand edits to that ConfigMap are reverted.
+      # names become {__name__="<metric>"} federation selectors; matches pass through
+      # verbatim so a label selector can be written directly. The classic path also takes
+      # renames, recording_rules and collect_rules, which are Red Hat Advanced Cluster
+      # Management's own schema. Older docs call recording_rules "rules"; the operator
+      # uses recording_rules.
       #
-      # In a multi-tier rollup a metric is only forwarded if it is allowed on the hub
+      # recording_rules apply to the CLASSIC path only. The add-on has no ScrapeConfig
+      # equivalent for them; those need a PrometheusRule, which this policy does not create.
+      #
+      # Both objects are written mustonlyhave, so removing a metric here stops its
+      # collection and hand edits are reverted. The add-on reference is appended to the
+      # live ClusterManagementAddOn and preserves anything not named autoshift-custom-*,
+      # but a removed tier leaves a dangling reference to clear by hand.
+      #
+      # In a multitiered rollup a metric is only forwarded if it is allowed on the hub
       # whose collectors gather it: set this on every participating hub clusterset.
       # =======================================================================
       acm:
@@ -674,8 +688,10 @@ hubClusterSets:
         observability:
           customMetrics:
             platform:
+              # node exporter metric that is NOT in the default allowlist, so enabling it
+              # is observable. node_memory_MemTotal_bytes would not be: it ships by default.
               names:
-                - node_memory_MemTotal_bytes
+                - node_vmstat_pgfault
               recording_rules:
                 - record: apiserver_request_duration_seconds:histogram_quantile_90
                   expr: 'histogram_quantile(0.90, sum(rate(apiserver_request_duration_seconds_bucket{job="apiserver",verb!="WATCH"}[5m])) by (verb,le))'
