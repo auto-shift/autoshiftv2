@@ -15,6 +15,9 @@
 #
 # Depends on policy-acm-custom-metrics: the product docs warn that referencing a ScrapeConfig
 # before it exists leaves the add-on in a Deploying state.
+#
+# Mind the API groups, they differ per resource and a reference with the wrong group is ignored
+# without any error: ScrapeConfig is monitoring.rhobs, PrometheusRule is monitoring.coreos.com.
 object-templates-raw: |
   {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
   {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
@@ -23,8 +26,11 @@ object-templates-raw: |
   {{hub- $refs := list hub}}
   {{hub- range $tier := (list "platform" "userWorkload") hub}}
   {{hub- $t := (dig $tier dict $custom) hub}}
-  {{hub- if or (dig "names" (list) $t) (dig "matches" (list) $t) hub}}
+  {{hub- if or (dig "names" (list) $t) (dig "matches" (list) $t) (dig "recording_rules" (list) $t) hub}}
   {{hub- $refs = append $refs (dict "group" "monitoring.rhobs" "resource" "scrapeconfigs" "name" (printf "%s%s-metrics" $ours (lower $tier)) "namespace" "open-cluster-management-observability") hub}}
+  {{hub- end hub}}
+  {{hub- if (dig "recording_rules" (list) $t) hub}}
+  {{hub- $refs = append $refs (dict "group" "monitoring.coreos.com" "resource" "prometheusrules" "name" (printf "%s%s-rules" $ours (lower $tier)) "namespace" "open-cluster-management-observability") hub}}
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- $live := (lookup "addon.open-cluster-management.io/v1alpha1" "ClusterManagementAddOn" "" "multicluster-observability-addon") | default dict hub}}

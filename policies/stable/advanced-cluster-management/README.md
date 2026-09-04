@@ -46,6 +46,9 @@ the `autoshift.io/acm-version` label is used — the dual-mode block lives in th
 
 ## Custom metrics
 
+Full guidance, including cardinality cost and storage sizing, is in
+[docs/observability-metrics.md](../../../docs/observability-metrics.md).
+
 MultiCluster Observability collects a fixed default set of metrics. To collect more, enable
 `autoshift.io/acm-observability-custom-metrics` and set `config.acm.observability.customMetrics`:
 
@@ -79,8 +82,10 @@ label selector can be written directly.
 
 Two limits worth knowing:
 
-- `recording_rules` work on the classic path only. MCOA has no `ScrapeConfig` equivalent; those need
-  a `PrometheusRule`, which this policy does not create.
+- `recording_rules` work on both paths: the config map on the classic path, a `PrometheusRule` on
+  MCOA. Each `record` name is added to the `ScrapeConfig` selectors automatically. Note the API
+  groups differ and a wrong one is ignored silently: `ScrapeConfig` is `monitoring.rhobs`,
+  `PrometheusRule` is `monitoring.coreos.com`.
 - `policy-acm-custom-metrics-addon` reads the live `ClusterManagementAddOn`, appends its references
   and writes the object back whole. It preserves anything not named `autoshift-custom-*`, so MCOA's
   own configs survive. Removing a metric tier from config removes its `ScrapeConfig` contents, but

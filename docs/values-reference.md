@@ -214,6 +214,9 @@ created for each replica of the image service. 2GiB per `OSImage` entry is requi
 > **Note:** Increased concurrency/QPS increases CPU and memory on the controller pods, the Kubernetes API server, and the OpenShift API server. Concurrency/QPS/burst are set through `ManagedClusterAddOn` annotations per Red Hat Advanced Cluster Management 2.17 docs. Resource limits are set through `AddOnDeploymentConfig`.
 
 
+For choosing metrics, cardinality cost, recording rules and storage sizing, see
+[Observability metrics](observability-metrics.md).
+
 **Config block** (`config.acm`):
 
 | Field | Type | Default | Description |
@@ -238,8 +241,11 @@ Both are rendered from the same config, so the same values work either way and t
 no effect. The add-on replaces the legacy collector, so where it is enabled the config map is
 written and read by nothing. If a metric does not arrive, check which collector the hub runs first.
 
-`recording_rules` apply to the classic path only. The add-on has no `ScrapeConfig` equivalent, so
-those require a `PrometheusRule`, which this policy does not create.
+`recording_rules` work on both paths. On the classic path they go into the config map; with the
+add-on they become a `PrometheusRule` on the managed cluster, and each `record` name is added to the
+`ScrapeConfig` selectors automatically so the computed metric is federated without naming it twice.
+A recording rule aggregates on the managed cluster before anything crosses the network, which is the
+only effective control on cardinality for pod-scoped and virtual machine metrics.
 
 In a multitiered rollup a metric is only forwarded if it is allowed on the hub whose collectors
 gather it. Set this on every participating hub cluster set, not only the top one.
