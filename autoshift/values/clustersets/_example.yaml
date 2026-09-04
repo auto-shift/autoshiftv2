@@ -109,6 +109,53 @@ hubClusterSets:
               cpu: '100m'
               memory: '256Mi'
       # =======================================================================
+      # Red Hat Advanced Cluster Management
+      # =======================================================================
+      # versions and startingCSV pin the operator, overriding the acm-version label.
+      #
+      # provisioning configures the Assisted Installer image catalog. Left unset, Red Hat
+      # Advanced Cluster Management offers its whole default catalog: every supported version for
+      # x86_64, arm64, s390x and ppc64le, which is why 100Gi of image storage is the recommended
+      # default. Pin the architectures and versions you provision to run a smaller volume. A
+      # disconnected deployment can still set disconnected.osImages below, which is deprecated
+      # and read only when this list is absent.
+      #
+      # observability.customMetrics collects metrics beyond the fixed default set, enabled by the
+      # acm-observability-custom-metrics label. Two delivery mechanisms are rendered from this one
+      # block and which is live depends on the collector the hub runs, so if a metric never
+      # arrives check the collector before suspecting this config. Cardinality cost, recording
+      # rules, virtual machine metrics and storage sizing: docs/observability-metrics.md
+      # =======================================================================
+      acm:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'advanced-cluster-management.vX.Y.Z'
+        # startingCSV: 'advanced-cluster-management.vX.Y.Z'
+        provisioning:
+          storageClass: ''                       # unset -> the cluster default StorageClass
+          databaseSize: 10Gi                     # Min 10GiB recommended
+          filesystemStorageSize: 100Gi           # Min 100GiB recommended
+          imageStorageSize: 100Gi                # Red Hat recommended default; less if osImages is pinned
+          osImages:
+            - openshiftVersion: '4.22'             # Major.Minor
+              version: '4.22.0'                    # Red Hat Enterprise Linux CoreOS version string
+              cpuArchitecture: x86_64              # x86_64, arm64, s390x or ppc64le
+              url: 'https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.22/4.22.0/rhcos-4.22.0-x86_64-live.x86_64.iso'
+        observability:
+          customMetrics:
+            platform:
+              # not in the default allowlist, so turning it on is observable
+              names:
+                - node_vmstat_pgfault
+              # aggregates on the managed cluster before remote-write; the record: name is
+              # added to the ScrapeConfig selectors automatically
+              recording_rules:
+                - record: apiserver_request_duration_seconds:histogram_quantile_90
+                  expr: 'histogram_quantile(0.90, sum(rate(apiserver_request_duration_seconds_bucket{job="apiserver",verb!="WATCH"}[5m])) by (verb,le))'
+            userWorkload:
+              names:
+                - sample_metrics
+      # =======================================================================
       # Managed AutoShift — nested deployments onto the hubs this hub governs
       # =======================================================================
       # One entry per AutoShift deployment to create on each MANAGED hub selected by the
@@ -185,12 +232,20 @@ hubClusterSets:
       # GitLab (values with / or spaces that can't be labels)
       # =======================================================================
       gitlab:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'gitlab-operator-kubernetes.vX.Y.Z'
+        # startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
         dbBackupSchedule: '0 2 * * *'
         dbBackupRetention: '30d'
       # =======================================================================
       # JFrog Artifactory
       # =======================================================================
       jfrog:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'openshiftartifactoryha-operator.vX.Y.Z'
+        # startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
         dbBackupSchedule: '0 3 * * *'
         dbBackupRetention: '30d'
       # =======================================================================
@@ -298,13 +353,6 @@ hubClusterSets:
       #   versions:
       #     - 'ansible-automation-platform-operator.vX.Y.Z'
       #   startingCSV: 'ansible-automation-platform-operator.vX.Y.Z'
-      # acm: declared in full in the Red Hat Advanced Cluster Management block below,
-      #      which carries observability settings alongside versions/startingCSV.
-      #      Keep it to ONE acm: key - two would collide in this mapping.
-      # acs:
-      #   versions:
-      #     - 'rhacs-operator.vX.Y.Z'
-      #   startingCSV: 'rhacs-operator.vX.Y.Z'
       # cert-manager:
       #   versions:
       #     - 'openshift-cert-manager-operator.vX.Y.Z'
@@ -333,22 +381,10 @@ hubClusterSets:
       #   versions:
       #     - 'openshift-external-secrets-operator.vX.Y.Z'
       #   startingCSV: 'openshift-external-secrets-operator.vX.Y.Z'
-      # gitlab:
-      #   versions:
-      #     - 'gitlab-operator-kubernetes.vX.Y.Z'
-      #   startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
       # gitlab-runner:
       #   versions:
       #     - 'gitlab-runner-operator.vX.Y.Z'
       #   startingCSV: 'gitlab-runner-operator.vX.Y.Z'
-      # gitops:
-      #   versions:
-      #     - 'openshift-gitops-operator.vX.Y.Z'
-      #   startingCSV: 'openshift-gitops-operator.vX.Y.Z'
-      # jfrog:
-      #   versions:
-      #     - 'openshiftartifactoryha-operator.vX.Y.Z'
-      #   startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
       # kiali:
       #   versions:
       #     - 'kiali-ossm.vX.Y.Z'
@@ -413,10 +449,6 @@ hubClusterSets:
       #   versions:
       #     - 'tempo-product.vX.Y.Z'
       #   startingCSV: 'tempo-product.vX.Y.Z'
-      # trident:
-      #   versions:
-      #     - 'trident-operator.vX.Y.Z'
-      #   startingCSV: 'trident-operator.vX.Y.Z'
       # virt:
       #   versions:
       #     - 'kubevirt-hyperconverged.vX.Y.Z'
@@ -488,6 +520,10 @@ hubClusterSets:
           search:
             - 'example.com'
       trident:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'trident-operator.vX.Y.Z'
+        # startingCSV: 'trident-operator.vX.Y.Z'
         storage:
           - backendName: "trident-backend-name"
             secretName: "openshift-secret"
@@ -507,6 +543,10 @@ hubClusterSets:
       # label. All fields are optional; omitted values fall back to defaults.
       # =======================================================================
       gitops:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'openshift-gitops-operator.vX.Y.Z'
+        # startingCSV: 'openshift-gitops-operator.vX.Y.Z'
         # Does THIS hub render policies via the policy-generator CMP? Overrides the fleet-wide
         # policyGenerator in global.yaml for this hub's Argo CD. GIT/source hubs MUST set true (it
         # installs the CMP sidecar in the infra ArgoCD repo-server, without which PolicyGenerator
@@ -611,6 +651,10 @@ hubClusterSets:
       # Advanced Cluster Security (Day-2 settings; enable the stack with the acs label)
       # =======================================================================
       acs:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'rhacs-operator.vX.Y.Z'
+        # startingCSV: 'rhacs-operator.vX.Y.Z'
         egressConnectivity: Online          # Online | Offline (disconnected)
         scannerV4: Enabled                  # Enabled | Disabled | Default (SecuredCluster maps Enabled -> AutoSense)
         monitoring: true                    # OpenShift monitoring integration
@@ -645,62 +689,6 @@ hubClusterSets:
         # production. Pinning one tag across a fleet spanning minors deploys the wrong bundle to
         # all but one of them.
         image: ''
-      # =======================================================================
-      # =======================================================================
-      # Red Hat Advanced Cluster Management
-      # versions and startingCSV pin the operator, overriding the acm-version label.
-      #
-      # observability.customMetrics collects metrics beyond the fixed default set. Enable
-      # it with the acm-observability-custom-metrics label. The base MCO lifecycle
-      # (namespace, pull secret, bucket, the MCO CR) is owned by policy-acm-observability
-      # and needs no config here.
-      #
-      # TWO delivery mechanisms are rendered from this one block, because which one is
-      # live depends on the collector the hub runs:
-      #   classic MultiCluster Observability -> observability-metrics-custom-allowlist ConfigMap
-      #   multicluster observability add-on  -> ScrapeConfig federated by the PrometheusAgent,
-      #                                         referenced from the ClusterManagementAddOn
-      # The add-on REPLACES the legacy collector, so where it is on the ConfigMap is
-      # written and read by nothing. If a metric never arrives, check which collector the
-      # hub runs before suspecting this config.
-      #
-      # names become {__name__="<metric>"} federation selectors; matches pass through
-      # verbatim so a label selector can be written directly. The classic path also takes
-      # renames, recording_rules and collect_rules, which are Red Hat Advanced Cluster
-      # Management's own schema. Older docs call recording_rules "rules"; the operator
-      # uses recording_rules.
-      #
-      # recording_rules work on BOTH paths: the ConfigMap on the classic path, a PrometheusRule
-      # on the add-on. Each record: name is added to the ScrapeConfig selectors automatically.
-      # A recording rule aggregates ON the managed cluster before remote-write, which is the only
-      # real control on cardinality for pod-scoped and VM metrics.
-      #
-      # Both objects are written mustonlyhave, so removing a metric here stops its
-      # collection and hand edits are reverted. The add-on reference is appended to the
-      # live ClusterManagementAddOn and preserves anything not named autoshift-custom-*,
-      # but a removed tier leaves a dangling reference to clear by hand.
-      #
-      # In a multitiered rollup a metric is only forwarded if it is allowed on the hub
-      # whose collectors gather it: set this on every participating hub clusterset.
-      # =======================================================================
-      acm:
-        versions:
-          - 'advanced-cluster-management.vX.Y.Z'
-        startingCSV: 'advanced-cluster-management.vX.Y.Z'
-        observability:
-          customMetrics:
-            platform:
-              # node exporter metric that is NOT in the default allowlist, so enabling it
-              # is observable. node_memory_MemTotal_bytes would not be: it ships by default.
-              names:
-                - node_vmstat_pgfault
-              recording_rules:
-                - record: apiserver_request_duration_seconds:histogram_quantile_90
-                  expr: 'histogram_quantile(0.90, sum(rate(apiserver_request_duration_seconds_bucket{job="apiserver",verb!="WATCH"}[5m])) by (verb,le))'
-            userWorkload:
-              names:
-                - sample_metrics
-
       # Global Observability (three-tier metrics rollup: global hub -> intermediate
       # hubs -> workload clusters). Enable with the global-observability label below;
       # placement is driven by that label + self-managed ('true' = global hub,
@@ -798,10 +786,12 @@ hubClusterSets:
       # Cluster provisioning (hive-based cluster install flow)
       cluster-install: 'false'                     # hub only — enables the cluster-install policy set
       acm-enable-provisioning: 'false'            # hub only
-      acm-provisioning-storage-class: ''             # StorageClass name
-      acm-provisioning-database-size: 10Gi           # Min 10GiB recommended
-      acm-provisioning-filesystem-storage-size: 100Gi # Min 100GiB recommended
-      acm-provisioning-image-storage-size: 50Gi      # 2GiB per OSImage entry
+      # DEPRECATED: superseded by config.acm.provisioning.*, which wins when set.
+      # Still honoured so existing deployments keep working; move to config and remove these.
+      acm-provisioning-storage-class: ''             # -> config.acm.provisioning.storageClass
+      acm-provisioning-database-size: 10Gi           # -> config.acm.provisioning.databaseSize
+      acm-provisioning-filesystem-storage-size: 100Gi # -> config.acm.provisioning.filesystemStorageSize
+      acm-provisioning-image-storage-size: 100Gi     # -> config.acm.provisioning.imageStorageSize
       # ACM Addon Tuning (for scale)
       acm-addon-tuning: 'true'
       # config-policy-controller tuning (annotations on ManagedClusterAddOn)

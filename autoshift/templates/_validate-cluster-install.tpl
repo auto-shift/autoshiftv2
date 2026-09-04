@@ -3,6 +3,31 @@ Validate disconnected config block.
 Called with dict "path" (string prefix for errors) "config" (the disconnected dict).
 Returns newline-separated error strings (empty string = no errors).
 */}}
+{{/*
+Validate an osImages list. Called with dict "path" (full field prefix for errors) "images" (list).
+Shared so config.acm.provisioning.osImages and the deprecated disconnected.osImages agree.
+*/}}
+{{- define "autoshift.validate-os-images" -}}
+  {{- $path := .path -}}
+  {{- $validOsImageKeys := list "openshiftVersion" "version" "cpuArchitecture" "url" "rootFSUrl" -}}
+  {{- range $idx, $img := (.images | default list) -}}
+    {{- range $key, $_ := $img -}}
+      {{- if not (has $key $validOsImageKeys) }}
+{{ printf "%s[%d].%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validOsImageKeys) }}
+      {{- end -}}
+    {{- end -}}
+    {{- if not (index $img "openshiftVersion") }}
+{{ printf "%s[%d].openshiftVersion is required" $path $idx }}
+    {{- end -}}
+    {{- if not (index $img "version") }}
+{{ printf "%s[%d].version is required (RHCOS version string)" $path $idx }}
+    {{- end -}}
+    {{- if not (index $img "url") }}
+{{ printf "%s[%d].url is required (path to RHCOS live ISO)" $path $idx }}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
 {{- define "autoshift.validate-disconnected" -}}
   {{- $path := .path -}}
   {{- $disconnected := .config -}}
@@ -11,7 +36,6 @@ Returns newline-separated error strings (empty string = no errors).
   {{- $validMirrorEntryKeys := list "source" "mirror" -}}
   {{- $validCaRefKeys := list "name" "key" "namespace" -}}
   {{- $validCatalogKeys := list "source" "imagePath" "tag" "publisher" "displayName" "updateInterval" -}}
-  {{- $validOsImageKeys := list "openshiftVersion" "version" "cpuArchitecture" "url" "rootFSUrl" -}}
   {{- range $key, $_ := $disconnected -}}
     {{- if not (has $key $validDisconnectedKeys) }}
 {{ printf "%s: disconnected.%s is not a recognized field (valid: %s)" $path $key (join ", " $validDisconnectedKeys) }}
@@ -90,22 +114,7 @@ Returns newline-separated error strings (empty string = no errors).
 {{ printf "%s: disconnected.catalogs[%d].tag is required" $path $idx }}
     {{- end -}}
   {{- end -}}
-  {{- range $idx, $img := ($disconnected.osImages | default list) -}}
-    {{- range $key, $_ := $img -}}
-      {{- if not (has $key $validOsImageKeys) }}
-{{ printf "%s: disconnected.osImages[%d].%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validOsImageKeys) }}
-      {{- end -}}
-    {{- end -}}
-    {{- if not (index $img "openshiftVersion") }}
-{{ printf "%s: disconnected.osImages[%d].openshiftVersion is required" $path $idx }}
-    {{- end -}}
-    {{- if not (index $img "version") }}
-{{ printf "%s: disconnected.osImages[%d].version is required (RHCOS version string)" $path $idx }}
-    {{- end -}}
-    {{- if not (index $img "url") }}
-{{ printf "%s: disconnected.osImages[%d].url is required (path to RHCOS live ISO)" $path $idx }}
-    {{- end -}}
-  {{- end -}}
+  {{- include "autoshift.validate-os-images" (dict "path" (printf "%s: disconnected.osImages" $path) "images" ($disconnected.osImages | default list)) -}}
 {{- end -}}
 
 {{/*
@@ -214,6 +223,17 @@ Collects all errors and reports them together.
       {{- range $key, $_ := $host }}
         {{- if not (has $key $validHostKeys) }}
           {{- $errors = append $errors (printf "%s host %s: %s is not a recognized field (valid: %s)" $path $hostname $key (join ", " $validHostKeys)) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{/* Validate acm.provisioning.osImages, the canonical path */}}
+    {{- $acmOsImages := (dig "config" "acm" "provisioning" "osImages" (list) $cluster) }}
+    {{- if $acmOsImages }}
+      {{- $acmErrStr := (include "autoshift.validate-os-images" (dict "path" (printf "%s: acm.provisioning.osImages" $path) "images" $acmOsImages)) | trim }}
+      {{- if $acmErrStr }}
+        {{- range splitList "\n" $acmErrStr }}
+          {{- $errors = append $errors . }}
         {{- end }}
       {{- end }}
     {{- end }}
@@ -752,6 +772,17 @@ Collects all errors and reports them together.
   {{- $csConfig := ($cs.config | default dict) }}
   {{- if not (empty $csConfig) }}
     {{- $errors := list }}
+
+    {{/* Validate acm.provisioning.osImages, the canonical path */}}
+    {{- $csAcmOsImages := (dig "acm" "provisioning" "osImages" (list) $csConfig) }}
+    {{- if $csAcmOsImages }}
+      {{- $csAcmErrStr := (include "autoshift.validate-os-images" (dict "path" (printf "%s: acm.provisioning.osImages" $csPath) "images" $csAcmOsImages)) | trim }}
+      {{- if $csAcmErrStr }}
+        {{- range splitList "\n" $csAcmErrStr }}
+          {{- $errors = append $errors . }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
 
     {{/* Validate disconnected config via shared template */}}
     {{- $csDisconnected := ($csConfig.disconnected | default dict) }}
