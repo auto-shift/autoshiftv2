@@ -298,10 +298,9 @@ hubClusterSets:
       #   versions:
       #     - 'ansible-automation-platform-operator.vX.Y.Z'
       #   startingCSV: 'ansible-automation-platform-operator.vX.Y.Z'
-      # acm:
-      #   versions:
-      #     - 'advanced-cluster-management.vX.Y.Z'
-      #   startingCSV: 'advanced-cluster-management.vX.Y.Z'
+      # acm: declared in full in the Red Hat Advanced Cluster Management block below,
+      #      which carries observability settings alongside versions/startingCSV.
+      #      Keep it to ONE acm: key - two would collide in this mapping.
       # acs:
       #   versions:
       #     - 'rhacs-operator.vX.Y.Z'
@@ -720,6 +719,96 @@ hubClusterSets:
         # production. Pinning one tag across a fleet spanning minors deploys the wrong bundle to
         # all but one of them.
         image: ''
+      # =======================================================================
+      # =======================================================================
+      # Red Hat Advanced Cluster Management
+      # versions and startingCSV pin the operator, overriding the acm-version label.
+      #
+      # observability.customMetrics collects metrics beyond the fixed default set. Enable
+      # it with the acm-observability-custom-metrics label. The base MCO lifecycle
+      # (namespace, pull secret, bucket, the MCO CR) is owned by policy-acm-observability
+      # and needs no config here.
+      #
+      # TWO delivery mechanisms are rendered from this one block, because which one is
+      # live depends on the collector the hub runs:
+      #   classic MultiCluster Observability -> observability-metrics-custom-allowlist ConfigMap
+      #   multicluster observability add-on  -> ScrapeConfig federated by the PrometheusAgent,
+      #                                         referenced from the ClusterManagementAddOn
+      # The add-on REPLACES the legacy collector, so where it is on the ConfigMap is
+      # written and read by nothing. If a metric never arrives, check which collector the
+      # hub runs before suspecting this config.
+      #
+      # names become {__name__="<metric>"} federation selectors; matches pass through
+      # verbatim so a label selector can be written directly. The classic path also takes
+      # renames, recording_rules and collect_rules, which are Red Hat Advanced Cluster
+      # Management's own schema. Older docs call recording_rules "rules"; the operator
+      # uses recording_rules.
+      #
+      # recording_rules work on BOTH paths: the ConfigMap on the classic path, a PrometheusRule
+      # on the add-on. Each record: name is added to the ScrapeConfig selectors automatically.
+      # A recording rule aggregates ON the managed cluster before remote-write, which is the only
+      # real control on cardinality for pod-scoped and VM metrics.
+      #
+      # Both objects are written mustonlyhave, so removing a metric here stops its
+      # collection and hand edits are reverted. The add-on reference is appended to the
+      # live ClusterManagementAddOn and preserves anything not named autoshift-custom-*,
+      # but a removed tier leaves a dangling reference to clear by hand.
+      #
+      # In a multitiered rollup a metric is only forwarded if it is allowed on the hub
+      # whose collectors gather it: set this on every participating hub clusterset.
+      # =======================================================================
+      acm:
+        versions:
+          - 'advanced-cluster-management.vX.Y.Z'
+        startingCSV: 'advanced-cluster-management.vX.Y.Z'
+        observability:
+          customMetrics:
+            platform:
+              # node exporter metric that is NOT in the default allowlist, so enabling it
+              # is observable. node_memory_MemTotal_bytes would not be: it ships by default.
+              names:
+                - node_vmstat_pgfault
+              recording_rules:
+                - record: apiserver_request_duration_seconds:histogram_quantile_90
+                  expr: 'histogram_quantile(0.90, sum(rate(apiserver_request_duration_seconds_bucket{job="apiserver",verb!="WATCH"}[5m])) by (verb,le))'
+            userWorkload:
+              names:
+                - sample_metrics
+
+      # Global Observability (three-tier metrics rollup: global hub -> intermediate
+      # hubs -> workload clusters). Enable with the global-observability label below;
+      # placement is driven by that label + self-managed ('true' = global hub,
+      # 'false' = intermediate hub). Base MCO config (retention, storage, thanos)
+      # stays under acm.observability / policy-acm-observability. Do NOT set
+      # acm.observability.enableMCOA when using these capability toggles.
+      # Prereqs on every participating hub: acm-observability: 'true', coo: 'true'.
+      # =======================================================================
+      globalObservability:
+        # MCOA capability toggles patched onto the MultiClusterObservability CR
+        capabilities:
+          platformAnalytics: 'true'         # incident detection + right-sizing
+          platformLogs: 'true'
+          platformMetrics: 'true'
+          userWorkloadLogs: 'true'
+          userWorkloadMetrics: 'true'
+          userWorkloadTraces: 'true'
+        scrapeInterval: '300s'              # PrometheusAgent scrape interval
+        logLevel: 'warn'                    # PrometheusAgent log level
+        # Optional extra remote-write targets alongside the built-in global rollup.
+        # Keep secret names short and alphanumeric-terminated: MCOA truncates
+        # secret-<name> volume names to 63 chars; a cut on a non-alphanumeric
+        # character silently breaks the agent StatefulSet.
+        # additionalRemoteWrites:
+        #   - name: external-monitoring
+        #     url: https://external.example.com/api/v1/receive
+        #     remoteTimeout: 30s                # optional (default 30s)
+        #     onSelfManagedHub: true            # true: every hub; false: intermediate hubs only (default)
+        #     caFile: /etc/prometheus/secrets/external-certs/ca.crt
+        #     certFile: /etc/prometheus/secrets/external-certs/tls.crt
+        #     keyFile: /etc/prometheus/secrets/external-certs/tls.key
+        #     secretRef:                        # hub secret replicated + mounted into the agent
+        #       name: external-certs
+        #       namespace: some-ns
     labels:
       # =======================================================================
       # Core Configuration
@@ -776,6 +865,7 @@ hubClusterSets:
       acm-availability-config: 'High'       # 'Basic' or 'High'
       acm-observability: 'true'              # Requires ODF for noobaa bucket
       # ACM Search v2 storage (PVC for the search-indexer PostgreSQL)
+      acm-observability-custom-metrics: 'false'   # collect metrics beyond ACM's default allowlist; needs config.acm.observability.customMetrics
       acm-search-storage: 'false'
       acm-search-storage-class: ''           # unset -> the cluster's default StorageClass; set to pin a class
       acm-search-storage-size: '100Gi'
@@ -1170,6 +1260,15 @@ hubClusterSets:
       coo-channel: stable
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Global Observability (hub only — settings in config.globalObservability above)
+      # Enables MCOA capability patching + metrics rollup to the global hub.
+      # Placement discriminator is the self-managed label: 'true' = global hub
+      # (secrets policy), 'false' = intermediate hub (PrometheusAgent patching).
+      # Requires acm-observability: 'true' and coo: 'true' on the same hub.
+      # =======================================================================
+      global-observability: 'false'
 
       # =======================================================================
       # User Workload Monitoring (settings in config section above)
