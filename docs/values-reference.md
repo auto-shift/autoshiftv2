@@ -175,6 +175,7 @@ created for each replica of the image service. 2GiB per `OSImage` entry is requi
 | `acm-source-namespace`      | string    | `openshift-marketplace`   |       |
 | `acm-availability-config`   | string    | `Basic` or `High`         |       |
 | `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a noobaa bucket for acm. OpenShift Data Foundation will have to be enabled as well |
+| `acm-observability-custom-metrics` | bool | `false` | Collect metrics beyond the default allowlist. Requires `config.acm.observability.customMetrics` |
 | `acm-search-storage`        | bool      | `true` or `false`         | Enable persistent storage for Red Hat Advanced Cluster Management Search (recommended for production) |
 | `acm-search-storage-class`  | string    | `ocs-storagecluster-ceph-rbd` | Storage class for Search database |
 | `acm-search-storage-size`   | string    | `100Gi`                   | Storage size for Search database. Sizing: Small (<50 clusters): 20Gi, Medium (50-200): 50Gi, Large (200-500): 100Gi, Very Large (500+): 200Gi+ |
@@ -212,6 +213,53 @@ created for each replica of the image service. 2GiB per `OSImage` entry is requi
 - **Very Large (500+ clusters)**: Consider `acm-addon-cpc-eval-concurrency: '15'`, `acm-addon-cpc-client-qps: '150'`, `acm-addon-cpc-mem-limit: '4Gi'`
 
 > **Note:** Increased concurrency/QPS increases CPU and memory on the controller pods, the Kubernetes API server, and the OpenShift API server. Concurrency/QPS/burst are set through `ManagedClusterAddOn` annotations per Red Hat Advanced Cluster Management 2.17 docs. Resource limits are set through `AddOnDeploymentConfig`.
+
+
+For choosing metrics, cardinality cost, recording rules and storage sizing, see
+[Observability metrics](observability-metrics.md).
+
+**Config block** (`config.acm`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `versions` | list | | Permitted CSVs for the operator. Overrides the `acm-version` label |
+| `startingCSV` | string | | Starting CSV for the subscription |
+| `observability.customMetrics.platform` | map | | Metrics collected from platform monitoring |
+| `observability.customMetrics.userWorkload` | map | | Metrics collected from user workload monitoring |
+
+Each of `platform` and `userWorkload` accepts `names` (metric names) and `matches` (label selectors,
+written verbatim). The classic path also accepts `renames`, `recording_rules` and `collect_rules`,
+which are Red Hat Advanced Cluster Management's own schema and pass through unchanged.
+
+There are two delivery mechanisms, and which is live depends on the collector the hub runs:
+
+| Collector | Mechanism |
+|---|---|
+| Classic MultiCluster Observability | `observability-metrics-custom-allowlist` config map |
+| Multicluster observability add-on | `ScrapeConfig` federated by the `PrometheusAgent`, referenced from the `ClusterManagementAddOn` |
+
+Both are rendered from the same config, so the same values work either way and the inactive one has
+no effect. The add-on replaces the legacy collector, so where it is enabled the config map is
+written and read by nothing. If a metric does not arrive, check which collector the hub runs first.
+
+`recording_rules` work on both paths. On the classic path they go into the config map; with the
+add-on they become a `PrometheusRule` on the managed cluster, and each `record` name is added to the
+`ScrapeConfig` selectors automatically so the computed metric is federated without naming it twice.
+A recording rule aggregates on the managed cluster before anything crosses the network, which is the
+only effective control on cardinality for pod-scoped and virtual machine metrics.
+
+In a multitiered rollup a metric is only forwarded if it is allowed on the hub whose collectors
+gather it. Set this on every participating hub cluster set, not only the top one.
+
+```yaml
+config:
+  acm:
+    observability:
+      customMetrics:
+        platform:
+          names:
+            - node_vmstat_pgfault
+```
 
 ### Managed AutoShift
 
