@@ -1,0 +1,56 @@
+# ACME ClusterIssuer with supporting secrets and optional CertManager controller overrides.
+# Delivers a full ACME issuer to managed clusters. The ClusterIssuer spec is a toYaml pass-through,
+# so any ACME provider (ZeroSSL, Let's Encrypt, Buypass, etc.) and any solver type (DNS01, HTTP01)
+# works — just supply the right spec in config.
+#
+# Config (in rendered-config under certManager.acmeIssuer):
+#   issuer.name           — ClusterIssuer name (e.g. 'zerossl-production')
+#   issuer.spec           — full ClusterIssuer .spec (toYaml pass-through)
+#   secrets[]             — list of {name, stringData: {key: value}} Secrets in cert-manager ns
+#   certManagerCR         — optional: CertManager operator CR overrides (e.g. DNS01 recursive nameservers)
+#     overrideArgs[]      — list of controller args (e.g. '--dns01-recursive-nameservers=8.8.8.8:53,1.1.1.1:53')
+#
+# Once created, point config.certManager.{apiCert,ingressCert}.issuer.name at the issuer.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $acmeCfg := (index (index $config "certManager" | default dict) "acmeIssuer" | default dict) hub}}
+  {{hub- $secrets := (index $acmeCfg "secrets" | default list) hub}}
+  {{hub- $issuer := (index $acmeCfg "issuer" | default dict) hub}}
+  {{hub- $certManagerCR := (index $acmeCfg "certManagerCR" | default dict) hub}}
+  {{hub- $overrideArgs := (index $certManagerCR "overrideArgs" | default list) hub}}
+  {{hub- if gt (len $overrideArgs) 0 hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.openshift.io/v1alpha1
+      kind: CertManager
+      metadata:
+        name: cluster
+      spec:
+        managementState: Managed
+        controllerConfig:
+          overrideArgs:
+            {{hub $overrideArgs | toYaml | autoindent hub}}
+  {{hub- end hub}}
+  {{hub- range $secret := $secrets hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub $secret.name hub}}
+        namespace: cert-manager
+      type: Opaque
+      stringData:
+        {{hub $secret.stringData | toYaml | autoindent hub}}
+  {{hub- end hub}}
+  {{hub- if gt (len (keys $issuer)) 0 hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: {{hub $issuer.name | default "acme-issuer" hub}}
+      spec:
+        {{hub $issuer.spec | toYaml | autoindent hub}}
+  {{hub- end hub}}
