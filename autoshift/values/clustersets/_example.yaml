@@ -298,10 +298,9 @@ hubClusterSets:
       #   versions:
       #     - 'ansible-automation-platform-operator.vX.Y.Z'
       #   startingCSV: 'ansible-automation-platform-operator.vX.Y.Z'
-      # acm:
-      #   versions:
-      #     - 'advanced-cluster-management.vX.Y.Z'
-      #   startingCSV: 'advanced-cluster-management.vX.Y.Z'
+      # acm: declared in full in the Red Hat Advanced Cluster Management block below,
+      #      which carries observability settings alongside versions/startingCSV.
+      #      Keep it to ONE acm: key - two would collide in this mapping.
       # acs:
       #   versions:
       #     - 'rhacs-operator.vX.Y.Z'
@@ -647,6 +646,43 @@ hubClusterSets:
         # all but one of them.
         image: ''
       # =======================================================================
+      # =======================================================================
+      # Red Hat Advanced Cluster Management
+      # versions and startingCSV pin the operator, overriding the acm-version label.
+      #
+      # observability.customMetrics renders the observability-metrics-custom-allowlist
+      # ConfigMap that MultiCluster Observability reads alongside its own default
+      # allowlist. Base MCO lifecycle (namespace, pull secret, bucket, the MCO CR) is
+      # owned by policy-acm-observability and needs no config here.
+      #
+      # Keys under platform and userWorkload are Red Hat Advanced Cluster Management's
+      # own schema and pass through verbatim: names, matches, renames, recording_rules
+      # and collect_rules. platform becomes metrics_list.yaml, userWorkload becomes
+      # uwl_metrics_list.yaml. Older documentation calls recording_rules "rules"; the
+      # operator uses recording_rules.
+      #
+      # The ConfigMap is written mustonlyhave, so removing a metric here stops its
+      # collection, and hand edits to that ConfigMap are reverted.
+      #
+      # In a multi-tier rollup a metric is only forwarded if it is allowed on the hub
+      # whose collectors gather it: set this on every participating hub clusterset.
+      # =======================================================================
+      acm:
+        versions:
+          - 'advanced-cluster-management.vX.Y.Z'
+        startingCSV: 'advanced-cluster-management.vX.Y.Z'
+        observability:
+          customMetrics:
+            platform:
+              names:
+                - node_memory_MemTotal_bytes
+              recording_rules:
+                - record: apiserver_request_duration_seconds:histogram_quantile_90
+                  expr: 'histogram_quantile(0.90, sum(rate(apiserver_request_duration_seconds_bucket{job="apiserver",verb!="WATCH"}[5m])) by (verb,le))'
+            userWorkload:
+              names:
+                - sample_metrics
+
       # Global Observability (three-tier metrics rollup: global hub -> intermediate
       # hubs -> workload clusters). Enable with the global-observability label below;
       # placement is driven by that label + self-managed ('true' = global hub,
@@ -737,6 +773,7 @@ hubClusterSets:
       acm-availability-config: 'High'       # 'Basic' or 'High'
       acm-observability: 'true'              # Requires ODF for noobaa bucket
       # ACM Search v2 storage (PVC for the search-indexer PostgreSQL)
+      acm-observability-custom-metrics: 'false'   # collect metrics beyond ACM's default allowlist; needs config.acm.observability.customMetrics
       acm-search-storage: 'false'
       acm-search-storage-class: ''           # unset -> the cluster's default StorageClass; set to pin a class
       acm-search-storage-size: '100Gi'
