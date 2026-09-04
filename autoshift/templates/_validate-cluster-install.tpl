@@ -116,7 +116,7 @@ Returns newline-separated error strings (empty string = no errors).
 {{- define "autoshift.validate-workload-partitioning" -}}
   {{- $path := .path -}}
   {{- $wp := .config -}}
-  {{- $validWpKeys := list "performanceProfile" "reservedCpus" "isolatedCpus" "nodeSelector" "numaTopology" "realTimeKernel" "globallyDisableIrqLoadBalancing" "hugepages" -}}
+  {{- $validWpKeys := list "performanceProfile" "reservedCpus" "isolatedCpus" "nodeSelector" "machineConfigPoolSelector" "numaTopology" "realTimeKernel" "globallyDisableIrqLoadBalancing" "hugepages" -}}
   {{- $validWpHugepagesKeys := list "defaultSize" "pages" -}}
   {{- $validWpPageKeys := list "size" "count" "node" -}}
   {{- $validNumaTopologies := list "single-numa-node" "best-effort" "restricted" -}}
