@@ -184,11 +184,7 @@ spec:
                     policy: {{ "{{hub" }} $rbac | toJson {{ "hub}}" }}
                     scopes: '[groups]'
                   repo:
-                    # With the CMP the render is heavy, so spread it across pods; a single
-                    # repo-server thrashes and renders time out when the ApplicationSet fans out to
-                    # every policies/* at once. Without it the repo-server only pulls prerendered
-                    # Helm charts, so one pod is enough.
-                    replicas: {{ "{{hub" }} index $repo "replicas" | default (ternary {{ $.Values.gitops.policyGenerator.repo.replicas }} {{ $.Values.gitops.repo.replicas }} $pgEnabled) {{ "hub}}" }}
+                    replicas: {{ "{{hub" }} index $repo "replicas" | default {{ $.Values.gitops.repo.replicas }} {{ "hub}}" }}
                     {{ "{{hub-" }} if $pgEnabled {{ "hub}}" }}
                     # Trim the tarball streamed to the CMP sidecar on every render.
                     extraRepoCommandArgs:
@@ -311,18 +307,16 @@ spec:
                         cpu: {{ "{{hub" }} index $redisRequests "cpu" | default "{{ $.Values.gitops.redis.requests.cpu }}" {{ "hub}}" }}
                         memory: {{ "{{hub" }} index $redisRequests "memory" | default "{{ $.Values.gitops.redis.requests.memory }}" {{ "hub}}" }}
                   controller:
-                    # Source mode drives the controller far harder than consuming prerendered
-                    # charts does, so the sizing follows the PolicyGenerator gate like repo.replicas.
                     processors:
                       status: {{ "{{hub" }} index $controller "statusProcessors" | default {{ $.Values.gitops.controller.statusProcessors }} {{ "hub}}" }}
                       operation: {{ "{{hub" }} index $controller "operationProcessors" | default {{ $.Values.gitops.controller.operationProcessors }} {{ "hub}}" }}
                     resources:
                       limits:
-                        cpu: {{ "{{hub" }} index $controllerLimits "cpu" | default (ternary "{{ $.Values.gitops.policyGenerator.controller.limits.cpu }}" "{{ $.Values.gitops.controller.limits.cpu }}" $pgEnabled) {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $controllerLimits "memory" | default (ternary "{{ $.Values.gitops.policyGenerator.controller.limits.memory }}" "{{ $.Values.gitops.controller.limits.memory }}" $pgEnabled) {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $controllerLimits "cpu" | default "{{ $.Values.gitops.controller.limits.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $controllerLimits "memory" | default "{{ $.Values.gitops.controller.limits.memory }}" {{ "hub}}" }}
                       requests:
-                        cpu: {{ "{{hub" }} index $controllerRequests "cpu" | default (ternary "{{ $.Values.gitops.policyGenerator.controller.requests.cpu }}" "{{ $.Values.gitops.controller.requests.cpu }}" $pgEnabled) {{ "hub}}" }}
-                        memory: {{ "{{hub" }} index $controllerRequests "memory" | default (ternary "{{ $.Values.gitops.policyGenerator.controller.requests.memory }}" "{{ $.Values.gitops.controller.requests.memory }}" $pgEnabled) {{ "hub}}" }}
+                        cpu: {{ "{{hub" }} index $controllerRequests "cpu" | default "{{ $.Values.gitops.controller.requests.cpu }}" {{ "hub}}" }}
+                        memory: {{ "{{hub" }} index $controllerRequests "memory" | default "{{ $.Values.gitops.controller.requests.memory }}" {{ "hub}}" }}
                   applicationSet:
                     resources:
                       limits:

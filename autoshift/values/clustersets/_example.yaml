@@ -538,11 +538,10 @@ hubClusterSets:
         # than appending to it, so carry the cluster-admin lines over unless you mean to drop them.
         # A `g` line takes a user or a group, but with OpenShift login the user identity is an
         # opaque Dex sub rather than a username, so name OpenShift Groups here.
-        # repo.replicas and the controller memory both default higher with the
-        # PolicyGenerator plugin (3 replicas and 6Gi) than without (1 replica, 2048Mi limit and
-        # 1024Mi request), and setting either here overrides both modes. The gitops-cluster-ca-bundle label overrides
-        # repo.cluster_ca_bundle. Raise the controller processors to 50 status and 25 operation for
-        # 1000 or more Applications. policyGenerator sizes the CMP sidecar that performs the render,
+        # repo.replicas defaults to 1; raise it for availability or a much larger policy set.
+        # Controller memory is 4Gi limit / 1Gi request, from a measured 843Mi peak.
+        # controller.statusProcessors is the main lever on how fast the fleet converges.
+        # The gitops-cluster-ca-bundle label overrides repo.cluster_ca_bundle. policyGenerator sizes the CMP sidecar that performs the render,
         # so raise it when manifest generation times out, and its tarExclusions trim the repository
         # tarball streamed to that sidecar. tarExclusions is repo-server WIDE, so keep it to .git;
         # per-Application scoping comes from useManifestGeneratePaths. All apply only where the
@@ -567,7 +566,7 @@ hubClusterSets:
         #       maxReplicas: 5
         #       targetCPUUtilizationPercentage: 50
         #   repo:
-        #     replicas: 3
+        #     replicas: 1
         #     cluster_ca_bundle: false
         #     limits:
         #       cpu: '2000m'
@@ -576,14 +575,14 @@ hubClusterSets:
         #       cpu: '500m'
         #       memory: '512Mi'
         #   controller:
-        #     statusProcessors: 20
-        #     operationProcessors: 10
+        #     statusProcessors: 50
+        #     operationProcessors: 25
         #     limits:
         #       cpu: '2000m'
-        #       memory: '6Gi'
+        #       memory: '4Gi'
         #     requests:
         #       cpu: '250m'
-        #       memory: '1024Mi'
+        #       memory: '1Gi'
         #   ha:
         #     enabled: false
         #     limits:

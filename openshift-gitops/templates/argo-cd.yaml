@@ -52,11 +52,7 @@ spec:
     {{- /* Install the policy-generator CMP sidecar only when enabled (git/source bootstrap); OCI-only
            bootstrap sets false. Default true for backwards compatibility. */}}
     {{- $pgEnabled := ternary ($pg.enabled) true (hasKey $pg "enabled") }}
-    {{- /* With the CMP the render (kustomize --enable-helm + PolicyGenerator + nested Helm) is
-           CPU and memory heavy, so spread it across pods instead of thrashing a single repo-server
-           when the ApplicationSet fans out to all policies/* at once. Without it the repo-server
-           only pulls prerendered Helm charts, so one pod is enough. */}}
-    replicas: {{ ternary ((($pg.repo).replicas) | default 3) (((.Values.gitops.repo).replicas) | default 1) $pgEnabled }}
+    replicas: {{ ((.Values.gitops.repo).replicas) | default 1 }}
     {{- if $pgEnabled }}
     extraRepoCommandArgs:
       {{- range ($pg.tarExclusions | default list) }}
@@ -208,12 +204,12 @@ spec:
   controller:
     resources:
       limits:
-        cpu: {{ ternary (((($pg.controller).limits).cpu) | default "2000m") (((.Values.gitops.controller).limits).cpu | default "2000m") $pgEnabled }}
+        cpu: {{ ((.Values.gitops.controller).limits).cpu | default "2000m" }}
         # 4Gi: the controller OOMKills at 2Gi once the ApplicationSet has fanned out to all policies/*.
-        memory: {{ ternary (((($pg.controller).limits).memory) | default "4096Mi") (((.Values.gitops.controller).limits).memory | default "4096Mi") $pgEnabled }}
+        memory: {{ ((.Values.gitops.controller).limits).memory | default "4096Mi" }}
       requests:
-        cpu: {{ ternary (((($pg.controller).requests).cpu) | default "250m") (((.Values.gitops.controller).requests).cpu | default "250m") $pgEnabled }}
-        memory: {{ ternary (((($pg.controller).requests).memory) | default "1024Mi") (((.Values.gitops.controller).requests).memory | default "1024Mi") $pgEnabled }}
+        cpu: {{ ((.Values.gitops.controller).requests).cpu | default "250m" }}
+        memory: {{ ((.Values.gitops.controller).requests).memory | default "1024Mi" }}
   applicationSet:
     resources:
       limits:

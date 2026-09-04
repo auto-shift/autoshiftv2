@@ -19,21 +19,6 @@ gitops:
     # mode (renders PolicyGenerator dirs live); disabled for OCI-only deployments (prerendered Helm).
     # The ApplicationSet forwards the effective value from the deployment's policyGenerator flag.
     enabled: true
-    repo:
-      # PolicyGenerator rendering (kustomize --enable-helm plus a nested Helm render) is heavy, so
-      # spread it across pods instead of thrashing a single repo-server when the ApplicationSet
-      # fans out to every policies/* at once.
-      replicas: 3
-    controller:
-      # Source mode fans the ApplicationSet out to an Application per policies/* directory, which
-      # drives the application controller far harder than consuming prerendered charts does. The
-      # controller OOMKills below this.
-      limits:
-        cpu: 2000m
-        memory: 6Gi
-      requests:
-        cpu: 250m
-        memory: 6Gi
     # Excluded from the repository tarball the repo-server streams to a CMP sidecar. This setting is
     # repo-server WIDE, so it hits every plugin-rendered Application on this Argo CD, not just
     # AutoShift's. Only .git is listed because no repository serves manifests out of it; do not add
@@ -58,8 +43,6 @@ gitops:
     requests:
       cpu: 500m
       memory: 512Mi
-  # Dev team cluster-scoped namespaces are auto-discovered from managed cluster labels
-  # matching autoshift.io/gitops-dev-team-<team>-cluster-scoped: 'true'
   # Argo CD RBAC. A `g` line assigns a subject to a role; the subject may be a user or a group. What
   # makes groups the practical unit is the identity: scopes is '[groups]', checked alongside the
   # always-matched sub claim, and with OpenShift login sub is an opaque Dex identifier rather than a
@@ -79,14 +62,22 @@ gitops:
   controller:
     # Scaling: increase processors for environments with many Applications
     # Recommended: 50 status / 25 operation for 1000+ Applications
-    statusProcessors: 20        # concurrent status reconciliations (default: 20)
-    operationProcessors: 10     # concurrent sync operations (default: 10)
+    # AutoShift generates an Application per policy directory, so even a minimal hub carries dozens.
+    # Measured on a 51-Application hub: a full refresh took 141s at 50/25 against 225s at the Argo CD
+    # defaults of 20/10, for 640Mi of controller memory. Raise further for a much larger policy set.
+    statusProcessors: 50        # concurrent status reconciliations (Argo CD default: 20)
+    operationProcessors: 25     # concurrent sync operations (Argo CD default: 10)
+    # Measured peak 843Mi on a hub with 51 Applications and 194 Policies at 50 processors, during a
+    # full hard-refresh storm. Requests sized for steady state and limits for that storm with room to
+    # spare; deliberately NOT equal, so the pod is Burstable and does not reserve the ceiling. A hub
+    # running several AutoShift deployments multiplies the per-Application share but not the cluster
+    # cache, which is the larger half. Re-measure before lowering rather than assuming.
     limits:
       cpu: 2000m
-      memory: 2048Mi
+      memory: 4Gi
     requests:
       cpu: 250m
-      memory: 1024Mi
+      memory: 1Gi
   ha:
     enabled: false
     limits:
@@ -107,8 +98,11 @@ gitops:
     # enabling the cluster_ca_bundle will inject the cluster's trusted CA bundle into the repo
     # server that Argo CD uses. This allows Argo CD to connect to repositories using custom certificates.
     cluster_ca_bundle: false
-    # Repo-server replicas WITHOUT the PolicyGenerator CMP: the repo-server only pulls prerendered
-    # Helm charts, so one pod is enough. The heavier source-mode count is policyGenerator.repo.replicas.
+    # Repo-server replicas. One is enough: with useManifestGeneratePaths each render ships only a
+    # policy's own directory, and a measured 51-Application refresh took 199s on one replica against
+    # 225s on three, with the repo-server idle at 14m CPU either way. The bottleneck is the
+    # application controller, not this. Raise it for availability or a much larger policy set, here
+    # or per cluster with config.gitops.infra.repo.replicas.
     replicas: 1
     limits:
       cpu: 2000m
