@@ -3,7 +3,8 @@
 //
 // A policy that owns configuration reads a single top-level key from the
 // cluster's rendered-config ConfigMap, named after the policy directory in
-// lowerCamelCase. Keys that belong to the fleet rather than to one policy, and
+// lowerCamelCase, or the directory name itself in kebab-case (preferred for new keys,
+// since config keys become ConfigMap names). Keys that belong to the fleet rather than to one policy, and
 // keys that deliberately use a shorter name, are recorded as exceptions so each
 // deviation is visible in review.
 package configkeys
@@ -157,7 +158,12 @@ func BuildReport(declared map[string][]string, dirs []string, conv *Conventions)
 	owned := map[string]bool{}
 	dirSet := map[string]bool{}
 	for _, d := range dirs {
+		// Both spellings are owned by the policy: the lowerCamelCase form that most existing
+		// keys use, and the directory name itself. Config keys become ConfigMap names
+		// (<cluster>.rendered-config-<key>), so the kebab form is the one that needs no
+		// conversion and is preferred for new keys.
 		owned[CamelCase(d)] = true
+		owned[d] = true
 		dirSet[d] = true
 	}
 	shared := map[string]bool{}

@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Renders the shared components/operator-install chart, which owns the Namespace + OperatorPolicy
+# structure. The per-operator ACM lookups below are the only inputs; the component itself renders
+# structure only.
+#
+# Global Hub installs and manages AMQ Streams (Kafka) and PostgreSQL itself, so do NOT add a
+# separate AMQ Streams operator policy — it would fight this one.
+helmGlobals:
+  chartHome: ../../../../../components/
+helmCharts:
+  - name: operator-install
+    releaseName: global-hub
+    valuesInline:
+      name: global-hub
+      namespace: multicluster-global-hub
+      remediation: ${REMEDIATION}
+      operatorGroupName: global-hub-operator-group
+      targetNamespaces:
+        - multicluster-global-hub
+      subscription:
+        name: '{{hub index .ManagedClusterLabels "autoshift.io/global-hub-subscription-name" | default "multicluster-global-hub-operator-rh" hub}}'
+        channel: '{{hub index .ManagedClusterLabels "autoshift.io/global-hub-channel" | default "release-1.8" hub}}'
+        # Disconnected mirrors append -<mirror-catalog-suffix> to the catalog source name.
+        source: '{{hub $base := (index .ManagedClusterLabels "autoshift.io/global-hub-source" | default "redhat-operators") hub}}{{hub if (eq (index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false") "true") hub}}{{hub printf "%s-%s" $base (index .ManagedClusterLabels "autoshift.io/mirror-catalog-suffix" | default "mirror") hub}}{{hub else hub}}{{hub $base hub}}{{hub end hub}}'
+        sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/global-hub-source-namespace" | default "openshift-marketplace" hub}}'
+        startingCSV: '{{hub index .ManagedClusterLabels "autoshift.io/global-hub-version" | default "" hub}}'
+      versions: '{{hub $v := (index .ManagedClusterLabels "autoshift.io/global-hub-version" | default "") hub}}{{hub ternary (list) (list $v) (empty $v) | toRawJson | toLiteral hub}}'

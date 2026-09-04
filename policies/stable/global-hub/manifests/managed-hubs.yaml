@@ -1,0 +1,20 @@
+object-templates-raw: |
+  {{- $hubs := list }}
+  {{- range (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items }}
+  {{- if index (.metadata.labels | default dict) "autoshift.io/global-hub-deploy-mode" }}
+  {{- $hubs = append $hubs . }}
+  {{- end }}
+  {{- end }}
+  {{- if not $hubs }}
+  []
+  {{- end }}
+  {{- range $hubs }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cluster.open-cluster-management.io/v1
+      kind: ManagedCluster
+      metadata:
+        name: {{ .metadata.name }}
+        labels:
+          global-hub.open-cluster-management.io/deploy-mode: {{ index .metadata.labels "autoshift.io/global-hub-deploy-mode" }}
+  {{- end }}

@@ -1,0 +1,47 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: global-hub
+# Multicluster Global Hub: import one or more ACM hubs and manage them from a single hub. Runs on
+# the global hub; settings come from config.global-hub in the cluster's rendered-config.
+#
+# The operator installs and manages AMQ Streams (Kafka) and PostgreSQL itself, so there must be no
+# separate AMQ Streams policy alongside it.
+placementBindingDefaults:
+  name: binding-policy-global-hub
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator, via the shared operator-install component.
+  - name: policy-global-hub-operator-install
+    manifests:
+      - path: manifests/operator-install
+    dependencies:
+      - name: policy-acm-mch-install
+  # 2) The MulticlusterGlobalHub CR. The operator then deploys Kafka, PostgreSQL and Grafana.
+  - name: policy-global-hub-instance
+    manifests:
+      - path: manifests/instance.yaml
+    dependencies:
+      - name: policy-global-hub-operator-install
+  # 3) Import managed hubs: translates autoshift.io/global-hub-deploy-mode on each ManagedCluster
+  #    into the global-hub.open-cluster-management.io/deploy-mode label the operator watches.
+  - name: policy-global-hub-managed-hubs
+    manifests:
+      - path: manifests/managed-hubs.yaml
+    dependencies:
+      - name: policy-global-hub-instance

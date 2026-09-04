@@ -146,6 +146,19 @@ hubClusterSets:
           #   name: 'autoshift-repo-secret'
           #   namespace: 'policies-autoshift'
       # =======================================================================
+      # Global Hub settings (the global-hub label turns the feature on)
+      # =======================================================================
+      # Settings live here, not in labels: labels switch features on and off for placements,
+      # configuration belongs in config. The operator-install labels (subscription-name, channel,
+      # source, source-namespace, version) stay as labels to match every other operator policy.
+      global-hub:
+        availabilityConfig: High            # High (default) or Basic
+        enableMetrics: 'true'
+        installAgentOnLocal: 'true'
+        postgresRetention: 18m
+        # consumerGroupPrefix: ''           # optional Kafka consumer group prefix
+        # strimziChannel: amq-streams-3.1.x # AMQ Streams channel (disconnected mirror)
+      # =======================================================================
       # Disconnected Mirror (read via rendered-config ConfigMap)
       # =======================================================================
       disconnected:
@@ -1385,3 +1398,29 @@ hubClusterSets:
       trident-source-namespace: openshift-marketplace
       trident-channel: stable
       trident-version: 'trident-operator.v25.06.0'   # optional CSV version pin
+
+      # =======================================================================
+      # Global Hub — set on the GLOBAL hub's clusterset (the self-managed hub-of-hubs)
+      # =======================================================================
+      # Turns the feature on and installs the operator here. Its settings live under
+      # config.global-hub, not in labels.
+      global-hub: 'false'
+      global-hub-subscription-name: multicluster-global-hub-operator-rh
+      global-hub-channel: release-1.8
+      global-hub-source: redhat-operators
+      global-hub-source-namespace: openshift-marketplace
+      global-hub-version: ''                       # optional: pin CSV (sets manual approval)
+
+      # =======================================================================
+      # Global Hub import — set on each MANAGED HUB's clusterset (hub1, hub2, ...)
+      # =======================================================================
+      # Opt one spoke hub in to being imported by the global hub. It is per hub: set it on
+      # every managed hub you want imported, and leave it unset on hubs you do not.
+      # Setting it on the global hub's own clusterset does nothing useful.
+      #
+      # policy-global-hub-managed-hubs reads this off the ManagedCluster and translates it into
+      # the operator's own global-hub.open-cluster-management.io/deploy-mode label — which is why
+      # it is a label and not config.
+      #   default  the Global Hub agent runs on that managed hub
+      #   hosted   the agent is hosted on the global hub instead
+      global-hub-deploy-mode: ''

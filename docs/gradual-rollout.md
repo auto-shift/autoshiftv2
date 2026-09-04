@@ -15,12 +15,14 @@ Migrate clusters by moving them from one clusterset to another.
 When `versionedClusterSets: true`, the version/branch is automatically appended to all ClusterSet names:
 
 **OCI Mode** (uses `autoshiftOciVersion`):
+
 | Values Definition | `autoshiftOciVersion` | Resulting ClusterSet |
 |-------------------|---------------------|----------------------|
 | `hubClusterSets.hub` | `0.0.1` | `hub-0-0-1` |
 | `managedClusterSets.managed` | `0.0.2` | `managed-0-0-2` |
 
 **Git Mode** (uses `autoshiftGitBranchTag`):
+
 | Values Definition | `autoshiftGitBranchTag` | Resulting ClusterSet |
 |-------------------|----------------------|----------------------|
 | `hubClusterSets.hub` | `main` | `hub-main` |

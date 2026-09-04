@@ -133,6 +133,7 @@ Every managed operator supports version control through its respective label:
 | Local Storage               | `local-storage-version` | `local-storage-operator.v4.18.0-202410091522`      |
 | NMState                     | `nmstate-version`       | `kubernetes-nmstate-operator.v4.18.0-202410091522` |
 | OpenShift Virtualization    | `virt-version`          | `kubevirt-hyperconverged.v4.18.0`                  |
+| Multicluster Global Hub     | `global-hub-version`    | `multicluster-global-hub-operator-rh.v1.8.0`       |
 
 ### Finding available CSV versions
 
@@ -706,6 +707,7 @@ no interactive administrator until you either configure OpenID Connect and list 
 | `odf-default-storageclass`        | string            | `ocs-storagecluster-ceph-rbd` | Sets specified storage class as default and all others as non-default |
 
 ### OpenShift internal registry
+
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `imageregistry`                   | bool              | `false`                   | If not set OpenShift Internal Image Registry will not be managed |
