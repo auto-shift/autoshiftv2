@@ -1,4 +1,8 @@
 object-templates-raw: |
+  {{hub $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) hub}}
+  {{hub- $odf := (index $config "odf" | default dict) hub}}
+  {{hub- $storageCluster := (index $odf "storageCluster" | default dict) hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: ocs.openshift.io/v1
@@ -6,6 +10,10 @@ object-templates-raw: |
       metadata:
         name: ocs-storagecluster
         namespace: openshift-storage
+  {{hub- if (gt (len (keys $storageCluster)) 0) hub}}
+      spec:
+        {{hub $storageCluster | toYaml | autoindent hub}}
+  {{hub- else hub}}
       spec:
         storageDeviceSets:
           - config: {}
@@ -90,3 +98,4 @@ object-templates-raw: |
         nodeTopologies: {}
         externalStorage: {}
         resourceProfile: '{{hub index .ManagedClusterLabels "autoshift.io/odf-resource-profile" | default "balanced" hub}}'
+  {{hub- end hub}}
