@@ -1,0 +1,33 @@
+# ScanSettingBindings, one per entry in config.compliance.scans.
+#
+# Profiles are PINNED to a version (ocp4-stig-v2r3, not ocp4-stig). The unversioned profile name
+# tracks whatever DISA publishes next, so a new STIG release would silently change what is scanned
+# and what gets remediated. Bumping the pin is the deliberate choice; see docs/compliance.md.
+#
+# Adding a scan here only scans. Applying remediations is a separate opt-in per scan
+# (config.compliance.scans[].autoApply), handled by policy-auto-remediate.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $scans := (dig "compliance" "scans" (list) $cfg) hub}}
+  {{hub- range $scan := $scans hub}}
+  {{hub- if (dig "profiles" (list) $scan) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: compliance.openshift.io/v1alpha1
+      kind: ScanSettingBinding
+      metadata:
+        name: {{hub $scan.name hub}}
+        namespace: openshift-compliance
+      profiles:
+        {{hub- range $p := (dig "profiles" (list) $scan) hub}}
+        - apiGroup: compliance.openshift.io/v1alpha1
+          kind: Profile
+          name: {{hub $p hub}}
+        {{hub- end hub}}
+      settingsRef:
+        apiGroup: compliance.openshift.io/v1alpha1
+        kind: ScanSetting
+        name: {{hub (dig "scanSetting" "default" $scan) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

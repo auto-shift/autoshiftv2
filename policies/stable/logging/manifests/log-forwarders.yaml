@@ -1,0 +1,50 @@
+# ClusterLogForwarders from config.logging.forwarders, one per entry. Nothing is created until the
+# list is set.
+#
+# spec is passed through verbatim rather than modelled field by field, so inputs, filters, retention
+# and any output type a later release adds work with no change here. AutoShift adds only the
+# scaffolding a forwarder cannot run without: the collector ServiceAccount and the ClusterRoleBindings
+# that let it read the log sources named in collectorRoles.
+#
+# Separate from the `logging` ClusterLogForwarder the loki policy owns, which is bound to a LokiStack.
+# These need only this operator, so a cluster forwarding to an external collector need not run Loki.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- range $fwd := (dig "logging" "forwarders" (list) $cfg) hub}}
+  {{hub- $ns := (dig "namespace" "openshift-logging" $fwd) hub}}
+  {{hub- $sa := (dig "spec" "serviceAccount" "name" (printf "%s-collector" $fwd.name) $fwd) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: {{hub $sa hub}}
+        namespace: {{hub $ns hub}}
+  {{hub- range $role := (dig "collectorRoles" (list "collect-audit-logs") $fwd) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: autoshift-{{hub $fwd.name hub}}-{{hub $role hub}}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: {{hub $role hub}}
+      subjects:
+        - kind: ServiceAccount
+          name: {{hub $sa hub}}
+          namespace: {{hub $ns hub}}
+  {{hub- end hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: observability.openshift.io/v1
+      kind: ClusterLogForwarder
+      metadata:
+        name: {{hub $fwd.name hub}}
+        namespace: {{hub $ns hub}}
+      spec:
+        {{hub- $spec := mergeOverwrite (dict "managementState" "Managed" "serviceAccount" (dict "name" $sa)) (dig "spec" dict $fwd) hub}}
+        {{hub $spec | toYaml | autoindent hub}}
+  {{hub- end hub}}

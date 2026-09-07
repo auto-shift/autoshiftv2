@@ -1,0 +1,34 @@
+# STIG reject-unsigned-images-by-default. Requires /etc/containers/policy.json to default to
+# reject, written through a MachineConfig. Applying this ROLLS EVERY NODE in the listed pools, and
+# a cluster whose images are not signed will stop pulling them, so it is off by default.
+#
+# The shipped policy rejects everything except the local container storage transport. Allowed
+# registries and their signature stores are added by overriding policy in config.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $rui := (dig "manualRemediations" "rejectUnsignedImages" dict $cfg) hub}}
+  {{hub- if (dig "enabled" false $rui) hub}}
+  {{hub- $policy := (dig "policy" (dict "default" (list (dict "type" "reject")) "transports" (dict "containers-storage" (dict "" (list (dict "type" "insecureAcceptAnything"))))) $rui) hub}}
+  {{hub- range $pool := (dig "pools" (list "master" "worker") $rui) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: machineconfiguration.openshift.io/v1
+      kind: MachineConfig
+      metadata:
+        name: 99-{{hub $pool hub}}-reject-unsigned-images
+        labels:
+          machineconfiguration.openshift.io/role: {{hub $pool hub}}
+      spec:
+        config:
+          ignition:
+            version: 3.2.0
+          storage:
+            files:
+              - path: /etc/containers/policy.json
+                mode: 420
+                overwrite: true
+                contents:
+                  source: data:text/plain;charset=utf-8;base64,{{hub $policy | toJson | b64enc hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

@@ -9,7 +9,11 @@ metadata:
 # manifests[].path points at a single FILE. Only edit this file to change the policy graph itself
 # (names, dependencies, per-policy remediation). Keep placement.yaml OUT of manifests/ (a Placement
 # inside a wildcarded dir would be wrapped into the Policy as a managed object).
-# Both policies share one hand-authored Placement (predicate autoshift.io/manual-remediations).
+# One policy per STIG finding the Compliance Operator ships no automatic remediation for. Every
+# manifest is object-templates-raw driven by config.manualRemediations and renders nothing until
+# its key is set, so the single autoshift.io/manual-remediations label enables the set and config
+# decides which members actually apply. Findings that cannot be remediated at all are reported by
+# policy-stig-manual-review in openshift-compliance-operator.
 placementBindingDefaults:
   name: binding-policy-manual-remediations
 policyDefaults:
@@ -32,9 +36,36 @@ policyDefaults:
   placement:
     placementPath: placement.yaml
 policies:
-  - name: policy-allowed-image-registries
+  - name: policy-image-registries
     manifests:
-      - path: manifests/allowed-image-registries.yaml
+      - path: manifests/image-registries.yaml
   - name: policy-remove-samples-operator
     manifests:
       - path: manifests/remove-samples-operator.yaml
+  - name: policy-classification-banner
+    manifests:
+      - path: manifests/classification-banner.yaml
+  - name: policy-motd
+    manifests:
+      - path: manifests/motd.yaml
+  - name: policy-oauth-customization
+    manifests:
+      - path: manifests/oauth-customization.yaml
+  - name: policy-route-rate-limits
+    manifests:
+      - path: manifests/route-rate-limits.yaml
+  # Inform only: a compute ResourceQuota with no LimitRange will reject pods that declare no
+  # resources. Reports them rather than deleting, since the quota may be deliberate.
+  - name: policy-quota-guard
+    remediationAction: inform
+    manifests:
+      - path: manifests/quota-guard.yaml
+  # Default project template: satisfies both project-config-and-template rules without the
+  # breakage the operator's own remediations cause. Keep those four in exclude.
+  - name: policy-project-template
+    manifests:
+      - path: manifests/project-template.yaml
+  # Rolls every node in the listed pools; off unless rejectUnsignedImages.enabled is set.
+  - name: policy-reject-unsigned-images
+    manifests:
+      - path: manifests/reject-unsigned-images.yaml

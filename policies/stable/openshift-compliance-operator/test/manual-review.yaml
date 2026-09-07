@@ -1,0 +1,35 @@
+# Inform only: surfaces every finding a human has to deal with, computed from the scan results on
+# the cluster itself rather than from a list maintained here.
+#
+# Two kinds qualify. MANUAL results are ones the STIG itself says cannot be judged automatically:
+# RBAC least privilege, the SCC reviews, and /var/log/audit partitioning. FAIL results with no
+# ComplianceRemediation are ones the Compliance Operator ships no fix for - some are covered by the
+# manual-remediations policies, and fips-mode-enabled-on-all-nodes cannot be fixed after install at
+# all, because FIPS is an install-config flag.
+#
+# mustnothave + inform reports each one as a violation naming the object, which is the report. It
+# never enforces, so nothing is deleted. Remediation names carry a -1, -2 suffix when one rule
+# produces several objects, hence the prefix match rather than an equality test.
+object-templates-raw: |
+  {{- $remediated := list }}
+  {{- range $rem := (dig "items" (list) ((lookup "compliance.openshift.io/v1alpha1" "ComplianceRemediation" "openshift-compliance" "") | default dict)) }}
+  {{- $remediated = append $remediated $rem.metadata.name }}
+  {{- end }}
+  {{- range $check := (dig "items" (list) ((lookup "compliance.openshift.io/v1alpha1" "ComplianceCheckResult" "openshift-compliance" "") | default dict)) }}
+  {{- $name := $check.metadata.name }}
+  {{- $hasFix := false }}
+  {{- range $rem := $remediated }}
+  {{- if hasPrefix $name $rem }}
+  {{- $hasFix = true }}
+  {{- end }}
+  {{- end }}
+  {{- if or (eq $check.status "MANUAL") (and (eq $check.status "FAIL") (not $hasFix)) }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: compliance.openshift.io/v1alpha1
+      kind: ComplianceCheckResult
+      metadata:
+        name: {{ $name }}
+        namespace: openshift-compliance
+  {{- end }}
+  {{- end }}

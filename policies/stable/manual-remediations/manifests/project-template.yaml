@@ -1,0 +1,163 @@
+# STIG project-config-and-template-network-policy and project-config-and-template-resource-quota.
+#
+# Owns the default project template, so projects created through `oc new-project` are born with the
+# objects those rules look for. The Compliance Operator's own remediations are excluded in
+# config.compliance.scans[].exclude because they write only a restrictive half that breaks the
+# cluster; this adds the parts they leave out.
+#
+# quota emits a LimitRange first, so a pod declaring no resources still gets defaults instead of
+# being refused with "failed quota: must specify limits.cpu". Verified both ways on 4.22.
+#
+# networkPolicies is OFF by default and should stay off until the host-network path is solved.
+# Measured on OVN-Kubernetes 4.22: a deny-by-default policy blocks cross-node host-network traffic
+# both direct and through a Service, which is how the kube-apiserver reaches an admission webhook.
+# The documented allow-from-hostnetwork rule does NOT lift it - that traffic arrives SNATed from the
+# node's OVN gateway address, which the openshift-host-network namespaceSelector does not match.
+# Turning this on will break webhook callers in every new project.
+#
+# The Project object and the admin RoleBinding are the stock template from
+# `oc adm create-bootstrap-project-template`. Removing either breaks `oc new-project` outright.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $pt := (dig "manualRemediations" "projectTemplate" dict $cfg) hub}}
+  {{hub- if (dig "enabled" false $pt) hub}}
+  {{hub- $name := (dig "name" "project-request" $pt) hub}}
+  {{hub- $quota := (dig "quota" dict $pt) hub}}
+  {{hub- $lr := (dig "limitRange" (dict "default" (dict "cpu" "500m" "memory" "512Mi") "defaultRequest" (dict "cpu" "100m" "memory" "256Mi")) $pt) hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: template.openshift.io/v1
+      kind: Template
+      metadata:
+        name: {{hub $name hub}}
+        namespace: openshift-config
+      parameters:
+        - name: PROJECT_NAME
+        - name: PROJECT_DISPLAYNAME
+        - name: PROJECT_DESCRIPTION
+        - name: PROJECT_ADMIN_USER
+        - name: PROJECT_REQUESTING_USER
+      objects:
+        - apiVersion: project.openshift.io/v1
+          kind: Project
+          metadata:
+            name: ${PROJECT_NAME}
+            annotations:
+              openshift.io/description: ${PROJECT_DESCRIPTION}
+              openshift.io/display-name: ${PROJECT_DISPLAYNAME}
+              openshift.io/requester: ${PROJECT_REQUESTING_USER}
+        - apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: admin
+            namespace: ${PROJECT_NAME}
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: admin
+          subjects:
+            - apiGroup: rbac.authorization.k8s.io
+              kind: User
+              name: ${PROJECT_ADMIN_USER}
+        {{hub- if (dig "networkPolicies" false $pt) hub}}
+        - apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: deny-by-default
+            namespace: ${PROJECT_NAME}
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+            ingress: []
+        - apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: allow-from-same-namespace
+            namespace: ${PROJECT_NAME}
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+            ingress:
+              - from:
+                  - podSelector: {}
+        - apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: allow-from-hostnetwork
+            namespace: ${PROJECT_NAME}
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+            ingress:
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        policy-group.network.openshift.io/host-network: ''
+                    podSelector: {}
+        - apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: allow-from-ingress
+            namespace: ${PROJECT_NAME}
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+            ingress:
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        policy-group.network.openshift.io/ingress: ''
+                    podSelector: {}
+        - apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: allow-from-monitoring
+            namespace: ${PROJECT_NAME}
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+            ingress:
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        kubernetes.io/metadata.name: openshift-monitoring
+                    podSelector: {}
+        {{hub- end hub}}
+        {{hub- if $quota hub}}
+        - apiVersion: v1
+          kind: LimitRange
+          metadata:
+            name: default-limits
+            namespace: ${PROJECT_NAME}
+          spec:
+            limits:
+              - type: Container
+                {{hub $lr | toYaml | autoindent hub}}
+        - apiVersion: v1
+          kind: ResourceQuota
+          metadata:
+            name: default-quota
+            namespace: ${PROJECT_NAME}
+          spec:
+            hard:
+              {{hub $quota | toYaml | autoindent hub}}
+        {{hub- end hub}}
+        {{hub- range $extra := (dig "extraObjects" (list) $pt) hub}}
+        - {{hub $extra | toYaml | autoindent hub}}
+        {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: Project
+      metadata:
+        name: cluster
+      spec:
+        projectRequestTemplate:
+          name: {{hub $name hub}}
+  {{hub- end hub}}

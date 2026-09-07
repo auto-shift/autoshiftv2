@@ -156,6 +156,179 @@ hubClusterSets:
               names:
                 - sample_metrics
       # =======================================================================
+      # Compliance Operator
+      # =======================================================================
+      # One ScanSettingBinding per entry in scans. Profiles are PINNED to a version: the
+      # unversioned name (ocp4-stig) tracks whatever DISA publishes next, so a new release would
+      # silently change what is scanned and remediated. Bumping the pin is the deliberate choice.
+      #
+      # autoApply defaults to false, so adding a scan gives findings and no cluster changes. With it
+      # true, every remediation the scan produced is applied EXCEPT those in exclude. Several
+      # generate MachineConfigs and will roll nodes, so turn it on per scan, per cluster.
+      #
+      # exclude is a reject list, not an allow list. The previous allow list carried 206 names to
+      # express four decisions and had to be re-enumerated on every profile bump. Excluding a
+      # remediation sets apply: false, so removing one after the fact actually reverts it.
+      #
+      # Full workflow, and the findings that need manual policies: docs/compliance.md
+      # =======================================================================
+      compliance:
+        # Pin the operator CSV. Same shape as the other operator version blocks.
+        # versions:
+        #   - 'compliance-operator.vX.Y.Z'
+        # startingCSV: 'compliance-operator.vX.Y.Z'
+        scans:
+          - name: stig-v2r3
+            profiles:
+              - ocp4-stig-v2r3
+              - ocp4-stig-node-v2r3
+              - rhcos4-stig-v2r3
+            scanSetting: default
+            autoApply: false
+            # These four change the DEFAULT PROJECT TEMPLATE, so every project created through
+            # `oc new-project` is born with a default-deny NetworkPolicy and a ResourceQuota.
+            # Excluded because default-deny blocks traffic from the kube-apiserver as well as from
+            # other namespaces: it has been observed to break the cluster-manager namespaces and
+            # Red Hat Advanced Cluster Security, whose admission webhook the API server calls into.
+            # Namespaces created directly by an operator bundle are not affected, but the ones ACM
+            # creates per managed cluster are the ones that bite. Verify on a test cluster before
+            # removing any of these.
+            exclude:
+              - ocp4-stig-v2r3-project-config-and-template-network-policy
+              - ocp4-stig-v2r3-project-config-and-template-network-policy-1
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
+
+      # =======================================================================
+      # Logging - policy: logging
+      # =======================================================================
+      # One ClusterLogForwarder per entry, created in namespace (default openshift-logging).
+      # spec is ClusterLogForwarder schema passed through verbatim, so inputs, filters, tuning and
+      # any output type a later release adds work with no change to the policy. AutoShift creates
+      # the collector ServiceAccount and binds it to collectorRoles; spec.serviceAccount.name
+      # defaults to <name>-collector.
+      #
+      # Forwarding audit logs satisfies the STIG rules audit-log-forwarding-enabled and
+      # audit-log-forwarding-uses-tls. This needs only the logging operator, not the Loki stack.
+      logging:
+        # Pin the operator CSV. Same shape as the other operator version blocks.
+        # versions:
+        #   - 'cluster-logging.vX.Y.Z'
+        # startingCSV: 'cluster-logging.vX.Y.Z'
+        forwarders:
+          - name: 'audit'
+            namespace: 'openshift-logging'
+            collectorRoles:
+              - 'collect-audit-logs'
+            spec:
+              outputs:
+                - name: 'audit-remote'
+                  type: 'syslog'
+                  syslog:
+                    url: 'tls://syslog.example.com:6514'
+                    rfc: 'RFC5424'
+              pipelines:
+                - name: 'audit-to-remote'
+                  inputRefs:
+                    - 'audit'
+                  outputRefs:
+                    - 'audit-remote'
+
+      # =======================================================================
+      # Manual remediations - policy: manual-remediations
+      # =======================================================================
+      # STIG findings the Compliance Operator ships no automatic remediation for, because each one
+      # needs a site decision it cannot make: which registries are permitted, what the banner says,
+      # where audit logs go. Enable the set with the autoshift.io/manual-remediations label; each
+      # entry below renders nothing until you set it, so the label alone changes nothing.
+      #
+      # Findings that cannot be remediated at all are reported by policy-stig-manual-review.
+      manualRemediations:
+        # ocp-allowed-registries, ocp-allowed-registries-for-import
+        imageRegistries:
+          allowed:
+            - quay.io
+            - registry.redhat.io
+            - image-registry.openshift-image-registry.svc:5000
+          allowedForImport:
+            - domainName: quay.io
+              insecure: false
+            - domainName: registry.redhat.io
+              insecure: false
+        # Samples Operator pulls from registry.redhat.io; remove it when the list above blocks that.
+        removeSamplesOperator: true
+        # classification-banner
+        classificationBanner:
+          text: 'UNCLASSIFIED'
+          location: 'BannerTopBottom'
+          color: '#ffffff'
+          backgroundColor: '#008000'
+        # openshift-motd-exists. The rule accepts either DoD consent banner; this is the short form.
+        motd: |
+          You are accessing a U.S. Government (USG) Information System (IS) that is provided for
+          USG-authorized use only. By using this IS (which includes any device attached to this
+          IS), you consent to the following conditions: the USG routinely intercepts and monitors
+          communications on this IS; at any time, the USG may inspect and seize data stored on this
+          IS; communications using, or data stored on, this IS are not private and are subject to
+          routine monitoring, interception, and search.
+        # oauth-login-template-set, oauth-provider-selection-set, oauth-logout-url-set.
+        # The template Secrets hold HTML and are created out of band in openshift-config.
+        oauth:
+          loginTemplateSecret: 'login-template'
+          providerSelectionTemplateSecret: 'providerselect-template'
+          errorTemplateSecret: 'error-template'
+          logoutRedirect: 'https://example.com/logged-out'
+        # routes-rate-limit. annotations defaults to 10 concurrent TCP, 10 http/s, 10 tcp/s.
+        # The rule scores every Route outside kube-* and openshift-*, so allNamespaces is the only
+        # setting that passes it; the default excludeRegex matches the rule's own exclusion.
+        routeRateLimits:
+          allNamespaces: true
+          excludeRegex: '^kube-.*|^openshift-.*'
+          namespaces: []
+          annotations:
+            haproxy.router.openshift.io/rate-limit-connections: 'true'
+            haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: '10'
+            haproxy.router.openshift.io/rate-limit-connections.rate-http: '10'
+            haproxy.router.openshift.io/rate-limit-connections.rate-tcp: '10'
+        # project-config-and-template-network-policy, project-config-and-template-resource-quota.
+        # Owns the default project template so new projects get network policies and a quota. Use
+        # this INSTEAD of the operator's own remediations, which are in compliance.scans[].exclude
+        # because they ship only the restrictive half and break admission webhooks and operator
+        # pods. quota values become mandatory for every pod in a new project; limitRange supplies
+        # the defaults that keeps pods without their own requests admissible.
+        projectTemplate:
+          enabled: true
+          name: 'project-request'
+          networkPolicies: false
+          quota:
+            requests.cpu: '4'
+            requests.memory: '8Gi'
+            limits.cpu: '8'
+            limits.memory: '16Gi'
+          limitRange:
+            default:
+              cpu: '500m'
+              memory: '512Mi'
+            defaultRequest:
+              cpu: '100m'
+              memory: '256Mi'
+          extraObjects: []
+        # reject-unsigned-images-by-default. ROLLS EVERY NODE in pools. Leave enabled false unless
+        # every image the cluster pulls is signed and its signature store is reachable.
+        rejectUnsignedImages:
+          enabled: false
+          pools:
+            - 'master'
+            - 'worker'
+          policy:
+            default:
+              - type: 'reject'
+            transports:
+              containers-storage:
+                '':
+                  - type: 'insecureAcceptAnything'
+
+      # =======================================================================
       # Managed AutoShift — nested deployments onto the hubs this hub governs
       # =======================================================================
       # One entry per AutoShift deployment to create on each MANAGED hub selected by the
@@ -361,10 +534,6 @@ hubClusterSets:
       #   versions:
       #     - 'cloudnative-pg.vX.Y.Z'
       #   startingCSV: 'cloudnative-pg.vX.Y.Z'
-      # compliance:
-      #   versions:
-      #     - 'compliance-operator.vX.Y.Z'
-      #   startingCSV: 'compliance-operator.vX.Y.Z'
       # coo:
       #   versions:
       #     - 'cluster-observability-operator.vX.Y.Z'
@@ -393,10 +562,6 @@ hubClusterSets:
       #   versions:
       #     - 'local-storage-operator.vX.Y.Z'
       #   startingCSV: 'local-storage-operator.vX.Y.Z'
-      # logging:
-      #   versions:
-      #     - 'cluster-logging.vX.Y.Z'
-      #   startingCSV: 'cluster-logging.vX.Y.Z'
       # loki:
       #   versions:
       #     - 'loki-operator.vX.Y.Z'
@@ -1202,6 +1367,18 @@ hubClusterSets:
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
+
+      # =======================================================================
+      # Container Security Operator
+      # =======================================================================
+      # Quay image vulnerability scanning. Satisfies the STIG rule
+      # container-security-operator-exists.
+      container-security: 'false'
+      container-security-subscription-name: container-security-operator
+      container-security-version: 'container-security-operator.v3.17.4'
+      container-security-channel: stable-3.17
+      container-security-source: redhat-operators
+      container-security-source-namespace: openshift-marketplace
 
       # =======================================================================
       # OpenShift Virtualization

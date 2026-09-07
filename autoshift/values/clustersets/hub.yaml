@@ -2,6 +2,91 @@
 hubClusterSets:
   hub:
     config:
+      # Manual remediations - STIG findings the Compliance Operator ships no fix for, because each
+      # needs a site decision. Enabled by the manual-remediations label below; every entry renders
+      # nothing until its key is set. See docs/compliance.md.
+      #
+      # imageRegistries and oauth are commented out because neither is safe as a shipped default.
+      #
+      # allowedRegistries is enforced by CRI-O on every node, and anything not listed cannot be
+      # pulled. The three below cover a plain hub, but AutoShift policies also reference docker.io
+      # and registry.access.redhat.com (cluster-install, ACM provisioning) and
+      # registry.connect.redhat.com (vault). Add every registry your enabled policies use, then
+      # confirm with: oc get pods -A -o jsonpath='{..image}' | tr ' ' '\n' | cut -d/ -f1 | sort -u
+      # Running pods are unaffected, so a missing entry surfaces on the next pull, not on sync.
+      #
+      # oauth names Secrets holding login HTML that must be created in openshift-config first; see
+      # docs/compliance.md for the commands. Referencing Secrets that do not exist is not something
+      # to ship by default.
+      manualRemediations:
+        removeSamplesOperator: true
+        classificationBanner:
+          text: 'UNCLASSIFIED'
+          location: 'BannerTopBottom'
+          color: '#ffffff'
+          backgroundColor: '#008000'
+        motd: |
+          You are accessing a U.S. Government (USG) Information System (IS) that is provided for
+          USG-authorized use only. By using this IS (which includes any device attached to this
+          IS), you consent to the following conditions: the USG routinely intercepts and monitors
+          communications on this IS; at any time, the USG may inspect and seize data stored on this
+          IS; communications using, or data stored on, this IS are not private and are subject to
+          routine monitoring, interception, and search.
+        # Owns the default project template. Both halves are off: quotas are a per-application
+        # sizing decision that belongs with whatever creates the namespace, and networkPolicies
+        # would put a deny-by-default policy in every new project, which blocks the kube-apiserver
+        # reaching an admission webhook across nodes. Neither rule passes with this as it stands.
+        projectTemplate:
+          enabled: true
+          name: 'project-request'
+          networkPolicies: false
+        # Annotates every Route outside kube-* and openshift-*, which is what the rule scores.
+        routeRateLimits:
+          allNamespaces: true
+        # Rolls every node and stops unsigned image pulls. Leave false unless image signing is set up.
+        rejectUnsignedImages:
+          enabled: false
+        # imageRegistries:
+        #   allowed:
+        #     - quay.io
+        #     - registry.redhat.io
+        #     - image-registry.openshift-image-registry.svc:5000
+        #   allowedForImport:
+        #     - domainName: quay.io
+        #       insecure: false
+        # oauth:
+        #   loginTemplateSecret: 'login-template'
+        #   providerSelectionTemplateSecret: 'providerselect-template'
+        #   errorTemplateSecret: 'error-template'
+        #   logoutRedirect: 'https://example.com/logged-out'
+
+      # Compliance Operator scans. Profiles are PINNED to a version: ocp4-stig tracks whatever
+      # DISA publishes next, so an unpinned name would silently change what is measured and, with
+      # autoApply on, change the cluster. Adopting a new release means adding an entry.
+      #
+      # autoApply true applies every remediation the scan produced except those in exclude. Several
+      # are MachineConfigs and will roll every node. This matches what AutoShift did before the
+      # reject list replaced the allow list, so upgrading changes nothing. Set it false to scan and
+      # report without touching the cluster. See docs/compliance.md.
+      compliance:
+        scans:
+          - name: stig-v2r3
+            profiles:
+              - ocp4-stig-v2r3
+              - ocp4-stig-node-v2r3
+              - rhcos4-stig-v2r3
+            scanSetting: default
+            autoApply: true
+            # These four rewrite the default project template so every new project gets a
+            # deny-by-default NetworkPolicy and a ResourceQuota, and ship only that restrictive
+            # half. Deny-by-default blocks the kube-apiserver, breaking admission webhooks (Red Hat
+            # Advanced Cluster Security) and the cluster-manager namespaces; the quota rejects every
+            # pod that declares no resources. Use manualRemediations.projectTemplate instead.
+            exclude:
+              - ocp4-stig-v2r3-project-config-and-template-network-policy
+              - ocp4-stig-v2r3-project-config-and-template-network-policy-1
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
       uwm:
         # storageClass: 'gp3-csi'            # Omit to use cluster default StorageClass
         prometheus:
@@ -357,6 +442,7 @@ hubClusterSets:
       coo-source: redhat-operators
       coo-source-namespace: openshift-marketplace
       ### Compliance Operator Stig Apply
+      manual-remediations: 'true'
       compliance: 'true'
       compliance-auto-remediate: 'true'
       compliance-subscription-name: compliance-operator
