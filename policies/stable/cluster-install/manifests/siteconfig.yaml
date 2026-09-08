@@ -119,6 +119,73 @@ object-templates-raw: |
           {{- end }}
       {{- end }}
 
+      {{- $parts := (index $ci "diskPartitions" | default dict) }}
+      {{- $partList := (index $parts "partitions" | default list) }}
+      {{- if $partList }}
+  {{- /* Day 1 disk partitioning. Satisfies the partition-for-var-log* rules in the NIST and STIG
+         profiles, which cannot be remediated later: partitioning Red Hat CoreOS is an install time
+         operation. Emitted as an extra manifest so it lands before the node first boots.
+         The device must be the install disk, and startMiB has to sit past the root filesystem. */}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: autoshift-partitions-config
+        namespace: {{ $clusterName }}
+      data:
+      {{- range $_, $role := (index $parts "roles" | default (list "master" "worker")) }}
+        autoshift-partitions-{{ $role }}.yaml: |
+          apiVersion: machineconfiguration.openshift.io/v1
+          kind: MachineConfig
+          metadata:
+            name: 98-{{ $role }}-autoshift-partitions
+            labels:
+              machineconfiguration.openshift.io/role: {{ $role }}
+          spec:
+            config:
+              ignition:
+                version: 3.2.0
+              storage:
+                disks:
+                  - device: {{ index $parts "device" }}
+                    partitions:
+                  {{- range $_, $p := $partList }}
+                      - label: {{ index $p "label" }}
+                        startMiB: {{ index $p "startMiB" | default 0 }}
+                        sizeMiB: {{ index $p "sizeMiB" | default 0 }}
+                  {{- end }}
+                filesystems:
+                {{- range $_, $p := $partList }}
+                  - device: /dev/disk/by-partlabel/{{ index $p "label" }}
+                    path: {{ index $p "mountPath" }}
+                    format: {{ index $p "format" | default "xfs" }}
+                    wipeFilesystem: true
+                {{- end }}
+              systemd:
+                units:
+                {{- range $_, $p := $partList }}
+                {{- /* systemd unit names use - as the path separator, so a hyphen inside a path
+                       component must be escaped as \x2d first: /var/log/kube-apiserver becomes
+                       var-log-kube\x2dapiserver.mount. A plain slash replace produces a name
+                       systemd never matches to the path, and the mount silently never happens. */}}
+                {{- $unit := (printf "%s.mount" (trimPrefix "-" (replace "/" "-" (replace "-" "\x2d" (index $p "mountPath"))))) }}
+                  - name: {{ $unit }}
+                    enabled: true
+                    contents: |
+                      [Unit]
+                      Before=local-fs.target
+                      [Mount]
+                      Where={{ index $p "mountPath" }}
+                      What=/dev/disk/by-partlabel/{{ index $p "label" }}
+                      Type={{ index $p "format" | default "xfs" }}
+                      Options=defaults,prjquota
+                      [Install]
+                      WantedBy=local-fs.target
+                {{- end }}
+      {{- end }}
+      {{- end }}
+
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -503,9 +570,14 @@ object-templates-raw: |
         pullSecretRef:
           name: {{ printf "%s-pull-secret" $clusterName }}
         sshPublicKey: {{ $sshPublicKey }}
-      {{- if (gt (len $mirrors) 0) }}
+      {{- if or (gt (len $mirrors) 0) $partList }}
         extraManifestsRefs:
+      {{- if (gt (len $mirrors) 0) }}
           - name: autoshift-idms-config
+      {{- end }}
+      {{- if $partList }}
+          - name: autoshift-partitions-config
+      {{- end }}
       {{- end }}
         templateRefs:
           - name: agent-cluster-install

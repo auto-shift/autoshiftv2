@@ -175,7 +175,7 @@ Collects all errors and reports them together.
 {{- define "autoshift.validate-cluster-install" -}}
 
 {{/* ===== Valid key lists — add new fields here ===== */}}
-{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
+{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" "diskPartitions" }}
 {{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
 {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
 {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
@@ -223,6 +223,21 @@ Collects all errors and reports them together.
       {{- range $key, $_ := $host }}
         {{- if not (has $key $validHostKeys) }}
           {{- $errors = append $errors (printf "%s host %s: %s is not a recognized field (valid: %s)" $path $hostname $key (join ", " $validHostKeys)) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{/* diskPartitions.device must be the disk the install actually lands on. rootDeviceHints is
+         per host and chooses that disk; the partition MachineConfig is per role and carries one
+         device path, so a disagreement silently partitions the wrong disk. Only deviceName can be
+         compared here: size and hardware hints are resolved by Ironic at provision time. */}}
+    {{- $dp := (dig "config" "clusterInstall" "diskPartitions" dict $cluster) }}
+    {{- $dpDevice := (dig "device" "" $dp) }}
+    {{- if $dpDevice }}
+      {{- range $hostname, $host := $hosts }}
+        {{- $hint := (dig "rootDeviceHints" "deviceName" "" $host) }}
+        {{- if and $hint (ne $hint $dpDevice) }}
+          {{- $errors = append $errors (printf "%s host %s: rootDeviceHints.deviceName is %s but clusterInstall.diskPartitions.device is %s; the partition would be created on a different disk from the one the OS installs to" $path $hostname $hint $dpDevice) }}
         {{- end }}
       {{- end }}
     {{- end }}

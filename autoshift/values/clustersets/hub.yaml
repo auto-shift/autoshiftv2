@@ -19,7 +19,6 @@ hubClusterSets:
       # docs/compliance.md for the commands. Referencing Secrets that do not exist is not something
       # to ship by default.
       manualRemediations:
-        removeSamplesOperator: true
         classificationBanner:
           text: 'UNCLASSIFIED'
           location: 'BannerTopBottom'
@@ -37,15 +36,11 @@ hubClusterSets:
         # would put a deny-by-default policy in every new project, which blocks the kube-apiserver
         # reaching an admission webhook across nodes. Neither rule passes with this as it stands.
         projectTemplate:
-          enabled: true
           name: 'project-request'
           networkPolicies: false
         # Annotates every Route outside kube-* and openshift-*, which is what the rule scores.
         routeRateLimits:
           allNamespaces: true
-        # Rolls every node and stops unsigned image pulls. Leave false unless image signing is set up.
-        rejectUnsignedImages:
-          enabled: false
         # imageRegistries:
         #   allowed:
         #     - quay.io
@@ -117,7 +112,6 @@ hubClusterSets:
           #     cpu: '100m'
           #     memory: '256Mi'
         alertmanager:
-          enabled: false
           storage: '10Gi'
       gitlab:
         dbBackupSchedule: '0 2 * * *'
@@ -144,7 +138,6 @@ hubClusterSets:
         vmScanning: true
         defaultPolicies: true
         admissionControl:
-          enabled: true
     labels:
       # OpenShift version for cluster deployment and image mirroring
       openshift-version: '4.22.8'
@@ -452,6 +445,14 @@ hubClusterSets:
       coo-source-namespace: openshift-marketplace
       ### Compliance Operator Stig Apply
       manual-remediations: 'true'
+      # Opt into individual members. The set gate above plus one of these places a policy;
+      # anything not listed here is not deployed at all rather than deployed and inert.
+      manual-remediations-classification-banner: 'true'
+      manual-remediations-motd: 'true'
+      manual-remediations-remove-samples-operator: 'true'
+      manual-remediations-route-rate-limits: 'true'
+      manual-remediations-quota-guard: 'true'
+      manual-remediations-project-template: 'true'
       compliance: 'true'
       compliance-auto-remediate: 'true'
       compliance-subscription-name: compliance-operator

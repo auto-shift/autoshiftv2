@@ -259,6 +259,37 @@ clusters:
         ingressVip: '10.0.0.3'                      # required for multi-node
         # mastersSchedulable: false                 # default: false
         # cpuPartitioning: 'AllNodes'               # 'None' (default) or 'AllNodes' — install-time only
+
+        # --- Day 1 disk partitioning ---
+        # Partitioning Red Hat CoreOS is an install-time operation. The partition has to exist before
+        # RHCOS is written, so this is emitted as an install manifest and there is no day-2
+        # equivalent: applying the same MachineConfig to a running node writes the mount unit but
+        # never creates the partition, leaving a unit that fails against a missing device.
+        #
+        # OpenShift Container Platform supports adding a SINGLE partition, mounted at /var or a
+        # subdirectory of it. The NIST profile has five partition-for-var-log* rules and each checks
+        # its own path, so at most one of them can be satisfied this way; accept the rest in
+        # compliance.manualReview. /var/log/audit is the one worth taking, because it is the
+        # filesystem whose exhaustion stops auditing.
+        #
+        # device must be the install disk. Prefer a /dev/disk/by-id/ path: on AWS the install disk is
+        # usually an NVMe device, and on bare metal device names move between boots. The root
+        # filesystem resizes to fill everything up to startMiB, and below 25000 the documentation
+        # warns the root filesystem ends up too small. prjquota is required for container storage.
+        #
+        # On a cloud platform, every node in a pool must use the same device name, so worker
+        # instance types with different disk layouts cannot share one partitioned pool.
+        # diskPartitions:
+        #   device: '/dev/disk/by-id/nvme-nvme.1b36-1234'
+        #   roles:
+        #     - 'master'
+        #     - 'worker'
+        #   partitions:
+        #     - label: 'varlogaudit'
+        #       mountPath: '/var/log/audit'
+        #       startMiB: 25000
+        #       sizeMiB: 10000
+        #       format: 'xfs'
         # fips: true                                # Enable FIPS mode (requires ECDSA/RSA SSH keys, not Ed25519)
 
         # --- SSH Key (inline or ConfigMap ref) ---

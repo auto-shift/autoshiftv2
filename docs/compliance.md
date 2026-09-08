@@ -12,7 +12,8 @@ Operator ships works the same way, and several can run side by side.
 | `compliance-storage-class` | label | storage class for raw scan results, when the cluster default cannot bind on a control plane node |
 | `compliance-auto-remediate` | label | set to `false` to keep a cluster scanned but never changed; overrides `autoApply` |
 | `config.compliance.scans` | config | which profiles to scan, and which remediations to apply |
-| `manual-remediations` | label | enables the policies for findings the operator ships no fix for |
+| `manual-remediations` | label | set gate for the policies covering findings the operator ships no fix for |
+| `manual-remediations-<name>` | label | opts into one member; both labels are required to place it |
 | `config.manualRemediations` | config | one key per finding; each renders nothing until set |
 | `logging` | label | installs the logging operator, needed for audit log forwarding |
 | `config.logging.forwarders` | config | `ClusterLogForwarder` objects, including the audit one |
@@ -115,15 +116,23 @@ reason beside any exclusion you add.
 
 ## Findings with no automatic remediation
 
-Set the label, then set only the keys you want. Everything else renders nothing.
+Two labels place each policy: the set gate, and one per member. A policy nobody asked for is not
+deployed at all, rather than deployed and inert. Configuration carries content only, never an
+on and off switch.
 
 ```yaml
       labels:
         manual-remediations: 'true'
+        manual-remediations-motd: 'true'
+        manual-remediations-classification-banner: 'true'
       config:
         manualRemediations:
-          ...
+          motd: |
+            You are accessing a U.S. Government (USG) Information System (IS) ...
 ```
+
+The member label is `manual-remediations-<policy name without the policy- prefix>`, so
+`policy-motd` is enabled by `manual-remediations-motd`.
 
 | Config key | Satisfies |
 |---|---|
@@ -133,6 +142,10 @@ Set the label, then set only the keys you want. Everything else renders nothing.
 | `oauth` | `oauth-login-template-set`, `oauth-provider-selection-set`, `oauth-logout-url-set` |
 | `routeRateLimits` | `routes-rate-limit` |
 | `projectTemplate` | `project-config-and-template-resource-quota` |
+| `kubeletEviction` | `kubelet-eviction-thresholds-set-hard-imagefs-available`, `-nodefs-available` |
+| `auditdConfig` | `auditd-data-disk-error-action`, `-disk-full-action`, `-retention-flush`, `-retention-space-left-action` |
+| `sshdAccess` | `sshd-limit-user-access` |
+| `clusterProxy` | `cluster-wide-proxy-set` |
 | `rejectUnsignedImages` | `reject-unsigned-images-by-default` |
 | `removeSamplesOperator` | none; stops the Samples Operator pulling from a blocked registry |
 
@@ -246,6 +259,31 @@ oc get pods -n openshift-apiserver
 oc rollout restart deployment/apiserver -n openshift-apiserver
 ```
 
+### Node and operating system settings
+
+`kubeletEviction`, `auditdConfig` and `sshdAccess` each write node configuration and **roll every
+node in the pools listed**. All three are off by default and the shipped values are the ones the
+profiles check for.
+
+```yaml
+          kubeletEviction:
+            enabled: true
+          auditdConfig:
+            enabled: true
+          sshdAccess:
+            enabled: true
+            AllowGroups:
+              - 'core'
+```
+
+Read these before turning them on:
+
+- `auditdConfig` sets `disk_error_action` and `disk_full_action` to `single`, which drops a node to
+  single-user mode rather than let auditing stop. That is the control's intent and it is disruptive.
+  `space_left_action` of `email` needs a working local mailer, or the warning goes nowhere.
+- `sshdAccess` naming a group nobody belongs to locks everyone out of SSH on those nodes. On Red Hat
+  CoreOS the usual account is `core`.
+
 ### rejectUnsignedImages
 
 ```yaml
@@ -295,6 +333,58 @@ output type work without a change here. List several entries for several destina
 bound to `collectorRoles`.
 
 `logging: 'true'` also covers `cluster-logging-operator-exist`.
+
+## Partitioning, at install only
+
+The `partition-for-var-log*` rules want the audit log directories on their own filesystems, so a
+full disk cannot silently stop auditing. Partitioning Red Hat CoreOS is an install time operation,
+so there is no day two remediation and these report as MANUAL on a running cluster.
+
+There are five of them, and each checks its own path: `/var/log`, `/var/log/audit`,
+`/var/log/kube-apiserver`, `/var/log/oauth-apiserver` and `/var/log/openshift-apiserver`. A separate
+`/var/log` does not satisfy the four nested inside it.
+
+**At most one of the five can be satisfied.** OpenShift Container Platform supports adding a single
+partition, mounted at `/var` or a subdirectory of it, so a five partition layout is outside what the
+installation documentation supports. Take `/var/log/audit`, because that is the filesystem whose
+exhaustion stops auditing, and accept the other four in `manualReview` with that as the reason.
+
+For clusters AutoShift provisions, set it in `config.clusterInstall`:
+
+```yaml
+        clusterInstall:
+          diskPartitions:
+            device: '/dev/sda'
+            roles:
+              - 'master'
+              - 'worker'
+            partitions:
+              - label: 'varlogaudit'
+                mountPath: '/var/log/audit'
+                startMiB: 25000
+                sizeMiB: 10000
+                format: 'xfs'
+```
+
+That becomes a `MachineConfig` in the cluster's extra manifests, applied before a node first boots.
+It works on bare metal through SiteConfig `extraManifestsRefs`, and on Amazon Web Services and
+vSphere through Hive `provisioning.manifestsConfigMapRef`.
+
+There is no day two equivalent. Ignition's disk and filesystem stages run once, in the initramfs on
+first boot, and the marker that gates them is removed afterwards, so no amount of rebooting replays
+them. Applying the same MachineConfig to a running node writes and enables the mount unit, which the
+Machine Config Operator does handle, while the partition and filesystem never appear: the unit then
+fails against a device that does not exist.
+`device` must be the install disk and `startMiB` must sit past the root filesystem, or the install
+fails. A `sizeMiB` of 0 takes the rest of the disk, so it only makes sense on the last entry. The
+full five-partition layout is in `autoshift/values/clusters/_example-cluster-install-baremetal.yaml`.
+
+systemd orders nested mounts by path, so `/var/log` mounts before `/var/log/audit` without anything
+extra. Mount unit names are escaped the way `systemd-escape --path` does it, because a hyphen inside
+a path component is written `\x2d`: `/var/log/kube-apiserver` becomes
+`var-log-kube\x2dapiserver.mount`.
+
+On an existing cluster, accept these in `manualReview` and revisit at the next rebuild.
 
 ## The Container Security Operator
 

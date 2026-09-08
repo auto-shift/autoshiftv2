@@ -4,9 +4,10 @@ One policy per Security Technical Implementation Guide finding that the Complian
 no automatic remediation for. Each needs a site decision the operator cannot make: which registries
 are permitted, what the classification banner says, where audit logs are sent.
 
-Enable the set with the `manual-remediations` label. Every policy is driven by
-`config.manualRemediations` and renders nothing until its key is set, so the label alone changes
-nothing and one label covers the whole set.
+Each policy has its own placement, gated on two labels: `manual-remediations` enables the set, and
+`manual-remediations-<name>` opts into one member. Both are required, so a policy nobody asked for is
+never placed rather than placed and vacuously compliant. `config.manualRemediations` carries content
+only; there is no `enabled` flag, because the label is the switch.
 
 | Policy | Rules it satisfies |
 |---|---|

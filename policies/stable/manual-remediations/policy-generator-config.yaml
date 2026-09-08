@@ -31,41 +31,81 @@ policyDefaults:
     - CM Configuration Management
   controls:
     - CM-2 Baseline Configuration
-  # Placement authored by us (placement.yaml at the dir root, full fidelity); PG includes it and
-  # generates only the PlacementBinding.
-  placement:
-    placementPath: placement.yaml
 policies:
   - name: policy-image-registries
     manifests:
       - path: manifests/image-registries.yaml
+    placement:
+      placementPath: placement-image-registries.yaml
   - name: policy-remove-samples-operator
     manifests:
       - path: manifests/remove-samples-operator.yaml
+    placement:
+      placementPath: placement-remove-samples-operator.yaml
   - name: policy-classification-banner
     manifests:
       - path: manifests/classification-banner.yaml
+    placement:
+      placementPath: placement-classification-banner.yaml
   - name: policy-motd
     manifests:
       - path: manifests/motd.yaml
+    placement:
+      placementPath: placement-motd.yaml
   - name: policy-oauth-customization
     manifests:
       - path: manifests/oauth-customization.yaml
+    placement:
+      placementPath: placement-oauth-customization.yaml
   - name: policy-route-rate-limits
     manifests:
       - path: manifests/route-rate-limits.yaml
   # Inform only: a compute ResourceQuota with no LimitRange will reject pods that declare no
   # resources. Reports them rather than deleting, since the quota may be deliberate.
+  # NIST node and OS level fixes. Each is opt-in and each rolls the nodes in its pools.
+    placement:
+      placementPath: placement-route-rate-limits.yaml
+  - name: policy-kubelet-eviction
+    manifests:
+      - path: manifests/kubelet-eviction.yaml
+    placement:
+      placementPath: placement-kubelet-eviction.yaml
+  - name: policy-auditd-config
+    manifests:
+      - path: manifests/auditd-config.yaml
+    placement:
+      placementPath: placement-auditd-config.yaml
+  - name: policy-sshd-access
+    manifests:
+      - path: manifests/sshd-access.yaml
+    placement:
+      placementPath: placement-sshd-access.yaml
+  - name: policy-audit-rule-order
+    manifests:
+      - path: manifests/audit-rule-order.yaml
+    placement:
+      placementPath: placement-audit-rule-order.yaml
+  - name: policy-cluster-proxy
+    manifests:
+      - path: manifests/cluster-proxy.yaml
+    placement:
+      placementPath: placement-cluster-proxy.yaml
   - name: policy-quota-guard
     remediationAction: inform
     manifests:
       - path: manifests/quota-guard.yaml
   # Default project template: satisfies both project-config-and-template rules without the
   # breakage the operator's own remediations cause. Keep those four in exclude.
+    placement:
+      placementPath: placement-quota-guard.yaml
   - name: policy-project-template
     manifests:
       - path: manifests/project-template.yaml
   # Rolls every node in the listed pools; off unless rejectUnsignedImages.enabled is set.
+    placement:
+      placementPath: placement-project-template.yaml
   - name: policy-reject-unsigned-images
     manifests:
       - path: manifests/reject-unsigned-images.yaml
+    placement:
+      placementPath: placement-reject-unsigned-images.yaml

@@ -102,7 +102,6 @@ hubClusterSets:
               cpu: '100m'
               memory: '256Mi'
         alertmanager:
-          enabled: true
           storage: '10Gi'
           resources:
             requests:
@@ -155,6 +154,29 @@ hubClusterSets:
             userWorkload:
               names:
                 - sample_metrics
+
+      # =======================================================================
+      # File integrity - policy: file-integrity
+      # =======================================================================
+      # NIST file-integrity-exists. AIDE runs in a privileged daemon set on each selected node.
+      # file-integrity-notification-enabled is satisfied by the operator itself, which ships the
+      # NodeHasIntegrityFailure alert.
+      #
+      # ONE instance covering every node. Schedulable control plane nodes carry both the master and
+      # worker role labels, so per-role instances would scan those nodes twice. Split only if your
+      # layout needs it, and keep the selectors disjoint.
+      fileIntegrity:
+        instances:
+          - name: 'autoshift'
+            nodeSelector:
+              kubernetes.io/os: 'linux'
+            tolerations:
+              - operator: 'Exists'
+            config:
+              gracePeriod: 20
+              maxBackups: 5
+            debug: false
+
       # =======================================================================
       # Compliance Operator
       # =======================================================================
@@ -281,7 +303,6 @@ hubClusterSets:
             - domainName: registry.redhat.io
               insecure: false
         # Samples Operator pulls from registry.redhat.io; remove it when the list above blocks that.
-        removeSamplesOperator: true
         # classification-banner
         classificationBanner:
           text: 'UNCLASSIFIED'
@@ -303,6 +324,7 @@ hubClusterSets:
           providerSelectionTemplateSecret: 'providerselect-template'
           errorTemplateSecret: 'error-template'
           logoutRedirect: 'https://example.com/logged-out'
+          tokenMaxAgeSeconds: 86400
         # routes-rate-limit. annotations defaults to 10 concurrent TCP, 10 http/s, 10 tcp/s.
         # The rule scores every Route outside kube-* and openshift-*, so allNamespaces is the only
         # setting that passes it; the default excludeRegex matches the rule's own exclusion.
@@ -315,6 +337,9 @@ hubClusterSets:
             haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: '10'
             haproxy.router.openshift.io/rate-limit-connections.rate-http: '10'
             haproxy.router.openshift.io/rate-limit-connections.rate-tcp: '10'
+          # NIST route-ip-whitelist. Requests from outside these ranges are dropped, so an
+          # incomplete list silently blocks legitimate traffic. Empty leaves routes open.
+          ipWhitelist: []
         # project-config-and-template-network-policy, project-config-and-template-resource-quota.
         # Owns the default project template so new projects get network policies and a quota. Use
         # this INSTEAD of the operator's own remediations, which are in compliance.scans[].exclude
@@ -322,7 +347,6 @@ hubClusterSets:
         # pods. quota values become mandatory for every pod in a new project; limitRange supplies
         # the defaults that keeps pods without their own requests admissible.
         projectTemplate:
-          enabled: true
           name: 'project-request'
           networkPolicies: false
           quota:
@@ -338,10 +362,71 @@ hubClusterSets:
               cpu: '100m'
               memory: '256Mi'
           extraObjects: []
+        # NIST kubelet-eviction-thresholds-set-hard-*. Reclaims node disk on a threshold instead
+        # of at the point of failure. Changing a KubeletConfig rolls the pools listed.
+        kubeletEviction:
+          # Empty discovers every MachineConfigPool at evaluation time. A KubeletConfig selects a
+          # pool by its own label, so naming only master and worker would skip infra, storage or
+          # any custom pool. List pools explicitly only to deliberately exclude one.
+          pools: []
+          evictionHard:
+            imagefs.available: '15%'
+            imagefs.inodesFree: '5%'
+            memory.available: '100Mi'
+            nodefs.available: '10%'
+            nodefs.inodesFree: '5%'
+        # NIST auditd-data-*. Writes /etc/audit/auditd.conf and ROLLS EVERY NODE in pools.
+        # disk_error_action and disk_full_action of single drop a node to single-user mode rather
+        # than let auditing stop; that is the control's intent and it is disruptive. space_left_action
+        # of email needs a working local mailer or the warning goes nowhere.
+        auditdConfig:
+          pools:
+            - 'master'
+            - 'worker'
+          settings:
+            flush: 'data'
+            freq: 50
+            max_log_file: 6
+            num_logs: 5
+            name_format: 'hostname'
+            max_log_file_action: 'rotate'
+            space_left: 100
+            space_left_action: 'email'
+            action_mail_acct: 'root'
+            admin_space_left_action: 'single'
+            disk_full_action: 'single'
+            disk_error_action: 'single'
+        # NIST sshd-limit-user-access. ROLLS EVERY NODE in pools. On Red Hat CoreOS only root and
+        # core have a shell and only core has keys, so this changes nothing today; it stops an
+        # account added later from reaching a node. Naming an account that does not exist locks
+        # everyone out of SSH. AllowUsers is preferred: core's core-group membership is primary,
+        # so `getent group core` lists no members.
+        sshdAccess:
+          pools:
+            - 'master'
+            - 'worker'
+          AllowUsers:
+            - 'core'
+          AllowGroups: []
+          DenyUsers: []
+          DenyGroups: []
+        # NIST audit-rules-unsuccessful-file-modification-*-rule-order. Writes the 36 rules those
+        # checks expect, in the order they require, to one file so augenrules keeps the sequence.
+        # ROLLS EVERY NODE in pools.
+        auditRuleOrder:
+          pools:
+            - 'master'
+            - 'worker'
+        # NIST cluster-wide-proxy-set. Only set this where egress really goes through a proxy;
+        # on a cluster with direct egress, accept the rule instead. Merged into the live Proxy CR,
+        # so installer-set fields such as trustedCA are preserved.
+        clusterProxy:
+          httpProxy: ''
+          httpsProxy: ''
+          noProxy: ''
         # reject-unsigned-images-by-default. ROLLS EVERY NODE in pools. Leave enabled false unless
         # every image the cluster pulls is signed and its signature store is reachable.
         rejectUnsignedImages:
-          enabled: false
           pools:
             - 'master'
             - 'worker'
@@ -1104,6 +1189,20 @@ hubClusterSets:
       # Manual Remediations
       # =======================================================================
       manual-remediations: 'false'
+      manual-remediations-image-registries: 'false'
+      manual-remediations-remove-samples-operator: 'false'
+      manual-remediations-classification-banner: 'false'
+      manual-remediations-motd: 'false'
+      manual-remediations-oauth-customization: 'false'
+      manual-remediations-route-rate-limits: 'false'
+      manual-remediations-kubelet-eviction: 'false'
+      manual-remediations-auditd-config: 'false'
+      manual-remediations-sshd-access: 'false'
+      manual-remediations-audit-rule-order: 'false'
+      manual-remediations-cluster-proxy: 'false'
+      manual-remediations-quota-guard: 'false'
+      manual-remediations-project-template: 'false'
+      manual-remediations-reject-unsigned-images: 'false'
 
       # =======================================================================
       # Infrastructure Nodes
@@ -1392,6 +1491,18 @@ hubClusterSets:
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
+
+      # =======================================================================
+      # File Integrity Operator
+      # =======================================================================
+      # Node file integrity monitoring with AIDE. Satisfies the NIST rules
+      # file-integrity-exists and file-integrity-notification-enabled.
+      file-integrity: 'false'
+      file-integrity-subscription-name: file-integrity-operator
+      file-integrity-version: 'file-integrity-operator.v1.4.1'
+      file-integrity-channel: stable
+      file-integrity-source: redhat-operators
+      file-integrity-source-namespace: openshift-marketplace
 
       # =======================================================================
       # Container Security Operator

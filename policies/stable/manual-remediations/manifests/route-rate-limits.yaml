@@ -1,5 +1,7 @@
-# STIG routes-rate-limit. Every Route outside kube-* and openshift-* needs the haproxy rate-limit
-# annotations, so an explicit namespace list can satisfy the rule only if it names every namespace
+# STIG routes-rate-limit and NIST route-ip-whitelist. Every Route outside kube-* and openshift-*
+# needs the haproxy rate-limit annotations, and the NIST profile additionally wants an IP allow
+# list, set with ipWhitelist. Requests from addresses outside it are dropped, so get the list right
+# before enabling it. Both are the same annotation mechanism, so an explicit namespace list can satisfy the rule only if it names every namespace
 # that has a Route. allNamespaces walks them instead, skipping excludeRegex, which defaults to the
 # same expression the rule itself excludes (ocp4-var-routes-excluded-namespaces-regex).
 #
@@ -18,6 +20,10 @@ object-templates-raw: |
        "haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp" "10"
        "haproxy.router.openshift.io/rate-limit-connections.rate-http" "10"
        "haproxy.router.openshift.io/rate-limit-connections.rate-tcp" "10") $rl) }}
+  {{- $allow := (dig "ipWhitelist" (list) $rl) }}
+  {{- if $allow }}
+  {{- $annotations = merge (dict "haproxy.router.openshift.io/ip_whitelist" (join " " $allow)) $annotations }}
+  {{- end }}
   {{- $namespaces := (dig "namespaces" (list) $rl) }}
   {{- if (dig "allNamespaces" false $rl) }}
   {{- $skip := (dig "excludeRegex" "^kube-.*|^openshift-.*" $rl) }}

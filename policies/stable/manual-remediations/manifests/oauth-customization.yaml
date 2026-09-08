@@ -1,4 +1,5 @@
-# STIG oauth-login-template-set, oauth-provider-selection-set and oauth-logout-url-set. The
+# STIG oauth-login-template-set, oauth-provider-selection-set and oauth-logout-url-set, and NIST
+# oauth-or-oauthclient-token-maxage. The
 # templates are HTML held in Secrets in openshift-config, created out of band; config names them.
 # logoutRedirect is on the Console CR, not OAuth, despite the rule wording.
 #
@@ -25,6 +26,17 @@ object-templates-raw: |
       spec:
         templates:
           {{hub $templates | toYaml | autoindent hub}}
+  {{hub- end hub}}
+  {{hub- if (dig "tokenMaxAgeSeconds" 0 $oauth) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: OAuth
+      metadata:
+        name: cluster
+      spec:
+        tokenConfig:
+          accessTokenMaxAgeSeconds: {{hub (dig "tokenMaxAgeSeconds" 0 $oauth) hub}}
   {{hub- end hub}}
   {{hub- if (dig "logoutRedirect" "" $oauth) hub}}
   - complianceType: musthave
