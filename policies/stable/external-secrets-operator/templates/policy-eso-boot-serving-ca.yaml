@@ -10,22 +10,26 @@
   emissions swap to DEBUG placeholder text), never by editing one copy alone.
 */ -}}
 # Serving-CA capture, hub-side. Placed ONLY on hub clusters (hubClusterSets). It resolves the
-# CA that signs the hub apiserver's SERVING cert and stashes it as a ConfigMap in the policy
-# namespace, where the copy policy (policy-eso-boot-store.yaml) can read
-# it with a hub template and ship it to the spokes. This is the client->server half of the mTLS
-# trust (the spoke's store must trust the cert the hub apiserver presents).
+# CA that signs the hub apiserver's SERVING cert and stashes it as a ConfigMap in every tenancy
+# namespace on THIS hub (this chart's policy namespace PLUS each unique
+# autoshift.io/owning-namespace on local ManagedClusters), where the copy policy
+# (policy-eso-boot-store.yaml) can read it with a hub template and ship it to the spokes.
+# This is the client->server half of the mTLS trust (the spoke's store must trust the cert the
+# hub apiserver presents).
 #
-# Why a separate policy that writes into the policy namespace:
-#   - The apiserver serving cert lives in openshift-config / openshift-config-managage and the
+# Why a separate policy that writes into tenancy namespaces:
+#   - The apiserver serving cert lives in openshift-config / openshift-config-managed and the
 #     APIServer config object — NONE of which the policy propagator may read. So the lookup CANNOT
 #     be a hub template. Instead this whole policy is RUNTIME: it lands on the hub (which is self-
 #     managing, or is an intermediate hub managed by a self-managed hub) and the LOCAL
 #     config-policy-controller (cluster-admin) does the lookup on the cluster itself.
-#   - It writes the result into the policy namespace. The copy policy then reads it with a hub
-#     template (hub templates ARE allowed to read the policy namespace) and copies it to each
-#     spoke. That indirection is what makes the flow compose across MULTIPLE AutoShift deployments
-#     and the hub -> managed-hub -> spoke topology: every hub captures its OWN serving CA locally,
-#     and the copy only ever reads from the policy namespace.
+#   - It writes the result into each AutoShift policy namespace on this hub. boot-store then reads
+#     with a hub template from ITS own policy namespace (hub templates ARE allowed to read that
+#     namespace) and copies it to each spoke. In hub-of-hubs the global app places this policy onto
+#     the site hub (Helm policy ns = global app) while leaf boot-store is rendered by the site app
+#     (fromConfigMap uses the site app ns = the leaves' owning-namespace). Stashing into every
+#     owning-namespace is what makes those two apps meet. Every hub still captures its OWN serving
+#     CA locally; the copy only ever reads a policy namespace.
 #
 # Resolution (runtime, on the hub): if the hub apiserver serves a custom named certificate for its
 # external apiserver host, trust that cert's chain (its openshift-config Secret, key tls.crt);
@@ -61,7 +65,7 @@ metadata:
   name: policy-eso-boot-serving-ca
   namespace: {{ $policyNamespace }}
   annotations:
-    policy.open-cluster-management.io/description: 'Discover the hub apiserver serving CA at runtime (custom named cert or operator-managed bundle) and stash it in the policy namespace for delivery to spokes.'
+    policy.open-cluster-management.io/description: 'Discover the hub apiserver serving CA at runtime (custom named cert or operator-managed bundle) and stash it in every tenancy namespace on this hub (Helm policy ns + each ManagedCluster owning-namespace) for delivery to spokes.'
     policy.open-cluster-management.io/standards: NIST SP 800-53
     policy.open-cluster-management.io/categories: SC System and Communications Protection
     policy.open-cluster-management.io/controls: SC-17 Public Key Infrastructure Certificates
@@ -115,16 +119,28 @@ spec:
                     {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
                     {{ "{{hub-" }} $teardown := (dig "eso" "hubBootstrap" "teardown" {{ $defaultTeardown }} $clusterConfig) {{ "hub}}" }}
                     {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
+                    ##### Tenancy namespaces to stash/remove: this chart's policy ns FIRST, then each unique #####
+                    ##### autoshift.io/owning-namespace on THIS hub's ManagedClusters (cluster-labels) if not #####
+                    ##### already present — a list so object-stream order is deterministic (map range is not). #####
+                    ##### In hub-of-hubs the rendering app's ns (global) and the child app's ns (site) differ; #####
+                    ##### boot-store fromConfigMap uses the child app ns. #####
+                    {{ "{{-" }} $stashNs := list "{{ $policyNamespace }}" {{ "}}" }}
+                    {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
+                      {{ "{{-" }} $own := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
+                      {{ "{{-" }} if and (ne $own "") (not (has $own $stashNs)) {{ "}}" }}{{ "{{-" }} $stashNs = append $stashNs $own {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} if eq $teardown "1" {{ "}}" }}
                     ##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): remove the stashed serving-CA ConfigMap #####
-                    ##### (the copy policy skips its copies under the same flag, so nothing re-reads it). #####
+                    ##### from every tenancy namespace we wrote it to. The copy policy skips its copies under the same flag. #####
+                    {{ "{{-" }} range $ns := $stashNs {{ "}}" }}
                     - complianceType: mustnothave
                       objectDefinition:
                         apiVersion: v1
                         kind: ConfigMap
                         metadata:
                           name: {{ $servingCAConfigMap }}
-                          namespace: {{ $policyNamespace }}
+                          namespace: {{ "{{" }} $ns {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} else {{ "}}" }}
                     ##### RUNTIME (on the hub itself): resolve the hub apiserver serving CA #####
                     ##### prefer a custom named serving cert for the hub's external apiserver host; else the operator-managed CA #####
@@ -143,15 +159,17 @@ spec:
                     {{ "{{-" }} if eq $caPEM "" {{ "}}" }}
                       {{ "{{-" }} $caPEM = (fromConfigMap "{{ $caNamespace }}" "{{ $caName }}" "{{ $caKey }}") {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
-                    ##### STASH the serving CA in the policy namespace for the copy policy to read (hub-template-readable) #####
+                    ##### STASH the serving CA into every tenancy namespace on THIS hub so each AutoShift #####
+                    ##### app's boot-store can fromConfigMap it from its own policy namespace. #####
                     {{ "{{-" }} if ne $caPEM "" {{ "}}" }}
+                    {{ "{{-" }} range $ns := $stashNs {{ "}}" }}
                     - complianceType: musthave
                       objectDefinition:
                         apiVersion: v1
                         kind: ConfigMap
                         metadata:
                           name: {{ $servingCAConfigMap }}
-                          namespace: {{ $policyNamespace }}
+                          namespace: {{ "{{" }} $ns {{ "}}" }}
                         data:
                           ca.crt: |
                             {{ "{{hub-" }} if $debug {{ "hub}}" }}
@@ -159,6 +177,7 @@ spec:
                             {{ "{{hub-" }} else {{ "hub}}" }}
                             {{ "{{" }} $caPEM | autoindent {{ "}}" }}
                             {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
             {{ "{{hub-" }} else {{ "hub}}" }}
@@ -176,16 +195,28 @@ spec:
             {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $teardown := (dig "eso" "hubBootstrap" "teardown" {{ $defaultTeardown }} $clusterConfig) {{ "hub}}" }}
             {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
+            ##### Tenancy namespaces to stash/remove: this chart's policy ns FIRST, then each unique #####
+            ##### autoshift.io/owning-namespace on THIS hub's ManagedClusters (cluster-labels) if not #####
+            ##### already present — a list so object-stream order is deterministic (map range is not). #####
+            ##### In hub-of-hubs the rendering app's ns (global) and the child app's ns (site) differ; #####
+            ##### boot-store fromConfigMap uses the child app ns. #####
+            {{ "{{-" }} $stashNs := list "{{ $policyNamespace }}" {{ "}}" }}
+            {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
+              {{ "{{-" }} $own := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
+              {{ "{{-" }} if and (ne $own "") (not (has $own $stashNs)) {{ "}}" }}{{ "{{-" }} $stashNs = append $stashNs $own {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} if eq $teardown "1" {{ "}}" }}
             ##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): remove the stashed serving-CA ConfigMap #####
-            ##### (the copy policy skips its copies under the same flag, so nothing re-reads it). #####
+            ##### from every tenancy namespace we wrote it to. The copy policy skips its copies under the same flag. #####
+            {{ "{{-" }} range $ns := $stashNs {{ "}}" }}
             - complianceType: mustnothave
               objectDefinition:
                 apiVersion: v1
                 kind: ConfigMap
                 metadata:
                   name: {{ $servingCAConfigMap }}
-                  namespace: {{ $policyNamespace }}
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} else {{ "}}" }}
             ##### RUNTIME (on the hub itself): resolve the hub apiserver serving CA #####
             ##### prefer a custom named serving cert for the hub's external apiserver host; else the operator-managed CA #####
@@ -204,15 +235,17 @@ spec:
             {{ "{{-" }} if eq $caPEM "" {{ "}}" }}
               {{ "{{-" }} $caPEM = (fromConfigMap "{{ $caNamespace }}" "{{ $caName }}" "{{ $caKey }}") {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
-            ##### STASH the serving CA in the policy namespace for the copy policy to read (hub-template-readable) #####
+            ##### STASH the serving CA into every tenancy namespace on THIS hub so each AutoShift #####
+            ##### app's boot-store can fromConfigMap it from its own policy namespace. #####
             {{ "{{-" }} if ne $caPEM "" {{ "}}" }}
+            {{ "{{-" }} range $ns := $stashNs {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: v1
                 kind: ConfigMap
                 metadata:
                   name: {{ $servingCAConfigMap }}
-                  namespace: {{ $policyNamespace }}
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
                 data:
                   ca.crt: |
                     {{ "{{hub-" }} if $debug {{ "hub}}" }}
@@ -220,6 +253,7 @@ spec:
                     {{ "{{hub-" }} else {{ "hub}}" }}
                     {{ "{{" }} $caPEM | autoindent {{ "}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
