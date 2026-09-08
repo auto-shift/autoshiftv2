@@ -493,6 +493,14 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 {{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
 ```
 
+**Read nested config with `dig`; hoist with `index` only when the intermediate is reused.** `dig` walks a path and returns its default when any level is missing, so a one-shot read is a single line:
+
+```yaml
+{{hub- $osImages := (dig "acm" "provisioning" "osImages" (list) $config) hub}}
+```
+
+Hoist a local with `index ... | default` when the same intermediate is read repeatedly, the way `$disconnected` and `$mirror` are in `acm-agentserviceconfig.yaml`. A hoist that is read once is ceremony. `dig` is available on every supported version, so it carries none of the allowlist risk described below. One difference is worth knowing: `dig` fails when an intermediate exists but is not a map, where `index | default` degrades quietly.
+
 **The available Sprig functions depend on the Red Hat Advanced Cluster Management version.** Version 2.15 and earlier expose an explicit allowlist that omits `trimPrefix`, `trimSuffix`, `compact`, and `toString`. Version 2.16 and later expose the whole Sprig function map and deny only `env` and `expandenv`, so all four work.
 
 Calling a function the hub does not have is not a local failure. It aborts hub resolution for the entire policy, so every `{{hub}}` expression stays raw, the wrapped policy is never created, and the operator silently never installs.
@@ -719,7 +727,7 @@ config:
     catalogs:                                     # name = {source}-{mirror-catalog-suffix label}
       - source: redhat-operators
         imagePath: redhat/redhat-operator-index
-        tag: v4.20
+        tag: v4.22
         publisher: Red Hat
 ```
 
