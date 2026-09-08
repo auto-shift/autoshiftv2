@@ -177,6 +177,19 @@ hubClusterSets:
         # versions:
         #   - 'compliance-operator.vX.Y.Z'
         # startingCSV: 'compliance-operator.vX.Y.Z'
+        # Findings a person has reviewed and accepted. policy-stig-manual-review reports every
+        # MANUAL result, every FAIL with no remediation, and any INCONSISTENT result that failed on
+        # a node, and stays NonCompliant until each one is listed here or fixed.
+        #
+        # The reason is the audit record. Write what was actually checked and what was found.
+        # Accept a finding only when nothing can be done about it; one with a real fix belongs
+        # fixed, not accepted. Names carry the profile version, so a bump reopens every acceptance.
+        manualReview:
+          accepted:
+            - name: 'ocp4-stig-v2r3-fips-mode-enabled-on-all-nodes'
+              reason: 'FIPS is an install-config flag and cannot be enabled after install. Accepted until the cluster is rebuilt.'
+            - name: 'ocp4-stig-v2r3-container-security-operator-exists'
+              reason: 'The Container Security Operator is deprecated. Red Hat Advanced Cluster Security provides the equivalent scanning and console integration.'
         scans:
           - name: stig-v2r3
             profiles:
@@ -198,6 +211,18 @@ hubClusterSets:
               - ocp4-stig-v2r3-project-config-and-template-network-policy-1
               - ocp4-stig-v2r3-project-config-and-template-resource-quota
               - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
+          # A second scan runs alongside the first, with its own autoApply and exclude. Any profile
+          # the Compliance Operator ships works the same way; these are the NIST 800-53 moderate
+          # baseline pinned to revision 4. List what is available with:
+          #   oc get profile.compliance -n openshift-compliance
+          - name: nist-moderate-rev4
+            profiles:
+              - ocp4-moderate-rev-4
+              - ocp4-moderate-node-rev-4
+              - rhcos4-moderate-rev-4
+            scanSetting: default
+            autoApply: false
+            exclude: []
 
       # =======================================================================
       # Logging - policy: logging
@@ -1371,14 +1396,6 @@ hubClusterSets:
       # =======================================================================
       # Container Security Operator
       # =======================================================================
-      # Quay image vulnerability scanning. Satisfies the STIG rule
-      # container-security-operator-exists.
-      container-security: 'false'
-      container-security-subscription-name: container-security-operator
-      container-security-version: 'container-security-operator.v3.17.4'
-      container-security-channel: stable-3.17
-      container-security-source: redhat-operators
-      container-security-source-namespace: openshift-marketplace
 
       # =======================================================================
       # OpenShift Virtualization

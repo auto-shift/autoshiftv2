@@ -1,7 +1,8 @@
 # Compliance and STIG
 
-What to set to scan a cluster against the DISA STIG, apply the remediations you choose, and see what
-is left for a person. Any profile the Compliance Operator ships works the same way.
+What to set to scan a cluster, apply the remediations you choose, and see what is left for a person.
+The examples use the DISA STIG because it needs the most manual work, but any profile the Compliance
+Operator ships works the same way, and several can run side by side.
 
 ## What each setting controls
 
@@ -15,7 +16,6 @@ is left for a person. Any profile the Compliance Operator ships works the same w
 | `config.manualRemediations` | config | one key per finding; each renders nothing until set |
 | `logging` | label | installs the logging operator, needed for audit log forwarding |
 | `config.logging.forwarders` | config | `ClusterLogForwarder` objects, including the audit one |
-| `container-security` | label | installs the Container Security Operator |
 
 ## Scanning
 
@@ -46,8 +46,41 @@ hubClusterSets:
 | `autoApply` | `false` scans and reports. `true` applies every remediation the scan produced |
 | `exclude` | remediation names to hold at `apply: false`, even when `autoApply` is true |
 
-Add a scan for a new STIG release rather than editing the version in place, so adopting it is a
-change you review.
+Add a scan for a new release rather than editing the version in place, so adopting it is a change
+you review.
+
+### Running more than one benchmark
+
+Each entry is independent, including `autoApply`, so a second benchmark can report while the first
+remediates:
+
+```yaml
+        scans:
+          - name: stig-v2r3
+            profiles:
+              - ocp4-stig-v2r3
+              - ocp4-stig-node-v2r3
+              - rhcos4-stig-v2r3
+            autoApply: true
+          - name: nist-moderate-rev4
+            profiles:
+              - ocp4-moderate-rev-4
+              - ocp4-moderate-node-rev-4
+              - rhcos4-moderate-rev-4
+            autoApply: false
+```
+
+Each becomes its own `ScanSettingBinding` and `ComplianceSuite`, and remediations carry the suite
+name, so `autoApply` and `exclude` only ever affect their own scan. List what the operator offers:
+
+```console
+oc get profile.compliance -n openshift-compliance
+```
+
+Alongside the STIG, that includes the NIST 800-53 moderate and high baselines
+(`ocp4-moderate-rev-4`, `ocp4-high-rev-4`), CIS, PCI-DSS, BSI, Essential Eight and NERC-CIP. The
+`-rev-4` and `-1-9` style suffixes are the pinned revisions; the unsuffixed names follow whatever
+ships next.
 
 ## Applying remediations
 
@@ -261,14 +294,39 @@ output type work without a change here. List several entries for several destina
 `ServiceAccount` is created for you, named `<name>-collector` unless the spec says otherwise, and
 bound to `collectorRoles`.
 
-Set `container-security: 'true'` for `container-security-operator-exists`, and `logging: 'true'`
-covers `cluster-logging-operator-exist`.
+`logging: 'true'` also covers `cluster-logging-operator-exist`.
+
+## The Container Security Operator
+
+`container-security-operator-exists` asks for an operator that was deprecated in Red Hat Quay 3.16,
+on OpenShift Container Platform 4.20, and is slated for removal. Red Hat Advanced Cluster Security
+replaces it and shows vulnerability information in the web console, so AutoShift does not install it.
+
+Enable `acs` and accept the rule naming the replacement:
+
+```yaml
+        compliance:
+          manualReview:
+            accepted:
+              - name: 'ocp4-stig-v2r3-container-security-operator-exists'
+                reason: 'Container Security Operator is deprecated. Red Hat Advanced Cluster Security provides the equivalent scanning and console integration.'
+```
 
 ## What is left for a person
 
-`policy-stig-manual-review` is inform only. It reports every `MANUAL` result and every `FAIL` with no
-remediation, computed from the scan on the cluster, so it stays accurate as coverage changes. It
-stays NonCompliant while anything is outstanding, which is the report rather than a fault.
+`policy-stig-manual-review` is inform only. It reports every `MANUAL` result, every `FAIL` with no
+remediation, and any `INCONSISTENT` result that failed on at least one node, computed from the scan
+on the cluster so it stays accurate as coverage changes. It stays NonCompliant while anything is
+outstanding, which is the report rather than a fault.
+
+`INCONSISTENT` means a check returned different results across nodes. Most are simply
+`NOT-APPLICABLE` on one node role and are not worth anyone's time, so only those with a `FAIL` among
+their sources are reported. The detail is on the result itself:
+
+```console
+oc get compliancecheckresult -n openshift-compliance <name> \
+  -o jsonpath='{.metadata.annotations.compliance\.openshift\.io/inconsistent-source}'
+```
 
 ```console
 oc get configurationpolicy -n <cluster> policy-stig-manual-review \

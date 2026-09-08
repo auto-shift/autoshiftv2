@@ -1,29 +1,46 @@
-# Inform only: surfaces every finding a human has to deal with, computed from the scan results on
-# the cluster itself rather than from a list maintained here.
+# Inform only: the findings a person still has to deal with.
 #
-# Two kinds qualify. MANUAL results are ones the STIG itself says cannot be judged automatically:
-# RBAC least privilege, the SCC reviews, and /var/log/audit partitioning. FAIL results with no
-# ComplianceRemediation are ones the Compliance Operator ships no fix for - some are covered by the
-# manual-remediations policies, and fips-mode-enabled-on-all-nodes cannot be fixed after install at
-# all, because FIPS is an install-config flag.
+# Reports every MANUAL result, every FAIL with no ComplianceRemediation, and any INCONSISTENT result
+# that failed on at least one node. Read from the scan on the cluster rather than a list kept here,
+# so it follows the profile rather than drifting from it.
 #
-# mustnothave + inform reports each one as a violation naming the object, which is the report. It
-# never enforces, so nothing is deleted. Remediation names carry a -1, -2 suffix when one rule
-# produces several objects, hence the prefix match rather than an equality test.
+# INCONSISTENT means a check returned different results across nodes. Most are simply
+# NOT-APPLICABLE on some node role and are not worth anyone's time, so only those with a FAIL among
+# their sources are reported.
+#
+# It stays NonCompliant until every finding has been either fixed or accepted in
+# config.compliance.manualReview.accepted. Accepting one records the decision in git beside the
+# name, which is what an auditor asks for, and is the only way this policy goes green. Names carry
+# the profile version, so a profile bump reopens every acceptance for review.
+#
+# mustnothave + inform reports each finding as a violation naming the object; it never enforces, so
+# nothing is deleted. Remediation names gain a -1, -2 suffix when one rule produces several objects,
+# hence the prefix match rather than an equality test.
 object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{- $review := `
+  accepted:
+    {{hub (dig "compliance" "manualReview" "accepted" (list) $cfg) | toYaml | autoindent hub}}
+  ` | fromYaml }}
+  {{- $accepted := list }}
+  {{- range $a := (dig "accepted" (list) $review) }}
+  {{- $accepted = append $accepted (dig "name" "" $a) }}
+  {{- end }}
   {{- $remediated := list }}
   {{- range $rem := (dig "items" (list) ((lookup "compliance.openshift.io/v1alpha1" "ComplianceRemediation" "openshift-compliance" "") | default dict)) }}
   {{- $remediated = append $remediated $rem.metadata.name }}
   {{- end }}
   {{- range $check := (dig "items" (list) ((lookup "compliance.openshift.io/v1alpha1" "ComplianceCheckResult" "openshift-compliance" "") | default dict)) }}
   {{- $name := $check.metadata.name }}
+  {{- $src := (dig "metadata" "annotations" "compliance.openshift.io/inconsistent-source" "" $check) }}
   {{- $hasFix := false }}
   {{- range $rem := $remediated }}
   {{- if hasPrefix $name $rem }}
   {{- $hasFix = true }}
   {{- end }}
   {{- end }}
-  {{- if or (eq $check.status "MANUAL") (and (eq $check.status "FAIL") (not $hasFix)) }}
+  {{- if and (not (has $name $accepted)) (or (eq $check.status "MANUAL") (and (eq $check.status "FAIL") (not $hasFix)) (and (eq $check.status "INCONSISTENT") (contains "FAIL" $src))) }}
   - complianceType: mustnothave
     objectDefinition:
       apiVersion: compliance.openshift.io/v1alpha1
