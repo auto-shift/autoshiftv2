@@ -227,6 +227,22 @@ Collects all errors and reports them together.
       {{- end }}
     {{- end }}
 
+    {{/* The installation documentation describes adding one partition, at /var or a subdirectory
+         of it. Ignition itself allows arbitrary partitioning. The NIST moderate profile needs five
+         partitions to pass every partition-for-var-log rule, so allowMultiple opens that up.
+         A mountPath outside /var is not described anywhere and stays an error. */}}
+    {{- $dpParts := (dig "config" "clusterInstall" "diskPartitions" "partitions" (list) $cluster) }}
+    {{- $dpAck := (dig "config" "clusterInstall" "diskPartitions" "allowMultiple" false $cluster) }}
+    {{- if and (gt (len $dpParts) 1) (not $dpAck) }}
+      {{- $errors = append $errors (printf "%s: clusterInstall.diskPartitions.partitions has %d entries, the installation documentation describes adding a single partition at /var or a subdirectory of it. The NIST moderate profile needs five to pass every partition-for-var-log rule; set clusterInstall.diskPartitions.allowMultiple: true to create more than one" $path (len $dpParts)) }}
+    {{- end }}
+    {{- range $idx, $part := $dpParts }}
+      {{- $mp := (dig "mountPath" "" $part) }}
+      {{- if and $mp (not (or (eq $mp "/var") (hasPrefix "/var/" $mp))) }}
+        {{- $errors = append $errors (printf "%s: clusterInstall.diskPartitions.partitions[%d].mountPath is %s; the installation documentation covers /var or a subdirectory of /var" $path $idx $mp) }}
+      {{- end }}
+    {{- end }}
+
     {{/* diskPartitions.device must be the disk the install actually lands on. rootDeviceHints is
          per host and chooses that disk; the partition MachineConfig is per role and carries one
          device path, so a disagreement silently partitions the wrong disk. Only deviceName can be

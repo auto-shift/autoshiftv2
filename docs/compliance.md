@@ -367,10 +367,22 @@ There are five of them, and each checks its own path: `/var/log`, `/var/log/audi
 `/var/log/kube-apiserver`, `/var/log/oauth-apiserver` and `/var/log/openshift-apiserver`. A separate
 `/var/log` does not satisfy the four nested inside it.
 
-**At most one of the five can be satisfied.** OpenShift Container Platform supports adding a single
-partition, mounted at `/var` or a subdirectory of it, so a five partition layout is outside what the
-installation documentation supports. Take `/var/log/audit`, because that is the filesystem whose
-exhaustion stops auditing, and accept the other four in `manualReview` with that as the reason.
+The [installation documentation][sep-var] describes adding a single partition, at `/var` or a
+subdirectory of it. Ignition itself allows arbitrary partitioning, as [Customizing nodes][cust]
+describes.
+
+Passing all five NIST rules needs five partitions, so set `allowMultiple: true` to create more than
+one. A `mountPath` outside `/var` is rejected.
+
+Take `/var/log/audit`. It is the filesystem whose exhaustion stops auditing, and it is the only
+partition rule the STIG has, so a single partition satisfies that profile completely:
+
+| Profile | Partition rules | Covered by one `/var/log/audit` partition |
+|---|---|---|
+| DISA STIG V2R3 | 1 | all of them |
+| NIST 800-53 moderate | 5 | one |
+
+If you take one partition rather than five, accept the other four NIST rules in `manualReview`.
 
 For clusters AutoShift provisions, set it in `config.clusterInstall`:
 
@@ -491,3 +503,5 @@ Red Hat OpenShift Container Platform, [Compliance Operator][co]. The chapter is 
 - 5.6.9 Using the `oc-compliance` plugin
 
 [co]: https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/security_and_compliance/compliance-operator
+[sep-var]: https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/installing_on_bare_metal/user-provisioned-infrastructure
+[cust]: https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/installation_configuration/installing-customizing

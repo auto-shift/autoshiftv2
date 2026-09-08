@@ -266,11 +266,15 @@ clusters:
         # equivalent: applying the same MachineConfig to a running node writes the mount unit but
         # never creates the partition, leaving a unit that fails against a missing device.
         #
-        # OpenShift Container Platform supports adding a SINGLE partition, mounted at /var or a
-        # subdirectory of it. The NIST profile has five partition-for-var-log* rules and each checks
-        # its own path, so at most one of them can be satisfied this way; accept the rest in
-        # compliance.manualReview. /var/log/audit is the one worth taking, because it is the
-        # filesystem whose exhaustion stops auditing.
+        # The installation documentation describes adding one partition, at /var or a subdirectory
+        # of it; Ignition itself allows arbitrary partitioning.
+        #
+        # The DISA STIG has one partition rule, /var/log/audit, so one partition satisfies that
+        # profile completely. NIST moderate has five, each checking its own path: passing all of
+        # them needs five partitions and allowMultiple: true. The alternative is one partition and
+        # four entries in compliance.manualReview.
+        #
+        # A mountPath outside /var is not covered either way and is always rejected.
         #
         # device must be the install disk. Prefer a /dev/disk/by-id/ path: on AWS the install disk is
         # usually an NVMe device, and on bare metal device names move between boots. The root
@@ -290,6 +294,33 @@ clusters:
         #       startMiB: 25000
         #       sizeMiB: 10000
         #       format: 'xfs'
+
+        # Or the full NIST layout instead of the block above, not as well as it. Uncomment ONE of
+        # these two; both together is a duplicate diskPartitions key and YAML keeps only the last.
+        # diskPartitions:
+        #   device: '/dev/disk/by-id/nvme-nvme.1b36-1234'
+        #   allowMultiple: true
+        #   partitions:
+        #     - label: 'varlog'
+        #       mountPath: '/var/log'
+        #       startMiB: 25000
+        #       sizeMiB: 4000
+        #     - label: 'varlogaudit'
+        #       mountPath: '/var/log/audit'
+        #       startMiB: 29000
+        #       sizeMiB: 4000
+        #     - label: 'varlogkubeapi'
+        #       mountPath: '/var/log/kube-apiserver'
+        #       startMiB: 33000
+        #       sizeMiB: 4000
+        #     - label: 'varlogoauthapi'
+        #       mountPath: '/var/log/oauth-apiserver'
+        #       startMiB: 37000
+        #       sizeMiB: 2000
+        #     - label: 'varlogopenshiftapi'
+        #       mountPath: '/var/log/openshift-apiserver'
+        #       startMiB: 39000
+        #       sizeMiB: 2000
         # fips: true                                # Enable FIPS mode (requires ECDSA/RSA SSH keys, not Ed25519)
 
         # --- SSH Key (inline or ConfigMap ref) ---
