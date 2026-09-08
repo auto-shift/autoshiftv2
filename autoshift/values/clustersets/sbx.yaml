@@ -6,10 +6,10 @@ managedClusterSets:
       # DISA publishes next, so an unpinned name would silently change what is measured and, with
       # autoApply on, change the cluster. Adopting a new release means adding an entry.
       #
-      # autoApply true applies every remediation the scan produced except those in exclude. Several
-      # are MachineConfigs and will roll every node. This matches what AutoShift did before the
-      # reject list replaced the allow list, so upgrading changes nothing. Set it false to scan and
-      # report without touching the cluster. See docs/compliance.md.
+      # autoApply is false: this scans and reports and changes nothing. Turning it on applies every
+      # remediation the scan produced except those in exclude, and several are MachineConfigs that
+      # reboot every node, in more than one round. Hardening is a deliberate choice, so layer
+      # hub-hardened.yaml on top rather than flipping this. See docs/compliance.md.
       compliance:
         scans:
           - name: stig-v2r3
@@ -18,7 +18,7 @@ managedClusterSets:
               - ocp4-stig-node-v2r3
               - rhcos4-stig-v2r3
             scanSetting: default
-            autoApply: true
+            autoApply: false
             # These four rewrite the default project template so every new project gets a
             # deny-by-default NetworkPolicy and a ResourceQuota, and ship only that restrictive
             # half. Deny-by-default blocks the kube-apiserver, breaking admission webhooks (Red Hat

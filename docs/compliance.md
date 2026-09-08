@@ -85,7 +85,30 @@ ships next.
 
 ## Applying remediations
 
-Set `autoApply: true`. This applies every remediation the scan produced except those in `exclude`.
+Every shipped profile scans with `autoApply: false`, so a cluster reports its posture without being
+changed. Hardening is a separate, deliberate step.
+
+Layer `hub-hardened.yaml` on top of `hub.yaml` to apply it, by adding it to the AutoShift
+Application's `valueFiles`. It goes last, so its values win:
+
+```yaml
+spec:
+  source:
+    path: autoshift
+    helm:
+      valueFiles:
+        - values/global.yaml
+        - values/clustersets/hub.yaml
+        - values/clustersets/hub-hardened.yaml
+```
+
+Argo CD syncs the change; hardening starts when it does.
+
+That profile turns on `autoApply` for both benchmarks, enables the manual remediation members, adds
+file integrity monitoring, and pre-populates `manualReview` with the findings that cannot be fixed on
+a running cluster. Lists replace rather than merge, so its `scans` block is the whole list.
+
+Setting `autoApply: true` applies every remediation the scan produced except those in `exclude`.
 
 Several remediations are `MachineConfig` objects, so **enabling this reboots every node**. Expect
 more than one round: applying remediations rolls the nodes, the next scan finds more, and those roll
