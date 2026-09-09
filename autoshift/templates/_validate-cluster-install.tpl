@@ -243,6 +243,27 @@ Collects all errors and reports them together.
       {{- end }}
     {{- end }}
 
+    {{/* startMiB caps the root filesystem, which grows only up to the first partition. Container
+         images live in /var/lib/containers and stay on root unless /var is a partition of its own,
+         so a low startMiB starves root and kubelet reports DiskPressure before the install
+         finishes: cluster operators never get pods and the install times out. */}}
+    {{- if $dpParts }}
+      {{- $hasVar := false }}
+      {{- $minStart := 0 }}
+      {{- range $part := $dpParts }}
+        {{- if eq (dig "mountPath" "" $part) "/var" }}
+          {{- $hasVar = true }}
+        {{- end }}
+        {{- $s := (dig "startMiB" 0 $part) | int }}
+        {{- if and (gt $s 0) (or (eq $minStart 0) (lt $s $minStart)) }}
+          {{- $minStart = $s }}
+        {{- end }}
+      {{- end }}
+      {{- if and (not $hasVar) (gt $minStart 0) (lt $minStart 51200) }}
+        {{- $errors = append $errors (printf "%s: clusterInstall.diskPartitions has no partition mounting /var and its lowest startMiB is %dMiB, which caps the root filesystem at about that size. Container images stay on root without a separate /var, so the node fills up and kubelet reports DiskPressure before the install completes. Add a /var partition with sizeMiB 0 as the last entry, or raise startMiB above 51200" $path $minStart) }}
+      {{- end }}
+    {{- end }}
+
     {{/* diskPartitions.device must be the disk the install actually lands on. rootDeviceHints is
          per host and chooses that disk; the partition MachineConfig is per role and carries one
          device path, so a disagreement silently partitions the wrong disk. Only deviceName can be

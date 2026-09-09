@@ -396,7 +396,7 @@ For clusters AutoShift provisions, set it in `config.clusterInstall`:
             partitions:
               - label: 'varlogaudit'
                 mountPath: '/var/log/audit'
-                startMiB: 25000
+                startMiB: 102400
                 sizeMiB: 10000
                 format: 'xfs'
 ```
@@ -410,9 +410,13 @@ first boot, and the marker that gates them is removed afterwards, so no amount o
 them. Applying the same MachineConfig to a running node writes and enables the mount unit, which the
 Machine Config Operator does handle, while the partition and filesystem never appear: the unit then
 fails against a device that does not exist.
-`device` must be the install disk and `startMiB` must sit past the root filesystem, or the install
-fails. A `sizeMiB` of 0 takes the rest of the disk, so it only makes sense on the last entry. The
-full five-partition layout is in `autoshift/values/clusters/_example-cluster-install-baremetal.yaml`.
+`device` must be the install disk. `startMiB` on the first partition sets the size of the root
+filesystem, because root grows only as far as the next partition, so a small value is not a safe
+default: it is the root filesystem. Container images live in `/var/lib/containers`, which stays on
+root unless `/var` is a partition of its own, and a root that cannot hold the images fills up and
+kubelet reports `DiskPressure` before the cluster operators finish starting. Give `/var` its own
+partition with a `sizeMiB` of 0, which takes the rest of the disk and only makes sense on the last
+entry. The full layout is in `autoshift/values/clusters/_example-cluster-install-baremetal.yaml`.
 
 systemd orders nested mounts by path, so `/var/log` mounts before `/var/log/audit` without anything
 extra. Mount unit names are escaped the way `systemd-escape --path` does it, because a hyphen inside

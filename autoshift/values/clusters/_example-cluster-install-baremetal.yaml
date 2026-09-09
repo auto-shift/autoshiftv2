@@ -291,12 +291,17 @@ clusters:
         #   partitions:
         #     - label: 'varlogaudit'
         #       mountPath: '/var/log/audit'
-        #       startMiB: 25000
+        #       startMiB: 102400
         #       sizeMiB: 10000
         #       format: 'xfs'
 
         # Or the full NIST layout instead of the block above, not as well as it. Uncomment ONE of
         # these two; both together is a duplicate diskPartitions key and YAML keeps only the last.
+        #
+        # startMiB on the first partition sizes the root filesystem, because root grows only up to
+        # it. Container images live in /var/lib/containers, so /var gets a partition of its own with
+        # sizeMiB 0 to take the rest of the disk; without it the images sit on a root capped at
+        # 25GiB and the node hits DiskPressure before the install finishes.
         # diskPartitions:
         #   device: '/dev/disk/by-id/nvme-nvme.1b36-1234'
         #   allowMultiple: true
@@ -321,6 +326,10 @@ clusters:
         #       mountPath: '/var/log/openshift-apiserver'
         #       startMiB: 39000
         #       sizeMiB: 2000
+        #     - label: 'var'
+        #       mountPath: '/var'
+        #       startMiB: 41000
+        #       sizeMiB: 0
         # fips: true                                # Enable FIPS mode (requires ECDSA/RSA SSH keys, not Ed25519)
 
         # --- SSH Key (inline or ConfigMap ref) ---
