@@ -71,11 +71,12 @@ Labels are the control plane, and they are the mechanism everything else rests o
 values file becomes a ConfigMap, then a label on a `ManagedCluster`, then a `PlacementDecision`,
 then a policy on that cluster. No feature label is ever applied to a `ManagedCluster` by hand.
 
-[![AutoShift label flow](diagrams/autoshift-label-flow.drawio.svg)](diagrams/autoshift-label-flow.drawio.svg)
+[![AutoShift config and label flow](diagrams/autoshift-config-and-labels.drawio.svg)](diagrams/autoshift-config-and-labels.drawio.svg)
 
 Configuration that does not fit in a label goes in a `config:` block instead, which AutoShift
-renders into a ConfigMap that policies read through hub templates. Every available label and
-config key is listed in the [Values reference](values-reference.md).
+renders into a ConfigMap that policies read through hub templates. Both paths are covered in
+[Config and labels](config-and-labels.md), and every available label and config key is listed in the
+[Values reference](values-reference.md).
 
 ## Scaling the fleet
 
@@ -98,6 +99,17 @@ it is placed from the layer that follows. Covered in full in
 [Hub-of-hubs topology](hub-of-hubs.md).
 
 [![AutoShift hub-of-hubs schematic](diagrams/autoshift-hub-of-hubs.drawio.svg)](diagrams/autoshift-hub-of-hubs.drawio.svg)
+
+## Delivering into a disconnected site
+
+AutoShift ships the same content two ways. A connected hub pulls charts straight from the registry.
+A disconnected site never reaches the internet, so a release is assembled on a connected machine,
+mirrored, and carried across the boundary as files. Everything on the low side then resolves against
+the internal registry, and the policies behave identically once the images and charts are present.
+The mirroring workflow is documented in
+[Releases and OCI](releases.md#disconnected-air-gapped-environments).
+
+[![AutoShift disconnected delivery](diagrams/autoshift-oci-disconnected.drawio.svg)](diagrams/autoshift-oci-disconnected.drawio.svg)
 
 ## Where to go next
 

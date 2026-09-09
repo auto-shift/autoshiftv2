@@ -24,31 +24,41 @@ fi
 
 # ── 2. Helm lint on changed charts ───────────────────────────────────────────
 if command -v helm &>/dev/null; then
-  declare -A charts_to_lint
+  # Newline-delimited then sort -u, rather than an associative array: macOS ships
+  # bash 3.2, where `declare -A` is a syntax error and aborts the whole hook.
+  charts_to_lint=""
 
   while IFS= read -r f; do
     case "$f" in
       autoshift/*)
-        charts_to_lint["$REPO_ROOT/autoshift"]=1
+        charts_to_lint="$charts_to_lint$REPO_ROOT/autoshift\n"
         ;;
       policies/*/*)
         # policies/<category>/<chart>/...  → lint policies/<category>/<chart>
         chart_dir=$(echo "$f" | cut -d/ -f1-3)
         if [ -f "$REPO_ROOT/$chart_dir/Chart.yaml" ]; then
-          charts_to_lint["$REPO_ROOT/$chart_dir"]=1
+          charts_to_lint="$charts_to_lint$REPO_ROOT/$chart_dir\n"
         fi
         ;;
     esac
   done <<< "$CHANGED"
 
-  if [ ${#charts_to_lint[@]} -gt 0 ]; then
-    echo "pre-commit: linting ${#charts_to_lint[@]} chart(s)..."
-    for chart in "${!charts_to_lint[@]}"; do
-      helm lint "$chart" --quiet || {
+  charts_to_lint=$(printf "%b" "$charts_to_lint" | sort -u | sed '/^$/d')
+
+  if [ -n "$charts_to_lint" ]; then
+    echo "pre-commit: linting $(printf '%s\n' "$charts_to_lint" | wc -l | tr -d ' ') chart(s)..."
+    while IFS= read -r chart; do
+      # The autoshift chart has no values.yaml; its values live in autoshift/values/.
+      # Linting it bare renders an unconfigured chart and trips its own validation.
+      lint_values=""
+      if [ "$chart" = "$REPO_ROOT/autoshift" ]; then
+        lint_values="-f $REPO_ROOT/autoshift/values/global.yaml"
+      fi
+      helm lint "$chart" --quiet $lint_values || {
         echo "pre-commit: helm lint failed for $chart" >&2
         exit 1
       }
-    done
+    done <<< "$charts_to_lint"
   fi
 fi
 

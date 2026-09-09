@@ -59,6 +59,28 @@ policies:
       - name: policy-storage-cluster-test
     manifests:
       - path: manifests/observability
+  # 3b) Custom metrics allowlist. Gated on its own label rather than folded into
+  #     policy-acm-observability: without a gate the ConfigurationPolicy would report
+  #     Compliant having verified nothing whenever no custom metrics are configured.
+  - name: policy-acm-custom-metrics
+    placement:
+      placementPath: placement-custom-metrics.yaml
+    dependencies:
+      - name: policy-acm-observability
+    manifests:
+      - path: manifests/observability-custom-metrics
+  # 3c) Reference those ScrapeConfigs from the observability add-on so MCOA distributes
+  #     them. Separate policy so it can depend on 3b: referencing a ScrapeConfig that does
+  #     not exist yet leaves the add-on in Deploying.
+  - name: policy-acm-custom-metrics-addon
+    placement:
+      placementPath: placement-custom-metrics.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-acm-custom-metrics
+    manifests:
+      - path: manifests/observability-custom-metrics-addon
   # 4) ACM Search persistent storage.
   - name: policy-acm-search-storage
     placement:

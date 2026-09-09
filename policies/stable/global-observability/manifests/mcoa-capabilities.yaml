@@ -1,0 +1,57 @@
+object-templates-raw: |
+  {{hub- $obsConfig := index (index (fromConfigMap "${POLICY_NAMESPACE}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict hub}}
+  {{hub- $capabilities := index $obsConfig "capabilities" | default dict hub}}
+  {{hub- $platformAnalytics := index $capabilities "platformAnalytics" | default "true" hub}}
+  {{hub- $platformLogs := index $capabilities "platformLogs" | default "true" hub}}
+  {{hub- $platformMetrics := index $capabilities "platformMetrics" | default "true" hub}}
+  {{hub- $userWorkloadLogs := index $capabilities "userWorkloadLogs" | default "true" hub}}
+  {{hub- $userWorkloadMetrics := index $capabilities "userWorkloadMetrics" | default "true" hub}}
+  {{hub- $userWorkloadTraces := index $capabilities "userWorkloadTraces" | default "true" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: observability.open-cluster-management.io/v1beta2
+      kind: MultiClusterObservability
+      metadata:
+        name: observability
+      spec:
+        {{hub- if or (eq $platformAnalytics "true") (eq $platformLogs "true") (eq $platformMetrics "true") (eq $userWorkloadLogs "true") (eq $userWorkloadMetrics "true") (eq $userWorkloadTraces "true") hub}}
+        capabilities:
+          {{hub- if or (eq $platformAnalytics "true") (eq $platformLogs "true") (eq $platformMetrics "true") hub}}
+          platform:
+            {{hub if eq $platformAnalytics "true" hub}}
+            analytics:
+              incidentDetection: {}
+              namespaceRightSizingRecommendation: {}
+              virtualizationRightSizingRecommendation: {}
+            {{hub end hub}}
+            {{hub if eq $platformLogs "true" hub}}
+            logs:
+              collection: {}
+            {{hub end hub}}
+            {{hub if eq $platformMetrics "true" hub}}
+            metrics:
+              default:
+                enabled: true
+              ui: {}
+            {{hub end hub}}
+          {{hub- end hub}}
+          {{hub- if or (eq $userWorkloadLogs "true") (eq $userWorkloadMetrics "true") (eq $userWorkloadTraces "true") hub}}
+          userWorkloads:
+            {{hub if eq $userWorkloadLogs "true" hub}}
+            logs:
+              collection:
+                clusterLogForwarder: {}
+            {{hub end hub}}
+            {{hub if eq $userWorkloadMetrics "true" hub}}
+            metrics:
+              default:
+                enabled: true
+            {{hub end hub}}
+            {{hub if eq $userWorkloadTraces "true" hub}}
+            traces:
+              collection:
+                collector: {}
+                instrumentation: {}
+            {{hub end hub}}
+          {{hub- end hub}}
+        {{hub- end hub}}

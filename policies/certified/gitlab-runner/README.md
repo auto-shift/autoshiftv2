@@ -263,4 +263,4 @@ For operators that need installation verification:
 - [Operator Documentation](https://operatorhub.io/operator/gitlab-runner-operator) - Find your operator details
 - [AutoShift Developer Guide](../../../docs/developer-guide.md) - Comprehensive policy development guide
 - [ACM Policy Documentation](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes) - Policy syntax reference in Governence Section
-- [Similar Policies](../) - Browse other policies for patterns and examples
+- [Similar Policies](../../README.md) - Browse other policies for patterns and examples

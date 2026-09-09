@@ -39,26 +39,6 @@ func lookupHint(errMsg string) string {
 	return stub
 }
 
-// repoRoot walks up from the package directory to find the repository root
-// (identified by the presence of a `policies/` directory).
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "policies")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Skip("could not find repo root (no policies/ directory in any parent)")
-		}
-		dir = parent
-	}
-}
-
 // TestPipeline_EndToEnd runs the full lint-labels pipeline against the real
 // policies/ and autoshift/values/ directories. It mirrors what autoshift-ci
 // does in CI.

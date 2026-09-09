@@ -1,0 +1,26 @@
+# Existence and sync gate, one assertion per config.managedAutoshift entry. Deliberately does NOT
+# repeat the guards in manifests/deployment.yaml: an entry that fails one of those creates nothing,
+# and the enforcing policy is then trivially Compliant because it wants nothing. This is what makes
+# that visible. Asserting sync.status (not health) is on purpose — Synced proves Argo CD resolved
+# the source, which is what a wrong ociRepo or an unreachable registry breaks, while health stays
+# Degraded for a while on a fresh nested deployment.
+object-templates-raw: |
+  {{hub- $clusterName := .ManagedClusterName hub}}
+  {{hub- $policyNs := .PolicyMetadata.namespace hub}}
+  {{hub- $rcm := (lookup "v1" "ConfigMap" $policyNs (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $autoshiftConfigs := (index $rcConfig "managedAutoshift" | default list) hub}}
+  {{hub- range $autoshiftConfig := $autoshiftConfigs hub}}
+  {{hub- $appName := index $autoshiftConfig "appName" | default $clusterName hub}}
+  {{hub- $gitopsNamespace := index $autoshiftConfig "gitopsNamespace" | default "openshift-gitops" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: {{hub $appName hub}}
+        namespace: {{hub $gitopsNamespace hub}}
+      status:
+        sync:
+          status: Synced
+  {{hub- end hub}}

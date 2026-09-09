@@ -253,11 +253,16 @@ case "$VALUES_FILE" in
 esac
 
 # Build values override
-VALUES_OVERRIDE="# Enable OCI registry mode for ApplicationSet
-        autoshiftOciRegistry: true
+VALUES_OVERRIDE="# Where the policy charts are published, and the value that selects OCI mode.
+        # Change this if you release your own charts.
         autoshiftOciRepo: ${OCI_REPO}/policies
-        autoshiftOciVersion: \"${VERSION}\"
         gitopsNamespace: ${GITOPS_NAMESPACE}"
+
+# autoshiftOciVersion is injected from the Application's own targetRevision rather than repeated,
+# so the chart version and the policy version cannot drift apart.
+OCI_VERSION_PARAM="      parameters:
+        - name: autoshiftOciVersion
+          value: \$ARGOCD_APP_SOURCE_TARGET_REVISION"
 
 if [ "$VERSIONED" = true ]; then
     VALUES_OVERRIDE="${VALUES_OVERRIDE}
@@ -297,6 +302,7 @@ spec:
       valueFiles:
 ${VALUEFILES_YAML}      values: |
         ${VALUES_OVERRIDE}
+${OCI_VERSION_PARAM}
   destination:
     server: https://kubernetes.default.svc
     namespace: ${GITOPS_NAMESPACE}
@@ -577,16 +583,19 @@ cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
         - values/clustersets/hub.yaml          # Or other clusterset profile
         - values/clustersets/managed.yaml      # Add managed spoke clusters
       values: |
-        # Enable OCI mode for policy deployment
-        autoshiftOciRegistry: true
+        # Where the policy charts are published, and the value that selects OCI mode.
+        # Change this if you release your own charts.
 GUIDE_EOF
 
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << GUIDE_VERSION
         autoshiftOciRepo: oci://${REGISTRY}/${REGISTRY_NAMESPACE}/policies
-        autoshiftOciVersion: "${VERSION}"
 GUIDE_VERSION
 
 cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
+      # Injected from this Application's targetRevision, so the release is pinned once.
+      parameters:
+        - name: autoshiftOciVersion
+          value: $ARGOCD_APP_SOURCE_TARGET_REVISION
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops

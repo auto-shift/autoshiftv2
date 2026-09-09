@@ -38,36 +38,7 @@ and only reaches *downward* to its own spokes.
 
 ## Management topology
 
-```mermaid
-graph TD
-    subgraph HoH["🌐 Hub-of-Hubs (global hub)"]
-        HoHACM["ACM"]
-        HoHAS["AutoShift #quot;autoshift#quot;<br/>ns: policies-autoshift"]
-    end
-    subgraph H1["🏢 hub1 (spoke hub)"]
-        H1ACM["ACM"]
-        H1AS["AutoShift #quot;hub1#quot;<br/>ns: policies-hub1"]
-    end
-    subgraph H2["🏢 hub2 (spoke hub)"]
-        H2ACM["ACM"]
-        H2AS["AutoShift #quot;hub2#quot;<br/>ns: policies-hub2"]
-    end
-    S1["spoke1"]
-    S2["spoke2"]
-    S3["spoke3"]
-
-    HoHACM -->|manages| HoHACM
-    HoHACM -->|manages| H1ACM
-    HoHACM -->|manages| H2ACM
-    H1ACM -->|manages| S1
-    H1ACM -->|manages| S2
-    H2ACM -->|manages| S3
-
-    classDef hub fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff;
-    classDef spoke fill:#198754,stroke:#0f5132,stroke-width:2px,color:#ffffff;
-    class HoHACM,HoHAS,H1ACM,H1AS,H2ACM,H2AS hub;
-    class S1,S2,S3 spoke;
-```
+[![AutoShift hub-of-hubs schematic](diagrams/autoshift-hub-of-hubs.drawio.svg)](diagrams/autoshift-hub-of-hubs.drawio.svg)
 
 - The hub-of-hubs Red Hat Advanced Cluster Management manages **itself** (top hub — it is self-managed) plus **hub1** and **hub2**.
 - hub1's Red Hat Advanced Cluster Management manages **spoke1/spoke2** but **not hub1** (hub1 is managed from above).
@@ -133,7 +104,7 @@ graph TD
     SMH --> SMHrun["runs on HoH · loops every cluster HoH sees<br/>→ stamps HoH-self, hub1, hub2<br/>owning-namespace = policies-autoshift"]
     MH --> MHrun["runs on hub1 · loops every cluster hub1 sees<br/>→ stamps spoke1, spoke2<br/>owning-namespace = policies-hub1"]
 
-    classDef box fill:#0d6efd,stroke:#084298,stroke-width:2px,color:#ffffff;
+    classDef box fill:#1D4174,stroke:#1D4174,color:#ffffff;
     class HoHAS,SMH,MH,SMHrun,MHrun box;
 ```
 
@@ -237,10 +208,17 @@ sequenceDiagram
    latter to manage and configure hub1.
 3. The hub-of-hubs provisions/imports hub1 and installs **GitOps + Red Hat Advanced Cluster Management** on it, then places hub1's
    own operator/config/upgrade policies onto it.
-4. **Separately bootstrap AutoShift on hub1**: a *second* Application (`hub1`) whose
-   destination is the hub1 cluster, policies in `policies-hub1`. There is **no policy in this
-   repo that auto-creates it**; it is a deliberate step (re-run the bootstrap, or commit a
-   second Application in GitOps).
+4. **Bootstrap AutoShift on hub1**, either way round:
+   - *Push*: create a *second* Application on the hub-of-hubs (`hub1`) whose destination is the
+     hub1 cluster, policies in `policies-hub1`. A deliberate step: re-run the bootstrap, or commit
+     a second Application in GitOps.
+   - *Per-hub*: label hub1 with `autoshift.io/autoshift-enable-install: 'true'` and describe the
+     deployment in `config.managedAutoshift`. The `managed-autoshift` policy then runs **on hub1**
+     and creates the Application in hub1's **own** Argo CD, pointing at hub1 itself. Nothing is
+     created on the hub-of-hubs. See
+     [policies/stable/managed-autoshift](../policies/stable/managed-autoshift/README.md).
+
+   Use one or the other. Both would give hub1 two AutoShift instances.
 5. hub1's AutoShift syncs its config ConfigMaps and deploys policies for **its spokes**.
 6. The hub-of-hubs-deployed cluster-labels/cluster-install policies (executing on hub1) read those
    ConfigMaps and manage hub1's spokes.

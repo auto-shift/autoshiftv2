@@ -1,0 +1,65 @@
+# Custom metrics for the multicluster observability add-on (MCOA).
+#
+# There are TWO mechanisms for custom metrics and which one applies depends on the collector:
+#
+#   classic MCO  -> observability-metrics-custom-allowlist ConfigMap, read by the legacy
+#                   metrics-collector (see acm-observability-custom-metrics.yaml)
+#   MCOA         -> a ScrapeConfig federated by the PrometheusAgent, THIS file
+#
+# MCOA replaces the legacy collector, so on an MCOA hub the ConfigMap is applied and read by
+# nothing. Both are emitted so the same config works either way; the inactive one is inert.
+# Reference: Red Hat Advanced Cluster Management 2.17 Observability, "Adding custom metrics"
+# (classic) and "Adding custom metrics for the multicluster observability add-on" (MCOA).
+#
+# A name prefixed with "-" is a REMOVAL, which only the classic allowlist understands: it drops one
+# of ACM's default metrics. Those entries are skipped here rather than turned into a nonsense
+# {__name__="-metric"} selector. Removing a default metric under the add-on would mean editing
+# MCOA's own platform-metrics ScrapeConfig, which this policy does not own.
+#
+# names become {__name__="<metric>"} federation selectors; matches are passed through as written
+# so a label selector can be expressed directly. Each recording_rules record: name is added as a
+# selector too, because the rule creates that metric on the managed cluster and it has to be
+# allowed through - see acm-observability-custom-rules.yaml, which creates the rule itself.
+#
+# The ClusterManagementAddOn must reference this ScrapeConfig before MCOA distributes it, which
+# policy-acm-observability-custom-metrics-addon does. It depends on this policy, because the docs
+# warn that referencing a ScrapeConfig that does not exist leaves the add-on in Deploying.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $custom := (dig "acm" "observability" "customMetrics" dict $cfg) hub}}
+  {{hub- range $tier, $component := dict "platform" "platform-metrics-collector" "userWorkload" "user-workload-metrics-collector" hub}}
+  {{hub- $t := (dig $tier dict $custom) hub}}
+  {{hub- $selectors := list hub}}
+  {{hub- range (dig "names" (list) $t) hub}}
+  {{hub- if not (hasPrefix "-" .) hub}}
+  {{hub- $selectors = append $selectors (printf "{__name__=\"%s\"}" .) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- range (dig "matches" (list) $t) hub}}
+  {{hub- $selectors = append $selectors . hub}}
+  {{hub- end hub}}
+  {{hub- range (dig "recording_rules" (list) $t) hub}}
+  {{hub- $selectors = append $selectors (printf "{__name__=\"%s\"}" .record) hub}}
+  {{hub- end hub}}
+  {{hub- if $selectors hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: monitoring.rhobs/v1alpha1
+      kind: ScrapeConfig
+      metadata:
+        name: autoshift-custom-{{hub $tier | lower hub}}-metrics
+        namespace: open-cluster-management-observability
+        labels:
+          app.kubernetes.io/component: {{hub $component hub}}
+          app.kubernetes.io/part-of: autoshift
+      spec:
+        jobName: autoshift-custom-{{hub $tier | lower hub}}
+        metricsPath: /federate
+        params:
+          match[]:
+            {{hub- range $selectors hub}}
+            - '{{hub . hub}}'
+            {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

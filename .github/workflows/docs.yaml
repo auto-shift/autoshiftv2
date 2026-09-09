@@ -1,19 +1,20 @@
 name: Docs
 
-# Publishes the current main as the `dev` version of the site.
+# Builds the site with Zensical and publishes it to gh-pages on every push to main.
 #
-# release.yaml only deploys on a v*.*.* tag, so between releases the published docs describe
-# whatever shipped last — main sat months ahead of the site. This keeps a `dev` entry in mike's
-# version switcher alongside `latest`, so a documentation fix is visible without cutting a release.
-#
-# `latest` stays tag-only and remains the default, so the site root still serves released docs.
+# Single-version, served from the Pages root: Zensical has no versioning yet. Published from main
+# rather than from tags so a documentation fix does not wait for a release.
 
 on:
   push:
     branches: [main]
+    # The site is README.md, the home page, plus docs/.
     paths:
+      - 'README.md'
       - 'docs/**'
       - 'mkdocs.yaml'
+      # The script decides what is published, so a change to it changes the site.
+      - 'scripts/build-docs.sh'
       - '.github/workflows/docs.yaml'
   workflow_dispatch:
 
@@ -21,10 +22,9 @@ permissions:
   contents: read
 
 jobs:
-  deploy-dev:
+  deploy:
     runs-on: ubuntu-latest
-    # Shared with release.yaml's deploy-docs: both push to gh-pages with mike, and a concurrent
-    # push loses one of them. Queued rather than cancelled so a docs commit is never dropped.
+    # One publish at a time. Queued rather than cancelled so no docs commit is dropped.
     concurrency:
       group: gh-pages
       cancel-in-progress: false
@@ -32,20 +32,34 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-        with:
-          # mike reads and rewrites the gh-pages branch, so it needs the full history.
-          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
 
-      - run: pip install mkdocs-material mike mkdocs-same-dir mkdocs-callouts
+      # Version lives in the manifest so Dependabot can raise a pull request against it.
+      - run: pip install -r docs/requirements.txt
 
-      - run: |
+      # Builds, prunes what must not be published, and verifies the result. Shared with
+      # ci.yaml so the check on a pull request runs exactly what the publish runs.
+      - name: Build the site
+        run: ./scripts/build-docs.sh
+
+      # A single-commit orphan branch, so pages that no longer exist are dropped rather than
+      # stranded. Discards gh-pages history, which is generated output.
+      - name: Publish to gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Serve the directory as it is, rather than running it through Jekyll.
+          touch site/.nojekyll
+          cd site
+          git init -q
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      # No --update-aliases: `dev` is the version itself, not an alias, so it never competes with
-      # `latest` for the default redirect.
-      - run: mike deploy --push dev
+          git add -A
+          git commit -q -m "Deploy ${GITHUB_SHA} to gh-pages"
+          git push -q --force \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            HEAD:gh-pages
