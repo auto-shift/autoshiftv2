@@ -43,22 +43,65 @@ gitops:
     # mode (renders PolicyGenerator dirs live); disabled for OCI-only deployments (prerendered Helm).
     # The ApplicationSet forwards the effective value from the deployment's policyGenerator flag.
     enabled: true
-  # Dev team cluster-scoped namespaces are auto-discovered from managed cluster labels
-  # matching autoshift.io/gitops-dev-team-<team>-cluster-scoped: 'true'
+    # Excluded from the repository tarball the repo-server streams to a CMP sidecar. This setting is
+    # repo-server WIDE, so it hits every plugin-rendered Application on this Argo CD, not just
+    # AutoShift's. Only .git is listed because no repository serves manifests out of it; do not add
+    # generic names like docs/ or scripts/ unless this Argo CD serves AutoShift alone, or another
+    # team's plugin app that keeps manifests there will silently render empty. AutoShift scopes its
+    # own tarball per Application with useManifestGeneratePaths below instead.
+    # Go filepath.Match syntax, one --plugin-tar-exclude repo-server arg per entry.
+    tarExclusions:
+      - '.git/*'
+    # Honour the argocd.argoproj.io/manifest-generate-paths annotation, which the AutoShift
+    # ApplicationSet stamps on every generated policy Application so each one ships only its own
+    # directory plus components/ rather than the whole repository. Verified on a live hub: the flag
+    # is inert for Applications that do not carry the annotation, so other workloads on this Argo CD
+    # are unaffected.
+    useManifestGeneratePaths: true
+    # The CMP sidecar's own container resources. It runs the actual kustomize/PolicyGenerator/Helm
+    # render, so it needs real CPU; without resources it competes unbounded and renders time out
+    # under fan-out load. Override per cluster with config.gitops.infra.policyGenerator.
+    limits:
+      cpu: 2000m
+      memory: 2048Mi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  # Argo CD RBAC. A `g` line assigns a subject to a role; the subject may be a user or a group. What
+  # makes groups the practical unit is the identity: scopes is '[groups]', checked alongside the
+  # always-matched sub claim, and with OpenShift login sub is an opaque Dex identifier rather than a
+  # username. Naming a user means pasting that opaque value.
+  #   system:cluster-admins - carried by kubeadmin (kube:admin)
+  #   cluster-admins        - the group Red Hat's OpenShift login procedure creates:
+  #                           oc adm groups new cluster-admins
+  # defaultPolicy is empty, so this list is the only access apart from the built-in admin account.
+  # Overridable per cluster with config.gitops.infra.rbac_policies, which REPLACES this list rather
+  # than appending to it. Avoid names containing commas (an LDAP group DN) - the comma is the field
+  # separator and the line is rejected as an invalid RBAC policy.
   rbac_policies:
+    - 'g, system:cluster-admins, role:admin'
+    - 'g, cluster-admins, role:admin'
     - 'g, openshift-systems, role:admin'
   # OPTIONAL
   controller:
     # Scaling: increase processors for environments with many Applications
     # Recommended: 50 status / 25 operation for 1000+ Applications
-    statusProcessors: 20 # concurrent status reconciliations (default: 20)
-    operationProcessors: 10 # concurrent sync operations (default: 10)
+    # AutoShift generates an Application per policy directory, so even a minimal hub carries dozens.
+    # Measured on a 51-Application hub: a full refresh took 141s at 50/25 against 225s at the Argo CD
+    # defaults of 20/10, for 640Mi of controller memory. Raise further for a much larger policy set.
+    statusProcessors: 50 # concurrent status reconciliations (Argo CD default: 20)
+    operationProcessors: 25 # concurrent sync operations (Argo CD default: 10)
+    # Measured peak 843Mi on a hub with 51 Applications and 194 Policies at 50 processors, during a
+    # full hard-refresh storm. Requests sized for steady state and limits for that storm with room to
+    # spare; deliberately NOT equal, so the pod is Burstable and does not reserve the ceiling. A hub
+    # running several AutoShift deployments multiplies the per-Application share but not the cluster
+    # cache, which is the larger half. Re-measure before lowering rather than assuming.
     limits:
       cpu: 2000m
-      memory: 6Gi
+      memory: 4Gi
     requests:
       cpu: 250m
-      memory: 6Gi
+      memory: 1Gi
   ha:
     enabled: false
     limits:
@@ -79,9 +122,12 @@ gitops:
     # enabling the cluster_ca_bundle will inject the cluster's trusted CA bundle into the repo
     # server that Argo CD uses. This allows Argo CD to connect to repositories using custom certificates.
     cluster_ca_bundle: false
-    # Multiple replicas so PolicyGenerator CMP renders spread across pods when the ApplicationSet
-    # fans out to every policies/* at once (a single repo-server thrashes and renders time out).
-    replicas: 3
+    # Repo-server replicas. One is enough: with useManifestGeneratePaths each render ships only a
+    # policy's own directory, and a measured 51-Application refresh took 199s on one replica against
+    # 225s on three, with the repo-server idle at 14m CPU either way. The bottleneck is the
+    # application controller, not this. Raise it for availability or a much larger policy set, here
+    # or per cluster with config.gitops.infra.repo.replicas.
+    replicas: 1
     limits:
       cpu: 2000m
       memory: 2048Mi
