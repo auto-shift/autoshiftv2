@@ -84,11 +84,36 @@ hubClusterSets:
         # SECRETS: ACME issuers typically reference secrets (EAB credentials, DNS provider API
         # tokens, etc.). These MUST be pre-created on each spoke cluster — either manually or via
         # External Secrets Operator (ESO) — NEVER inline in this file. The ClusterIssuer spec
-        # just references them by name. Example:
+        # just references them by name.
+        #
+        # Create via CLI:
         #   oc -n cert-manager create secret generic zero-ssl-eabsecret \
         #     --from-literal=secret='<EAB HMAC key>'
         #   oc -n cert-manager create secret generic cloudflare-api-token-secret \
         #     --from-literal=api-token='<Cloudflare API token>'
+        #
+        # Or as YAML manifests (apply to each spoke cluster):
+        #   ---
+        #   apiVersion: v1
+        #   kind: Secret
+        #   metadata:
+        #     name: zero-ssl-eabsecret
+        #     namespace: cert-manager
+        #   type: Opaque
+        #   stringData:
+        #     secret: '<EAB HMAC key from zerossl.com/developer>'
+        #   ---
+        #   apiVersion: v1
+        #   kind: Secret
+        #   metadata:
+        #     name: cloudflare-api-token-secret
+        #     namespace: cert-manager
+        #   type: Opaque
+        #   stringData:
+        #     api-token: '<Cloudflare API token with Zone:DNS:Edit>'
+        #
+        # Or via External Secrets Operator (ESO) — create an ExternalSecret referencing
+        # your secret store (Vault, AWS Secrets Manager, etc.).
         #
         # Example: ZeroSSL with Cloudflare DNS01 validation.
         # acmeIssuer:
