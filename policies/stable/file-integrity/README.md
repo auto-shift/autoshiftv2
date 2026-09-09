@@ -15,6 +15,8 @@ file-integrity/
     operator-install/
       kustomization.yaml        # renders the shared components/operator-install chart (Namespace +
                                 #   OperatorPolicy); per-operator ACM lookups are visible here
+    aide-config.yaml            # ConfigMap holding the AIDE configuration the instances read
+    file-integrity-instances.yaml # FileIntegrity CRs from config.fileIntegrity.instances
 ```
 The operator-install renders the shared `components/operator-install` chart — edit the visible ACM
 lookups in `manifests/operator-install/kustomization.yaml` to tune the subscription/version. Add

@@ -361,7 +361,12 @@ bound to `collectorRoles`.
 
 The `partition-for-var-log*` rules want the audit log directories on their own filesystems, so a
 full disk cannot silently stop auditing. Partitioning Red Hat CoreOS is an install time operation,
-so there is no day two remediation and these report as MANUAL on a running cluster.
+so there is no day two remediation.
+
+Every one of these rules reports MANUAL, on a partitioned cluster and an unpartitioned one alike.
+The check does not inspect the filesystem, it asks a person to confirm, so partitioning satisfies
+the control an auditor checks without turning the result green. Accept each rule in `manualReview`
+either way, and treat the partitions as the evidence behind that decision.
 
 There are five of them, and each checks its own path: `/var/log`, `/var/log/audit`,
 `/var/log/kube-apiserver`, `/var/log/oauth-apiserver` and `/var/log/openshift-apiserver`. A separate
@@ -371,18 +376,19 @@ The [installation documentation][sep-var] describes adding a single partition, a
 subdirectory of it. Ignition itself allows arbitrary partitioning, as [Customizing nodes][cust]
 describes.
 
-Passing all five NIST rules needs five partitions, so set `allowMultiple: true` to create more than
+Covering all five paths needs five partitions, so set `allowMultiple: true` to create more than
 one. A `mountPath` outside `/var` is rejected.
 
 Take `/var/log/audit`. It is the filesystem whose exhaustion stops auditing, and it is the only
-partition rule the STIG has, so a single partition satisfies that profile completely:
+partition rule the STIG has, so a single partition addresses that profile completely:
 
-| Profile | Partition rules | Covered by one `/var/log/audit` partition |
+| Profile | Partition rules | Addressed by one `/var/log/audit` partition |
 |---|---|---|
 | DISA STIG V2R3 | 1 | all of them |
 | NIST 800-53 moderate | 5 | one |
 
-If you take one partition rather than five, accept the other four NIST rules in `manualReview`.
+The remaining four NIST paths stay unpartitioned in that case. All five still need accepting in
+`manualReview`, because the result is MANUAL whether the partition exists or not.
 
 For clusters AutoShift provisions, set it in `config.clusterInstall`:
 

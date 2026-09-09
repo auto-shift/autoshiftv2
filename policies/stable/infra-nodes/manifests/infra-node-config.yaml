@@ -12,13 +12,6 @@ object-templates-raw: |
   {{- $systemReservedCpu := "{{hub index .ManagedClusterLabels "autoshift.io/infra-system-reserved-cpu" | default "500m" hub}}" }}
   {{- $kubeReservedMemory := "{{hub index .ManagedClusterLabels "autoshift.io/infra-kube-reserved-memory" | default "1Gi" hub}}" }}
   {{- $kubeReservedCpu := "{{hub index .ManagedClusterLabels "autoshift.io/infra-kube-reserved-cpu" | default "500m" hub}}" }}
-  {{- $evictionMemory := "{{hub index .ManagedClusterLabels "autoshift.io/infra-eviction-memory" | default "500Mi" hub}}" }}
-  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
-  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
-  {{- $evictionCfg := `
-  evictionHard:
-    {{hub (dig "infraNodes" "evictionHard" dict $cfg) | toYaml | autoindent hub}}
-  ` | fromYaml }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: machineconfiguration.openshift.io/v1
@@ -38,11 +31,8 @@ object-templates-raw: |
           kubeReserved:
             memory: {{ $kubeReservedMemory }}
             cpu: {{ $kubeReservedCpu }}
-          {{- /* evictionHard REPLACES the kubelet default set rather than merging into it, so
-                 setting memory.available alone silently drops the imagefs and nodefs thresholds and
-                 the node stops evicting on disk at all. The defaults below restate the rest, which
-                 is also what the NIST kubelet-eviction-thresholds-set-hard-* rules check for.
-                 config.infraNodes.evictionHard overrides any of them by key. */}}
-          {{- $evictionDefaults := (dict "memory.available" $evictionMemory "imagefs.available" "15%" "imagefs.inodesFree" "5%" "nodefs.available" "10%" "nodefs.inodesFree" "5%") }}
-          evictionHard:
-            {{ (mergeOverwrite $evictionDefaults (dig "evictionHard" dict $evictionCfg)) | toYaml | autoindent }}
+          {{- /* evictionHard is deliberately NOT set here. It replaces the kubelet default set
+                 rather than merging into it, so a partial map silently drops the thresholds it
+                 omits and the node stops evicting on disk. The kubelet defaults already satisfy
+                 the NIST kubelet-eviction-thresholds-set-hard-* rules, and the kubelet-eviction
+                 manual remediation is the one place that overrides them. */}}

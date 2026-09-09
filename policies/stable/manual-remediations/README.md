@@ -19,6 +19,11 @@ only; there is no `enabled` flag, because the label is the switch.
 | `policy-reject-unsigned-images` | `reject-unsigned-images-by-default` |
 | `policy-project-template` | `project-config-and-template-network-policy`, `project-config-and-template-resource-quota` |
 | `policy-quota-guard` | none; inform only, reports quotas that will reject pods |
+| `policy-kubelet-eviction` | `kubelet-eviction-thresholds-set-hard-imagefs-available`, `-nodefs-available` |
+| `policy-auditd-config` | `auditd-data-disk-error-action`, `-disk-full-action`, `-retention-flush`, `-retention-space-left-action` |
+| `policy-audit-rule-order` | `audit-rules-unsuccessful-file-modification-open-rule-order`, `-openat-rule-order`, `-open-by-handle-at-rule-order` |
+| `policy-cluster-proxy` | `cluster-wide-proxy-set`, only where egress goes through a proxy |
+| `policy-sshd-access` | `sshd-limit-user-access` |
 | `policy-remove-samples-operator` | none; the Samples Operator pulls from a registry the list above blocks |
 
 `policy-reject-unsigned-images` rolls every node and stops unsigned image pulls, so read it before
