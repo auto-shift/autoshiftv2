@@ -292,23 +292,29 @@ object-templates-raw: |
                     path: {{ index $p "mountPath" }}
                     format: {{ index $p "format" | default "xfs" }}
                     wipeFilesystem: true
+                    mountOptions:
+                      - defaults
+                      - prjquota
                 {{- end }}
               systemd:
                 units:
                 {{- range $_, $p := $partList }}
                 {{- $unit := (printf "%s.mount" (trimPrefix "-" (replace "/" "-" (replace "-" "\\x2d" (index $p "mountPath"))))) }}
+                {{- $fsck := (printf "systemd-fsck@%s.service" (trimPrefix "-" (replace "/" "-" (replace "-" "\\x2d" (printf "/dev/disk/by-partlabel/%s" (index $p "label")))))) }}
                   - name: {{ $unit }}
                     enabled: true
                     contents: |
                       [Unit]
                       Before=local-fs.target
+                      Requires={{ $fsck }}
+                      After={{ $fsck }}
                       [Mount]
                       Where={{ index $p "mountPath" }}
                       What=/dev/disk/by-partlabel/{{ index $p "label" }}
                       Type={{ index $p "format" | default "xfs" }}
                       Options=defaults,prjquota
                       [Install]
-                      WantedBy=local-fs.target
+                      RequiredBy=local-fs.target
                 {{- end }}
       {{- end }}
       {{- end }}
