@@ -299,6 +299,13 @@ object-templates-raw: |
               systemd:
                 units:
                 {{- range $_, $p := $partList }}
+                {{- /* systemd escapes a path into a unit name by replacing / with -, so a hyphen in a
+                       path component must be escaped as \x2d first: /var/log/kube-apiserver becomes
+                       var-log-kube\x2dapiserver.mount. A plain slash replace produces a name systemd
+                       never matches to the path, and the mount silently never happens. The rest of
+                       the unit is what butane emits for with_mount_unit: fsck ordering,
+                       and RequiredBy rather than WantedBy so a mount that fails stops the boot
+                       instead of leaving the path quietly on the root filesystem. */}}
                 {{- $unit := (printf "%s.mount" (trimPrefix "-" (replace "/" "-" (replace "-" "\\x2d" (index $p "mountPath"))))) }}
                 {{- $fsck := (printf "systemd-fsck@%s.service" (trimPrefix "-" (replace "/" "-" (replace "-" "\\x2d" (printf "/dev/disk/by-partlabel/%s" (index $p "label")))))) }}
                   - name: {{ $unit }}
