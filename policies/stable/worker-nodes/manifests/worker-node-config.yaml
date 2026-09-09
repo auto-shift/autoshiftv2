@@ -13,6 +13,12 @@ object-templates-raw: |
   {{- $kubeReservedMemory := "{{hub index .ManagedClusterLabels "autoshift.io/worker-kube-reserved-memory" | default "512Mi" hub}}" }}
   {{- $kubeReservedCpu := "{{hub index .ManagedClusterLabels "autoshift.io/worker-kube-reserved-cpu" | default "250m" hub}}" }}
   {{- $evictionMemory := "{{hub index .ManagedClusterLabels "autoshift.io/worker-eviction-memory" | default "500Mi" hub}}" }}
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{- $evictionCfg := `
+  evictionHard:
+    {{hub (dig "workerNodes" "evictionHard" dict $cfg) | toYaml | autoindent hub}}
+  ` | fromYaml }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: machineconfiguration.openshift.io/v1
@@ -32,5 +38,11 @@ object-templates-raw: |
           kubeReserved:
             memory: {{ $kubeReservedMemory }}
             cpu: {{ $kubeReservedCpu }}
+          {{- /* evictionHard REPLACES the kubelet default set rather than merging into it, so
+                 setting memory.available alone silently drops the imagefs and nodefs thresholds and
+                 the node stops evicting on disk at all. The defaults below restate the rest, which
+                 is also what the NIST kubelet-eviction-thresholds-set-hard-* rules check for.
+                 config.workerNodes.evictionHard overrides any of them by key. */}}
+          {{- $evictionDefaults := (dict "memory.available" $evictionMemory "imagefs.available" "15%" "imagefs.inodesFree" "5%" "nodefs.available" "10%" "nodefs.inodesFree" "5%") }}
           evictionHard:
-            memory.available: {{ $evictionMemory }}
+            {{ (mergeOverwrite $evictionDefaults (dig "evictionHard" dict $evictionCfg)) | toYaml | autoindent }}
