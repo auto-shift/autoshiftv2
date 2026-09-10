@@ -1,0 +1,46 @@
+# Recording rules for the multicluster observability add-on (MCOA).
+#
+# A recording rule runs a PromQL query ON THE MANAGED CLUSTER and stores the answer as a new
+# metric. That is the only real control on cardinality: a per-pod or per-VM metric can be tens of
+# thousands of series, and sum()-ing it to one number before remote-write is the difference between
+# affordable and not. Filtering at the hub does not help, the series already exist by then.
+#
+# Two objects are needed to collect an aggregate, and missing either is silent:
+#   this file            - the PrometheusRule that computes the new metric
+#   the ScrapeConfig     - a match[] entry allowing that new name to federate up
+# acm-observability-custom-scrapeconfig.yaml adds the record: names to match[] automatically, so a
+# rule cannot be computed and then dropped for want of a selector.
+#
+# NOTE the API group: PrometheusRule is monitoring.coreos.com/v1, while ScrapeConfig is
+# monitoring.rhobs/v1alpha1. The ClusterManagementAddOn reference must use the matching group or
+# the add-on ignores it without error. Modelled on MCOA's own platform-rules-default.
+#
+# On the classic collector these same recording_rules are carried in the allowlist ConfigMap
+# instead, so one config serves both paths.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $custom := (dig "acm" "observability" "customMetrics" dict $cfg) hub}}
+  {{hub- range $tier, $component := dict "platform" "platform-metrics-collector" "userWorkload" "user-workload-metrics-collector" hub}}
+  {{hub- $rules := (dig $tier "recording_rules" (list) $custom) hub}}
+  {{hub- if $rules hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: monitoring.coreos.com/v1
+      kind: PrometheusRule
+      metadata:
+        name: autoshift-custom-{{hub $tier | lower hub}}-rules
+        namespace: open-cluster-management-observability
+        labels:
+          app.kubernetes.io/component: {{hub $component hub}}
+          app.kubernetes.io/part-of: autoshift
+      spec:
+        groups:
+          - name: autoshift-custom-{{hub $tier | lower hub}}-rules
+            rules:
+              {{hub- range $rules hub}}
+              - record: {{hub .record hub}}
+                expr: {{hub .expr | quote hub}}
+              {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
