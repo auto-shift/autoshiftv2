@@ -25,7 +25,7 @@ values/
     hub-minimal.yaml                 # Hub — minimal (GitOps + ACM only)
     hub-baremetal-sno.yaml           # Hub — baremetal single-node OpenShift
     hub-baremetal-compact.yaml       # Hub — baremetal compact (3-node)
-    hubofhubs.yaml                   # Hub-of-hubs + selfManagedHubSet override
+    hubofhubs.yaml                   # Hub-of-hubs
     hub1.yaml                        # Spoke hub managed by hub-of-hubs
     hub2.yaml                        # Spoke hub managed by hub-of-hubs
     managed.yaml                     # Managed spoke — full enterprise
@@ -38,7 +38,7 @@ values/
 
 | Type | Directory | Key Pattern | Purpose |
 |------|-----------|-------------|---------|
-| Global config | `values/` | Top-level keys | Git repo, branch, dryRun, selfManagedHubSet |
+| Global config | `values/` | Top-level keys | Git repo, branch, dryRun|
 | Hub clustersets | `values/clustersets/` | `hubClusterSets.<name>` | Hub cluster configuration with ACM |
 | Managed clustersets | `values/clustersets/` | `managedClusterSets.<name>` | Spoke cluster configuration (no ACM) |
 | Cluster overrides | `values/clusters/` | `clusters.<name>` | Per-cluster label overrides |
@@ -48,7 +48,7 @@ values/
 Helm merges multiple value files in order. Each file adds to or overrides the merged result:
 
 ```yaml
-# File 1: global.yaml sets selfManagedHubSet: hub
+# File 1: global.yaml
 # File 2: hub.yaml adds hubClusterSets.hub with all labels
 # File 3: managed.yaml adds managedClusterSets.managed with all labels
 # Result: all three sections exist in the merged values
@@ -56,7 +56,7 @@ Helm merges multiple value files in order. Each file adds to or overrides the me
 
 **Key behaviors:**
 - **Maps deep-merge**: `hubClusterSets.hub` from one file and `hubClusterSets.hub1` from another combine into a single `hubClusterSets` map
-- **Scalars use last-file-wins**: `selfManagedHubSet: hubofhubs` in a later file overrides `selfManagedHubSet: hub` from `global.yaml`
+- **Scalars use last-file-wins**: `versionedClusterSets: true` in a later file overrides `versionedClusterSets: false` from `global.yaml`
 - **Lists are replaced, not appended**: `excludePolicies` in a later file replaces the entire list
 
 ## Available Profiles
@@ -69,7 +69,7 @@ Helm merges multiple value files in order. Each file adds to or overrides the me
 | `hub-minimal.yaml` | Minimal hub with only GitOps and ACM. Good starting point to add features incrementally. |
 | `hub-baremetal-sno.yaml` | Single-node OpenShift on baremetal. Excludes infra/worker node policies, enables LVM and master node config. |
 | `hub-baremetal-compact.yaml` | 3-node compact cluster on baremetal. Excludes infra/worker node policies, enables local storage and ODF with flexible scaling. |
-| `hubofhubs.yaml` | Hub-of-hubs configuration. Overrides `selfManagedHubSet` to `hubofhubs`. Use with `hub1.yaml`/`hub2.yaml` for spoke hubs. |
+| `hubofhubs.yaml` | Hub-of-hubs configuration. Use with `hub1.yaml`/`hub2.yaml` for spoke hubs. |
 | `hub1.yaml` / `hub2.yaml` | Spoke hub clustersets managed by a hub-of-hubs. |
 
 ### Managed (Spoke) Profiles
@@ -145,7 +145,6 @@ Defined in `values/global.yaml` and always loaded first:
 | `autoshift.dryRun` | `false` | Deploy policies in inform-only mode (no enforcement) |
 | `autoshiftGitRepo` | `https://github.com/auto-shift/autoshiftv2.git` | Git repository URL for policy sources |
 | `autoshiftGitBranchTag` | `main` | Git branch or tag to track |
-| `selfManagedHubSet` | `hub` | Name of the clusterset that contains the hub itself |
 | `versionedClusterSets` | `false` | Append version/branch suffix to clusterset names for gradual rollout |
 | `excludePolicies` | `[]` | List of policy folder names to exclude from all clusters |
 

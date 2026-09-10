@@ -24,9 +24,9 @@ import (
 
 const (
 	esoChart           = "policies/stable/external-secrets-operator"
-	trustExternalName  = "policy-eso-hub-bootstrap-trust-external"
-	trustName          = "policy-eso-hub-bootstrap-trust"
-	spokeBootstrapName = "policy-eso-hub-bootstrap"
+	trustExternalName  = "policy-eso-boot-clientca-ext"
+	trustName          = "policy-eso-boot-clientca-self"
+	spokeBootstrapName = "policy-eso-boot-store"
 )
 
 // selfSigned does not require baseDomain: it defaults to autoshift.io so the minted client-cert CN
@@ -231,18 +231,19 @@ func TestHubBootstrap_ExternalCA(t *testing.T) {
 		spokeBootstrapName: true,
 	})
 	seed := seedFor(t, map[string]interface{}{
-		"mode":         "externalCA",
-		"hubServer":    "https://api.hub.example.com:6443",
-		"baseDomain":   "eso.hub.example.com",
-		"certCNPrefix": "autoshift-eso-client",
-		"spokeIssuer": map[string]interface{}{
-			"name": "shared-ca-issuer", "kind": "ClusterIssuer", "group": "cert-manager.io",
+		"mode":      "externalCA",
+		"hubServer": "https://api.hub.example.com:6443",
+		"clientIdentity": map[string]interface{}{
+			"baseDomain":   "eso.hub.example.com",
+			"certCNPrefix": "autoshift-eso-client",
 		},
-		"externalClientCA": map[string]interface{}{
-			"namespace": "openshift-config", "name": "external-shared-ca", "key": "ca-bundle.crt",
-		},
-		"externalSecrets": []interface{}{
-			map[string]interface{}{"name": "app-secrets", "namespace": "app-secrets"},
+		"externalCertAuthority": map[string]interface{}{
+			"certIssuer": map[string]interface{}{
+				"name": "shared-ca-issuer", "kind": "ClusterIssuer", "group": "cert-manager.io",
+			},
+			"caTrustBundle": map[string]interface{}{
+				"namespace": "openshift-config", "name": "external-shared-ca", "key": "ca-bundle.crt",
+			},
 		},
 	})
 	out := resolveBoth(t, selected, seed)
@@ -281,9 +282,6 @@ func TestHubBootstrap_InvalidMode(t *testing.T) {
 	seed := seedFor(t, map[string]interface{}{
 		"mode":      "externalca", // valid-looking typo of externalCA
 		"hubServer": "https://api.hub.example.com:6443",
-		"externalSecrets": []interface{}{
-			map[string]interface{}{"name": "app-secrets", "namespace": "app-secrets"},
-		},
 	})
 
 	r, err := NewResolver(seed)
@@ -322,9 +320,6 @@ func TestHubBootstrap_DeriveHubUrl(t *testing.T) {
 		"mode":         "selfSigned",
 		"deriveHubUrl": true,
 		// deliberately NO hubServer — the policy must derive it from Infrastructure (testdata fixture)
-		"externalSecrets": []interface{}{
-			map[string]interface{}{"name": "app-secrets", "namespace": "app-secrets"},
-		},
 	})
 	out := resolveBoth(t, selected, seed)
 
@@ -341,9 +336,6 @@ func TestHubBootstrap_HubServerRequiredWithoutDerive(t *testing.T) {
 	seed := seedFor(t, map[string]interface{}{
 		"mode": "selfSigned",
 		// no hubServer, deriveHubUrl defaults false
-		"externalSecrets": []interface{}{
-			map[string]interface{}{"name": "app-secrets", "namespace": "app-secrets"},
-		},
 	})
 
 	r, err := NewResolver(seed)
@@ -374,11 +366,10 @@ func TestHubBootstrap_ExternalCAReuseServingCert(t *testing.T) {
 	seed := seedFor(t, map[string]interface{}{
 		"mode":      "externalCAReuseServingCert",
 		"hubServer": "https://api.hub.example.com:6443",
-		"externalClientCA": map[string]interface{}{
-			"namespace": "openshift-config", "name": "external-shared-ca", "key": "ca-bundle.crt",
-		},
-		"externalSecrets": []interface{}{
-			map[string]interface{}{"name": "app-secrets", "namespace": "app-secrets"},
+		"externalCertAuthority": map[string]interface{}{
+			"caTrustBundle": map[string]interface{}{
+				"namespace": "openshift-config", "name": "external-shared-ca", "key": "ca-bundle.crt",
+			},
 		},
 	})
 	out := resolveBoth(t, selected, seed)
@@ -447,9 +438,6 @@ func TestHubBootstrap_LongClusterNameTruncation(t *testing.T) {
 		renderedConfigCMNamed(t, longName, map[string]interface{}{
 			"mode":      "selfSigned",
 			"hubServer": "https://api.hub.example.com:6443",
-			"externalSecrets": []interface{}{
-				map[string]interface{}{"name": "app-secrets", "namespace": "app-secrets"},
-			},
 		}),
 		managedClusterFixture(longName),
 		// hub-minted client secret seeded ONLY under the truncated name

@@ -1,0 +1,13 @@
+object-templates-raw: |
+  {{hub $defaultSC := index .ManagedClusterLabels "autoshift.io/odf-default-storageclass" | default "ocs-storagecluster-ceph-rbd" hub}}
+  {{- $storageclasses := (lookup "storage.k8s.io/v1" "StorageClass" "" "").items }}
+  {{- range $sc := $storageclasses }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: storage.k8s.io/v1
+      kind: StorageClass
+      metadata:
+        name: {{ $sc.metadata.name }}
+        annotations:
+          storageclass.kubernetes.io/is-default-class: '{{ if eq $sc.metadata.name "{{hub $defaultSC hub}}" }}true{{ else }}false{{ end }}'
+  {{- end }}

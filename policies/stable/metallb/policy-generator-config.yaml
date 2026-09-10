@@ -1,0 +1,113 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: metallb
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`.
+# They live here and in placement-*.yaml — never in manifests/, whose hub templates contain the
+# label-iteration `$vars` (metallb-ippool/l2/bgp/peer) that substitution would clobber.
+#
+# Two predicate labels across the graph, so two hand-authored Placements:
+#   placement.yaml         -> autoshift.io/metallb        (operator install, CR, config generators)
+#   placement-quota.yaml   -> autoshift.io/metallb-quota  (namespace ResourceQuota)
+#
+# The *-configmaps policies stamp hub-side lookup ConfigMaps (ippool-/l2-/bgp-/peer-) into the
+# policy namespace; the paired *-config policies read them back via hub-template `lookup` and fan
+# them out into IPAddressPool/L2Advertisement/BGPAdvertisement/BGPPeer per metallb-*-<n> label.
+placementBindingDefaults:
+  name: binding-policy-metallb
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Default Placement (predicate autoshift.io/metallb); the quota policy overrides below.
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-metallb-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) MetalLB CR (raw -> wrapped). Waits on the operator install.
+  - name: policy-deploy-metallb
+    dependencies:
+      - name: policy-metallb-operator-install
+    manifests:
+      - path: manifests/metallb-cr.yaml
+  # 3) Namespace ResourceQuota. Distinct predicate (autoshift.io/metallb-quota).
+  - name: policy-metallb-quota-config
+    placement:
+      placementPath: placement-quota.yaml
+    dependencies:
+      - name: policy-metallb-operator-install
+    manifests:
+      - path: manifests/quota.yaml
+        complianceType: mustonlyhave
+  # 4) IPAddressPool lookup ConfigMaps (hub-side). Waits on the CR.
+  - name: policy-ippools-configmaps
+    placement:
+      placementPath: placement-configmaps.yaml
+    dependencies:
+      - name: policy-deploy-metallb
+    manifests:
+      - path: manifests/ippools-configmaps.yaml
+        complianceType: mustonlyhave
+  # 5) IPAddressPool fan-out per metallb-ippool-<n> label. Waits on its ConfigMaps.
+  - name: policy-metallb-ippool-config
+    dependencies:
+      - name: policy-ippools-configmaps
+    manifests:
+      - path: manifests/ippool-config.yaml
+  # 6) L2Advertisement lookup ConfigMaps (hub-side). Waits on the ippool config.
+  - name: policy-l2-configmaps
+    placement:
+      placementPath: placement-configmaps.yaml
+    dependencies:
+      - name: policy-metallb-ippool-config
+    manifests:
+      - path: manifests/l2-configmaps.yaml
+  # 7) L2Advertisement fan-out per metallb-l2-<n> label. Waits on its ConfigMaps.
+  - name: policy-metallb-l2-config
+    dependencies:
+      - name: policy-l2-configmaps
+    manifests:
+      - path: manifests/l2-config.yaml
+  # 8) BGPAdvertisement lookup ConfigMaps (hub-side). Waits on the CR.
+  - name: policy-bgp-configmaps
+    placement:
+      placementPath: placement-configmaps.yaml
+    dependencies:
+      - name: policy-deploy-metallb
+    manifests:
+      - path: manifests/bgp-configmaps.yaml
+  # 9) BGPAdvertisement fan-out per metallb-bgp-<n> label. Waits on its ConfigMaps.
+  - name: policy-metallb-bgp-config
+    dependencies:
+      - name: policy-bgp-configmaps
+    manifests:
+      - path: manifests/bgp-config.yaml
+  # 10) BGPPeer lookup ConfigMaps (hub-side). Waits on the CR.
+  - name: policy-peer-configmaps
+    placement:
+      placementPath: placement-configmaps.yaml
+    dependencies:
+      - name: policy-deploy-metallb
+    manifests:
+      - path: manifests/peer-configmaps.yaml
+  # 11) BGPPeer fan-out per metallb-peer-<n> label. Waits on its ConfigMaps.
+  - name: policy-metallb-peer-config
+    dependencies:
+      - name: policy-peer-configmaps
+    manifests:
+      - path: manifests/peer-config.yaml

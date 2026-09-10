@@ -1,0 +1,157 @@
+# CNPG PostgreSQL for Quay (quay-db-mode: managed). Two SEPARATE clusters by design — Red Hat does
+# not support sharing one externally managed database between Quay and Clair, and the database must
+# not be shared with other workloads either (connection-limit contention).
+#
+# NO Pooler here, unlike the gitlab/jfrog CNPG charts: pgBouncer is explicitly unsupported with Quay
+# and Clair, so both connect straight to the <cluster>-rw service.
+#
+# pg_trgm must exist before Quay's schema migration runs — an externally managed PostgreSQL requires
+# it to be enabled manually, so it is created in postInitApplicationSQL (runs in the application
+# database as the owner, which is where Quay needs it).
+#
+# Storage matches the 50Gi the Quay Operator allocates for its own managed database, so switching
+# quay-db-mode does not silently change the disk budget.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: quay-db
+  namespace: quay-enterprise
+spec:
+  instances: '{{hub index .ManagedClusterLabels "autoshift.io/quay-db-instances" | default "2" | toInt hub}}'
+  postgresql:
+    parameters:
+      max_connections: '200'
+      shared_buffers: 512MB
+      effective_cache_size: 1536MB
+      work_mem: 8MB
+  bootstrap:
+    initdb:
+      database: quay
+      owner: quay
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS pg_trgm;
+  storage:
+    size: 50Gi
+  resources:
+    requests:
+      cpu: '1'
+      memory: 2Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: clair-db
+  namespace: quay-enterprise
+spec:
+  instances: '{{hub index .ManagedClusterLabels "autoshift.io/quay-clair-db-instances" | default "2" | toInt hub}}'
+  postgresql:
+    parameters:
+      max_connections: '200'
+      shared_buffers: 512MB
+      effective_cache_size: 1536MB
+      work_mem: 8MB
+  bootstrap:
+    initdb:
+      database: clair
+      owner: clair
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS pg_trgm;
+        - CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+  storage:
+    size: 50Gi
+  resources:
+    requests:
+      cpu: '1'
+      memory: 2Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: quay-db
+  namespace: quay-enterprise
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: quay-db
+  endpoints:
+    - port: metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: clair-db
+  namespace: quay-enterprise
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: clair-db
+  endpoints:
+    - port: metrics
+      interval: 30s
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: quay-db-allow
+  namespace: quay-enterprise
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: quay-db
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: quay-enterprise
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 9187
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-operators
+      ports:
+        - port: 8000
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: clair-db-allow
+  namespace: quay-enterprise
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: clair-db
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: quay-enterprise
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 9187
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-operators
+      ports:
+        - port: 8000
+          protocol: TCP

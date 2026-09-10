@@ -1,0 +1,129 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: advanced-cluster-security
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a
+# wildcard: drop a file in, no config edit). Keep placement.yaml at the dir root, NOT inside a
+# wildcarded manifests dir. Per-deployment scalars (${...}) live here and in placement.yaml only —
+# never in manifests/, whose hub templates contain $vars that substitution would clobber.
+#
+# remediationAction: ${REMEDIATION} is set once in policyDefaults (dry-run aware). Readiness/status
+# checks are their own policies[] entry (policy-*-test, remediationAction: inform, manifest under
+# test/) — a separate Policy so the enforce root of a config policy can't clobber the inform check.
+placementBindingDefaults:
+  name: binding-policy-acs
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+    - CA Security Assessment and Authorization
+  controls:
+    - CM-2 Baseline Configuration
+    - CA-2 Security Assessments
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator install: raw Namespaces (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-acs-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) Central CR + readiness gate. MIXED: Central enforce, the status check informs. HUB-only.
+  - name: policy-acs-central
+    placement:
+      placementPath: placement-hub.yaml
+    dependencies:
+      - name: policy-acs-operator-install
+    manifests:
+      - path: manifests/central.yaml
+  # 3) Sync the Central-generated TLS bundles to the managed cluster (hub fromSecret needs a SA). MANAGED-only.
+  - name: policy-acs-central-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-hub.yaml
+    manifests:
+      - path: test/central-ready.yaml
+  - name: policy-acs-sync-bundle
+    placement:
+      placementPath: placement-managed.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-acs-operator-install
+    manifests:
+      - path: manifests/sync-bundle.yaml
+  # 4) Declarative auth-provider config for Central. HUB-only.
+  - name: policy-acs-declarative-config
+    placement:
+      placementPath: placement-hub.yaml
+    dependencies:
+      - name: policy-acs-central
+    manifests:
+      - path: manifests/declarative-config.yaml
+  # 5) Baseline SecurityPolicy CRDs for Central. HUB-only.
+  - name: policy-acs-security-policies
+    placement:
+      placementPath: placement-hub.yaml
+    dependencies:
+      - name: policy-acs-central
+    manifests:
+      - path: manifests/security-policies.yaml
+  # 6) Cluster init-bundle generation (RBAC + Job) + Job-succeeded gate. MIXED: resources enforce, check informs. HUB-only.
+  - name: policy-acs-init-bundle
+    placement:
+      placementPath: placement-hub.yaml
+    dependencies:
+      - name: policy-acs-central
+    manifests:
+      - path: manifests/init-bundle
+  # 7) SecuredCluster on the hub's own local-cluster + readiness gate. MIXED: SecuredCluster enforce, check informs. HUB-only.
+  - name: policy-acs-init-bundle-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-hub.yaml
+    manifests:
+      - path: test/init-bundle-ready.yaml
+  - name: policy-acs-secured-cluster-hub
+    placement:
+      placementPath: placement-hub.yaml
+    dependencies:
+      - name: policy-acs-init-bundle
+    manifests:
+      - path: manifests/secured-cluster-hub.yaml
+  # 8) SecuredCluster on managed clusters + readiness gate. MIXED: SecuredCluster enforce, check informs. MANAGED-only.
+  - name: policy-acs-secured-cluster-hub-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-hub.yaml
+    manifests:
+      - path: test/secured-cluster-hub-ready.yaml
+  - name: policy-acs-secured-cluster
+    placement:
+      placementPath: placement-managed.yaml
+    dependencies:
+      - name: policy-acs-sync-bundle
+    manifests:
+      - path: manifests/secured-cluster.yaml
+  # 9) Console link to the ACS portal.
+  - name: policy-acs-secured-cluster-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-managed.yaml
+    manifests:
+      - path: test/secured-cluster-ready.yaml
+  - name: policy-acs-console-link
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: manifests/console-link.yaml

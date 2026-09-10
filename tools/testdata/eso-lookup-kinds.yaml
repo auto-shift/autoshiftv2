@@ -1,0 +1,128 @@
+# Stubs registering the kinds the ESO boot/store policies look up. The e2e fake dynamic client
+# builds its GVR registry from the objects present here, so a kind with no stub makes every
+# lookup of it fail with "one or more API resources are not installed on the API server".
+#
+# The CRD stubs below are existence gates: the ESO policies key off "is this CRD installed" to
+# decide whether to emit the objects that depend on it. Present means the e2e renders the gated
+# bodies rather than skipping them, which is the path worth linting.
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clustersecretstores.external-secrets.io
+spec:
+  group: external-secrets.io
+  names:
+    kind: ClusterSecretStore
+    plural: clustersecretstores
+  scope: Cluster
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: secretstores.external-secrets.io
+spec:
+  group: external-secrets.io
+  names:
+    kind: SecretStore
+    plural: secretstores
+  scope: Namespaced
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: externalsecrets.external-secrets.io
+spec:
+  group: external-secrets.io
+  names:
+    kind: ExternalSecret
+    plural: externalsecrets
+  scope: Namespaced
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: certificates.cert-manager.io
+spec:
+  group: cert-manager.io
+  names:
+    kind: Certificate
+    plural: certificates
+  scope: Namespaced
+---
+# Registers external-secrets.io/v1 so the store-drift and auth-ExternalSecret lookups resolve.
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: hub-bootstrap
+spec:
+  provider:
+    kubernetes:
+      remoteNamespace: policies-autoshift
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: eso-stub-store
+  namespace: app-secrets
+spec:
+  provider:
+    kubernetes:
+      remoteNamespace: policies-autoshift
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: eso-stub-external-secret
+  namespace: app-secrets
+spec:
+  secretStoreRef:
+    name: hub-bootstrap
+    kind: ClusterSecretStore
+  target:
+    name: eso-stub-external-secret
+---
+# Registers Role/ClusterRole/ClusterRoleBinding for the bootPrereqs RBAC sweep, which lists
+# them across all namespaces to find grants it previously created. RoleBinding is registered
+# by an existing stub.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: eso-stub-role
+  namespace: policies-autoshift
+rules:
+  - apiGroups:
+      - policy.open-cluster-management.io
+    resources:
+      - policies
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eso-secret-reader
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eso-stub-clusterrolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: eso-secret-reader
+subjects:
+  - kind: ServiceAccount
+    name: secret-reader
+    namespace: external-secrets-operator

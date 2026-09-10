@@ -1,0 +1,26 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-acm-observability
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: selects across the namespace's ManagedClusterSetBindings filtered by the
+  # predicate. autoshift.io/self-managed is a hub-only label (managed clusters never carry it), so
+  # cluster-type: hub selects hub-clusterset members.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/acm-observability'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

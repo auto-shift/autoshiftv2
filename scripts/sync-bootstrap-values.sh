@@ -91,44 +91,11 @@ echo "disableDefaultArgoCD: $DISABLE_DEFAULT" >> "$GITOPS_BOOTSTRAP_VALUES"
 success "Synced openshift-gitops values"
 
 # =============================================================================
-# Sync Advanced Cluster Management values
+# Advanced Cluster Management (no longer synced)
 # =============================================================================
-log "Syncing advanced-cluster-management values..."
-
-ACM_POLICY_VALUES="$REPO_ROOT/policies/stable/advanced-cluster-management/values.yaml"
-ACM_BOOTSTRAP_VALUES="$REPO_ROOT/advanced-cluster-management/values.yaml"
-
-if [ ! -f "$ACM_POLICY_VALUES" ]; then
-    warn "Policy values not found: $ACM_POLICY_VALUES"
-    exit 1
-fi
-
-cat > "$ACM_BOOTSTRAP_VALUES" << 'EOF'
-# =============================================================================
-# AUTO-GENERATED - DO NOT EDIT DIRECTLY
-# =============================================================================
-# This file is generated from policies/stable/advanced-cluster-management/values.yaml
-# To modify defaults, edit the policy chart values and run:
-#   make sync-values
-# =============================================================================
-
-# Bootstrap-specific settings
-ignoreHelmHooks: false
-
-# Job image for waiting for CRD
-# Use internal registry for disconnected environments
-image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
-
-# =============================================================================
-# Values synced from policies/stable/advanced-cluster-management/values.yaml
-# =============================================================================
-
-EOF
-
-# Add acm section with installPlanApproval injected
-yq eval '.acm.installPlanApproval = "Automatic"' "$ACM_POLICY_VALUES" | yq eval '{"acm": .acm}' - >> "$ACM_BOOTSTRAP_VALUES"
-
-success "Synced advanced-cluster-management values"
+# The ACM policy is a PolicyGenerator dir with no values.yaml; its bootstrap chart
+# (advanced-cluster-management/values.yaml) is hand-maintained.
+log "Skipping advanced-cluster-management (bootstrap values.yaml is hand-maintained)"
 
 echo ""
 log "========================================="
@@ -137,7 +104,6 @@ log "========================================="
 echo ""
 echo "Updated files:"
 echo "  - openshift-gitops/values.yaml"
-echo "  - advanced-cluster-management/values.yaml"
 echo ""
-echo "These files are now in sync with their respective policy charts."
-echo "The policies will manage these operators after initial bootstrap."
+echo "openshift-gitops bootstrap values are now in sync with its policy chart."
+echo "The policy will manage the operator after initial bootstrap."

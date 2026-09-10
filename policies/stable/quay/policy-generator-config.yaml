@@ -1,0 +1,126 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: quay
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests. Keep the
+# hand-authored Placements (placement*.yaml) at the dir root, NOT inside a wildcarded manifests dir.
+#
+# Database backing is selected by the autoshift.io/quay-db-mode label:
+#   bundled  (default) — the Quay Operator's own PostgreSQL Deployment
+#   managed            — CNPG HA clusters provisioned below (also needs cloudnative-pg: 'true')
+#   external           — bring your own, via DB_URI in config.quay.config
+placementBindingDefaults:
+  name: binding-policy-quay
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Default Placement (predicate autoshift.io/quay). Policies that are db-mode-specific override it.
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-quay-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) CNPG databases for db-mode: managed. Two SEPARATE clusters — Red Hat does not support sharing
+  #    one external database between Quay and Clair. No PgBouncer pooler: pgBouncer is unsupported
+  #    with both, so this deliberately omits the pooler stage the gitlab/jfrog CNPG charts have.
+  #    NOTE: cloudnative-pg lives in policies/certified/ — the only stable -> certified dependency in
+  #    the repo. It binds only on clusters that opted in via placement-cnpg.yaml.
+  - name: policy-cnpg-quay
+    dependencies:
+      - name: policy-cloudnative-pg-operator-install
+      - name: policy-quay-operator-install
+    placement:
+      placementPath: placement-cnpg.yaml
+    manifests:
+      - path: manifests/cnpg
+  # 2-test) CNPG cluster readiness (status observation → inform, its own Policy in test/).
+  - name: policy-cnpg-quay-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-cnpg.yaml
+    dependencies:
+      - name: policy-cnpg-quay
+    manifests:
+      - path: test/cnpg-quay-ready.yaml
+  # 3) Quay enterprise namespace + config bundle Secret + optional serving Certificate + QuayRegistry.
+  #    Waits on the operator install and the storage cluster. Split in two by db-mode so the CNPG
+  #    readiness dependency applies only where CNPG is actually in play — the placements are mutually
+  #    exclusive, so exactly one of these lands on any given cluster.
+  - name: policy-quay-deploy
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-quay-operator-install
+      # Storage-readiness gate that exists in BOTH standard and standalone MCG modes (default ODF
+      # placement) — policy-storage-cluster is standard-only, so depending on it stranded Quay on
+      # standalone-MCG clusters. Matches the -test dependency used by the other ODF dependents.
+      - name: policy-storage-cluster-test
+    placement:
+      placementPath: placement-deploy.yaml
+    manifests:
+      - path: manifests/quay-deploy
+  - name: policy-quay-deploy-cnpg
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-quay-operator-install
+      - name: policy-storage-cluster-test
+      - name: policy-cnpg-quay-test
+    placement:
+      placementPath: placement-cnpg.yaml
+    manifests:
+      - path: manifests/quay-deploy
+  # 3-test) QuayRegistry readiness (status observation → inform, its own Policy in test/).
+  - name: policy-quay-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-quay-operator-install
+    manifests:
+      - path: test/quay-registry-ready.yaml
+  # 4) Console link + registry host ConfigMap. Waits on the registry actually serving.
+  # TLS status (inform) — config.quay.tls names an issuer, but the deploy policy emits the
+  # Certificate only when that issuer exists and leaves tls managed while the secret is absent.
+  - name: policy-quay-tls-issuer
+    remediationAction: inform
+    dependencies:
+      - name: policy-quay-test
+    manifests:
+      - path: test/quay-tls-issuer.yaml
+    customMessage:
+      noncompliant: >-
+        Quay is not serving the cert-manager certificate you configured. Either the issuer named in
+        config.quay.tls.certificate.issuerRef does not exist on this cluster, or the Certificate has
+        not produced its secret yet. Until it does, the tls component stays Operator-managed and Quay
+        serves a self-signed certificate. Check the ClusterIssuer or Issuer exists, then the
+        Certificate quay-registry-tls in quay-enterprise. Expected briefly during first issuance.
+  - name: policy-quay-configure
+    dependencies:
+      - name: policy-quay-test
+    manifests:
+      - path: manifests/console-link.yaml
+  # 5) CNPG scheduled backups to NooBaa. The Quay Operator does not back up its own managed
+  #    database, so this only exists for db-mode: managed.
+  - name: policy-cnpg-quay-backup
+    dependencies:
+      - name: policy-cnpg-quay
+      - name: policy-storage-cluster-test
+    placement:
+      placementPath: placement-backup.yaml
+    manifests:
+      - path: manifests/backup

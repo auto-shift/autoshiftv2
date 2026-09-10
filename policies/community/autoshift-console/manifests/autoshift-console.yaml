@@ -1,0 +1,175 @@
+object-templates-raw: |
+  {{- /* The tag names the OpenShift minor it targets, so it comes from the ACTUAL running version
+         (ClusterVersion history), not the desired autoshift.io/openshift-version label. A minor
+         with no published build has no tag; policy-autoshift-console-available reports the
+         failed pull. */}}
+  {{- $cvStatus := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
+  {{- $current := "" }}
+  {{- range $h := (index $cvStatus "history" | default list) }}
+  {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}{{- $current = (index $h "version") }}{{- end }}
+  {{- end }}
+  {{- if ne $current "" }}
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm | default dict) "data" | default dict) hub}}
+  {{hub- $configYaml := (index $config "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $console := (index $configYaml "autoshiftConsole" | default dict) hub}}
+  {{hub- $repository := (index $console "repository" | default "quay.io/autoshift/autoshift-console-plugin") hub}}
+  {{hub- $imageOverride := (index $console "image" | default "") hub}}
+  {{- /* An explicit config.autoshiftConsole.image wins, so a digest can be pinned in production. */ -}}
+  {{- $image := "{{hub $imageOverride hub}}" }}
+  {{- if eq $image "" }}
+  {{-   $image = printf "%s:ocp%s" "{{hub $repository hub}}" (regexFind "^[0-9]+[.][0-9]+" $current) }}
+  {{- end }}
+  {{hub- $replicas := (index $console "replicas" | default 2) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: autoshift-console
+        labels:
+          # The plugin serves static assets only; it holds no workload that needs elevated SCCs.
+          pod-security.kubernetes.io/enforce: restricted
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: autoshift-console-nginx-conf
+        namespace: autoshift-console
+      data:
+        nginx.conf: |
+          error_log /dev/stdout info;
+          events {}
+          http {
+            include /etc/nginx/mime.types;
+            default_type application/octet-stream;
+            access_log /dev/stdout;
+            client_max_body_size 8m;
+            server {
+              listen 9443 ssl;
+              listen [::]:9443 ssl;
+              ssl_certificate /var/serving-cert/tls.crt;
+              ssl_certificate_key /var/serving-cert/tls.key;
+              root /usr/share/nginx/html;
+            }
+          }
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: autoshift-console
+        namespace: autoshift-console
+        labels:
+          app: autoshift-console
+          app.kubernetes.io/component: autoshift-console
+          app.kubernetes.io/name: autoshift-console
+          app.kubernetes.io/part-of: autoshift
+      spec:
+        replicas: {{hub $replicas hub}}
+        selector:
+          matchLabels:
+            app: autoshift-console
+        template:
+          metadata:
+            labels:
+              app: autoshift-console
+          spec:
+            containers:
+              - name: autoshift-console
+                image: {{ $image }}
+                ports:
+                  - containerPort: 9443
+                    protocol: TCP
+                imagePullPolicy: Always
+                volumeMounts:
+                  - name: plugin-serving-cert
+                    readOnly: true
+                    mountPath: /var/serving-cert
+                  - name: nginx-conf
+                    readOnly: true
+                    mountPath: /etc/nginx/nginx.conf
+                    subPath: nginx.conf
+                # Keeps the Service endpoint-less until nginx is actually serving the bundle, which
+                # is what the console-enable readiness gate keys off.
+                readinessProbe:
+                  httpGet:
+                    path: /plugin-manifest.json
+                    port: 9443
+                    scheme: HTTPS
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                      - ALL
+                resources:
+                  requests:
+                    cpu: 10m
+                    memory: 50Mi
+            volumes:
+              - name: plugin-serving-cert
+                secret:
+                  secretName: autoshift-console-cert
+                  defaultMode: 420
+              - name: nginx-conf
+                configMap:
+                  name: autoshift-console-nginx-conf
+                  defaultMode: 420
+            restartPolicy: Always
+            dnsPolicy: ClusterFirst
+            securityContext:
+              runAsNonRoot: true
+              seccompProfile:
+                type: RuntimeDefault
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: autoshift-console
+        namespace: autoshift-console
+        labels:
+          app: autoshift-console
+          app.kubernetes.io/component: autoshift-console
+          app.kubernetes.io/name: autoshift-console
+          app.kubernetes.io/part-of: autoshift
+        annotations:
+          # service-ca mints the TLS cert the nginx listener above serves.
+          service.beta.openshift.io/serving-cert-secret-name: autoshift-console-cert
+      spec:
+        ports:
+          - name: 9443-tcp
+            protocol: TCP
+            port: 9443
+            targetPort: 9443
+        selector:
+          app: autoshift-console
+        type: ClusterIP
+        sessionAffinity: None
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: console.openshift.io/v1
+      kind: ConsolePlugin
+      metadata:
+        name: autoshift-console
+      spec:
+        displayName: AutoShift
+        backend:
+          type: Service
+          service:
+            name: autoshift-console
+            namespace: autoshift-console
+            port: 9443
+            basePath: /
+        # The i18n namespace in the plugin source (plugin__autoshift-console) must match this
+        # resource's name, or translated labels in console-extensions.json resolve to raw keys.
+        #
+        # Lazy, not Preload: Preload makes the console fetch this plugin's locale bundle during
+        # bootstrap of every page. If the plugin is unreachable that cost — and its failure — is
+        # paid across the whole console rather than only on the AutoShift routes.
+        i18n:
+          loadType: Lazy
+  {{- end }}

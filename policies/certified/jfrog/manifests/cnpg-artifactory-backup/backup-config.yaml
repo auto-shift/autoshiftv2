@@ -1,0 +1,88 @@
+object-templates-raw: |
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $jfrogCfg := (index $rcmConfig "jfrog" | default dict) hub}}
+  # Read OBC credentials for the backup bucket
+  {{- $obcSecret := (lookup "v1" "Secret" "jfrog-system" "artifactory-db-backup") | default dict }}
+  {{- $obcData := ($obcSecret.data | default dict) }}
+  {{- $accessKey := (index $obcData "AWS_ACCESS_KEY_ID" | default "") }}
+  {{- $secretKey := (index $obcData "AWS_SECRET_ACCESS_KEY" | default "") }}
+  {{- $obcCM := (lookup "v1" "ConfigMap" "jfrog-system" "artifactory-db-backup") | default dict }}
+  {{- $obcCMData := ($obcCM.data | default dict) }}
+  {{- $bucketName := (index $obcCMData "BUCKET_NAME" | default "") }}
+  {{- $bucketHost := (index $obcCMData "BUCKET_HOST" | default "") }}
+  {{- $bucketPort := (index $obcCMData "BUCKET_PORT" | default "443") }}
+  {{- $retention := "{{hub index $jfrogCfg "dbBackupRetention" | default "30d" hub}}" }}
+  {{- $schedule := "{{hub index $jfrogCfg "dbBackupSchedule" | default "0 3 * * *" hub}}" }}
+  {{- $caCM := (lookup "v1" "ConfigMap" "jfrog-system" "openshift-service-ca") | default dict }}
+  {{- $caCert := (index ($caCM.data | default dict) "service-ca.crt" | default "") }}
+  {{- if and (not (empty $accessKey)) (not (empty $bucketName)) }}
+  # Create S3 endpoint CA secret for barman (CNPG endpointCA requires a Secret)
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: artifactory-db-backup-ca
+        namespace: jfrog-system
+      type: Opaque
+      stringData:
+        ca.crt: |
+          {{ $caCert | autoindent }}
+  # Create S3 credentials secret for barman
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: artifactory-db-backup-s3-creds
+        namespace: jfrog-system
+      type: Opaque
+      data:
+        ACCESS_KEY_ID: {{ $accessKey }}
+        ACCESS_SECRET_KEY: {{ $secretKey }}
+  # Patch the CNPG Cluster with backup configuration
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: artifactory-db
+        namespace: jfrog-system
+      spec:
+        backup:
+          retentionPolicy: {{ $retention }}
+          barmanObjectStore:
+            destinationPath: s3://{{ $bucketName }}/
+            endpointURL: https://{{ $bucketHost }}:{{ $bucketPort }}
+            endpointCA:
+              name: artifactory-db-backup-ca
+              key: ca.crt
+            s3Credentials:
+              accessKeyId:
+                name: artifactory-db-backup-s3-creds
+                key: ACCESS_KEY_ID
+              secretAccessKey:
+                name: artifactory-db-backup-s3-creds
+                key: ACCESS_SECRET_KEY
+            wal:
+              compression: gzip
+            data:
+              compression: gzip
+  # Scheduled base backup
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: ScheduledBackup
+      metadata:
+        name: artifactory-db-scheduled-backup
+        namespace: jfrog-system
+      spec:
+        schedule: {{ $schedule }}
+        backupOwnerReference: cluster
+        cluster:
+          name: artifactory-db
+        method: barmanObjectStore
+        target: prefer-standby
+        immediate: true
+  {{- end }}

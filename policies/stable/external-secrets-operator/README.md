@@ -138,8 +138,10 @@ ConfigurationPolicy (does the work, records per-item failures into a status Conf
 
 ### Test Locally
 ```bash
-# Validate policy renders correctly
-helm template policies/external-secrets-operator/
+# A PolicyGenerator directory, not a Helm chart: rendering it needs the ${...}
+# placeholders substituted first. The validation suite does that, resolves hub and
+# spoke templates, and is what CI runs.
+cd tools && go test -tags integration ./internal/resolver/...
 ```
 
 ### Enable on Clusters
@@ -2221,9 +2223,9 @@ is [troubleshooting.md](troubleshooting.md). The quick checks below cover the ba
 3. Verify operator source exists: `oc get catalogsource -n openshift-marketplace`
 
 ### Template Rendering Issues
-1. Test locally: `helm template policies/external-secrets-operator/`
+1. Validate rendering: `cd tools && go test -tags integration ./internal/resolver/...`
 2. Check hub escaping: Look for `{{ "{{hub" }} ... {{ "hub}}" }}` patterns
-3. Validate YAML: `helm lint policies/external-secrets-operator/`
+3. Read the failure: the suite names the chart and the stage that failed (render, hub resolution, spoke resolution, YAML validation, label contract)
 
 ### Boot/readiness policy NonCompliant
 A boot or readiness Policy showing NonCompliant has hit a precondition — the detail is in its **status
@@ -2239,6 +2241,6 @@ the healthy ones. See [Precondition failures — where to look](#precondition-fa
 
 ## Resources
 - [Operator Documentation](https://operatorhub.io/operator/external-secrets-operator) - Find your operator details
-- [AutoShift Developer Guide](../../docs/developer-guide.md) - Comprehensive policy development guide
+- [AutoShift Developer Guide](../../../docs/developer-guide.md) - Comprehensive policy development guide
 - [ACM Policy Documentation](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes) - Policy syntax reference in Governence Section
-- [Similar Policies](../) - Browse other policies for patterns and examples
+- [Similar Policies](../../README.md) - Browse other policies for patterns and examples

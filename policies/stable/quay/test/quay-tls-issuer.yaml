@@ -1,0 +1,34 @@
+# Reports when cert-manager TLS was requested but is not in effect. The deploy policy emits the
+# Certificate only when the issuer exists, and leaves the tls component managed when the secret is
+# absent, so Quay serves an Operator-generated self-signed certificate and every policy still
+# reports Compliant.
+object-templates-raw: |
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $quayCfg := (index $rcmConfig "quay" | default dict) hub}}
+  {{hub- $tlsCfg := (index $quayCfg "tls" | default dict) hub}}
+  {{hub- $certCfg := (index $tlsCfg "certificate" | default dict) hub}}
+  {{hub- $issuerRef := (index $certCfg "issuerRef" | default dict) hub}}
+  {{- $issuerName := "{{hub index $issuerRef "name" | default "" hub}}" }}
+  {{- $issuerKind := "{{hub index $issuerRef "kind" | default "ClusterIssuer" hub}}" }}
+  {{- $tlsSecretName := "{{hub index $tlsCfg "secretName" | default "" hub}}" }}
+  {{- if $issuerName }}
+  {{- $issuerFound := false }}
+  {{- if eq $issuerKind "ClusterIssuer" }}
+  {{- $issuerFound = not (empty ((lookup "cert-manager.io/v1" "ClusterIssuer" "" $issuerName) | default dict)) }}
+  {{- else }}
+  {{- $issuerFound = not (empty ((lookup "cert-manager.io/v1" "Issuer" "quay-enterprise" $issuerName) | default dict)) }}
+  {{- end }}
+  {{- $secretPresent := and (ne $tlsSecretName "") (not (empty ((lookup "v1" "Secret" "quay-enterprise" $tlsSecretName) | default dict))) }}
+  {{- /* Nothing creates this Deployment, and metadata alone is invalid, so an enforce override
+         cannot satisfy or create it. */ -}}
+  {{- if not (and $issuerFound $secretPresent) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: quay-tls-certificate-not-issued
+        namespace: quay-enterprise
+  {{- end }}
+  {{- end }}

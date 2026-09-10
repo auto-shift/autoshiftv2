@@ -1,0 +1,67 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: loki
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+# A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests. Keep the
+# hand-authored Placements at the dir root, NOT inside a wildcarded manifests dir.
+#
+# Three predicate labels across the graph, so three hand-authored Placements:
+#   placement.yaml           -> autoshift.io/loki    (operator install + stack install)
+#   placement-logging.yaml   -> autoshift.io/logging (logging forwarder)
+#   placement-coo.yaml       -> autoshift.io/coo     (Cluster Observability logging UI)
+placementBindingDefaults:
+  name: binding-policy-loki
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+    - CA Security Assessment and Authorization
+  controls:
+    - CM-2 Baseline Configuration
+    - CA-7 Continuous Monitoring
+  # Default Placement (predicate autoshift.io/loki); policies with other predicates override below.
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) Operator install: raw Namespace (PG wraps -> ConfigurationPolicy) + first-class OperatorPolicy.
+  - name: policy-loki-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) LokiStack + ObjectBucketClaim + bucket Secret. Waits on the operator + ODF storage cluster.
+  - name: policy-loki-stack-install
+    dependencies:
+      - name: policy-loki-operator-install
+      - name: policy-storage-cluster-test
+    manifests:
+      - path: manifests/loki-stack-install/loki-bucketclaim.yaml
+      - path: manifests/loki-stack-install/loki-stack.yaml
+      - path: manifests/loki-stack-install/loki-bucket-secret.yaml
+        complianceType: mustonlyhave
+  # 3) ClusterLogForwarder + RBAC. Targets autoshift.io/logging clusters.
+  - name: policy-loki-logging-forwarder
+    placement:
+      placementPath: placement-logging.yaml
+    dependencies:
+      - name: policy-logging-operator-install
+      - name: policy-loki-stack-install
+    manifests:
+      - path: manifests/logging-forwarder.yaml
+  # 4) Cluster Observability logging UIPlugin. Targets autoshift.io/coo clusters.
+  - name: policy-loki-cluster-observ-logging-ui
+    placement:
+      placementPath: placement-coo.yaml
+    dependencies:
+      - name: policy-loki-logging-forwarder
+      - name: policy-coo-operator-install
+    manifests:
+      - path: manifests/cluster-observ-logging-ui.yaml

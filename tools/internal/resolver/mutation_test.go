@@ -69,7 +69,7 @@ func runMutated(
 		t.Fatalf("NewSpokeResolver: %v", err)
 	}
 
-	consumed, results, err := RunPipeline(policiesDir, ctx, r, spokeR, declared, configs, testdataDir)
+	consumed, results, err := RunPipeline(policiesDir, ctx, nil, r, spokeR, declared, configs, testdataDir)
 	if err != nil {
 		t.Fatalf("RunPipeline: %v", err)
 	}
@@ -97,12 +97,12 @@ func TestPipeline_MutationSweep(t *testing.T) {
 	// klog v1 defaults to logtostderr=true which writes directly to os.Stderr,
 	// bypassing SetOutput, so we must also raise the stderrthreshold to FATAL.
 	klog.InitFlags(nil)
-	flag.Set("logtostderr", "false")      //nolint:errcheck
-	flag.Set("stderrthreshold", "FATAL")  //nolint:errcheck
+	flag.Set("logtostderr", "false")     //nolint:errcheck
+	flag.Set("stderrthreshold", "FATAL") //nolint:errcheck
 	klog.SetOutput(io.Discard)
 	t.Cleanup(func() {
-		flag.Set("logtostderr", "true")       //nolint:errcheck
-		flag.Set("stderrthreshold", "ERROR")  //nolint:errcheck
+		flag.Set("logtostderr", "true")      //nolint:errcheck
+		flag.Set("stderrthreshold", "ERROR") //nolint:errcheck
 		klog.SetOutput(os.Stderr)
 	})
 
@@ -136,8 +136,8 @@ func TestPipeline_MutationSweep(t *testing.T) {
 
 		// Output assertions: pipeline must NOT contain this string for the given
 		// policy (because the config that drives it was removed).
-		expectAbsentInPolicy  string
-		expectAbsentString    string
+		expectAbsentInPolicy string
+		expectAbsentString   string
 
 		// Resolution error: the policy should have ResolveOK=false (hub template
 		// resolution error), which surfaces the missing/broken config condition.

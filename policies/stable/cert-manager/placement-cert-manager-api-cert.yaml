@@ -1,0 +1,24 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-cert-manager-api-cert
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Opt-in: cert-manager-managed API server serving cert (additive namedCertificate for api.<domain>).
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cert-manager'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/cert-manager-api-cert'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

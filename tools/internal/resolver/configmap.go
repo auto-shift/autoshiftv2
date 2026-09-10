@@ -167,56 +167,78 @@ func GenerateSyntheticConfigMaps(cfg *ExampleConfigs, clusterName, namespace str
 		cms = append(cms, cm)
 	}
 
-	// managed-cluster-config.<clusterName>
-	clusterCfg := map[string]interface{}{"clusterSet": "hub"}
-	if len(cfg.ClusterInstallConfig) > 0 {
-		for k, v := range cfg.ClusterInstallConfig {
+	// appendClusterCMs emits the managed-cluster-config.<name> and
+	// <name>.rendered-config ConfigMaps for one synthetic cluster. The install
+	// policies range over every rendered-config ConfigMap, so emitting one per
+	// platform makes each platform's install policy body resolve in a single run.
+	appendClusterCMs := func(name string, installCfg map[string]interface{}) error {
+		clusterCfg := map[string]interface{}{"clusterSet": "hub"}
+		for k, v := range installCfg {
 			clusterCfg[k] = v
 		}
-	}
-	clusterCM := unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "v1",
-			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
-				"name":      "managed-cluster-config." + clusterName,
-				"namespace": namespace,
-				"labels":    map[string]interface{}{"autoshift.io/cluster-configs": ""},
-			},
-			"data": func() map[string]interface{} {
-				b, _ := json.Marshal(clusterCfg)
-				return map[string]interface{}{"config": string(b)}
-			}(),
-		},
-	}
-	cms = append(cms, clusterCM)
 
-	// <clusterName>.rendered-config — merge hub config base + cluster overrides
-	renderedCfg := map[string]interface{}{}
-	if len(cfg.HubConfig) > 0 {
-		deepMerge(renderedCfg, cfg.HubConfig)
-	}
-	deepMerge(renderedCfg, clusterCfg)
+		clusterCM := unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata": map[string]interface{}{
+					"name":      "managed-cluster-config." + name,
+					"namespace": namespace,
+					"labels":    map[string]interface{}{"autoshift.io/cluster-configs": ""},
+				},
+				"data": func() map[string]interface{} {
+					b, _ := json.Marshal(clusterCfg)
+					return map[string]interface{}{"config": string(b)}
+				}(),
+			},
+		}
+		cms = append(cms, clusterCM)
 
-	renderedJSON, err := json.Marshal(renderedCfg)
-	if err != nil {
-		return nil, fmt.Errorf("marshal rendered config: %w", err)
-	}
-	renderedCM := unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "v1",
-			"kind":       "ConfigMap",
-			"metadata": map[string]interface{}{
-				"name":      clusterName + ".rendered-config",
-				"namespace": namespace,
-				"labels":    map[string]interface{}{"autoshift.io/rendered-config-map": ""},
+		// <name>.rendered-config — merge hub config base + cluster overrides
+		renderedCfg := map[string]interface{}{}
+		if len(cfg.HubConfig) > 0 {
+			deepMerge(renderedCfg, cfg.HubConfig)
+		}
+		deepMerge(renderedCfg, clusterCfg)
+
+		renderedJSON, err := json.Marshal(renderedCfg)
+		if err != nil {
+			return fmt.Errorf("marshal rendered config for %s: %w", name, err)
+		}
+		renderedCM := unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata": map[string]interface{}{
+					"name":      name + ".rendered-config",
+					"namespace": namespace,
+					"labels":    map[string]interface{}{"autoshift.io/rendered-config-map": ""},
+				},
+				"data": map[string]interface{}{
+					"config": string(renderedJSON),
+				},
 			},
-			"data": map[string]interface{}{
-				"config": string(renderedJSON),
-			},
-		},
+		}
+		cms = append(cms, renderedCM)
+		return nil
 	}
-	cms = append(cms, renderedCM)
+
+	// Primary cluster carries the merged cluster-install config. Example files
+	// merge in sorted filename order, so the last one wins scalar keys like
+	// clusterInstall.platform (currently vmware). Per-platform policy bodies are
+	// exercised by the dedicated per-platform clusters below, not by this merged
+	// blob.
+	if err := appendClusterCMs(clusterName, cfg.ClusterInstallConfig); err != nil {
+		return nil, err
+	}
+
+	// One dedicated cluster per additional platform (aws, vmware, ...) so every
+	// platform's install policy body is exercised, not just the merge winner.
+	for platform, installCfg := range cfg.ClusterInstallExtra {
+		if err := appendClusterCMs(clusterName+"-"+platform, installCfg); err != nil {
+			return nil, err
+		}
+	}
 
 	return cms, nil
 }

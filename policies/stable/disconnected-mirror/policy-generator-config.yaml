@@ -1,0 +1,44 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: disconnected-mirror
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+# Each policy points at a single first-class ConfigurationPolicy FILE whose dense
+# object-templates-raw reads the per-cluster <cluster>.rendered-config ConfigMap on the hub.
+# All four policies share one hand-authored Placement (predicate autoshift.io/disconnected-mirror).
+placementBindingDefaults:
+  name: binding-policy-disconnected-mirror
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  # CatalogSources for mirrored operator catalogs.
+  - name: policy-disconnected-catalog-sources
+    manifests:
+      - path: manifests/catalog-sources.yaml
+  # ImageDigestMirrorSet/ICSP + ImageTagMirrorSet for image pull redirection.
+  - name: policy-disconnected-image-mirrors
+    manifests:
+      - path: manifests/image-digest-mirror-set.yaml
+  # Registry CA trust: ConfigMap in openshift-config + image.config patch.
+  - name: policy-disconnected-registry-ca
+    manifests:
+      - path: manifests/disconnected-registry-ca.yaml
+  # Disable default OperatorHub catalogs (when disableDefaultCatalogs is true).
+  - name: policy-disconnected-disable-catalogs
+    manifests:
+      - path: manifests/disable-default-catalogs.yaml

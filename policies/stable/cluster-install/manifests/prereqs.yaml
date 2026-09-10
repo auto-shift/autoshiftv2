@@ -1,0 +1,66 @@
+object-templates-raw: |
+  {{- $configMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/rendered-config-map") | default dict }}
+  {{- range $_, $cm := ($configMaps.items | default list) }}
+    {{- $clusterName := (replace ".rendered-config" "" $cm.metadata.name) }}
+    {{- $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" $clusterName) | default dict }}
+    {{- $mcOwningNs := dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc }}
+    {{- $config := ($cm.data.config | fromYaml) }}
+    {{- $ci := (index $config "clusterInstall" | default dict) }}
+    {{- if and (eq (index $ci "createCluster" | default "") "true") (or (empty $mc) (eq $mcOwningNs $cm.metadata.namespace)) }}
+      {{- $openshiftVersion := (index $ci "openshiftVersion") }}
+      {{- $cpuArch := (index $ci "cpuArch" | default "x86_64") }}
+      {{- $imageSet := (index $ci "clusterImageSet" | default (printf "openshift-image-set-%s" $openshiftVersion)) }}
+      {{- $disconnected := (index $config "disconnected" | default dict) }}
+      {{- $mirrorReg := (index $disconnected "mirrorRegistry" | default dict) }}
+      {{- $mirrorHost := (index $mirrorReg "host" | default "") }}
+      {{- $mirrorPath := (index $mirrorReg "path" | default "") }}
+      {{- $releaseImagePath := "openshift-release-dev/ocp-release" }}
+      {{- $releaseRegistry := "quay.io" }}
+      {{- if $mirrorHost }}
+        {{- $releaseRegistry = $mirrorHost }}
+        {{- if $mirrorPath }}
+          {{- $releaseRegistry = (printf "%s/%s" $mirrorHost $mirrorPath) }}
+        {{- end }}
+        {{- $releaseImagePath = (index $mirrorReg "releaseImage" | default $releaseImagePath) }}
+      {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{ $clusterName }}
+      {{ if not (index $ci "clusterImageSet") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: hive.openshift.io/v1
+      kind: ClusterImageSet
+      metadata:
+        name: {{ $imageSet }}
+        labels:
+          visible: 'true'
+          channel: {{ index $ci "openshiftChannel" | default "stable" }}
+      spec:
+        releaseImage: '{{ $releaseRegistry }}/{{ $releaseImagePath }}:{{ $openshiftVersion }}-{{ $cpuArch }}'
+      {{ end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: agent.open-cluster-management.io/v1
+      kind: KlusterletAddonConfig
+      metadata:
+        name: {{ $clusterName }}
+        namespace: {{ $clusterName }}
+      spec:
+      {{- $addons := (index $ci "klusterletAddons" | default list) }}
+      {{- if (eq (len $addons) 0) }}
+        {{- $addons = list "applicationManager" "certPolicyController" "policyController" }}
+      {{- end }}
+        applicationManager:
+          enabled: {{ has "applicationManager" $addons }}
+        certPolicyController:
+          enabled: {{ has "certPolicyController" $addons }}
+        policyController:
+          enabled: {{ has "policyController" $addons }}
+        searchCollector:
+          enabled: {{ has "searchCollector" $addons }}
+    {{- end }}
+  {{- end }}

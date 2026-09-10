@@ -1,0 +1,18 @@
+# ACM Search persistent storage (search-postgres PVC). object-templates-raw so storageClassName can be
+# CONDITIONALLY omitted: set autoshift.io/acm-search-storage-class to pin a class; leave it unset to omit
+# the field entirely, which makes the PVC use the cluster's DEFAULT StorageClass (empty string would mean
+# "no provisioning", so it must be omitted, not blanked). size defaults to 100Gi.
+object-templates-raw: |
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: search.open-cluster-management.io/v1alpha1
+      kind: Search
+      metadata:
+        name: search-v2-operator
+        namespace: open-cluster-management
+      spec:
+        dbStorage:
+          {{hub- if (index .ManagedClusterLabels "autoshift.io/acm-search-storage-class") hub}}
+          storageClassName: '{{hub index .ManagedClusterLabels "autoshift.io/acm-search-storage-class" hub}}'
+          {{hub- end hub}}
+          size: '{{hub index .ManagedClusterLabels "autoshift.io/acm-search-storage-size" | default "100Gi" hub}}'

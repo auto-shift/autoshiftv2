@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Renders the shared components/operator-install chart. Trident installs into the trident namespace with a
+# hardcoded OperatorGroup name (trident-operator) and label-driven install-plan approval (trident-install-plan-approval).
+helmGlobals:
+  chartHome: ../../../../../components/
+helmCharts:
+  - name: operator-install
+    releaseName: trident
+    valuesInline:
+      name: trident
+      namespace: trident
+      operatorGroupName: trident-operator
+      remediation: ${REMEDIATION}
+      policyNamespace: ${POLICY_NAMESPACE}
+      # OperatorPolicy upgradeApproval enum is None|Automatic. The user-facing label accepts
+      # Automatic/Manual; map Manual -> None (OperatorPolicy hands off InstallPlan approval, so
+      # upgrades wait for manual approval — combine with trident-version to pin).
+      upgradeApproval: '{{hub ternary "None" "Automatic" (eq (index .ManagedClusterLabels "autoshift.io/trident-install-plan-approval" | default "Automatic") "Manual") hub}}'
+      subscription:
+        name: '{{hub index .ManagedClusterLabels "autoshift.io/trident-name" | default "trident-operator" hub}}'
+        channel: '{{hub index .ManagedClusterLabels "autoshift.io/trident-channel" | default "stable" hub}}'
+        source: '{{hub index .ManagedClusterLabels "autoshift.io/trident-source" | default "certified-operators" hub}}'
+        sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/trident-source-namespace" | default "openshift-marketplace" hub}}'
+        # Version resolution (config lives in the rendered-config ConfigMap on the hub):
+        #   config mode (config.trident.versions set): versions = that list; startingCSV = config.trident.startingCSV
+        #     (explicit — the list says what's ALLOWED, not where to START; default "" = let OLM pick).
+        #   label mode (no config): versions = [trident-version label]; startingCSV = that same version.
+        # $vers is computed here and reused by `versions` below.
+        startingCSV: |-
+          {{hub- $cfg := (index (index (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "trident" | default dict) hub}}
+          {{hub- $cfgVers := (dig "versions" (list) $cfg) hub}}
+          {{hub- $isCfg := (not (empty $cfgVers)) hub}}
+          {{hub- $labelVer := (index .ManagedClusterLabels "autoshift.io/trident-version" | default "") hub}}
+          {{hub- $vers := (ternary $cfgVers (ternary (list) (list $labelVer) (empty $labelVer)) $isCfg) hub}}
+          {{hub- (ternary (dig "startingCSV" "" $cfg) $labelVer $isCfg) hub}}
+      # versions reuses $vers set in startingCSV above (same policy, resolves after it).
+      versions: '{{hub $vers | toRawJson | toLiteral hub}}'

@@ -43,11 +43,10 @@ API_URL="https://quay.io/api/v1"
 echo "Creating repositories in organization: $ORG"
 echo ""
 
-# Discover all charts.
-# Bootstrap charts live at <chart>/Chart.yaml (depth 2).
-# Policy charts live at policies/<category>/<chart>/Chart.yaml (depth 3).
+# Bootstrap charts: <chart>/Chart.yaml (depth 2). Policies: Helm charts (Chart.yaml) or
+# PolicyGenerator dirs (policy-generator-config.yaml), both need a repo. Chart.yaml-only misses PG policies.
 BOOTSTRAP_CHARTS=$(find . -maxdepth 2 -name Chart.yaml -not -path "./policies/*" -not -path "./autoshift/*" -exec dirname {} \; | xargs -r -n1 basename)
-POLICY_CHARTS=$(find policies -maxdepth 3 -name Chart.yaml -exec dirname {} \; | xargs -r -n1 basename)
+POLICY_CHARTS=$(find policies -maxdepth 3 \( -name Chart.yaml -o -name policy-generator-config.yaml \) -exec dirname {} \; | sort -u | xargs -r -n1 basename)
 
 # Function to create repository
 create_repo() {
@@ -62,7 +61,7 @@ create_repo() {
             "repository": "'${repo_name}'",
             "visibility": "public",
             "namespace": "'${ORG}'",
-            "description": "AutoShift Helm Chart: '${repo_name}'",
+            "description": "AutoShift OCI artifact: '${repo_name}'",
             "repo_kind": "image"
         }')
 
@@ -87,7 +86,7 @@ echo "Main chart:"
 create_repo "autoshift"
 
 echo ""
-echo "Policy charts (in policies/ namespace):"
+echo "Policies (in policies/ namespace):"
 for chart in $POLICY_CHARTS; do
     create_repo "policies/$chart"
 done

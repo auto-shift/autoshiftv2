@@ -10,9 +10,15 @@
   "containerUser": "vscode",
   "updateRemoteUserUID": true,
   "build": {
-    "dockerfile": "Containerfile"
+    "dockerfile": "Containerfile",
+    "_comment": "Context is the repository root, not .devcontainer/, so the image can read tools/go.mod and docs/requirements.txt at build time instead of pinning Go and Zensical a second time here.",
+    "context": ".."
   },
-  "postCreateCommand": "git config core.hooksPath .githooks",
+  "postCreateCommand": "git config core.hooksPath .githooks && make install-policy-generator",
+  "remoteEnv": {
+    "KUSTOMIZE_BIN": "${containerWorkspaceFolder}/.tools/kustomize",
+    "KUSTOMIZE_PLUGIN_HOME": "${containerWorkspaceFolder}/.tools/kustomize-plugin"
+  },
   "features": {},
   "customizations": {
     "vscode": {

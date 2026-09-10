@@ -1,0 +1,22 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-acs
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Shared/both-tier placement: policies for BOTH hub and managed clusters (operator install,
+  # console link). Hub-only and managed-only policies use placement-hub.yaml / placement-managed.yaml
+  # instead (they add a cluster-type hub/spoke predicate).
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acs'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

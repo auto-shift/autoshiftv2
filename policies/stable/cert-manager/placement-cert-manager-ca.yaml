@@ -1,0 +1,25 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-cert-manager-ca
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # The built-in autoshift-ca. Default-on wherever cert-manager is enabled; opt out per cluster with
+  # autoshift.io/cert-manager-ca: 'false' (NotIn also matches the label's absence, so default is on).
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cert-manager'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/cert-manager-ca'
+              operator: NotIn
+              values:
+                - 'false'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

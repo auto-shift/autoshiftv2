@@ -9,9 +9,26 @@ import (
 	"strings"
 
 	"github.com/auto-shift/autoshiftv2/tools/internal/labels"
-	sigsyaml "sigs.k8s.io/yaml"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	sigsyaml "sigs.k8s.io/yaml"
 )
+
+// NamedContext pairs a cluster resolution context with a short profile name
+// (e.g. "managed-vmware") used in diagnostics and per-profile assertions.
+type NamedContext struct {
+	Name string
+	Ctx  HubContext
+}
+
+// ContextResult holds the resolution outcome for one chart against one extra
+// cluster profile.
+type ContextResult struct {
+	ResolveOK    bool
+	ResolveWarns []string
+	SpokeWarns   []string
+	YAMLErrors   []string // malformed YAML / <no value> in the fully-resolved output
+	ResolvedYAML string
+}
 
 // ChartResult holds the outcome for one policy chart.
 type ChartResult struct {
@@ -21,9 +38,17 @@ type ChartResult struct {
 	ResolveOK    bool     // all Policy documents resolved without error
 	ResolveWarns []string // per-document resolution warnings (e.g. lookup failures)
 	SpokeWarns   []string // warnings from the spoke-side second pass
+	YAMLErrors   []string // malformed YAML / <no value> in the fully-resolved primary output
 	EmptyLabels  []string // label keys that resolved to empty string
 	Err          error    // fatal error (helm template failed or zero docs rendered)
 	ResolvedYAML string   // final multi-doc YAML after hub+spoke resolution (for output assertions)
+
+	// ExtraResults holds resolution outcomes for each additional cluster profile
+	// passed to RunPipeline (e.g. managed-baremetal, managed-aws, managed-vmware),
+	// keyed by profile name. Same rendered YAML and seed resources as the primary
+	// pass — only .ManagedClusterLabels differ. Empty when no extra contexts were
+	// supplied.
+	ExtraResults map[string]ContextResult
 }
 
 // HelmTemplate runs `helm template <name> <chartDir>` and returns the raw
@@ -44,6 +69,157 @@ func HelmTemplate(chartDir string, extraValuesFiles ...string) (string, error) {
 	return string(out), nil
 }
 
+// KustomizeBuild renders a PolicyGenerator policy directory the same way the
+// repo-server CMP does: substitute the per-deployment ${...} placeholders, then
+// run `kustomize build` with the same flags as the CMP. Test values mirror a
+// non-dryRun deployment (REMEDIATION=enforce) so object-templates render in
+// enforce mode.
+//
+// The kustomize binary and PolicyGenerator plugin come from (in order):
+// $KUSTOMIZE_BIN / $KUSTOMIZE_PLUGIN_HOME, then the repo-local .tools/ that
+// `make install-policy-generator` stages, then `kustomize` on PATH.
+func KustomizeBuild(policyDir string) (string, error) {
+	repl := strings.NewReplacer(
+		"${POLICY_NAMESPACE}", "policies-autoshift",
+		"${REMEDIATION}", "enforce",
+		"${EVAL_COMPLIANT}", "watch",
+		"${EVAL_NONCOMPLIANT}", "watch",
+		"${CLUSTER_SET_SUFFIX}", "",
+	)
+	work, err := os.MkdirTemp("", "autoshift-kustomize-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(work)
+
+	// Stage the policy dir, substituting placeholders in every file. The exact
+	// ${...} tokens never appear in manifests (whose hub templates use $var), so
+	// substituting broadly is safe — mirrors an envsubst restricted to these vars.
+	//
+	// A policy may render a shared Helm chart via a nested kustomization whose
+	// helmGlobals.chartHome reaches up to the repo-level components/ dir. To keep
+	// that relative path resolvable inside the isolated work tree, stage the policy
+	// at its repo-relative path and copy components/ alongside. Falls back to flat
+	// staging when no components/ root is found (policies that don't use it are
+	// unaffected — they just render from a deeper path).
+	absPolicy, _ := filepath.Abs(policyDir)
+	buildTarget := work
+	if root := findComponentsRoot(absPolicy); root != "" {
+		rel, _ := filepath.Rel(root, absPolicy)
+		buildTarget = filepath.Join(work, rel)
+		if err := copyDirSubst(absPolicy, buildTarget, repl); err != nil {
+			return "", fmt.Errorf("stage kustomize dir: %w", err)
+		}
+		if err := copyDirSubst(filepath.Join(root, "components"), filepath.Join(work, "components"), repl); err != nil {
+			return "", fmt.Errorf("stage components dir: %w", err)
+		}
+	} else if err := copyDirSubst(policyDir, work, repl); err != nil {
+		return "", fmt.Errorf("stage kustomize dir: %w", err)
+	}
+
+	bin, pluginHome := resolveKustomizeTools(policyDir)
+	// Match the flags the repo-server CMP uses so the tested render == the deployed one.
+	cmd := exec.Command(bin, "build", "--enable-alpha-plugins", "--enable-helm",
+		"--load-restrictor", "LoadRestrictionsNone", buildTarget)
+	cmd.Env = os.Environ()
+	// PolicyGenerator renders a manifest path that is itself a kustomization (for the
+	// shared-chart pattern) by spawning a nested `kustomize build`; that nested build is
+	// configured by these env vars, NOT the outer flags above.
+	cmd.Env = append(cmd.Env,
+		"POLICY_GEN_ENABLE_HELM=true",
+		"POLICY_GEN_DISABLE_LOAD_RESTRICTORS=true",
+	)
+	if pluginHome != "" {
+		cmd.Env = append(cmd.Env, "KUSTOMIZE_PLUGIN_HOME="+pluginHome)
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if strings.Contains(err.Error(), "executable file not found") {
+			return "", fmt.Errorf("kustomize not found for %s — run `make install-policy-generator` "+
+				"(stages kustomize + the PolicyGenerator plugin into .tools/): %w", policyDir, err)
+		}
+		return "", fmt.Errorf("kustomize build %s: %w\n%s", policyDir, err, out)
+	}
+	return string(out), nil
+}
+
+// resolveKustomizeTools picks the kustomize binary and plugin home, preferring
+// explicit env vars, then the repo-local .tools/ from `make install-policy-generator`
+// (found by walking up from policyDir), then `kustomize` on PATH.
+func resolveKustomizeTools(policyDir string) (bin, pluginHome string) {
+	bin = os.Getenv("KUSTOMIZE_BIN")
+	pluginHome = os.Getenv("KUSTOMIZE_PLUGIN_HOME")
+	if bin != "" && pluginHome != "" {
+		return bin, pluginHome
+	}
+	for dir := policyDir; ; {
+		if bin == "" {
+			if cand := filepath.Join(dir, ".tools", "kustomize"); isFile(cand) {
+				bin = cand
+			}
+		}
+		if pluginHome == "" {
+			if cand := filepath.Join(dir, ".tools", "kustomize-plugin"); isDir(cand) {
+				pluginHome = cand
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir || (bin != "" && pluginHome != "") {
+			break
+		}
+		dir = parent
+	}
+	if bin == "" {
+		bin = "kustomize"
+	}
+	return bin, pluginHome
+}
+
+func isFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
+func isDir(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
+}
+
+// copyDirSubst copies src to dst, applying repl to the contents of every file.
+// findComponentsRoot walks up from dir to the nearest ancestor containing a
+// components/ directory (the repo-level home for shared Helm charts). Returns ""
+// if none is found before the filesystem root.
+func findComponentsRoot(dir string) string {
+	for {
+		if st, err := os.Stat(filepath.Join(dir, "components")); err == nil && st.IsDir() {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+func copyDirSubst(src, dst string, repl *strings.Replacer) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, path)
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, []byte(repl.Replace(string(data))), 0o644)
+	})
+}
+
 // RunPipeline processes all policy charts under policiesDir:
 //
 //  1. Generates synthetic ConfigMaps from example file configs and pre-seeds
@@ -58,6 +234,7 @@ func HelmTemplate(chartDir string, extraValuesFiles ...string) (string, error) {
 func RunPipeline(
 	policiesDir string,
 	ctx HubContext,
+	extraCtxs []NamedContext,
 	r *Resolver,
 	spokeR *Resolver,
 	declared map[string]*labels.Declared,
@@ -120,25 +297,68 @@ func RunPipeline(
 	keysByPolicy := map[string]map[string]bool{}
 	var results []ChartResult
 
+	// resolvePasses runs the two-stage resolution for one chart's rendered YAML
+	// against a given cluster context: pass 1 resolves hub templates
+	// ({{hub ... hub}}), pass 2 resolves spoke templates ({{ ... }}). Returns
+	// (hubResolveOK, hubErrors, spokeErrors, resolvedYAML). Called once for the
+	// primary context and, when managedCtx is set, once for the managed context.
+	resolvePasses := func(rawYAML string, c HubContext) (bool, []string, []string, string) {
+		var resolveWarns, spokeWarns []string
+		resolveOK := false
+
+		hubResult := r.ResolvePolicy(rawYAML, c)
+		if len(hubResult.Errors) == 0 {
+			resolveOK = true
+		} else {
+			resolveWarns = hubResult.Errors
+		}
+
+		// Strip string defaults first so any config key the template consumes but
+		// the example file doesn't declare produces "<no value>" in the output
+		// rather than silently falling back to a hardcoded string.
+		spokeInput := stripStringDefaults(hubResult.Resolved)
+		if spokeR != nil && strings.Contains(spokeInput, "{{") {
+			spokeResult := spokeR.ResolveSpokeTemplates(spokeInput, c)
+			if len(spokeResult.Errors) > 0 {
+				spokeWarns = spokeResult.Errors
+			}
+			if spokeResult.Resolved != "" {
+				spokeInput = spokeResult.Resolved
+			}
+		}
+		return resolveOK, resolveWarns, spokeWarns, spokeInput
+	}
+
 	for _, chart := range charts {
 		result := ChartResult{
 			Policy:   chart.policy,
 			ChartDir: chart.dir,
 		}
 
-		// 1. Prepare chart for rendering (activate .example files if present).
-		renderDir, cleanup, err := prepareChartForRender(chart.dir, tmpDir)
-		if err != nil {
-			result.Err = fmt.Errorf("prepare chart: %w", err)
-			results = append(results, result)
-			continue
-		}
-		rawYAML, err := HelmTemplate(renderDir, testValuesPath)
-		cleanup()
-		if err != nil {
-			result.Err = err
-			results = append(results, result)
-			continue
+		// 1. Render the policy — kustomize+PolicyGenerator or Helm, per marker file.
+		var rawYAML string
+		if chart.kind == "kustomize" {
+			rawYAML, err = KustomizeBuild(chart.dir)
+			if err != nil {
+				result.Err = err
+				results = append(results, result)
+				continue
+			}
+		} else {
+			// Prepare chart for rendering (activate .example files if present).
+			renderDir, cleanup, perr := prepareChartForRender(chart.dir, tmpDir)
+			if perr != nil {
+				result.Err = fmt.Errorf("prepare chart: %w", perr)
+				results = append(results, result)
+				continue
+			}
+			rawYAML, err = HelmTemplate(renderDir, testValuesPath)
+			cleanup()
+			if err != nil {
+				result.Err = err
+				results = append(results, result)
+				continue
+			}
 		}
 		result.HelmOK = true
 
@@ -178,6 +398,12 @@ func RunPipeline(
 			`hasPrefix "autoshift.io/`,
 			`key: 'autoshift.io/`,
 			`key: "autoshift.io/`,
+			`key: autoshift.io/`, // unquoted: kustomize/PolicyGenerator placement predicates
+			// Labels read off a ManagedCluster fetched with `lookup`, rather than from the
+			// hub-template .ManagedClusterLabels context. cluster-install does this to read
+			// the runtime-stamped autoshift.io/owning-namespace. Without this pattern such a
+			// label is consumed but reported neither missing nor orphaned.
+			`dig "metadata" "labels" "autoshift.io/`,
 		} {
 			remaining := rawYAML
 			for {
@@ -218,27 +444,26 @@ func RunPipeline(
 		}
 		keysByPolicy[chart.policy] = consumed
 
-		// 4. Hub template resolution (pass 1).
-		hubResult := r.ResolvePolicy(rawYAML, ctx)
-		if len(hubResult.Errors) == 0 {
-			result.ResolveOK = true
-		} else {
-			result.ResolveWarns = hubResult.Errors
-		}
+		// 4-5. Resolve hub + spoke templates against the primary (hub,
+		// self-managed) context.
+		var spokeInput string
+		result.ResolveOK, result.ResolveWarns, result.SpokeWarns, spokeInput = resolvePasses(rawYAML, ctx)
 
-		// 5. Spoke-side resolution (pass 2).
-		// Strip string defaults first so any config key the template consumes
-		// but the example file doesn't declare produces "<no value>" in the
-		// output rather than silently falling back to a hardcoded string.
-		spokeInput := stripStringDefaults(hubResult.Resolved)
-		if spokeR != nil && strings.Contains(spokeInput, "{{") {
-			spokeResult := spokeR.ResolveSpokeTemplates(spokeInput, ctx)
-			if len(spokeResult.Errors) > 0 {
-				result.SpokeWarns = spokeResult.Errors
-			}
-			// Use the spoke-resolved output for YAML validation where possible.
-			if spokeResult.Resolved != "" {
-				spokeInput = spokeResult.Resolved
+		// 5b. Resolve against each additional cluster profile (managed spokes,
+		// one per install platform). Same rendered YAML and seed resources — only
+		// .ManagedClusterLabels differ — so hub templates that branch on
+		// clusterset identity / provider get every profile's branch exercised.
+		if len(extraCtxs) > 0 {
+			result.ExtraResults = make(map[string]ContextResult, len(extraCtxs))
+			for _, ec := range extraCtxs {
+				ok, rw, sw, out := resolvePasses(rawYAML, ec.Ctx)
+				result.ExtraResults[ec.Name] = ContextResult{
+					ResolveOK:    ok,
+					ResolveWarns: rw,
+					SpokeWarns:   sw,
+					YAMLErrors:   validateYAML(out),
+					ResolvedYAML: out,
+				}
 			}
 		}
 
@@ -266,13 +491,11 @@ func RunPipeline(
 			}
 		}
 
-		// 7. Validate YAML on fully-resolved documents.
-		yamlErrors := validateYAML(spokeInput)
-		if len(yamlErrors) > 0 {
-			for _, e := range yamlErrors {
-				result.ResolveWarns = append(result.ResolveWarns, "invalid YAML in rendered output: "+e)
-			}
-		}
+		// 7. Validate YAML on fully-resolved documents (primary context; extra
+		// contexts are validated inline in step 5b). These are surfaced as their
+		// own hard failures (result.YAMLErrors), independent of hub ResolveOK, so
+		// malformed YAML / <no value> on an otherwise-clean chart still fails CI.
+		result.YAMLErrors = validateYAML(spokeInput)
 
 		// 8. Track empty-string label substitutions for diagnostics.
 		if result.ResolveOK {
@@ -433,23 +656,56 @@ func validateYAML(multiDocYAML string) []string {
 		if strings.Contains(doc, "{{") {
 			continue
 		}
+		// id names the offending document by its Kind/name so a developer can go
+		// straight to the source: a resolved Policy "policy-<x>" maps to the
+		// template policies/<chart>/templates/policy-<x>.yaml.
+		id := docIdentity(doc, i)
 		// "<no value>" in output means a template consumed a config key that
 		// was absent from the example file (its | default "..." was stripped).
 		if strings.Contains(doc, "<no value>") {
 			for j, line := range strings.Split(doc, "\n") {
 				if strings.Contains(line, "<no value>") {
 					errs = append(errs, fmt.Sprintf(
-						"document %d line %d: <no value> — config key consumed by template is missing from example file: %s",
-						i+1, j+1, strings.TrimSpace(line)))
+						"%s line %d: <no value> — a config key the template reads is missing from the relevant _example*.yaml, or a lookup returned nothing (add a tools/testdata/ stub): %s",
+						id, j+1, strings.TrimSpace(line)))
 				}
 			}
 		}
 		var obj interface{}
 		if err := sigsyaml.Unmarshal([]byte(doc), &obj); err != nil {
-			errs = append(errs, fmt.Sprintf("document %d: %v", i+1, err))
+			errs = append(errs, fmt.Sprintf("%s: malformed YAML: %v", id, err))
 		}
 	}
 	return errs
+}
+
+// docIdentity returns a short "Kind/name (document N)" label for a resolved
+// YAML document, scanned leniently so it still works when the document is
+// malformed deeper down. Falls back to "document N" when kind/name aren't found.
+func docIdentity(doc string, idx int) string {
+	var kind, name string
+	for _, line := range strings.Split(doc, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if kind == "" && strings.HasPrefix(trimmed, "kind:") {
+			kind = strings.TrimSpace(strings.TrimPrefix(trimmed, "kind:"))
+		}
+		// Top-level metadata.name sits at two-space indent; deeper `name:` fields
+		// (inside object-templates-raw, refs, etc.) are more indented.
+		if name == "" && strings.HasPrefix(line, "  name:") {
+			name = strings.TrimSpace(strings.TrimPrefix(trimmed, "name:"))
+		}
+		if kind != "" && name != "" {
+			break
+		}
+	}
+	switch {
+	case kind != "" && name != "":
+		return fmt.Sprintf("%s/%s (document %d)", kind, name, idx+1)
+	case kind != "":
+		return fmt.Sprintf("%s (document %d)", kind, idx+1)
+	default:
+		return fmt.Sprintf("document %d", idx+1)
+	}
 }
 
 // stripStringDefaults removes | default "..." and | default '...' from
@@ -503,10 +759,16 @@ func stripStringDefaults(s string) string {
 type chartInfo struct {
 	policy string // "stable/cert-manager"
 	dir    string // absolute path to chart directory
+	kind   string // "helm" (Chart.yaml) or "kustomize" (policy-generator-config.yaml)
 }
 
-// discoverCharts finds all Chart.yaml files under policiesDir at the expected
-// depth: <category>/<chart>/Chart.yaml.
+// discoverCharts finds all policy directories under policiesDir at the expected
+// depth <category>/<chart>, discriminated by MARKER FILE (matching the hybrid
+// ApplicationSet):
+//   - policy-generator-config.yaml -> PolicyGenerator/kustomize policy
+//   - Chart.yaml                   -> Helm policy
+//
+// A migrated policy drops Chart.yaml, so each dir yields exactly one entry.
 func discoverCharts(policiesDir string) ([]chartInfo, error) {
 	var charts []chartInfo
 
@@ -514,7 +776,16 @@ func discoverCharts(policiesDir string) ([]chartInfo, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || d.Name() != "Chart.yaml" {
+		if d.IsDir() {
+			return nil
+		}
+		var kind string
+		switch d.Name() {
+		case "policy-generator-config.yaml":
+			kind = "kustomize"
+		case "Chart.yaml":
+			kind = "helm"
+		default:
 			return nil
 		}
 
@@ -530,6 +801,7 @@ func discoverCharts(policiesDir string) ([]chartInfo, error) {
 		charts = append(charts, chartInfo{
 			policy: parts[0] + "/" + parts[1],
 			dir:    filepath.Dir(path),
+			kind:   kind,
 		})
 		return nil
 	})

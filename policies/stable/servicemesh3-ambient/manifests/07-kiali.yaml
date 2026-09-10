@@ -1,0 +1,31 @@
+object-templates-raw: |
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: kiali.io/v1alpha1
+      kind: Kiali
+      metadata:
+        name: kiali
+        namespace: istio-system
+      spec:
+        istio_namespace: istio-system
+        auth:
+          strategy: openshift
+        deployment:
+          cluster_wide_access: true
+        external_services:
+          prometheus:
+            auth:
+              type: bearer
+              use_kiali_token: true
+            thanos_proxy:
+              enabled: true
+            url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+        {{hub if eq (index .ManagedClusterLabels "autoshift.io/servicemesh3operator-tempo" | default "false") "true" hub}}
+          tracing:
+            enabled: true
+            provider: tempo
+            use_grpc: false
+            internal_url: 'http://tempo-servicemesh-query-frontend.tracing-system.svc.cluster.local:3200'
+            tempo_config:
+              url_format: jaeger
+        {{hub end hub}}

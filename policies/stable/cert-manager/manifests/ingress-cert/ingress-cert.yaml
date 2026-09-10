@@ -1,0 +1,54 @@
+# cert-manager-managed serving cert for the default Ingress wildcard (*.apps.<domain> — console, CLI, routes).
+# SAFE by construction:
+#   - Always creates the Certificate; only patches IngressController once the Certificate is Ready (gate below).
+#   - Additive musthave merge of spec.defaultCertificate (leaves other operator-managed fields intact).
+#   - Same secretName across renewals -> the router hot-reloads (no rolling update).
+# Higher blast radius than the API cert (this REPLACES the wildcard). Issuer ref + extra SANs come from
+# config.certManager.ingressCert (data); the enable flag is a label. For a self-signed CA the cluster's
+# internal clients must also TRUST it — see README (trustedCA companion) or use a real issuer.
+# SANs = *.apps.<domain> AND the bare apps.<domain>, plus any config.certManager.ingressCert.extraSANs.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $ingCfg := (index (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "certManager" | default dict) "ingressCert" | default dict) hub}}
+  {{hub- $issuer := (index $ingCfg "issuer" | default dict) hub}}
+  {{hub- $extraSANs := (index $ingCfg "extraSANs" | default list) hub}}
+  {{ $appsDomain := dig "spec" "domain" "" ((lookup "config.openshift.io/v1" "Ingress" "" "cluster") | default dict) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: cert-manager-ingress-cert
+        namespace: openshift-ingress
+      spec:
+        secretName: cert-manager-ingress-cert
+        duration: 8760h
+        renewBefore: 720h
+        privateKey:
+          algorithm: ECDSA
+          size: 384                 # P-384: FIPS 140-approved, higher-assurance curve for FedRAMP High (matches autoshift-ca)
+        dnsNames:
+          - '*.{{ $appsDomain }}'
+          - {{ $appsDomain }}
+          {{hub- range $san := $extraSANs hub}}
+          - {{hub $san hub}}
+          {{hub- end hub}}
+        issuerRef:
+          name: {{hub $issuer.name | default "autoshift-ca" hub}}
+          kind: {{hub $issuer.kind | default "ClusterIssuer" hub}}
+          group: {{hub $issuer.group | default "cert-manager.io" hub}}
+  {{ $conds := dig "status" "conditions" (list) ((lookup "cert-manager.io/v1" "Certificate" "openshift-ingress" "cert-manager-ingress-cert") | default dict) }}
+  {{ $ready := false }}
+  {{ range $c := $conds }}{{ if and (eq (dig "type" "" $c) "Ready") (eq (dig "status" "" $c) "True") }}{{ $ready = true }}{{ end }}{{ end }}
+  {{ if $ready }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.openshift.io/v1
+      kind: IngressController
+      metadata:
+        name: default
+        namespace: openshift-ingress-operator
+      spec:
+        defaultCertificate:
+          name: cert-manager-ingress-cert
+  {{ end }}

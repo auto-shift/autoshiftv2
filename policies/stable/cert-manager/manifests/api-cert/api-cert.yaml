@@ -1,0 +1,54 @@
+# cert-manager-managed serving cert for the EXTERNAL API endpoint (api.<domain>:6443).
+# SAFE by construction:
+#   - Always creates the Certificate; only patches APIServer once the Certificate is Ready (gate below).
+#   - APIServer namedCertificates is ADDITIVE + SNI (musthave merge): the internal cert and api-int are
+#     untouched, so a wrong/missing cert never blocks internal access. NEVER name-cert api-int.
+#   - Same secretName across renewals -> the API server hot-reloads (only the first-time add rolls one revision).
+# Issuer ref + extra SANs come from config.certManager.apiCert (data); the enable flag is a label.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $apiCfg := (index (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "certManager" | default dict) "apiCert" | default dict) hub}}
+  {{hub- $issuer := (index $apiCfg "issuer" | default dict) hub}}
+  {{hub- $extraSANs := (index $apiCfg "extraSANs" | default list) hub}}
+  {{ $baseDomain := dig "spec" "baseDomain" "" ((lookup "config.openshift.io/v1" "DNS" "" "cluster") | default dict) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: cert-manager-api-cert
+        namespace: openshift-config
+      spec:
+        secretName: cert-manager-api-cert
+        duration: 8760h
+        renewBefore: 720h
+        privateKey:
+          algorithm: ECDSA
+          size: 384                 # P-384: FIPS 140-approved, higher-assurance curve for FedRAMP High (matches autoshift-ca)
+        dnsNames:
+          - api.{{ $baseDomain }}
+          {{hub- range $san := $extraSANs hub}}
+          - {{hub $san hub}}
+          {{hub- end hub}}
+        issuerRef:
+          name: {{hub $issuer.name | default "autoshift-ca" hub}}
+          kind: {{hub $issuer.kind | default "ClusterIssuer" hub}}
+          group: {{hub $issuer.group | default "cert-manager.io" hub}}
+  {{ $conds := dig "status" "conditions" (list) ((lookup "cert-manager.io/v1" "Certificate" "openshift-config" "cert-manager-api-cert") | default dict) }}
+  {{ $ready := false }}
+  {{ range $c := $conds }}{{ if and (eq (dig "type" "" $c) "Ready") (eq (dig "status" "" $c) "True") }}{{ $ready = true }}{{ end }}{{ end }}
+  {{ if $ready }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: APIServer
+      metadata:
+        name: cluster
+      spec:
+        servingCerts:
+          namedCertificates:
+            - names:
+                - api.{{ $baseDomain }}
+              servingCertificate:
+                name: cert-manager-api-cert
+  {{ end }}

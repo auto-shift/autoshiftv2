@@ -1,0 +1,33 @@
+object-templates-raw: |
+  {{- /* Declarative cluster->clusterset ownership. For every rendered-config with a config.clusterSet,
+         compose the target clusterset and stamp it on the ManagedCluster — but only if the cluster is
+         unowned OR already owned by THIS deployment, so a release can hand a cluster off but never
+         take one. The suffix comes from config.versionTag when set, otherwise from this deployment's
+         own ${CLUSTER_SET_SUFFIX}. cluster-install applies the identical rule. */ -}}
+  {{- $configMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/rendered-config-map") | default dict }}
+  {{- range $_, $cm := ($configMaps.items | default list) }}
+  {{-   $clusterName := (replace ".rendered-config" "" $cm.metadata.name) }}
+  {{-   $config := ($cm.data.config | fromYaml) }}
+  {{-   $clusterSet := (index $config "clusterSet" | default "") }}
+  {{-   if ne $clusterSet "" }}
+  {{-     $versionTag := (printf "%v" (index $config "versionTag" | default "")) }}
+  {{-     $suffix := "${CLUSTER_SET_SUFFIX}" }}
+  {{-     if ne $versionTag "" }}{{- $suffix = printf "-%s" ($versionTag | replace "." "-" | replace "/" "-" | lower) }}{{- end }}
+  {{-     $target := printf "%s%s" $clusterSet $suffix }}
+  {{-     $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" $clusterName) | default dict }}
+  {{-     $mcOwningNs := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) }}
+  {{- /* Only stamp a cluster that is already registered: musthave would otherwise CREATE a bare,
+         unimportable ManagedCluster. A cluster being provisioned gets its clusterset from
+         cluster-install, and is stamped here once it registers. */ -}}
+  {{-     if and (not (empty $mc)) (or (eq $mcOwningNs "") (eq $mcOwningNs $cm.metadata.namespace)) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cluster.open-cluster-management.io/v1
+      kind: ManagedCluster
+      metadata:
+        name: {{ $clusterName }}
+        labels:
+          cluster.open-cluster-management.io/clusterset: {{ $target }}
+  {{-     end }}
+  {{-   end }}
+  {{- end }}

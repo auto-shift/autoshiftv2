@@ -4,7 +4,11 @@ metadata:
   name: multiclusterhub
   namespace: {{ .Values.acm.namespace }}
   annotations:
-    "helm.sh/hook": post-install,post-upgrade
+    # post-install only. Helm's default hook-delete-policy is before-hook-creation, so a
+    # post-upgrade hook would delete and recreate the MultiClusterHub on every upgrade,
+    # taking ACM down with it. After bootstrap the MultiClusterHub is owned by
+    # policy-acm-mch-install, which reconciles any spec change.
+    "helm.sh/hook": post-install
     "helm.sh/hook-weight": "25"
 spec:
   availabilityConfig: {{ .Values.acm.availabilityConfig }}

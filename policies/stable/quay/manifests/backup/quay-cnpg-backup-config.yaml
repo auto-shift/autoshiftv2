@@ -1,0 +1,92 @@
+# Scheduled CNPG backups for both Quay databases to the NooBaa bucket provisioned by
+# quay-cnpg-backup-bucket.yaml. Gate-closed: emits nothing until the OBC has actually produced its
+# credentials Secret and ConfigMap, so a slow bucket does not park the policy in violation.
+# The Quay Operator does not back up its own managed database — this only exists in db-mode managed.
+object-templates-raw: |
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $quayCfg := (index $rcmConfig "quay" | default dict) hub}}
+  {{- $obcSecret := (lookup "v1" "Secret" "quay-enterprise" "quay-db-backup") | default dict }}
+  {{- $obcData := ($obcSecret.data | default dict) }}
+  {{- $accessKey := (index $obcData "AWS_ACCESS_KEY_ID" | default "") }}
+  {{- $secretKey := (index $obcData "AWS_SECRET_ACCESS_KEY" | default "") }}
+  {{- $obcCM := (lookup "v1" "ConfigMap" "quay-enterprise" "quay-db-backup") | default dict }}
+  {{- $obcCMData := ($obcCM.data | default dict) }}
+  {{- $bucketName := (index $obcCMData "BUCKET_NAME" | default "") }}
+  {{- $bucketHost := (index $obcCMData "BUCKET_HOST" | default "") }}
+  {{- $bucketPort := (index $obcCMData "BUCKET_PORT" | default "443") }}
+  {{/* Both values MUST be quoted. A cron expression that begins with an asterisk is a YAML alias
+       when unquoted, and the whole policy then fails to render with
+       "did not find expected alphabetic or numeric character". */}}
+  {{- $retention := "{{hub index $quayCfg "dbBackupRetention" | default "30d" hub}}" }}
+  {{- $schedule := "{{hub index $quayCfg "dbBackupSchedule" | default "0 4 * * *" hub}}" }}
+  {{- $caCM := (lookup "v1" "ConfigMap" "quay-enterprise" "openshift-service-ca") | default dict }}
+  {{- $caCert := (index ($caCM.data | default dict) "service-ca.crt" | default "") }}
+  {{- if and (not (empty $accessKey)) (not (empty $bucketName)) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: quay-db-backup-ca
+        namespace: quay-enterprise
+      type: Opaque
+      stringData:
+        ca.crt: |
+          {{ $caCert | autoindent }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: quay-db-backup-s3-creds
+        namespace: quay-enterprise
+      type: Opaque
+      data:
+        ACCESS_KEY_ID: {{ $accessKey }}
+        ACCESS_SECRET_KEY: {{ $secretKey }}
+  {{- range $db := (list "quay-db" "clair-db") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: {{ $db }}
+        namespace: quay-enterprise
+      spec:
+        backup:
+          retentionPolicy: '{{ $retention }}'
+          barmanObjectStore:
+            destinationPath: s3://{{ $bucketName }}/{{ $db }}
+            endpointURL: https://{{ $bucketHost }}:{{ $bucketPort }}
+            endpointCA:
+              name: quay-db-backup-ca
+              key: ca.crt
+            s3Credentials:
+              accessKeyId:
+                name: quay-db-backup-s3-creds
+                key: ACCESS_KEY_ID
+              secretAccessKey:
+                name: quay-db-backup-s3-creds
+                key: ACCESS_SECRET_KEY
+            wal:
+              compression: gzip
+            data:
+              compression: gzip
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: ScheduledBackup
+      metadata:
+        name: {{ $db }}-scheduled-backup
+        namespace: quay-enterprise
+      spec:
+        schedule: '{{ $schedule }}'
+        backupOwnerReference: cluster
+        cluster:
+          name: {{ $db }}
+        method: barmanObjectStore
+        target: prefer-standby
+        immediate: true
+  {{- end }}
+  {{- end }}

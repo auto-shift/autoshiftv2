@@ -1,0 +1,117 @@
+# The CMP ConfigMap that the ArgoCD repo-server mounts, placed onto every hub.
+#
+# A Policy rather than a ConfigMap that ArgoCD applies. A managed hub never runs the bootstrap
+# chart and never syncs this chart in-cluster, so ArgoCD cannot reach it. And on any hub an ArgoCD
+# copy cannot heal a missing ConfigMap: the repo-server fails to mount it and stops, and ArgoCD
+# needs that repo-server to render this chart. config-policy-controller carries the desired
+# ConfigMap inside the Policy, so it restores it while ArgoCD is still down.
+#
+# The bootstrap chart applies it on day zero, before any of this exists.
+{{- if .Values.hubClusterSets }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-gitops-cmp-plugin
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-gitops-operator-install
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: Policy
+      compliance: Compliant
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-cmp-plugin
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: ConfigMap
+                metadata:
+                  name: policy-generator-cmp-plugin
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                data:
+                  plugin.yaml: |
+                        apiVersion: argoproj.io/v1alpha1
+                        kind: ConfigManagementPlugin
+                        metadata:
+                          name: policy-generator
+                        spec:
+                          discover:
+                            find:
+                              glob: "**/policy-generator-config.yaml"
+                          generate:
+                            command: [/bin/sh, -c]
+                            args:
+                              - |
+                                set -eu
+                                # ArgoCD may or may not prefix plugin.env with ARGOCD_ENV_ depending on version; read both.
+                                NS="${ARGOCD_ENV_POLICY_NAMESPACE:-${POLICY_NAMESPACE:-policies-autoshift}}"
+                                REM="${ARGOCD_ENV_REMEDIATION:-${REMEDIATION:-enforce}}"
+                                EC="${ARGOCD_ENV_EVAL_COMPLIANT:-${EVAL_COMPLIANT:-10m}}"
+                                EN="${ARGOCD_ENV_EVAL_NONCOMPLIANT:-${EVAL_NONCOMPLIANT:-30s}}"
+                                CSS="${ARGOCD_ENV_CLUSTER_SET_SUFFIX:-${CLUSTER_SET_SUFFIX:-}}"
+                                # sed (envsubst is not in the argocd image), restricted to these exact tokens so
+                                # hub-template $vars ($base, $cm, ...) inside manifests/ are never touched.
+                                find . -type f -name '*.yaml' -exec sed -i \
+                                  -e "s|\${POLICY_NAMESPACE}|${NS}|g" \
+                                  -e "s|\${REMEDIATION}|${REM}|g" \
+                                  -e "s|\${EVAL_COMPLIANT}|${EC}|g" \
+                                  -e "s|\${EVAL_NONCOMPLIANT}|${EN}|g" \
+                                  -e "s|\${CLUSTER_SET_SUFFIX}|${CSS}|g" \
+                                  {} +
+                                # A policy manifest path may be a nested kustomization that renders a shared chart from
+                                # components/. PolicyGenerator spawns a nested `kustomize build` for it, configured by
+                                # these env vars (the outer flags below do not reach it).
+                                export POLICY_GEN_ENABLE_HELM=true POLICY_GEN_DISABLE_LOAD_RESTRICTORS=true
+                                kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone .
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-gitops-cmp-plugin
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-gitops-cmp-plugin
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-gitops-cmp-plugin
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-gitops-cmp-plugin
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

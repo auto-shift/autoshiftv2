@@ -11,12 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
@@ -25,12 +25,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
         with:
-          version: v3.16.3
+          # Dependabot bumps the action (azure/setup-helm@v5) but never a `with:` input, so this
+          # pin is Renovate's. Keep it identical to the Containerfile and GitLab CI pins.
+          # renovate: datasource=github-releases depName=helm/helm
+          version: v3.19.4
 
       - name: Dry-run packaging
         run: |
@@ -83,7 +86,15 @@ jobs:
           fi
 
           POLICY_COUNT=$(wc -l < autoshift/files/policy-list.txt | tr -d ' ')
-          EXPECTED=$(find policies -maxdepth 3 -name Chart.yaml | wc -l | tr -d ' ')
+          # A policy ships either as a PolicyGenerator dir (policy-generator-config.yaml) or a
+          # Helm holdout (Chart.yaml). cluster-labels and cluster-config-maps are deployed as
+          # dedicated Applications (full label/config data), not via the ApplicationSet list, so
+          # they are excluded from policy-list.txt. Keep in sync with DEDICATED_APP_NAMES in the Makefile.
+          PG_COUNT=$(find policies -maxdepth 3 -name policy-generator-config.yaml | wc -l | tr -d ' ')
+          CHART_COUNT=$(find policies -maxdepth 3 -name Chart.yaml \
+            -not -path 'policies/*/cluster-labels/*' \
+            -not -path 'policies/*/cluster-config-maps/*' | wc -l | tr -d ' ')
+          EXPECTED=$((PG_COUNT + CHART_COUNT))
 
           echo "policy-list.txt contains $POLICY_COUNT entries"
           echo "Expected $EXPECTED policies"
@@ -102,28 +113,47 @@ jobs:
   validate-policies:
     name: Validate policy rendering and config (ACM resolver)
     runs-on: ubuntu-latest
+    env:
+      # PolicyGenerator toolchain for rendering kustomize/PolicyGenerator policies.
+      # Populated by `make install-policy-generator` (repo-local .tools/).
+      KUSTOMIZE_BIN: ${{ github.workspace }}/.tools/kustomize
+      KUSTOMIZE_PLUGIN_HOME: ${{ github.workspace }}/.tools/kustomize-plugin
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: tools/go.mod
           cache: true
           cache-dependency-path: tools/go.sum
 
+      - name: Install kustomize + PolicyGenerator plugin
+        run: make install-policy-generator
+
       - name: Validate policy name lengths
         run: |
           echo "=== Validating policy name lengths (max 40 chars) ==="
           FAILED=0
+          check() {  # $1=name $2=file
+            local len=${#1}
+            if [ "$len" -gt 40 ]; then
+              echo "::error file=$2::Policy name '$1' is $len chars (max 40). Combined with a 20-char namespace this exceeds ACM's 62-char limit."
+              FAILED=1
+            fi
+          }
+          # PolicyGenerator policies: `- name:` entries directly under `policies:` (2-space indent)
+          # in each policy-generator-config.yaml.
           while IFS= read -r file; do
             while IFS= read -r name; do
-              len=${#name}
-              if [ "$len" -gt 40 ]; then
-                echo "::error file=$file::Policy name '$name' is $len chars (max 40). Combined with a 20-char namespace this exceeds ACM's 62-char limit."
-                FAILED=1
-              fi
+              check "$name" "$file"
+            done < <(grep -oP '^  - name: \K.*' "$file" 2>/dev/null || true)
+          done < <(find policies -name "policy-generator-config.yaml")
+          # Helm holdouts still author the name via `$policyName := "..."`.
+          while IFS= read -r file; do
+            while IFS= read -r name; do
+              check "$name" "$file"
             done < <(grep -oP '(?<=\$policyName := ")[^"]+' "$file" 2>/dev/null || true)
           done < <(find policies -name "*.yaml")
           [ "$FAILED" -eq 0 ] && echo "All policy names within limit" || exit 1
@@ -131,12 +161,19 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v5
         with:
-          version: v3.16.3
+          # Dependabot bumps the action (azure/setup-helm@v5) but never a `with:` input, so this
+          # pin is Renovate's. Keep it identical to the Containerfile and GitLab CI pins.
+          # renovate: datasource=github-releases depName=helm/helm
+          version: v3.19.4
 
       - name: Run govulncheck
         working-directory: tools
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # Pinned to v1.3.0 (x/tools v0.44.0). v1.4.0 pulls x/tools v0.46.0,
+          # which panics ("ForEachElement called on type containing
+          # *types.TypeParam") building the SSA call graph under Go 1.25+.
+          # TODO: revert to @latest once a release ships x/tools >= v0.47.0.
+          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
           govulncheck ./...
 
       - name: Validate policies (render, hub/spoke resolution, config coverage, label contract)
@@ -156,3 +193,64 @@ jobs:
           name: label-contract-report
           path: label-contract-report.md
           if-no-files-found: warn
+
+  docs:
+    name: Documentation (build and prose lint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      # The same manifest docs.yaml publishes with, so the two cannot drift.
+      - name: Install documentation toolchain
+        run: pip install -r docs/requirements.txt
+
+      # mkdocs.yaml sets strict: true, so a warning fails the build. This is what catches a broken
+      # link — nothing else does, and the site is only otherwise built at deploy time, so a bad
+      # link would merge and surface in production. Zensical also validates heading anchors, which
+      # MkDocs never did.
+      # The same script docs.yaml publishes with, so this cannot pass on a build the deploy fails.
+      - name: Build and verify the site
+        run: ./scripts/build-docs.sh
+
+      - name: Install Vale
+        run: |
+          # pipefail matters: `curl -sfL ... | sh` swallows a failed download, because the
+          # pipeline exits with sh's status. That is how a 404 previously left Vale
+          # uninstalled while this step still reported success, failing the next step with
+          # an unexplained "vale: command not found".
+          set -euo pipefail
+          # renovate: datasource=github-releases depName=errata-ai/vale extractVersion=^v(?<version>.+)$
+          VALE_VERSION=3.17.1
+          mkdir -p "$HOME/.local/bin"
+          curl -sfL "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
+            | tar -xz -C "$HOME/.local/bin" vale
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/vale" --version
+
+      - name: Fetch the Red Hat style
+        run: vale sync
+
+      # Gates on error-level findings only. Which rules are set to error, and why the rest are
+      # left reporting, is recorded in .vale.ini next to each rule.
+      - name: Prose lint
+        run: vale --minAlertLevel=error README.md docs/
+
+      # Not a gate: prints the backlog so progress is visible on every run.
+      - name: Report remaining style findings
+        if: always()
+        run: |
+          {
+            echo "### Documentation style backlog"
+            echo ""
+            echo "Not enforced. See \`.vale.ini\` for which rules gate CI."
+            echo ""
+            echo '```'
+            vale --output=line README.md docs/ 2>/dev/null \
+              | grep -oE 'RedHat\.[A-Za-z]+' | sort | uniq -c | sort -rn || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

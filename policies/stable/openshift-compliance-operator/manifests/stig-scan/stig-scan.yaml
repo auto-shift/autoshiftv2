@@ -1,0 +1,51 @@
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: compliance-operator-agg-patch-role
+  namespace: openshift-compliance
+rules:
+- verbs:
+  - create
+  - get
+  - update
+  - patch
+  - delete
+  apiGroups:
+  - compliance.openshift.io
+  resources:
+  - complianceremediations
+  - complianceremediations/status
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: compliance-operator-agg-patch-rolebinding
+  namespace: openshift-compliance
+subjects:
+- kind: ServiceAccount
+  name: remediation-aggregator
+  namespace: openshift-compliance
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: compliance-operator-agg-patch-role
+---
+apiVersion: compliance.openshift.io/v1alpha1
+kind: ScanSettingBinding
+metadata:
+  name: stig
+  namespace: openshift-compliance
+profiles:
+- apiGroup: compliance.openshift.io/v1alpha1
+  kind: Profile
+  name: ocp4-stig
+- apiGroup: compliance.openshift.io/v1alpha1
+  kind: Profile
+  name: ocp4-stig-node
+- apiGroup: compliance.openshift.io/v1alpha1
+  kind: Profile
+  name: rhcos4-stig
+settingsRef:
+  apiGroup: compliance.openshift.io/v1alpha1
+  kind: ScanSetting
+  name: default

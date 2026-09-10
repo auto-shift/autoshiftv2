@@ -3,6 +3,31 @@ Validate disconnected config block.
 Called with dict "path" (string prefix for errors) "config" (the disconnected dict).
 Returns newline-separated error strings (empty string = no errors).
 */}}
+{{/*
+Validate an osImages list. Called with dict "path" (full field prefix for errors) "images" (list).
+Shared so config.acm.provisioning.osImages and the deprecated disconnected.osImages agree.
+*/}}
+{{- define "autoshift.validate-os-images" -}}
+  {{- $path := .path -}}
+  {{- $validOsImageKeys := list "openshiftVersion" "version" "cpuArchitecture" "url" "rootFSUrl" -}}
+  {{- range $idx, $img := (.images | default list) -}}
+    {{- range $key, $_ := $img -}}
+      {{- if not (has $key $validOsImageKeys) }}
+{{ printf "%s[%d].%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validOsImageKeys) }}
+      {{- end -}}
+    {{- end -}}
+    {{- if not (index $img "openshiftVersion") }}
+{{ printf "%s[%d].openshiftVersion is required" $path $idx }}
+    {{- end -}}
+    {{- if not (index $img "version") }}
+{{ printf "%s[%d].version is required (RHCOS version string)" $path $idx }}
+    {{- end -}}
+    {{- if not (index $img "url") }}
+{{ printf "%s[%d].url is required (path to RHCOS live ISO)" $path $idx }}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
 {{- define "autoshift.validate-disconnected" -}}
   {{- $path := .path -}}
   {{- $disconnected := .config -}}
@@ -11,7 +36,6 @@ Returns newline-separated error strings (empty string = no errors).
   {{- $validMirrorEntryKeys := list "source" "mirror" -}}
   {{- $validCaRefKeys := list "name" "key" "namespace" -}}
   {{- $validCatalogKeys := list "source" "imagePath" "tag" "publisher" "displayName" "updateInterval" -}}
-  {{- $validOsImageKeys := list "openshiftVersion" "version" "cpuArchitecture" "url" "rootFSUrl" -}}
   {{- range $key, $_ := $disconnected -}}
     {{- if not (has $key $validDisconnectedKeys) }}
 {{ printf "%s: disconnected.%s is not a recognized field (valid: %s)" $path $key (join ", " $validDisconnectedKeys) }}
@@ -90,22 +114,7 @@ Returns newline-separated error strings (empty string = no errors).
 {{ printf "%s: disconnected.catalogs[%d].tag is required" $path $idx }}
     {{- end -}}
   {{- end -}}
-  {{- range $idx, $img := ($disconnected.osImages | default list) -}}
-    {{- range $key, $_ := $img -}}
-      {{- if not (has $key $validOsImageKeys) }}
-{{ printf "%s: disconnected.osImages[%d].%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validOsImageKeys) }}
-      {{- end -}}
-    {{- end -}}
-    {{- if not (index $img "openshiftVersion") }}
-{{ printf "%s: disconnected.osImages[%d].openshiftVersion is required" $path $idx }}
-    {{- end -}}
-    {{- if not (index $img "version") }}
-{{ printf "%s: disconnected.osImages[%d].version is required (RHCOS version string)" $path $idx }}
-    {{- end -}}
-    {{- if not (index $img "url") }}
-{{ printf "%s: disconnected.osImages[%d].url is required (path to RHCOS live ISO)" $path $idx }}
-    {{- end -}}
-  {{- end -}}
+  {{- include "autoshift.validate-os-images" (dict "path" (printf "%s: disconnected.osImages" $path) "images" ($disconnected.osImages | default list)) -}}
 {{- end -}}
 
 {{/*
@@ -166,7 +175,7 @@ Collects all errors and reports them together.
 {{- define "autoshift.validate-cluster-install" -}}
 
 {{/* ===== Valid key lists — add new fields here ===== */}}
-{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
+{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
 {{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
 {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
 {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
@@ -176,6 +185,13 @@ Collects all errors and reports them together.
 {{- $validAwsCpKeys := list "instanceType" "rootVolume" }}
 {{- $validAwsWorkerKeys := list "replicas" "instanceType" "rootVolume" }}
 {{- $validAwsVolumeKeys := list "iops" "size" "type" }}
+{{- $validVsphereKeys := list "credentialRef" "certificatesRef" "sshKeyRef" "sshPublicKey" "fips" "networkType" "apiVIPs" "ingressVIPs" "vcenter" "failureDomains" "controlPlane" "workers" "hosts" }}
+{{- $validVcenterKeys := list "server" "port" "datacenters" }}
+{{- $validFailureDomainKeys := list "name" "region" "zone" "server" "topology" }}
+{{- $validFdTopologyKeys := list "computeCluster" "datacenter" "datastore" "networks" "resourcePool" "folder" }}
+{{- $validVsphereNodeKeys := list "replicas" "coresPerSocket" "cpus" "memoryMB" "osDisk" }}
+{{- $validVsphereHostKeys := list "role" "failureDomain" "networkDevice" }}
+{{- $validNetworkDeviceKeys := list "gateway" "ipAddrs" "nameservers" }}
 
 {{- range $clusterName, $cluster := ($.Values.clusters | default dict) }}
   {{- $ci := (dig "config" "clusterInstall" dict $cluster) }}
@@ -186,7 +202,7 @@ Collects all errors and reports them together.
     {{- $path := (printf "cluster %s" $clusterName) }}
 
     {{/* Validate platform */}}
-    {{- $validPlatforms := list "baremetal" "aws" }}
+    {{- $validPlatforms := list "baremetal" "aws" "vmware" }}
     {{- $platform := ($ci.platform | default "baremetal" | toString) }}
     {{- if not (has $platform $validPlatforms) }}
       {{- $errors = append $errors (printf "%s: clusterInstall.platform must be one of: %s (got: %s)" $path (join ", " $validPlatforms) $platform) }}
@@ -211,6 +227,17 @@ Collects all errors and reports them together.
       {{- end }}
     {{- end }}
 
+    {{/* Validate acm.provisioning.osImages, the canonical path */}}
+    {{- $acmOsImages := (dig "config" "acm" "provisioning" "osImages" (list) $cluster) }}
+    {{- if $acmOsImages }}
+      {{- $acmErrStr := (include "autoshift.validate-os-images" (dict "path" (printf "%s: acm.provisioning.osImages" $path) "images" $acmOsImages)) | trim }}
+      {{- if $acmErrStr }}
+        {{- range splitList "\n" $acmErrStr }}
+          {{- $errors = append $errors . }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
     {{/* Validate disconnected config via shared template */}}
     {{- $disconnected := (dig "config" "disconnected" dict $cluster) }}
     {{- if not (empty $disconnected) }}
@@ -223,9 +250,7 @@ Collects all errors and reports them together.
     {{- end }}
 
     {{/* Required clusterInstall fields */}}
-    {{- if not $ci.baseDomain }}
-      {{- $errors = append $errors (printf "%s: clusterInstall.baseDomain is required" $path) }}
-    {{- end }}
+    {{/* baseDomain is optional — when empty it inherits the hub's base domain (DNS baseDomain minus the hub cluster-name label) */}}
     {{- if not $ci.openshiftVersion }}
       {{- if not $ci.clusterImageSet }}
         {{- $errors = append $errors (printf "%s: clusterInstall.openshiftVersion or clusterImageSet is required" $path) }}
@@ -262,6 +287,194 @@ Collects all errors and reports them together.
       {{- end }}
     {{- end }}
     {{- end }}
+
+    {{/* ===== vSphere-specific validations ===== */}}
+    {{- if eq $platform "vmware" }}
+    {{- $vsphere := (dig "config" "vsphere" dict $cluster) }}
+    {{- if empty $vsphere }}
+      {{- $errors = append $errors (printf "%s: config.vsphere is required for platform 'vmware'" $path) }}
+    {{- else }}
+      {{- range $key, $_ := $vsphere }}
+        {{- if not (has $key $validVsphereKeys) }}
+          {{- $errors = append $errors (printf "%s: vsphere.%s is not a recognized field (valid: %s)" $path $key (join ", " $validVsphereKeys)) }}
+        {{- end }}
+      {{- end }}
+      {{- if not $vsphere.credentialRef }}
+        {{- $errors = append $errors (printf "%s: vsphere.credentialRef is required" $path) }}
+      {{- end }}
+      {{- if and (not $vsphere.sshPublicKey) (empty ($vsphere.sshKeyRef | default dict)) }}
+        {{- $errors = append $errors (printf "%s: vsphere.sshPublicKey or vsphere.sshKeyRef is required" $path) }}
+      {{- end }}
+
+      {{/* Secret-ref sub-keys */}}
+      {{- range $refField := (list "certificatesRef" "sshKeyRef") }}
+        {{- $ref := (index $vsphere $refField | default dict) }}
+        {{- if not (empty $ref) }}
+          {{- range $key, $_ := $ref }}
+            {{- if not (has $key $validSshRefKeys) }}
+              {{- $errors = append $errors (printf "%s: vsphere.%s.%s is not a recognized field (valid: %s)" $path $refField $key (join ", " $validSshRefKeys)) }}
+            {{- end }}
+          {{- end }}
+          {{- if not (index $ref "name") }}
+            {{- $errors = append $errors (printf "%s: vsphere.%s.name is required" $path $refField) }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+
+      {{/* vCenter */}}
+      {{- $vcenter := ($vsphere.vcenter | default dict) }}
+      {{- if empty $vcenter }}
+        {{- $errors = append $errors (printf "%s: vsphere.vcenter is required" $path) }}
+      {{- else }}
+        {{- range $key, $_ := $vcenter }}
+          {{- if not (has $key $validVcenterKeys) }}
+            {{- $errors = append $errors (printf "%s: vsphere.vcenter.%s is not a recognized field (valid: %s)" $path $key (join ", " $validVcenterKeys)) }}
+          {{- end }}
+        {{- end }}
+        {{- if not $vcenter.server }}
+          {{- $errors = append $errors (printf "%s: vsphere.vcenter.server is required" $path) }}
+        {{- end }}
+        {{- if empty ($vcenter.datacenters | default list) }}
+          {{- $errors = append $errors (printf "%s: vsphere.vcenter.datacenters is required (at least one)" $path) }}
+        {{- end }}
+      {{- end }}
+
+      {{/* Virtual IPs */}}
+      {{- if empty ($vsphere.apiVIPs | default list) }}
+        {{- $errors = append $errors (printf "%s: vsphere.apiVIPs is required (at least one)" $path) }}
+      {{- end }}
+      {{- if empty ($vsphere.ingressVIPs | default list) }}
+        {{- $errors = append $errors (printf "%s: vsphere.ingressVIPs is required (at least one)" $path) }}
+      {{- end }}
+
+      {{/* Failure domains */}}
+      {{- $fds := ($vsphere.failureDomains | default list) }}
+      {{- if empty $fds }}
+        {{- $errors = append $errors (printf "%s: vsphere.failureDomains is required (at least one)" $path) }}
+      {{- else }}
+        {{- range $idx, $fd := $fds }}
+          {{- range $key, $_ := $fd }}
+            {{- if not (has $key $validFailureDomainKeys) }}
+              {{- $errors = append $errors (printf "%s: vsphere.failureDomains[%d].%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validFailureDomainKeys)) }}
+            {{- end }}
+          {{- end }}
+          {{- if not (index $fd "name") }}
+            {{- $errors = append $errors (printf "%s: vsphere.failureDomains[%d].name is required" $path $idx) }}
+          {{- end }}
+          {{- if not (index $fd "region") }}
+            {{- $errors = append $errors (printf "%s: vsphere.failureDomains[%d].region is required" $path $idx) }}
+          {{- end }}
+          {{- if not (index $fd "zone") }}
+            {{- $errors = append $errors (printf "%s: vsphere.failureDomains[%d].zone is required" $path $idx) }}
+          {{- end }}
+          {{- $topo := (index $fd "topology" | default dict) }}
+          {{- if empty $topo }}
+            {{- $errors = append $errors (printf "%s: vsphere.failureDomains[%d].topology is required" $path $idx) }}
+          {{- else }}
+            {{- range $key, $_ := $topo }}
+              {{- if not (has $key $validFdTopologyKeys) }}
+                {{- $errors = append $errors (printf "%s: vsphere.failureDomains[%d].topology.%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validFdTopologyKeys)) }}
+              {{- end }}
+            {{- end }}
+            {{- if not (index $topo "computeCluster") }}
+              {{- $errors = append $errors (printf "%s: vsphere.failureDomains[%d].topology.computeCluster is required" $path $idx) }}
+            {{- end }}
+            {{- if not (index $topo "datacenter") }}
+              {{- $errors = append $errors (printf "%s: vsphere.failureDomains[%d].topology.datacenter is required" $path $idx) }}
+            {{- end }}
+            {{- if not (index $topo "datastore") }}
+              {{- $errors = append $errors (printf "%s: vsphere.failureDomains[%d].topology.datastore is required" $path $idx) }}
+            {{- end }}
+            {{- if empty (index $topo "networks" | default list) }}
+              {{- $errors = append $errors (printf "%s: vsphere.failureDomains[%d].topology.networks is required (at least one)" $path $idx) }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+
+      {{/* Control plane / worker node sizing keys */}}
+      {{- range $section := (list "controlPlane" "workers") }}
+        {{- $node := (index $vsphere $section | default dict) }}
+        {{- range $key, $_ := $node }}
+          {{- if not (has $key $validVsphereNodeKeys) }}
+            {{- $errors = append $errors (printf "%s: vsphere.%s.%s is not a recognized field (valid: %s)" $path $section $key (join ", " $validVsphereNodeKeys)) }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+
+      {{/* Static-IP hosts (optional — omit for DHCP). When present, install-config
+           requires exactly one bootstrap + one host per control-plane + one per
+           compute node, each with a complete networkDevice. */}}
+      {{- $vsphereHosts := ($vsphere.hosts | default list) }}
+      {{- $validVsphereRoles := list "bootstrap" "control-plane" "compute" }}
+      {{- range $idx, $h := $vsphereHosts }}
+        {{- range $key, $_ := $h }}
+          {{- if not (has $key $validVsphereHostKeys) }}
+            {{- $errors = append $errors (printf "%s: vsphere.hosts[%d].%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validVsphereHostKeys)) }}
+          {{- end }}
+        {{- end }}
+        {{- $role := ($h.role | default "" | toString) }}
+        {{- if not $role }}
+          {{- $errors = append $errors (printf "%s: vsphere.hosts[%d].role is required (bootstrap, control-plane, compute)" $path $idx) }}
+        {{- else if not (has $role $validVsphereRoles) }}
+          {{- $errors = append $errors (printf "%s: vsphere.hosts[%d].role must be one of: bootstrap, control-plane, compute (got: %s)" $path $idx $role) }}
+        {{- end }}
+        {{- $nd := (index $h "networkDevice" | default dict) }}
+        {{- if empty $nd }}
+          {{- $errors = append $errors (printf "%s: vsphere.hosts[%d].networkDevice is required for static-IP hosts" $path $idx) }}
+        {{- else }}
+          {{- range $key, $_ := $nd }}
+            {{- if not (has $key $validNetworkDeviceKeys) }}
+              {{- $errors = append $errors (printf "%s: vsphere.hosts[%d].networkDevice.%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validNetworkDeviceKeys)) }}
+            {{- end }}
+          {{- end }}
+          {{- if empty (index $nd "ipAddrs" | default list) }}
+            {{- $errors = append $errors (printf "%s: vsphere.hosts[%d].networkDevice.ipAddrs is required (at least one)" $path $idx) }}
+          {{- end }}
+          {{- if not (index $nd "gateway") }}
+            {{- $errors = append $errors (printf "%s: vsphere.hosts[%d].networkDevice.gateway is required" $path $idx) }}
+          {{- end }}
+          {{- if empty (index $nd "nameservers" | default list) }}
+            {{- $errors = append $errors (printf "%s: vsphere.hosts[%d].networkDevice.nameservers is required (at least one)" $path $idx) }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+
+      {{/* Host count must match topology: 1 bootstrap + control-plane + compute */}}
+      {{- if gt (len $vsphereHosts) 0 }}
+        {{- $cpReplicas := (index ($vsphere.controlPlane | default dict) "replicas" | default 3 | int) }}
+        {{- $wkReplicas := (index ($vsphere.workers | default dict) "replicas" | default 3 | int) }}
+        {{- $expectedHosts := (add 1 $cpReplicas $wkReplicas | int) }}
+        {{- if ne (len $vsphereHosts) $expectedHosts }}
+          {{- $errors = append $errors (printf "%s: vsphere.hosts has %d entries but static-IP installs require exactly %d (1 bootstrap + %d control-plane + %d compute)" $path (len $vsphereHosts) $expectedHosts $cpReplicas $wkReplicas) }}
+        {{- end }}
+        {{- $bootstrapCount := 0 }}
+        {{- range $_, $h := $vsphereHosts }}
+          {{- if eq ($h.role | default "" | toString) "bootstrap" }}
+            {{- $bootstrapCount = add $bootstrapCount 1 | int }}
+          {{- end }}
+        {{- end }}
+        {{- if ne $bootstrapCount 1 }}
+          {{- $errors = append $errors (printf "%s: vsphere.hosts must contain exactly 1 host with role 'bootstrap' (got: %d)" $path $bootstrapCount) }}
+        {{- end }}
+      {{- end }}
+
+      {{/* Networking required for vSphere IPI */}}
+      {{- if empty $networking }}
+        {{- $errors = append $errors (printf "%s: config.networking is required" $path) }}
+      {{- else }}
+        {{- if not (dig "clusterNetwork" "cidr" "" $networking) }}
+          {{- $errors = append $errors (printf "%s: networking.clusterNetwork.cidr is required" $path) }}
+        {{- end }}
+        {{- if not (dig "machineNetwork" "cidr" "" $networking) }}
+          {{- $errors = append $errors (printf "%s: networking.machineNetwork.cidr is required" $path) }}
+        {{- end }}
+        {{- if not $networking.serviceNetwork }}
+          {{- $errors = append $errors (printf "%s: networking.serviceNetwork is required" $path) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- end }}{{/* end vmware-specific validations */}}
 
     {{/* ===== Baremetal-specific validations ===== */}}
     {{- if eq $platform "baremetal" }}
@@ -559,6 +772,17 @@ Collects all errors and reports them together.
   {{- $csConfig := ($cs.config | default dict) }}
   {{- if not (empty $csConfig) }}
     {{- $errors := list }}
+
+    {{/* Validate acm.provisioning.osImages, the canonical path */}}
+    {{- $csAcmOsImages := (dig "acm" "provisioning" "osImages" (list) $csConfig) }}
+    {{- if $csAcmOsImages }}
+      {{- $csAcmErrStr := (include "autoshift.validate-os-images" (dict "path" (printf "%s: acm.provisioning.osImages" $csPath) "images" $csAcmOsImages)) | trim }}
+      {{- if $csAcmErrStr }}
+        {{- range splitList "\n" $csAcmErrStr }}
+          {{- $errors = append $errors . }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
 
     {{/* Validate disconnected config via shared template */}}
     {{- $csDisconnected := ($csConfig.disconnected | default dict) }}

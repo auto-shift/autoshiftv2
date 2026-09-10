@@ -1,0 +1,26 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-image-registry-storage-s3
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Dedicated placement so only s3-backed clusters get the ObjectBucketClaim policy — that policy
+  # depends on ODF being ready, and a shared placement would strand pvc-backed clusters in Pending
+  # (policy-storage-cluster-test is only placed where ODF is enabled).
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/imageregistry'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/imageregistry-storage-type'
+              operator: In
+              values:
+                - 's3'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

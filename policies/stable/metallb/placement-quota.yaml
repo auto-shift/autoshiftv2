@@ -1,0 +1,25 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-metallb-quota
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: selected via ManagedClusterSetBindings in this namespace + the predicate.
+  # Requires metallb AND metallb-quota — the quota targets metallb's namespace.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/metallb'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/metallb-quota'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

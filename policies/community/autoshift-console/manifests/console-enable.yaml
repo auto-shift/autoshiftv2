@@ -1,0 +1,23 @@
+object-templates-raw: |
+  {{- /* Readiness gate. The Policy dependency on policy-autoshift-console only proves the
+         Deployment OBJECT exists — a Deployment stuck in ImagePullBackOff is still Compliant, and
+         enabling a plugin whose Service has no endpoints degrades EVERY console page, not just the
+         AutoShift routes, because the console fetches each enabled plugin's manifest at bootstrap.
+         So gate on availableReplicas instead. Until then this policy emits nothing;
+         policy-autoshift-console-available is what reports the wait. */}}
+  {{- $deploy := (lookup "apps/v1" "Deployment" "autoshift-console" "autoshift-console" | default dict) }}
+  {{- $deployStatus := (index ($deploy | default dict) "status" | default dict) }}
+  {{- $available := (index $deployStatus "availableReplicas" | default 0 | int) }}
+  {{- if gt $available 0 }}
+  {{/* musthave on spec.plugins APPENDS to the list. mustonlyhave would evict every other
+       console plugin on the cluster, including ACM's — never change this complianceType. */}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.openshift.io/v1
+      kind: Console
+      metadata:
+        name: cluster
+      spec:
+        plugins:
+          - autoshift-console
+  {{- end }}
