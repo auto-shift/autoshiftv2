@@ -109,6 +109,53 @@ hubClusterSets:
               cpu: '100m'
               memory: '256Mi'
       # =======================================================================
+      # Red Hat Advanced Cluster Management
+      # =======================================================================
+      # versions and startingCSV pin the operator, overriding the acm-version label.
+      #
+      # provisioning configures the Assisted Installer image catalog. Left unset, Red Hat
+      # Advanced Cluster Management offers its whole default catalog: every supported version for
+      # x86_64, arm64, s390x and ppc64le, which is why 100Gi of image storage is the recommended
+      # default. Pin the architectures and versions you provision to run a smaller volume. A
+      # disconnected deployment can still set disconnected.osImages below, which is deprecated
+      # and read only when this list is absent.
+      #
+      # observability.customMetrics collects metrics beyond the fixed default set, enabled by the
+      # acm-observability-custom-metrics label. Two delivery mechanisms are rendered from this one
+      # block and which is live depends on the collector the hub runs, so if a metric never
+      # arrives check the collector before suspecting this config. Cardinality cost, recording
+      # rules, virtual machine metrics and storage sizing: docs/observability-metrics.md
+      # =======================================================================
+      acm:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'advanced-cluster-management.vX.Y.Z'
+        # startingCSV: 'advanced-cluster-management.vX.Y.Z'
+        provisioning:
+          storageClass: ''                       # unset -> the cluster default StorageClass
+          databaseSize: 10Gi                     # Min 10GiB recommended
+          filesystemStorageSize: 100Gi           # Min 100GiB recommended
+          imageStorageSize: 100Gi                # Red Hat recommended default; less if osImages is pinned
+          osImages:
+            - openshiftVersion: '4.22'             # Major.Minor
+              version: '4.22.0'                    # Red Hat Enterprise Linux CoreOS version string
+              cpuArchitecture: x86_64              # x86_64, arm64, s390x or ppc64le
+              url: 'https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.22/4.22.0/rhcos-4.22.0-x86_64-live.x86_64.iso'
+        observability:
+          customMetrics:
+            platform:
+              # not in the default allowlist, so turning it on is observable
+              names:
+                - node_vmstat_pgfault
+              # aggregates on the managed cluster before remote-write; the record: name is
+              # added to the ScrapeConfig selectors automatically
+              recording_rules:
+                - record: apiserver_request_duration_seconds:histogram_quantile_90
+                  expr: 'histogram_quantile(0.90, sum(rate(apiserver_request_duration_seconds_bucket{job="apiserver",verb!="WATCH"}[5m])) by (verb,le))'
+            userWorkload:
+              names:
+                - sample_metrics
+      # =======================================================================
       # Managed AutoShift — nested deployments onto the hubs this hub governs
       # =======================================================================
       # One entry per AutoShift deployment to create on each MANAGED hub selected by the
@@ -185,12 +232,20 @@ hubClusterSets:
       # GitLab (values with / or spaces that can't be labels)
       # =======================================================================
       gitlab:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'gitlab-operator-kubernetes.vX.Y.Z'
+        # startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
         dbBackupSchedule: '0 2 * * *'
         dbBackupRetention: '30d'
       # =======================================================================
       # JFrog Artifactory
       # =======================================================================
       jfrog:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'openshiftartifactoryha-operator.vX.Y.Z'
+        # startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
         dbBackupSchedule: '0 3 * * *'
         dbBackupRetention: '30d'
       # =======================================================================
@@ -298,14 +353,6 @@ hubClusterSets:
       #   versions:
       #     - 'ansible-automation-platform-operator.vX.Y.Z'
       #   startingCSV: 'ansible-automation-platform-operator.vX.Y.Z'
-      # acm:
-      #   versions:
-      #     - 'advanced-cluster-management.vX.Y.Z'
-      #   startingCSV: 'advanced-cluster-management.vX.Y.Z'
-      # acs:
-      #   versions:
-      #     - 'rhacs-operator.vX.Y.Z'
-      #   startingCSV: 'rhacs-operator.vX.Y.Z'
       # cert-manager:
       #   versions:
       #     - 'openshift-cert-manager-operator.vX.Y.Z'
@@ -334,22 +381,10 @@ hubClusterSets:
       #   versions:
       #     - 'openshift-external-secrets-operator.vX.Y.Z'
       #   startingCSV: 'openshift-external-secrets-operator.vX.Y.Z'
-      # gitlab:
-      #   versions:
-      #     - 'gitlab-operator-kubernetes.vX.Y.Z'
-      #   startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
       # gitlab-runner:
       #   versions:
       #     - 'gitlab-runner-operator.vX.Y.Z'
       #   startingCSV: 'gitlab-runner-operator.vX.Y.Z'
-      # gitops:
-      #   versions:
-      #     - 'openshift-gitops-operator.vX.Y.Z'
-      #   startingCSV: 'openshift-gitops-operator.vX.Y.Z'
-      # jfrog:
-      #   versions:
-      #     - 'openshiftartifactoryha-operator.vX.Y.Z'
-      #   startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
       # kiali:
       #   versions:
       #     - 'kiali-ossm.vX.Y.Z'
@@ -414,10 +449,6 @@ hubClusterSets:
       #   versions:
       #     - 'tempo-product.vX.Y.Z'
       #   startingCSV: 'tempo-product.vX.Y.Z'
-      # trident:
-      #   versions:
-      #     - 'trident-operator.vX.Y.Z'
-      #   startingCSV: 'trident-operator.vX.Y.Z'
       # virt:
       #   versions:
       #     - 'kubevirt-hyperconverged.vX.Y.Z'
@@ -539,6 +570,10 @@ hubClusterSets:
           search:
             - 'example.com'
       trident:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'trident-operator.vX.Y.Z'
+        # startingCSV: 'trident-operator.vX.Y.Z'
         storage:
           - backendName: "trident-backend-name"
             secretName: "openshift-secret"
@@ -558,6 +593,10 @@ hubClusterSets:
       # label. All fields are optional; omitted values fall back to defaults.
       # =======================================================================
       gitops:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'openshift-gitops-operator.vX.Y.Z'
+        # startingCSV: 'openshift-gitops-operator.vX.Y.Z'
         # Does THIS hub render policies via the policy-generator CMP? Overrides the fleet-wide
         # policyGenerator in global.yaml for this hub's Argo CD. GIT/source hubs MUST set true (it
         # installs the CMP sidecar in the infra ArgoCD repo-server, without which PolicyGenerator
@@ -573,31 +612,105 @@ hubClusterSets:
         # infra-gitops instance). Drives gitops-disable-default-argocd (disable = not defaultInstance).
         # defaultInstance: false
         #
-        # Infra (main) ArgoCD instance config — same knobs as teams.<team> below, plus infra-only fields
-        # (server.autoscale, controller.statusProcessors/operationProcessors, repo.cluster_ca_bundle).
-        # The openshift-gitops policy reads these from this cluster's rendered-config at enforcement time
-        # (like the teams instances), so one policy serves per-cluster values; omit any field to keep default.
+        # Infra (main) ArgoCD instance config: the same knobs as teams.<team> below, plus the
+        # infra-only fields server.autoscale, controller.statusProcessors,
+        # controller.operationProcessors, repo.replicas and repo.cluster_ca_bundle. The
+        # openshift-gitops policy reads these from this cluster's rendered-config at enforcement
+        # time, so one policy serves per-cluster values.
+        #
+        # Every field is optional. Omit one and it falls back to the chart default in
+        # policies/stable/openshift-gitops/values.yaml, the same file the bootstrap chart reads, so
+        # bootstrap and day 2 agree. The block below is those defaults, so uncommenting it as is
+        # changes nothing.
+        #
+        # rbac_policies is the COMPLETE Argo CD RBAC policy and replaces the chart default rather
+        # than appending to it, so carry the cluster-admin lines over unless you mean to drop them.
+        # A `g` line takes a user or a group, but with OpenShift login the user identity is an
+        # opaque Dex sub rather than a username, so name OpenShift Groups here.
+        # repo.replicas defaults to 1; raise it for availability or a much larger policy set.
+        # Controller memory is 4Gi limit / 1Gi request, from a measured 843Mi peak.
+        # controller.statusProcessors is the main lever on how fast the fleet converges.
+        # The gitops-cluster-ca-bundle label overrides repo.cluster_ca_bundle. policyGenerator sizes the CMP sidecar that performs the render,
+        # so raise it when manifest generation times out, and its tarExclusions trim the repository
+        # tarball streamed to that sidecar. tarExclusions is repo-server WIDE, so keep it to .git;
+        # per-Application scoping comes from useManifestGeneratePaths. All apply only where the
+        # plugin is on.
+        #
+        # Full table: docs/values-reference.md, "OpenShift GitOps".
         # infra:
         #   rbac_policies:
+        #     - 'g, system:cluster-admins, role:admin'
+        #     - 'g, cluster-admins, role:admin'
         #     - 'g, my-admins, role:admin'
-        #   disableAdmin: 'true'
+        #   disableAdmin: false
         #   server:
-        #     limits: { cpu: '500m', memory: '256Mi' }
-        #     requests: { cpu: '125m', memory: '128Mi' }
-        #     autoscale: { enabled: false, maxReplicas: 3 }
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '125m'
+        #       memory: '128Mi'
+        #     autoscale:
+        #       enabled: true
+        #       maxReplicas: 5
+        #       targetCPUUtilizationPercentage: 50
         #   repo:
-        #     limits: { cpu: '1000m', memory: '1024Mi' }
-        #     requests: { cpu: '250m', memory: '256Mi' }
+        #     replicas: 1
         #     cluster_ca_bundle: false
+        #     limits:
+        #       cpu: '2000m'
+        #       memory: '2048Mi'
+        #     requests:
+        #       cpu: '500m'
+        #       memory: '512Mi'
         #   controller:
-        #     limits: { cpu: '2000m', memory: '2048Mi' }
-        #     requests: { cpu: '250m', memory: '1024Mi' }
-        #     statusProcessors: '20'
-        #     operationProcessors: '10'
-        #   ha: { enabled: 'false' }
-        #   redis: {}
-        #   dex: {}
-        #   applicationSet: {}
+        #     statusProcessors: 50
+        #     operationProcessors: 25
+        #     limits:
+        #       cpu: '2000m'
+        #       memory: '4Gi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '1Gi'
+        #   ha:
+        #     enabled: false
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '128Mi'
+        #   redis:
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '128Mi'
+        #   dex:
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '128Mi'
+        #   applicationSet:
+        #     limits:
+        #       cpu: '2'
+        #       memory: '1Gi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '512Mi'
+        #   policyGenerator:
+        #     limits:
+        #       cpu: '2000m'
+        #       memory: '2048Mi'
+        #     requests:
+        #       cpu: '500m'
+        #       memory: '512Mi'
+        #     tarExclusions:
+        #       - '.git/*'
+        #     useManifestGeneratePaths: true
         teams:
           dev:
             gitops_rbac_policies:
@@ -662,6 +775,10 @@ hubClusterSets:
       # Advanced Cluster Security (Day-2 settings; enable the stack with the acs label)
       # =======================================================================
       acs:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'rhacs-operator.vX.Y.Z'
+        # startingCSV: 'rhacs-operator.vX.Y.Z'
         egressConnectivity: Online          # Online | Offline (disconnected)
         scannerV4: Enabled                  # Enabled | Disabled | Default (SecuredCluster maps Enabled -> AutoSense)
         monitoring: true                    # OpenShift monitoring integration
@@ -696,6 +813,40 @@ hubClusterSets:
         # production. Pinning one tag across a fleet spanning minors deploys the wrong bundle to
         # all but one of them.
         image: ''
+      # Global Observability (three-tier metrics rollup: global hub -> intermediate
+      # hubs -> workload clusters). Enable with the global-observability label below;
+      # placement is driven by that label + self-managed ('true' = global hub,
+      # 'false' = intermediate hub). Base MCO config (retention, storage, thanos)
+      # stays under acm.observability / policy-acm-observability. Do NOT set
+      # acm.observability.enableMCOA when using these capability toggles.
+      # Prereqs on every participating hub: acm-observability: 'true', coo: 'true'.
+      # =======================================================================
+      globalObservability:
+        # MCOA capability toggles patched onto the MultiClusterObservability CR
+        capabilities:
+          platformAnalytics: 'true'         # incident detection + right-sizing
+          platformLogs: 'true'
+          platformMetrics: 'true'
+          userWorkloadLogs: 'true'
+          userWorkloadMetrics: 'true'
+          userWorkloadTraces: 'true'
+        scrapeInterval: '300s'              # PrometheusAgent scrape interval
+        logLevel: 'warn'                    # PrometheusAgent log level
+        # Optional extra remote-write targets alongside the built-in global rollup.
+        # Keep secret names short and alphanumeric-terminated: MCOA truncates
+        # secret-<name> volume names to 63 chars; a cut on a non-alphanumeric
+        # character silently breaks the agent StatefulSet.
+        # additionalRemoteWrites:
+        #   - name: external-monitoring
+        #     url: https://external.example.com/api/v1/receive
+        #     remoteTimeout: 30s                # optional (default 30s)
+        #     onSelfManagedHub: true            # true: every hub; false: intermediate hubs only (default)
+        #     caFile: /etc/prometheus/secrets/external-certs/ca.crt
+        #     certFile: /etc/prometheus/secrets/external-certs/tls.crt
+        #     keyFile: /etc/prometheus/secrets/external-certs/tls.key
+        #     secretRef:                        # hub secret replicated + mounted into the agent
+        #       name: external-certs
+        #       namespace: some-ns
     labels:
       # =======================================================================
       # Core Configuration
@@ -729,7 +880,7 @@ hubClusterSets:
       gitops-subscription-name: openshift-gitops-operator
       gitops-disable-default-argocd: 'true'
       gitops-channel: gitops-1.21
-      gitops-version: 'openshift-gitops-operator.v1.21.3'
+      gitops-version: 'openshift-gitops-operator.v1.21.4'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
       gitops-namespace: 'openshift-gitops'          # Override ArgoCD namespace per-cluster
@@ -745,23 +896,26 @@ hubClusterSets:
       # Advanced Cluster Management (hub only — not installed on managed clusters)
       # =======================================================================
       acm-subscription-name: advanced-cluster-management
-      acm-version: 'advanced-cluster-management.v2.17.0'
+      acm-version: 'advanced-cluster-management.v2.17.1'
       acm-channel: release-2.17
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'High'       # 'Basic' or 'High'
       acm-observability: 'true'              # Requires ODF for noobaa bucket
       # ACM Search v2 storage (PVC for the search-indexer PostgreSQL)
+      acm-observability-custom-metrics: 'false'   # collect metrics beyond ACM's default allowlist; needs config.acm.observability.customMetrics
       acm-search-storage: 'false'
       acm-search-storage-class: ''           # unset -> the cluster's default StorageClass; set to pin a class
       acm-search-storage-size: '100Gi'
       # Cluster provisioning (hive-based cluster install flow)
       cluster-install: 'false'                     # hub only — enables the cluster-install policy set
       acm-enable-provisioning: 'false'            # hub only
-      acm-provisioning-storage-class: ''             # StorageClass name
-      acm-provisioning-database-size: 10Gi           # Min 10GiB recommended
-      acm-provisioning-filesystem-storage-size: 100Gi # Min 100GiB recommended
-      acm-provisioning-image-storage-size: 50Gi      # 2GiB per OSImage entry
+      # DEPRECATED: superseded by config.acm.provisioning.*, which wins when set.
+      # Still honoured so existing deployments keep working; move to config and remove these.
+      acm-provisioning-storage-class: ''             # -> config.acm.provisioning.storageClass
+      acm-provisioning-database-size: 10Gi           # -> config.acm.provisioning.databaseSize
+      acm-provisioning-filesystem-storage-size: 100Gi # -> config.acm.provisioning.filesystemStorageSize
+      acm-provisioning-image-storage-size: 100Gi     # -> config.acm.provisioning.imageStorageSize
       # ACM Addon Tuning (for scale)
       acm-addon-tuning: 'true'
       # config-policy-controller tuning (annotations on ManagedClusterAddOn)
@@ -819,7 +973,7 @@ hubClusterSets:
       # =======================================================================
       metallb: 'false'
       metallb-subscription-name: metallb-operator
-      metallb-version: 'metallb-operator.v4.22.0-202608170914'
+      metallb-version: 'metallb-operator.v4.22.0-202608251608'
       metallb-source: redhat-operators
       metallb-source-namespace: openshift-marketplace
       metallb-channel: stable
@@ -959,7 +1113,7 @@ hubClusterSets:
       # =======================================================================
       local-storage: 'false'
       local-storage-subscription-name: local-storage-operator
-      local-storage-version: 'local-storage-operator.v4.22.0-202608170914'
+      local-storage-version: 'local-storage-operator.v4.22.0-202608251608'
       local-storage-channel: stable
       local-storage-source: redhat-operators
       local-storage-source-namespace: openshift-marketplace
@@ -1008,7 +1162,7 @@ hubClusterSets:
       nmstate-channel: stable
       nmstate-source: redhat-operators
       nmstate-source-namespace: openshift-marketplace
-      nmstate-version: 'kubernetes-nmstate-operator.4.22.0-202608191601'
+      nmstate-version: 'kubernetes-nmstate-operator.4.22.0-202608260901'
       #
       # =======================================================================
       # Advanced Cluster Security
@@ -1027,7 +1181,7 @@ hubClusterSets:
       # =======================================================================
       dev-spaces: 'false'
       dev-spaces-subscription-name: devspaces
-      dev-spaces-version: 'devspacesoperator.v3.29.1'
+      dev-spaces-version: 'devspacesoperator.v3.30.0'
       dev-spaces-channel: stable
       dev-spaces-source: redhat-operators
       dev-spaces-source-namespace: openshift-marketplace
@@ -1037,7 +1191,7 @@ hubClusterSets:
       # =======================================================================
       dev-hub: 'false'
       dev-hub-subscription-name: rhdh
-      dev-hub-version: 'rhdh-operator.v1.10.3'
+      dev-hub-version: 'rhdh-operator.v1.10.4'
       dev-hub-channel: fast-1.10
       dev-hub-source: redhat-operators
       dev-hub-source-namespace: openshift-marketplace
@@ -1148,6 +1302,15 @@ hubClusterSets:
       coo-source-namespace: openshift-marketplace
 
       # =======================================================================
+      # Global Observability (hub only — settings in config.globalObservability above)
+      # Enables MCOA capability patching + metrics rollup to the global hub.
+      # Placement discriminator is the self-managed label: 'true' = global hub
+      # (secrets policy), 'false' = intermediate hub (PrometheusAgent patching).
+      # Requires acm-observability: 'true' and coo: 'true' on the same hub.
+      # =======================================================================
+      global-observability: 'false'
+
+      # =======================================================================
       # User Workload Monitoring (settings in config section above)
       # =======================================================================
       uwm: 'false'                              # Enable UWM (placement label only)
@@ -1192,7 +1355,7 @@ hubClusterSets:
       node-feature-discovery-channel: stable
       node-feature-discovery-source: redhat-operators
       node-feature-discovery-source-namespace: openshift-marketplace
-      node-feature-discovery-version: 'nfd.4.22.0-202608191301'
+      node-feature-discovery-version: 'nfd.4.22.0-202608251608'
 
       # =======================================================================
       # SR-IOV Network Operator

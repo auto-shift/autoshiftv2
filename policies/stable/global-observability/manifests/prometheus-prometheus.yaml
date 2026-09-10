@@ -1,0 +1,87 @@
+object-templates-raw: |
+  # INDENTATION ANCHOR
+  {{hub- $obsConfig := index (index (fromConfigMap "${POLICY_NAMESPACE}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml) "globalObservability" | default dict hub}}
+  {{hub- $scrapeInterval := index $obsConfig "scrapeInterval" | default "300s" hub}}
+  {{hub- $logLevel := index $obsConfig "logLevel" | default "warn" | default "warn" hub}}
+  {{hub- $isSelfManaged := (index .ManagedClusterLabels "autoshift.io/self-managed" | default "false") hub}}
+  {{hub- $additionalRW := index $obsConfig "additionalRemoteWrites" | default list hub}}
+  {{hub- range $idx, $name := (list "mcoa-default-platform-metrics-collector-global" "mcoa-default-user-workload-metrics-collector-global") hub}}
+  {{- /* Read-modify-write, the same shape policy-cluster-labels uses on ManagedCluster.
+         MCOA owns this PrometheusAgent and sets ~19 spec fields; a partial musthave can add a
+         remoteWrite but can never remove one, so a deleted additionalRemoteWrites entry would keep
+         shipping metrics forever. Instead: read the live object, replace only the lists this policy
+         owns, and apply mustonlyhave so removals actually take effect. Everything MCOA set survives
+         because it came from the live read. The lookup is spoke-side — the agent lives here, not on
+         the hub above. */ -}}
+  {{- $live := (lookup "monitoring.rhobs/v1alpha1" "PrometheusAgent" "open-cluster-management-observability" "{{hub $name hub}}") | default dict }}
+  {{- if not (dig "spec" "" $live) }}
+  {{- fail "global-observability: PrometheusAgent {{hub $name hub}} not found in open-cluster-management-observability. MCOA creates it; policy-global-observability-prom-test gates on that. Refusing to write a partial object." }}
+  {{- end }}
+  {{- $spec := $live.spec }}
+  {{- $_ := set $spec "scrapeInterval" "{{hub $scrapeInterval hub}}" }}
+  {{- $_ := set $spec "logLevel" "{{hub $logLevel hub}}" }}
+  {{- /* secrets this policy owns, in desired order */ -}}
+  {{- $secrets := list }}
+  {{hub- if ne $isSelfManaged "true" hub}}
+  {{- $secrets = append $secrets "global-observability-secrets" }}
+  {{hub- end hub}}
+  {{hub- range $rw := $additionalRW hub}}
+  {{hub- $secretRef := index $rw "secretRef" | default dict hub}}
+  {{hub- $onSelfManaged := index $rw "onSelfManagedHub" | default false hub}}
+  {{hub- if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) hub}}
+  {{hub- if not (empty $secretRef) hub}}
+  {{- $secrets = append $secrets "{{hub index $secretRef "name" hub}}" }}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{- /* Same ownership problem as remoteWrite below: keep MCOA's own mounted secrets by prefix and
+         drop any this policy mounted for a remote-write that config no longer lists, so the two
+         lists stay consistent. */ -}}
+  {{- range $s := (dig "secrets" (list) $spec) }}
+  {{- if hasPrefix "observability-" $s }}{{- $secrets = append $secrets $s }}{{- end }}
+  {{- end }}
+  {{- $_ := set $spec "secrets" $secrets }}
+  {{- /* remoteWrite: rebuilt from config, so a removed entry disappears */ -}}
+  {{- $rws := list }}
+  {{hub- if ne $isSelfManaged "true" hub}}
+  {{- $u := fromSecret "open-cluster-management-observability" "global-observability-secrets" "observatorium.url" | base64dec }}
+  {{- if not $u }}{{ fail "global-observability: observatorium.url missing from global-observability-secrets (rollup secret not yet replicated?)" }}{{ end }}
+  {{- $rws = append $rws (dict "name" "acm-global-observability" "remoteTimeout" "30s" "url" $u
+        "tlsConfig" (dict "ca" (dict) "cert" (dict)
+          "caFile" "/etc/prometheus/secrets/global-observability-secrets/ca.crt"
+          "certFile" "/etc/prometheus/secrets/global-observability-secrets/tls.crt"
+          "keyFile" "/etc/prometheus/secrets/global-observability-secrets/tls.key")) }}
+  {{hub- end hub}}
+  {{hub- range $rw := $additionalRW hub}}
+  {{hub- if not (index $rw "name") hub}}{{hub fail "global-observability: additionalRemoteWrites[].name is required" hub}}{{hub- end hub}}
+  {{hub- if not (index $rw "url") hub}}{{hub fail "global-observability: additionalRemoteWrites[].url is required" hub}}{{hub- end hub}}
+  {{hub- if not (index $rw "caFile") hub}}{{hub fail "global-observability: additionalRemoteWrites[].caFile is required" hub}}{{hub- end hub}}
+  {{hub- if not (index $rw "certFile") hub}}{{hub fail "global-observability: additionalRemoteWrites[].certFile is required" hub}}{{hub- end hub}}
+  {{hub- if not (index $rw "keyFile") hub}}{{hub fail "global-observability: additionalRemoteWrites[].keyFile is required" hub}}{{hub- end hub}}
+  {{hub- $onSelfManaged := index $rw "onSelfManagedHub" | default false hub}}
+  {{hub- if not (and (eq $isSelfManaged "true") (not $onSelfManaged)) hub}}
+  {{- $rws = append $rws (dict "name" "{{hub index $rw "name" hub}}" "remoteTimeout" "{{hub index $rw "remoteTimeout" | default "30s" hub}}" "url" "{{hub index $rw "url" hub}}"
+        "tlsConfig" (dict "ca" (dict) "cert" (dict)
+          "caFile" "{{hub index $rw "caFile" hub}}"
+          "certFile" "{{hub index $rw "certFile" hub}}"
+          "keyFile" "{{hub index $rw "keyFile" hub}}")) }}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{- /* Keep MCOA's own remote-writes; drop anything else config no longer lists. A bare list
+         element carries no ownership marker, so "absent from config" cannot distinguish MCOA's
+         entry from one this policy wrote on an earlier pass. Without an allowlist a removed
+         additionalRemoteWrites entry survives forever, disguised as MCOA's. MCOA names its own
+         "acm-observability"; anything under that prefix is preserved. A future MCOA entry outside
+         the prefix would be pruned, which shows up as the agent drifting. */ -}}
+  {{- $mcoaPrefix := "acm-observability" }}
+  {{- range $e := (dig "remoteWrite" (list) $spec) }}
+  {{- if hasPrefix $mcoaPrefix (dig "name" "" $e) }}{{- $rws = append $rws $e }}{{- end }}
+  {{- end }}
+  {{- $_ := set $spec "remoteWrite" $rws }}
+  {{- $obj := set $live "spec" $spec }}
+  {{- $_ := unset $obj "status" }}
+  {{- $_ := unset $obj.metadata "managedFields" }}
+  - complianceType: mustonlyhave
+    recreateOption: IfRequired
+    objectDefinition: {{ $obj | toRawJson }}
+  {{hub- end hub}}
