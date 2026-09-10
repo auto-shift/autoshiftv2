@@ -1,7 +1,18 @@
 # Hub1 - Spoke hub managed by hub-of-hubs
 hubClusterSets:
   hub1:
-    config: {}
+    config:
+      eso:
+        hubBootstrap:
+          # Prefix for the bootstrap store and every secret derived from it.
+          # Uncommenting renames the ClusterSecretStore and the per-cluster
+          # client-cert Secrets; the chart default is hub-bootstrap.
+          # storePrefix: eso-client
+          deriveHubUrl: true
+          clientIdentity:
+            baseDomain: autoshift.io
+          externalCertAuthority:
+            autoshiftProvisioned: false
     labels:
       # OpenShift version for cluster deployment and image mirroring
       openshift-version: '4.22.8'
@@ -141,6 +152,13 @@ hubClusterSets:
       node-maintenance-source: redhat-operators
       node-maintenance-source-namespace: openshift-marketplace
       node-maintenance-version: 'node-maintenance-operator.v5.7.1'
+      ### cert-manager (required: hub1 mints selfSigned ESO client certs for its spokes)
+      cert-manager: 'true'
+      cert-manager-subscription-name: openshift-cert-manager-operator
+      cert-manager-channel: stable-v1
+      cert-manager-version: 'cert-manager-operator.v1.19.0'
+      cert-manager-source: redhat-operators
+      cert-manager-source-namespace: openshift-marketplace
       ### external-secrets-operator
       external-secrets-operator: 'true'
       external-secrets-operator-subscription-name: openshift-external-secrets-operator

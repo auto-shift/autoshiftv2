@@ -43,7 +43,7 @@ func TestHubBootstrap_SelfSignedDefaultBaseDomain(t *testing.T) {
 	})
 	out := resolveBoth(t, selected, seed)
 
-	wantCN := "autoshift-eso-client.lint-cluster.autoshift.io"
+	wantCN := "eso-client.lint-cluster.autoshift.io"
 	if !strings.Contains(out, "commonName: "+wantCN) {
 		t.Errorf("selfSigned: expected minted cert CN to default baseDomain to autoshift.io (%q); not found in:\n%s", wantCN, out)
 	}
@@ -234,7 +234,7 @@ func TestHubBootstrap_ExternalCA(t *testing.T) {
 		"mode":      "externalCA",
 		"hubServer": "https://api.hub.example.com:6443",
 		"clientIdentity": map[string]interface{}{
-			"baseDomain":   "eso.hub.example.com",
+			"baseDomain":   "test.example.com",
 			"certCNPrefix": "autoshift-eso-client",
 		},
 		"externalCertAuthority": map[string]interface{}{
@@ -248,7 +248,11 @@ func TestHubBootstrap_ExternalCA(t *testing.T) {
 	})
 	out := resolveBoth(t, selected, seed)
 
-	wantCN := "autoshift-eso-client.lint-cluster.eso.hub.example.com"
+	// Derived from the apiserverurl.openshift.io clusterClaim (api.test-cluster.test.example.com):
+	// host minus the "api." label, minus the trailing baseDomain -> "test-cluster". Deliberately NOT
+	// the OCM name "lint-cluster" — under a shared external CA every self-managed hub is
+	// "local-cluster" and OCM names would collide.
+	wantCN := "autoshift-eso-client.test-cluster.test.example.com"
 	checks := []struct{ needle, why string }{
 		{"kind: APIServer", "hub must wire the external CA into APIServer.spec.clientCA"},
 		{"name: hub-bootstrap-client-ca", "clientCA ConfigMap must be referenced"},
@@ -270,9 +274,9 @@ func TestHubBootstrap_ExternalCA(t *testing.T) {
 	}
 }
 
-// An unknown mode must fail loudly rather than silently no-op (no clientCA wired, no cert
-// minted/copied, yet the store still created). Every mode-gated policy carries the guard, so the
-// spoke pass must surface a resolution error naming the bad mode.
+// An unknown mode must be reported rather than silently no-op (no clientCA wired, no cert
+// minted/copied, yet the store still created). The guard is non-fatal: it records the bad mode in
+// the status ConfigMap that the companion inform gate turns into NonCompliant.
 func TestHubBootstrap_InvalidMode(t *testing.T) {
 	raw := renderESOChart(t)
 	selected := selectPolicies(t, raw, map[string]bool{
@@ -284,30 +288,20 @@ func TestHubBootstrap_InvalidMode(t *testing.T) {
 		"hubServer": "https://api.hub.example.com:6443",
 	})
 
-	r, err := NewResolver(seed)
-	if err != nil {
-		t.Fatalf("NewResolver: %v", err)
+	out := resolveBoth(t, selected, seed)
+
+	// The guard is non-fatal by design: a template `fail` aborts propagation and buries the reason
+	// inside the serialized policy, so the bad mode is recorded in the status ConfigMap that the
+	// companion inform gate turns into NonCompliant. Assert the report, not a resolution error.
+	if !strings.Contains(out, "eso-boot-store-status") {
+		t.Fatalf("invalidMode: expected the status ConfigMap to be written for an unknown mode; not found in:\n%s", out)
 	}
-	spokeR, err := NewSpokeResolver(seed)
-	if err != nil {
-		t.Fatalf("NewSpokeResolver: %v", err)
+	if !strings.Contains(out, "externalca") || !strings.Contains(out, "invalid config.eso.hubBootstrap.mode") {
+		t.Errorf("invalidMode: status report did not name the bad mode value; got:\n%s", out)
 	}
-	hub := r.ResolvePolicy(selected, HubContext{ManagedClusterName: "lint-cluster"})
-	if len(hub.Errors) > 0 {
-		t.Fatalf("hub resolution errors (mode guard is runtime, not hub): %v", hub.Errors)
-	}
-	spoke := spokeR.ResolveSpokeTemplates(stripStringDefaults(hub.Resolved), HubContext{ManagedClusterName: "lint-cluster"})
-	if len(spoke.Errors) == 0 {
-		t.Fatalf("invalidMode: expected a resolution error for an unknown mode, got none\n%s", spoke.Resolved)
-	}
-	var sawMode bool
-	for _, e := range spoke.Errors {
-		if strings.Contains(e, "externalca") && strings.Contains(e, "mode") {
-			sawMode = true
-		}
-	}
-	if !sawMode {
-		t.Errorf("invalidMode: error did not name the bad mode value; got: %v", spoke.Errors)
+	// A bad mode must not silently produce a store as though it were valid.
+	if strings.Contains(out, "kind: ClusterSecretStore") {
+		t.Errorf("invalidMode: must not create the bootstrap store for an unknown mode")
 	}
 }
 
@@ -329,7 +323,7 @@ func TestHubBootstrap_DeriveHubUrl(t *testing.T) {
 	}
 }
 
-// Default (deriveHubUrl off) with no hubServer must fail loudly — the policy makes no hub lookup.
+// Default (deriveHubUrl off) with no hubServer must be reported — the policy makes no hub lookup.
 func TestHubBootstrap_HubServerRequiredWithoutDerive(t *testing.T) {
 	raw := renderESOChart(t)
 	selected := selectPolicies(t, raw, map[string]bool{spokeBootstrapName: true})
@@ -338,22 +332,16 @@ func TestHubBootstrap_HubServerRequiredWithoutDerive(t *testing.T) {
 		// no hubServer, deriveHubUrl defaults false
 	})
 
-	r, err := NewResolver(seed)
-	if err != nil {
-		t.Fatalf("NewResolver: %v", err)
+	out := resolveBoth(t, selected, seed)
+
+	// Non-fatal by design (see TestHubBootstrap_InvalidMode): the missing URL is collected into the
+	// status ConfigMap rather than aborting propagation.
+	if !strings.Contains(out, "hub apiserver URL unresolved") {
+		t.Errorf("expected the unresolved-hubServer problem to be reported; not found in:\n%s", out)
 	}
-	hub := r.ResolvePolicy(selected, HubContext{ManagedClusterName: "lint-cluster"})
-	if len(hub.Errors) == 0 {
-		t.Fatalf("expected a hub resolution error when hubServer is unset and deriveHubUrl is off, got none\n%s", hub.Resolved)
-	}
-	var sawMsg bool
-	for _, e := range hub.Errors {
-		if strings.Contains(e, "hub apiserver URL unresolved") {
-			sawMsg = true
-		}
-	}
-	if !sawMsg {
-		t.Errorf("expected the unresolved-hubServer fail; got: %v", hub.Errors)
+	// Without a hub URL there is nothing to point a store at, so none may be created.
+	if strings.Contains(out, "kind: ClusterSecretStore") {
+		t.Errorf("must not create the bootstrap store when the hub apiserver URL is unresolved")
 	}
 }
 
@@ -389,9 +377,13 @@ func TestHubBootstrap_ExternalCAReuseServingCert(t *testing.T) {
 			t.Errorf("reuseServingCert: missing %q\n  reason: %s", c.needle, c.why)
 		}
 	}
-	// This mode mints nothing — there must be no cert-manager Certificate.
-	if strings.Contains(out, "kind: Certificate") {
-		t.Errorf("reuseServingCert: must not mint a Certificate (it reuses the existing serving cert)")
+	// This mode mints nothing. A bare "kind: Certificate" is not proof of a mint: boot-store also
+	// emits a mustnothave Certificate here to sweep a stale one. Assert on the mint's own fields
+	// (issuerRef/commonName), which appear only under the musthave branch.
+	for _, minted := range []string{"issuerRef:", "commonName:"} {
+		if strings.Contains(out, minted) {
+			t.Errorf("reuseServingCert: must not mint a Certificate (found %q); it reuses the existing serving cert", minted)
+		}
 	}
 }
 
@@ -407,20 +399,23 @@ func TestHubBootstrap_LongClusterNameTruncation(t *testing.T) {
 		spokeBootstrapName: true,
 	})
 
-	// selfSigned defaults: prefix autoshift-eso-client, baseDomain autoshift.io. CN budget is the room
-	// the prefix + baseDomain (+2 dots) leave under 63 — computed here so the test tracks the policy.
-	const longName = "external-secrets-managed-cluster-alpha" // 38 chars > budget
-	budget := 61 - len("autoshift-eso-client") - len("autoshift.io")
+	// selfSigned defaults: prefix eso-client, baseDomain autoshift.io. CN budget is the room the
+	// prefix + baseDomain (+2 dots) leave under 63 — computed here so the test tracks the policy.
+	const longName = "external-secrets-managed-cluster-alpha-region-one" // 48 chars > budget
+	budget := 61 - len("eso-client") - len("autoshift.io")
 	seg := longName
 	if len(longName) > budget {
-		seg = longName[:budget]
+		// Mirror the policy: cut to the budget, then trimAll ".-" so a cut landing mid-separator
+		// cannot leave the CN with an empty/invalid trailing DNS label. This name is chosen so the
+		// cut DOES land on a "-", exercising that trim.
+		seg = strings.Trim(longName[:budget], ".-")
 	}
 	if seg == longName {
 		t.Fatalf("test cluster name %q (%d chars) is not longer than the CN budget %d — pick a longer name so truncation is actually exercised", longName, len(longName), budget)
 	}
 	wantSecret := "hub-bootstrap-client-" + seg
 	fullSecret := "hub-bootstrap-client-" + longName
-	wantCN := "autoshift-eso-client." + seg + ".autoshift.io"
+	wantCN := "eso-client." + seg + ".autoshift.io"
 
 	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 	certData := b64("trunc-match-cert")
