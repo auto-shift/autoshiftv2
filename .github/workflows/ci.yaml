@@ -194,6 +194,54 @@ jobs:
           path: label-contract-report.md
           if-no-files-found: warn
 
+  # The release only runs on a tag, so before this job nothing exercised it until the tag was
+  # already pushed: v0.1.0 failed at install-policy-generator because the release container had no
+  # Go, which no PR could have caught. This runs the real release, in the real container, with the
+  # registry push skipped, so the release environment is a PR gate like anything else.
+  release-dry-run:
+    name: Release pipeline (dry run)
+    runs-on: ubuntu-latest
+    container:
+      image: registry.access.redhat.com/ubi9/ubi:latest
+    steps:
+      - name: Install git
+        run: dnf -y install git
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # The same script release.yaml installs with, so this cannot pass on a container the release
+      # fails in.
+      - name: Install release toolchain
+        run: ./scripts/install-release-toolchain.sh
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: tools/go.mod
+          cache: true
+          cache-dependency-path: tools/go.sum
+
+      # Everything a real release does except push: sync values, stamp versions, generate the
+      # policy list, install kustomize and PolicyGenerator, package the charts, render every
+      # PolicyGenerator directory into a Helm chart, and build the artifacts.
+      - name: Run the release with the push skipped
+        run: make release DRY_RUN=true VERSION=0.0.0-ci
+
+      # A step that silently produces nothing still exits 0, so assert the output rather than
+      # trusting the exit status: every policy in policy-list.txt must have a packaged chart.
+      - name: Verify the release output
+        run: |
+          set -euo pipefail
+          test -f .helm-charts/autoshift-0.0.0-ci.tgz
+          expected=$(grep -c . autoshift/files/policy-list.txt)
+          for policy in $(cat autoshift/files/policy-list.txt); do
+            test -f ".helm-charts/policies/${policy}-0.0.0-ci.tgz" \
+              || { echo "missing packaged chart: ${policy}"; exit 1; }
+          done
+          echo "verified ${expected} policy charts, the main chart and the bootstrap charts"
+          ls .helm-charts/bootstrap/*.tgz >/dev/null
+
   docs:
     name: Documentation (build and prose lint)
     runs-on: ubuntu-latest
