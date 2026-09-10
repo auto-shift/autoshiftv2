@@ -1,4 +1,23 @@
 # Hub1 - Spoke hub managed by hub-of-hubs
+#
+# Secrets: this hub does NOT talk to Vault. Vault runs on the hub-of-hubs, which
+# materialises its secrets into that hub's policy namespace; this hub reads them
+# through the hub-bootstrap ClusterSecretStore the boot policies build below —
+# a kubernetes-provider store pointing at the hub-of-hubs API over mTLS.
+#
+# Nothing extra is needed here to make that work, and deliberately so:
+#   - no Vault address, token or :8200 egress rule — this hub never reaches Vault
+#   - no CA material — policy-eso-boot-serving-ca stashes the hub-of-hubs serving CA
+#     and policy-eso-boot-store copies it in, so trust is established automatically
+#   - no client cert — the hub-of-hubs mints one per cluster and the store copies it
+#
+# Consumers on this hub pull a hub-of-hubs Secret by name with their own
+# ExternalSecret against the store, e.g.:
+#   spec:
+#     secretStoreRef: { name: hub-bootstrap, kind: ClusterSecretStore }
+#     data:
+#       - secretKey: message
+#         remoteRef: { key: <secret in the hub-of-hubs policy namespace>, property: message }
 hubClusterSets:
   hub1:
     config:

@@ -148,6 +148,7 @@ flowchart TB
   A[something is wrong] --> B{Policy state<br/>on the hub?}
   B -->|Pending| G1["gate not Compliant yet — by design.<br/>Diagnose the GATE, not the pending policy → R2"]
   B -->|NonCompliant| G2[read the gate message →<br/>status ConfigMap → R1]
+  B -->|"NonCompliant, template-error<br/>saying is forbidden"| R10["fresh-install RBAC race → R10"]
   B -->|all Compliant| C{ESO objects healthy?}
   C -->|"bootstrap store NotReady"| R3[→ R3 mTLS ladder]
   C -->|"user store NotReady /<br/>auth ES failing"| R45["→ R5 (store config) or<br/>R4/R6 (credential chain)"]
@@ -176,7 +177,8 @@ CONFIRM `[hub]`: `oc get policy -n $CLUSTER | grep -v Compliant`
    compliance details for the failing object and reason.
 3. **Template error** (envelope says `template error`). The chart never uses `fail`, so this
    is a real resolution failure: missing rendered-config (I1), RBAC (R2 cause 3), or a chart
-   bug. CHECK I1 `[hub]`:
+   bug. If the message says `is forbidden`, it is the fresh-install RBAC race, not a config
+   error, and it will not self-heal → **R10**. CHECK I1 `[hub]`:
    `oc get cm $CLUSTER.rendered-config -n $POLICY_NS -o jsonpath='{.data.config}' | head -20`
 
 ### R2 — readiness gate stuck NonCompliant (boot policies Pending)
@@ -348,6 +350,54 @@ the deadlock; seed the Secret manually and remove the self-reference.
   Switch off when done (the preview CM self-clears).
 - **Prove preconditions before first enablement**: `readinessOnly: true` → only the gates run;
   when they're Compliant, flip it off.
+
+### R10 — every policy template-errors with `is forbidden` right after a fresh install
+
+**SYMPTOM.** Shortly after a first install (or after the policy namespace is recreated), policies
+report `NonCompliant; template-error` and the message contains, for example:
+
+```
+configmaps "<cluster>.rendered-config" is forbidden: User
+"system:serviceaccount:<POLICY_NS>:autoshift-policy-service-account" cannot list
+resource "configmaps" in API group "" in the namespace "<POLICY_NS>"
+```
+
+`clusterclaims`, `apiservers` or any other looked-up kind appears in place of `configmaps`. The
+state does **not** clear on its own.
+
+**CONFIRM.** `[hub]` — the permission is present *now*, which is what makes this confusing:
+
+```bash
+oc auth can-i list configmaps -n $POLICY_NS \
+  --as=system:serviceaccount:$POLICY_NS:autoshift-policy-service-account   # expect: yes
+```
+
+**CAUSE.** A startup ordering race, not a configuration error. Policies that set
+`hubTemplateOptions.serviceAccountName` resolve their hub templates as
+`autoshift-policy-service-account`, whose `cluster-admin` ClusterRoleBinding is created by the
+`policy-foundation` Application. That Application is a *sibling* of every other policy Application
+under the same ApplicationSet, and Argo CD cannot order sibling Applications — sync waves order
+resources within one Application's sync, never across them. If the binding lands after the policy
+propagator first resolves a policy, the lookup fails.
+
+It does not recover because the lookup **errored** rather than returning a value, so no watch was
+established on it and `evaluationInterval: watch` has nothing to retrigger on. Measured on a live
+cluster: still failing 13 minutes after the permission was granted. `| default dict` around the
+lookup does not help — that handles a nil result, not an error.
+
+This is not ESO-specific. Any policy using the elevated service account is exposed; ESO surfaces it
+first because it performs the most hub lookups.
+
+**FIX.** Force one re-resolution. The propagator re-resolves when the root policy changes, so any
+annotation will do `[hub]`:
+
+```bash
+oc annotate policy -n $POLICY_NS <policy-name> \
+  policy.open-cluster-management.io/trigger-update="$(date +%s)" --overwrite
+```
+
+Apply it to each affected policy; they go Compliant within a propagation cycle. The fix is
+one-time per install — once the binding exists, later resolutions succeed.
 
 ---
 

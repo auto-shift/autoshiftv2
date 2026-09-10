@@ -16,8 +16,87 @@ hubClusterSets:
             baseDomain: autoshift.io
           externalCertAuthority:
             autoshiftProvisioned: false
+        # ===================================================================
+        # ExternalSecretsConfig passthrough.
+        # The operator applies a deny-all egress NetworkPolicy to the operand: only
+        # :6443 and DNS are permitted. The Vault store below is reached over its
+        # passthrough Route on :443, which the chart default already allows, so no
+        # override is needed here.
+        # It WOULD be needed to reach Vault on its native :8200 (the in-cluster
+        # Service, say). In that case restate the :443 rule too: an overriding
+        # networkPolicies list REPLACES the chart default wholesale, and dropping
+        # :443 costs the core controller its HTTPS egress. Symptom of a missing
+        # rule is InvalidProviderConfig + context deadline exceeded.
+        # externalSecretsConfig:
+        #   controllerConfig:
+        #     networkPolicies:
+        #       - name: allow-https-egress
+        #         componentName: ExternalSecretsCoreController
+        #         egress:
+        #           - ports:
+        #               - protocol: TCP
+        #                 port: 443
+        #       - name: allow-vault-8200-egress
+        #         componentName: ExternalSecretsCoreController
+        #         egress:
+        #           - ports:
+        #               - protocol: TCP
+        #                 port: 8200
+        # ===================================================================
+        # Vault store on this hub. Vault runs here (labels below) and is the source of
+        # truth; spoke hubs do NOT talk to Vault directly — they read the Secrets this
+        # hub materialises, through their hub-bootstrap ClusterSecretStore.
+        #
+        # PREREQUISITE, created by hand on the cluster (never in git — it is a
+        # credential): a Secret holding a Vault token scoped to a read-only policy.
+        #   oc create secret generic vault-eso-token -n <policy-namespace> \
+        #     --from-literal=token=<vault token with a read-only policy>
+        # Generate it with: vault token create -policy=eso-reader -period=720h
+        #
+        # TLS: caProvider reads ca.crt from the cert-manager-issued vault-tls Secret in
+        # the vault namespace, so no CA material is carried in values either.
+        # ===================================================================
+        secretStores:
+          - clusterSecretStore:
+              name: hub-vault
+              spec:
+                provider:
+                  vault:
+                    # Vault's passthrough Route, NOT the in-cluster Service: this is the
+                    # path a consumer outside the cluster takes. Replace the host with this
+                    # cluster's Route (oc get route -n vault vault).
+                    # It MUST also be set in vault-external-hostname below, which adds it to
+                    # the Vault serving cert SANs. Passthrough means the client validates
+                    # Vault's own cert, so a host missing from the SANs fails with
+                    # "x509: certificate is valid for ..., not <route host>".
+                    server: 'https://vault-vault.apps.example.com:443'
+                    path: 'secret'
+                    version: 'v2'
+                    caProvider:
+                      type: Secret
+                      name: vault-tls
+                      namespace: vault
+                      key: ca.crt
+                    auth:
+                      tokenSecretRef:
+                        name: vault-eso-token
+                        namespace: policies-autoshift
+                        key: token
 
     labels:
+      ### Vault (source of truth for this deployment's secrets)
+      # Requires cert-manager + a ClusterIssuer (autoshift-ca, below) for the serving cert.
+      # NOTE: the upstream chart pulls docker.io/hashicorp/* — a cluster running the
+      # manual-remediations policy restricts registries and must allow docker.io first,
+      # or the pods sit in ImagePullBackOff and Vault's PDB then blocks node drains.
+      vault: 'true'
+      vault-seal-type: 'shamir'          # manual unseal ceremony; see policies/community/vault
+      vault-tls-issuer: 'autoshift-ca'
+      # Adds the Route host to the Vault serving cert SANs; must match the store server above.
+      # NOTE: Vault does not hot-reload TLS. SIGHUP does not pick up a reissued cert, so the
+      # pods must be restarted after this changes — and with the shamir seal, unsealed again.
+      vault-external-hostname: 'vault-vault.apps.example.com'
+      vault-storage-size: '5Gi'
       cert-manager: 'true'
       cert-manager-subscription-name: openshift-cert-manager-operator
       cert-manager-channel: stable-v1
