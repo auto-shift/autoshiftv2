@@ -321,7 +321,7 @@ Taints specific master nodes with `NoSchedule` so they run only control plane co
 **Why a custom taint key?** On compact clusters, the OpenShift scheduler operator has `mastersSchedulable: true` and actively removes the standard `node-role.kubernetes.io/control-plane:NoSchedule` taint. Using the standard key would create a reconciliation loop between ACM and the scheduler operator. The custom key `autoshift.io/unschedulable-control-plane` avoids this conflict entirely.
 
 **Impact on workloads:**
-- **Application workloads**: No changes needed. Pods without a toleration for the custom taint simply won't schedule on the dedicated node.
+- **Application workloads**: No changes needed. Pods without a toleration for the custom taint simply will not schedule on the dedicated node.
 - **System DaemonSets** (OVN-Kubernetes, CSI plugins, machine-config-daemon, etc.): Unaffected. These use `operator: Exists` tolerations that tolerate all taints.
 - **Control plane components** (etcd, API server, scheduler, controllers): Unaffected. These run as static pods with all-taint tolerations.
 
