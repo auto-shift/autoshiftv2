@@ -579,6 +579,42 @@ hubClusterSets:
         #           - ports:
         #               - protocol: TCP
         #                 port: 8200
+        # Secrets this cluster CONSUMES (the data counterpart to secretStores, which only
+        # provisions stores and the credentials they authenticate with). Rendered into
+        # ExternalSecrets on whichever cluster the config lands on, by
+        # policy-eso-external-secrets. `data`, `dataFrom` and `target` pass through verbatim.
+        # Reading through hub-bootstrap is subject to the hub's per-cluster grant, and
+        # dataFrom.find needs `list`, which a name-scoped grant denies — name keys explicitly.
+        externalSecrets:
+          - name: demo-app-creds
+            namespace: app-secrets            # where the Secret lands on THIS cluster
+            storeRef:
+              name: hub-bootstrap
+              kind: ClusterSecretStore
+            refreshInterval: 1h
+            data:
+              - secretKey: password
+                remoteRef:
+                  key: demo-app-creds         # the Secret's name in the store's remoteNamespace
+                  property: password
+        # Secrets this cluster CONSUMES. secretStores (below) provisions stores and the
+        # credentials they authenticate with; this is the data pulled THROUGH them, rendered
+        # into ExternalSecrets by policy-eso-cluster-secrets on whichever cluster the config
+        # lands on. data, dataFrom and target pass through to ESO verbatim.
+        # Reading through hub-bootstrap is subject to the hub's per-cluster grant, and
+        # dataFrom.find needs `list`, which a name-scoped grant denies — name keys explicitly.
+        secrets:
+          - name: demo-app-creds
+            namespace: app-secrets            # where the Secret lands on THIS cluster
+            storeRef:
+              name: hub-bootstrap
+              kind: ClusterSecretStore
+            refreshInterval: 1h
+            data:
+              - secretKey: password
+                remoteRef:
+                  key: demo-app-creds         # the Secret's name in the store's remoteNamespace
+                  property: password
         secretStores:
           - clusterSecretStore:
               name: vault-backend
