@@ -2,10 +2,11 @@ object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $auth := (index (index $config "acs" | default dict) "auth" | default dict) hub}}
-  {{hub- $authProvider := (index $auth "provider" | default "openshift") hub}}
+  # Assigned but not yet read: the ConfigMap below only emits OpenShift auth. This is the seam
+  # for keycloak and ldap, which branch here and get added to placement-auth-hub.yaml.
+  {{hub- $authProvider := (index .ManagedClusterLabels "autoshift.io/acs-auth-provider" | default "none") hub}}
   {{hub- $minimumRole := (index $auth "minimumRole" | default "None") hub}}
   {{hub- $adminGroup := (index $auth "adminGroup" | default "cluster-admins") hub}}
-  {{hub- if $authProvider hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -23,4 +24,3 @@ object-templates-raw: |
             - key: groups
               value: '{{hub $adminGroup hub}}'
               role: Admin
-  {{hub- end hub}}

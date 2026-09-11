@@ -116,8 +116,8 @@ missing default produces `<no value>` in the output, which the validation suite 
 
 **Keep related settings under one config key.** A policy that owns its settings should read a single
 top-level key named after the component, so `workload-partitioning` reads `config.workloadPartitioning`.
-Shared facts that several policies need, such as `networking`, `hosts`, and `disconnected`, are
-top-level keys of their own rather than being duplicated per component.
+Shared facts that several policies need, such as `networking`, `hosts`, `disconnected`, and
+`images`, are top-level keys of their own rather than being duplicated per component.
 
 **Never put credentials in config.** Config becomes a ConfigMap, which is not a secret. Reference a
 Secret that an administrator creates on the cluster instead.
