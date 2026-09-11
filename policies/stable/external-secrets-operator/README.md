@@ -125,7 +125,7 @@ flowchart LR
 
 ## Responsibilities — which policy owns what
 
-The chart renders 13 Policies grouped into 6 PolicySets; **all placement lives in
+The chart renders 14 Policies grouped into 6 PolicySets; **all placement lives in
 `templates/policysets.yaml`** — the policy files carry none. Most policies pair an *enforce*
 ConfigurationPolicy (does the work, records per-item failures into a status ConfigMap) with an
 *inform gate* (surfaces those failures as NonCompliant detail). The full ownership map lives in
@@ -1210,6 +1210,66 @@ config:
   username). The client cert and the remote apiserver's `spec.clientCA` trust are provisioned
   separately (out of band, or via the hub-bootstrap flow).
 
+## Unowned secrets (`config.eso.secrets`)
+
+*Key tables: [`config.eso.secrets[]`](config-reference.md#configesosecrets--unowned-secrets) in config-reference.md.*
+
+> [!IMPORTANT]
+> This is an **escape hatch**, not the normal way to consume a secret. A component that needs a
+> secret declares it under its **own** config key and renders its own ExternalSecret, the way
+> `quay.configSecretRef`, `aws.credentialRef` and `clusterInstall.pullSecretRef` already work.
+> That keeps ownership, dependency order and lifecycle with the component that cares, and follows
+> the rule in [config and labels](../../../docs/config-and-labels.md) that a policy owning
+> configuration reads one top-level key named after its component. Declaring another component's
+> secrets here inverts that, and excluding this policy would silently delete them.
+>
+> Use `config.eso.secrets` for secrets that belong to **no** component: an application team's
+> credential, an ad hoc pull during a migration, anything with no chart of its own.
+
+`secretStores` above provisions stores and the credentials those stores authenticate with. This is
+data pulled **through** them. `policy-eso-cluster-secrets` renders each entry into an ExternalSecret
+on whichever cluster the config lands on.
+
+```yaml
+config:
+  eso:
+    secrets:
+      - name: demo-app-creds
+        namespace: app-secrets            # where the Secret lands on THIS cluster
+        storeRef:
+          name: hub-bootstrap             # any store that exists on this cluster
+          kind: ClusterSecretStore
+        refreshInterval: 1h
+        data:
+          - secretKey: password
+            remoteRef:
+              key: demo-app-creds         # the Secret's name in the store's remoteNamespace
+              property: password
+```
+
+`data`, `dataFrom` and `target` pass through to ESO verbatim, so anything the installed ESO accepts
+works. `target` defaults to the entry's own name with `creationPolicy: Owner`.
+
+Validation reports rather than fails. A missing `name`, `namespace` or `storeRef.name`, neither or
+both of `data`/`dataFrom`, or a duplicate namespace and name is collected into the
+`eso-cluster-secrets-status` ConfigMap and that entry is skipped, so one malformed entry never stops
+the others being created. The `eso-cluster-secrets-gate` inform policy turns that report into a
+NonCompliant signal.
+
+Removing an entry deletes its ExternalSecret when the baked `autoshift.io/eso-prune` label says so,
+the same mechanism `secretStores` uses.
+
+### Reading through the bootstrap store
+
+Keys named here are folded into the hub's per-cluster grant automatically, so a declared secret is
+never denied by its own RBAC. Two things follow from how that grant works:
+
+- `dataFrom.find` needs `list`, which a name-scoped grant denies. Name keys explicitly when reading
+  from the policy namespace.
+- What a cluster may read depends on which namespace the secret is in. See `sharedNamespace` below:
+  material meant for every child belongs in the curated fan-out namespace, and anything that must
+  reach exactly one cluster stays in the policy namespace.
+
 ## Cluster→cluster hub bootstrap (`config.eso.hubBootstrap`)
 
 *Concept walkthrough: [the bootstrap store](mechanics.md#2-the-bootstrap-store--clustercluster-secret-transport); key tables:
@@ -1416,6 +1476,41 @@ on/off in any mode; explicitly-set fields always win.
   caveat:** that path pins the serving leaf chain (not a CA), so on serving-cert rotation there's a
   one-`evalInterval` window where the spoke trusts the stale leaf and reads fail closed; the
   operator-managed fallback is rotation-clean. Point `hubCASource*` at a stable custom CA to avoid it.
+
+### What a child may read (`sharedNamespace`)
+
+The bootstrap store reads one namespace on the propagating hub, and each child is granted access to
+it. By default that namespace is the **policy namespace**, which also holds every cluster's
+bootstrap client key, the cluster-install credentials and the tenancy material. Granting children
+broad access there means a spoke can read another spoke's client key and then present that identity
+to the hub. The store carries no `spec.conditions` either, so any namespace on a spoke can reference
+it.
+
+`sharedNamespace` splits the two:
+
+```yaml
+config:
+  eso:
+    hubBootstrap:
+      sharedNamespace: policies-autoshift-shared
+```
+
+- The bootstrap store's `remoteNamespace` points there, and `policy-eso-boot-prereqs` creates it.
+- Publish into it only what is meant for children. Broad read is then safe by construction.
+- The policy namespace narrows to **declared names only**: the union of each cluster's
+  `authSecretConfig[].hubSecretName` and its `config.eso.secrets[]` remote keys, granted per
+  cluster with `resourceNames` and `get`, in place of one shared Role bound to every identity.
+
+Leaving it unset keeps the historical behaviour exactly: one broad Role per tenancy namespace, no
+declarations needed, nothing to migrate. **Setting it is the opt-in to scoping**, so the safer model
+never breaks an existing deployment by surprise.
+
+Two consequences worth knowing before enabling it. `resourceNames` denies `list` outright, so
+`dataFrom.find` cannot work against the policy namespace, so name keys explicitly. A cluster that
+declares nothing gets an empty `rules: []`: authenticated, authorized for nothing.
+
+Material that must reach exactly one cluster, a per-cluster registration secret for example,
+belongs in the policy namespace behind the scoped grant, never in the fan-out namespace.
 
 ### Trust modes (`config.eso.hubBootstrap.mode`)
 

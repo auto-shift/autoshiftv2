@@ -58,6 +58,10 @@
 # All-or-nothing: absent config.eso.hubBootstrap -> no-op. Depends on ESO being installed.
 #
 {{- $policyNamespace := $.Values.policy_namespace }}
+{{- /* Namespace the bootstrap store reads on the propagating hub. Defaults to the policy namespace
+       (historical); a curated fan-out namespace is what makes broad child access safe.
+       Runtime override: config.eso.hubBootstrap.sharedNamespace. */ -}}
+{{- $sharedNamespace := (dig "hubBootstrap" "sharedNamespace" "" $.Values.externalSecretsOperator | default $policyNamespace) }}
 {{- $eso := $.Values.externalSecretsOperator }}
 {{- $hb := (default (dict) $eso.hubBootstrap) }}
 {{- $esoNamespace := $eso.namespace }}
@@ -183,6 +187,7 @@ spec:
                       {{ "{{hub-" }} $hubServer = (fromClusterClaim "apiserverurl.openshift.io") {{ "hub}}" }}
                     {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} $storeName := (index $hubBootstrap "storeName" | default "{{ $storePrefix }}") {{ "hub}}" }}
+                    {{ "{{hub-" }} $sharedNs := (index $hubBootstrap "sharedNamespace" | default "{{ $sharedNamespace }}") {{ "hub}}" }}
                     ##### externalCA-mode mint settings: the CN prefix + baseDomain are bridged to the spoke, which derives #####
                     ##### its own client cert CN the SAME way as the hub clientca-external policy (from its apiserverurl.openshift.io #####
                     ##### clusterClaim real name) so it matches the hub RBAC, plus the user-provided spoke issuer. #####
@@ -290,6 +295,7 @@ spec:
                     {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $hubServer := `{{ "{{hub" }} $hubServer {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $sharedNs := `{{ "{{hub" }} $sharedNs {{ "hub}}" }}` {{ "}}" }}
                     ##### externalCA CN inputs — the spoke derives the full CN/SAN itself from these + its own apiserver URL #####
                     {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
@@ -519,7 +525,7 @@ spec:
                                   name: {{ $servingCAConfigMap }}
                                   key: ca.crt
                                   namespace: {{ $esoNamespace }}
-                              remoteNamespace: {{ $policyNamespace }}
+                              remoteNamespace: {{ "{{" }} $sharedNs {{ "}}" }}
                               auth:
                                 cert:
                                   clientCert:
@@ -597,6 +603,7 @@ spec:
               {{ "{{hub-" }} $hubServer = (fromClusterClaim "apiserverurl.openshift.io") {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $storeName := (index $hubBootstrap "storeName" | default "{{ $storePrefix }}") {{ "hub}}" }}
+                    {{ "{{hub-" }} $sharedNs := (index $hubBootstrap "sharedNamespace" | default "{{ $sharedNamespace }}") {{ "hub}}" }}
             ##### externalCA-mode mint settings: the CN prefix + baseDomain are bridged to the spoke, which derives #####
             ##### its own client cert CN the SAME way as the hub clientca-external policy (from its apiserverurl.openshift.io #####
             ##### clusterClaim real name) so it matches the hub RBAC, plus the user-provided spoke issuer. #####
@@ -704,6 +711,7 @@ spec:
             {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $hubServer := `{{ "{{hub" }} $hubServer {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $sharedNs := `{{ "{{hub" }} $sharedNs {{ "hub}}" }}` {{ "}}" }}
             ##### externalCA CN inputs — the spoke derives the full CN/SAN itself from these + its own apiserver URL #####
             {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
@@ -933,7 +941,7 @@ spec:
                           name: {{ $servingCAConfigMap }}
                           key: ca.crt
                           namespace: {{ $esoNamespace }}
-                      remoteNamespace: {{ $policyNamespace }}
+                      remoteNamespace: {{ "{{" }} $sharedNs {{ "}}" }}
                       auth:
                         cert:
                           clientCert:

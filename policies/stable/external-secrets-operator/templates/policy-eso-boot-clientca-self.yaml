@@ -224,6 +224,9 @@ spec:
                     {{ "{{-" }} $cnBudget := (sub 61 (add (len $certCNPrefix) (len $certBaseDomain))) {{ "}}" }}
                     {{ "{{-" }} $eligible := list {{ "}}" }}
                     {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
+                    ##### Per-cluster reader scope: "<ownerNs>|<CN>" -> the hub Secret names THAT cluster declares. #####
+                    ##### Drives one narrowly-scoped Role per cluster instead of one namespace-wide Role shared by all. #####
+                    {{ "{{-" }} $nsScopes := dict {{ "}}" }}
                     {{ "{{-" }} $seenNames := dict {{ "}}" }}
                     ##### This policy owns the selfSigned mode ONLY. In externalCA / externalCAReuseServingCert #####
                     ##### the hub mints no CA + no client certs — policy ...-boot-clientca-ext owns those #####
@@ -278,6 +281,39 @@ spec:
                             {{ "{{-" }} $nsList := (index $nsIdentities $tenancyNs | default list) {{ "}}" }}
                             {{ "{{-" }} $nsList = append $nsList $certCN {{ "}}" }}
                             {{ "{{-" }} $_ := set $nsIdentities $tenancyNs $nsList {{ "}}" }}
+                            ##### Scope = the hub Secrets this cluster's own stores name. Read from ITS rendered-config in #####
+                            ##### its owning namespace, same cross-tenant read policy-eso-hub-secrets uses. A cluster that #####
+                            ##### declares none gets an empty Role: authenticated, authorized for nothing. #####
+                            {{ "{{-" }} $scopeCfg := (dig "data" "config" "" ((lookup "v1" "ConfigMap" $tenancyNs (printf "%s.rendered-config" $mcName)) | default dict) | fromYaml | default dict) {{ "}}" }}
+                            {{ "{{-" }} $scopeNames := list {{ "}}" }}
+                            {{ "{{-" }} range $si := (dig "eso" "secretStores" (list) $scopeCfg) {{ "}}" }}
+                              {{ "{{-" }} $si = ($si | default dict) {{ "}}" }}
+                              {{ "{{-" }} $st := dict {{ "}}" }}
+                              {{ "{{-" }} if hasKey $si "clusterSecretStore" {{ "}}" }}{{ "{{-" }} $st = (index $si "clusterSecretStore" | default dict) {{ "}}" }}{{ "{{-" }} else if hasKey $si "secretStore" {{ "}}" }}{{ "{{-" }} $st = (index $si "secretStore" | default dict) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} range $c, $src := (dig "authSecretConfig" "sources" (dict) $st) {{ "}}" }}
+                                {{ "{{-" }} $hsn := (index ($src | default dict) "hubSecretName" | default "") {{ "}}" }}
+                                {{ "{{-" }} if and (ne $hsn "") (not (has $hsn $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $hsn {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} range $se := (dig "eso" "secrets" (list) $scopeCfg) {{ "}}" }}
+                              {{ "{{-" }} $se = ($se | default dict) {{ "}}" }}
+                              ##### data[].remoteRef.key and dataFrom[].extract.key are the Secret NAMES this #####
+                              ##### cluster asks for. Collected regardless of which store the entry targets: the #####
+                              ##### grant only ever means "may read a Secret of this name in the policy namespace", #####
+                              ##### which is the declared intent either way. #####
+                              {{ "{{-" }} range $d := (index $se "data" | default list) {{ "}}" }}
+                                {{ "{{-" }} $k := (dig "remoteRef" "key" "" ($d | default dict)) {{ "}}" }}
+                                {{ "{{-" }} if and (ne $k "") (not (has $k $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $k {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} range $d := (index $se "dataFrom" | default list) {{ "}}" }}
+                                {{ "{{-" }} $k := (dig "extract" "key" "" ($d | default dict)) {{ "}}" }}
+                                {{ "{{-" }} if and (ne $k "") (not (has $k $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $k {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
+                            ##### That cluster's own fan-out namespace. Equal to the tenancy namespace unless #####
+                            ##### config.eso.hubBootstrap.sharedNamespace is set — which is the opt-in to scoping. #####
+                            {{ "{{-" }} $clusterShared := (dig "eso" "hubBootstrap" "sharedNamespace" $tenancyNs $scopeCfg) {{ "}}" }}
+                            {{ "{{-" }} $_ := set $nsScopes (printf "%s|%s|%s|%s" $tenancyNs $certCN $nameSeg $clusterShared) $scopeNames {{ "}}" }}
                           {{ "{{-" }} end {{ "}}" }}
                         {{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }}
@@ -340,39 +376,68 @@ spec:
                       ##### sweep below lists them and deletes any whose namespace is no longer a key in $nsIdentities. The hub- #####
                       ##### global CA / issuers / clientCA / APIServer are deliberately NOT labelled (different lifecycle, and #####
                       ##### they do not live in a tenancy namespace, so a namespace-based sweep must never touch them). #####
-                      {{ "{{-" }} range $ownerNs, $cns := $nsIdentities {{ "}}" }}
+                      ##### ONE Role + RoleBinding PER CLUSTER, scoped by resourceNames to the hub Secrets that cluster #####
+                      ##### declares. A namespace-wide Role shared by every CN let any spoke read every other spoke's #####
+                      ##### client key and impersonate it to the hub. resourceNames also denies `list`, which is the #####
+                      ##### point: an unrestricted list on secrets returns their contents. The cost is that #####
+                      ##### dataFrom.find cannot work through the bootstrap store — name the keys explicitly. #####
+                      ##### Expected per-cluster RBAC names this evaluation, so the sweep below can retire a Role whose #####
+                      ##### cluster is gone even when its namespace still owns others. #####
+                      {{ "{{-" }} $expectRBAC := dict {{ "}}" }}
+                      {{ "{{-" }} range $sk, $sv := $nsScopes {{ "}}" }}
+                        {{ "{{-" }} $pp := (splitList "|" $sk) {{ "}}" }}
+                        {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s-%s" (index $pp 0) $readerRole (index $pp 2)) true {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} range $scopeKey, $scopeNames := $nsScopes {{ "}}" }}
+                      {{ "{{-" }} $parts := (splitList "|" $scopeKey) {{ "}}" }}
+                      {{ "{{-" }} $ownerNs := (index $parts 0) {{ "}}" }}
+                      {{ "{{-" }} $cn := (index $parts 1) {{ "}}" }}
+                      {{ "{{-" }} $roleName := (printf "%s-%s" $readerRole (index $parts 2)) {{ "}}" }}
+                      {{ "{{-" }} $sharedNs := (index $parts 3) {{ "}}" }}
+                      ##### DEFAULT (sharedNs == ownerNs): broad read on the tenancy namespace, exactly as #####
+                      ##### before — nothing to declare, nothing breaks. Setting sharedNamespace OPTS IN to #####
+                      ##### the split: broad read stays on the curated fan-out namespace (safe, everything in #####
+                      ##### it is meant for children) and the tenancy namespace narrows to declared names only. #####
+                      {{ "{{-" }} $broad := (eq $sharedNs $ownerNs) {{ "}}" }}
                     - complianceType: musthave
                       objectDefinition:
                         apiVersion: rbac.authorization.k8s.io/v1
                         kind: Role
                         metadata:
-                          name: {{ $readerRole }}
+                          name: {{ "{{" }} $roleName {{ "}}" }}
                           namespace: {{ "{{" }} $ownerNs {{ "}}" }}
                           labels:
                             autoshift.io/secret-reader-role: {{ $storePrefix }}
                         rules:
+                          {{ "{{-" }} if $broad {{ "}}" }}
                           - apiGroups: [""]
                             resources: ["secrets"]
                             verbs: ["get", "list", "watch"]
+                          {{ "{{-" }} else if $scopeNames {{ "}}" }}
+                          - apiGroups: [""]
+                            resources: ["secrets"]
+                            resourceNames: {{ "{{" }} $scopeNames | toRawJson {{ "}}" }}
+                            verbs: ["get"]
+                          {{ "{{-" }} else {{ "}}" }}
+                          []
+                          {{ "{{-" }} end {{ "}}" }}
                     - complianceType: mustonlyhave
                       objectDefinition:
                         apiVersion: rbac.authorization.k8s.io/v1
                         kind: RoleBinding
                         metadata:
-                          name: {{ $readerRole }}
+                          name: {{ "{{" }} $roleName {{ "}}" }}
                           namespace: {{ "{{" }} $ownerNs {{ "}}" }}
                           labels:
                             autoshift.io/secret-reader-rolebinding: {{ $storePrefix }}
                         roleRef:
                           apiGroup: rbac.authorization.k8s.io
                           kind: Role
-                          name: {{ $readerRole }}
+                          name: {{ "{{" }} $roleName {{ "}}" }}
                         subjects:
-                          {{ "{{-" }} range $cn := $cns {{ "}}" }}
                           - kind: User
                             name: {{ "{{" }} $cn {{ "}}" }}
                             apiGroup: rbac.authorization.k8s.io
-                          {{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }}
                       ##### PER CLUSTER: one client cert minted into the cluster's OWN owning namespace (where its owning #####
                       ##### deployment's store policy reads it). Secret name reuses the truncated CN segment, so that store #####
@@ -439,7 +504,7 @@ spec:
                         {{ "{{-" }} $rbLabels := (dig "metadata" "labels" (dict) $rb) {{ "}}" }}
                         {{ "{{-" }} if hasKey $rbLabels "autoshift.io/secret-reader-rolebinding" {{ "}}" }}
                           {{ "{{-" }} $rbNs := (dig "metadata" "namespace" "" $rb) {{ "}}" }}
-                          {{ "{{-" }} if not (hasKey $nsIdentities $rbNs) {{ "}}" }}
+                          {{ "{{-" }} if not (hasKey $expectRBAC (printf "%s/%s" $rbNs (dig "metadata" "name" "" $rb))) {{ "}}" }}
                     - complianceType: mustnothave
                       objectDefinition:
                         apiVersion: rbac.authorization.k8s.io/v1
@@ -454,7 +519,7 @@ spec:
                         {{ "{{-" }} $roleLabels := (dig "metadata" "labels" (dict) $role) {{ "}}" }}
                         {{ "{{-" }} if hasKey $roleLabels "autoshift.io/secret-reader-role" {{ "}}" }}
                           {{ "{{-" }} $roleNs := (dig "metadata" "namespace" "" $role) {{ "}}" }}
-                          {{ "{{-" }} if not (hasKey $nsIdentities $roleNs) {{ "}}" }}
+                          {{ "{{-" }} if not (hasKey $expectRBAC (printf "%s/%s" $roleNs (dig "metadata" "name" "" $role))) {{ "}}" }}
                     - complianceType: mustnothave
                       objectDefinition:
                         apiVersion: rbac.authorization.k8s.io/v1
