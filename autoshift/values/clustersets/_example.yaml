@@ -597,10 +597,12 @@ hubClusterSets:
                 remoteRef:
                   key: demo-app-creds         # the Secret's name in the store's remoteNamespace
                   property: password
-        # Secrets this cluster CONSUMES. secretStores (below) provisions stores and the
-        # credentials they authenticate with; this is the data pulled THROUGH them, rendered
-        # into ExternalSecrets by policy-eso-cluster-secrets on whichever cluster the config
-        # lands on. data, dataFrom and target pass through to ESO verbatim.
+        # ESCAPE HATCH for secrets owned by no component. A component that needs a secret
+        # declares it under its OWN config key and renders its own ExternalSecret, the way
+        # quay.configSecretRef and aws.credentialRef already do -- that keeps ownership and
+        # lifecycle with the component that cares. Use this only for credentials with no
+        # chart of their own. Rendered by policy-eso-cluster-secrets; data, dataFrom and
+        # target pass through to ESO verbatim.
         # Reading through hub-bootstrap is subject to the hub's per-cluster grant, and
         # dataFrom.find needs `list`, which a name-scoped grant denies — name keys explicitly.
         secrets:

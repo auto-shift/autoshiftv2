@@ -47,16 +47,51 @@ hubClusterSets:
         # truth; spoke hubs do NOT talk to Vault directly — they read the Secrets this
         # hub materialises, through their hub-bootstrap ClusterSecretStore.
         #
-        # PREREQUISITE, created by hand on the cluster (never in git — it is a
-        # credential): a Secret holding a Vault token scoped to a read-only policy.
-        #   oc create secret generic vault-eso-token -n <policy-namespace> \
-        #     --from-literal=token=<vault token with a read-only policy>
-        # Generate it with: vault token create -policy=eso-reader -period=720h
+        # No credential to place: the store uses Vault Kubernetes auth, so External Secrets
+        # Operator mints a short-lived bound token for its own ServiceAccount and Vault
+        # validates it. Nothing static is stored, relayed or rotated.
+        #
+        # PREREQUISITE, on Vault (one-time, not a credential):
+        #   vault auth enable kubernetes
+        #   vault write auth/kubernetes/config kubernetes_host=https://kubernetes.default.svc
+        #   vault write auth/kubernetes/role/eso-reader \
+        #     bound_service_account_names=external-secrets \
+        #     bound_service_account_namespaces=external-secrets policies=eso-reader ttl=1h
         #
         # TLS: caProvider reads ca.crt from the cert-manager-issued vault-tls Secret in
         # the vault namespace, so no CA material is carried in values either.
         # ===================================================================
         secretStores:
+          # Chained off the root store below: policy-eso-hub-secrets runs here (it enumerates
+          # every owned ManagedCluster, including this one) and pulls eso/hubofhubs-reader-token
+          # out of Vault into Secret hubofhubs-reader-token in this hub's policy namespace.
+          # That Secret is what spoke hubs relay down - see hub1.yaml. A token for a
+          # ServiceAccount on THIS cluster, so the spokes authenticate here, never to Vault.
+          - clusterSecretStore:
+              name: hubofhubs-secrets
+              authSecretConfig:
+                fromRef: kubernetesToken
+                sources:
+                  bearerToken:
+                    hubSecretName: hubofhubs-reader-token
+                    key: token
+                    external:
+                      storeRef:
+                        name: hub-vault
+                        kind: ClusterSecretStore
+                      remoteRef:
+                        key: 'eso/hubofhubs-reader-token'
+                        property: token
+              spec:
+                provider:
+                  kubernetes:
+                    remoteNamespace: 'policies-autoshift'
+                    auth:
+                      token:
+                        bearerToken:
+                          name: hubofhubs-reader-token
+                          key: token
+                          namespace: 'external-secrets-operator'
           - clusterSecretStore:
               name: hub-vault
               spec:
@@ -78,10 +113,14 @@ hubClusterSets:
                       namespace: vault
                       key: ca.crt
                     auth:
-                      tokenSecretRef:
-                        name: vault-eso-token
-                        namespace: policies-autoshift
-                        key: token
+                      # serviceAccountRef names the ESO CONTROLLER's ServiceAccount, which lives in
+                      # the operand namespace (external-secrets), not the operator namespace.
+                      kubernetes:
+                        mountPath: 'kubernetes'
+                        role: 'eso-reader'
+                        serviceAccountRef:
+                          name: 'external-secrets'
+                          namespace: 'external-secrets'
 
     labels:
       ### Vault (source of truth for this deployment's secrets)

@@ -64,6 +64,7 @@ chart-only) can be overridden per deployment/cluster under `config.eso.hubBootst
 | `hubServer` | string | `''` | Hub apiserver URL (e.g. `https://api.hub.example.com:6443`). Required unless `deriveHubUrl` is true. Runtime override: `config.eso.hubBootstrap.hubServer`. |
 | `deriveHubUrl` | bool | `false` | If true AND `hubServer` is empty, the copy policy looks the hub apiserver URL up itself (hub-template lookup of the `apiserverurl.openshift.io` ClusterClaim on the **immediate propagating hub**). Prefer this over a static `hubServer` in multi-hop (global-hub → spoke-hub → leaf) topologies — each cluster resolves the hub that minted its cert. Runtime override: `config.eso.hubBootstrap.deriveHubUrl`. |
 | `storePrefix` | string | `hub-bootstrap` | Names everything the bootstrap mints/copies: store (default), `<prefix>-client` Secret, `<prefix>-hub-ca` ConfigMap, `<prefix>-reader` Role, `<prefix>-ca` / issuers, `<prefix>-client-ca` ConfigMap. Chart-only (the spoke store *name* alone can be overridden at runtime via `config.eso.hubBootstrap.storeName`). |
+| `sharedNamespace` | string | `''` | Namespace on the propagating hub that the bootstrap store READS, and that children are granted broad access to. Empty resolves to the policy namespace, which is the historical behaviour and is **not** safe to grant broadly — that namespace also holds the per-cluster client keys, install credentials and tenancy material. Point it at a curated fan-out namespace (conventionally `<policy namespace>-shared`) so "read anything here" is safe by construction, and anything that must reach exactly one cluster stays in the policy namespace behind a scoped grant. Setting it is also the opt-in to per-cluster scoped reader RBAC. Runtime override: `config.eso.hubBootstrap.sharedNamespace`. |
 | `clientCAConfigMap` | string | `''` → `<storePrefix>-client-ca` | Name of the `openshift-config` ConfigMap `APIServer.spec.clientCA` points at. Chart-only. |
 | `authSecretRefreshInterval` | duration | `1h` | Default `refreshInterval` for the store-auth ExternalSecrets `policy-eso-secret-stores` emits (credential pulls through the bootstrap store). Per-store override: `secretStores[].authSecretConfig.refreshInterval`. Chart-only. |
 | `teardown` | bool | `false` | Explicit decommission flag: every boot policy switches from provisioning to removal (spoke store + client secret + serving-CA copy, hub mint estate, reader RBAC, clientCA ConfigMap, `APIServer.spec.clientCA` → `""` — a disruptive apiserver rollout). Removing the `hubBootstrap` block WITHOUT this flag is a deliberate no-op. Runtime override: `config.eso.hubBootstrap.teardown`. See README → Decommissioning. |
@@ -186,8 +187,37 @@ values files (per-cluster files may override). Everything here is evaluated **pe
 |---|---|---|---|
 | `pruneRemovedStores` | bool | chart `pruneRemovedStores` (`true`) | Deployment-wide prune default for removed store entries. Baked as the `autoshift.io/eso-prune` label at emission time. Per-store override below. |
 | `secretStores` | list(map) | `[]` | The store list — see next section. |
+| `secrets` | list(map) | `[]` | Escape hatch for secrets owned by no component — see `config.eso.secrets[]` below. A component's own secrets belong under its own config key. `secretStores` provisions stores and the credentials they authenticate with; this is the data pulled **through** them, rendered by `policy-eso-cluster-secrets` on whichever cluster the config lands on. |
 | `externalSecretsConfig` | map | unset | Per-cluster `ExternalSecretsConfig` CR **spec** overlay — highest-precedence layer, deep-merged over the chart's `externalSecretsConfig` overlay and the `config*` defaults (this overlay wins; lists replaced wholesale). Zero values (`0`/`false`/`""`) here cannot override a non-zero chart default — set those at chart level. See README *ExternalSecretsConfig passthrough*. |
 | `hubBootstrap` | map | unset | Cluster→cluster bootstrap config — see below. Present ⇒ the boot policies provision the store; **absent ⇒ no-op** (removal never tears anything down; use `teardown: true`). |
+
+### `config.eso.secrets[]` — unowned secrets
+
+An **escape hatch** for secrets that belong to no component. A component that needs a secret
+declares it under its own config key and renders its own ExternalSecret (see
+[config and labels](../../../docs/config-and-labels.md)); putting it here instead inverts
+ownership and ties its lifecycle to this policy.
+
+Rendered by `policy-eso-cluster-secrets`. `data`, `dataFrom` and `target` pass through to ESO
+verbatim; only the fields below are interpreted. A malformed entry is reported in
+`eso-cluster-secrets-status` and skipped, so one bad entry never stops the others.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | — (required) | ExternalSecret name, and the default target Secret name. |
+| `namespace` | string | — (required) | Namespace on **this** cluster where the Secret lands. |
+| `storeRef.name` | string | — (required) | A store that exists on this cluster (for example the bootstrap store). |
+| `storeRef.kind` | string | `ClusterSecretStore` | `ClusterSecretStore` or `SecretStore`. |
+| `refreshInterval` | duration | ESO default | Re-pull cadence. |
+| `target` | map | `{name: <name>, creationPolicy: Owner}` | ESO `target`, verbatim. |
+| `data` | list(map) | — | Per-key pulls; `remoteRef` verbatim. Exactly one of `data` or `dataFrom`. |
+| `dataFrom` | list(map) | — | Whole-secret or find pulls, verbatim. Exactly one of `data` or `dataFrom`. |
+| `prune` | bool | `config.eso.pruneRemovedStores` | Delete the ExternalSecret if the entry is later removed. Baked as `autoshift.io/eso-prune` at emission time. |
+
+Reading through the bootstrap store is subject to the hub's per-cluster grant, so a key named here
+must be within that grant. Keys declared here are folded into that grant automatically. Note that
+`dataFrom.find` needs `list`, which a name-scoped grant denies — name keys explicitly when reading
+from the policy namespace.
 
 ### `config.eso.secretStores[]` — list item wrapper
 
@@ -279,6 +309,7 @@ key for key. Only the keys below differ from or add to the chart surface:
 | `hubServer` | string | chart `hubServer` | Hub apiserver URL. |
 | `deriveHubUrl` | bool | chart `deriveHubUrl` (`false`) | Look the hub URL up via ClusterClaim when `hubServer` is empty. |
 | `storeName` | string | chart `storePrefix` (`hub-bootstrap`) | **Runtime-only.** Name of the ClusterSecretStore created on the spoke — the name consumers put in `secretStoreRef`. All *other* minted-object names still derive from the chart `storePrefix`. |
+| `sharedNamespace` | string | chart `hubBootstrap.sharedNamespace` | Per-cluster override of the fan-out namespace the bootstrap store reads. Setting it to anything other than the policy namespace also opts this cluster into scoped reader RBAC. |
 | `mode` | string | chart `mode` (`selfSigned`) | Trust mode: `selfSigned` \| `externalCA` \| `externalCAReuseServingCert`. |
 | `teardown` | bool | chart `teardown` (`false`) | Explicit decommission flag — see §1 and README → Decommissioning. |
 | `clientIdentity.*` | — | chart values | Same keys as §1 `clientIdentity` (`certCNPrefix`, `baseDomain`, `useDefaultCertValues`, `certDuration`, `certRenewBefore`, `certUsages`, `privateKeyAlgorithm`, `privateKeySize`), same mode-gated defaults. |
