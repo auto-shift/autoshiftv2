@@ -3,101 +3,136 @@
 # vault-init secret (KMS-sealed provider, created by Component D) or an operator-supplied
 # vault-bootstrap-token secret (Shamir/air-gap provider, after the manual unseal ceremony).
 # Gated on label autoshift.io/vault-transit-provider In [true].
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: vault-transit-provider
-  namespace: vault
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: vault-transit-provider
-  namespace: vault
-rules:
-  - apiGroups:
-      - ''
-    resources:
-      - pods
-    verbs:
-      - get
-      - list
-  - apiGroups:
-      - ''
-    resources:
-      - pods/exec
-    verbs:
-      - create
-  - apiGroups:
-      - ''
-    resources:
-      - secrets
-    verbs:
-      - get
-      - list
-      - create
-      - patch
-      - update
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: vault-transit-provider
-  namespace: vault
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: vault-transit-provider
-subjects:
-  - kind: ServiceAccount
-    name: vault-transit-provider
-    namespace: vault
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: vault-transit-provider-v1
-  namespace: vault
-spec:
-  backoffLimit: 10
-  template:
-    spec:
-      serviceAccountName: vault-transit-provider
-      restartPolicy: Never
-      containers:
-        - name: vault-transit-provider
-          # Overridable for disconnected/baremetal where the internal registry isn't available -> point
-          # autoshift.io/vault-job-image at a mirrored CLI image.
-          image: '{{hub index .ManagedClusterLabels "autoshift.io/vault-job-image" | default "image-registry.openshift-image-registry.svc:5000/openshift/cli:latest" hub}}'
-          imagePullPolicy: Always
-          command:
-            - /bin/bash
-            - -c
-            - |
-              set -eo pipefail
-              NS=vault
-              CA=/vault/userconfig/vault-tls/ca.crt
-
-              if oc get secret vault-transit-unseal-token -n "$NS" &>/dev/null; then
-                echo "transit provider already configured — nothing to do"
-                exit 0
-              fi
-
-              ROOT="$(oc get secret vault-init -n "$NS" -o jsonpath='{.data.init\.json}' 2>/dev/null \
-                        | base64 -d | python3 -c 'import sys,json; print(json.load(sys.stdin)["root_token"])' 2>/dev/null || true)"
-              [ -z "$ROOT" ] && ROOT="$(oc get secret vault-bootstrap-token -n "$NS" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)"
-              if [ -z "$ROOT" ]; then
-                echo "no admin token: create secret/vault-bootstrap-token (key token) after unsealing the provider" >&2
-                exit 1
-              fi
-              vex() { oc exec -n "$NS" vault-0 -- env VAULT_CACERT="$CA" VAULT_TOKEN="$ROOT" "$@"; }
-
-              vex vault secrets enable transit 2>/dev/null || true
-              vex vault write -f transit/keys/autoshift-unseal 2>/dev/null || true
-              printf 'path "transit/encrypt/autoshift-unseal" { capabilities = ["update"] }\npath "transit/decrypt/autoshift-unseal" { capabilities = ["update"] }\n' \
-                | oc exec -i -n "$NS" vault-0 -- env VAULT_CACERT="$CA" VAULT_TOKEN="$ROOT" vault policy write autoshift-unseal -
-              UNSEAL="$(vex vault token create -policy=autoshift-unseal -period=768h -format=json \
-                          | python3 -c 'import sys,json; print(json.load(sys.stdin)["auth"]["client_token"])')"
-              oc create secret generic vault-transit-unseal-token -n "$NS" --from-literal=token="$UNSEAL"
-              vex vault secrets enable -path=vault-recovery kv-v2 2>/dev/null || true
-              echo "transit provider configured: engine + autoshift-unseal key + scoped token + recovery KV"
+object-templates-raw: |
+  {{- /* CLI image, highest priority first: config.images.cli, then this cluster's own
+     openshift/cli ImageStream, then the in-cluster registry. The ImageStream entry is a digest
+     against the release payload, so an ImageDigestMirrorSet rewrites it in a disconnected
+     deployment; the in-cluster registry does not exist wherever the registry Operator is
+     Removed. The fallback is assigned up front rather than written as `| default "<literal>"`,
+     which the validation suite strips. */ -}}
+  {{hub- $ownCM := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $ownCfg := (index ($ownCM.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{- $cliImage := "image-registry.openshift-image-registry.svc:5000/openshift/cli:latest" }}
+  {{- $cliOverride := "{{hub (index (index $ownCfg "images" | default dict) "cli" | default "") hub}}" }}
+  {{- $cliFromIS := "" }}
+  {{- $isCli := (lookup "image.openshift.io/v1" "ImageStream" "openshift" "cli") }}
+  {{- if $isCli }}
+  {{-   range $t := (index ($isCli.spec | default dict) "tags" | default list) }}
+  {{-     if eq (index $t "name" | default "") "latest" }}
+  {{-       $cliFromIS = (index ($t.from | default dict) "name" | default "") }}
+  {{-     end }}
+  {{-   end }}
+  {{-   if not $cliFromIS }}
+  {{-     range $t := (index ($isCli.status | default dict) "tags" | default list) }}
+  {{-       if eq (index $t "tag" | default "") "latest" }}
+  {{-         $items := (index $t "items" | default list) }}
+  {{-         if $items }}
+  {{-           $cliFromIS = (index (index $items 0) "dockerImageReference" | default "") }}
+  {{-         end }}
+  {{-       end }}
+  {{-     end }}
+  {{-   end }}
+  {{- end }}
+  {{- if $cliFromIS }}{{ $cliImage = $cliFromIS }}{{ end }}
+  {{- if $cliOverride }}{{ $cliImage = $cliOverride }}{{ end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: vault-transit-provider
+        namespace: vault
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: vault-transit-provider
+        namespace: vault
+      rules:
+        - apiGroups:
+            - ''
+          resources:
+            - pods
+          verbs:
+            - get
+            - list
+        - apiGroups:
+            - ''
+          resources:
+            - pods/exec
+          verbs:
+            - create
+        - apiGroups:
+            - ''
+          resources:
+            - secrets
+          verbs:
+            - get
+            - list
+            - create
+            - patch
+            - update
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: vault-transit-provider
+        namespace: vault
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: vault-transit-provider
+      subjects:
+        - kind: ServiceAccount
+          name: vault-transit-provider
+          namespace: vault
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: vault-transit-provider-v1
+        namespace: vault
+      spec:
+        backoffLimit: 10
+        template:
+          spec:
+            serviceAccountName: vault-transit-provider
+            restartPolicy: Never
+            containers:
+              - name: vault-transit-provider
+                image: '{{ $cliImage }}'
+                imagePullPolicy: Always
+                command:
+                  - /bin/bash
+                  - -c
+                  - |
+                    set -eo pipefail
+                    NS=vault
+                    CA=/vault/userconfig/vault-tls/ca.crt
+                    #
+                    if oc get secret vault-transit-unseal-token -n "$NS" &>/dev/null; then
+                      echo "transit provider already configured — nothing to do"
+                      exit 0
+                    fi
+                    #
+                    ROOT="$(oc get secret vault-init -n "$NS" -o jsonpath='{.data.init\.json}' 2>/dev/null \
+                              | base64 -d | python3 -c 'import sys,json; print(json.load(sys.stdin)["root_token"])' 2>/dev/null || true)"
+                    [ -z "$ROOT" ] && ROOT="$(oc get secret vault-bootstrap-token -n "$NS" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)"
+                    if [ -z "$ROOT" ]; then
+                      echo "no admin token: create secret/vault-bootstrap-token (key token) after unsealing the provider" >&2
+                      exit 1
+                    fi
+                    vex() { oc exec -n "$NS" vault-0 -- env VAULT_CACERT="$CA" VAULT_TOKEN="$ROOT" "$@"; }
+                    #
+                    vex vault secrets enable transit 2>/dev/null || true
+                    vex vault write -f transit/keys/autoshift-unseal 2>/dev/null || true
+                    printf 'path "transit/encrypt/autoshift-unseal" { capabilities = ["update"] }\npath "transit/decrypt/autoshift-unseal" { capabilities = ["update"] }\n' \
+                      | oc exec -i -n "$NS" vault-0 -- env VAULT_CACERT="$CA" VAULT_TOKEN="$ROOT" vault policy write autoshift-unseal -
+                    UNSEAL="$(vex vault token create -policy=autoshift-unseal -period=768h -format=json \
+                                | python3 -c 'import sys,json; print(json.load(sys.stdin)["auth"]["client_token"])')"
+                    oc create secret generic vault-transit-unseal-token -n "$NS" --from-literal=token="$UNSEAL"
+                    vex vault secrets enable -path=vault-recovery kv-v2 2>/dev/null || true
+                    echo "transit provider configured: engine + autoshift-unseal key + scoped token + recovery KV"

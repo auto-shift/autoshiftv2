@@ -1,0 +1,33 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-crs-mint-hub
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Mints the CRS. crs mode only; NotIn also matches clusters with no acs-registration label, which is the default.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/acs'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/acs-central'
+              operator: NotIn
+              values:
+                - 'false'
+            - key: 'autoshift.io/acs-registration'
+              operator: NotIn
+              values:
+                - 'initBundle'
+                - 'manual'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
