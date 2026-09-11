@@ -149,7 +149,8 @@ Three rules cause most of the breakage:
 2. Any expression producing multiple lines must be piped through `autoindent`. Plain `toYaml`
    outputs at column 0, which terminates the enclosing block scalar.
 3. Blank lines inside a block scalar must carry spaces to the block's indentation, or Kubernetes
-   re-serializes `|` as `>` and merges the lines.
+   re-serializes `|` as `>` and merges the lines. Inside `object-templates-raw` that padding instead
+   forces the whole block into a quoted scalar and breaks hub resolution, so use a `#` line there.
 
 Hub templates do not support Go comments; `{{hub /* ... */ hub}}` is a parse error. Use `{{/* */}}`
 only in `object-templates-raw`, written as exactly `{{- /*` with one space.
