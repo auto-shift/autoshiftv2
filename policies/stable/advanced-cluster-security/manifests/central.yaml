@@ -18,6 +18,7 @@ object-templates-raw: |
   {{hub- $db := (index $acs "db" | default dict) hub}}
   {{hub- $dbSize := (index $db "size" | default "") hub}}
   {{hub- $dbStorageClass := (index $db "storageClassName" | default "") hub}}
+  {{hub- $dbClaimName := (index $db "claimName" | default "central-db") hub}}
   {{hub- $auth := (index $acs "auth" | default dict) hub}}
   {{hub- $authProvider := (index .ManagedClusterLabels "autoshift.io/acs-auth-provider" | default "none") hub}}
   - complianceType: musthave
@@ -41,7 +42,12 @@ object-templates-raw: |
           db:
             persistence:
               persistentVolumeClaim:
-                claimName: stackrox-db
+                # Defaults to the Operator's own claim name (central-db). Pinning a different one
+                # is irrecoverable on any cluster where the Operator already created central-db:
+                # it manages exactly one PVC for central-db and reports Irreconcilable forever,
+                # while Central itself stays Available so the only symptom is a failing readiness
+                # gate. Override only to adopt an existing claim of another name.
+                claimName: '{{hub $dbClaimName hub}}'
                 {{hub- if $dbSize hub}}
                 size: '{{hub $dbSize hub}}'
                 {{hub- end hub}}
