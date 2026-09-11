@@ -155,14 +155,23 @@ config:
     registration:
       validFor: 8760h        # CRS lifetime; roxctl's own default is only 24h
       maxClusters: 0         # 0 = no limit
-      roxctlImage: ''        # blank = tag matched to the installed operator version
+      roxctlImage: ''        # blank = the image Central itself is running
 ```
 
-The mint Job runs `roxctl`, the documented way to generate a CRS. When `roxctlImage` is blank the
-tag is taken from the `acs-version` label, or from the installed operator's current cluster service
-version when that label is unset. **In a disconnected environment set `roxctlImage` to the digest
-recorded in the operator's related images**, because that is what `oc-mirror` copies; a floating tag
-might not resolve in a mirrored registry.
+The mint Job runs `roxctl`, the documented way to generate a cluster registration secret. When
+`roxctlImage` is blank the Job takes the image Central itself is running: the Operator has already
+resolved that to a digest through `registryOverride` and the cluster mirrors, and the main image
+ships `roxctl` alongside Central. That is what makes the Job work in a disconnected deployment,
+because Red Hat's offline image list has no standalone `roxctl` image for `oc-mirror` to copy. If
+Central is not visible to the policy, the Job falls back to
+`registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9`, tagged from the `acs-version`
+label or the installed Operator's current cluster service version. That fallback is a floating tag
+and needs an ImageTagMirrorSet to resolve in a mirrored registry, so set `roxctlImage` explicitly if
+you rely on it.
+
+The other containers in the Job only run `oc`. They resolve their image from the cluster's own
+`openshift/cli` ImageStream, with `config.images.cli` as an override. See the
+[values reference](../../../docs/values-reference.md#helper-job-images).
 
 ### Creating a CRS by hand
 

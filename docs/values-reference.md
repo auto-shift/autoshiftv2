@@ -590,7 +590,7 @@ placed on a cluster.
 | `central.endpoint` | string | | Blank discovers Central's route on this hub |
 | `registration.validFor` | string | `8760h` | Cluster registration secret lifetime |
 | `registration.maxClusters` | int | `0` | `0` means no limit on clusters registered with one secret |
-| `registration.roxctlImage` | string | | Blank matches the tag to the installed operator version. Pin the mirrored digest when disconnected |
+| `registration.roxctlImage` | string | | Blank takes the image Central itself is running, which the Operator has already resolved to a digest through `registryOverride` and the cluster mirrors. Set it only to pin a different image |
 
 See the [policy README](../policies/stable/advanced-cluster-security/README.md) for the registration
 modes and for where Central runs.
@@ -946,3 +946,23 @@ Provides manual fixes and configurations that cannot be automated through operat
 |-----------------------------------|-------------------|---------------------------|-------|
 | `manual-remediations`             | bool              |                           | If not set Manual Remediations will not be managed |
 | `allowed-registries`              | <list<String>>    |                           | List of allowed container image registries. Controls which registries can be used for pulling images |
+
+### Helper job images
+
+AutoShift runs a small number of its own Jobs that need only the `oc` command, such as the Red Hat
+Advanced Cluster Security registration Job and the Vault initialization Job. Each resolves its image
+at runtime, highest priority first:
+
+1. `config.images.cli`, if set.
+2. The cluster's own `openshift/cli` ImageStream. That entry is a digest against the release payload,
+   so an ImageDigestMirrorSet rewrites it in a disconnected deployment and no ImageTagMirrorSet is
+   required.
+3. The in-cluster registry, which is the last resort and is absent wherever the registry Operator is
+   set to `Removed`, as on bare metal and in most disconnected deployments.
+
+Set the value only to pin a specific mirrored image. It belongs in `config`, not in a label: an image
+reference contains characters that are not legal in a Kubernetes label value.
+
+| Variable | Type | Default Value | Notes |
+|----------|------|---------------|-------|
+| `images.cli` | string | | Image for AutoShift helper Jobs. Blank resolves from the `openshift/cli` ImageStream |

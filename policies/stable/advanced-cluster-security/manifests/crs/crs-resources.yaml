@@ -1,14 +1,63 @@
 object-templates-raw: |
-  {{- /* Spoke-side templates throughout, like cluster-install and cluster-labels. A hub
-     template resolves on the ACM hub that OWNS the policy, so on a managed hub it would
-     see the hub-of-hubs' clusters rather than the ones this hub manages. Resolving here
-     means the loop sees whatever clusters the cluster it runs on manages. */ -}}
+  {{- /* Spoke-side templates for everything that walks the fleet, like cluster-install and
+     cluster-labels. A hub template resolves on the ACM hub that OWNS the policy, so on a managed
+     hub it would see the hub-of-hubs' clusters rather than the ones this hub manages. Resolving
+     here means the loop sees whatever clusters the cluster it runs on manages. The one exception
+     is the CLI image override further down: that is a property of the single cluster this Job
+     runs on, which is exactly what .ManagedClusterName gives a hub template. */ -}}
   {{- $subName := "rhacs-operator" }}
   {{- $sub := (lookup "operators.coreos.com/v1alpha1" "Subscription" "rhacs-operator" $subName) | default dict }}
   {{- $installedCSV := (dig "status" "currentCSV" "" $sub) }}
   {{- $roxctlTag := ($installedCSV | replace "rhacs-operator.v" "") }}
+  {{- /* roxctl comes from Central's own running image. The Operator has already resolved that to
+     a digest through registryOverride and the cluster's mirrors, and the main image ships roxctl.
+     Red Hat's offline image list has no standalone roxctl image, so a mirrored deployment very
+     likely has no rhacs-roxctl-rhel9 to pull, and the tag below would need an ImageTagMirrorSet
+     on top. The tag stays as the last resort for a Central this policy cannot see. */ -}}
   {{- $defaultImage := (printf "registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9:%s" $roxctlTag) }}
+  {{- $centralImage := "" }}
+  {{- $centralDeploy := (lookup "apps/v1" "Deployment" "stackrox" "central") }}
+  {{- if $centralDeploy }}
+  {{-   range $c := (dig "spec" "template" "spec" "containers" (list) $centralDeploy) }}
+  {{-     if eq (index $c "name" | default "") "central" }}
+  {{-       $centralImage = (index $c "image" | default "") }}
+  {{-     end }}
+  {{-   end }}
+  {{- end }}
+  {{- if $centralImage }}{{ $defaultImage = $centralImage }}{{ end }}
   {{- $roxctlImage := "" }}
+  {{- /* CLI image for the oc containers, highest priority first: config.images.cli, then the
+     cluster's own openshift/cli ImageStream, then the in-cluster registry. The ImageStream entry
+     is a digest against the release payload, so an ImageDigestMirrorSet rewrites it in a
+     disconnected deployment; the in-cluster registry does not exist wherever the registry
+     Operator is Removed. The fallback is assigned up front rather than written as
+     `| default "<literal>"`, which the validation suite strips. */ -}}
+  {{hub- $ownCM := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $ownCfg := (index ($ownCM.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{- $cliImage := "image-registry.openshift-image-registry.svc:5000/openshift/cli:latest" }}
+  {{- $cliOverride := "{{hub (index (index $ownCfg "images" | default dict) "cli" | default "") hub}}" }}
+  {{- $cliFromIS := "" }}
+  {{- $isCli := (lookup "image.openshift.io/v1" "ImageStream" "openshift" "cli") }}
+  {{- if $isCli }}
+  {{-   range $t := (index ($isCli.spec | default dict) "tags" | default list) }}
+  {{-     if eq (index $t "name" | default "") "latest" }}
+  {{-       $cliFromIS = (index ($t.from | default dict) "name" | default "") }}
+  {{-     end }}
+  {{-   end }}
+  {{-   if not $cliFromIS }}
+  {{-     range $t := (index ($isCli.status | default dict) "tags" | default list) }}
+  {{-       if eq (index $t "tag" | default "") "latest" }}
+  {{-         $items := (index $t "items" | default list) }}
+  {{-         if $items }}
+  {{-           $cliFromIS = (index (index $items 0) "dockerImageReference" | default "") }}
+  {{-         end }}
+  {{-       end }}
+  {{-     end }}
+  {{-   end }}
+  {{- end }}
+  {{- if $cliFromIS }}{{ $cliImage = $cliFromIS }}{{ end }}
+  {{- if $cliOverride }}{{ $cliImage = $cliOverride }}{{ end }}
+  {{- $defaultValidFor := "168h" }}
   {{- $specs := list }}
   {{- $names := list }}
   {{- $configMaps := (lookup "v1" "ConfigMap" "" "" "autoshift.io/rendered-config-map") | default dict }}
@@ -22,7 +71,7 @@ object-templates-raw: |
   {{- /* Only clusters this deployment owns: with versionedClusterSets two deployments run
      against one hub and would otherwise mint for each other's clusters. */ -}}
   {{- if and (eq $acsOn "true") (or (empty $mc) (eq $mcOwningNs $cm.metadata.namespace)) }}
-  {{- $validFor := (index $reg "validFor" | default "168h") }}
+  {{- $validFor := (index $reg "validFor" | default $defaultValidFor) }}
   {{- $maxClusters := (index $reg "maxClusters" | default 1) }}
   {{- $roxctlImage = (index $reg "roxctlImage" | default $defaultImage) }}
   {{- $names = append $names $clusterName }}
@@ -108,7 +157,7 @@ object-templates-raw: |
             # 1. Which clusters still need one. A CRS cannot be retrieved after generation,
             #    so only mint where none exists or the existing one has expired.
             - name: check
-              image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+              image: '{{ $cliImage }}'
               command: ["/bin/bash","-c"]
               args:
               - |
@@ -136,9 +185,12 @@ object-templates-raw: |
               args:
               - |
                 set -eu
+                # roxctl is on PATH in the standalone roxctl image and under /stackrox in the main
+                # image, which is what Central runs.
+                ROXCTL="$(command -v roxctl || echo /stackrox/roxctl)"
                 while read -r c validfor maxc; do
                   [ -n "$c" ] || continue
-                  roxctl -e central.stackrox.svc:443 --insecure-skip-tls-verify \
+                  "$ROXCTL" -e central.stackrox.svc:443 --insecure-skip-tls-verify \
                     central crs generate "autoshift-$c-$(date -u +%Y%m%d%H%M%S)" \
                     --valid-for "$validfor" \
                     --max-clusters "$maxc" \
@@ -156,7 +208,7 @@ object-templates-raw: |
             containers:
             # 3. Store each as crs-<cluster>; sync-crs hands each cluster its own.
             - name: apply
-              image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+              image: '{{ $cliImage }}'
               command: ["/bin/bash","-c"]
               args:
               - |

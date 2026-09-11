@@ -14,3 +14,18 @@ spec:
   sourceNamespace: openshift-marketplace
 status:
   currentCSV: rhacs-operator.v4.11.2
+---
+# The CRS mint Job takes its roxctl image from Central's own running image: the ACS operator has
+# already resolved it to a digest through registryOverride and the cluster's mirrors, and the main
+# image ships roxctl. Red Hat's offline image list has no standalone roxctl image to mirror.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: central
+  namespace: stackrox
+spec:
+  template:
+    spec:
+      containers:
+        - name: central
+          image: registry.redhat.io/advanced-cluster-security/rhacs-main-rhel8@sha256:0000000000000000000000000000000000000000000000000000000000000acs
