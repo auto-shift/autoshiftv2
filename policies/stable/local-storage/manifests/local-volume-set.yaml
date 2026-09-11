@@ -1,21 +1,88 @@
-apiVersion: local.storage.openshift.io/v1alpha1
-kind: LocalVolumeSet
-metadata:
-  name: nvme-localvolumeset
-  namespace: openshift-local-storage
-spec:
-  deviceInclusionSpec:
-    deviceTypes:
-    - disk
-    minSize: 200G
-  nodeSelector:
-    nodeSelectorTerms:
-    - matchExpressions:
-      - key: cluster.ocs.openshift.io/openshift-storage
-        operator: Exists
-  storageClassName: nvme-storageclass
-  tolerations:
-  - effect: NoSchedule
-    key: node.ocs.openshift.io/storage
-    operator: Exists
-  volumeMode: Block
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $ls := (index $config "localStorage" | default dict) hub}}
+  {{hub- $discovery := (index $ls "localVolumeDiscovery" | default dict) hub}}
+  {{hub- $volumeSets := (index $ls "localVolumeSets" | default dict) hub}}
+  {{hub- if (gt (len (keys $discovery)) 0) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: local.storage.openshift.io/v1alpha1
+      kind: LocalVolumeDiscovery
+      metadata:
+        name: auto-discover-devices
+        namespace: openshift-local-storage
+      spec:
+        {{hub $discovery | toYaml | autoindent hub}}
+  {{hub- end hub}}
+  {{hub- if (gt (len (keys $volumeSets)) 0) hub}}
+  {{hub- range $id, $vs := $volumeSets hub}}
+  {{hub- $storageClassName := (index $vs "storageClassName" | default "nvme-storageclass") hub}}
+  {{hub- $volumeMode := (index $vs "volumeMode" | default "Block") hub}}
+  {{hub- $deviceInclusionSpec := (index $vs "deviceInclusionSpec" | default dict) hub}}
+  {{hub- $nodeSelector := (index $vs "nodeSelector" | default dict) hub}}
+  {{hub- $tolerations := (index $vs "tolerations" | default list) hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: local.storage.openshift.io/v1alpha1
+      kind: LocalVolumeSet
+      metadata:
+        name: {{hub $id hub}}-localvolumeset
+        namespace: openshift-local-storage
+      spec:
+        storageClassName: {{hub $storageClassName hub}}
+        volumeMode: {{hub $volumeMode hub}}
+  {{hub- if (gt (len (keys $deviceInclusionSpec)) 0) hub}}
+        deviceInclusionSpec:
+          {{hub $deviceInclusionSpec | toYaml | autoindent hub}}
+  {{hub- else hub}}
+        deviceInclusionSpec:
+          deviceTypes:
+          - disk
+          minSize: 200G
+  {{hub- end hub}}
+  {{hub- if (gt (len (keys $nodeSelector)) 0) hub}}
+        nodeSelector:
+          {{hub $nodeSelector | toYaml | autoindent hub}}
+  {{hub- else hub}}
+        nodeSelector:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: cluster.ocs.openshift.io/openshift-storage
+              operator: Exists
+  {{hub- end hub}}
+  {{hub- if (gt (len $tolerations) 0) hub}}
+        tolerations:
+          {{hub $tolerations | toYaml | autoindent hub}}
+  {{hub- else hub}}
+        tolerations:
+        - effect: NoSchedule
+          key: node.ocs.openshift.io/storage
+          operator: Exists
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- else hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: local.storage.openshift.io/v1alpha1
+      kind: LocalVolumeSet
+      metadata:
+        name: nvme-localvolumeset
+        namespace: openshift-local-storage
+      spec:
+        storageClassName: nvme-storageclass
+        volumeMode: Block
+        deviceInclusionSpec:
+          deviceTypes:
+          - disk
+          minSize: 200G
+        nodeSelector:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: cluster.ocs.openshift.io/openshift-storage
+              operator: Exists
+        tolerations:
+        - effect: NoSchedule
+          key: node.ocs.openshift.io/storage
+          operator: Exists
+  {{hub- end hub}}

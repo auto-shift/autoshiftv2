@@ -429,6 +429,27 @@ hubClusterSets:
       #   versions:
       #     - 'odf-operator.vX.Y.Z'
       #   startingCSV: 'odf-operator.vX.Y.Z'
+      #   # Config-driven StorageCluster — when set, replaces the entire label-driven
+      #   # StorageCluster spec. When absent, the existing label-driven default applies.
+      #   storageCluster:
+      #     enableCephTools: true
+      #     resourceProfile: Lean
+      #     monDataDirHostPath: /var/lib/rook
+      #     multiCloudGateway:
+      #       reconcileStrategy: ignore
+      #     storageDeviceSets:
+      #       - name: nvme-set
+      #         deviceClass: nvme
+      #         count: 1
+      #         replica: 3
+      #         dataPVCTemplate:
+      #           spec:
+      #             storageClassName: local-nvme
+      #             accessModes: [ReadWriteOnce]
+      #             volumeMode: Block
+      #             resources:
+      #               requests:
+      #                 storage: 1
       # opentelemetry:
       #   versions:
       #     - 'opentelemetry-product.vX.Y.Z'
@@ -453,6 +474,31 @@ hubClusterSets:
       #   versions:
       #     - 'kubevirt-hyperconverged.vX.Y.Z'
       #   startingCSV: 'kubevirt-hyperconverged.vX.Y.Z'
+      # =======================================================================
+      # Local Storage (config-driven)
+      # Named volume sets under localVolumeSets.<id>; each field has a sensible
+      # default so you only need to set what you want to override:
+      #   storageClassName  → nvme-storageclass
+      #   volumeMode        → Block
+      #   deviceInclusionSpec → {deviceTypes: [disk], minSize: 200G}
+      #   nodeSelector      → cluster.ocs.openshift.io/openshift-storage: Exists
+      #   tolerations       → node.ocs.openshift.io/storage: NoSchedule
+      # When absent, a single default nvme-localvolumeset is created.
+      # =======================================================================
+      # localStorage:
+      #   localVolumeDiscovery:
+      #     nodeSelector:
+      #       nodeSelectorTerms:
+      #         - matchExpressions:
+      #             - key: cluster.ocs.openshift.io/openshift-storage
+      #               operator: Exists
+      #   localVolumeSets:
+      #     nvme:
+      #       storageClassName: local-nvme
+      #       volumeMode: Block
+      #       deviceInclusionSpec:
+      #         deviceTypes: [disk]
+      #         deviceMechanicalProperties: [NonRotational]
       # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
       # =======================================================================
