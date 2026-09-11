@@ -108,6 +108,13 @@ externalSecretsOperator:
                                              # hub, so each cluster points at the hub that minted its cert; one shared
                                              # hubServer value would aim every level at the same apiserver.
     storePrefix: hub-bootstrap               # names the store + the minted/copied Secrets/ConfigMaps
+    # Namespace on the propagating hub that the bootstrap store READS, and that children get broad
+    # (get + list) access to. Empty = the policy namespace: historical behaviour, and NOT safe to
+    # grant broadly, because that namespace also holds per-cluster client keys, install credentials
+    # and tenancy material. Point it at a curated fan-out namespace (conventionally
+    # '<policy namespace>-shared') so "read anything here" is safe by construction; anything that
+    # must reach exactly one cluster stays in the policy namespace behind a scoped grant.
+    sharedNamespace: ''
     clientCAConfigMap: ''                    # openshift-config CM the hub apiserver clientCA points at (default <prefix>-client-ca)
     # Default refreshInterval for the store-auth ExternalSecrets that policy-eso-secret-stores emits to
     # pull each store's credential from the hub through THIS bootstrap store. Per-store override:

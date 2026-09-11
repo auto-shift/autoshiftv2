@@ -26,6 +26,9 @@
 # RBAC, if ever needed, is a future extension (add a placement selector per grant and split the loop).
 #
 {{- $policyNamespace := $.Values.policy_namespace }}
+{{- /* Curated fan-out namespace the bootstrap store reads. Empty = the policy namespace, in which
+       case there is nothing extra to create. Runtime override: config.eso.hubBootstrap.sharedNamespace. */ -}}
+{{- $sharedNamespace := (dig "hubBootstrap" "sharedNamespace" "" $.Values.externalSecretsOperator | default $policyNamespace) }}
 {{- $eso := $.Values.externalSecretsOperator }}
 {{- $rbac := (dig "bootPrereqs" "rbac" (list) $eso) }}
 {{- /* Validate the chart-baked grants at render time (fail fast). Rendered-config overrides bypass
@@ -79,6 +82,21 @@ spec:
             ##### else the chart-baked default (JSON-inlined at Helm render; JSON is valid template input). #####
             {{ "{{hub-" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $baked := (`{"rbac": {{ $rbac | toJson }}}` | fromJson) {{ "hub}}" }}
+            ##### The fan-out namespace the bootstrap store reads. Created here so it exists before any #####
+            ##### credential is published into it. Skipped when it IS the policy namespace (that one is #####
+            ##### owned by policy-foundation) so this stays a no-op on the historical default. #####
+            {{ "{{hub-" }} $sharedNs := (dig "eso" "hubBootstrap" "sharedNamespace" "{{ $sharedNamespace }}" $clusterConfig) {{ "hub}}" }}
+            {{ "{{hub-" }} if ne $sharedNs "{{ $policyNamespace }}" {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} $sharedNs {{ "hub}}" }}
+                  labels:
+                    autoshift.io/createdByAutoshift: "true"
+                    autoshift.io/eso-shared-namespace: "true"
+            {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $grants := (dig "eso" "bootPrereqs" "rbac" $baked.rbac $clusterConfig) {{ "hub}}" }}
             {{ "{{hub-" }} range $grant := $grants {{ "hub}}" }}
             {{ "{{hub-" }} $name := (dig "name" "" $grant) {{ "hub}}" }}
