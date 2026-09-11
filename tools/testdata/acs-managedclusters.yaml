@@ -1,18 +1,12 @@
 ---
-# ManagedCluster stubs for the e2e cluster profiles. The CRS mint Job walks every
-# rendered-config ConfigMap and only mints for a cluster whose ManagedCluster carries
-# autoshift.io/acs: 'true' and is owned by this deployment's namespace. Without these the
-# whole Job body renders to an empty string and the policy is never validated.
-apiVersion: cluster.open-cluster-management.io/v1
-kind: ManagedCluster
-metadata:
-  name: lint-cluster
-  labels:
-    autoshift.io/acs: 'true'
-    autoshift.io/owning-namespace: policies-autoshift
-spec:
-  hubAcceptsClient: true
----
+# ManagedCluster stubs for the per-platform e2e profiles. The ACS CRS mint Job only mints for a
+# cluster whose ManagedCluster carries autoshift.io/acs and is owned by this deployment's namespace.
+# lint-cluster itself is defined in eso-hub-bootstrap.yaml, which needs extra fields on it: two
+# stubs of the same name panic the fake dynamic client.
+#
+# The apiserver URL and clusterClaim are required, not decorative. The ESO bootstrap policies
+# enumerate EVERY ManagedCluster carrying autoshift.io/owning-namespace and derive a client
+# identity per cluster, all-or-nothing: one cluster it cannot derive blocks the whole render.
 apiVersion: cluster.open-cluster-management.io/v1
 kind: ManagedCluster
 metadata:
@@ -22,6 +16,12 @@ metadata:
     autoshift.io/owning-namespace: policies-autoshift
 spec:
   hubAcceptsClient: true
+  managedClusterClientConfigs:
+  - url: https://api.lint-cluster-aws.test.example.com:6443
+status:
+  clusterClaims:
+  - name: apiserverurl.openshift.io
+    value: https://api.lint-cluster-aws.test.example.com:6443
 ---
 apiVersion: cluster.open-cluster-management.io/v1
 kind: ManagedCluster
@@ -32,6 +32,12 @@ metadata:
     autoshift.io/owning-namespace: policies-autoshift
 spec:
   hubAcceptsClient: true
+  managedClusterClientConfigs:
+  - url: https://api.lint-cluster-baremetal.test.example.com:6443
+status:
+  clusterClaims:
+  - name: apiserverurl.openshift.io
+    value: https://api.lint-cluster-baremetal.test.example.com:6443
 ---
 apiVersion: cluster.open-cluster-management.io/v1
 kind: ManagedCluster
@@ -42,6 +48,12 @@ metadata:
     autoshift.io/owning-namespace: policies-autoshift
 spec:
   hubAcceptsClient: true
+  managedClusterClientConfigs:
+  - url: https://api.lint-cluster-vmware.test.example.com:6443
+status:
+  clusterClaims:
+  - name: apiserverurl.openshift.io
+    value: https://api.lint-cluster-vmware.test.example.com:6443
 ---
 apiVersion: cluster.open-cluster-management.io/v1
 kind: ManagedCluster
@@ -52,3 +64,9 @@ metadata:
     autoshift.io/owning-namespace: policies-autoshift
 spec:
   hubAcceptsClient: true
+  managedClusterClientConfigs:
+  - url: https://api.lint-cluster-vmware-static.test.example.com:6443
+status:
+  clusterClaims:
+  - name: apiserverurl.openshift.io
+    value: https://api.lint-cluster-vmware-static.test.example.com:6443
