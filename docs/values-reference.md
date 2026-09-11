@@ -574,6 +574,7 @@ placed on a cluster.
 | `tolerations` | list | | Custom taints to tolerate; ignored when `pinToNodes` is set |
 | `db.size` | string | | Central database volume size, for example `100Gi` |
 | `db.storageClassName` | string | | Blank uses the cluster default storage class |
+| `db.claimName` | string | `central-db` | The Central database claim. Blank uses the Operator's own name. Naming a second claim leaves Central `Irreconcilable` while still reporting `Available` |
 | `collector.collection` | string | `CORE_BPF` | `CORE_BPF` is recommended; `EBPF` is deprecated |
 | `processBaselines.autoLock` | string | `Disabled` | Lock process baselines when the observation period ends |
 | `processIndicators.persistence` | string | `Enabled` | Persist process indicators |
