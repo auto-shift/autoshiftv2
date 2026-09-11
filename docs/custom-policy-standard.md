@@ -26,7 +26,7 @@ This flows through the existing substitution pipeline:
 - **Helm-templated policies** receive `.Values.autoshift.policyStandard` or `.Values.autoshift.policyStandardHub`
 - **OCI-rendered charts** receive it through the same `policyValuesObject`
 
-## Hub vs. Managed Policy Classification
+## Hub versus Managed Policy Classification
 
 Hub policies are those whose placement targets hub clusters (via `autoshift.io/cluster-type: hub` or hub-only clusterSets):
 
@@ -35,9 +35,9 @@ Hub policies are those whose placement targets hub clusters (via `autoshift.io/c
 | Hub | advanced-cluster-management, advanced-cluster-security, cluster-install, cluster-labels, cluster-config-maps, openshift-gitops, openshift-dns, metallb |
 | Managed | All other policies (~40) — cert-manager, logging, lvm, odf, openshift-virtualization, etc. |
 
-## HA vs. Non-HA Storage (ODF / LVM)
+## HA versus Non-HA Storage (ODF / LVM)
 
-The HA vs. non-HA distinction is a **placement concern**, not a standards concern — policies for ODF and LVM target different clusters via label selectors:
+The HA versus non-HA distinction is a **placement concern**, not a standards concern — policies for ODF and LVM target different clusters via label selectors:
 
 | Storage | Placement label | Use case |
 |---------|----------------|----------|
@@ -63,7 +63,7 @@ In the ACM Governance UI this creates two filterable standards:
 The standards are substituted at deploy time — the same mechanism used for `${POLICY_NAMESPACE}`, `${REMEDIATION}`, and other per-deployment tokens:
 
 1. Helm renders the ApplicationSet with `POLICY_STANDARD` and `POLICY_STANDARD_HUB` as plugin env vars
-2. The CMP sidecar runs `sed` to replace both `${POLICY_STANDARD_HUB}` and `${POLICY_STANDARD}` tokens (`_HUB` is replaced first so the shorter token doesn't match it)
+2. The CMP sidecar runs `sed` to replace both `${POLICY_STANDARD_HUB}` and `${POLICY_STANDARD}` tokens (`_HUB` is replaced first so the shorter token does not match it)
 3. PolicyGenerator bakes the values into `policy.open-cluster-management.io/standards` annotations
 
 For Helm-templated policies (openshift-gitops, cluster-labels, cluster-config-maps), the annotation reads directly from `.Values.autoshift.policyStandardHub`.
