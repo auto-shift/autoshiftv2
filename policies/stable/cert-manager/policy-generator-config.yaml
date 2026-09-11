@@ -50,6 +50,17 @@ policies:
       - name: policy-cert-manager-operator-install
     manifests:
       - path: manifests/ca
+  # Opt-in (cert-manager-acme-issuer): ACME ClusterIssuer with supporting secrets and CertManager DNS01
+  # controller config. Pass-through spec (config.certManager.acmeIssuer.issuer.spec) — any ACME provider /
+  # solver combination works. Point config.certManager.{apiCert,ingressCert}.issuer.name at the new issuer.
+  - name: policy-cert-manager-acme-issuer
+    placement:
+      placementPath: placement-cert-manager-acme-issuer.yaml
+    consolidateManifests: false
+    dependencies:
+      - name: policy-cert-manager-operator-install
+    manifests:
+      - path: manifests/acme-issuer
   # Opt-in (cert-manager-api-cert): cert-manager-managed API server serving cert. ADDITIVE namedCertificate
   # (SNI, api.<domain> only — never api-int). Only patches APIServer once the Certificate is Ready (gated in
   # the manifest). object-templates-raw -> consolidateManifests: false.
