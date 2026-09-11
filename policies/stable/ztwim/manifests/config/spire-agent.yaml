@@ -1,0 +1,23 @@
+# SpireAgent — the per-node DaemonSet that attests workloads and hands them SVIDs.
+#
+# k8s_psat is the only node attestor the CRD exposes, and it is on by default; the workload attestor
+# verification type `auto` picks host-cert verification where the kubelet serving cert allows it and
+# falls back otherwise, which is the right default on OpenShift.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $agent := (index $cfg "agent" | default dict) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.openshift.io/v1alpha1
+      kind: SpireAgent
+      metadata:
+        name: cluster
+      spec:
+        logLevel: {{hub (index $agent "logLevel" | default (index $cfg "logLevel" | default "info")) hub}}
+        nodeAttestor:
+          k8sPSATEnabled: 'true'
+        workloadAttestors:
+          k8sEnabled: 'true'
+          workloadAttestorsVerification:
+            type: {{hub (index $agent "workloadAttestorVerification" | default "auto") hub}}

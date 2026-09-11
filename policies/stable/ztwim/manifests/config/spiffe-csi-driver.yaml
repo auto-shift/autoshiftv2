@@ -1,0 +1,17 @@
+# SpiffeCSIDriver — exposes the agent's Workload API socket to pods as an ephemeral CSI volume, so a
+# workload reads its SVID from a mounted socket instead of holding a credential.
+#
+# agentSocketPath must match the SpireAgent socketPath (both default to /run/spire/agent-sockets).
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $csi := (index $cfg "csiDriver" | default dict) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.openshift.io/v1alpha1
+      kind: SpiffeCSIDriver
+      metadata:
+        name: cluster
+      spec:
+        pluginName: {{hub (index $csi "pluginName" | default "csi.spiffe.io") hub}}
+        agentSocketPath: {{hub (index $csi "agentSocketPath" | default "/run/spire/agent-sockets") hub}}

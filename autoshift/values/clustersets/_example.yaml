@@ -78,6 +78,54 @@ hubClusterSets:
             group: 'cert-manager.io'
           extraSANs: []
       # =======================================================================
+      # Zero Trust Workload Identity Manager / SPIRE (DATA; the ENABLE flags are the
+      # ztwim and ztwim-federation labels below). Every key is optional.
+      # Only keys SAFE ON ANY CLUSTER are set live, because this file gets copied.
+      # =======================================================================
+      ztwim:
+        logLevel: 'info'
+        caSubject:
+          commonName: 'autoshift'
+          country: 'US'
+          organization: 'AutoShift'
+        persistence:
+          size: '5Gi'
+          accessMode: 'ReadWriteOnce'
+          # storageClass omitted -> the cluster default. A literal is platform-specific.
+        datastore:
+          databaseType: 'sqlite3'
+          connectionString: '/run/spire/data/datastore.sqlite3'
+        # Left unset so the built-in defaults apply:
+        #   trustDomain   defaults to the cluster base domain. Changing it after the first
+        #                 deployment is DESTRUCTIVE (SPIRE caches its CA and every issued
+        #                 identity against it). Nested SPIRE is the one case that REQUIRES
+        #                 hub and spoke to share one value.
+        #   clusterName   defaults to the ManagedCluster name. A fixed literal would make
+        #                 every cluster claim the same name in its agent SPIFFE IDs.
+        #   jwtIssuer     defaults to https://spire-oidc.<cluster ingress domain>.
+        #   upstreamAuthority omitted -> SPIRE self-signs its own root. certManager needs
+        #                 cert-manager AND cert-manager-ca on the cluster; autoshift-ca is
+        #                 self-signed PER CLUSTER, so that is a chain, not a shared fleet
+        #                 root (for that, set config.certManager.ca.issuer to a common signer).
+        #   federatedTrustDomains needs the ztwim-federation label and a real peer.
+        # Uncomment to use:
+        # trustDomain: 'spire.example.com'
+        # clusterName: 'hub'
+        # jwtIssuer: 'https://spire-oidc.apps.example.com'
+        # upstreamAuthority:
+        #   certManager:
+        #     issuerName: 'autoshift-ca'
+        #     issuerKind: 'ClusterIssuer'
+        #     issuerGroup: 'cert-manager.io'
+        #     namespace: 'cert-manager'
+        # federatedTrustDomains:
+        #   - trustDomain: 'other.example.com'
+        #     bundleEndpointURL: 'https://spire-federation.apps.other.example.com'
+        #     bundleEndpointProfile:
+        #       type: 'https_spiffe'
+        #       endpointSPIFFEID: 'spiffe://other.example.com/spire/server'
+
+      # =======================================================================
       # User Workload Monitoring (config section - read via rendered-config)
       # =======================================================================
       uwm:
@@ -1495,3 +1543,14 @@ hubClusterSets:
       trident-source-namespace: openshift-marketplace
       trident-channel: stable
       trident-version: 'trident-operator.v25.06.0'   # optional CSV version pin
+
+      # Zero Trust Workload Identity Manager (SPIRE)
+      # =======================================================================
+      ztwim: 'false'
+      ztwim-subscription-name: openshift-zero-trust-workload-identity-manager
+      ztwim-channel: stable-v1
+      ztwim-version: 'zero-trust-workload-identity-manager.v1.1.1'
+      ztwim-source: redhat-operators
+      ztwim-source-namespace: openshift-marketplace
+      # Opt-in: trust foreign trust domains listed in config.ztwim.federatedTrustDomains.
+      ztwim-federation: 'false'

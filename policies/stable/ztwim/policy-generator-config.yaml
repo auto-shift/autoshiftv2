@@ -1,0 +1,68 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: ztwim
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in the placement files — never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# manifests[].path is a DIRECTORY: drop a new manifest into it and it is picked up automatically.
+# Only edit this file to change the policy graph itself (names, dependencies, per-policy remediation).
+# Keep the placement files OUT of manifests/ (a Placement inside a wildcarded dir would be wrapped
+# into the Policy as a managed object).
+placementBindingDefaults:
+  name: binding-policy-ztwim
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # Every manifest here is object-templates-raw, which must stay its own ConfigurationPolicy.
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - AC Access Control
+  controls:
+    - AC-3 Access Enforcement
+  # Placement authored by us (full fidelity); PG includes it and generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  # The operator itself. consolidateManifests: true here only — this policy is the shared
+  # operator-install chart (a raw Namespace plus a first-class OperatorPolicy), not a raw template.
+  - name: policy-ztwim-operator-install
+    consolidateManifests: true
+    manifests:
+      - path: manifests/operator-install
+  # ZeroTrustWorkloadIdentityManager carries the trust domain and cluster name that every other
+  # operand controller reads, so it lands before them.
+  - name: policy-ztwim-instance
+    dependencies:
+      - name: policy-ztwim-operator-install
+    manifests:
+      - path: manifests/instance
+  # The operands: SPIRE server, agent, CSI driver and OIDC discovery provider.
+  - name: policy-ztwim-config
+    dependencies:
+      - name: policy-ztwim-instance
+    manifests:
+      - path: manifests/config
+  # Opt-in (autoshift.io/ztwim-federation): trust bundles from FOREIGN trust domains.
+  - name: policy-ztwim-federation
+    placement:
+      placementPath: placement-ztwim-federation.yaml
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/federation
+  # inform: surfaces a SPIRE control plane that installed but never became ready.
+  - name: policy-ztwim-ready
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: test/spire-ready.yaml

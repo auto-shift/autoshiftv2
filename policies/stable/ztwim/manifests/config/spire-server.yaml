@@ -1,0 +1,79 @@
+# SpireServer — the SPIRE control plane. caSubject, datastore, jwtIssuer and persistence are all
+# REQUIRED by the CRD, so each is emitted with a default rather than left off.
+#
+# jwtIssuer is a URL; the operator strips the scheme and uses the remainder as the managed Route's
+# host (StripProtocolFromJWTIssuer), so it must resolve under the cluster's *.apps wildcard. The
+# default is built from the cluster's own ingress domain.
+#
+# upstreamAuthority is OMITTED unless configured, which leaves SPIRE minting its own self-signed
+# root. The CRD supports exactly two plugins, certManager and vault — there is no aws_pca and no
+# nested `spire` plugin, so neither can be expressed here. Pointing certManager at the built-in
+# `autoshift-ca` ClusterIssuer chains this cluster's SPIRE CA under AutoShift's CA; note that
+# autoshift-ca is self-signed PER CLUSTER, so a shared fleet root additionally needs
+# config.certManager.ca.issuer set to a common signer. See the README.
+#
+# federation.federatesWith and the bundle endpoint let this server exchange trust bundles with
+# SPIRE servers in OTHER trust domains. Lists and maps are passed through as JSON (toRawJson |
+# toLiteral) so an arbitrary config shape survives without block-scalar indentation hazards.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $ca := (index $cfg "caSubject" | default dict) hub}}
+  {{hub- $ds := (index $cfg "datastore" | default dict) hub}}
+  {{hub- $pers := (index $cfg "persistence" | default dict) hub}}
+  {{hub- $ua := (index $cfg "upstreamAuthority" | default dict) hub}}
+  {{hub- $uaCertManager := (index $ua "certManager" | default dict) hub}}
+  {{hub- $uaVault := (index $ua "vault" | default dict) hub}}
+  {{hub- $fed := (index $cfg "federation" | default dict) hub}}
+  {{hub- $federatesWith := (index $fed "federatesWith" | default list) hub}}
+  {{hub- $bundleEndpoint := (index $fed "bundleEndpoint" | default dict) hub}}
+  {{hub- $issuer := (index $cfg "jwtIssuer" | default "") hub}}
+  {{hub- $storageClass := (index $pers "storageClass" | default "") hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.openshift.io/v1alpha1
+      kind: SpireServer
+      metadata:
+        name: cluster
+      spec:
+        logLevel: {{hub (index $cfg "logLevel" | default "info") hub}}
+        caValidity: {{hub (index $cfg "caValidity" | default "24h") hub}}
+        defaultX509Validity: {{hub (index $cfg "defaultX509Validity" | default "1h") hub}}
+        defaultJWTValidity: {{hub (index $cfg "defaultJWTValidity" | default "5m") hub}}
+        caKeyType: {{hub (index $cfg "caKeyType" | default "rsa-2048") hub}}
+        {{hub- if $issuer hub}}
+        jwtIssuer: {{hub $issuer hub}}
+        {{hub- else hub}}
+        jwtIssuer: https://spire-oidc.{{ dig "spec" "domain" "" ((lookup "config.openshift.io/v1" "Ingress" "" "cluster") | default dict) }}
+        {{hub- end hub}}
+        caSubject:
+          commonName: {{hub (index $ca "commonName" | default "autoshift") hub}}
+          country: {{hub (index $ca "country" | default "US") hub}}
+          organization: {{hub (index $ca "organization" | default "AutoShift") hub}}
+        datastore:
+          databaseType: {{hub (index $ds "databaseType" | default "sqlite3") hub}}
+          connectionString: {{hub (index $ds "connectionString" | default "/run/spire/data/datastore.sqlite3") hub}}
+          maxOpenConns: {{hub (index $ds "maxOpenConns" | default 100) hub}}
+          maxIdleConns: {{hub (index $ds "maxIdleConns" | default 2) hub}}
+        persistence:
+          size: {{hub (index $pers "size" | default "5Gi") hub}}
+          accessMode: {{hub (index $pers "accessMode" | default "ReadWriteOnce") hub}}
+          {{hub- if $storageClass hub}}
+          storageClass: {{hub $storageClass hub}}
+          {{hub- end hub}}
+        {{hub- if $uaCertManager hub}}
+        upstreamAuthority:
+          certManager: {{hub $uaCertManager | toRawJson | toLiteral hub}}
+        {{hub- else if $uaVault hub}}
+        upstreamAuthority:
+          vault: {{hub $uaVault | toRawJson | toLiteral hub}}
+        {{hub- end hub}}
+        {{hub- if or $federatesWith $bundleEndpoint hub}}
+        federation:
+          {{hub- if $federatesWith hub}}
+          federatesWith: {{hub $federatesWith | toRawJson | toLiteral hub}}
+          {{hub- end hub}}
+          {{hub- if $bundleEndpoint hub}}
+          bundleEndpoint: {{hub $bundleEndpoint | toRawJson | toLiteral hub}}
+          {{hub- end hub}}
+        {{hub- end hub}}

@@ -1,0 +1,31 @@
+# ZeroTrustWorkloadIdentityManager — the singleton (name `cluster`) carrying the two values every
+# other ZTWIM operand reads: the SPIFFE trust domain and the cluster name. It gets its own policy so
+# the operand policy can depend on it.
+#
+# trustDomain defaults to the cluster's base domain. A SPIFFE trust domain is an identity, not a
+# routable name, so any stable string works; the base domain is used because it is unique per cluster
+# and already meaningful. Override with config.ztwim.trustDomain — and note that nested SPIRE
+# requires hub and spoke to share ONE trust domain, so set it explicitly there.
+#
+# clusterName defaults to the ManagedCluster name, which is what the k8s_psat node attestor stamps
+# into every agent SPIFFE ID (spiffe://<td>/spire/agent/k8s_psat/<clusterName>/<node-uid>).
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $td := (index $cfg "trustDomain" | default "") hub}}
+  {{hub- $cluster := (index $cfg "clusterName" | default .ManagedClusterName) hub}}
+  {{hub- $bundle := (index $cfg "bundleConfigMap" | default "spire-bundle") hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.openshift.io/v1alpha1
+      kind: ZeroTrustWorkloadIdentityManager
+      metadata:
+        name: cluster
+      spec:
+        {{hub- if $td hub}}
+        trustDomain: {{hub $td hub}}
+        {{hub- else hub}}
+        trustDomain: {{ dig "spec" "baseDomain" "" ((lookup "config.openshift.io/v1" "DNS" "" "cluster") | default dict) }}
+        {{hub- end hub}}
+        clusterName: {{hub $cluster hub}}
+        bundleConfigMap: {{hub $bundle hub}}

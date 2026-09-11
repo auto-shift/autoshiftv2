@@ -1,0 +1,27 @@
+# SpireOIDCDiscoveryProvider — serves the JWKS/OIDC discovery document for SPIFFE JWT-SVIDs, so an
+# external verifier (a cloud IAM provider, an API gateway) can validate them without SPIRE.
+#
+# jwtIssuer MUST match the SpireServer's. The operator strips the scheme and uses the rest as the
+# managed Route's host, so the default is built from the cluster's ingress domain exactly as the
+# server's is. managedRoute: 'true' lets the operator own that Route.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $oidc := (index $cfg "oidcDiscoveryProvider" | default dict) hub}}
+  {{hub- $issuer := (index $cfg "jwtIssuer" | default "") hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.openshift.io/v1alpha1
+      kind: SpireOIDCDiscoveryProvider
+      metadata:
+        name: cluster
+      spec:
+        logLevel: {{hub (index $oidc "logLevel" | default (index $cfg "logLevel" | default "info")) hub}}
+        replicaCount: {{hub (index $oidc "replicaCount" | default 1) hub}}
+        managedRoute: {{hub (index $oidc "managedRoute" | default "true") hub}}
+        csiDriverName: {{hub (index (index $cfg "csiDriver" | default dict) "pluginName" | default "csi.spiffe.io") hub}}
+        {{hub- if $issuer hub}}
+        jwtIssuer: {{hub $issuer hub}}
+        {{hub- else hub}}
+        jwtIssuer: https://spire-oidc.{{ dig "spec" "domain" "" ((lookup "config.openshift.io/v1" "Ingress" "" "cluster") | default dict) }}
+        {{hub- end hub}}
