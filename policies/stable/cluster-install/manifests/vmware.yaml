@@ -250,6 +250,82 @@ object-templates-raw: |
         install-config.yaml: '{{ $installConfig | toYaml | base64enc }}'
   {{- $existingCD := (lookup "hive.openshift.io/v1" "ClusterDeployment" $clusterName $clusterName) | default dict }}
   {{- $alreadyInstalled := (index ($existingCD.spec | default dict) "installed" | default false) }}
+      {{- $parts := (index $ci "diskPartitions" | default dict) }}
+      {{- $partList := (index $parts "partitions" | default list) }}
+      {{- if $partList }}
+  {{- /* Day 1 disk partitioning, for the partition-for-var-log* rules. Hive injects extra install
+         manifests through provisioning.manifestsConfigMapRef, which is this cluster's equivalent of
+         the SiteConfig extraManifestsRefs used on bare metal. On a cloud instance the install disk
+         is usually an NVMe device, so set diskPartitions.device to match rather than assuming sda. */}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: autoshift-partitions-config
+        namespace: {{ $clusterName }}
+      data:
+      {{- range $_, $role := (index $parts "roles" | default (list "master" "worker")) }}
+        autoshift-partitions-{{ $role }}.yaml: |
+          apiVersion: machineconfiguration.openshift.io/v1
+          kind: MachineConfig
+          metadata:
+            name: 98-{{ $role }}-autoshift-partitions
+            labels:
+              machineconfiguration.openshift.io/role: {{ $role }}
+          spec:
+            config:
+              ignition:
+                version: 3.2.0
+              storage:
+                disks:
+                  - device: {{ index $parts "device" }}
+                    partitions:
+                  {{- range $_, $p := $partList }}
+                      - label: {{ index $p "label" }}
+                        startMiB: {{ index $p "startMiB" | default 0 }}
+                        sizeMiB: {{ index $p "sizeMiB" | default 0 }}
+                  {{- end }}
+                filesystems:
+                {{- range $_, $p := $partList }}
+                  - device: /dev/disk/by-partlabel/{{ index $p "label" }}
+                    path: {{ index $p "mountPath" }}
+                    format: {{ index $p "format" | default "xfs" }}
+                    wipeFilesystem: true
+                    mountOptions:
+                      - defaults
+                      - prjquota
+                {{- end }}
+              systemd:
+                units:
+                {{- range $_, $p := $partList }}
+                {{- /* systemd escapes a path into a unit name by replacing / with -, so a hyphen in a
+                       path component must be escaped as \x2d first: /var/log/kube-apiserver becomes
+                       var-log-kube\x2dapiserver.mount. A plain slash replace produces a name systemd
+                       never matches to the path, and the mount silently never happens. The rest of
+                       the unit is what butane emits for with_mount_unit: fsck ordering,
+                       and RequiredBy rather than WantedBy so a mount that fails stops the boot
+                       instead of leaving the path quietly on the root filesystem. */}}
+                {{- $unit := (printf "%s.mount" (trimPrefix "-" (replace "/" "-" (replace "-" "\\x2d" (index $p "mountPath"))))) }}
+                {{- $fsck := (printf "systemd-fsck@%s.service" (trimPrefix "-" (replace "/" "-" (replace "-" "\\x2d" (printf "/dev/disk/by-partlabel/%s" (index $p "label")))))) }}
+                  - name: {{ $unit }}
+                    enabled: true
+                    contents: |
+                      [Unit]
+                      Before=local-fs.target
+                      Requires={{ $fsck }}
+                      After={{ $fsck }}
+                      [Mount]
+                      Where={{ index $p "mountPath" }}
+                      What=/dev/disk/by-partlabel/{{ index $p "label" }}
+                      Type={{ index $p "format" | default "xfs" }}
+                      Options=defaults,prjquota
+                      [Install]
+                      RequiredBy=local-fs.target
+                {{- end }}
+      {{- end }}
+      {{- end }}
+
   - complianceType: musthave
     objectDefinition:
       apiVersion: hive.openshift.io/v1
@@ -283,6 +359,10 @@ object-templates-raw: |
             certificatesSecretRef:
               name: {{ $clusterName }}-vsphere-certs
         provisioning:
+        {{- if $partList }}
+          manifestsConfigMapRef:
+            name: autoshift-partitions-config
+        {{- end }}
           installConfigSecretRef:
             name: {{ $clusterName }}-install-config
           imageSetRef:

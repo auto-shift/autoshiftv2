@@ -712,7 +712,7 @@ no interactive administrator until you either configure OpenID Connect and list 
 
 | Variable                              | Type              | Default Value             | Notes |
 |---------------------------------------|-------------------|---------------------------|-------|
-| `compliance`                          | bool              |                           | If not set Compliance Operator will not be managed. Helm chart config map must be set with profiles and remediations |
+| `compliance`                          | bool              |                           | If not set Compliance Operator will not be managed. Scans, pinned profiles and the remediation reject list are set in `config.compliance`; see [Compliance and STIG](compliance.md) |
 | `compliance-auto-remediate`           | bool              | `true`                    |       |
 | `compliance-storage-class`            | string            |                           | `StorageClass` for compliance scan raw results. Use when default `StorageClass` is not available on master nodes (e.g., Ceph RBD) |
 | `compliance-subscription-name`        | string            | `compliance-operator`     |       |
@@ -894,9 +894,8 @@ config:
 
 ### Manual remediations
 
-Provides manual fixes and configurations that cannot be automated through operators, including managing allowed image registries for enhanced security.
+One policy per Security Technical Implementation Guide finding the Compliance Operator ships no automatic remediation for, because each needs a site decision: permitted registries, banner text, audit log destination.
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
-| `manual-remediations`             | bool              |                           | If not set Manual Remediations will not be managed |
-| `allowed-registries`              | <list<String>>    |                           | List of allowed container image registries. Controls which registries can be used for pulling images |
+| `manual-remediations`             | bool              |                           | Enables the whole set. Each remediation is configured under `config.manualRemediations` and renders nothing until its key is set; see [Compliance and STIG](compliance.md) |

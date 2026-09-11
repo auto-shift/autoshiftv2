@@ -1,24 +1,39 @@
+# Sets spec.apply on every ComplianceRemediation a scan produced, from config.compliance.scans.
+#
+# autoApply defaults to false, so adding a scan gives you findings and no cluster changes. Turning
+# it on applies every remediation except those named in exclude, a reject list. Several remediations
+# are MachineConfigs and will roll nodes.
+#
+# What keeps a new STIG from applying itself is the pinned profile version in config, not the list.
+#
+# Naming a remediation in exclude sets apply: false rather than declining to set it true, so adding
+# a name after the fact reverts that remediation. musthave is correct because apply is a scalar.
+# mustonlyhave would be destructive: spec also carries current.object, the whole remediation payload
+# the scan generated, and type.
+#
+# The scan config is read on the hub and passed through as literal YAML; the remediations are looked
+# up SPOKE side, because each cluster has its own set from its own scan. A hub lookup would stamp
+# the hub's remediation names onto every managed cluster.
 object-templates-raw: |
-  {{hub- range (fromConfigMap .PolicyMetadata.namespace "stig-remediation" "ocp4-stig" | trim | split "\n") hub}}
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{- $spoke := `
+  scans:
+    {{hub (dig "compliance" "scans" (list) $cfg) | toYaml | autoindent hub}}
+  ` | fromYaml }}
+  {{- range $scan := (dig "scans" (list) $spoke) }}
+  {{- $exclude := (dig "exclude" (list) $scan) }}
+  {{- range $rem := (dig "items" (list) ((lookup "compliance.openshift.io/v1alpha1" "ComplianceRemediation" "openshift-compliance" "") | default dict)) }}
+  {{- if eq (dig "metadata" "labels" "compliance.openshift.io/suite" "" $rem) $scan.name }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: compliance.openshift.io/v1alpha1
       kind: ComplianceRemediation
       metadata:
-        name: {{hub . hub}}
+        name: {{ $rem.metadata.name }}
         namespace: openshift-compliance
       spec:
-        apply: true
-  {{hub- end hub}}
-
-  {{hub- range (fromConfigMap .PolicyMetadata.namespace "stig-remediation" "rhcos4-stig" | trim | split "\n") hub}}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: compliance.openshift.io/v1alpha1
-      kind: ComplianceRemediation
-      metadata:
-        name: {{hub . hub}}
-        namespace: openshift-compliance
-      spec:
-        apply: true
-  {{hub- end hub}}
+        apply: {{ and (dig "autoApply" false $scan) (not (has $rem.metadata.name $exclude)) }}
+  {{- end }}
+  {{- end }}
+  {{- end }}

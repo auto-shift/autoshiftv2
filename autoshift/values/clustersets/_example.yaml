@@ -102,7 +102,6 @@ hubClusterSets:
               cpu: '100m'
               memory: '256Mi'
         alertmanager:
-          enabled: true
           storage: '10Gi'
           resources:
             requests:
@@ -155,6 +154,304 @@ hubClusterSets:
             userWorkload:
               names:
                 - sample_metrics
+
+      # =======================================================================
+      # File integrity - policy: file-integrity
+      # =======================================================================
+      # NIST file-integrity-exists. AIDE runs in a privileged daemon set on each selected node.
+      # file-integrity-notification-enabled is satisfied by the operator itself, which ships the
+      # NodeHasIntegrityFailure alert.
+      #
+      # ONE instance covering every node. Schedulable control plane nodes carry both the master and
+      # worker role labels, so per-role instances would scan those nodes twice. Split only if your
+      # layout needs it, and keep the selectors disjoint.
+      fileIntegrity:
+        # config defaults to the AutoShift ConfigMap, which is the operator's own generated AIDE
+        # default plus an exclusion for the machine config daemon log directory. Without that
+        # exclusion every node reports NodeHasIntegrityFailure after a daemon restart, for log
+        # files nobody edited. Set config.name and config.namespace to use a ConfigMap of your own.
+        instances:
+          - name: 'autoshift'
+            nodeSelector:
+              kubernetes.io/os: 'linux'
+            tolerations:
+              - operator: 'Exists'
+            config:
+              gracePeriod: 20
+              maxBackups: 5
+            debug: false
+
+      # =======================================================================
+      # Compliance Operator
+      # =======================================================================
+      # One ScanSettingBinding per entry in scans. Profiles are PINNED to a version: the
+      # unversioned name (ocp4-stig) tracks whatever DISA publishes next, so a new release would
+      # silently change what is scanned and remediated. Bumping the pin is the deliberate choice.
+      #
+      # autoApply defaults to false, so adding a scan gives findings and no cluster changes. With it
+      # true, every remediation the scan produced is applied EXCEPT those in exclude. Several
+      # generate MachineConfigs and will roll nodes, so turn it on per scan, per cluster.
+      #
+      # exclude is a reject list, not an allow list. The previous allow list carried 206 names to
+      # express four decisions and had to be re-enumerated on every profile bump. Excluding a
+      # remediation sets apply: false, so removing one after the fact actually reverts it.
+      #
+      # Full workflow, and the findings that need manual policies: docs/compliance.md
+      # =======================================================================
+      compliance:
+        # Pin the operator CSV. Same shape as the other operator version blocks.
+        # versions:
+        #   - 'compliance-operator.vX.Y.Z'
+        # startingCSV: 'compliance-operator.vX.Y.Z'
+        # Findings a person has reviewed and accepted. policy-stig-manual-review reports every
+        # MANUAL result, every FAIL with no remediation, and any INCONSISTENT result that failed on
+        # a node, and stays NonCompliant until each one is listed here or fixed.
+        #
+        # The reason is the audit record. Write what was actually checked and what was found.
+        # Accept a finding only when nothing can be done about it; one with a real fix belongs
+        # fixed, not accepted. Names carry the profile version, so a bump reopens every acceptance.
+        manualReview:
+          accepted:
+            - name: 'ocp4-stig-v2r3-fips-mode-enabled-on-all-nodes'
+              reason: 'FIPS is an install-config flag and cannot be enabled after install. Accepted until the cluster is rebuilt.'
+            - name: 'ocp4-stig-v2r3-container-security-operator-exists'
+              reason: 'The Container Security Operator is deprecated. Red Hat Advanced Cluster Security provides the equivalent scanning and console integration.'
+        scans:
+          - name: stig-v2r3
+            profiles:
+              - ocp4-stig-v2r3
+              - ocp4-stig-node-v2r3
+              - rhcos4-stig-v2r3
+            scanSetting: default
+            autoApply: false
+            # These four change the DEFAULT PROJECT TEMPLATE, so every project created through
+            # `oc new-project` is born with a default-deny NetworkPolicy and a ResourceQuota.
+            # Excluded because default-deny blocks traffic from the kube-apiserver as well as from
+            # other namespaces: it has been observed to break the cluster-manager namespaces and
+            # Red Hat Advanced Cluster Security, whose admission webhook the API server calls into.
+            # Namespaces created directly by an operator bundle are not affected, but the ones ACM
+            # creates per managed cluster are the ones that bite. Verify on a test cluster before
+            # removing any of these.
+            exclude:
+              - ocp4-stig-v2r3-project-config-and-template-network-policy
+              - ocp4-stig-v2r3-project-config-and-template-network-policy-1
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
+          # A second scan runs alongside the first, with its own autoApply and exclude. Any profile
+          # the Compliance Operator ships works the same way; these are the NIST 800-53 moderate
+          # baseline pinned to revision 4. List what is available with:
+          #   oc get profile.compliance -n openshift-compliance
+          - name: nist-moderate-rev4
+            profiles:
+              - ocp4-moderate-rev-4
+              - ocp4-moderate-node-rev-4
+              - rhcos4-moderate-rev-4
+            scanSetting: default
+            autoApply: false
+            exclude: []
+
+      # =======================================================================
+      # Logging - policy: logging
+      # =======================================================================
+      # One ClusterLogForwarder per entry, created in namespace (default openshift-logging).
+      # spec is ClusterLogForwarder schema passed through verbatim, so inputs, filters, tuning and
+      # any output type a later release adds work with no change to the policy. AutoShift creates
+      # the collector ServiceAccount and binds it to collectorRoles; spec.serviceAccount.name
+      # defaults to <name>-collector.
+      #
+      # Forwarding audit logs satisfies the STIG rules audit-log-forwarding-enabled and
+      # audit-log-forwarding-uses-tls. This needs only the logging operator, not the Loki stack.
+      logging:
+        # Pin the operator CSV. Same shape as the other operator version blocks.
+        # versions:
+        #   - 'cluster-logging.vX.Y.Z'
+        # startingCSV: 'cluster-logging.vX.Y.Z'
+        forwarders:
+          - name: 'audit'
+            namespace: 'openshift-logging'
+            collectorRoles:
+              - 'collect-audit-logs'
+            spec:
+              outputs:
+                - name: 'audit-remote'
+                  type: 'syslog'
+                  syslog:
+                    url: 'tls://syslog.example.com:6514'
+                    rfc: 'RFC5424'
+              pipelines:
+                - name: 'audit-to-remote'
+                  inputRefs:
+                    - 'audit'
+                  outputRefs:
+                    - 'audit-remote'
+
+      # =======================================================================
+      # Manual remediations - policy: manual-remediations
+      # =======================================================================
+      # STIG findings the Compliance Operator ships no automatic remediation for, because each one
+      # needs a site decision it cannot make: which registries are permitted, what the banner says,
+      # where audit logs go. Enable the set with the autoshift.io/manual-remediations label; each
+      # entry below renders nothing until you set it, so the label alone changes nothing.
+      #
+      # Findings that cannot be remediated at all are reported by policy-stig-manual-review.
+      manualRemediations:
+        # ocp-allowed-registries, ocp-allowed-registries-for-import
+        imageRegistries:
+          allowed:
+            - quay.io
+            - registry.redhat.io
+            - image-registry.openshift-image-registry.svc:5000
+          allowedForImport:
+            - domainName: quay.io
+              insecure: false
+            - domainName: registry.redhat.io
+              insecure: false
+        # Samples Operator pulls from registry.redhat.io; remove it when the list above blocks that.
+        # classification-banner
+        classificationBanner:
+          text: 'UNCLASSIFIED'
+          location: 'BannerTopBottom'
+          color: '#ffffff'
+          backgroundColor: '#008000'
+        # openshift-motd-exists. The rule accepts either DoD consent banner; this is the short form.
+        motd: |
+          You are accessing a U.S. Government (USG) Information System (IS) that is provided for
+          USG-authorized use only. By using this IS (which includes any device attached to this
+          IS), you consent to the following conditions: the USG routinely intercepts and monitors
+          communications on this IS; at any time, the USG may inspect and seize data stored on this
+          IS; communications using, or data stored on, this IS are not private and are subject to
+          routine monitoring, interception, and search.
+        # oauth-login-template-set, oauth-provider-selection-set, oauth-logout-url-set.
+        # The template Secrets hold HTML and are created out of band in openshift-config.
+        oauth:
+          loginTemplateSecret: 'login-template'
+          providerSelectionTemplateSecret: 'providerselect-template'
+          errorTemplateSecret: 'error-template'
+          logoutRedirect: 'https://example.com/logged-out'
+          tokenMaxAgeSeconds: 86400
+        # routes-rate-limit. annotations defaults to 10 concurrent TCP, 10 http/s, 10 tcp/s.
+        # The rule scores every Route outside kube-* and openshift-*, so allNamespaces is the only
+        # setting that passes it; the default excludeRegex matches the rule's own exclusion.
+        routeRateLimits:
+          allNamespaces: true
+          excludeRegex: '^kube-.*|^openshift-.*'
+          namespaces: []
+          annotations:
+            haproxy.router.openshift.io/rate-limit-connections: 'true'
+            haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: '10'
+            haproxy.router.openshift.io/rate-limit-connections.rate-http: '10'
+            haproxy.router.openshift.io/rate-limit-connections.rate-tcp: '10'
+          # NIST route-ip-whitelist. Requests from outside these ranges are dropped, so an
+          # incomplete list silently blocks legitimate traffic. Empty leaves routes open.
+          ipWhitelist: []
+        # project-config-and-template-network-policy, project-config-and-template-resource-quota.
+        # Owns the default project template so new projects get network policies and a quota. Use
+        # this INSTEAD of the operator's own remediations, which are in compliance.scans[].exclude
+        # because they ship only the restrictive half and break admission webhooks and operator
+        # pods. quota values become mandatory for every pod in a new project; limitRange supplies
+        # the defaults that keeps pods without their own requests admissible.
+        projectTemplate:
+          name: 'project-request'
+          networkPolicies: false
+          quota:
+            requests.cpu: '4'
+            requests.memory: '8Gi'
+            limits.cpu: '8'
+            limits.memory: '16Gi'
+          limitRange:
+            default:
+              cpu: '500m'
+              memory: '512Mi'
+            defaultRequest:
+              cpu: '100m'
+              memory: '256Mi'
+          extraObjects: []
+        # NIST kubelet-eviction-thresholds-set-hard-*. Reclaims node disk on a threshold instead
+        # of at the point of failure. Changing a KubeletConfig rolls the pools listed.
+        kubeletEviction:
+          # Empty discovers every MachineConfigPool at evaluation time. A KubeletConfig selects a
+          # pool by its own label, so naming only master and worker would skip infra, storage or
+          # any custom pool. List pools explicitly only to deliberately exclude one.
+          pools: []
+          # Applied to every pool. The defaults are the values the profile checks for.
+          evictionHard:
+            imagefs.available: '15%'
+            imagefs.inodesFree: '5%'
+            memory.available: '100Mi'
+            nodefs.available: '10%'
+            nodefs.inodesFree: '5%'
+          # Per pool, merged over evictionHard by key, so a pool only restates what differs. Keyed
+          # by MachineConfigPool name, so any pool works: storage, or an accelerator pool added
+          # later, not just the node roles AutoShift ships policies for.
+          overrides:
+            infra:
+              memory.available: '500Mi'
+            storage:
+              nodefs.available: '15%'
+              imagefs.available: '20%'
+        # NIST auditd-data-*. Writes /etc/audit/auditd.conf and ROLLS EVERY NODE in pools.
+        # disk_error_action and disk_full_action of single drop a node to single-user mode rather
+        # than let auditing stop; that is the control's intent and it is disruptive. space_left_action
+        # of email needs a working local mailer or the warning goes nowhere.
+        auditdConfig:
+          pools:
+            - 'master'
+            - 'worker'
+          settings:
+            flush: 'data'
+            freq: 50
+            max_log_file: 6
+            num_logs: 5
+            name_format: 'hostname'
+            max_log_file_action: 'rotate'
+            space_left: 100
+            space_left_action: 'email'
+            action_mail_acct: 'root'
+            admin_space_left_action: 'single'
+            disk_full_action: 'single'
+            disk_error_action: 'single'
+        # NIST sshd-limit-user-access. ROLLS EVERY NODE in pools. On Red Hat CoreOS only root and
+        # core have a shell and only core has keys, so this changes nothing today; it stops an
+        # account added later from reaching a node. Naming an account that does not exist locks
+        # everyone out of SSH. AllowUsers is preferred: core's core-group membership is primary,
+        # so `getent group core` lists no members.
+        sshdAccess:
+          pools:
+            - 'master'
+            - 'worker'
+          AllowUsers:
+            - 'core'
+          AllowGroups: []
+          DenyUsers: []
+          DenyGroups: []
+        # NIST audit-rules-unsuccessful-file-modification-*-rule-order. Writes the 36 rules those
+        # checks expect, in the order they require, to one file so augenrules keeps the sequence.
+        # ROLLS EVERY NODE in pools.
+        auditRuleOrder:
+          pools:
+            - 'master'
+            - 'worker'
+        # NIST cluster-wide-proxy-set. Only set this where egress really goes through a proxy;
+        # on a cluster with direct egress, accept the rule instead. Merged into the live Proxy CR,
+        # so installer-set fields such as trustedCA are preserved.
+        clusterProxy:
+          httpProxy: ''
+          httpsProxy: ''
+          noProxy: ''
+        # reject-unsigned-images-by-default. ROLLS EVERY NODE in pools. Leave enabled false unless
+        # every image the cluster pulls is signed and its signature store is reachable.
+        rejectUnsignedImages:
+          pools:
+            - 'master'
+            - 'worker'
+          policy:
+            default:
+              - type: 'reject'
+            transports:
+              containers-storage:
+                '':
+                  - type: 'insecureAcceptAnything'
+
       # =======================================================================
       # Managed AutoShift — nested deployments onto the hubs this hub governs
       # =======================================================================
@@ -361,10 +658,6 @@ hubClusterSets:
       #   versions:
       #     - 'cloudnative-pg.vX.Y.Z'
       #   startingCSV: 'cloudnative-pg.vX.Y.Z'
-      # compliance:
-      #   versions:
-      #     - 'compliance-operator.vX.Y.Z'
-      #   startingCSV: 'compliance-operator.vX.Y.Z'
       # coo:
       #   versions:
       #     - 'cluster-observability-operator.vX.Y.Z'
@@ -393,10 +686,6 @@ hubClusterSets:
       #   versions:
       #     - 'local-storage-operator.vX.Y.Z'
       #   startingCSV: 'local-storage-operator.vX.Y.Z'
-      # logging:
-      #   versions:
-      #     - 'cluster-logging.vX.Y.Z'
-      #   startingCSV: 'cluster-logging.vX.Y.Z'
       # loki:
       #   versions:
       #     - 'loki-operator.vX.Y.Z'
@@ -1015,7 +1304,6 @@ hubClusterSets:
       master-system-reserved-cpu: '500m'     # CPU reserved for OS/system processes
       master-kube-reserved-memory: '1536Mi'  # Memory reserved for kubelet/CRI-O
       master-kube-reserved-cpu: '500m'       # CPU reserved for kubelet/CRI-O
-      master-eviction-memory: '500Mi'        # Hard eviction threshold for memory.available
 
       # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
@@ -1034,6 +1322,20 @@ hubClusterSets:
       # Manual Remediations
       # =======================================================================
       manual-remediations: 'false'
+      manual-remediations-image-registries: 'false'
+      manual-remediations-remove-samples-operator: 'false'
+      manual-remediations-classification-banner: 'false'
+      manual-remediations-motd: 'false'
+      manual-remediations-oauth-customization: 'false'
+      manual-remediations-route-rate-limits: 'false'
+      manual-remediations-kubelet-eviction: 'false'
+      manual-remediations-auditd-config: 'false'
+      manual-remediations-sshd-access: 'false'
+      manual-remediations-audit-rule-order: 'false'
+      manual-remediations-cluster-proxy: 'false'
+      manual-remediations-quota-guard: 'false'
+      manual-remediations-project-template: 'false'
+      manual-remediations-reject-unsigned-images: 'false'
 
       # =======================================================================
       # Infrastructure Nodes
@@ -1055,7 +1357,6 @@ hubClusterSets:
       infra-system-reserved-cpu: '500m'      # CPU reserved for OS/system processes
       infra-kube-reserved-memory: '1Gi'      # Memory reserved for kubelet/CRI-O
       infra-kube-reserved-cpu: '500m'        # CPU reserved for kubelet/CRI-O
-      infra-eviction-memory: '500Mi'         # Hard eviction threshold for memory.available
 
       # =======================================================================
       # Worker Nodes
@@ -1074,7 +1375,6 @@ hubClusterSets:
       worker-system-reserved-cpu: '250m'     # CPU reserved for OS/system processes
       worker-kube-reserved-memory: '512Mi'   # Memory reserved for kubelet/CRI-O
       worker-kube-reserved-cpu: '250m'       # CPU reserved for kubelet/CRI-O
-      worker-eviction-memory: '500Mi'        # Hard eviction threshold for memory.available
 
       # =======================================================================
       # Storage Nodes
@@ -1322,6 +1622,22 @@ hubClusterSets:
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
+
+      # =======================================================================
+      # File Integrity Operator
+      # =======================================================================
+      # Node file integrity monitoring with AIDE. Satisfies the NIST rules
+      # file-integrity-exists and file-integrity-notification-enabled.
+      file-integrity: 'false'
+      file-integrity-subscription-name: file-integrity-operator
+      file-integrity-version: 'file-integrity-operator.v1.4.1'
+      file-integrity-channel: stable
+      file-integrity-source: redhat-operators
+      file-integrity-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Container Security Operator
+      # =======================================================================
 
       # =======================================================================
       # OpenShift Virtualization

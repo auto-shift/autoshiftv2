@@ -259,6 +259,77 @@ clusters:
         ingressVip: '10.0.0.3'                      # required for multi-node
         # mastersSchedulable: false                 # default: false
         # cpuPartitioning: 'AllNodes'               # 'None' (default) or 'AllNodes' — install-time only
+
+        # --- Day 1 disk partitioning ---
+        # Partitioning Red Hat CoreOS is an install-time operation. The partition has to exist before
+        # RHCOS is written, so this is emitted as an install manifest and there is no day-2
+        # equivalent: applying the same MachineConfig to a running node writes the mount unit but
+        # never creates the partition, leaving a unit that fails against a missing device.
+        #
+        # The installation documentation describes adding one partition, at /var or a subdirectory
+        # of it; Ignition itself allows arbitrary partitioning.
+        #
+        # The DISA STIG has one partition rule, /var/log/audit, so one partition satisfies that
+        # profile completely. NIST moderate has five, each checking its own path: passing all of
+        # them needs five partitions and allowMultiple: true. The alternative is one partition and
+        # four entries in compliance.manualReview.
+        #
+        # A mountPath outside /var is not covered either way and is always rejected.
+        #
+        # device must be the install disk. Prefer a /dev/disk/by-id/ path: on AWS the install disk is
+        # usually an NVMe device, and on bare metal device names move between boots. The root
+        # filesystem resizes to fill everything up to startMiB, and below 25000 the documentation
+        # warns the root filesystem ends up too small. prjquota is required for container storage.
+        #
+        # On a cloud platform, every node in a pool must use the same device name, so worker
+        # instance types with different disk layouts cannot share one partitioned pool.
+        # diskPartitions:
+        #   device: '/dev/disk/by-id/nvme-nvme.1b36-1234'
+        #   roles:
+        #     - 'master'
+        #     - 'worker'
+        #   partitions:
+        #     - label: 'varlogaudit'
+        #       mountPath: '/var/log/audit'
+        #       startMiB: 102400
+        #       sizeMiB: 10000
+        #       format: 'xfs'
+
+        # Or the full NIST layout instead of the block above, not as well as it. Uncomment ONE of
+        # these two; both together is a duplicate diskPartitions key and YAML keeps only the last.
+        #
+        # startMiB on the first partition sizes the root filesystem, because root grows only up to
+        # it. Container images live in /var/lib/containers, so /var gets a partition of its own with
+        # sizeMiB 0 to take the rest of the disk; without it the images sit on a root capped at
+        # 25GiB and the node hits DiskPressure before the install finishes.
+        # diskPartitions:
+        #   device: '/dev/disk/by-id/nvme-nvme.1b36-1234'
+        #   allowMultiple: true
+        #   partitions:
+        #     - label: 'varlog'
+        #       mountPath: '/var/log'
+        #       startMiB: 25000
+        #       sizeMiB: 4000
+        #     - label: 'varlogaudit'
+        #       mountPath: '/var/log/audit'
+        #       startMiB: 29000
+        #       sizeMiB: 4000
+        #     - label: 'varlogkubeapi'
+        #       mountPath: '/var/log/kube-apiserver'
+        #       startMiB: 33000
+        #       sizeMiB: 4000
+        #     - label: 'varlogoauthapi'
+        #       mountPath: '/var/log/oauth-apiserver'
+        #       startMiB: 37000
+        #       sizeMiB: 2000
+        #     - label: 'varlogopenshiftapi'
+        #       mountPath: '/var/log/openshift-apiserver'
+        #       startMiB: 39000
+        #       sizeMiB: 2000
+        #     - label: 'var'
+        #       mountPath: '/var'
+        #       startMiB: 41000
+        #       sizeMiB: 0
         # fips: true                                # Enable FIPS mode (requires ECDSA/RSA SSH keys, not Ed25519)
 
         # --- SSH Key (inline or ConfigMap ref) ---

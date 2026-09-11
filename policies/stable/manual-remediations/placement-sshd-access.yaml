@@ -1,0 +1,25 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-sshd-access
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Both labels are required: manual-remediations enables the set, the specific label opts into this
+  # member. Nothing is placed on a cluster that has not asked for it.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/manual-remediations'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/manual-remediations-sshd-access'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

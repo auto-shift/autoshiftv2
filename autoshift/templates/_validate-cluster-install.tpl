@@ -175,7 +175,7 @@ Collects all errors and reports them together.
 {{- define "autoshift.validate-cluster-install" -}}
 
 {{/* ===== Valid key lists — add new fields here ===== */}}
-{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
+{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" "diskPartitions" }}
 {{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
 {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
 {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
@@ -223,6 +223,58 @@ Collects all errors and reports them together.
       {{- range $key, $_ := $host }}
         {{- if not (has $key $validHostKeys) }}
           {{- $errors = append $errors (printf "%s host %s: %s is not a recognized field (valid: %s)" $path $hostname $key (join ", " $validHostKeys)) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{/* The installation documentation describes adding one partition, at /var or a subdirectory
+         of it. Ignition itself allows arbitrary partitioning. The NIST moderate profile needs five
+         partitions to pass every partition-for-var-log rule, so allowMultiple opens that up.
+         A mountPath outside /var is not described anywhere and stays an error. */}}
+    {{- $dpParts := (dig "config" "clusterInstall" "diskPartitions" "partitions" (list) $cluster) }}
+    {{- $dpAck := (dig "config" "clusterInstall" "diskPartitions" "allowMultiple" false $cluster) }}
+    {{- if and (gt (len $dpParts) 1) (not $dpAck) }}
+      {{- $errors = append $errors (printf "%s: clusterInstall.diskPartitions.partitions has %d entries, the installation documentation describes adding a single partition at /var or a subdirectory of it. The NIST moderate profile needs five to pass every partition-for-var-log rule; set clusterInstall.diskPartitions.allowMultiple: true to create more than one" $path (len $dpParts)) }}
+    {{- end }}
+    {{- range $idx, $part := $dpParts }}
+      {{- $mp := (dig "mountPath" "" $part) }}
+      {{- if and $mp (not (or (eq $mp "/var") (hasPrefix "/var/" $mp))) }}
+        {{- $errors = append $errors (printf "%s: clusterInstall.diskPartitions.partitions[%d].mountPath is %s; the installation documentation covers /var or a subdirectory of /var" $path $idx $mp) }}
+      {{- end }}
+    {{- end }}
+
+    {{/* startMiB caps the root filesystem, which grows only up to the first partition. Container
+         images live in /var/lib/containers and stay on root unless /var is a partition of its own,
+         so a low startMiB starves root and kubelet reports DiskPressure before the install
+         finishes: cluster operators never get pods and the install times out. */}}
+    {{- if $dpParts }}
+      {{- $hasVar := false }}
+      {{- $minStart := 0 }}
+      {{- range $part := $dpParts }}
+        {{- if eq (dig "mountPath" "" $part) "/var" }}
+          {{- $hasVar = true }}
+        {{- end }}
+        {{- $s := (dig "startMiB" 0 $part) | int }}
+        {{- if and (gt $s 0) (or (eq $minStart 0) (lt $s $minStart)) }}
+          {{- $minStart = $s }}
+        {{- end }}
+      {{- end }}
+      {{- if and (not $hasVar) (gt $minStart 0) (lt $minStart 51200) }}
+        {{- $errors = append $errors (printf "%s: clusterInstall.diskPartitions has no partition mounting /var and its lowest startMiB is %dMiB, which caps the root filesystem at about that size. Container images stay on root without a separate /var, so the node fills up and kubelet reports DiskPressure before the install completes. Add a /var partition with sizeMiB 0 as the last entry, or raise startMiB above 51200" $path $minStart) }}
+      {{- end }}
+    {{- end }}
+
+    {{/* diskPartitions.device must be the disk the install actually lands on. rootDeviceHints is
+         per host and chooses that disk; the partition MachineConfig is per role and carries one
+         device path, so a disagreement silently partitions the wrong disk. Only deviceName can be
+         compared here: size and hardware hints are resolved by Ironic at provision time. */}}
+    {{- $dp := (dig "config" "clusterInstall" "diskPartitions" dict $cluster) }}
+    {{- $dpDevice := (dig "device" "" $dp) }}
+    {{- if $dpDevice }}
+      {{- range $hostname, $host := $hosts }}
+        {{- $hint := (dig "rootDeviceHints" "deviceName" "" $host) }}
+        {{- if and $hint (ne $hint $dpDevice) }}
+          {{- $errors = append $errors (printf "%s host %s: rootDeviceHints.deviceName is %s but clusterInstall.diskPartitions.device is %s; the partition would be created on a different disk from the one the OS installs to" $path $hostname $hint $dpDevice) }}
         {{- end }}
       {{- end }}
     {{- end }}

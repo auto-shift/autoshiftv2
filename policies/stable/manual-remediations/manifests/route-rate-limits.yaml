@@ -1,0 +1,49 @@
+# STIG routes-rate-limit and NIST route-ip-whitelist. Every Route outside kube-* and openshift-*
+# needs the haproxy rate-limit annotations, and the NIST profile additionally wants an IP allow
+# list, set with ipWhitelist. Requests from addresses outside it are dropped, so get the list right
+# before enabling it. Both are the same annotation mechanism, so an explicit namespace list can satisfy the rule only if it names every namespace
+# that has a Route. allNamespaces walks them instead, skipping excludeRegex, which defaults to the
+# same expression the rule itself excludes (ocp4-var-routes-excluded-namespaces-regex).
+#
+# Widening excludeRegex leaves the rule failing. Rate limits do apply to operator consoles caught by
+# allNamespaces, which is the trade the control asks for.
+#
+# Routes belong to whatever created them, so the annotations are merged onto the live objects.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{- $rl := `
+  {{hub (dig "manualRemediations" "routeRateLimits" dict $cfg) | toYaml | autoindent hub}}
+  ` | fromYaml }}
+  {{- $annotations := (dig "annotations" (dict
+       "haproxy.router.openshift.io/rate-limit-connections" "true"
+       "haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp" "10"
+       "haproxy.router.openshift.io/rate-limit-connections.rate-http" "10"
+       "haproxy.router.openshift.io/rate-limit-connections.rate-tcp" "10") $rl) }}
+  {{- $allow := (dig "ipWhitelist" (list) $rl) }}
+  {{- if $allow }}
+  {{- $annotations = merge (dict "haproxy.router.openshift.io/ip_whitelist" (join " " $allow)) $annotations }}
+  {{- end }}
+  {{- $namespaces := (dig "namespaces" (list) $rl) }}
+  {{- if (dig "allNamespaces" false $rl) }}
+  {{- $skip := (dig "excludeRegex" "^kube-.*|^openshift-.*" $rl) }}
+  {{- $namespaces = list }}
+  {{- range $ns := (dig "items" (list) ((lookup "v1" "Namespace" "" "") | default dict)) }}
+  {{- if not (regexMatch $skip $ns.metadata.name) }}
+  {{- $namespaces = append $namespaces $ns.metadata.name }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- range $ns := $namespaces }}
+  {{- range $route := (dig "items" (list) ((lookup "route.openshift.io/v1" "Route" $ns "") | default dict)) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: route.openshift.io/v1
+      kind: Route
+      metadata:
+        name: {{ $route.metadata.name }}
+        namespace: {{ $ns }}
+        annotations:
+          {{ $annotations | toYaml | autoindent }}
+  {{- end }}
+  {{- end }}
