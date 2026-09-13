@@ -20,8 +20,10 @@
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
-  {{hub- $td := (index $cfg "trustDomain" | default "") hub}}
-  {{- $trustDomain := "{{hub $td hub}}" }}
+  {{hub- $cfgTd := (index $cfg "trustDomain" | default "") hub}}
+  {{- $cfgTrustDomain := "{{hub $cfgTd hub}}" }}
+  {{- $localZtwim := (lookup "operator.openshift.io/v1alpha1" "ZeroTrustWorkloadIdentityManager" "" "cluster") | default dict }}
+  {{- $trustDomain := ($cfgTrustDomain | default (dig "spec" "trustDomain" "" $localZtwim)) }}
   {{- $ns := "zero-trust-workload-identity-manager" }}
   {{- if $trustDomain }}
   {{- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items }}

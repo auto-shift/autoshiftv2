@@ -9,6 +9,12 @@
 # this topology hardcodes ghcr.io/spiffe/spire-agent, which is none of those things. An audit of a
 # live install found all eight operator images declared this way and none undeclared.
 #
+# TRUST DOMAIN IS DERIVED TOO. A nested spoke does not get to choose its trust domain -- it MUST
+# equal the hub's, or the upstream-authority plugin builds the wrong expected server ID and the TLS
+# handshake fails with "unexpected ID". So rather than asking an operator to retype the hub's value
+# (and inviting a typo that fails in a confusing way), this hub template reads the hub's own
+# ZeroTrustWorkloadIdentityManager CR. config.ztwim.trustDomain still overrides.
+#
 # HUB ENDPOINT IS DERIVED, not configured. These are HUB templates, so they resolve against the
 # hub and can read the spire-server-grpc Route that manifests/nested-hub/grpc-route.yaml created.
 # config.ztwim.nested.hubEndpoint is an override for what derivation cannot cover: an external load
@@ -21,7 +27,9 @@ object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
   {{hub- $nested := (index $cfg "nested" | default dict) hub}}
-  {{hub- $td := (index $cfg "trustDomain" | default "") hub}}
+  {{hub- $cfgTd := (index $cfg "trustDomain" | default "") hub}}
+  {{hub- $hubZtwim := (lookup "operator.openshift.io/v1alpha1" "ZeroTrustWorkloadIdentityManager" "" "cluster") | default dict hub}}
+  {{hub- $td := ($cfgTd | default (dig "spec" "trustDomain" "" $hubZtwim)) hub}}
   {{hub- $cfgEndpoint := (index $nested "hubEndpoint" | default "") hub}}
   {{hub- $route := (lookup "route.openshift.io/v1" "Route" "zero-trust-workload-identity-manager" "spire-server-grpc") | default dict hub}}
   {{hub- $endpoint := ($cfgEndpoint | default (dig "spec" "host" "" $route)) hub}}
