@@ -18,7 +18,10 @@ object-templates-raw: |
       spec:
         logLevel: {{hub (index $oidc "logLevel" | default (index $cfg "logLevel" | default "info")) hub}}
         replicaCount: {{hub (index $oidc "replicaCount" | default 1) hub}}
-        managedRoute: {{hub (index $oidc "managedRoute" | default "true") hub}}
+        # QUOTED deliberately: managedRoute is a STRING enum ('true'/'false') in the CRD, not a
+        # boolean. Rendered unquoted, YAML coerces it to a boolean and the API server rejects the
+        # object with `must be of type string: "boolean"`.
+        managedRoute: '{{hub (index $oidc "managedRoute" | default "true") hub}}'
         csiDriverName: {{hub (index (index $cfg "csiDriver" | default dict) "pluginName" | default "csi.spiffe.io") hub}}
         {{hub- if $issuer hub}}
         jwtIssuer: {{hub $issuer hub}}
