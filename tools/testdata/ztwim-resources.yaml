@@ -1,0 +1,88 @@
+# Stubs for the ztwim policy's runtime lookups. Low-entropy fake values only: this directory is
+# deliberately NOT allowlisted in .gitleaks.toml.
+#
+# The SPIRE trust bundle is public CA material by design, so the placeholder below is a plain
+# marker rather than anything resembling a real certificate.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-bundle
+  namespace: zero-trust-workload-identity-manager
+data:
+  bundle.crt: |
+    -----BEGIN CERTIFICATE-----
+    RkFLRS1URVNUREFUQS1OT1QtQS1SRUFMLUNFUlRJRklDQVRF
+    -----END CERTIFICATE-----
+---
+# The operator Deployment is the source of truth for operand images: the nested-spoke manifests read
+# RELATED_IMAGE_* from here at runtime rather than hardcoding references. Registry paths match the
+# productized shape so the templates exercise a realistic value; the digests are fake.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zero-trust-workload-identity-manager-controller-manager
+  namespace: zero-trust-workload-identity-manager
+spec:
+  selector:
+    matchLabels:
+      app: ztwim
+  template:
+    metadata:
+      labels:
+        app: ztwim
+    spec:
+      containers:
+        - name: manager
+          image: registry.redhat.io/zero-trust-workload-identity-manager/zero-trust-workload-identity-manager-rhel9:test
+          env:
+            - name: RELATED_IMAGE_SPIRE_AGENT
+              value: registry.redhat.io/zero-trust-workload-identity-manager/spiffe-spire-agent-rhel9:test
+            - name: RELATED_IMAGE_SPIFFE_CSI_DRIVER
+              value: registry.redhat.io/zero-trust-workload-identity-manager/spiffe-csi-driver-rhel9:test
+            - name: RELATED_IMAGE_NODE_DRIVER_REGISTRAR
+              value: registry.redhat.io/openshift4/ose-csi-node-driver-registrar-rhel9:test
+            - name: RELATED_IMAGE_SPIFFE_CSI_INIT_CONTAINER
+              value: registry.redhat.io/ubi9:test
+---
+# Registers the CSIDriver GVK and gates the upstream-authority patch: that manifest only emits once
+# upstream.csi.spiffe.io exists, so without this stub the branch would never render in CI.
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: upstream.csi.spiffe.io
+spec:
+  attachRequired: false
+  podInfoOnMount: true
+  volumeLifecycleModes:
+    - Ephemeral
+---
+# Registers the ServiceAccount GVK for the msa-rbac guard. Namespaced, so metadata.namespace is set
+# deliberately: the harness infers scope from the FIRST object of a GVK it sees, and a namespaced
+# stub written without a namespace would register the type as cluster-scoped.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ztwim-tokenreview
+  namespace: open-cluster-management-agent-addon
+---
+# Registers the spire-server ConfigMap so the read-modify-write templates on both ends resolve. The
+# JSON mirrors the operator's generated shape: NodeAttestor clusters is a LIST OF SINGLE-KEY MAPS
+# keyed by cluster name, which is what the idempotency guard scans with hasKey.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-server
+  namespace: zero-trust-workload-identity-manager
+data:
+  server.conf: '{"health_checks":{"bind_address":"0.0.0.0","bind_port":"8080"},"plugins":{"DataStore":[{"sql":{"plugin_data":{"connection_string":"/run/spire/data/datastore.sqlite3","database_type":"sqlite3"}}}],"KeyManager":[{"disk":{"plugin_data":{"keys_path":"/run/spire/data/keys.json"}}}],"NodeAttestor":[{"k8s_psat":{"plugin_data":{"clusters":[{"lint-cluster":{"allowed_node_label_keys":[],"allowed_pod_label_keys":[],"audience":["spire-server"],"service_account_allow_list":["zero-trust-workload-identity-manager:spire-agent"]}}]}}}],"Notifier":[{"k8sbundle":{"plugin_data":{"config_map":"spire-bundle","namespace":"zero-trust-workload-identity-manager"}}}]},"server":{"bind_address":"0.0.0.0","bind_port":"8081","trust_domain":"test-cluster.test.example.com"}}'
+---
+# Registers the ManagedServiceAccount GVK used by the hub-side spoke-kubeconfigs manifest.
+apiVersion: authentication.open-cluster-management.io/v1beta1
+kind: ManagedServiceAccount
+metadata:
+  name: ztwim-tokenreview
+  namespace: lint-cluster
+spec:
+  rotation:
+    enabled: true

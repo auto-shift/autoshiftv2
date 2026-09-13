@@ -1,0 +1,62 @@
+# Grants the ManagedServiceAccount identity the permissions the hub's k8s_psat attestor needs.
+#
+# The hub's spire-server authenticates to THIS cluster with the kubeconfig assembled from the MSA
+# token. It needs TWO things, and the second is easy to miss:
+#
+#   1. TokenReview, to validate the projected service account token the local upstream agent
+#      presents. That is system:auth-delegator.
+#   2. GET on pods and nodes. After validating the token, the k8s_psat plugin looks up the agent POD
+#      to resolve which node it runs on (and to read any allowed_pod_label_keys /
+#      allowed_node_label_keys). Without this the agent attests and is then REJECTED with
+#      "fail to get pod from k8s API server: ... is forbidden", which is easy to misread as a
+#      token or network problem. Verified live: auth-delegator alone is not enough.
+#
+# Scope is still deliberately narrow: read-only on pods and nodes, no Secrets, no ConfigMaps, no
+# write anywhere. The hub gets an attestation oracle, not cluster access.
+#
+# The ServiceAccount itself is created ON this cluster by the managed-serviceaccount addon agent, in
+# the addon install namespace. Only the roles and bindings are ours.
+object-templates-raw: |
+  {{- $msaName := "ztwim-tokenreview" }}
+  {{- $msaNs := "open-cluster-management-agent-addon" }}
+  {{- $sa := (lookup "v1" "ServiceAccount" $msaNs $msaName) }}
+  {{- if $sa }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: ztwim-tokenreview-auth-delegator
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: system:auth-delegator
+      subjects:
+        - kind: ServiceAccount
+          name: {{ $msaName }}
+          namespace: {{ $msaNs }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: ztwim-tokenreview-attestor
+      rules:
+        - apiGroups: ['']
+          resources: ['pods', 'nodes']
+          verbs: ['get']
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: ztwim-tokenreview-attestor
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: ztwim-tokenreview-attestor
+      subjects:
+        - kind: ServiceAccount
+          name: {{ $msaName }}
+          namespace: {{ $msaNs }}
+  {{- end }}

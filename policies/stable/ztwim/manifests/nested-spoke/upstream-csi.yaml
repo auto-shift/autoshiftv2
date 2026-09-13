@@ -1,0 +1,167 @@
+# A SECOND CSI driver (upstream.csi.spiffe.io) exposing the upstream agent's Workload API socket.
+#
+# This is the bridge that makes nesting work: the local spire-server mounts this driver's socket and
+# talks to the upstream agent through it, which is how it reaches the HUB to request its
+# intermediate CA. It is deliberately a separate driver name from the workload-facing
+# csi.spiffe.io, so ordinary workloads never see the upstream socket.
+#
+# The pod spec MIRRORS the operator's own spire-spiffe-csi-driver DaemonSet, diverging only in the
+# plugin name and the two paths that must not collide with it (the agent socket dir it reads, and
+# its own plugin dir under /var/lib/kubelet/plugins). Everything else -- arg shapes, mount names,
+# mountPropagation, and in particular the securityContext on BOTH containers -- is copied, because
+# this DaemonSet is running the same images and the operator's spec is the known-good reference.
+# node-driver-registrar needs privileged: true to write into /registration; omitting it puts both
+# containers into CrashLoopBackOff with the init container still completing cleanly, which makes it
+# look like a socket problem rather than an RBAC/securityContext one.
+#
+# Images come from the operator's RELATED_IMAGE_* env, digest-pinned and version-matched.
+object-templates-raw: |
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $opDep := (lookup "apps/v1" "Deployment" $ns "zero-trust-workload-identity-manager-controller-manager") | default dict }}
+  {{- $csiImage := "" }}
+  {{- $regImage := "" }}
+  {{- $initImage := "" }}
+  {{- range $c := (dig "spec" "template" "spec" "containers" (list) $opDep) }}
+  {{- range $e := (dig "env" (list) $c) }}
+  {{- $n := dig "name" "" $e }}
+  {{- if eq $n "RELATED_IMAGE_SPIFFE_CSI_DRIVER" }}{{- $csiImage = dig "value" "" $e }}{{- end }}
+  {{- if eq $n "RELATED_IMAGE_NODE_DRIVER_REGISTRAR" }}{{- $regImage = dig "value" "" $e }}{{- end }}
+  {{- if eq $n "RELATED_IMAGE_SPIFFE_CSI_INIT_CONTAINER" }}{{- $initImage = dig "value" "" $e }}{{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if and $csiImage $regImage $initImage }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: storage.k8s.io/v1
+      kind: CSIDriver
+      metadata:
+        name: upstream.csi.spiffe.io
+        labels:
+          security.openshift.io/csi-ephemeral-volume-profile: restricted
+      spec:
+        attachRequired: false
+        podInfoOnMount: true
+        volumeLifecycleModes:
+          - Ephemeral
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: spire-spiffe-csi-driver-upstream
+        namespace: {{ $ns }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: spire-csi-upstream-use-privileged-scc
+        namespace: {{ $ns }}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: system:openshift:scc:privileged
+      subjects:
+        - kind: ServiceAccount
+          name: spire-spiffe-csi-driver-upstream
+          namespace: {{ $ns }}
+  {{- /* mustonlyhave, not musthave: AutoShift owns this workload outright, and musthave MERGES --
+         it treats an existing containers[] list as already satisfied, so an edit to a container
+         (a securityContext, an arg, an image) is silently never applied and the DaemonSet's
+         generation never advances. Verified live. mustonlyhave replaces the spec so updates land. */}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: spire-spiffe-csi-driver-upstream
+        namespace: {{ $ns }}
+      spec:
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: spire-spiffe-csi-driver-upstream
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: spire-spiffe-csi-driver-upstream
+          spec:
+            serviceAccountName: spire-spiffe-csi-driver-upstream
+            initContainers:
+              - name: set-context
+                image: {{ $initImage }}
+                command: ['chcon', '-Rvt', 'container_file_t', 'spire-agent-socket/']
+                volumeMounts:
+                  - name: spire-agent-socket-dir
+                    mountPath: /spire-agent-socket
+                securityContext:
+                  privileged: true
+            containers:
+              - name: spiffe-csi-driver
+                image: {{ $csiImage }}
+                args:
+                  - -workload-api-socket-dir
+                  - /spire-agent-socket
+                  - -plugin-name
+                  - upstream.csi.spiffe.io
+                  - -csi-socket-path
+                  - /spiffe-csi/csi.sock
+                env:
+                  {{- /* Load-bearing: the driver exits 1 with "node ID is required" without it.
+                         The node name arrives ONLY through this fieldRef -- there is no arg for
+                         it, so mirroring the operator's args and mounts alone is not enough. */}}
+                  - name: MY_NODE_NAME
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: spec.nodeName
+                volumeMounts:
+                  - name: spire-agent-socket-dir
+                    mountPath: /spire-agent-socket
+                    readOnly: true
+                  - name: spiffe-csi-socket-dir
+                    mountPath: /spiffe-csi
+                  - name: mountpoint-dir
+                    mountPath: /var/lib/kubelet/pods
+                    mountPropagation: Bidirectional
+                terminationMessagePolicy: FallbackToLogsOnError
+                securityContext:
+                  privileged: true
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop: ['all']
+              - name: node-driver-registrar
+                image: {{ $regImage }}
+                args:
+                  - -csi-address
+                  - /spiffe-csi/csi.sock
+                  - -kubelet-registration-path
+                  - /var/lib/kubelet/plugins/upstream.csi.spiffe.io/csi.sock
+                  - -health-port
+                  - '9809'
+                volumeMounts:
+                  - name: spiffe-csi-socket-dir
+                    mountPath: /spiffe-csi
+                  - name: kubelet-plugin-registration-dir
+                    mountPath: /registration
+                terminationMessagePolicy: FallbackToLogsOnError
+                securityContext:
+                  privileged: true
+                  capabilities:
+                    drop: ['all']
+            volumes:
+              - name: spire-agent-socket-dir
+                hostPath:
+                  path: /run/spire/agent-sockets-upstream
+                  type: DirectoryOrCreate
+              - name: spiffe-csi-socket-dir
+                hostPath:
+                  path: /var/lib/kubelet/plugins/upstream.csi.spiffe.io
+                  type: DirectoryOrCreate
+              - name: mountpoint-dir
+                hostPath:
+                  path: /var/lib/kubelet/pods
+                  type: Directory
+              - name: kubelet-plugin-registration-dir
+                hostPath:
+                  path: /var/lib/kubelet/plugins_registry
+                  type: Directory
+  {{- end }}

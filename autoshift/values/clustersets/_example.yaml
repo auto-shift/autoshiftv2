@@ -79,7 +79,8 @@ hubClusterSets:
           extraSANs: []
       # =======================================================================
       # Zero Trust Workload Identity Manager / SPIRE (DATA; the ENABLE flags are the
-      # ztwim and ztwim-federation labels below). Every key is optional.
+      # ztwim, ztwim-federation and ztwim-nested-role labels below). Every key is optional
+      # for a standalone cluster -- nested SPIRE is the exception, noted below.
       # Only keys SAFE ON ANY CLUSTER are set live, because this file gets copied.
       # =======================================================================
       ztwim:
@@ -95,35 +96,82 @@ hubClusterSets:
         datastore:
           databaseType: 'sqlite3'
           connectionString: '/run/spire/data/datastore.sqlite3'
-        # Left unset so the built-in defaults apply:
-        #   trustDomain   defaults to the cluster base domain. Changing it after the first
-        #                 deployment is DESTRUCTIVE (SPIRE caches its CA and every issued
-        #                 identity against it). Nested SPIRE is the one case that REQUIRES
-        #                 hub and spoke to share one value.
-        #   clusterName   defaults to the ManagedCluster name. A fixed literal would make
-        #                 every cluster claim the same name in its agent SPIFFE IDs.
-        #   jwtIssuer     defaults to https://spire-oidc.<cluster ingress domain>.
-        #   upstreamAuthority omitted -> SPIRE self-signs its own root. certManager needs
-        #                 cert-manager AND cert-manager-ca on the cluster; autoshift-ca is
-        #                 self-signed PER CLUSTER, so that is a chain, not a shared fleet
-        #                 root (for that, set config.certManager.ca.issuer to a common signer).
-        #   federatedTrustDomains needs the ztwim-federation label and a real peer.
+        # ---------------------------------------------------------------------------------
+        # IDENTITY. Left unset so the built-in defaults apply:
+        #   trustDomain  defaults to the cluster base domain. Changing it after the first
+        #                deployment is DESTRUCTIVE (SPIRE caches its CA and every issued
+        #                identity against it). Nested SPIRE REQUIRES hub and spoke to share
+        #                one explicit value -- see the nested block at the end.
+        #   clusterName  defaults to the ManagedCluster name. A fixed literal would make
+        #                every cluster claim the same name in its agent SPIFFE IDs.
+        #   jwtIssuer    derived from the cluster ingress domain as spire-oidc.<apps domain>.
         # Uncomment to use:
         # trustDomain: 'spire.example.com'
         # clusterName: 'hub'
         # jwtIssuer: 'https://spire-oidc.apps.example.com'
+        # bundleConfigMap: 'spire-bundle'
+        # subscriptionName: 'openshift-zero-trust-workload-identity-manager'
+        # ---------------------------------------------------------------------------------
+        # CERTIFICATE AND TOKEN LIFETIMES. Key types are restricted by the CRD to
+        # FIPS-approved algorithms: rsa-2048 | rsa-4096 | ec-p256 | ec-p384.
+        # caKeyType: 'rsa-2048'
+        # caValidity: '24h'
+        # defaultX509Validity: '1h'
+        # defaultJWTValidity: '5m'
+        # ---------------------------------------------------------------------------------
+        # PER-COMPONENT OVERRIDES. Each falls back to the top-level logLevel.
+        # agent:
+        #   logLevel: 'info'
+        #   workloadAttestorVerification: 'auto'
+        # csiDriver:
+        #   pluginName: 'csi.spiffe.io'
+        #   agentSocketPath: '/run/spire/agent-sockets'
+        # oidcDiscoveryProvider:
+        #   logLevel: 'info'
+        #   replicaCount: 1
+        #   managedRoute: 'true'
+        # ---------------------------------------------------------------------------------
+        # ROOT OF TRUST. Omitted -> SPIRE self-signs its own root. The CRD supports exactly
+        # two plugins, certManager and vault. certManager requires the cert-manager and
+        # cert-manager-ca labels both enabled. NOTE autoshift-ca is self-signed PER
+        # CLUSTER, so this gives a chain, not a shared fleet root -- for that, also set
+        # config.certManager.ca.issuer to a signer common to every cluster.
         # upstreamAuthority:
         #   certManager:
         #     issuerName: 'autoshift-ca'
         #     issuerKind: 'ClusterIssuer'
         #     issuerGroup: 'cert-manager.io'
         #     namespace: 'cert-manager'
+        # ---------------------------------------------------------------------------------
+        # FEDERATION (needs the ztwim-federation label). Two distinct settings:
+        #   federation            -> SpireServer.spec.federation; how THIS server publishes
+        #                            its bundle endpoint and which domains it federates with.
+        #   federatedTrustDomains -> one ClusterFederatedTrustDomain CR per foreign domain.
+        # federation:
+        #   bundleEndpoint:
+        #     profile: 'https_spiffe'
+        #     refreshHint: 300
+        #   federatesWith:
+        #     - trustDomain: 'other.example.com'
+        #       bundleEndpointUrl: 'https://spire-federation.apps.other.example.com'
+        #       endpointSpiffeId: 'spiffe://other.example.com/spire/server'
         # federatedTrustDomains:
         #   - trustDomain: 'other.example.com'
         #     bundleEndpointURL: 'https://spire-federation.apps.other.example.com'
         #     bundleEndpointProfile:
         #       type: 'https_spiffe'
         #       endpointSPIFFEID: 'spiffe://other.example.com/spire/server'
+        # ---------------------------------------------------------------------------------
+        # NESTED SPIRE (needs the ztwim-nested-role label set to hub or spoke).
+        #   trustDomain        REQUIRED, and must be the SAME literal on hub and spoke (above).
+        #                      Deliberately not derived: it is a fleet-wide choice, and changing
+        #                      it later is destructive.
+        #   nested.hubEndpoint DERIVED by default. The spoke-side policy runs hub templates, so it
+        #                      reads the spire-server-grpc Route straight off the hub. Set this
+        #                      only to override -- an external load balancer in front of the hub,
+        #                      or a hub that is not the propagating hub.
+        # nested:
+        #   hubEndpoint: 'spire-server-grpc.apps.hub.example.com'
 
       # =======================================================================
       # User Workload Monitoring (config section - read via rendered-config)
@@ -1554,3 +1602,8 @@ hubClusterSets:
       ztwim-source-namespace: openshift-marketplace
       # Opt-in: trust foreign trust domains listed in config.ztwim.federatedTrustDomains.
       ztwim-federation: 'false'
+      # Nested SPIRE role: 'hub' signs, 'spoke' is signed. Empty (the default) means not nested.
+      # Setting this REQUIRES config.ztwim.trustDomain to the SAME value on both ends, and puts the
+      # ZTWIM operator into CREATE_ONLY_MODE on that cluster, after which no operand change
+      # reconciles until the resource is deleted and recreated.
+      ztwim-nested-role: ''

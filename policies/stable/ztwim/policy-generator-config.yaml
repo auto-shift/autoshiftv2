@@ -59,6 +59,97 @@ policies:
       - name: policy-ztwim-config
     manifests:
       - path: manifests/federation
+  # ---------------------------------------------------------------------------------------------
+  # Nested SPIRE (opt-in, autoshift.io/ztwim-nested-role: hub|spoke).
+  #
+  # Ordering is expressed as dependencies rather than left to chance: CREATE_ONLY_MODE must be in
+  # effect BEFORE either side patches the operator-generated server.conf, or the operator reverts
+  # the patch on its next reconcile.
+  # ---------------------------------------------------------------------------------------------
+  - name: policy-ztwim-nested-create-only
+    placement:
+      placementPath: placement-ztwim-nested.yaml
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/nested-create-only
+  # Hub side: the gRPC endpoint spokes dial, a per-spoke kubeconfig assembled from ACM state, the
+  # k8s_psat patch that consumes it, and the registration entries that permit downstream signing.
+  - name: policy-ztwim-nested-hub
+    placement:
+      placementPath: placement-ztwim-nested-hub.yaml
+    dependencies:
+      - name: policy-ztwim-nested-create-only
+    manifests:
+      - path: manifests/nested-hub
+  # Spoke side: the hub trust bundle, the upstream agent and its CSI bridge, and the upstream
+  # authority patch. The trust-bundle manifest reads a ConfigMap in the operator namespace ON THE
+  # HUB, which is cross-namespace, so this policy needs the elevated hub-template service account.
+  - name: policy-ztwim-nested-spoke
+    placement:
+      placementPath: placement-ztwim-nested-spoke.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-ztwim-nested-create-only
+    manifests:
+      - path: manifests/nested-spoke
+  # inform: catches a nested pair that reports green while silently doing nothing. An unsatisfied
+  # guard renders no object templates, and an empty ConfigurationPolicy reports Compliant -- so
+  # these assert the EFFECTS exist rather than trusting the enforcing policies' own status.
+  # Deliberately NOT depended on by the enforcing policies: they detect, they do not gate, so
+  # making them a dependency would deadlock (the effect cannot exist until the enforcer runs).
+  - name: policy-ztwim-nested-hub-effective
+    placement:
+      placementPath: placement-ztwim-nested-hub.yaml
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-nested-hub
+    manifests:
+      - path: test/nested-hub-effective.yaml
+    customMessage:
+      noncompliant: >
+        Nested SPIRE is enabled on this hub but its gRPC Route is absent, so the hub-side policies
+        rendered no objects. The usual cause is the cluster ingress domain not resolving. Check
+        policy-ztwim-nested-hub and note that an empty render reports Compliant, so its green
+        status is not evidence that it did anything.
+  - name: policy-ztwim-nested-spoke-effective
+    placement:
+      placementPath: placement-ztwim-nested-spoke.yaml
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-nested-spoke
+    manifests:
+      - path: test/nested-spoke-effective.yaml
+    customMessage:
+      noncompliant: >
+        Nested SPIRE is enabled on this spoke but the upstream agent or the hub trust bundle is
+        absent, so the spoke-side policies rendered no objects. Check that
+        config.ztwim.trustDomain is set to the SAME value as the hub, and that the elevated hub
+        template service account can get, list AND watch ConfigMaps in the operator namespace on
+        the hub. An empty render reports Compliant, so policy-ztwim-nested-spoke being green is
+        not evidence that it did anything.
+  # inform: proves the nested CA chain actually FORMED. The two checks above catch "rendered
+  # nothing"; this catches "rendered everything and still did not chain" -- a trust domain mismatch,
+  # an upstream authority patch that did not take, or a datastore PVC that was never cleared.
+  - name: policy-ztwim-nested-spoke-chained
+    placement:
+      placementPath: placement-ztwim-nested-spoke.yaml
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-ztwim-nested-spoke
+    manifests:
+      - path: test/nested-spoke-chained.yaml
+    customMessage:
+      noncompliant: >
+        This spoke is not chained to the hub: its SPIRE trust bundle differs from the hub's root, so
+        it is still serving a CA of its own. Check that config.ztwim.trustDomain is the SAME value
+        on hub and spoke, that the spire UpstreamAuthority block is present in the spoke's
+        spire-server ConfigMap, and that the one-time datastore PVC clear has been done on the
+        spoke (see the policy README) -- SPIRE keeps the root it minted on first boot until that
+        volume is removed.
   # inform: surfaces a SPIRE control plane that installed but never became ready.
   - name: policy-ztwim-ready
     remediationAction: inform

@@ -1,0 +1,80 @@
+# Teaches the hub's spire-server to attest agents from each spoke.
+#
+# Two edits the CRD cannot express:
+#   1. plugins.NodeAttestor[0].k8s_psat.plugin_data.clusters gets an entry per spoke. The operator
+#      hardcodes this list to exactly ONE entry (the local cluster), so it is patched in place.
+#   2. the spire-server StatefulSet mounts each spoke's kubeconfig, which the k8s_psat entry
+#      references by path.
+# Both rely on CREATE_ONLY_MODE being on (policy-ztwim-nested-create-only) or the operator reverts
+# them on its next reconcile.
+#
+# The ConfigMap edit is a read-modify-write of operator-generated JSON. `clusters` is a LIST OF
+# SINGLE-KEY MAPS keyed by cluster name, so the idempotency guard is a hasKey scan before appending.
+# That guard is essential: evaluationInterval `watch` tracks the lookup, so the policy re-evaluates
+# on its OWN write. With the guard, the ConfigMap resourceVersion goes constant after one write
+# (verified live over 3 minutes); without it the list would grow on every pass.
+#
+# The StatefulSet edit uses musthave, which appends to lists -- correct here, and idempotent because
+# a volume that already matches is left alone. The spire-server pod must be restarted for a newly
+# mounted kubeconfig to be visible; SPIRE re-reads server.conf on start.
+object-templates-raw: |
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $spokes := list }}
+  {{- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items }}
+  {{- if eq (index $mc.metadata.labels "autoshift.io/ztwim-nested-role" | default "") "spoke" }}
+  {{- if (lookup "v1" "Secret" $ns (printf "spoke-kubeconfig-%s" $mc.metadata.name)) }}
+  {{- $spokes = append $spokes $mc.metadata.name }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if $spokes }}
+  {{- $cm := (lookup "v1" "ConfigMap" $ns "spire-server") | default dict }}
+  {{- $raw := dig "data" "server.conf" "" $cm }}
+  {{- if $raw }}
+  {{- $conf := $raw | fromJSON }}
+  {{- $na := index (dig "plugins" "NodeAttestor" (list) $conf) 0 | default dict }}
+  {{- $pd := dig "k8s_psat" "plugin_data" dict $na }}
+  {{- $clusters := dig "clusters" (list) $pd }}
+  {{- range $spoke := $spokes }}
+  {{- $have := false }}
+  {{- range $c := $clusters }}{{- if hasKey $c $spoke }}{{- $have = true }}{{- end }}{{- end }}
+  {{- if not $have }}
+  {{- $clusters = append $clusters (dict $spoke (dict "audience" (list "spire-server") "allowed_node_label_keys" (list) "allowed_pod_label_keys" (list) "service_account_allow_list" (list (printf "%s:spire-agent-upstream" $ns)) "kube_config_file" (printf "/run/spire/spoke-kubeconfigs/%s/kubeconfig" $spoke))) }}
+  {{- end }}
+  {{- end }}
+  {{- $_ := set $pd "clusters" $clusters }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: spire-server
+        namespace: {{ $ns }}
+      data:
+        server.conf: '{{ $conf | mustToJSON }}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: spire-server
+        namespace: {{ $ns }}
+      spec:
+        template:
+          spec:
+            volumes:
+            {{- range $spoke := $spokes }}
+              - name: spoke-kc-{{ $spoke }}
+                secret:
+                  secretName: spoke-kubeconfig-{{ $spoke }}
+            {{- end }}
+            containers:
+              - name: spire-server
+                volumeMounts:
+                {{- range $spoke := $spokes }}
+                  - name: spoke-kc-{{ $spoke }}
+                    mountPath: /run/spire/spoke-kubeconfigs/{{ $spoke }}
+                    readOnly: true
+                {{- end }}
+  {{- end }}
+  {{- end }}

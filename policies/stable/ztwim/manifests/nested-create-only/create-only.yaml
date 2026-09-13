@@ -1,0 +1,34 @@
+# Puts the ZTWIM operator into CREATE_ONLY_MODE on both ends of a nested pair.
+#
+# WHY THIS IS NEEDED: the SpireServer CRD exposes only the certManager and vault upstream authority
+# plugins. Nested SPIRE needs the `spire` plugin, and the hub additionally needs extra entries in the
+# k8s_psat NodeAttestor `clusters` list. Neither is a CRD field, so both are reached by editing the
+# server.conf the operator generates. CREATE_ONLY_MODE is what stops the operator reverting those
+# edits: it creates resources that are absent but skips updates to ones that already exist.
+#
+# WHAT IT COSTS: the flag is read from a single env var by every ZTWIM controller, so it is
+# OPERATOR-WIDE. Once on, no change to ANY operand (SpireServer, SpireAgent, SpiffeCSIDriver,
+# SpireOIDCDiscoveryProvider) reconciles on that cluster -- to change one you must delete the
+# resource so the operator recreates it. That is the price of nested SPIRE until the operator grows
+# a `spire` upstream-authority field. Do not enable the nested role on a cluster you are still
+# iterating on.
+#
+# The Subscription is owned by the OperatorPolicy in manifests/operator-install; this policy only
+# adds spec.config.env. Verified live on ACM 2.17.1: OperatorPolicy stays Compliant and does not
+# revert the field, and because env merges by `name` a changed value REPLACES rather than appends.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $subName := (index $cfg "subscriptionName" | default (index .ManagedClusterLabels "autoshift.io/ztwim-subscription-name" | default "openshift-zero-trust-workload-identity-manager")) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: {{hub $subName hub}}
+        namespace: zero-trust-workload-identity-manager
+      spec:
+        config:
+          env:
+            - name: CREATE_ONLY_MODE
+              value: 'true'
