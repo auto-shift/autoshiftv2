@@ -41,6 +41,13 @@ policies:
   # ZeroTrustWorkloadIdentityManager carries the trust domain and cluster name that every other
   # operand controller reads, so it lands before them.
   - name: policy-ztwim-instance
+    # On a nested SPOKE this manifest reads the HUB's ZeroTrustWorkloadIdentityManager CR to derive
+    # the shared trust domain. That CR is CLUSTER-SCOPED, and a hub template may not look up
+    # cluster-scoped resources at all without an elevated service account -- it fails with
+    # "lookup of cluster-scoped resource ... is not allowed", which is a different error from an
+    # RBAC denial and easy to misread.
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-ztwim-operator-install
     manifests:
