@@ -4,11 +4,17 @@
 # jwtIssuer MUST match the SpireServer's. The operator strips the scheme and uses the rest as the
 # managed Route's host, so the default is built from the cluster's ingress domain exactly as the
 # server's is. managedRoute: 'true' lets the operator own that Route.
+#
+# SCHEDULING. Tolerations default to EMPTY: this is a singleton Deployment, not a DaemonSet, so it
+# belongs on an ordinary worker. Requests only, no limits -- see the note in spire-server.yaml.
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
   {{hub- $oidc := (index $cfg "oidcDiscoveryProvider" | default dict) hub}}
   {{hub- $issuer := (index $cfg "jwtIssuer" | default "") hub}}
+  {{hub- $oidcRes := (index $oidc "resources" | default (dict "requests" (dict "cpu" "50m" "memory" "128Mi"))) hub}}
+  {{hub- $oidcTol := (index $oidc "tolerations" | default list) hub}}
+  {{hub- $oidcSel := (index $oidc "nodeSelector" | default dict) hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: operator.openshift.io/v1alpha1
@@ -27,4 +33,11 @@ object-templates-raw: |
         jwtIssuer: {{hub $issuer hub}}
         {{hub- else hub}}
         jwtIssuer: https://spire-oidc.{{ dig "spec" "domain" "" ((lookup "config.openshift.io/v1" "Ingress" "" "cluster") | default dict) }}
+        {{hub- end hub}}
+        resources: {{hub $oidcRes | toRawJson | toLiteral hub}}
+        {{hub- if $oidcTol hub}}
+        tolerations: {{hub $oidcTol | toRawJson | toLiteral hub}}
+        {{hub- end hub}}
+        {{hub- if $oidcSel hub}}
+        nodeSelector: {{hub $oidcSel | toRawJson | toLiteral hub}}
         {{hub- end hub}}

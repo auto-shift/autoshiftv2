@@ -1,0 +1,60 @@
+# inform: catches an operator that upgraded while its operands did not.
+#
+# This is the silent failure that CREATE_ONLY_MODE introduces. In create-only mode the operator
+# CREATES absent objects but never UPDATES existing ones, so after an operator upgrade the SPIRE
+# workloads keep running the PREVIOUS release's images indefinitely. Nothing reports it: the
+# Subscription is healthy, the CSV is Succeeded, and the operand CRs report
+# `Ready=True, "All components are ready"` -- verified live while spire-agent was running on ONE of
+# seven nodes with none of the tolerations its own CR declared. The CR status tracks readiness, not
+# conformance, so it cannot be used as the signal.
+#
+# The signal used instead is the operator's own RELATED_IMAGE_* environment, which is the source of
+# truth for what each operand SHOULD run. Every variable maps 1:1 onto a running container by
+# digest, so a mismatch means exactly one thing: the operator moved and the operand did not.
+#
+# Deliberately placed on EVERY ztwim cluster, not just nested ones. On a cluster reconciling
+# normally this is always Compliant and costs one Deployment lookup; on any cluster where
+# create-only was turned on by some other route it still fires.
+#
+# The violation is signalled with a metadata-only Deployment, the established AutoShift idiom: it
+# has no selector and no pod template, so the API server rejects it. It can never be satisfied, and
+# it cannot be silently "fixed" into compliance if someone flips this policy to enforce.
+#
+# ONE sentinel PER DRIFTED WORKLOAD, named after it. ACM's violation message lists the object names
+# it could not find and nothing else, so a single sentinel carrying the detail in an annotation
+# reads only as "deployments [ztwim-operand-image-drift] not found" -- true, and useless. Naming
+# them per workload makes the message itself say which operand is stale.
+object-templates-raw: |
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $opDep := (lookup "apps/v1" "Deployment" $ns "zero-trust-workload-identity-manager-controller-manager") | default dict }}
+  {{- /* container name -> the RELATED_IMAGE_* variable that declares its image */}}
+  {{- $map := dict "spire-server" "RELATED_IMAGE_SPIRE_SERVER" "spire-controller-manager" "RELATED_IMAGE_SPIRE_CONTROLLER_MANAGER" "spire-agent" "RELATED_IMAGE_SPIRE_AGENT" "spiffe-csi-driver" "RELATED_IMAGE_SPIFFE_CSI_DRIVER" "node-driver-registrar" "RELATED_IMAGE_NODE_DRIVER_REGISTRAR" "spiffe-oidc-discovery-provider" "RELATED_IMAGE_SPIRE_OIDC_DISCOVERY_PROVIDER" }}
+  {{- $env := dict }}
+  {{- range $c := (dig "spec" "template" "spec" "containers" (list) $opDep) }}
+  {{- range $e := (dig "env" (list) $c) }}
+  {{- $_ := set $env (dig "name" "" $e) (dig "value" "" $e) }}
+  {{- end }}
+  {{- end }}
+  {{- $targets := list (dict "kind" "StatefulSet" "name" "spire-server") (dict "kind" "DaemonSet" "name" "spire-agent") (dict "kind" "DaemonSet" "name" "spire-spiffe-csi-driver") (dict "kind" "Deployment" "name" "spire-spiffe-oidc-discovery-provider") }}
+  {{- range $t := $targets }}
+  {{- $w := (lookup "apps/v1" (index $t "kind") $ns (index $t "name")) | default dict }}
+  {{- $stale := "" }}
+  {{- range $c := (dig "spec" "template" "spec" "containers" (list) $w) }}
+  {{- $cn := (dig "name" "" $c) }}
+  {{- if hasKey $map $cn }}
+  {{- $want := (index $env (index $map $cn) | default "") }}
+  {{- if and $want (ne (dig "image" "" $c) $want) }}{{- $stale = $cn }}{{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if $stale }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ztwim-stale-operand-{{ index $t "name" }}
+        namespace: {{ $ns }}
+        annotations:
+          autoshift.io/stale-container: '{{ $stale }}'
+  {{- end }}
+  {{- end }}

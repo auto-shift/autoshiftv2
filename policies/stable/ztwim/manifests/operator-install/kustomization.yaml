@@ -13,6 +13,20 @@ helmCharts:
       name: ztwim
       namespace: zero-trust-workload-identity-manager
       remediation: ${REMEDIATION}
+      # UPGRADE APPROVAL IS DERIVED, not configured. A nested cluster pins itself to the installed
+      # version (None = never approve an InstallPlan); a standalone cluster keeps Automatic.
+      #
+      # The reason is CREATE_ONLY_MODE. Nested clusters run the operator in create-only mode, where
+      # it creates absent objects but never updates existing ones. An automatic operator upgrade
+      # there leaves every SPIRE workload on the PREVIOUS release's images indefinitely, and nothing
+      # reports it -- the CSV is Succeeded and the operand CRs still say "All components are ready".
+      # AutoShift also owns hand-patched content inside the operator-generated server.conf, which is
+      # written against a specific release's shape. Both make an unattended upgrade a bad trade on
+      # exactly the clusters that opt into nesting.
+      #
+      # Override with autoshift.io/ztwim-upgrade-approval. test/operand-image-drift.yaml reports the
+      # drift if an upgrade does happen; manifests/operand-reconcile/ can repair it on request.
+      upgradeApproval: '{{hub $nestedRole := (index .ManagedClusterLabels "autoshift.io/ztwim-nested-role" | default "") hub}}{{hub index .ManagedClusterLabels "autoshift.io/ztwim-upgrade-approval" | default (ternary "None" "Automatic" (ne $nestedRole "")) hub}}'
       subscription:
         name: '{{hub index .ManagedClusterLabels "autoshift.io/ztwim-subscription-name" | default "openshift-zero-trust-workload-identity-manager" hub}}'
         channel: '{{hub index .ManagedClusterLabels "autoshift.io/ztwim-channel" | default "stable-v1" hub}}'

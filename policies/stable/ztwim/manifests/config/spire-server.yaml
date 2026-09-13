@@ -12,6 +12,16 @@
 # autoshift-ca is self-signed PER CLUSTER, so a shared fleet root additionally needs
 # config.certManager.ca.issuer set to a common signer. See the README.
 #
+# SCHEDULING AND RESOURCES. The CRD exposes tolerations, nodeSelector, affinity and resources on
+# all four operands; AutoShift emitted none, which left every SPIRE pod BestEffort -- the kubelet
+# evicts the trust domain's root CA ahead of almost anything else under memory pressure. Requests are
+# emitted by default, limits are NOT: a CPU limit on a signing service buys throttling, and requests
+# alone are what move the pod out of BestEffort. Set config.ztwim.resources to add limits.
+#
+# Tolerations default to EMPTY here, unlike the two DaemonSets. spire-server is a singleton control
+# plane component and belongs on an ordinary worker; a cluster whose every worker is tainted cannot
+# run workloads either, so there is nothing to chase.
+#
 # federation.federatesWith and the bundle endpoint let this server exchange trust bundles with
 # SPIRE servers in OTHER trust domains. Lists and maps are passed through as JSON (toRawJson |
 # toLiteral) so an arbitrary config shape survives without block-scalar indentation hazards.
@@ -29,6 +39,9 @@ object-templates-raw: |
   {{hub- $bundleEndpoint := (index $fed "bundleEndpoint" | default dict) hub}}
   {{hub- $issuer := (index $cfg "jwtIssuer" | default "") hub}}
   {{hub- $storageClass := (index $pers "storageClass" | default "") hub}}
+  {{hub- $resources := (index $cfg "resources" | default (dict "requests" (dict "cpu" "100m" "memory" "256Mi"))) hub}}
+  {{hub- $tolerations := (index $cfg "tolerations" | default list) hub}}
+  {{hub- $nodeSelector := (index $cfg "nodeSelector" | default dict) hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: operator.openshift.io/v1alpha1
@@ -76,4 +89,11 @@ object-templates-raw: |
           {{hub- if $bundleEndpoint hub}}
           bundleEndpoint: {{hub $bundleEndpoint | toRawJson | toLiteral hub}}
           {{hub- end hub}}
+        {{hub- end hub}}
+        resources: {{hub $resources | toRawJson | toLiteral hub}}
+        {{hub- if $tolerations hub}}
+        tolerations: {{hub $tolerations | toRawJson | toLiteral hub}}
+        {{hub- end hub}}
+        {{hub- if $nodeSelector hub}}
+        nodeSelector: {{hub $nodeSelector | toRawJson | toLiteral hub}}
         {{hub- end hub}}

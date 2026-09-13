@@ -1,0 +1,56 @@
+# OPT-IN (autoshift.io/ztwim-operand-reconcile): applies operand changes that CREATE_ONLY_MODE would
+# otherwise swallow, by DELETING the stale workload so the operator recreates it from the current CR.
+#
+# WHY DELETION IS THE MECHANISM. In create-only mode the operator skips updates but still creates
+# absent objects, so a delete is the only lever that makes it apply a changed CR. Verified live: with
+# create-only ON, patching SpireAgent with tolerations left the DaemonSet at generation 1 covering
+# one of seven nodes; deleting the DaemonSet had the operator recreate it in about five seconds with
+# the tolerations applied, on all seven.
+#
+# WHY NOT OPEN A RECONCILE WINDOW INSTEAD. Clearing CREATE_ONLY_MODE on the Subscription cannot be
+# done on a GitOps-managed cluster: policy-ztwim-nested-create-only restored it in under five
+# seconds, and Argo CD reverted an attempt to inform that policy. Both were measured. A window would
+# also hand server.conf back to the operator, which reverts the nested patches while the enforcing
+# policies re-apply them -- a fight with no defined end. Deleting one operand touches none of that.
+#
+# TWO RESTARTS ON A NESTED HUB, deliberately called out: recreating the spire-server StatefulSet
+# drops the per-spoke kubeconfig volumes that manifests/nested-hub/psat-clusters.yaml owns. That
+# policy re-applies them on its next evaluation, which restarts the pod a second time. SPIRE is down
+# across both, and agents serve cached SVIDs only until defaultX509Validity (default 1h) expires.
+#
+# GUARDED on the operator being Ready. Without that guard, deleting an operand while the operator is
+# unavailable removes SPIRE with nothing left to recreate it.
+object-templates-raw: |
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $opDep := (lookup "apps/v1" "Deployment" $ns "zero-trust-workload-identity-manager-controller-manager") | default dict }}
+  {{- $opReady := gt (dig "status" "readyReplicas" 0 $opDep) 0 }}
+  {{- $map := dict "spire-server" "RELATED_IMAGE_SPIRE_SERVER" "spire-controller-manager" "RELATED_IMAGE_SPIRE_CONTROLLER_MANAGER" "spire-agent" "RELATED_IMAGE_SPIRE_AGENT" "spiffe-csi-driver" "RELATED_IMAGE_SPIFFE_CSI_DRIVER" "node-driver-registrar" "RELATED_IMAGE_NODE_DRIVER_REGISTRAR" "spiffe-oidc-discovery-provider" "RELATED_IMAGE_SPIRE_OIDC_DISCOVERY_PROVIDER" }}
+  {{- $env := dict }}
+  {{- range $c := (dig "spec" "template" "spec" "containers" (list) $opDep) }}
+  {{- range $e := (dig "env" (list) $c) }}
+  {{- $_ := set $env (dig "name" "" $e) (dig "value" "" $e) }}
+  {{- end }}
+  {{- end }}
+  {{- $targets := list (dict "kind" "DaemonSet" "name" "spire-agent") (dict "kind" "DaemonSet" "name" "spire-spiffe-csi-driver") (dict "kind" "Deployment" "name" "spire-spiffe-oidc-discovery-provider") (dict "kind" "StatefulSet" "name" "spire-server") }}
+  {{- if $opReady }}
+  {{- range $t := $targets }}
+  {{- $w := (lookup "apps/v1" (index $t "kind") $ns (index $t "name")) | default dict }}
+  {{- $stale := false }}
+  {{- range $c := (dig "spec" "template" "spec" "containers" (list) $w) }}
+  {{- $cn := (dig "name" "" $c) }}
+  {{- if hasKey $map $cn }}
+  {{- $want := (index $env (index $map $cn) | default "") }}
+  {{- if and $want (ne (dig "image" "" $c) $want) }}{{- $stale = true }}{{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if $stale }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: {{ index $t "kind" }}
+      metadata:
+        name: {{ index $t "name" }}
+        namespace: {{ $ns }}
+  {{- end }}
+  {{- end }}
+  {{- end }}

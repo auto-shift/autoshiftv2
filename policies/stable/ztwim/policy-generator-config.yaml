@@ -101,6 +101,26 @@ policies:
       - name: policy-ztwim-nested-create-only
     manifests:
       - path: manifests/nested-spoke
+  # OPT-IN (autoshift.io/ztwim-nested-auto-reset): automates the one manual step by clearing the
+  # spoke's SPIRE datastore so it re-mints its CA from the hub. Split in two so the clear is ORDERED
+  # before the resume rather than racing it. This is the only part of the policy that can delete a
+  # PersistentVolumeClaim, which is why it needs its own label and is off by default.
+  - name: policy-ztwim-nested-auto-reset
+    placement:
+      placementPath: placement-ztwim-nested-auto-reset.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-ztwim-nested-spoke
+    manifests:
+      - path: manifests/nested-spoke-reset
+  - name: policy-ztwim-nested-auto-resume
+    placement:
+      placementPath: placement-ztwim-nested-auto-reset.yaml
+    dependencies:
+      - name: policy-ztwim-nested-auto-reset
+    manifests:
+      - path: manifests/nested-spoke-resume
   # inform: catches a nested pair that reports green while silently doing nothing. An unsatisfied
   # guard renders no object templates, and an empty ConfigurationPolicy reports Compliant -- so
   # these assert the EFFECTS exist rather than trusting the enforcing policies' own status.
@@ -157,6 +177,33 @@ policies:
         spire-server ConfigMap, and that the one-time datastore PVC clear has been done on the
         spoke (see the policy README) -- SPIRE keeps the root it minted on first boot until that
         volume is removed.
+  # OPT-IN (autoshift.io/ztwim-operand-reconcile): forces the operator to reapply a changed operand
+  # CR under CREATE_ONLY_MODE, by deleting the stale workload so the create path runs. Off by
+  # default because on a nested hub it restarts the SPIRE server, and with it the fleet's CA.
+  - name: policy-ztwim-operand-reconcile
+    placement:
+      placementPath: placement-ztwim-operand-reconcile.yaml
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/operand-reconcile
+  # inform: catches an operator that upgraded while CREATE_ONLY_MODE held its operands at the
+  # previous release's images. Placed on every ztwim cluster, not just nested ones.
+  - name: policy-ztwim-operand-drift
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: test/operand-image-drift.yaml
+    customMessage:
+      noncompliant: >
+        The ZTWIM operator has upgraded but one or more SPIRE operands are still running the
+        previous release's images. This is CREATE_ONLY_MODE: the operator creates absent objects
+        but never updates existing ones, so the operand CRs report Ready while the workloads are
+        stale. The drifted workloads are named in the annotation on the violating object. To
+        repair, set autoshift.io/ztwim-operand-reconcile to 'true' so AutoShift deletes them and
+        the operator recreates them at the declared images, or delete them by hand. On a nested hub
+        this restarts the SPIRE server and therefore the trust domain's CA -- see the policy README.
   # inform: surfaces a SPIRE control plane that installed but never became ready.
   - name: policy-ztwim-ready
     remediationAction: inform

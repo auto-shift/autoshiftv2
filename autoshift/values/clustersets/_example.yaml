@@ -112,6 +112,37 @@ hubClusterSets:
         # bundleConfigMap: 'spire-bundle'
         # subscriptionName: 'openshift-zero-trust-workload-identity-manager'
         # ---------------------------------------------------------------------------------
+        # SCHEDULING AND RESOURCES. Every operand accepts resources, tolerations and nodeSelector;
+        # top-level keys apply to the SPIRE SERVER, and each operand sub-map overrides for itself.
+        #
+        # The two DaemonSets (agent, csiDriver) default to TOLERATING ALL TAINTS, because a workload
+        # can land on any node that admits workloads and without the agent and the CSI driver on
+        # that node it silently cannot obtain an SVID -- there is no error, the socket is just
+        # absent. AutoShift's own infra-nodes and storage-nodes policies taint nodes, and the
+        # previous default of no tolerations left SPIRE covering one node out of seven on a live
+        # cluster. Set an explicit empty list to clear the default rather than replace it.
+        #
+        # Requests are set by default and limits are not: requests are what lift the pods out of
+        # BestEffort, where the kubelet evicts the trust domain's CA ahead of almost anything else,
+        # while a CPU limit on a signing service only buys throttling. Add limits here if wanted.
+        # resources:
+        #   requests:
+        #     cpu: '100m'
+        #     memory: '256Mi'
+        # tolerations: []
+        # nodeSelector: {}
+        # agent:
+        #   tolerations:
+        #     - operator: 'Exists'
+        # csiDriver:
+        #   tolerations:
+        #     - operator: 'Exists'
+        # oidcDiscoveryProvider:
+        #   resources:
+        #     requests:
+        #       cpu: '50m'
+        #       memory: '128Mi'
+        # ---------------------------------------------------------------------------------
         # CERTIFICATE AND TOKEN LIFETIMES. Key types are restricted by the CRD to
         # FIPS-approved algorithms: rsa-2048 | rsa-4096 | ec-p256 | ec-p384.
         # caKeyType: 'rsa-2048'
@@ -1607,3 +1638,25 @@ hubClusterSets:
       # ZTWIM operator into CREATE_ONLY_MODE on that cluster, after which no operand change
       # reconciles until the resource is deleted and recreated.
       ztwim-nested-role: ''
+      # OPT-IN, and the only setting that lets AutoShift delete a PersistentVolumeClaim. On a nested
+      # spoke SPIRE self-signs a root on first boot and keeps it; clearing the datastore is what
+      # makes it re-mint from the hub. Leave this off and do the documented manual step unless the
+      # fleet is large enough to justify the trade -- if the chain can never form, this clears the
+      # datastore repeatedly instead of converging.
+      ztwim-nested-auto-reset: 'false'
+      # Upgrade approval for the ZTWIM operator. DERIVED when unset: 'None' (pinned, no InstallPlan
+      # is approved) on any cluster with ztwim-nested-role set, 'Automatic' everywhere else. Nested
+      # clusters run in CREATE_ONLY_MODE, where an operator upgrade leaves every SPIRE workload on
+      # the previous release's images with nothing reporting it, so they pin themselves. Set this
+      # explicitly to override in either direction. Valid values: Automatic | None.
+      # Declared EMPTY so the derivation above stays in effect; a literal here would apply to every
+      # cluster and defeat it, exactly as it would for ztwim-nested-role.
+      ztwim-upgrade-approval: ''
+      # OPT-IN. Lets AutoShift DELETE a running SPIRE operand so the operator recreates it from the
+      # current CR. This is the only way to apply an operand change under CREATE_ONLY_MODE, which
+      # skips updates but still runs the create path. Needed after an operator upgrade on a nested
+      # cluster, or to apply a changed tolerations/resources setting there. On a nested HUB this
+      # restarts the SPIRE server and therefore the trust domain's CA: agents serve cached SVIDs
+      # only until config.ztwim.defaultX509Validity expires. policy-ztwim-operand-drift reports
+      # when this is needed and stays Compliant when it is not.
+      ztwim-operand-reconcile: 'false'

@@ -3,8 +3,8 @@
 # Two edits the CRD cannot express:
 #   1. plugins.NodeAttestor[0].k8s_psat.plugin_data.clusters gets an entry per spoke. The operator
 #      hardcodes this list to exactly ONE entry (the local cluster), so it is patched in place.
-#   2. the spire-server StatefulSet mounts each spoke's kubeconfig, which the k8s_psat entry
-#      references by path.
+#   2. the spire-server StatefulSet mounts the spoke kubeconfigs, which the k8s_psat entries
+#      reference by path.
 # Both rely on CREATE_ONLY_MODE being on (policy-ztwim-nested-create-only) or the operator reverts
 # them on its next reconcile.
 #
@@ -14,15 +14,31 @@
 # on its OWN write. With the guard, the ConfigMap resourceVersion goes constant after one write
 # (verified live over 3 minutes); without it the list would grow on every pass.
 #
-# The StatefulSet edit uses musthave, which appends to lists -- correct here, and idempotent because
-# a volume that already matches is left alone. The spire-server pod must be restarted for a newly
-# mounted kubeconfig to be visible; SPIRE re-reads server.conf on start.
+# ONE VOLUME, NOT ONE PER SPOKE. spoke-kubeconfigs.yaml keys every spoke into a single Secret, and
+# each key surfaces here as a file under one mount: /run/spire/spoke-kubeconfigs/<spoke>. The pod
+# spec is therefore CONSTANT no matter how many spokes exist, which is what lets a hub carry more
+# than a handful. The earlier shape added a volume and a volumeMount per spoke, so the pod spec grew
+# without bound and every spoke that onboarded rewrote the pod template.
+#
+# THE RESTART IS EXPLICIT NOW, and that is the point of the annotation. SPIRE reads server.conf once
+# at startup, so a newly added spoke does not take effect until the server restarts. Under the old
+# shape the restart came for free as a side effect of the pod template growing a volume -- which
+# also meant it fired on onboarding and on nothing else useful. With a constant pod spec nothing
+# would trigger it at all, and the failure would be silent: server.conf lists the spoke, the running
+# process has never read it, and the spoke cannot attest.
+#
+# So the pod template carries the server.conf ConfigMap's resourceVersion. That value changes when,
+# and only when, this policy actually rewrites the config -- an MSA token rotation changes the
+# Secret but not the ConfigMap, and so does not restart the CA. The annotation lags the write by one
+# evaluation (it reads the resourceVersion from before its own write), which is the correct order:
+# the config lands first, the restart follows.
 object-templates-raw: |
   {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $kcSecret := (lookup "v1" "Secret" $ns "spoke-kubeconfigs") | default dict }}
   {{- $spokes := list }}
   {{- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items }}
   {{- if eq (index $mc.metadata.labels "autoshift.io/ztwim-nested-role" | default "") "spoke" }}
-  {{- if (lookup "v1" "Secret" $ns (printf "spoke-kubeconfig-%s" $mc.metadata.name)) }}
+  {{- if hasKey (dig "data" dict $kcSecret) $mc.metadata.name }}
   {{- $spokes = append $spokes $mc.metadata.name }}
   {{- end }}
   {{- end }}
@@ -30,6 +46,7 @@ object-templates-raw: |
   {{- if $spokes }}
   {{- $cm := (lookup "v1" "ConfigMap" $ns "spire-server") | default dict }}
   {{- $raw := dig "data" "server.conf" "" $cm }}
+  {{- $confVersion := dig "metadata" "resourceVersion" "" $cm }}
   {{- if $raw }}
   {{- $conf := $raw | fromJSON }}
   {{- $na := index (dig "plugins" "NodeAttestor" (list) $conf) 0 | default dict }}
@@ -39,7 +56,7 @@ object-templates-raw: |
   {{- $have := false }}
   {{- range $c := $clusters }}{{- if hasKey $c $spoke }}{{- $have = true }}{{- end }}{{- end }}
   {{- if not $have }}
-  {{- $clusters = append $clusters (dict $spoke (dict "audience" (list "spire-server") "allowed_node_label_keys" (list) "allowed_pod_label_keys" (list) "service_account_allow_list" (list (printf "%s:spire-agent-upstream" $ns)) "kube_config_file" (printf "/run/spire/spoke-kubeconfigs/%s/kubeconfig" $spoke))) }}
+  {{- $clusters = append $clusters (dict $spoke (dict "audience" (list "spire-server") "allowed_node_label_keys" (list) "allowed_pod_label_keys" (list) "service_account_allow_list" (list (printf "%s:spire-agent-upstream" $ns)) "kube_config_file" (printf "/run/spire/spoke-kubeconfigs/%s" $spoke))) }}
   {{- end }}
   {{- end }}
   {{- $_ := set $pd "clusters" $clusters }}
@@ -61,20 +78,19 @@ object-templates-raw: |
         namespace: {{ $ns }}
       spec:
         template:
+          metadata:
+            annotations:
+              autoshift.io/spire-server-conf-version: '{{ $confVersion }}'
           spec:
             volumes:
-            {{- range $spoke := $spokes }}
-              - name: spoke-kc-{{ $spoke }}
+              - name: spoke-kubeconfigs
                 secret:
-                  secretName: spoke-kubeconfig-{{ $spoke }}
-            {{- end }}
+                  secretName: spoke-kubeconfigs
             containers:
               - name: spire-server
                 volumeMounts:
-                {{- range $spoke := $spokes }}
-                  - name: spoke-kc-{{ $spoke }}
-                    mountPath: /run/spire/spoke-kubeconfigs/{{ $spoke }}
+                  - name: spoke-kubeconfigs
+                    mountPath: /run/spire/spoke-kubeconfigs
                     readOnly: true
-                {{- end }}
   {{- end }}
   {{- end }}

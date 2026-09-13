@@ -23,6 +23,8 @@ attestation, issuance and rotation.
 | `policy-ztwim-nested-hub-effective` | inform only: hub-side policies actually produced something | `ztwim-nested-role: 'hub'` |
 | `policy-ztwim-nested-spoke-effective` | inform only: spoke-side policies actually produced something | `ztwim-nested-role: 'spoke'` |
 | `policy-ztwim-nested-spoke-chained` | inform only: the CA chain actually formed | `ztwim-nested-role: 'spoke'` |
+| `policy-ztwim-operand-drift` | inform only: operands still on the previous release's images | same as install |
+| `policy-ztwim-operand-reconcile` | deletes a stale operand so the operator recreates it | `autoshift.io/ztwim-operand-reconcile: 'true'` |
 
 The policies are chained with `dependencies`, because the operand controllers read the trust domain
 and cluster name from the `ZeroTrustWorkloadIdentityManager` singleton.
@@ -130,11 +132,100 @@ generates, held in place by `CREATE_ONLY_MODE`. That flag is read from a single 
 variable by **every** ZTWIM controller, so once it is on, no operand change reconciles on that
 cluster until the resource is deleted and recreated.
 
+**The SPIRE server cannot run in high availability.** The `SpireServer` CRD carries no `replicas`
+field at v1.1.1, so one `spire-server` pod is the only configuration available, and there is no
+field for a `PodDisruptionBudget` either. Red Hat's own documentation for the `SpireServer` custom
+resource, from OpenShift Container Platform 4.19 through 4.22, lists no such field and shows
+`spire-server 1/1` with a single `spire-server-0` pod as the expected result. The operator CSV
+declares `capabilities: Basic Install`, the lowest level. This is a limit of the operator, not of
+AutoShift: no setting in this policy changes it. When the pod is down, agents keep serving cached SVIDs until
+`config.ztwim.defaultX509Validity` expires, one hour by default, after which the trust domain stops
+issuing. Plan maintenance inside that window.
+
+**The persistence fields are effectively immutable.** Red Hat documents `persistence.size`,
+`accessMode` and `storageClass` as unchangeable once set, and the underlying StatefulSet volume
+claim template cannot change either. Changing `config.ztwim.persistence` after the first deployment
+is accepted by the API and then does nothing. On a nested cluster `CREATE_ONLY_MODE` hides it a
+second time. Resizing means deleting the `SpireServer` resource, which discards the CA unless the
+volume is preserved by hand. Choose the size at install time.
+
 **The datastore defaults to SQLite.** That is a single replica backed by one volume, which is
 appropriate for most clusters but is not highly available. The CRD also accepts `postgres` and
 `mysql`. Note that `connectionString` is a literal string with no secret reference, so a connection
 string carrying a password must not be committed to a values file. Use client certificate
 authentication through `datastore.tlsSecretName` instead.
+
+## Scheduling and resources
+
+Every operand accepts `resources`, `tolerations` and `nodeSelector`. Top-level `config.ztwim` keys
+apply to the SPIRE server; each operand sub-map (`agent`, `csiDriver`, `oidcDiscoveryProvider`)
+overrides for itself.
+
+Two defaults are deliberate and worth knowing about.
+
+**The agent and CSI driver DaemonSets tolerate every taint.** A workload can be scheduled onto any
+node that admits workloads, and if the agent and the CSI driver are not on that node the workload
+cannot obtain an SVID. There is no error in that case: the Workload API socket is simply absent.
+Because AutoShift's own `infra-nodes` and `storage-nodes` policies taint nodes, the earlier default
+of no tolerations left SPIRE covering one node out of seven on a live cluster. This is the same
+posture the CNI and CSI DaemonSets take. To narrow it, set an explicit list; setting an explicit
+empty list clears the default rather than restoring it.
+
+**Requests are set, limits are not.** Requests are what lift the pods out of `BestEffort`, where
+the kubelet evicts the trust domain's CA ahead of almost anything else. A CPU limit on a signing
+service only buys throttling. Add limits through `config.ztwim.resources` if a quota requires them.
+
+## Upgrades
+
+On an ordinary cluster an upgrade is a channel or version change and needs nothing from this
+section. On a **nested** cluster it does, because `CREATE_ONLY_MODE` changes what an upgrade means.
+
+**Nested clusters pin themselves.** `upgradeApproval` is derived: any cluster with
+`ztwim-nested-role` set resolves to `None`, so no InstallPlan is approved and the operator stays
+where it is. Every other cluster keeps `Automatic`. Override with
+`autoshift.io/ztwim-upgrade-approval`.
+
+The reason is that in create-only mode the operator creates absent objects but never updates
+existing ones. After an operator upgrade the SPIRE workloads keep running the previous release's
+images indefinitely, and nothing reports it: the CSV is `Succeeded`, and the operand CRs still
+report `Ready=True` with `All components are ready`. That status tracks readiness, not conformance.
+AutoShift also owns hand-patched content inside the generated `server.conf`, written against a
+particular release's shape.
+
+**`policy-ztwim-operand-drift` is the check.** It compares each running container against the
+`RELATED_IMAGE_*` environment on the installed operator, which is the source of truth for what each
+operand should run. A violation names the stale workload directly, for example
+`ztwim-stale-operand-spire-agent`.
+
+**Applying an operand change under create-only means deleting the workload.** That is the only
+lever: the create path still runs. Clearing `CREATE_ONLY_MODE` instead does not work on a
+GitOps-managed cluster, because `policy-ztwim-nested-create-only` restores it within seconds and
+Argo CD reverts an attempt to inform that policy. A window would also hand `server.conf` back to the
+operator while the enforcing policies re-apply their patches, with no defined end to the fight.
+
+Set `autoshift.io/ztwim-operand-reconcile: 'true'` to have AutoShift delete drifted operands so the
+operator recreates them, or delete them by hand:
+
+```bash
+oc delete daemonset spire-agent -n zero-trust-workload-identity-manager
+```
+
+On a nested **hub**, recreating the `spire-server` StatefulSet costs two restarts: the recreated
+StatefulSet lacks the per-spoke kubeconfig volumes that `psat-clusters.yaml` owns, and that policy
+re-applies them on its next evaluation. SPIRE is down across both. This is why the reconcile is
+opt-in.
+
+### Upgrade sequence for a nested cluster
+
+1. Confirm `policy-ztwim-operand-drift` is Compliant, so you start from a known state.
+2. Move `autoshift.io/ztwim-version` and `ztwim-channel` to the target release in the values file.
+3. Set `autoshift.io/ztwim-upgrade-approval: 'Automatic'` for the upgrade, and let the operator roll.
+4. `policy-ztwim-operand-drift` goes NonCompliant, naming each stale operand. Expected.
+5. Set `autoshift.io/ztwim-operand-reconcile: 'true'`. The operands are recreated at the new images.
+6. Confirm `policy-ztwim-nested-spoke-chained` returns to Compliant, then set both labels back.
+
+Step 6 matters: a `server.conf` shape change between releases breaks the nested patches, and the
+chained check is what catches it.
 
 ## Nested SPIRE
 
@@ -160,8 +251,29 @@ balancer in front of the hub. Both the upstream agent and the upstream-authority
 the plugin dials it on port 443.
 
 No external secret store is involved. The spoke's TokenReview credential comes from ACM's
-`ManagedServiceAccount` addon, and the hub assembles the kubeconfig from state it already holds.
+`ManagedServiceAccount` add-on, and the hub assembles the kubeconfig from state it already holds.
 The hub trust bundle is public CA material, delivered by a hub template.
+
+### How many spokes a hub carries
+
+Every spoke costs the hub one `ManagedServiceAccount`, one key in the `spoke-kubeconfigs` Secret,
+and two `ClusterStaticEntry` resources. The pod specification does not grow: all spoke kubeconfigs
+share one Secret, mounted once at `/run/spire/spoke-kubeconfigs`, where each key appears as a file.
+
+The limit is therefore the Secret, not the pod. Measured against a real spoke, a kubeconfig is 17KB
+and 23KB once stored, almost entirely the cluster CA bundle, which puts a hub at **roughly 45
+spokes**. Two further limits arrive before any hardware does:
+
+* The SPIRE server reads `server.conf` only at startup, so onboarding a spoke restarts it. The pod
+  template carries the ConfigMap resource version to make that restart happen exactly when the
+  configuration changes, and not on a token rotation. During the restart no spoke can renew its
+  intermediate CA.
+* The datastore defaults to SQLite, a single writer, and the server cannot run more than one replica.
+
+For a fleet larger than one hub can carry, shard into regional hubs rather than widening a single
+one. Nesting is a tree and nothing requires it to be two levels deep. Note that
+`autoshift.io/ztwim-nested-role` currently accepts one value, so a cluster that is a spoke of the
+root and a hub to its own spokes cannot yet be expressed.
 
 ### The one manual step
 
@@ -218,6 +330,22 @@ oc get cm spire-bundle -n zero-trust-workload-identity-manager -o jsonpath='{.da
 On the hub, the spoke's agent appears in `spire-server agent list` as
 `spiffe://<trust-domain>/spire/agent/k8s_psat/<spoke>/<uid>`, and
 `spire-server entry show -downstream` lists the spoke's server entry with `Downstream: true`.
+
+### Migrating from per-spoke kubeconfig Secrets
+
+Earlier revisions of this policy wrote one `spoke-kubeconfig-<name>` Secret per spoke and mounted
+each as its own volume. A hub carrying that shape needs one manual step, because
+`complianceType: musthave` adds the new volume without removing the old ones, and the old mount
+paths sit inside the new one:
+
+```bash
+oc delete statefulset spire-server -n zero-trust-workload-identity-manager
+oc delete secret -l autoshift.io/ztwim-nested-spoke -n zero-trust-workload-identity-manager
+```
+
+The operator recreates the StatefulSet from the `SpireServer` resource, and the policies re-apply
+the single mount on their next evaluation. This costs one SPIRE restart, so do it in the same
+window as any other operand change.
 
 ## Supportability
 
