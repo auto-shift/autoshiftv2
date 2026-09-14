@@ -1,0 +1,59 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: autoshift-console
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# Each policy references a single bare manifest file (manifests/<policy>.yaml). Add another policy
+# by dropping manifests/<name>.yaml + a policies[] entry here (re-run generate-policy.sh --dir <this>).
+# Both policies share placement.yaml, so the PlacementBinding needs an explicit name.
+placementBindingDefaults:
+  name: binding-policy-autoshift-console
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: medium
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Default Placement (placement.yaml at the dir root); policies with a different predicate set
+  # their own placement.placementPath. PG includes it and generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  # 1) The plugin itself: namespace, nginx config, Deployment, Service (service-ca TLS) and the
+  #    ConsolePlugin registration. Image/replicas come from config.autoshiftConsole in rendered-config.
+  - name: policy-autoshift-console
+    manifests:
+      - path: manifests/autoshift-console.yaml
+  # 2) Enable the plugin in the console operator. Split out so (1) is applied first; the manifest
+  #    itself waits on the Deployment reporting availableReplicas, because this dependency only
+  #    proves (1) is Compliant — a Deployment in ImagePullBackOff satisfies that.
+  - name: policy-autoshift-console-enable
+    dependencies:
+      - name: policy-autoshift-console
+    manifests:
+      - path: manifests/console-enable.yaml
+  # 3) Availability (inform) — reports when the plugin has no running pods; (1) is satisfied by the
+  #    Deployment object alone and (2) goes quiet until pods are up.
+  - name: policy-autoshift-console-available
+    remediationAction: inform
+    manifests:
+      - path: test/autoshift-console-available.yaml
+    customMessage:
+      noncompliant: >-
+        AutoShift console plugin has no available pods. The image tag is derived from this cluster's
+        OpenShift minor, so the usual causes are that no plugin build is published for that minor,
+        or that the image is not mirrored in a disconnected environment. Check the Deployment and
+        pod events in the autoshift-console namespace, or set autoshift.io/autoshift-console to
+        'false' to stop requesting the plugin. This is expected briefly while pods roll out.

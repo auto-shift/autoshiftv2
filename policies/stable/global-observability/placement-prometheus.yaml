@@ -1,0 +1,25 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-global-observability-prometheus
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Intermediate hubs only. These are the hubs that remote-write UP to the global hub; the global
+  # hub itself is the destination and has nothing to forward.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/global-observability'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/self-managed'
+              operator: In
+              values:
+                - 'false'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

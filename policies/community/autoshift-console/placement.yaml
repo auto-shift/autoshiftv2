@@ -1,0 +1,27 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-autoshift-console
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # No spec.clusterSets: selects across all ManagedClusterSetBindings in this namespace,
+  # filtered by the predicate below.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            # Hub-only: the plugin reads the cluster-labels / cluster-config / rendered-config
+            # ConfigMaps, which only exist where an AutoShift instance runs (incl. spoke hubs).
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/autoshift-console'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

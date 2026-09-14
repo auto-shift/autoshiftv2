@@ -1,0 +1,17 @@
+object-templates-raw: |
+  {{- /* Reports when the plugin has no running pods: the deploy policy is satisfied by the
+         Deployment object alone, which a failed image pull still creates, and the enable policy
+         stays quiet until pods are up. */}}
+  {{- $deploy := (lookup "apps/v1" "Deployment" "autoshift-console" "autoshift-console" | default dict) }}
+  {{- $available := (index ($deploy | default dict) "status" | default dict) }}
+  {{- /* Nothing creates this Deployment, and metadata alone is invalid, so an enforce override
+         cannot satisfy or create it. */ -}}
+  {{- if lt (index $available "availableReplicas" | default 0 | int) 1 }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: autoshift-console-no-available-replicas
+        namespace: autoshift-console
+  {{- end }}

@@ -602,46 +602,133 @@ get_channels() {
 get_best_channel() {
     local channels="$1"
     local package="$2"
+    local current="$3"
     local best=""
 
-    # Try version-specific patterns based on package name hints
-    case "$package" in
-        *gitops*)
-            best=$(echo "$channels" | grep -E '^gitops-[0-9]+\.[0-9]+$' | sort -Vr | head -1)
-            ;;
-        *pipelines*)
-            best=$(echo "$channels" | grep -E '^pipelines-[0-9]+\.[0-9]+$' | sort -Vr | head -1)
-            ;;
-        advanced-cluster-management)
-            best=$(echo "$channels" | grep -E '^release-[0-9]+\.[0-9]+$' | sort -Vr | head -1)
-            ;;
-        rhdh)
-            best=$(echo "$channels" | grep -E '^fast-[0-9]+\.[0-9]+$' | sort -Vr | head -1)
-            ;;
-    esac
+    # Prefer the newest channel in the SAME family as the one already configured. The channel
+    # name carries deliberate intent (loki runs stable-6.x although the catalog's defaultChannel
+    # is alpha), so the family is preserved and only the version advances.
+    #
+    # Derived from the current channel rather than matched against a list of known prefixes: the
+    # old case list had no pattern for a "v"-prefixed version (mtv's release-v2.11), so five of
+    # 32 operators fell through to "first channel in the list" and were reported up to date
+    # without any comparison happening.
+    if [[ -n "$current" && "$current" != "-" ]]; then
+        local fam="" ver_re=""
+        if [[ "$current" =~ ^(.+)-v[0-9]+(\.[0-9]+)*$ ]]; then
+            fam="${BASH_REMATCH[1]}"; ver_re="v[0-9]+(\.[0-9]+)*"
+        elif [[ "$current" =~ ^(.+)-[0-9]+(\.[0-9]+)*$ ]]; then
+            fam="${BASH_REMATCH[1]}"; ver_re="[0-9]+(\.[0-9]+)*"
+        fi
+        if [[ -n "$fam" ]]; then
+            # sort -V ignores a leading "v" per component, so release-v2.12 > release-v2.11.
+            best=$(echo "$channels" | grep -E "^${fam}-${ver_re}$" | sort -Vr | head -1)
+            [[ -n "$best" ]] && { echo "$best"; return 0; }
+        fi
+    fi
+
 
     # If no specific pattern matched, try generic patterns
-    if [[ -z "$best" ]]; then
-        # Try stable-X.Y (most common for Red Hat operators)
-        best=$(echo "$channels" | grep -E '^stable-[0-9]+\.[0-9]+$' | sort -Vr | head -1)
+    # The configured channel is still offered and nothing newer exists in its family, so it is
+    # the answer. Checked before the generic patterns below because those prefer a versioned
+    # channel over a rolling one: servicemeshoperator3 sits on `stable` deliberately, and
+    # stable-X.Y matching first proposed stable-3.4 every run — a "latest" that
+    # is_newer_channel then discards, so the report showed churn that never happened.
+    if [[ -n "$current" && "$current" != "-" ]] && echo "$channels" | grep -qxF "$current"; then
+        echo "$current"; return 0
     fi
 
-    if [[ -z "$best" ]]; then
-        # Try generic stable
-        best=$(echo "$channels" | grep -E '^stable$' | head -1)
-    fi
+    # Below here the configured channel is gone from the catalog, so a migration is needed.
 
-    if [[ -z "$best" ]]; then
-        # Fall back to latest
-        best=$(echo "$channels" | grep -E '^latest$' | head -1)
-    fi
+    # Migration ladder, most- to least-specific. Only reached when the configured channel is no
+    # longer offered, so there is no same-family answer and no current channel to keep.
+    local pattern
+    for pattern in '^stable-[0-9]+\.[0-9]+$' '^stable$' '^latest$'; do
+        best=$(echo "$channels" | grep -E "$pattern" | sort -Vr | head -1)
+        [[ -n "$best" ]] && break
+    done
 
-    if [[ -z "$best" ]]; then
-        # Last resort: first available channel
-        best=$(echo "$channels" | head -1)
-    fi
+    # Deliberately no "first available channel" fallback. Returning an arbitrary channel made
+    # the report claim a comparison that never happened — jfrog on `alpha` was printed as
+    # "up to date" against itself. An empty result makes the caller print "no suitable channel",
+    # which is the honest answer for a package whose channels match no known shape.
 
     echo "$best"
+}
+
+# The CSV at the head of a channel: the entry no other entry `replaces`. That is what a
+# <label>-version pin must name — OLM resolves startingCSV within the subscribed channel, so a
+# pin from a different channel cannot resolve at all.
+#
+# Looks in catalog.json and in a standalone <channel>.json, because packages use both layouts:
+# quay-operator ships stable-3.18.json separately while most packages inline every channel.
+get_channel_head() {
+    local catalog_dir="$1" package="$2" channel="$3"
+    local dir="$catalog_dir/configs/$package" f head
+    [[ -d "$dir" ]] || return 1
+    # Three layouts in the wild: a standalone <channel>.json (quay-operator), a channels/
+    # subdirectory (odf-operator), and everything inlined in catalog.json (most packages).
+    # Four layouts in the wild: a standalone <channel>.json (quay-operator), a channels/
+    # subdirectory (odf-operator), a single channels.json holding every channel
+    # (advanced-cluster-management), and everything inlined in catalog.json (most packages).
+    for f in "$dir/$channel.json" "$dir/channels/$channel.json" "$dir/channels.json" \
+             "$dir/channel.json" "$dir/catalog.json"; do
+        [[ -f "$f" ]] || continue
+        # A channel is an upgrade graph, not a list. The head is the entry that no other entry
+        # supersedes — via `replaces` OR `skips`. Subtracting only `replaces` finds the chain's
+        # ROOT instead: tempo-product's stable channel starts at v0.1.0-6, which nothing replaces
+        # (the next entry skips it), so the pin would have been moved backwards from v0.19.0-3.
+        # Version-sort what remains, because a channel can legitimately have several heads.
+        head=$(jq -s -r --arg ch "$channel" '
+            [.[] | select(.schema == "olm.channel" and .name == $ch)] | .[0] // empty
+            | (.entries // []) as $e
+            | ($e | map(.name))
+              - ($e | map(.replaces) | map(select(. != null)))
+              - ($e | map(.skips // []) | flatten)
+            | .[]' "$f" 2>/dev/null | sort -Vr | head -1)
+        [[ -n "$head" ]] && { echo "$head"; return 0; }
+    done
+
+    # catalog.yaml: same olm.channel documents, YAML-encoded (local-storage, metallb, loki,
+    # cluster-logging, nmstate, nfd). jq cannot read it and the repo does not require yq, so parse
+    # the one document we need with awk. `entries` precede `name` within a document, so the whole
+    # document is buffered before it can be matched to the requested channel.
+    if [[ -f "$dir/catalog.yaml" ]]; then
+        head=$(awk -v ch="$channel" '
+            /^---$/ { doc=""; next }
+            { doc = doc $0 "\n" }
+            /^schema: olm.channel$/ {
+                if (doc ~ ("\nname: " ch "\n") || doc ~ ("^name: " ch "\n")) { print doc; exit }
+            }' "$dir/catalog.yaml" 2>/dev/null | awk '
+            /^- name: / { n=$3; order[++i]=n }
+            /^ +replaces: / { gsub(/^ +replaces: /,""); repl[$0]=1 }
+            /^ +skips:/ { insk=1; next }
+            insk && /^ +- / { gsub(/^ +- /,""); repl[$0]=1; next }
+            insk { insk=0 }
+            END { for (k=1; k<=i; k++) if (!(order[k] in repl)) print order[k] }' | sort -Vr | head -1)
+        [[ -n "$head" ]] && { echo "$head"; return 0; }
+    fi
+    return 1
+}
+
+# Read the configured <label>-version pin, if any, from the same files get_current_channel scans.
+get_current_version() {
+    local label="$1" file cur
+    while IFS= read -r file; do
+        cur=$(grep -E "^[[:space:]]*${label}-version:" "$file" 2>/dev/null | head -1 | \
+              sed 's/#.*$//' | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+        if [[ -n "$cur" ]]; then echo "$cur"; return 0; fi
+    done <<< "$(get_values_files)"
+    # Fall back to the example files. get_values_files() skips _example*.yaml by design, but the
+    # live pins live there — the curated profiles keep theirs commented out as illustrations. Only
+    # mtv was caught without this, because two baremetal profiles happen to set it uncommented.
+    for file in "$PROJECT_ROOT"/autoshift/values/clustersets/_example*.yaml; do
+        [[ -f "$file" ]] || continue
+        cur=$(grep -E "^[[:space:]]*${label}-version:" "$file" 2>/dev/null | head -1 | \
+              sed 's/#.*$//' | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+        if [[ -n "$cur" ]]; then echo "$cur"; return 0; fi
+    done
+    return 0
 }
 
 # Compare two channels and determine if the second is newer
@@ -709,6 +796,49 @@ update_autoshift_channel() {
         fi
     done < <(get_update_files)
 
+    return $updated
+}
+
+# Report values files whose <label>-channel disagrees with the channel we settled on.
+#
+# get_current_channel() returns the FIRST match from get_values_files(), which deliberately skips
+# _example*.yaml. A stale example therefore never surfaced: mtv-channel sat at release-v2.9 in
+# _example.yaml while every curated profile said release-v2.11, and the script reported "up to
+# date" for months. _example*.yaml is the reference users copy from and the file the label
+# contract checks, so drift there matters more than in any single profile.
+channels_out_of_sync() {
+    local label="$1" want="$2" f cur
+    for f in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml \
+             "$PROJECT_ROOT"/autoshift/values/clusters/*.yaml; do
+        [[ -f "$f" ]] || continue
+        # Strip any trailing comment before reading the value: several profiles park a channel
+        # as `dev-spaces-channel: '' #stable`, i.e. deliberately unset with the intended value
+        # noted alongside. Without this the comment is read as the value and reported as drift.
+        cur=$(grep -E "^[[:space:]]*${label}-channel:" "$f" 2>/dev/null | head -1 | \
+              sed 's/#.*$//' | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r' | xargs)
+        [[ -n "$cur" && "$cur" != "$want" ]] && echo "${f#$PROJECT_ROOT/}|$cur"
+    done
+    return 0
+}
+
+# Write <label>-version across the same files update_autoshift_channel writes. The pin documents
+# the starting CSV for the channel it sits beside, so it moves with the channel; consumers keep
+# their own values files and are unaffected.
+update_autoshift_version() {
+    local label="$1" new_version="$2" file current updated=0
+    while IFS= read -r file; do
+        grep -qE "^[[:space:]]*#?[[:space:]]*${label}-version:" "$file" 2>/dev/null || continue
+        current=$(grep -E "^[[:space:]]*#?[[:space:]]*${label}-version:" "$file" | head -1 | \
+                  sed 's/#.*$//' | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | xargs)
+        if $DRY_RUN; then
+            [[ -n "$current" && "$current" != "$new_version" ]] && {
+                echo "  Would update $file: ${label}-version: $current -> $new_version"; updated=1; }
+        else
+            # Keep a commented pin commented: hub.yaml parks examples as `# quay-version: ...`.
+            sed -i.bak -E "s|^([[:space:]]*#?[[:space:]]*${label}-version:)[[:space:]]*.*|\1 '${new_version}'|" "$file"
+            rm -f "$file.bak"; updated=1
+        fi
+    done < <(get_update_files)
     return $updated
 }
 
@@ -835,22 +965,40 @@ main() {
             continue
         fi
 
+        # Current channel first: get_best_channel uses it to stay in the same channel family.
+        local current_channel
+        current_channel=$(get_current_channel "$label")
+        [[ -z "$current_channel" ]] && current_channel="-"
+
         # Get the best channel
         local best_channel
-        best_channel=$(get_best_channel "$channels" "$package")
+        best_channel=$(get_best_channel "$channels" "$package" "$current_channel")
         if [[ -z "$best_channel" ]]; then
             printf "%-35s %-20s %-20s %s\n" "$package" "-" "-" "${YELLOW}no suitable channel${NC}"
             continue
         fi
 
-        # Get current channel
-        local current_channel
-        current_channel=$(get_current_channel "$label")
-        [[ -z "$current_channel" ]] && current_channel="-"
-
         # Compare and update
         if [[ "$current_channel" == "$best_channel" ]]; then
-            printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${GREEN}up to date${NC}"
+            # Matching the first curated profile is not enough — check every values file.
+            local drift
+            drift=$(channels_out_of_sync "$label" "$best_channel")
+            if [[ -n "$drift" ]]; then
+                printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${YELLOW}drift${NC}"
+                while IFS='|' read -r dfile dchan; do
+                    [[ -z "$dfile" ]] && continue
+                    echo "    $dfile has ${label}-channel: $dchan"
+                done <<< "$drift"
+                updates_available=1
+                if ! $CHECK_ONLY; then
+                    update_autoshift_channel "$label" "$best_channel" || true
+                    if ! $DRY_RUN; then
+                        ((updates_made++)) || true
+                    fi
+                fi
+            else
+                printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${GREEN}up to date${NC}"
+            fi
         elif [[ "$current_channel" == "-" ]]; then
             printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${CYAN}not configured${NC}"
         elif is_newer_channel "$current_channel" "$best_channel"; then
@@ -869,6 +1017,31 @@ main() {
             # best_channel differs but is not newer - current channel is preferred, don't downgrade
             printf "%-35s %-20s %-20s %s\n" "$package" "$current_channel" "$best_channel" "${GREEN}up to date${NC} (keeping current channel)"
         fi
+
+        # Reconcile the <label>-version pin to the head of whatever channel is now configured.
+        # The pin documents the starting CSV for the channel beside it, so it is always the
+        # channel head — not merely "not contradictory". Checking only for a major.minor
+        # contradiction missed 27 of 33 operators, because a bare `stable` channel has no version
+        # to contradict and a rolling stable-v1 matches v1.15.1 on its first component.
+        # Consumers keep their own values files and are unaffected.
+        local eff_channel="$current_channel" pin head
+        [[ "$current_channel" == "-" ]] && eff_channel="$best_channel"
+        if is_newer_channel "$current_channel" "$best_channel"; then eff_channel="$best_channel"; fi
+        pin=$(get_current_version "$label")
+        if [[ -n "$pin" ]]; then
+            head=$(get_channel_head "$catalog_dir" "$package" "$eff_channel" || true)
+            if [[ -z "$head" ]]; then
+                printf "  %-33s %-20s %-20s %s\n" "  version pin" "${pin:0:20}" "-" "${YELLOW}head unresolved for ${eff_channel}${NC}"
+            elif [[ "$head" != "$pin" ]]; then
+                printf "  %-33s %-20s %-20s %s\n" "  version pin" "${pin:0:20}" "${head:0:20}" "${YELLOW}-> channel head${NC}"
+                updates_available=1
+                if ! $CHECK_ONLY; then
+                    update_autoshift_version "$label" "$head" || true
+                    if ! $DRY_RUN; then ((updates_made++)) || true; fi
+                fi
+            fi
+        fi
+
     done
 
     echo ""

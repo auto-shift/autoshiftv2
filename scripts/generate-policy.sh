@@ -59,38 +59,9 @@ TEMPLATE_DIR="$SCRIPT_DIR/templates"
 # per-deployment ${...} tokens into a throwaway copy (never mutate the source), then run
 # kustomize + the PolicyGenerator plugin. Returns 0 on success, 1 on render failure, 2 if the
 # toolchain is not installed.
-pg_render() {
-    local dir="$1"
-    local kbin plugin_home
-    if [[ -x "$PROJECT_ROOT/.tools/kustomize" ]]; then
-        kbin="$PROJECT_ROOT/.tools/kustomize"
-        plugin_home="$PROJECT_ROOT/.tools/kustomize-plugin"
-    elif command -v kustomize >/dev/null 2>&1; then
-        kbin="kustomize"
-        plugin_home="${KUSTOMIZE_PLUGIN_HOME:-}"
-    else
-        return 2
-    fi
-
-    local tmp
-    tmp="$(mktemp -d)"
-    cp -R "$dir"/. "$tmp"/
-    local f
-    while IFS= read -r f; do
-        sed -e 's/\${POLICY_NAMESPACE}/policies-autoshift/g' \
-            -e 's/\${REMEDIATION}/enforce/g' \
-            -e 's/\${EVAL_COMPLIANT}/2h/g' \
-            -e 's/\${EVAL_NONCOMPLIANT}/45s/g' \
-            -e 's/\${CLUSTER_SET_SUFFIX}//g' \
-            "$f" > "$f.sub" && mv "$f.sub" "$f"
-    done < <(find "$tmp" -name '*.yaml')
-
-    KUSTOMIZE_PLUGIN_HOME="$plugin_home" "$kbin" build \
-        --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone "$tmp" >/dev/null 2>&1
-    local rc=$?
-    rm -rf "$tmp"
-    return $rc
-}
+# Shared with the other generators and runnable on its own as `scripts/pg-render.sh <dir>`.
+# Defines pg_render(); see that script for why a bare `kustomize build` cannot work here.
+source "$SCRIPT_DIR/pg-render.sh"
 
 # Parse arguments
 POLICY_NAME=""
@@ -628,6 +599,12 @@ add_to_autoshift_values() {
             fi
         done
     else
+        # Non-interactive (CI, scripted runs, no TTY): skip the profile picker and fall through
+        # to the _example*.yaml files, which are always included below. Those are the files the
+        # label contract checks, so a scaffold validates cleanly without a human at the prompt.
+        if [[ ! -t 0 ]]; then
+            log_step "Non-interactive run: declaring labels in _example*.yaml only"
+        else
         # Interactive: let user select which values files to update
         # Search clustersets/ AND parent values/ for single-file setups
         # Use newline-based find (no -print0/-z) for Git Bash compatibility
@@ -667,6 +644,7 @@ add_to_autoshift_values() {
             fi
         fi
     fi
+        fi
 
     # Always include example files that have a labels: section
     while IFS= read -r file; do
@@ -791,7 +769,10 @@ elif [[ $rc -eq 2 ]]; then
     log_warning "Install it with: make install-policy-generator"
 else
     log_error "Generated policy fails PolicyGenerator render"
-    echo "Run: KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR"
+    echo "The raw kustomize command cannot be run as-is: the manifests still contain"
+    echo "\${REMEDIATION}/\${EVAL_COMPLIANT} tokens that PolicyGenerator rejects. Re-run this"
+    echo "script (it substitutes them internally), or validate with:"
+    echo "  cd tools && go test -tags integration -count=1 ./internal/resolver/..."
     exit 1
 fi
 
@@ -831,7 +812,7 @@ echo -e "${BLUE}📋 Next Steps:${NC}"
 echo "1. Edit $OUTPUT_FILE"
 echo "   - Replace the placeholder ConfigMap with your actual bare resource (no ConfigurationPolicy wrapper)"
 echo "   - For hub templates / loops / conditionals, use a bare 'object-templates-raw:' manifest instead"
-echo "2. Test locally: KUSTOMIZE_PLUGIN_HOME=\$PWD/.tools/kustomize-plugin .tools/kustomize build --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone $POLICY_DIR"
+echo "2. Validate: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
 echo "   Full validation: cd tools && go test -tags integration -count=1 ./internal/resolver/..."
 if [[ "$TARGET" != "all" ]]; then
     if [[ "$ADD_TO_AUTOSHIFT" == "true" ]]; then

@@ -212,10 +212,13 @@ if [ "$METHOD" = "argocd" ]; then
     OCI_VALUES=""
     if [ "$OCI_POLICIES" = "true" ]; then
         OCI_VALUES="      values: |
-        autoshiftOciRegistry: true
+        # Where the policy charts are published. Change this if you release your own charts.
         autoshiftOciRepo: ${POLICIES_REGISTRY}
-        autoshiftOciVersion: \"${VERSION}\"
-        gitopsNamespace: ${NAMESPACE}"
+        gitopsNamespace: ${NAMESPACE}
+      # Injected from this Application's targetRevision, so the release is pinned once.
+      parameters:
+        - name: autoshiftOciVersion
+          value: \$ARGOCD_APP_SOURCE_TARGET_REVISION"
     else
         OCI_VALUES="      values: |
         gitopsNamespace: ${NAMESPACE}"
