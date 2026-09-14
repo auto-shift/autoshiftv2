@@ -14,10 +14,27 @@
 # reencrypt rather than edge, because the SPIRE server serves the federation port over TLS. The
 # router presents the public wildcard certificate to the peer and re-encrypts to the backend, whose
 # own certificate never has to be publicly valid.
+#
+# WHAT THIS EXPOSES, and how to not do it. A trust bundle is certificate authority material, so the
+# contents are public by design and the https_web profile exists so a peer can fetch one with no
+# pre-existing trust. Publishing it on the default ingress still makes the endpoint reachable from
+# wherever that ingress is reachable, which on a cloud cluster usually means the internet, and it
+# discloses the trust domain name and that this cluster runs SPIRE.
+#
+# Whether that is acceptable is a network decision rather than a data one. Clusters sharing a
+# private network do not need it at all. Set config.ztwim.federation.publishEndpointRoute to 'false'
+# to skip this Route and config.ztwim.federation.bundleEndpointHost to the name peers should use
+# instead, whether that is an internal load balancer, a service mesh gateway or a private ingress
+# controller.
 object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $fed := (index $cfg "federation" | default dict) hub}}
+  {{hub- $cfgPublish := (index $fed "publishEndpointRoute" | default "true") hub}}
   {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $publish := `{{hub $cfgPublish hub}}` }}
   {{- $domain := dig "spec" "domain" "" ((lookup "config.openshift.io/v1" "Ingress" "" "cluster") | default dict) }}
-  {{- if $domain }}
+  {{- if and $domain (ne $publish "false") }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: route.openshift.io/v1

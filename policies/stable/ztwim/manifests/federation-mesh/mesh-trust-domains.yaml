@@ -19,6 +19,11 @@
 # A peer is skipped until all three of its views have reported. A half-built federation entry would
 # point at an endpoint with no bundle to validate it.
 #
+# The endpoint a peer publishes is read from that peer's own rendered configuration first, falling
+# back to the Route it publishes. A deployment that serves its bundle somewhere other than the
+# default ingress sets config.ztwim.federation.bundleEndpointHost on that cluster, and its peers
+# pick the value up from here without any of them being configured with it.
+#
 # A peer sharing this cluster's trust domain is skipped too. Federation joins INDEPENDENT domains,
 # so two clusters already in one domain have nothing to federate -- which is the case for a nested
 # hub and its spokes, since nesting merges them into a single domain. Without this guard, labelling
@@ -38,7 +43,10 @@ object-templates-raw: |
   {{hub- $endpointView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-endpoint") | default dict hub}}
   {{hub- $bundle := (dig "status" "result" "data" "bundle.crt" "" $bundleView) hub}}
   {{hub- $domain := (dig "status" "result" "spec" "trustDomain" "" $domainView) hub}}
-  {{hub- $host := (dig "status" "result" "spec" "host" "" $endpointView) hub}}
+  {{hub- $peerCM := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" $peer)) | default dict hub}}
+  {{hub- $peerCfg := (index (index (index $peerCM "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $cfgHost := (index (index $peerCfg "federation" | default dict) "bundleEndpointHost" | default "") hub}}
+  {{hub- $host := ($cfgHost | default (dig "status" "result" "spec" "host" "" $endpointView)) hub}}
   {{hub- if and $bundle $domain $host (ne $domain $selfDomain) hub}}
   - complianceType: musthave
     objectDefinition:
