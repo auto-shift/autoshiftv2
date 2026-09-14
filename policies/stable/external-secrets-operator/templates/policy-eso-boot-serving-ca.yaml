@@ -54,6 +54,7 @@
 {{- $caKey := ($eso.hubCASourceKey | default "ca-bundle.crt") }}
 {{- /* Explicit decommission flag (config.eso.hubBootstrap.teardown / values hubBootstrap.teardown). */}}
 {{- $defaultTeardown := (dig "teardown" "" $hb | default false) }}
+{{- $sharedNamespace := (dig "hubBootstrap" "sharedNamespace" "" $eso | default $policyNamespace) }}
 {{- /* Diagnostics run modes (deployment-wide). readinessOnly: suppress this active policy entirely.
        debugRender: emit only a preview ConfigMap of what this policy WOULD apply (nothing live).
        debugRender wins, so previews still render under readinessOnly. */ -}}
@@ -119,16 +120,17 @@ spec:
                     {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
                     {{ "{{hub-" }} $teardown := (dig "eso" "hubBootstrap" "teardown" {{ $defaultTeardown }} $clusterConfig) {{ "hub}}" }}
                     {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
-                    ##### Tenancy namespaces to stash/remove: this chart's policy ns FIRST, then each unique #####
-                    ##### autoshift.io/owning-namespace on THIS hub's ManagedClusters (cluster-labels) if not #####
-                    ##### already present — a list so object-stream order is deterministic (map range is not). #####
-                    ##### In hub-of-hubs the rendering app's ns (global) and the child app's ns (site) differ; #####
-                    ##### boot-store fromConfigMap uses the child app ns. #####
-                    {{ "{{-" }} $stashNs := list "{{ $policyNamespace }}" {{ "}}" }}
+                    ##### Tenancy namespaces to stash/remove: owning-namespaces this hub sees, plus #####
+                    ##### sharedNamespace when set. Do NOT seed the rendering chart's policy namespace — #####
+                    ##### that is the parent app's governance ns and must not be created on a managed hub. #####
+                    {{ "{{hub-" }} $sharedNs := (dig "eso" "hubBootstrap" "sharedNamespace" "{{ $sharedNamespace }}" $clusterConfig) {{ "hub}}" }}
+                    {{ "{{-" }} $stashNs := list {{ "}}" }}
                     {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
                       {{ "{{-" }} $own := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
                       {{ "{{-" }} if and (ne $own "") (not (has $own $stashNs)) {{ "}}" }}{{ "{{-" }} $stashNs = append $stashNs $own {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $sharedNs := "{{ "{{hub" }} $sharedNs {{ "hub}}" }}" {{ "}}" }}
+                    {{ "{{-" }} if and (ne $sharedNs "") (ne $sharedNs "{{ $policyNamespace }}") (not (has $sharedNs $stashNs)) {{ "}}" }}{{ "{{-" }} $stashNs = append $stashNs $sharedNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} if eq $teardown "1" {{ "}}" }}
                     ##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): remove the stashed serving-CA ConfigMap #####
                     ##### from every tenancy namespace we wrote it to. The copy policy skips its copies under the same flag. #####
@@ -195,16 +197,17 @@ spec:
             {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $teardown := (dig "eso" "hubBootstrap" "teardown" {{ $defaultTeardown }} $clusterConfig) {{ "hub}}" }}
             {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
-            ##### Tenancy namespaces to stash/remove: this chart's policy ns FIRST, then each unique #####
-            ##### autoshift.io/owning-namespace on THIS hub's ManagedClusters (cluster-labels) if not #####
-            ##### already present — a list so object-stream order is deterministic (map range is not). #####
-            ##### In hub-of-hubs the rendering app's ns (global) and the child app's ns (site) differ; #####
-            ##### boot-store fromConfigMap uses the child app ns. #####
-            {{ "{{-" }} $stashNs := list "{{ $policyNamespace }}" {{ "}}" }}
+            ##### Tenancy namespaces to stash/remove: owning-namespaces this hub sees, plus #####
+            ##### sharedNamespace when set. Do NOT seed the rendering chart's policy namespace — #####
+            ##### that is the parent app's governance ns and must not be created on a managed hub. #####
+            {{ "{{hub-" }} $sharedNs := (dig "eso" "hubBootstrap" "sharedNamespace" "{{ $sharedNamespace }}" $clusterConfig) {{ "hub}}" }}
+            {{ "{{-" }} $stashNs := list {{ "}}" }}
             {{ "{{-" }} range $mc := ((lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list) {{ "}}" }}
               {{ "{{-" }} $own := (dig "metadata" "labels" "autoshift.io/owning-namespace" "" $mc) {{ "}}" }}
               {{ "{{-" }} if and (ne $own "") (not (has $own $stashNs)) {{ "}}" }}{{ "{{-" }} $stashNs = append $stashNs $own {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} $sharedNs := "{{ "{{hub" }} $sharedNs {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} if and (ne $sharedNs "") (ne $sharedNs "{{ $policyNamespace }}") (not (has $sharedNs $stashNs)) {{ "}}" }}{{ "{{-" }} $stashNs = append $stashNs $sharedNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} if eq $teardown "1" {{ "}}" }}
             ##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): remove the stashed serving-CA ConfigMap #####
             ##### from every tenancy namespace we wrote it to. The copy policy skips its copies under the same flag. #####

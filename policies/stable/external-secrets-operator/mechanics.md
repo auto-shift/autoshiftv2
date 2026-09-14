@@ -24,8 +24,9 @@ detail — is [responsibilities.md](responsibilities.md#per-file-breakdown).*
 | `policy-eso-boot-readiness-hub` / `-spoke` | `policyset-eso-boot-hub` / `-spoke` | hubs / spokes | Precursor gates — assert cert-manager/issuer/serving-cert health before the active boot policies may run. |
 | `policy-eso-boot-clientca-self` (+ `-self-wire`) | `policyset-eso-boot-hub` | hubs | selfSigned mode: mint the bootstrap CA, per-cluster client certs, reader RBAC; wire `APIServer.spec.clientCA`. |
 | `policy-eso-boot-clientca-ext` | `policyset-eso-boot-hub` | hubs | External modes: materialize the external CA bundle into the clientCA ConfigMap + reader RBAC (no minting). |
-| `policy-eso-boot-serving-ca` | `policyset-eso-boot-hub` | hubs | Discover the hub apiserver's serving CA and stash it in the policy namespace. |
+| `policy-eso-boot-serving-ca` | `policyset-eso-boot-hub` | hubs | Discover the hub apiserver's serving CA and stash it in owning-namespaces and `sharedNamespace` (`eso-shared` by default). |
 | `policy-eso-boot-store` | `policyset-eso-boot-spoke` | hubs + spokes | Copy the client cert + serving CA to the cluster and build the bootstrap `ClusterSecretStore`. |
+| `policy-eso-cluster-secrets` | `policyset-eso-secret-stores` | all placed clusters | `config.eso.secrets` on the landing cluster. |
 
 Placement is defined once per PolicySet in `templates/policysets.yaml` — policies are grouped
 by shared intent + placement, each group bound to a single Placement (hub-only groups render
@@ -144,10 +145,10 @@ Key mechanics:
 - **Store-only contract.** The bootstrap provisions the store and its auth — never
   application `ExternalSecret`s. Every consumer creates its own `ExternalSecret` against the
   store (`storeName`, default `hub-bootstrap`), so consumers own their Secrets.
-- **Per-cluster identity, per-deployment authorization.** One client cert per owned
-  `ManagedCluster` (unique CN → hub audit logs attribute reads to a cluster), but every
-  cluster binds to the *same* reader Role scoped to this deployment's policy namespace — a
-  deployment is a tenancy boundary; no cross-deployment reads.
+- **Per-cluster identity, shared fan-out.** One client cert per owned `ManagedCluster`
+  (unique CN, so hub audit logs attribute reads to a cluster). Children share a broad Role
+  on `eso-shared`. Policy-namespace grants are per-cluster `resourceNames` and only when
+  names are declared.
 - **Ownership by label.** The mint loop keeps only `ManagedCluster`s whose
   `autoshift.io/owning-namespace` label equals this policy namespace (set by the
   cluster-labels policy). Multiple AutoShift deployments share a hub safely.

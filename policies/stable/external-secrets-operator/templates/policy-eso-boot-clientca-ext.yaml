@@ -53,6 +53,7 @@
   {{- $policyNamespace := $.Values.policy_namespace }}
   {{- $eso := $.Values.externalSecretsOperator }}
   {{- $hb := (default (dict) $eso.hubBootstrap) }}
+  {{- $sharedNamespace := (dig "hubBootstrap" "sharedNamespace" "" $eso | default $policyNamespace) }}
   {{- $storePrefix := (dig "storePrefix" "" $hb | default "hub-bootstrap") }}
   {{- $readerRole := (printf "%s-reader" $storePrefix) }}
   {{- $clientCAConfigMap := (dig "clientCAConfigMap" "" $hb | default (printf "%s-client-ca" $storePrefix)) }}
@@ -164,6 +165,7 @@ spec:
                     ##### Per-cluster reader scope: "<ownerNs>|<identity>|<slug>" -> the hub Secret names THAT cluster #####
                     ##### declares. Drives one scoped Role per cluster, as in the selfSigned policy. #####
                     {{ "{{-" }} $nsScopes := dict {{ "}}" }}
+                    {{ "{{-" }} $expectRBAC := dict {{ "}}" }}
                     {{ "{{-" }} $seenIds := dict {{ "}}" }}
                     ##### On teardown, skip enumeration entirely: $eligible/$nsIdentities stay empty, so the wiring never #####
                     ##### fires and the RBAC sweep below treats ALL labelled objects as stale. #####
@@ -291,8 +293,13 @@ spec:
                                 {{ "{{-" }} $k := (dig "extract" "key" "" ($d | default dict)) {{ "}}" }}
                                 {{ "{{-" }} if and (ne $k "") (not (has $k $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $k {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
                               {{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} if and (eq (len (index $se "data" | default list)) 0) (eq (len (index $se "dataFrom" | default list)) 0) {{ "}}" }}
+                                {{ "{{-" }} $nm := (index $se "name" | default "") {{ "}}" }}
+                                {{ "{{-" }} if and (ne $nm "") (not (has $nm $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $nm {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
                             {{ "{{-" }} end {{ "}}" }}
-                            {{ "{{-" }} $clusterShared := (dig "eso" "hubBootstrap" "sharedNamespace" $tenancyNs $scopeCfg) {{ "}}" }}
+                            {{ "{{-" }} $clusterShared := (dig "eso" "hubBootstrap" "sharedNamespace" "{{ $sharedNamespace }}" $scopeCfg) {{ "}}" }}
+                            {{ "{{-" }} if eq $clusterShared "" {{ "}}" }}{{ "{{-" }} $clusterShared = $tenancyNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
                             {{ "{{-" }} $_ := set $nsScopes (printf "%s|%s|%s|%s" $tenancyNs $identity ($identity | sha256sum | trunc 10) $clusterShared) $scopeNames {{ "}}" }}
                           {{ "{{-" }} end {{ "}}" }}
                         {{ "{{-" }} end {{ "}}" }}
@@ -345,18 +352,21 @@ spec:
                         ##### ONE Role + RoleBinding PER CLUSTER, scoped by resourceNames to the hub Secrets that cluster #####
                         ##### declares — see the selfSigned policy for why a shared namespace-wide Role is unsafe. #####
                         {{ "{{-" }} $expectRBAC := dict {{ "}}" }}
-                        {{ "{{-" }} range $sk, $sv := $nsScopes {{ "}}" }}
-                          {{ "{{-" }} $pp := (splitList "|" $sk) {{ "}}" }}
-                          {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s-%s" (index $pp 0) $readerRole (index $pp 2)) true {{ "}}" }}
-                        {{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} $sharedFanout := dict {{ "}}" }}
+                        {{ "{{-" }} $rollbackNs := dict {{ "}}" }}
                         {{ "{{-" }} range $scopeKey, $scopeNames := $nsScopes {{ "}}" }}
                         {{ "{{-" }} $parts := (splitList "|" $scopeKey) {{ "}}" }}
                         {{ "{{-" }} $ownerNs := (index $parts 0) {{ "}}" }}
                         {{ "{{-" }} $id := (index $parts 1) {{ "}}" }}
-                        {{ "{{-" }} $roleName := (printf "%s-%s" $readerRole (index $parts 2)) {{ "}}" }}
+                        {{ "{{-" }} $seg := (index $parts 2) {{ "}}" }}
                         {{ "{{-" }} $sharedNs := (index $parts 3) {{ "}}" }}
-                        ##### Same opt-in as the selfSigned policy: broad until sharedNamespace splits them. #####
-                        {{ "{{-" }} $broad := (eq $sharedNs $ownerNs) {{ "}}" }}
+                        {{ "{{-" }} if eq $sharedNs "" {{ "}}" }}{{ "{{-" }} $sharedNs = $ownerNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} if ne $sharedNs $ownerNs {{ "}}" }}
+                        {{ "{{-" }} $roleName := (printf "%s-%s" "{{ $readerRole }}" $seg) {{ "}}" }}
+                        {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s" $ownerNs $roleName) true {{ "}}" }}
+                        {{ "{{-" }} $fan := (index $sharedFanout $sharedNs | default list) {{ "}}" }}
+                        {{ "{{-" }} if not (has $id $fan) {{ "}}" }}{{ "{{-" }} $fan = append $fan $id {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} $_ := set $sharedFanout $sharedNs $fan {{ "}}" }}
                     - complianceType: musthave
                       objectDefinition:
                         apiVersion: rbac.authorization.k8s.io/v1
@@ -367,11 +377,7 @@ spec:
                           labels:
                             autoshift.io/secret-reader-role: {{ $storePrefix }}
                         rules:
-                          {{ "{{-" }} if $broad {{ "}}" }}
-                          - apiGroups: [""]
-                            resources: ["secrets"]
-                            verbs: ["get", "list", "watch"]
-                          {{ "{{-" }} else if $scopeNames {{ "}}" }}
+                          {{ "{{-" }} if $scopeNames {{ "}}" }}
                           - apiGroups: [""]
                             resources: ["secrets"]
                             resourceNames: {{ "{{" }} $scopeNames | toRawJson {{ "}}" }}
@@ -396,6 +402,81 @@ spec:
                           - kind: User
                             name: {{ "{{" }} $id {{ "}}" }}
                             apiGroup: rbac.authorization.k8s.io
+                        {{ "{{-" }} else {{ "}}" }}
+                        {{ "{{-" }} $rbCNs := (index $rollbackNs $ownerNs | default list) {{ "}}" }}
+                        {{ "{{-" }} if not (has $id $rbCNs) {{ "}}" }}{{ "{{-" }} $rbCNs = append $rbCNs $id {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} $_ := set $rollbackNs $ownerNs $rbCNs {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} range $sns, $cns := $sharedFanout {{ "}}" }}
+                        {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s" $sns "{{ $readerRole }}") true {{ "}}" }}
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: rbac.authorization.k8s.io/v1
+                        kind: Role
+                        metadata:
+                          name: {{ $readerRole }}
+                          namespace: {{ "{{" }} $sns {{ "}}" }}
+                          labels:
+                            autoshift.io/secret-reader-role: {{ $storePrefix }}
+                        rules:
+                          - apiGroups: [""]
+                            resources: ["secrets"]
+                            verbs: ["get", "list", "watch"]
+                    - complianceType: mustonlyhave
+                      objectDefinition:
+                        apiVersion: rbac.authorization.k8s.io/v1
+                        kind: RoleBinding
+                        metadata:
+                          name: {{ $readerRole }}
+                          namespace: {{ "{{" }} $sns {{ "}}" }}
+                          labels:
+                            autoshift.io/secret-reader-rolebinding: {{ $storePrefix }}
+                        roleRef:
+                          apiGroup: rbac.authorization.k8s.io
+                          kind: Role
+                          name: {{ $readerRole }}
+                        subjects:
+                          {{ "{{-" }} range $id := $cns {{ "}}" }}
+                          - kind: User
+                            name: {{ "{{" }} $id {{ "}}" }}
+                            apiGroup: rbac.authorization.k8s.io
+                          {{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} end {{ "}}" }}
+                        {{ "{{-" }} range $ownerNs, $cns := $rollbackNs {{ "}}" }}
+                        {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s" $ownerNs "{{ $readerRole }}") true {{ "}}" }}
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: rbac.authorization.k8s.io/v1
+                        kind: Role
+                        metadata:
+                          name: {{ $readerRole }}
+                          namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                          labels:
+                            autoshift.io/secret-reader-role: {{ $storePrefix }}
+                        rules:
+                          - apiGroups: [""]
+                            resources: ["secrets"]
+                            verbs: ["get", "list", "watch"]
+                    - complianceType: mustonlyhave
+                      objectDefinition:
+                        apiVersion: rbac.authorization.k8s.io/v1
+                        kind: RoleBinding
+                        metadata:
+                          name: {{ $readerRole }}
+                          namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                          labels:
+                            autoshift.io/secret-reader-rolebinding: {{ $storePrefix }}
+                        roleRef:
+                          apiGroup: rbac.authorization.k8s.io
+                          kind: Role
+                          name: {{ $readerRole }}
+                        subjects:
+                          {{ "{{-" }} range $id := $cns {{ "}}" }}
+                          - kind: User
+                            name: {{ "{{" }} $id {{ "}}" }}
+                            apiGroup: rbac.authorization.k8s.io
+                          {{ "{{-" }} end {{ "}}" }}
                         {{ "{{-" }} end {{ "}}" }}
                         {{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }}
@@ -544,6 +625,8 @@ spec:
             ##### Identity per cluster = derived CN (externalCA) OR the registered apiserver host (reuse mode). #####
             {{ "{{-" }} $eligible := list {{ "}}" }}
             {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
+            {{ "{{-" }} $nsScopes := dict {{ "}}" }}
+            {{ "{{-" }} $expectRBAC := dict {{ "}}" }}
             {{ "{{-" }} $seenIds := dict {{ "}}" }}
             ##### On teardown, skip enumeration entirely: $eligible/$nsIdentities stay empty, so the wiring never #####
             ##### fires and the RBAC sweep below treats ALL labelled objects as stale. #####
@@ -645,6 +728,35 @@ spec:
                     {{ "{{-" }} $nsList := (index $nsIdentities $tenancyNs | default list) {{ "}}" }}
                     {{ "{{-" }} $nsList = append $nsList $identity {{ "}}" }}
                     {{ "{{-" }} $_ := set $nsIdentities $tenancyNs $nsList {{ "}}" }}
+                    {{ "{{-" }} $scopeCfg := (dig "data" "config" "" ((lookup "v1" "ConfigMap" $tenancyNs (printf "%s.rendered-config" $mcName)) | default dict) | fromYaml | default dict) {{ "}}" }}
+                    {{ "{{-" }} $scopeNames := list {{ "}}" }}
+                    {{ "{{-" }} range $si := (dig "eso" "secretStores" (list) $scopeCfg) {{ "}}" }}
+                      {{ "{{-" }} $si = ($si | default dict) {{ "}}" }}
+                      {{ "{{-" }} $st := dict {{ "}}" }}
+                      {{ "{{-" }} if hasKey $si "clusterSecretStore" {{ "}}" }}{{ "{{-" }} $st = (index $si "clusterSecretStore" | default dict) {{ "}}" }}{{ "{{-" }} else if hasKey $si "secretStore" {{ "}}" }}{{ "{{-" }} $st = (index $si "secretStore" | default dict) {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} range $c, $src := (dig "authSecretConfig" "sources" (dict) $st) {{ "}}" }}
+                        {{ "{{-" }} $hsn := (index ($src | default dict) "hubSecretName" | default "") {{ "}}" }}
+                        {{ "{{-" }} if and (ne $hsn "") (not (has $hsn $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $hsn {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} range $se := (dig "eso" "secrets" (list) $scopeCfg) {{ "}}" }}
+                      {{ "{{-" }} $se = ($se | default dict) {{ "}}" }}
+                      {{ "{{-" }} range $d := (index $se "data" | default list) {{ "}}" }}
+                        {{ "{{-" }} $k := (dig "remoteRef" "key" "" ($d | default dict)) {{ "}}" }}
+                        {{ "{{-" }} if and (ne $k "") (not (has $k $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $k {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} range $d := (index $se "dataFrom" | default list) {{ "}}" }}
+                        {{ "{{-" }} $k := (dig "extract" "key" "" ($d | default dict)) {{ "}}" }}
+                        {{ "{{-" }} if and (ne $k "") (not (has $k $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $k {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} if and (eq (len (index $se "data" | default list)) 0) (eq (len (index $se "dataFrom" | default list)) 0) {{ "}}" }}
+                        {{ "{{-" }} $nm := (index $se "name" | default "") {{ "}}" }}
+                        {{ "{{-" }} if and (ne $nm "") (not (has $nm $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $nm {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $clusterShared := (dig "eso" "hubBootstrap" "sharedNamespace" "{{ $sharedNamespace }}" $scopeCfg) {{ "}}" }}
+                    {{ "{{-" }} if eq $clusterShared "" {{ "}}" }}{{ "{{-" }} $clusterShared = $tenancyNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} $_ := set $nsScopes (printf "%s|%s|%s|%s" $tenancyNs $identity ($identity | sha256sum | trunc 10) $clusterShared) $scopeNames {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
@@ -693,7 +805,99 @@ spec:
                 ##### Both objects carry an autoshift.io/secret-reader-* label; the cleanup sweep below lists them #####
                 ##### and deletes any whose namespace is no longer a key in $nsIdentities. The hub-global clientCA / #####
                 ##### APIServer wiring is deliberately NOT labelled (different lifecycle; not in a tenancy namespace). #####
-                {{ "{{-" }} range $ownerNs, $ids := $nsIdentities {{ "}}" }}
+                {{ "{{-" }} $sharedFanout := dict {{ "}}" }}
+                {{ "{{-" }} $rollbackNs := dict {{ "}}" }}
+                {{ "{{-" }} range $scopeKey, $scopeNames := $nsScopes {{ "}}" }}
+                {{ "{{-" }} $parts := (splitList "|" $scopeKey) {{ "}}" }}
+                {{ "{{-" }} $ownerNs := (index $parts 0) {{ "}}" }}
+                {{ "{{-" }} $id := (index $parts 1) {{ "}}" }}
+                {{ "{{-" }} $seg := (index $parts 2) {{ "}}" }}
+                {{ "{{-" }} $sharedNs := (index $parts 3) {{ "}}" }}
+                {{ "{{-" }} if eq $sharedNs "" {{ "}}" }}{{ "{{-" }} $sharedNs = $ownerNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} if ne $sharedNs $ownerNs {{ "}}" }}
+                {{ "{{-" }} $roleName := (printf "%s-%s" "{{ $readerRole }}" $seg) {{ "}}" }}
+                {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s" $ownerNs $roleName) true {{ "}}" }}
+                {{ "{{-" }} $fan := (index $sharedFanout $sharedNs | default list) {{ "}}" }}
+                {{ "{{-" }} if not (has $id $fan) {{ "}}" }}{{ "{{-" }} $fan = append $fan $id {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $_ := set $sharedFanout $sharedNs $fan {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: Role
+                metadata:
+                  name: {{ "{{" }} $roleName {{ "}}" }}
+                  namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-role: {{ $storePrefix }}
+                rules:
+                  {{ "{{-" }} if $scopeNames {{ "}}" }}
+                  - apiGroups: [""]
+                    resources: ["secrets"]
+                    resourceNames: {{ "{{" }} $scopeNames | toRawJson {{ "}}" }}
+                    verbs: ["get"]
+                  {{ "{{-" }} else {{ "}}" }}
+                  []
+                  {{ "{{-" }} end {{ "}}" }}
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: {{ "{{" }} $roleName {{ "}}" }}
+                  namespace: {{ "{{" }} $ownerNs {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-rolebinding: {{ $storePrefix }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: Role
+                  name: {{ "{{" }} $roleName {{ "}}" }}
+                subjects:
+                  - kind: User
+                    name: {{ "{{" }} $id {{ "}}" }}
+                    apiGroup: rbac.authorization.k8s.io
+                {{ "{{-" }} else {{ "}}" }}
+                {{ "{{-" }} $rbCNs := (index $rollbackNs $ownerNs | default list) {{ "}}" }}
+                {{ "{{-" }} if not (has $id $rbCNs) {{ "}}" }}{{ "{{-" }} $rbCNs = append $rbCNs $id {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} $_ := set $rollbackNs $ownerNs $rbCNs {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} range $sns, $cns := $sharedFanout {{ "}}" }}
+                {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s" $sns "{{ $readerRole }}") true {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: Role
+                metadata:
+                  name: {{ $readerRole }}
+                  namespace: {{ "{{" }} $sns {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-role: {{ $storePrefix }}
+                rules:
+                  - apiGroups: [""]
+                    resources: ["secrets"]
+                    verbs: ["get", "list", "watch"]
+            - complianceType: mustonlyhave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: {{ $readerRole }}
+                  namespace: {{ "{{" }} $sns {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-rolebinding: {{ $storePrefix }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: Role
+                  name: {{ $readerRole }}
+                subjects:
+                  {{ "{{-" }} range $id := $cns {{ "}}" }}
+                  - kind: User
+                    name: {{ "{{" }} $id {{ "}}" }}
+                    apiGroup: rbac.authorization.k8s.io
+                  {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} end {{ "}}" }}
+                {{ "{{-" }} range $ownerNs, $cns := $rollbackNs {{ "}}" }}
+                {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s" $ownerNs "{{ $readerRole }}") true {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
@@ -721,7 +925,7 @@ spec:
                   kind: Role
                   name: {{ $readerRole }}
                 subjects:
-                  {{ "{{-" }} range $id := $ids {{ "}}" }}
+                  {{ "{{-" }} range $id := $cns {{ "}}" }}
                   - kind: User
                     name: {{ "{{" }} $id {{ "}}" }}
                     apiGroup: rbac.authorization.k8s.io
@@ -768,7 +972,7 @@ spec:
                 {{ "{{-" }} $rbLabels := (dig "metadata" "labels" (dict) $rb) {{ "}}" }}
                 {{ "{{-" }} if hasKey $rbLabels "autoshift.io/secret-reader-rolebinding" {{ "}}" }}
                   {{ "{{-" }} $rbNs := (dig "metadata" "namespace" "" $rb) {{ "}}" }}
-                  {{ "{{-" }} if not (hasKey $nsIdentities $rbNs) {{ "}}" }}
+                  {{ "{{-" }} if not (hasKey $expectRBAC (printf "%s/%s" $rbNs (dig "metadata" "name" "" $rb))) {{ "}}" }}
             - complianceType: mustnothave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
@@ -783,7 +987,7 @@ spec:
                 {{ "{{-" }} $roleLabels := (dig "metadata" "labels" (dict) $role) {{ "}}" }}
                 {{ "{{-" }} if hasKey $roleLabels "autoshift.io/secret-reader-role" {{ "}}" }}
                   {{ "{{-" }} $roleNs := (dig "metadata" "namespace" "" $role) {{ "}}" }}
-                  {{ "{{-" }} if not (hasKey $nsIdentities $roleNs) {{ "}}" }}
+                  {{ "{{-" }} if not (hasKey $expectRBAC (printf "%s/%s" $roleNs (dig "metadata" "name" "" $role))) {{ "}}" }}
             - complianceType: mustnothave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1

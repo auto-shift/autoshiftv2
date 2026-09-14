@@ -1,0 +1,82 @@
+# Stubs for the external-secrets-operator Helm chart. Register each GVK the boot
+# policies look up so the resolver returns empty/not-found instead of "API not
+# installed". Named objects that fromConfigMap / fromSecret / fromClusterClaim
+# read by name must exist; everything else is a type registration stub.
+# Low-entropy fake values only (testdata is not gitleaks-allowlisted).
+
+---
+# Policy GVK — policy-eso-boot-readiness-{hub,spoke} lookup
+# policy-cert-manager-install. Name need not match; registering the kind is enough.
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: stub-policy
+  namespace: policies-autoshift
+spec:
+  disabled: false
+---
+# kube-apiserver-server-ca, hub-bootstrap-ca, hub-bootstrap-hub-ca, and the
+# apiserverurl ClusterClaim live in eso-hub-bootstrap.yaml / cluster-infrastructure.yaml.
+# CSV the readiness gates require in cert-manager-operator (phase Succeeded).
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  name: cert-manager-operator.v1.16.0
+  namespace: cert-manager-operator
+spec:
+  displayName: cert-manager
+  version: "1.16.0"
+status:
+  phase: Succeeded
+---
+# CRD GVK — named lookups (certificates.cert-manager.io, clustersecretstores.external-secrets.io,
+# ...) return empty and skip the inner range, which is the intended no-CRD path in CI.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: stub-crds.example.com
+spec:
+  group: example.com
+  names:
+    kind: Stub
+    plural: stub-crds
+  scope: Cluster
+  versions:
+    - name: v1
+      served: true
+      storage: true
+---
+# RBAC GVKs the prune/sweep ranges iterate.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: stub-role
+  namespace: policies-autoshift
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: stub-rolebinding
+  namespace: policies-autoshift
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: stub-role
+subjects: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: stub-clusterrole
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: stub-clusterrolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: stub-clusterrole
+subjects: []

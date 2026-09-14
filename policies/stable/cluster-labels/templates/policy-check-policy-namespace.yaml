@@ -30,10 +30,15 @@ spec:
           name: {{ $configPolicyName }}
         spec:
           severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
-            {{ "{{-" }} $ns := (lookup "v1" "Namespace" "" "{{ $policyNamespace }}")  {{ "}}" }}
-            {{ "{{-" }} $nsLabels := (index $ns "metadata" "labels") {{ "}}" }}
-            {{ "{{-" }} $autoshiftLabel := (index $nsLabels "autoshift.io/createdByAutoshift") | default "" {{ "}}" }}
+            ##### Flag the PARENT policy namespace on a managed hub only when it exists AND #####
+            ##### AutoShift created it. Absent is the success case (do not index a missed #####
+            ##### lookup — that is a template error and shows NonCompliant). #####
+            {{ "{{-" }} $ns := (lookup "v1" "Namespace" "" "{{ $policyNamespace }}" | default dict) {{ "}}" }}
+            {{ "{{-" }} $autoshiftLabel := (dig "metadata" "labels" "autoshift.io/createdByAutoshift" "" $ns) {{ "}}" }}
             {{ "{{-" }} if ne $autoshiftLabel "" {{ "}}" }}
             - complianceType: mustnothave
               objectDefinition:
@@ -41,7 +46,7 @@ spec:
                 kind: Namespace
                 metadata:
                   name: {{ $policyNamespace }}
-            {{ "{{" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding

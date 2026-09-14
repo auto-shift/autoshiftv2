@@ -1210,9 +1210,9 @@ config:
   username). The client cert and the remote apiserver's `spec.clientCA` trust are provisioned
   separately (out of band, or via the hub-bootstrap flow).
 
-## Unowned secrets (`config.eso.secrets`)
+## Secrets this cluster consumes (`config.eso.secrets`)
 
-*Key tables: [`config.eso.secrets[]`](config-reference.md#configesosecrets--unowned-secrets) in config-reference.md.*
+*Key tables: [`config.eso.secrets[]`](config-reference.md#configesosecrets) in config-reference.md.*
 
 > [!IMPORTANT]
 > This is an **escape hatch**, not the normal way to consume a secret. A component that needs a
@@ -1223,8 +1223,9 @@ config:
 > configuration reads one top-level key named after its component. Declaring another component's
 > secrets here inverts that, and excluding this policy would silently delete them.
 >
-> Use `config.eso.secrets` for secrets that belong to **no** component: an application team's
-> credential, an ad hoc pull during a migration, anything with no chart of its own.
+> Use `config.eso.secrets` for secrets that belong to **no** component, and for the
+> hub-to-spoke hop (`storeRef: eso-vault` on the global hub, `storeRef: hub-bootstrap` on
+> site and spoke).
 
 `secretStores` above provisions stores and the credentials those stores authenticate with. This is
 data pulled **through** them. `policy-eso-cluster-secrets` renders each entry into an ExternalSecret
@@ -1413,7 +1414,7 @@ config:
 > our own CA honors the spec verbatim, so the mode-based defaults (incl. the `client auth` usage hub mTLS
 > needs) are applied. Only set these fields for an external issuer if you know it won't override them.
 
-There is **no `externalSecrets` key** — this policy only provisions the store. To consume Secrets
+This policy only provisions the store; it does not render `config.eso.secrets`. To consume Secrets
 from the hub, a consumer creates its own `ExternalSecret` referencing the store by name (the
 `storeName` above, default `hub-bootstrap`):
 
@@ -1479,38 +1480,28 @@ on/off in any mode; explicitly-set fields always win.
 
 ### What a child may read (`sharedNamespace`)
 
-The bootstrap store reads one namespace on the propagating hub, and each child is granted access to
-it. By default that namespace is the **policy namespace**, which also holds every cluster's
-bootstrap client key, the cluster-install credentials and the tenancy material. Granting children
-broad access there means a spoke can read another spoke's client key and then present that identity
-to the hub. The store carries no `spec.conditions` either, so any namespace on a spoke can reference
-it.
+The bootstrap store reads one namespace on the propagating hub. The chart default is `eso-shared`.
+`policy-eso-boot-prereqs` creates that namespace. Children get `get`/`list`/`watch` on it, so bulk
+pull needs no declarations. Publish into it only what is meant for children.
 
-`sharedNamespace` splits the two:
+The policy namespace stays off the store. Per-cluster `resourceNames` + `get` grants there are the
+opt-in for material that must reach exactly one cluster (`crs-<cluster>`, for example), collected
+from `authSecretConfig[].hubSecretName` and remote keys in `config.eso.secrets`.
+A cluster that declares nothing gets `rules: []` in the policy namespace.
 
 ```yaml
 config:
   eso:
     hubBootstrap:
-      sharedNamespace: policies-autoshift-shared
+      sharedNamespace: eso-shared   # chart default; set '' to roll back to the policy namespace
 ```
 
-- The bootstrap store's `remoteNamespace` points there, and `policy-eso-boot-prereqs` creates it.
-- Publish into it only what is meant for children. Broad read is then safe by construction.
-- The policy namespace narrows to **declared names only**: the union of each cluster's
-  `authSecretConfig[].hubSecretName` and its `config.eso.secrets[]` remote keys, granted per
-  cluster with `resourceNames` and `get`, in place of one shared Role bound to every identity.
+The store also carries `spec.conditions`. By default only the operand namespace, `eso-shared`, and
+`config.defaultSecretsNamespace` may create ExternalSecrets against hub-bootstrap. Add more with
+`consumerNamespaces` or `consumerNamespaceSelector`.
 
-Leaving it unset keeps the historical behaviour exactly: one broad Role per tenancy namespace, no
-declarations needed, nothing to migrate. **Setting it is the opt-in to scoping**, so the safer model
-never breaks an existing deployment by surprise.
-
-Two consequences worth knowing before enabling it. `resourceNames` denies `list` outright, so
-`dataFrom.find` cannot work against the policy namespace, so name keys explicitly. A cluster that
-declares nothing gets an empty `rules: []`: authenticated, authorized for nothing.
-
-Material that must reach exactly one cluster, a per-cluster registration secret for example,
-belongs in the policy namespace behind the scoped grant, never in the fan-out namespace.
+Empty `sharedNamespace` rolls back to the historical model: the store reads the policy namespace
+and children have broad access there.
 
 ### Trust modes (`config.eso.hubBootstrap.mode`)
 
@@ -1767,7 +1758,7 @@ and spokes in lockstep. The per-cluster form below is shown because that's what 
 
 `hubServer` is mode-independent (the copy policy uses it in every mode); only the
 **client-identity** keys differ between modes, so the three examples are otherwise identical. None
-of them lists `externalSecrets` — this policy provisions the store only; consumers create their own
+of them lists `config.eso.secrets` — this policy provisions the store only; consumers create their own
 `ExternalSecret` against it (see [above](#clustercluster-hub-bootstrap-configesohubbootstrap)).
 
 #### 1. `selfSigned` (default) — hub mints the CA and a per-cluster client cert

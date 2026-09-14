@@ -86,6 +86,7 @@ spec:
             ##### credential is published into it. Skipped when it IS the policy namespace (that one is #####
             ##### owned by policy-foundation) so this stays a no-op on the historical default. #####
             {{ "{{hub-" }} $sharedNs := (dig "eso" "hubBootstrap" "sharedNamespace" "{{ $sharedNamespace }}" $clusterConfig) {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $sharedNs "" {{ "hub}}" }}{{ "{{hub-" }} $sharedNs = "{{ $policyNamespace }}" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} if ne $sharedNs "{{ $policyNamespace }}" {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
@@ -130,13 +131,17 @@ spec:
                     namespace: {{ "{{hub" }} $saNamespace {{ "hub}}" }}
             {{ "{{hub-" }} else if eq $scope "namespaced" {{ "hub}}" }}
             {{ "{{hub-" }} range $ns := (dig "namespaces" (list "{{ $policyNamespace }}") $grant) {{ "hub}}" }}
+            ##### Skip a grant namespace that does not exist on THIS cluster. The default is the #####
+            ##### rendering app's policy namespace, which must not be created on a managed hub. #####
+            {{ "{{-" }} $grantNs := "{{ "{{hub" }} $ns {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} if (lookup "v1" "Namespace" "" $grantNs) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: rbac.authorization.k8s.io/v1
                 kind: Role
                 metadata:
                   name: {{ "{{hub" }} $name {{ "hub}}" }}
-                  namespace: {{ "{{hub" }} $ns {{ "hub}}" }}
+                  namespace: {{ "{{" }} $grantNs {{ "}}" }}
                 rules: {{ "{{hub" }} $rules | toRawJson {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
@@ -144,7 +149,7 @@ spec:
                 kind: RoleBinding
                 metadata:
                   name: {{ "{{hub" }} $name {{ "hub}}" }}
-                  namespace: {{ "{{hub" }} $ns {{ "hub}}" }}
+                  namespace: {{ "{{" }} $grantNs {{ "}}" }}
                 roleRef:
                   apiGroup: rbac.authorization.k8s.io
                   kind: Role
@@ -153,6 +158,7 @@ spec:
                   - kind: ServiceAccount
                     name: {{ "{{hub" }} $saName {{ "hub}}" }}
                     namespace: {{ "{{hub" }} $saNamespace {{ "hub}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}

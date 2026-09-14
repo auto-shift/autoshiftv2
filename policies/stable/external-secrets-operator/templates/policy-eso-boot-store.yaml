@@ -64,6 +64,8 @@
 {{- $sharedNamespace := (dig "hubBootstrap" "sharedNamespace" "" $.Values.externalSecretsOperator | default $policyNamespace) }}
 {{- $eso := $.Values.externalSecretsOperator }}
 {{- $hb := (default (dict) $eso.hubBootstrap) }}
+{{- $defaultConsumerNs := (dig "consumerNamespaces" (list) $hb) }}
+{{- $defaultConsumerSel := (dig "consumerNamespaceSelector" (dict) $hb) }}
 {{- $esoNamespace := $eso.namespace }}
 {{- $storePrefix := (dig "storePrefix" "" $hb | default "hub-bootstrap") }}
 {{- $clientSecret := (printf "%s-client" $storePrefix) }}
@@ -188,6 +190,10 @@ spec:
                     {{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} $storeName := (index $hubBootstrap "storeName" | default "{{ $storePrefix }}") {{ "hub}}" }}
                     {{ "{{hub-" }} $sharedNs := (index $hubBootstrap "sharedNamespace" | default "{{ $sharedNamespace }}") {{ "hub}}" }}
+                    {{ "{{hub-" }} if eq $sharedNs "" {{ "hub}}" }}{{ "{{hub-" }} $sharedNs = "{{ $policyNamespace }}" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} $consumerNs := (index $hubBootstrap "consumerNamespaces" | default (`{{ $defaultConsumerNs | toJson }}` | fromJson)) {{ "hub}}" }}
+                    {{ "{{hub-" }} $consumerSel := (index $hubBootstrap "consumerNamespaceSelector" | default (`{{ $defaultConsumerSel | toJson }}` | fromJson)) {{ "hub}}" }}
+                    {{ "{{hub-" }} $dsn := (index $clusterConfig "defaultSecretsNamespace" | default "") {{ "hub}}" }}
                     ##### externalCA-mode mint settings: the CN prefix + baseDomain are bridged to the spoke, which derives #####
                     ##### its own client cert CN the SAME way as the hub clientca-external policy (from its apiserverurl.openshift.io #####
                     ##### clusterClaim real name) so it matches the hub RBAC, plus the user-provided spoke issuer. #####
@@ -296,6 +302,9 @@ spec:
                     {{ "{{-" }} $hubServer := `{{ "{{hub" }} $hubServer {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $sharedNs := `{{ "{{hub" }} $sharedNs {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $consumerNs := `{{ "{{hub" }} $consumerNs | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+                    {{ "{{-" }} $consumerSel := `{{ "{{hub" }} $consumerSel | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+                    {{ "{{-" }} $dsn := `{{ "{{hub" }} $dsn {{ "hub}}" }}` {{ "}}" }}
                     ##### externalCA CN inputs — the spoke derives the full CN/SAN itself from these + its own apiserver URL #####
                     {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
@@ -516,6 +525,20 @@ spec:
                         metadata:
                           name: {{ "{{" }} $storeName {{ "}}" }}
                         spec:
+                          {{ "{{-" }} $condNs := list "{{ $esoNamespace }}" {{ "}}" }}
+                          {{ "{{-" }} if and (ne $sharedNs "") (not (has $sharedNs $condNs)) {{ "}}" }}{{ "{{-" }} $condNs = append $condNs $sharedNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} if and (ne $dsn "") (not (has $dsn $condNs)) {{ "}}" }}{{ "{{-" }} $condNs = append $condNs $dsn {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} range $n := ($consumerNs | default list) {{ "}}" }}
+                            {{ "{{-" }} if and (ne $n "") (not (has $n $condNs)) {{ "}}" }}{{ "{{-" }} $condNs = append $condNs $n {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
+                          conditions:
+                            - namespaces:
+                              {{ "{{-" }} range $n := $condNs {{ "}}" }}
+                                - {{ "{{" }} $n {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} if or (hasKey ($consumerSel | default dict) "matchLabels") (hasKey ($consumerSel | default dict) "matchExpressions") {{ "}}" }}
+                            - namespaceSelector: {{ "{{" }} $consumerSel | toRawJson {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
                           provider:
                             kubernetes:
                               server:
@@ -603,7 +626,11 @@ spec:
               {{ "{{hub-" }} $hubServer = (fromClusterClaim "apiserverurl.openshift.io") {{ "hub}}" }}
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $storeName := (index $hubBootstrap "storeName" | default "{{ $storePrefix }}") {{ "hub}}" }}
-                    {{ "{{hub-" }} $sharedNs := (index $hubBootstrap "sharedNamespace" | default "{{ $sharedNamespace }}") {{ "hub}}" }}
+            {{ "{{hub-" }} $sharedNs := (index $hubBootstrap "sharedNamespace" | default "{{ $sharedNamespace }}") {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $sharedNs "" {{ "hub}}" }}{{ "{{hub-" }} $sharedNs = "{{ $policyNamespace }}" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $consumerNs := (index $hubBootstrap "consumerNamespaces" | default (`{{ $defaultConsumerNs | toJson }}` | fromJson)) {{ "hub}}" }}
+            {{ "{{hub-" }} $consumerSel := (index $hubBootstrap "consumerNamespaceSelector" | default (`{{ $defaultConsumerSel | toJson }}` | fromJson)) {{ "hub}}" }}
+            {{ "{{hub-" }} $dsn := (index $clusterConfig "defaultSecretsNamespace" | default "") {{ "hub}}" }}
             ##### externalCA-mode mint settings: the CN prefix + baseDomain are bridged to the spoke, which derives #####
             ##### its own client cert CN the SAME way as the hub clientca-external policy (from its apiserverurl.openshift.io #####
             ##### clusterClaim real name) so it matches the hub RBAC, plus the user-provided spoke issuer. #####
@@ -711,7 +738,10 @@ spec:
             {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $hubServer := `{{ "{{hub" }} $hubServer {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
-                    {{ "{{-" }} $sharedNs := `{{ "{{hub" }} $sharedNs {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $sharedNs := `{{ "{{hub" }} $sharedNs {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $consumerNs := `{{ "{{hub" }} $consumerNs | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+            {{ "{{-" }} $consumerSel := `{{ "{{hub" }} $consumerSel | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
+            {{ "{{-" }} $dsn := `{{ "{{hub" }} $dsn {{ "hub}}" }}` {{ "}}" }}
             ##### externalCA CN inputs — the spoke derives the full CN/SAN itself from these + its own apiserver URL #####
             {{ "{{-" }} $certCNPrefix := `{{ "{{hub" }} $certCNPrefix {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $certBaseDomain := `{{ "{{hub" }} $certBaseDomain {{ "hub}}" }}` {{ "}}" }}
@@ -932,6 +962,20 @@ spec:
                 metadata:
                   name: {{ "{{" }} $storeName {{ "}}" }}
                 spec:
+                  {{ "{{-" }} $condNs := list "{{ $esoNamespace }}" {{ "}}" }}
+                  {{ "{{-" }} if and (ne $sharedNs "") (not (has $sharedNs $condNs)) {{ "}}" }}{{ "{{-" }} $condNs = append $condNs $sharedNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} if and (ne $dsn "") (not (has $dsn $condNs)) {{ "}}" }}{{ "{{-" }} $condNs = append $condNs $dsn {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} range $n := ($consumerNs | default list) {{ "}}" }}
+                    {{ "{{-" }} if and (ne $n "") (not (has $n $condNs)) {{ "}}" }}{{ "{{-" }} $condNs = append $condNs $n {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
+                  conditions:
+                    - namespaces:
+                      {{ "{{-" }} range $n := $condNs {{ "}}" }}
+                        - {{ "{{" }} $n {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if or (hasKey ($consumerSel | default dict) "matchLabels") (hasKey ($consumerSel | default dict) "matchExpressions") {{ "}}" }}
+                    - namespaceSelector: {{ "{{" }} $consumerSel | toRawJson {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                   provider:
                     kubernetes:
                       server:

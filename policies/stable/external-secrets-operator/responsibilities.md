@@ -31,7 +31,7 @@ Companion docs: [README.md](README.md) (operational reference),
 
 ## PolicySets (`templates/policysets.yaml`)
 
-This file owns ALL placement: six PolicySets, each with its own Placement + PlacementBinding.
+This file owns ALL placement: PolicySets, each with its own Placement + PlacementBinding.
 Every Placement uses the same predicate (`autoshift.io/external-secrets-operator: 'true'`) plus
 unreachable/unavailable tolerations; the groups differ only in clusterSet scope (hubs-only vs
 hubs+managed) and member intent. The two hub-only groups are wrapped in
@@ -44,7 +44,7 @@ hubs+managed) and member intent. The two hub-only groups are wrapped in
 | `policyset-eso-secret-reader` | all placed clusters | policy-eso-secret-reader | Read-only consumption ServiceAccount + RBAC for ESO-provisioned Secrets. |
 | `policyset-eso-boot-spoke` | all placed clusters | policy-eso-boot-readiness-spoke, policy-eso-boot-store | Spoke half of the hub bootstrap: per-mode readiness gate, then the hub-bootstrap ClusterSecretStore build. Hubs are members too — a hub gets a bootstrap store like any spoke. |
 | `policyset-eso-boot-hub` | hubs only | policy-eso-boot-prereqs, policy-eso-boot-readiness-hub, policy-eso-boot-serving-ca, policy-eso-boot-clientca-self, policy-eso-boot-clientca-self-wire, policy-eso-boot-clientca-ext | Hub half of the hub bootstrap: hub-template RBAC prereqs, readiness gate, client-CA mint/wire (per trust mode), serving-CA discovery. |
-| `policyset-eso-hub-secrets` | hubs only | policy-eso-hub-secrets | Hop 1 of the two-hop credential transport: materialize external-origin store credentials on the hub for every owned cluster. |
+| `policyset-eso-hub-secrets` | hubs only | policy-eso-hub-secrets | Hop 1 of the two-hop credential transport: materialize external-origin store credentials into `sharedNamespace` (`eso-shared` by default). |
 
 ---
 
@@ -166,23 +166,16 @@ payoff of the boot chain: after this, the cluster can pull hub secrets.
 
 ### `templates/policy-eso-cluster-secrets.yaml`
 
-**Policy `policy-eso-cluster-secrets`** — set: `policyset-eso-secret-stores` (all clusters). The
-escape hatch for secrets owned by no component, from `config.eso.secrets`. A component that needs
-a secret declares it under its own config key and renders its own ExternalSecret; this policy is
-for credentials with no chart of their own.
+**Policy `policy-eso-cluster-secrets`** — set: `policyset-eso-secret-stores` (all clusters).
+Renders `config.eso.secrets`.
+`storeRef` names the provider. Omit `namespace` to land in `eso-shared`. Omit `data`/`dataFrom`
+to extract the whole secret named `name`.
 
 - `eso-cluster-secrets` (enforce) — one ExternalSecret per entry, labeled
   `autoshift.io/eso-cluster-secret` with the prune decision baked in as `autoshift.io/eso-prune`.
   `data`, `dataFrom` and `target` pass through to ESO verbatim. Validation reports rather than
-  fails: a missing `name`/`namespace`/`storeRef.name`, neither or both of `data`/`dataFrom`, or a
-  duplicate namespace+name is collected into `eso-cluster-secrets-status` and that entry skipped,
-  so one bad entry never blocks the rest. Entries removed from the list are swept by their baked
-  prune label.
-- `eso-cluster-secrets-gate` (inform) — asserts `eso-cluster-secrets-status` is absent, so a
-  malformed entry surfaces as NonCompliant while the valid ones stay provisioned.
-
-Without it, the only ExternalSecrets the chart can produce are store-auth ones, so a credential
-belonging to no component has nowhere to be declared.
+  fails. Sweep is skipped while any entry is malformed.
+- `eso-cluster-secrets-gate` (inform) — asserts `eso-cluster-secrets-status` is absent.
 
 ### `templates/policy-eso-hub-secrets.yaml` *(hub-gated render)*
 
