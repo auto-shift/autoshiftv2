@@ -128,3 +128,33 @@ spec:
   datastore:
     databaseType: sqlite3
     connectionString: /run/spire/data/datastore.sqlite3
+---
+# Registers the ManagedClusterView GVK for the federation mesh manifests, which read a peer's bundle,
+# trust domain and federation endpoint from views the hub publishes. An unregistered GVK in lookup is
+# a hard harness failure rather than an empty result. Namespaced, so metadata.namespace is set.
+apiVersion: view.open-cluster-management.io/v1beta1
+kind: ManagedClusterView
+metadata:
+  name: ztwim-fed-bundle
+  namespace: lint-cluster
+spec:
+  scope:
+    kind: ConfigMap
+    version: v1
+    name: spire-bundle
+    namespace: zero-trust-workload-identity-manager
+---
+# Registers the ClusterFederatedTrustDomain GVK for test/federation-mesh-effective.yaml, which
+# checks that a mesh member actually holds a trust domain for each of its peers. An unregistered
+# GVK in lookup is a hard harness failure rather than an empty result. Cluster-scoped, so no
+# metadata.namespace.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterFederatedTrustDomain
+metadata:
+  name: ztwim-testdata-placeholder
+spec:
+  className: zero-trust-workload-identity-manager-spire
+  trustDomain: peer.test.example.com
+  bundleEndpointURL: https://federation.peer.test.example.com
+  bundleEndpointProfile:
+    type: https_web

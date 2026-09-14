@@ -1,0 +1,52 @@
+# One ClusterFederatedTrustDomain per PEER in this cluster's federation mesh, seeded with the peer's
+# trust bundle so the relationship needs no manual bootstrap.
+#
+# Everything read here lives on the cluster running Red Hat Advanced Cluster Management -- the
+# ManagedCluster list and the views that manifests/federation-mesh/bundle-views.yaml publishes --
+# so these are HUB templates. The resources they produce land on this cluster, which is what the
+# placement selects.
+#
+# Members are paired by the autoshift.io/ztwim-federation-mesh label. Every member of a group
+# federates with every other member of that group, and nothing outside it, which keeps the
+# relationship count proportional to the group rather than to the fleet. Federation is not
+# transitive, so a mesh is exactly the set of clusters that need to authenticate one another.
+#
+# The https_web profile is used deliberately. It authenticates the endpoint with ordinary web public
+# key infrastructure, so no endpointSpiffeId is needed and there is no chicken-and-egg: the bundle
+# can be fetched before any SPIFFE trust exists between the two sides. The https_spiffe profile
+# would require already trusting the peer to fetch the bundle that establishes that trust.
+#
+# A peer is skipped until all three of its views have reported. A half-built federation entry would
+# point at an endpoint with no bundle to validate it.
+object-templates-raw: |
+  {{hub- $self := .ManagedClusterName hub}}
+  {{hub- $group := (index .ManagedClusterLabels "autoshift.io/ztwim-federation-mesh" | default "") hub}}
+  {{hub- if $group hub}}
+  {{hub- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items hub}}
+  {{hub- $peer := $mc.metadata.name hub}}
+  {{hub- $peerGroup := (index $mc.metadata.labels "autoshift.io/ztwim-federation-mesh" | default "") hub}}
+  {{hub- if and (eq $peerGroup $group) (ne $peer $self) hub}}
+  {{hub- $bundleView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-bundle") | default dict hub}}
+  {{hub- $domainView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-domain") | default dict hub}}
+  {{hub- $endpointView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-endpoint") | default dict hub}}
+  {{hub- $bundle := (dig "status" "result" "data" "bundle.crt" "" $bundleView) hub}}
+  {{hub- $domain := (dig "status" "result" "spec" "trustDomain" "" $domainView) hub}}
+  {{hub- $host := (dig "status" "result" "spec" "host" "" $endpointView) hub}}
+  {{hub- if and $bundle $domain $host hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: spire.spiffe.io/v1alpha1
+      kind: ClusterFederatedTrustDomain
+      metadata:
+        name: ztwim-mesh-{{hub $peer hub}}
+      spec:
+        className: zero-trust-workload-identity-manager-spire
+        trustDomain: {{hub $domain hub}}
+        bundleEndpointURL: https://{{hub $host hub}}
+        bundleEndpointProfile:
+          type: https_web
+        trustDomainBundle: {{hub $bundle | toRawJson | toLiteral hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

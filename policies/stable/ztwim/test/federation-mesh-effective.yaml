@@ -1,0 +1,52 @@
+# inform: catches a federation mesh that reports success while trusting nobody.
+#
+# Both halves of the mesh are guard-wrapped, and an unsatisfied guard renders no object templates,
+# which a ConfigurationPolicy reports as Compliant. A member can therefore carry the mesh label,
+# have both enforcing policies green, and hold no federated trust domains at all -- because a peer
+# view never reported, or because the endpoint the views read does not exist.
+#
+# Two distinct failures are checked, and the violating object name says which.
+#
+# ztwim-federation-not-in-server-config: the running server has no federation block. Either
+# config.ztwim.federation.bundleEndpoint was never set, so the Operator published no endpoint for
+# peers to fetch from, or the cluster is in CREATE_ONLY_MODE for nesting and the Operator could not
+# rewrite the generated configuration. Observed on a live cluster: the federation Route was created,
+# because that is a create, while server.conf was left untouched.
+#
+# ztwim-mesh-missing-<peer>: a cluster in this mesh group has no ClusterFederatedTrustDomain here.
+#
+# The peer list is a hub template, because ManagedCluster membership lives on the cluster running
+# Red Hat Advanced Cluster Management. The presence checks are spoke templates against local
+# resources. The hub pass emits one local check per peer.
+object-templates-raw: |
+  {{hub- $self := .ManagedClusterName hub}}
+  {{hub- $group := (index .ManagedClusterLabels "autoshift.io/ztwim-federation-mesh" | default "") hub}}
+  {{hub- if $group hub}}
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $conf := (lookup "v1" "ConfigMap" $ns "spire-server") | default dict }}
+  {{- $raw := dig "data" "server.conf" "" $conf }}
+  {{- if and $raw (not (hasKey ($raw | fromJSON).server "federation")) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ztwim-federation-not-in-server-config
+        namespace: {{ $ns }}
+  {{- end }}
+  {{hub- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items hub}}
+  {{hub- $peer := $mc.metadata.name hub}}
+  {{hub- if and (eq (index $mc.metadata.labels "autoshift.io/ztwim-federation-mesh" | default "") $group) (ne $peer $self) hub}}
+  {{- $p := `{{hub $peer hub}}` }}
+  {{- if not (lookup "spire.spiffe.io/v1alpha1" "ClusterFederatedTrustDomain" "" (printf "ztwim-mesh-%s" $p)) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ztwim-mesh-missing-{{ $p }}
+        namespace: {{ $ns }}
+  {{- end }}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

@@ -68,6 +68,44 @@ policies:
       - name: policy-ztwim-instance
     manifests:
       - path: manifests/config
+  # Opt-in (autoshift.io/ztwim-federation-mesh): automates the one manual step in federation.
+  # Split in two because the halves run in different places. The views are published on the cluster
+  # running Red Hat Advanced Cluster Management, where every member is visible; the trust domains
+  # are created on each member, reading those views through hub templates.
+  - name: policy-ztwim-federation-views
+    placement:
+      placementPath: placement-ztwim-federation-views.yaml
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/federation-mesh/bundle-views.yaml
+  - name: policy-ztwim-federation-mesh
+    placement:
+      placementPath: placement-ztwim-federation-mesh.yaml
+    dependencies:
+      - name: policy-ztwim-federation-views
+    manifests:
+      - path: manifests/federation-mesh/mesh-trust-domains.yaml
+  # inform: catches a mesh member that reports success while trusting no peer. Both mesh policies
+  # are guard-wrapped, and an empty render reports Compliant, so the effects are asserted here.
+  - name: policy-ztwim-federation-mesh-effective
+    placement:
+      placementPath: placement-ztwim-federation-mesh.yaml
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-federation-mesh
+    manifests:
+      - path: test/federation-mesh-effective.yaml
+    customMessage:
+      noncompliant: >
+        This cluster is in a federation mesh but is not federating as configured. The violating
+        object name says which half failed. ztwim-federation-not-in-server-config means the running
+        SPIRE server has no federation block, so either config.ztwim.federation.bundleEndpoint was
+        never set, or CREATE_ONLY_MODE stopped the Operator rewriting the generated configuration,
+        in which case the operands need recreating. ztwim-mesh-missing-<peer> means no
+        ClusterFederatedTrustDomain exists for that peer, usually because its ManagedClusterView has
+        not reported a bundle, trust domain and federation endpoint yet. Note that both enforcing
+        mesh policies report Compliant when they render nothing, so their status is not evidence.
   # Opt-in (autoshift.io/ztwim-federation): trust bundles from FOREIGN trust domains.
   - name: policy-ztwim-federation
     placement:

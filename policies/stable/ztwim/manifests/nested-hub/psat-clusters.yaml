@@ -22,7 +22,12 @@
 # JSON, so the ConfigMap resourceVersion goes constant after one write. Entries for clusters NOT in
 # the spoke list -- the operator's own local-cluster entry -- are preserved untouched.
 #
-# ONE VOLUME, NOT ONE PER SPOKE. spoke-kubeconfigs.yaml keys every spoke into a single Secret, and
+# A SECOND VOLUME appears only when config.ztwim.nested.apiCaSecret names one: the shared
+# certificate authority that signs the fleet's API server certificates, mounted once so the
+# kubeconfigs can reference it by path instead of each carrying its own copy. See
+# spoke-kubeconfigs.yaml for what that saves.
+#
+# ONE VOLUME PER SPOKE IS WHAT THIS AVOIDS. spoke-kubeconfigs.yaml keys every spoke into a single Secret, and
 # each key surfaces here as a file under one mount: /run/spire/spoke-kubeconfigs/<spoke>. The pod
 # spec is therefore CONSTANT no matter how many spokes exist, which is what lets a hub carry more
 # than a handful. A volume per spoke would grow the pod spec without bound.
@@ -38,7 +43,11 @@
 # evaluation (it reads the resourceVersion from before its own write), which is the correct order:
 # the config lands first, the restart follows.
 object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $cfgCaSecret := (index (index $cfg "nested" | default dict) "apiCaSecret" | default "") hub}}
   {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $caSecret := `{{hub $cfgCaSecret hub}}` }}
   {{- $kcSecret := (lookup "v1" "Secret" $ns "spoke-kubeconfigs") | default dict }}
   {{- $spokes := list }}
   {{- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items }}
@@ -94,11 +103,21 @@ object-templates-raw: |
               - name: spoke-kubeconfigs
                 secret:
                   secretName: spoke-kubeconfigs
+              {{- if $caSecret }}
+              - name: spoke-api-ca
+                secret:
+                  secretName: {{ $caSecret }}
+              {{- end }}
             containers:
               - name: spire-server
                 volumeMounts:
                   - name: spoke-kubeconfigs
                     mountPath: /run/spire/spoke-kubeconfigs
                     readOnly: true
+                  {{- if $caSecret }}
+                  - name: spoke-api-ca
+                    mountPath: /run/spire/spoke-api-ca
+                    readOnly: true
+                  {{- end }}
   {{- end }}
   {{- end }}

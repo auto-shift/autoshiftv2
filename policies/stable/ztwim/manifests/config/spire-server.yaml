@@ -6,7 +6,10 @@
 # default is built from the cluster's own ingress domain.
 #
 # upstreamAuthority is OMITTED unless configured, which leaves SPIRE minting its own self-signed
-# root. The CRD supports exactly two plugins, certManager and vault — there is no aws_pca and no
+# root. It is also omitted on any cluster with a nested role, whatever config says: nesting supplies
+# its own upstream authority by patching the generated server.conf, and that patch REPLACES the
+# UpstreamAuthority block. Emitting a configured plugin here as well would leave the resource
+# claiming one authority while the running server used another. The CRD supports exactly two plugins, certManager and vault — there is no aws_pca and no
 # nested `spire` plugin, so neither can be expressed here. Pointing certManager at the built-in
 # `autoshift-ca` ClusterIssuer chains this cluster's SPIRE CA under AutoShift's CA; note that
 # autoshift-ca is self-signed PER CLUSTER, so a shared fleet root additionally needs
@@ -51,8 +54,9 @@ object-templates-raw: |
   {{hub- $ds := (index $cfg "datastore" | default dict) hub}}
   {{hub- $pers := (index $cfg "persistence" | default dict) hub}}
   {{hub- $ua := (index $cfg "upstreamAuthority" | default dict) hub}}
-  {{hub- $uaCertManager := (index $ua "certManager" | default dict) hub}}
-  {{hub- $uaVault := (index $ua "vault" | default dict) hub}}
+  {{hub- $nestedRole := (index .ManagedClusterLabels "autoshift.io/ztwim-nested-role" | default "") hub}}
+  {{hub- $uaCertManager := (ternary dict (index $ua "certManager" | default dict) (ne $nestedRole "")) hub}}
+  {{hub- $uaVault := (ternary dict (index $ua "vault" | default dict) (ne $nestedRole "")) hub}}
   {{hub- $fed := (index $cfg "federation" | default dict) hub}}
   {{hub- $federatesWith := (index $fed "federatesWith" | default list) hub}}
   {{hub- $bundleEndpoint := (index $fed "bundleEndpoint" | default dict) hub}}

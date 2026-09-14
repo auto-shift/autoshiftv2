@@ -19,6 +19,8 @@ failure modes in this component report success, so start with the inform policie
 | `policy-ztwim-instance` | `ZeroTrustWorkloadIdentityManager` (trust domain, cluster name) | same |
 | `policy-ztwim-config` | `SpireServer`, `SpireAgent`, `SpiffeCSIDriver`, `SpireOIDCDiscoveryProvider` | same |
 | `policy-ztwim-federation` | `ClusterFederatedTrustDomain` per foreign trust domain | `autoshift.io/ztwim-federation: 'true'` |
+| `policy-ztwim-federation-views` | `ManagedClusterView` per mesh member, publishing its bundle and endpoint | `autoshift.io/cluster-type: 'hub'` |
+| `policy-ztwim-federation-mesh` | `ClusterFederatedTrustDomain` per peer, bundle included | `autoshift.io/ztwim-federation-mesh` set |
 | `policy-ztwim-ready` | inform only: SPIRE server readiness | same as install |
 | `policy-ztwim-nested-hub` | gRPC Route, per-spoke kubeconfig, `k8s_psat` patch, downstream entries | `ztwim-nested-role: 'hub'` |
 | `policy-ztwim-nested-spoke` | trust bundle, upstream agent, upstream CSI, upstream authority | `ztwim-nested-role: 'spoke'` |
@@ -160,9 +162,11 @@ carries validation rules rejecting any change to `persistence.size`, `accessMode
 fail rather than drift. Resizing means deleting the `SpireServer` resource, which discards the
 certificate authority unless the volume is preserved by hand, so choose the size at install time.
 
-**Federation cannot be turned off once enabled.** A further validation rule states that federation
-configuration cannot be removed once set. Removing `config.ztwim.federation` from values leaves the
-resource rejecting the update. Treat enabling federation as a one-way decision.
+**Federation cannot be turned off once enabled.** A validation rule states that federation
+configuration cannot be removed once set, so even editing the resource directly will not clear it.
+Removing `config.ztwim.federation` from values does not attempt the removal at all, it simply stops
+AutoShift managing the field while federation carries on. Treat enabling federation as a one-way
+decision.
 
 **The SPIRE server is a singleton.** A validation rule requires `metadata.name` to be `cluster`, so
 a second `SpireServer` resource is rejected at admission. Running more than one SPIRE server is
@@ -171,9 +175,16 @@ singletons in the same way.
 
 ### Fields the API refuses to change
 
-Every rule below is enforced by the custom resource definitions, so an edit after the first
-deployment is rejected and the policy reports NonCompliant rather than drifting quietly. Undoing one
-means deleting the resource, which discards the certificate authority.
+Every rule below is enforced by the custom resource definitions, so **changing** one of these
+values after the first deployment is rejected and the policy reports NonCompliant. Undoing one means
+deleting the resource, which discards the certificate authority.
+
+**Removing** a key behaves differently, and quietly. These manifests use `complianceType: musthave`,
+which merges: when a key disappears from values the template stops emitting the field, and nothing
+removes it from the resource. The setting stays in effect and the policy stays Compliant. Deleting
+`config.ztwim.federation` does not turn federation off, it only stops AutoShift managing it. To
+actually remove a setting, edit the resource directly, and expect the validation rules above to
+refuse if the field is one of the immutable ones.
 
 | Setting | Rule |
 |---|---|
@@ -301,6 +312,30 @@ No external secret store is involved. The spoke's TokenReview credential comes f
 `ManagedServiceAccount` add-on, and the hub assembles the kubeconfig from state it already holds.
 The hub trust bundle is public CA material, delivered by a hub template.
 
+### Federating a mesh instead of nesting
+
+Nesting puts every cluster in one trust domain beneath a single certificate authority, and each tier
+adds an intermediate that every mutual TLS handshake verifies. Federation keeps each cluster's own
+authority and exchanges trust bundles instead, so chains stay one certificate deep everywhere and
+none of the create-only machinery is needed.
+
+The step that usually makes federation awkward is the first bundle exchange, documented as a manual
+copy between clusters. `ClusterFederatedTrustDomain` takes that bundle as a field, so it only needs
+someone, or something, to fetch it. Setting `autoshift.io/ztwim-federation-mesh` to the same value
+on a set of clusters has AutoShift do it: the cluster running Red Hat Advanced Cluster Management
+publishes each member's bundle, trust domain and federation endpoint as `ManagedClusterView`
+resources, and each member reads its peers' views and writes the trust domains locally. After that
+first exchange the SPIRE controller manager keeps bundles current on its own.
+
+Members federate only within their group, so the number of relationships follows the group rather
+than the fleet. Federation is not transitive, which makes that the right shape: a mesh is exactly
+the set of clusters that must authenticate one another.
+
+Every member needs `config.ztwim.federation.bundleEndpoint` set, which is what makes the Operator
+publish the endpoint peers fetch from. Note that enabling federation on a cluster already running
+in create-only mode for nesting does not take effect until its operands are recreated, because the
+Operator cannot rewrite the generated configuration while that mode is on.
+
 ### How many spokes a hub carries
 
 Every spoke costs the hub one `ManagedServiceAccount`, one key in the `spoke-kubeconfigs` Secret,
@@ -320,6 +355,20 @@ measured split is 15356 bytes of certificate authority data against 1335 bytes o
 bytes of everything else, giving 17042 bytes and around 60 spokes. Append a corporate certificate
 chain and the same hub carries closer to 35. Replace the per-cluster bundles with one shared root
 referenced by path instead of inlined, and it rises into the hundreds.
+
+**The largest lever is `config.ztwim.nested.apiCaSecret`.** Certificate authority data is about
+15KB of the 17KB a kubeconfig costs. Naming a Secret on the hub that holds the authority signing the
+fleet's API server certificates lets every kubeconfig reference that one mounted file by path
+instead of carrying a copy, which drops the per-spoke cost to roughly 1.7KB and takes a hub from
+about sixty spokes to several hundred.
+
+It requires the fleet to share that authority. Stock Red Hat OpenShift does not: each cluster signs
+its own API certificate with a per-cluster signer. Replacing the API serving certificate from one
+common issuer makes it true, which the `cert-manager` policy in this repository can do.
+
+Worth knowing even without it: of the seven certificates in a default bundle, only the one that
+signed the API endpoint takes part in verification. The rest cover localhost, the service network,
+recovery and ingress, and travel in every kubeconfig for nothing.
 
 Measure it for a real fleet rather than assuming:
 
