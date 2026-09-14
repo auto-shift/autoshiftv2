@@ -82,6 +82,12 @@ policies:
   - name: policy-ztwim-federation-mesh
     placement:
       placementPath: placement-ztwim-federation-mesh.yaml
+    # Lists ManagedClusters to find this cluster's peers, and ManagedCluster is CLUSTER-SCOPED. A
+    # hub template may not look up a cluster-scoped resource without an elevated service account;
+    # it fails with "lookup of cluster-scoped resource ... is not allowed", which is a different
+    # error from an RBAC denial and easy to misread.
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-ztwim-federation-views
     manifests:
@@ -92,6 +98,9 @@ policies:
     placement:
       placementPath: placement-ztwim-federation-mesh.yaml
     remediationAction: inform
+    # Same cluster-scoped ManagedCluster lookup as the enforcing policy above.
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-ztwim-federation-mesh
     manifests:
