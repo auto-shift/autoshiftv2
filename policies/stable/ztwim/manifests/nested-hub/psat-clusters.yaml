@@ -11,13 +11,13 @@
 # The ConfigMap edit is a read-modify-write of operator-generated JSON. `clusters` is a LIST OF
 # SINGLE-KEY MAPS keyed by cluster name.
 #
-# Every managed spoke entry is DROPPED AND REBUILT on each pass, rather than appended only when
-# absent. An earlier version skipped any spoke already present (a hasKey scan), which made the patch
-# add-only: it could never correct an entry whose content had changed. That cost a live outage when
-# the kubeconfig mount path moved -- server.conf kept pointing at the old path forever, TokenReview
-# failed, and the spoke silently never attested while every policy reported Compliant.
+# Every managed spoke entry is DROPPED AND REBUILT on each pass rather than appended only when
+# absent. Skipping spokes already present would make the patch add-only, unable to correct an entry
+# whose content changed: a moved kubeconfig path would leave server.conf pointing at the old one
+# forever, TokenReview would fail, and the spoke would silently never attest while every policy
+# reported Compliant.
 #
-# Rebuilding is still idempotent, which matters because evaluationInterval `watch` tracks the lookup
+# Rebuilding is idempotent, which matters because evaluationInterval `watch` tracks the lookup
 # and the policy re-evaluates on its OWN write: the same spokes in the same order produce identical
 # JSON, so the ConfigMap resourceVersion goes constant after one write. Entries for clusters NOT in
 # the spoke list -- the operator's own local-cluster entry -- are preserved untouched.
@@ -25,15 +25,12 @@
 # ONE VOLUME, NOT ONE PER SPOKE. spoke-kubeconfigs.yaml keys every spoke into a single Secret, and
 # each key surfaces here as a file under one mount: /run/spire/spoke-kubeconfigs/<spoke>. The pod
 # spec is therefore CONSTANT no matter how many spokes exist, which is what lets a hub carry more
-# than a handful. The earlier shape added a volume and a volumeMount per spoke, so the pod spec grew
-# without bound and every spoke that onboarded rewrote the pod template.
+# than a handful. A volume per spoke would grow the pod spec without bound.
 #
-# THE RESTART IS EXPLICIT NOW, and that is the point of the annotation. SPIRE reads server.conf once
-# at startup, so a newly added spoke does not take effect until the server restarts. Under the old
-# shape the restart came for free as a side effect of the pod template growing a volume -- which
-# also meant it fired on onboarding and on nothing else useful. With a constant pod spec nothing
-# would trigger it at all, and the failure would be silent: server.conf lists the spoke, the running
-# process has never read it, and the spoke cannot attest.
+# THE RESTART IS EXPLICIT, and that is the point of the annotation. SPIRE reads server.conf once at
+# startup, so a newly added spoke does not take effect until the server restarts. A constant pod
+# spec means nothing would trigger that restart on its own, and the failure would be silent:
+# server.conf lists the spoke, the running process has never read it, and the spoke cannot attest.
 #
 # So the pod template carries the server.conf ConfigMap's resourceVersion. That value changes when,
 # and only when, this policy actually rewrites the config -- an MSA token rotation changes the

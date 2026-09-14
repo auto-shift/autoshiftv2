@@ -2,16 +2,15 @@
 # otherwise swallow, by DELETING the stale workload so the operator recreates it from the current CR.
 #
 # WHY DELETION IS THE MECHANISM. In create-only mode the operator skips updates but still creates
-# absent objects, so a delete is the only lever that makes it apply a changed CR. Verified live: with
-# create-only ON, patching SpireAgent with tolerations left the DaemonSet at generation 1 covering
-# one of seven nodes; deleting the DaemonSet had the operator recreate it in about five seconds with
-# the tolerations applied, on all seven.
+# absent objects, so a delete is the only lever that makes it apply a changed resource. Patching the
+# resource alone leaves the workload at its existing generation indefinitely; deleting it has the
+# operator rebuild it from the current spec within seconds.
 #
-# WHY NOT OPEN A RECONCILE WINDOW INSTEAD. Clearing CREATE_ONLY_MODE on the Subscription cannot be
-# done on a GitOps-managed cluster: policy-ztwim-nested-create-only restored it in under five
-# seconds, and Argo CD reverted an attempt to inform that policy. Both were measured. A window would
-# also hand server.conf back to the operator, which reverts the nested patches while the enforcing
-# policies re-apply them -- a fight with no defined end. Deleting one operand touches none of that.
+# WHY NOT OPEN A RECONCILE WINDOW INSTEAD. Clearing CREATE_ONLY_MODE on the Subscription does not
+# hold on a GitOps-managed cluster: policy-ztwim-nested-create-only restores it within seconds, and
+# Argo CD reverts any attempt to set that policy to inform. A window would also hand server.conf
+# back to the operator, which reverts the nested patches while the enforcing policies re-apply them,
+# a fight with no defined end. Deleting one operand touches none of that.
 #
 # TWO RESTARTS ON A NESTED HUB, deliberately called out: recreating the spire-server StatefulSet
 # drops the per-spoke kubeconfig volumes that manifests/nested-hub/psat-clusters.yaml owns. That

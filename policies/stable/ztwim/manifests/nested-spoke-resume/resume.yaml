@@ -1,13 +1,13 @@
 # Second half of the opt-in reset: bring the server back up after its datastore was cleared.
 #
-# UNCONDITIONAL on replicas, deliberately. An earlier version guarded this on the PVC being absent,
-# which looked tidier and was wrong: the StatefulSet controller recreates the PVC almost immediately
-# after the clear, so the guard was already false by the time this evaluated and the spoke was left
-# scaled to ZERO -- SPIRE down, with nothing to bring it back. Verified live.
+# UNCONDITIONAL on replicas, deliberately. Guarding this on the datastore volume being absent would
+# never fire: the StatefulSet controller recreates the claim almost immediately after the clear, so
+# the guard is already false by the time this evaluates and the spoke stays scaled to ZERO with
+# nothing to bring it back.
 #
 # Leaving the server down is strictly worse than starting it on a fresh datastore, so this asserts
-# replicas unconditionally and lets ordering (it depends on the clear policy being Compliant) do the
-# sequencing. The operator will NOT restore the replica count itself -- CREATE_ONLY_MODE skips
+# replicas unconditionally and lets ordering -- it depends on the clear policy being Compliant -- do
+# the sequencing. The operator will NOT restore the replica count itself -- CREATE_ONLY_MODE skips
 # StatefulSet updates -- so something has to assert it, and that something is this.
 object-templates-raw: |
   {{- $ns := "zero-trust-workload-identity-manager" }}

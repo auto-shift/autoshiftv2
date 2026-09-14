@@ -25,9 +25,10 @@
 #
 # SPOKE templates do the work; hub templates only lift values out of the rendered-config ConfigMap,
 # which genuinely lives on the hub. Each hub value is hoisted to its own line and captured into a
-# spoke variable, rather than inlined -- an inline hub expression inside a backtick raw string is
-# what broke the earlier version. Keeping the logic on the spoke is also what lets this run on a
-# SPOKE and not just the hub: the database belongs wherever the SPIRE server it backs is running.
+# spoke variable rather than inlined: an inline hub expression inside a backtick raw string fails to
+# parse, because the spoke resolver templates the whole policy JSON and its quotes arrive escaped.
+# Keeping the logic on the spoke is also what lets this run on a SPOKE and not just the hub -- the
+# database belongs wherever the SPIRE server it backs is running.
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}

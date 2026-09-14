@@ -9,9 +9,12 @@
 # manifests/cnpg has the same shape from the other side: its object templates are wrapped in a guard
 # on databaseType, and an unsatisfied guard renders NO objects, which is also Compliant.
 #
-# This asserts the EFFECT instead: if the config asked for postgres, then the SpireServer resource
-# must actually say postgres and the CNPG cluster must exist. Compliant on every cluster that never
-# asked for postgres, so it is safe to place everywhere.
+# This asserts the EFFECT instead, and deliberately reads the generated server.conf rather than the
+# SpireServer resource. Under CREATE_ONLY_MODE the resource can say postgres while the operator has
+# not regenerated the config, leaving the process on SQLite; only the config reflects what the
+# server is actually running.
+#
+# Compliant on every cluster that never asked for postgres, so it is safe to place everywhere.
 #
 # Spoke templates read the live state; the hub template does nothing but lift the requested type out
 # of rendered-config, which is the one value that genuinely lives on the hub.
@@ -23,16 +26,21 @@ object-templates-raw: |
   {{- $ns := "zero-trust-workload-identity-manager" }}
   {{- $want := `{{hub $cfgType hub}}` }}
   {{- if eq $want "postgres" }}
-  {{- $ss := (lookup "operator.openshift.io/v1alpha1" "SpireServer" "" "cluster") | default dict }}
-  {{- $actual := dig "spec" "datastore" "databaseType" "" $ss }}
+  {{- $conf := (lookup "v1" "ConfigMap" $ns "spire-server") | default dict }}
+  {{- $raw := dig "data" "server.conf" "" $conf }}
+  {{- $actual := "" }}
+  {{- if $raw }}
+  {{- $sql := index (dig "plugins" "DataStore" (list) ($raw | fromJSON)) 0 | default dict }}
+  {{- $actual = dig "sql" "plugin_data" "database_type" "" $sql }}
+  {{- end }}
   {{- $db := (lookup "postgresql.cnpg.io/v1" "Cluster" $ns "spire-db") | default dict }}
-  {{- if ne $actual "postgres" }}
+  {{- if and $raw (ne $actual "postgres") }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: apps/v1
       kind: Deployment
       metadata:
-        name: ztwim-datastore-still-{{ $actual | default "unset" }}
+        name: ztwim-server-conf-still-{{ $actual | default "unset" }}
         namespace: {{ $ns }}
   {{- end }}
   {{- if not $db }}

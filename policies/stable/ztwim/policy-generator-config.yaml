@@ -226,9 +226,11 @@ policies:
     customMessage:
       noncompliant: >
         config.ztwim.datastore.databaseType asks for postgres but this cluster is not using it. The
-        violating object name says which half failed: ztwim-datastore-still-<type> means the
-        SpireServer resource is still on that datastore, because the CNPG password Secret
-        spire-db-app did not exist when the policy last evaluated; ztwim-cnpg-cluster-missing means
+        violating object name says which half failed: ztwim-server-conf-still-<type> means the
+        RUNNING server config is still on that datastore -- either the CNPG password Secret
+        spire-db-app did not exist when the policy last evaluated, or CREATE_ONLY_MODE stopped the
+        operator regenerating server.conf, in which case delete the spire-server ConfigMap and
+        StatefulSet so it is rebuilt from the resource; ztwim-cnpg-cluster-missing means
         the CNPG Cluster was never created, so check that autoshift.io/cloudnative-pg is 'true' and
         that the CloudNativePG operator installed. Note that switching datastore is DESTRUCTIVE
         whenever it takes effect: a different datastore is an empty one, so SPIRE mints a new CA and

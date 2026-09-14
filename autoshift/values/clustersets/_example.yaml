@@ -1633,7 +1633,23 @@ hubClusterSets:
       ztwim-source-namespace: openshift-marketplace
       # Opt-in: trust foreign trust domains listed in config.ztwim.federatedTrustDomains.
       ztwim-federation: 'false'
-      # Nested SPIRE role: 'hub' signs, 'spoke' is signed. Empty (the default) means not nested.
+      # Nested SPIRE role: 'hub' signs, 'spoke' is signed, 'both' does each in one place. Empty
+      # (the default) means not nested.
+      #
+      # 'both' is how a fleet SHARDS past what one hub can carry. That capacity is set by the 1MB
+      # decoded-data limit on the Secret holding one kubeconfig per spoke, so it depends on the
+      # size of each cluster's API server CA bundle -- see the policy README before assuming one. It is the middle tier of a hub-of-hubs: a regional hub is a nested
+      # spoke of the hub-of-hubs and a nested hub to its own spokes. Both manifest sets are placed
+      # by the HUB-OF-HUBS instance, because a regional hub is not managed by its own Red Hat
+      # Advanced Cluster Management and so cannot place policies on itself, which is why one label
+      # has to express both roles.
+      #
+      # The templates need no change for this, and the reason is worth knowing: the spoke-side
+      # manifests use HUB templates, which resolve against whichever cluster placed the policy --
+      # the hub-of-hubs -- so a regional hub correctly dials the root. The hub-side manifests
+      # enumerate clusters with SPOKE templates, evaluated locally on the regional hub, where its
+      # own Red Hat Advanced Cluster Management can see its spokes. The hub-of-hubs cannot see those
+      # spokes at all, so a hub template there would find nothing.
       # Setting this REQUIRES config.ztwim.trustDomain to the SAME value on both ends, and puts the
       # ZTWIM operator into CREATE_ONLY_MODE on that cluster, after which no operand change
       # reconciles until the resource is deleted and recreated.

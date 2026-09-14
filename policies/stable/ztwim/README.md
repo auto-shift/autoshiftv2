@@ -166,9 +166,9 @@ Two defaults are deliberate and worth knowing about.
 **The agent and CSI driver DaemonSets tolerate every taint.** A workload can be scheduled onto any
 node that admits workloads, and if the agent and the CSI driver are not on that node the workload
 cannot obtain an SVID. There is no error in that case: the Workload API socket is simply absent.
-Because AutoShift's own `infra-nodes` and `storage-nodes` policies taint nodes, the earlier default
-of no tolerations left SPIRE covering one node out of seven on a live cluster. This is the same
-posture the CNI and CSI DaemonSets take. To narrow it, set an explicit list; setting an explicit
+Because AutoShift's own `infra-nodes` and `storage-nodes` policies taint most nodes, anything
+narrower leaves SPIRE covering a fraction of the cluster. This is the same posture the container
+network interface and CSI DaemonSets take. To narrow it, set an explicit list; setting an explicit
 empty list clears the default rather than restoring it.
 
 **Requests are set, limits are not.** Requests are what lift the pods out of `BestEffort`, where
@@ -260,9 +260,28 @@ Every spoke costs the hub one `ManagedServiceAccount`, one key in the `spoke-kub
 and two `ClusterStaticEntry` resources. The pod specification does not grow: all spoke kubeconfigs
 share one Secret, mounted once at `/run/spire/spoke-kubeconfigs`, where each key appears as a file.
 
-The limit is therefore the Secret, not the pod. Measured against a real spoke, a kubeconfig is 17KB
-and 23KB once stored, almost entirely the cluster CA bundle, which puts a hub at **roughly 45
-spokes**. Two further limits arrive before any hardware does:
+The limit is therefore the Secret, not the pod. Kubernetes caps a Secret at 1048576 bytes of
+decoded data, so:
+
+```
+spokes per hub  =  1048576 / bytes per kubeconfig
+```
+
+**Do not treat that as a fixed number.** A kubeconfig is dominated by the spoke's API server CA
+bundle, which varies widely between environments. On a default Red Hat OpenShift cluster the
+measured split is 15356 bytes of certificate authority data against 1335 bytes of token and 351
+bytes of everything else, giving 17042 bytes and around 60 spokes. Append a corporate certificate
+chain and the same hub carries closer to 35. Replace the per-cluster bundles with one shared root
+referenced by path instead of inlined, and it rises into the hundreds.
+
+Measure it for a real fleet rather than assuming:
+
+```bash
+oc get secret spoke-kubeconfigs -n zero-trust-workload-identity-manager \
+  -o jsonpath='{.data}' | wc -c        # divide 1048576 by the per-spoke share
+```
+
+Two further limits arrive before any hardware does:
 
 * The SPIRE server reads `server.conf` only at startup, so onboarding a spoke restarts it. The pod
   template carries the ConfigMap resource version to make that restart happen exactly when the
@@ -271,9 +290,23 @@ spokes**. Two further limits arrive before any hardware does:
 * The datastore defaults to SQLite, a single writer, and the server cannot run more than one replica.
 
 For a fleet larger than one hub can carry, shard into regional hubs rather than widening a single
-one. Nesting is a tree and nothing requires it to be two levels deep. Note that
-`autoshift.io/ztwim-nested-role` currently accepts one value, so a cluster that is a spoke of the
-root and a hub to its own spokes cannot yet be expressed.
+one. Nesting is a tree and nothing requires it to be two levels deep.
+
+Set `autoshift.io/ztwim-nested-role` to `both` on the middle tier. A regional hub is then a nested
+spoke of the hub-of-hubs and a nested hub to its own spokes, squaring whatever one hub carries.
+
+Both manifest sets are placed by the **hub-of-hubs** instance, because a regional hub is not managed
+by its own Red Hat Advanced Cluster Management and cannot place policies on itself. One label has to
+select both, which is what `both` is for.
+
+The templates need no change for this, and the reason is worth understanding before altering them:
+
+* The **spoke-side** manifests use hub templates. Those resolve against whichever cluster placed the
+  policy, so on a regional hub they read the hub-of-hubs and it correctly dials the root.
+* The **hub-side** manifests enumerate clusters with spoke templates, evaluated locally on the
+  regional hub, where its own Red Hat Advanced Cluster Management can see its spokes. The
+  hub-of-hubs cannot see those spokes at all, so a hub template would find nothing and, because an
+  empty render is compliant, would report success while doing nothing.
 
 ### The one manual step
 
@@ -331,26 +364,10 @@ On the hub, the spoke's agent appears in `spire-server agent list` as
 `spiffe://<trust-domain>/spire/agent/k8s_psat/<spoke>/<uid>`, and
 `spire-server entry show -downstream` lists the spoke's server entry with `Downstream: true`.
 
-### Migrating from per-spoke kubeconfig Secrets
-
-Earlier revisions of this policy wrote one `spoke-kubeconfig-<name>` Secret per spoke and mounted
-each as its own volume. A hub carrying that shape needs one manual step, because
-`complianceType: musthave` adds the new volume without removing the old ones, and the old mount
-paths sit inside the new one:
-
-```bash
-oc delete statefulset spire-server -n zero-trust-workload-identity-manager
-oc delete secret -l autoshift.io/ztwim-nested-spoke -n zero-trust-workload-identity-manager
-```
-
-The operator recreates the StatefulSet from the `SpireServer` resource, and the policies re-apply
-the single mount on their next evaluation. This costs one SPIRE restart, so do it in the same
-window as any other operand change.
-
 ## Supportability
 
 Red Hat publishes capability annotations on the operator bundle. These are the values on
-`zero-trust-workload-identity-manager.v1.1.1`, verified against a live cluster.
+`zero-trust-workload-identity-manager.v1.1.1`.
 
 | Capability | Declared | What it means here |
 |---|---|---|
@@ -376,9 +393,9 @@ chaining SPIRE under it stays consistent.
 
 The `disconnected: false` annotation means Red Hat has not declared or tested air-gapped support.
 It does **not** indicate missing image metadata: every image this operator runs is digest-pinned
-under `registry.redhat.io`, and the full set is discoverable for mirroring (seven CSV
-`relatedImages` entries plus the operator's own image from the CSV deployment spec). An audit of a
-running install found all eight declared images in use and no undeclared image.
+under `registry.redhat.io`, and the full set is discoverable for mirroring: seven CSV
+`relatedImages` entries plus the operator's own image from the CSV deployment specification, which
+together cover every image the operator runs.
 
 This policy still applies the standard AutoShift disconnected source rule: with
 `autoshift.io/disconnected-mirror: 'true'` the catalog source becomes

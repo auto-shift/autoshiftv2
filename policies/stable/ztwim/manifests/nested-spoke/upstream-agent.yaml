@@ -5,9 +5,8 @@
 # IMAGE SOURCING: the image comes from the installed operator's own RELATED_IMAGE_SPIRE_AGENT
 # environment variable, looked up at runtime -- never a hardcoded reference. On a productized
 # install that resolves to a digest-pinned registry.redhat.io image matching the operator version,
-# which is supported, mirrorable, and upgrades in lockstep. The upstream community reference for
-# this topology hardcodes ghcr.io/spiffe/spire-agent, which is none of those things. An audit of a
-# live install found all eight operator images declared this way and none undeclared.
+# which is supported, mirrorable, and upgrades in lockstep. Every operand image the operator manages
+# is declared this way, so nothing here needs a hardcoded reference.
 #
 # TRUST DOMAIN IS DERIVED TOO. A nested spoke does not get to choose its trust domain -- it MUST
 # equal the hub's, or the upstream-authority plugin builds the wrong expected server ID and the TLS
@@ -115,7 +114,7 @@ object-templates-raw: |
   {{- /* mustonlyhave, not musthave: AutoShift owns this workload outright, and musthave MERGES --
          it treats an existing containers[] list as already satisfied, so an edit to a container
          (a securityContext, an arg, an image) is silently never applied and the DaemonSet's
-         generation never advances. Verified live. mustonlyhave replaces the spec so updates land. */}}
+         generation never advances. mustonlyhave replaces the spec, so updates land. */}}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: apps/v1
