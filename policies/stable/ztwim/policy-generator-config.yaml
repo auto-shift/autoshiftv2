@@ -214,6 +214,25 @@ policies:
         repair, set autoshift.io/ztwim-operand-reconcile to 'true' so AutoShift deletes them and
         the operator recreates them at the declared images, or delete them by hand. On a nested hub
         this restarts the SPIRE server and therefore the trust domain's CA -- see the policy README.
+  # inform: catches a datastore that was asked to be postgres and silently is not. The switch is
+  # gated on the CNPG password existing and falls back to SQLite until then, which is a valid
+  # config and therefore reports Compliant -- so the request has to be checked against the effect.
+  - name: policy-ztwim-datastore-effective
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: test/datastore-effective.yaml
+    customMessage:
+      noncompliant: >
+        config.ztwim.datastore.databaseType asks for postgres but this cluster is not using it. The
+        violating object name says which half failed: ztwim-datastore-still-<type> means the
+        SpireServer resource is still on that datastore, because the CNPG password Secret
+        spire-db-app did not exist when the policy last evaluated; ztwim-cnpg-cluster-missing means
+        the CNPG Cluster was never created, so check that autoshift.io/cloudnative-pg is 'true' and
+        that the CloudNativePG operator installed. Note that switching datastore is DESTRUCTIVE
+        whenever it takes effect: a different datastore is an empty one, so SPIRE mints a new CA and
+        the previous trust domain root is gone.
   # inform: surfaces a SPIRE control plane that installed but never became ready.
   - name: policy-ztwim-ready
     remediationAction: inform

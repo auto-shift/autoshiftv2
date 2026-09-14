@@ -36,6 +36,13 @@
 # back to the spoke engine with the quotes escaped, and fails to parse. Client certificate authentication through datastore.tlsSecretName
 # avoids that and is the right answer for production; it needs a client CA wired into CNPG first.
 #
+# The switch to postgres is GATED on that password actually existing. The CNPG cluster and this
+# resource are separate policies with no ordering between them -- adding a dependency would stall
+# ztwim on every cluster that does not run CNPG -- so without the guard the server would be handed
+# a connection string with an empty password and fail to start. Until the database is up, SQLite
+# stays in effect. Note the transition itself is destructive whenever it happens: a different
+# datastore is an empty datastore, so SPIRE mints a new CA and the old trust domain root is gone.
+#
 # federation.federatesWith and the bundle endpoint let this server exchange trust bundles with
 # SPIRE servers in OTHER trust domains. Lists and maps are passed through as JSON (toRawJson |
 # toLiteral) so an arbitrary config shape survives without block-scalar indentation hazards.
@@ -58,8 +65,11 @@ object-templates-raw: |
   {{hub- $resources := (index $cfg "resources" | default (dict "requests" (dict "cpu" "100m" "memory" "256Mi"))) hub}}
   {{hub- $tolerations := (ternary (index $cfg "tolerations") (list (dict "key" "node-role.kubernetes.io/infra" "operator" "Exists")) (hasKey $cfg "tolerations")) hub}}
   {{hub- $nodeSelector := (index $cfg "nodeSelector" | default dict) hub}}
+  {{- $wantType := `{{hub $dsType hub}}` }}
+  {{- $wantConn := `{{hub $dsConn hub}}` }}
   {{- $pgSecret := (lookup "v1" "Secret" "zero-trust-workload-identity-manager" "spire-db-app") | default dict }}
   {{- $pgPass := (dig "data" "password" "" $pgSecret) | base64dec }}
+  {{- $usePg := and (eq $wantType "postgres") (not $wantConn) $pgPass }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: operator.openshift.io/v1alpha1
@@ -82,12 +92,16 @@ object-templates-raw: |
           country: {{hub (index $ca "country" | default "US") hub}}
           organization: {{hub (index $ca "organization" | default "AutoShift") hub}}
         datastore:
-          databaseType: {{hub $dsType hub}}
-          {{hub- if and (eq $dsType "postgres") (not $dsConn) hub}}
+          {{- if $usePg }}
+          databaseType: postgres
           connectionString: 'host=spire-db-rw.zero-trust-workload-identity-manager.svc port=5432 dbname=spire user=spire sslmode=require password={{ $pgPass }}'
-          {{hub- else hub}}
-          connectionString: {{hub $dsConn | default "/run/spire/data/datastore.sqlite3" hub}}
-          {{hub- end hub}}
+          {{- else if $wantConn }}
+          databaseType: {{ $wantType }}
+          connectionString: {{ $wantConn }}
+          {{- else }}
+          databaseType: sqlite3
+          connectionString: /run/spire/data/datastore.sqlite3
+          {{- end }}
           maxOpenConns: {{hub (index $ds "maxOpenConns" | default 100) hub}}
           maxIdleConns: {{hub (index $ds "maxIdleConns" | default 2) hub}}
         persistence:
