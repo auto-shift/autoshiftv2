@@ -18,6 +18,11 @@
 #
 # A peer is skipped until all three of its views have reported. A half-built federation entry would
 # point at an endpoint with no bundle to validate it.
+#
+# A peer sharing this cluster's trust domain is skipped too. Federation joins INDEPENDENT domains,
+# so two clusters already in one domain have nothing to federate -- which is the case for a nested
+# hub and its spokes, since nesting merges them into a single domain. Without this guard, labelling
+# a nested pair into a mesh would produce a trust domain resource pointing at itself.
 object-templates-raw: |
   {{hub- $self := .ManagedClusterName hub}}
   {{hub- $group := (index .ManagedClusterLabels "autoshift.io/ztwim-federation-mesh" | default "") hub}}
@@ -26,13 +31,15 @@ object-templates-raw: |
   {{hub- $peer := $mc.metadata.name hub}}
   {{hub- $peerGroup := (index $mc.metadata.labels "autoshift.io/ztwim-federation-mesh" | default "") hub}}
   {{hub- if and (eq $peerGroup $group) (ne $peer $self) hub}}
+  {{hub- $selfDomainView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $self "ztwim-fed-domain") | default dict hub}}
+  {{hub- $selfDomain := (dig "status" "result" "spec" "trustDomain" "" $selfDomainView) hub}}
   {{hub- $bundleView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-bundle") | default dict hub}}
   {{hub- $domainView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-domain") | default dict hub}}
   {{hub- $endpointView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-endpoint") | default dict hub}}
   {{hub- $bundle := (dig "status" "result" "data" "bundle.crt" "" $bundleView) hub}}
   {{hub- $domain := (dig "status" "result" "spec" "trustDomain" "" $domainView) hub}}
   {{hub- $host := (dig "status" "result" "spec" "host" "" $endpointView) hub}}
-  {{hub- if and $bundle $domain $host hub}}
+  {{hub- if and $bundle $domain $host (ne $domain $selfDomain) hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: spire.spiffe.io/v1alpha1

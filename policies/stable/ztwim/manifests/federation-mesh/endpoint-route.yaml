@@ -1,0 +1,39 @@
+# A federation endpoint peers can actually reach.
+#
+# The Operator publishes its own Route for the bundle endpoint at federation.<baseDomain>, which is
+# outside the *.apps.<baseDomain> wildcard and so does not resolve on a default cluster. It also
+# carries the serving certificate from bundleEndpoint.httpsWeb.servingCert, which has to be supplied
+# and kept valid for a name that is not the cluster's own.
+#
+# This Route sidesteps both. It sits under the apps wildcard, so it resolves, and it terminates with
+# the cluster's default ingress certificate, which is already issued by a public authority and
+# already valid for *.apps.<baseDomain>. That is exactly what the https_web profile wants: a bundle
+# endpoint a peer can authenticate with ordinary web public key infrastructure, with nothing to
+# issue, distribute or renew.
+#
+# reencrypt rather than edge, because the SPIRE server serves the federation port over TLS. The
+# router presents the public wildcard certificate to the peer and re-encrypts to the backend, whose
+# own certificate never has to be publicly valid.
+object-templates-raw: |
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $domain := dig "spec" "domain" "" ((lookup "config.openshift.io/v1" "Ingress" "" "cluster") | default dict) }}
+  {{- if $domain }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: route.openshift.io/v1
+      kind: Route
+      metadata:
+        name: spire-server-federation-public
+        namespace: {{ $ns }}
+      spec:
+        host: spire-federation.{{ $domain }}
+        to:
+          kind: Service
+          name: spire-server
+          weight: 100
+        port:
+          targetPort: federation
+        tls:
+          termination: reencrypt
+          insecureEdgeTerminationPolicy: Redirect
+  {{- end }}
