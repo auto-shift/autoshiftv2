@@ -44,5 +44,17 @@ helmCharts:
           {{hub- $labelVer := (index .ManagedClusterLabels "autoshift.io/ztwim-version" | default "") hub}}
           {{hub- $vers := (ternary $cfgVers (ternary (list) (list $labelVer) (empty $labelVer)) $isCfg) hub}}
           {{hub- (ternary (dig "startingCSV" "" $cfg) $labelVer $isCfg) hub}}
+        # CREATE_ONLY_MODE is set HERE, on the OperatorPolicy that owns this Subscription, rather
+        # than by a second policy patching spec.config afterwards. It stops the operator reverting
+        # the hand-edited server.conf that nested SPIRE depends on, and it must be in effect before
+        # anything patches that file -- setting it at install time makes that ordering automatic.
+        #
+        # 'true' on any cluster with ztwim-nested-role set, 'false' everywhere else. Writing false
+        # explicitly rather than omitting the variable keeps the Subscription identical in shape on
+        # every cluster, so enabling nesting later is a value change rather than a structural one.
+        config:
+          env:
+            - name: CREATE_ONLY_MODE
+              value: '{{hub ternary "true" "false" (ne (index .ManagedClusterLabels "autoshift.io/ztwim-nested-role" | default "") "") hub}}'
       # versions reuses $vers set in startingCSV above (same policy, resolves after it).
       versions: '{{hub $vers | toRawJson | toLiteral hub}}'

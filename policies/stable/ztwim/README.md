@@ -20,7 +20,6 @@ failure modes in this component report success, so start with the inform policie
 | `policy-ztwim-config` | `SpireServer`, `SpireAgent`, `SpiffeCSIDriver`, `SpireOIDCDiscoveryProvider` | same |
 | `policy-ztwim-federation` | `ClusterFederatedTrustDomain` per foreign trust domain | `autoshift.io/ztwim-federation: 'true'` |
 | `policy-ztwim-ready` | inform only: SPIRE server readiness | same as install |
-| `policy-ztwim-nested-create-only` | `CREATE_ONLY_MODE` on the operator | `ztwim-nested-role` in `hub`,`spoke` |
 | `policy-ztwim-nested-hub` | gRPC Route, per-spoke kubeconfig, `k8s_psat` patch, downstream entries | `ztwim-nested-role: 'hub'` |
 | `policy-ztwim-nested-spoke` | trust bundle, upstream agent, upstream CSI, upstream authority | `ztwim-nested-role: 'spoke'` |
 | `policy-ztwim-nested-hub-effective` | inform only: hub-side policies actually produced something | `ztwim-nested-role: 'hub'` |
@@ -247,7 +246,7 @@ operand should run. A violation names the stale workload directly, for example
 
 **Applying an operand change under create-only means deleting the workload.** That is the only
 lever: the create path still runs. Clearing `CREATE_ONLY_MODE` instead does not work on a
-GitOps-managed cluster, because `policy-ztwim-nested-create-only` restores it within seconds and
+GitOps-managed cluster, because `policy-ztwim-operator-install` restores it within seconds and
 Argo CD reverts an attempt to inform that policy. A window would also hand `server.conf` back to the
 operator while the enforcing policies re-apply their patches, with no defined end to the fight.
 

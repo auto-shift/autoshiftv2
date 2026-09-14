@@ -77,26 +77,19 @@ policies:
     manifests:
       - path: manifests/federation
   # ---------------------------------------------------------------------------------------------
-  # Nested SPIRE (opt-in, autoshift.io/ztwim-nested-role: hub|spoke).
+  # Nested SPIRE (opt-in, autoshift.io/ztwim-nested-role: hub|spoke|both).
   #
-  # Ordering is expressed as dependencies rather than left to chance: CREATE_ONLY_MODE must be in
-  # effect BEFORE either side patches the operator-generated server.conf, or the operator reverts
-  # the patch on its next reconcile.
+  # CREATE_ONLY_MODE is set by policy-ztwim-operator-install, on the OperatorPolicy that owns the
+  # Subscription, so it is already in effect before anything below patches the generated
+  # server.conf. Depending on policy-ztwim-config is therefore enough to order these correctly.
   # ---------------------------------------------------------------------------------------------
-  - name: policy-ztwim-nested-create-only
-    placement:
-      placementPath: placement-ztwim-nested.yaml
-    dependencies:
-      - name: policy-ztwim-config
-    manifests:
-      - path: manifests/nested-create-only
   # Hub side: the gRPC endpoint spokes dial, a per-spoke kubeconfig assembled from ACM state, the
   # k8s_psat patch that consumes it, and the registration entries that permit downstream signing.
   - name: policy-ztwim-nested-hub
     placement:
       placementPath: placement-ztwim-nested-hub.yaml
     dependencies:
-      - name: policy-ztwim-nested-create-only
+      - name: policy-ztwim-config
     manifests:
       - path: manifests/nested-hub
   # Spoke side: the hub trust bundle, the upstream agent and its CSI bridge, and the upstream
@@ -108,7 +101,7 @@ policies:
     hubTemplateOptions:
       serviceAccountName: autoshift-policy-service-account
     dependencies:
-      - name: policy-ztwim-nested-create-only
+      - name: policy-ztwim-config
     manifests:
       - path: manifests/nested-spoke
   # OPT-IN (autoshift.io/ztwim-nested-auto-reset): automates the one manual step by clearing the
