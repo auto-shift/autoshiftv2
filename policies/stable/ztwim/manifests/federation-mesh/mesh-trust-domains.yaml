@@ -1,11 +1,28 @@
-# One ClusterFederatedTrustDomain per peer TRUST DOMAIN in this cluster's federation mesh, seeded
-# with that domain's trust bundle so the relationship needs no manual bootstrap.
+# One ClusterFederatedTrustDomain per peer TRUST DOMAIN in this cluster's federation mesh.
+#
+# NO trustDomainBundle IS SET, deliberately. The field is optional and takes a SPIFFE bundle in JWKS
+# form, not the PEM that SPIRE's spire-bundle ConfigMap holds, and there is no way to convert one to
+# the other in a template. Handing it PEM is not rejected by the API server: the controller manager
+# logs "Ignoring invalid ClusterFederatedTrustDomain ... unable to parse JWKS" and drops the
+# relationship, while the resource keeps an empty status and the policy stays Compliant. Leaving the
+# field off instead makes the server fetch the bundle from the peer's endpoint, which is what the
+# https_web profile is for and needs no pre-seeded trust.
+#
+# The peer's bundle is still read below, as the readiness signal that its SPIRE is actually running.
+# A trust domain pointing at an endpoint with no server behind it would never resolve.
 #
 # Per domain rather than per peer, and named for the domain, because a federation relationship is
 # with a trust domain and not with a cluster. Several peers can share one: a nested hub and its
 # spokes are one domain across many clusters, so a mesh holding such a pair would otherwise produce
 # two resources naming the same trust domain and differing only in which peer's endpoint they point
 # at. The first peer to report a given domain supplies the endpoint; the rest are skipped.
+#
+# Which peer that is follows the ManagedCluster list order, and nothing here can tell a serving
+# endpoint from a dead one -- an endpoint is only a Route, and the Route exists whether or not the
+# server behind it has a federation block. Any healthy endpoint in a domain serves the same bundle,
+# so the choice is immaterial until one of them is not serving. A domain whose chosen endpoint is
+# down is a bundle that stops refreshing, which is why every member of a shared domain needs
+# federation working, not just one.
 #
 # Everything read here lives on the cluster running Red Hat Advanced Cluster Management -- the
 # ManagedCluster list and the views that manifests/federation-mesh/bundle-views.yaml publishes --
@@ -22,8 +39,13 @@
 # can be fetched before any SPIFFE trust exists between the two sides. The https_spiffe profile
 # would require already trusting the peer to fetch the bundle that establishes that trust.
 #
-# A peer is skipped until all three of its views have reported. A half-built federation entry would
-# point at an endpoint with no bundle to validate it.
+# A peer is skipped until all three of its views have reported, so a trust domain is never written
+# pointing at a cluster whose SPIRE is not up yet.
+#
+# Whether the bundle then actually transfers is NOT visible from here. A ClusterFederatedTrustDomain
+# carries no status, and a fetch that fails -- an untrusted endpoint certificate is the usual cause
+# -- appears only as "Error updating bundle" in the spire-server log. Neither this policy nor the
+# inform test in test/ can see it. See the README for how to check.
 #
 # The endpoint a peer publishes is read from that peer's own rendered configuration first, falling
 # back to the Route it publishes. A deployment that serves its bundle somewhere other than the
@@ -75,7 +97,6 @@ object-templates-raw: |
         bundleEndpointURL: https://{{hub $host hub}}
         bundleEndpointProfile:
           type: https_web
-        trustDomainBundle: {{hub $bundle | toRawJson | toLiteral hub}}
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}

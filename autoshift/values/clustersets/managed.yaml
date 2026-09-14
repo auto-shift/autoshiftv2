@@ -2,6 +2,17 @@
 managedClusterSets:
   managed:
     config:
+      # Publishes this cluster's bundle endpoint, which is what makes it a usable federation peer.
+      # Without it the operator writes no federation block and peers have nothing to fetch from.
+      ztwim:
+        federation:
+          bundleEndpoint:
+            profile: 'https_web'
+            refreshHint: 300
+            httpsWeb:
+              servingCert:
+                externalSecretRef: 'spire-federation-cert'
+                fileSyncInterval: 3600
       uwm:
         # storageClass: 'gp3-csi'            # Omit to use cluster default StorageClass
         prometheus:
@@ -19,8 +30,11 @@ managedClusterSets:
       ### Zero Trust Workload Identity Manager (SPIRE)
       ztwim: 'true'
       ztwim-federation-mesh: 'demo'
-      # Signed end of the nested pair: this cluster's SPIRE CA is an intermediate issued by the hub.
-      ztwim-nested-role: 'spoke'
+      # Nesting is OFF so this cluster federates instead. The two are mutually exclusive in practice:
+      # nesting puts the operator in CREATE_ONLY_MODE, which stops it writing the federation block
+      # into the generated server.conf, so a nested cluster publishes a bundle endpoint Route with
+      # nothing listening behind it. Set to 'spoke' to take an intermediate from the hub instead.
+      ztwim-nested-role: ''
       ### tempo
       tempo: 'true'
       tempo-subscription-name: tempo-product
