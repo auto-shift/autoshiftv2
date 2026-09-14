@@ -336,6 +336,15 @@ publish the endpoint peers fetch from. Note that enabling federation on a cluste
 in create-only mode for nesting does not take effect until its operands are recreated, because the
 Operator cannot rewrite the generated configuration while that mode is on.
 
+**Each member's ingress wildcard certificate has to be one its peers trust.** AutoShift publishes
+the bundle endpoint on a Route under `*.apps.<baseDomain>`, and the `https_web` profile
+authenticates that endpoint with ordinary web public key infrastructure. A stock Red Hat OpenShift
+cluster signs its ingress wildcard with a per-cluster self-signed authority, which a peer rejects.
+Set `config.certManager.ingressCert` with a real issuer on every member, or run the mesh on
+clusters whose ingress already carries a publicly issued wildcard. The backend certificate is the
+service-serving certificate and is not part of this: the Route re-encrypts, so only what the router
+presents has to be trusted.
+
 ### How many spokes a hub carries
 
 Every spoke costs the hub one `ManagedServiceAccount`, one key in the `spoke-kubeconfigs` Secret,

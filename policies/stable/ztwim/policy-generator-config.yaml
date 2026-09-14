@@ -97,8 +97,16 @@ policies:
     # error from an RBAC denial and easy to misread.
     hubTemplateOptions:
       serviceAccountName: autoshift-policy-service-account
+    # NOT dependent on policy-ztwim-federation-views, even though it reads what those views report.
+    # A dependency is evaluated per cluster against the SAME cluster's copy of the named policy, and
+    # the views policy is placed on the cluster running Red Hat Advanced Cluster Management only. On
+    # every other mesh member there is no copy to satisfy it, so the dependency never resolves and
+    # this policy stays Pending forever. The ordering is instead handled by the manifest itself,
+    # which renders nothing for a peer whose view has not reported yet and picks it up on a later
+    # evaluation; policy-ztwim-federation-mesh-effective is what turns that waiting state into a
+    # visible violation.
     dependencies:
-      - name: policy-ztwim-federation-views
+      - name: policy-ztwim-config
     manifests:
       - path: manifests/federation-mesh/mesh-trust-domains.yaml
   # inform: catches a mesh member that reports success while trusting no peer. Both mesh policies

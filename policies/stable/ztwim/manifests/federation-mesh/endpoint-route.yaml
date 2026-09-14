@@ -6,14 +6,20 @@
 # and kept valid for a name that is not the cluster's own.
 #
 # This Route sidesteps both. It sits under the apps wildcard, so it resolves, and it terminates with
-# the cluster's default ingress certificate, which is already issued by a public authority and
-# already valid for *.apps.<baseDomain>. That is exactly what the https_web profile wants: a bundle
-# endpoint a peer can authenticate with ordinary web public key infrastructure, with nothing to
-# issue, distribute or renew.
+# whatever certificate the default ingress controller already serves for *.apps.<baseDomain>, so
+# there is nothing here to issue, distribute or renew.
+#
+# THAT CERTIFICATE HAS TO BE ONE THE PEERS TRUST. A stock Red Hat OpenShift cluster signs its
+# ingress wildcard with a per-cluster self-signed authority, and the https_web profile authenticates
+# the endpoint with ordinary web public key infrastructure, so a peer fetching the bundle rejects it
+# with a self-signed chain. Replace the ingress certificate from an authority the fleet trusts
+# before relying on this Route: the cert-manager policy in this repository does it through
+# config.certManager.ingressCert with a real issuer. Clusters whose ingress already carries a
+# publicly issued wildcard need nothing.
 #
 # reencrypt rather than edge, because the SPIRE server serves the federation port over TLS. The
-# router presents the public wildcard certificate to the peer and re-encrypts to the backend, whose
-# own certificate never has to be publicly valid.
+# router presents the wildcard certificate to the peer and re-encrypts to the backend, whose own
+# certificate is the service-serving certificate and never has to be publicly valid.
 #
 # WHAT THIS EXPOSES, and how to not do it. A trust bundle is certificate authority material, so the
 # contents are public by design and the https_web profile exists so a peer can fetch one with no

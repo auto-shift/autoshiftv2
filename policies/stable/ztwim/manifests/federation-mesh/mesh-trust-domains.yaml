@@ -24,6 +24,11 @@
 # default ingress sets config.ztwim.federation.bundleEndpointHost on that cluster, and its peers
 # pick the value up from here without any of them being configured with it.
 #
+# The three context values are read into variables before the range. A range rebinds the dot to the
+# element it is iterating, whether or not the element is also assigned to a variable, so a
+# .PolicyMetadata or .ManagedClusterName reference inside the loop resolves against a ManagedCluster
+# and fails with "invalid value; expected string".
+#
 # A peer sharing this cluster's trust domain is skipped too. Federation joins INDEPENDENT domains,
 # so two clusters already in one domain have nothing to federate -- which is the case for a nested
 # hub and its spokes, since nesting merges them into a single domain. Without this guard, labelling
@@ -31,6 +36,7 @@
 object-templates-raw: |
   {{hub- $self := .ManagedClusterName hub}}
   {{hub- $group := (index .ManagedClusterLabels "autoshift.io/ztwim-federation-mesh" | default "") hub}}
+  {{hub- $polNs := .PolicyMetadata.namespace hub}}
   {{hub- if $group hub}}
   {{hub- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items hub}}
   {{hub- $peer := $mc.metadata.name hub}}
@@ -43,7 +49,7 @@ object-templates-raw: |
   {{hub- $endpointView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-endpoint") | default dict hub}}
   {{hub- $bundle := (dig "status" "result" "data" "bundle.crt" "" $bundleView) hub}}
   {{hub- $domain := (dig "status" "result" "spec" "trustDomain" "" $domainView) hub}}
-  {{hub- $peerCM := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" $peer)) | default dict hub}}
+  {{hub- $peerCM := (lookup "v1" "ConfigMap" $polNs (printf "%s.rendered-config" $peer)) | default dict hub}}
   {{hub- $peerCfg := (index (index (index $peerCM "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
   {{hub- $cfgHost := (index (index $peerCfg "federation" | default dict) "bundleEndpointHost" | default "") hub}}
   {{hub- $host := ($cfgHost | default (dig "status" "result" "spec" "host" "" $endpointView)) hub}}
