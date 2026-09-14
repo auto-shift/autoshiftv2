@@ -319,13 +319,21 @@ adds an intermediate that every mutual TLS handshake verifies. Federation keeps 
 authority and exchanges trust bundles instead, so chains stay one certificate deep everywhere and
 none of the create-only machinery is needed.
 
-The step that usually makes federation awkward is the first bundle exchange, documented as a manual
-copy between clusters. `ClusterFederatedTrustDomain` takes that bundle as a field, so it only needs
-someone, or something, to fetch it. Setting `autoshift.io/ztwim-federation-mesh` to the same value
-on a set of clusters has AutoShift do it: the cluster running Red Hat Advanced Cluster Management
-publishes each member's bundle, trust domain and federation endpoint as `ManagedClusterView`
-resources, and each member reads its peers' views and writes the trust domains locally. After that
-first exchange the SPIRE controller manager keeps bundles current on its own.
+The step that usually makes federation awkward is knowing who the peers are and where their bundle
+endpoints live, which is normally a manual exchange between cluster owners. Setting
+`autoshift.io/ztwim-federation-mesh` to the same value on a set of clusters has AutoShift do it: the
+cluster running Red Hat Advanced Cluster Management publishes each member's bundle, trust domain and
+federation endpoint as `ManagedClusterView` resources, and each member reads its peers' views and
+writes a `ClusterFederatedTrustDomain` for each peer domain. SPIRE then fetches the bundle from the
+endpoint and keeps it current on its own.
+
+AutoShift does not seed `trustDomainBundle`. The field is optional and takes a SPIFFE bundle in JWKS
+form rather than the PEM that SPIRE's own `spire-bundle` ConfigMap holds, and nothing in a policy
+template can convert between them. Setting it to PEM is worse than leaving it off: the API server
+accepts it, the resource keeps an empty status, the policy reports Compliant, and the controller
+manager silently drops the relationship with `Ignoring invalid ClusterFederatedTrustDomain` in its
+log. Omitting it is also the right shape for `https_web`, whose whole point is that no trust has to
+exist in advance.
 
 Members federate only within their group, so the number of relationships follows the group rather
 than the fleet. Federation is not transitive, which makes that the right shape: a mesh is exactly
@@ -337,6 +345,12 @@ single domain across several clusters, so a mesh containing such a pair would ot
 resources naming the same domain and differing only in whose endpoint they point at. The first peer
 to report a domain supplies the endpoint for it. Peers sharing the member's own domain are left out
 altogether, which is why a nested pair inside a mesh federates outward and not with itself.
+
+Which peer supplies the endpoint follows the cluster list order, and AutoShift cannot tell a serving
+endpoint from a dead one: the endpoint is a Route, and the Route exists whether or not the server
+behind it has a federation block. Any healthy endpoint in a domain serves the same bundle, so the
+choice only matters when one of them is not serving. Enable federation on every cluster in a shared
+trust domain rather than on one of them.
 
 Every member needs `config.ztwim.federation.bundleEndpoint` set, which is what makes the Operator
 publish the endpoint peers fetch from. Note that enabling federation on a cluster already running
@@ -351,6 +365,22 @@ Set `config.certManager.ingressCert` with a real issuer on every member, or run 
 clusters whose ingress already carries a publicly issued wildcard. The backend certificate is the
 service-serving certificate and is not part of this: the Route re-encrypts, so only what the router
 presents has to be trusted.
+
+**No policy can tell you the bundle actually transferred.** `ClusterFederatedTrustDomain` carries no
+status, so a relationship that SPIRE accepted but cannot fetch looks identical to a working one from
+Kubernetes. The inform policy checks that the resource exists, which is as far as it can see. Verify
+the transfer in the server log:
+
+```bash
+oc logs -n zero-trust-workload-identity-manager spire-server-0 -c spire-server | grep bundle_client
+# "Trust domain is now managed"  -> the relationship was accepted
+# "Error updating bundle ... certificate signed by unknown authority"  -> the peer's ingress
+#                                                                        certificate is not trusted
+
+oc logs -n zero-trust-workload-identity-manager spire-server-0 -c spire-controller-manager \
+  | grep "Ignoring invalid"
+# any output here means a trust domain was dropped before SPIRE ever saw it
+```
 
 ### How many spokes a hub carries
 
