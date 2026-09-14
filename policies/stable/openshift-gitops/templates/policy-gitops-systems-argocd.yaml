@@ -116,6 +116,31 @@ spec:
             {{ "{{hub-" }} $controller := (index $infra "controller" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $controllerLimits := (index $controller "limits" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $controllerRequests := (index $controller "requests" | default dict) {{ "hub}}" }}
+            {{/* GOMEMLIMIT is DERIVED from the controller memory limit, so the two cannot drift.
+                 The Go runtime does not read the container limit; left unset it collects on GOGC
+                 alone and a refresh storm is killed before it ever collects.
+
+                 trimSuffix is deliberately avoided: the ACM 2.15 and earlier template allowlist
+                 does not carry it. contains and regexReplaceAll are safe on every supported hub.
+
+                 Only Gi and Mi are parsed, which is what Kubernetes quantities use in practice.
+                 Anything else -- a decimal like 1.5Gi, SI units like 8G, or a bare byte count --
+                 leaves the derivation empty and the environment variable is then omitted rather
+                 than guessed. Set controller.goMemLimit explicitly for those, because a value
+                 derived wrongly is worse than none: too low and the runtime collects constantly
+                 without ever using the memory it has. */}}
+            {{ "{{hub-" }} $ctrlMem := (index $controllerLimits "memory" | default "{{ $.Values.gitops.controller.limits.memory }}") {{ "hub}}" }}
+            {{ "{{hub-" }} $gmlPct := (index $controller "goMemLimitPercent" | default {{ $.Values.gitops.controller.goMemLimitPercent }}) {{ "hub}}" }}
+            {{ "{{hub-" }} $gmlMib := 0 {{ "hub}}" }}
+            {{ "{{hub-" }} if not (contains "." $ctrlMem) {{ "hub}}" }}
+            {{ "{{hub-" }} if contains "Gi" $ctrlMem {{ "hub}}" }}
+            {{ "{{hub-" }} $gmlMib = mul ((regexReplaceAll "[^0-9]" $ctrlMem "") | int) 1024 {{ "hub}}" }}
+            {{ "{{hub-" }} else if contains "Mi" $ctrlMem {{ "hub}}" }}
+            {{ "{{hub-" }} $gmlMib = ((regexReplaceAll "[^0-9]" $ctrlMem "") | int) {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $gmlDerived := (ternary (printf "%dMiB" (div (mul $gmlMib $gmlPct) 100)) "" (gt $gmlMib 0)) {{ "hub}}" }}
+            {{ "{{hub-" }} $goMemLimit := (index $controller "goMemLimit" | default $gmlDerived) {{ "hub}}" }}
             {{ "{{hub-" }} $pgSidecar := (index $infra "policyGenerator" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $pgSidecarLimits := (index $pgSidecar "limits" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $pgSidecarRequests := (index $pgSidecar "requests" | default dict) {{ "hub}}" }}
@@ -178,6 +203,20 @@ spec:
                   kustomizeBuildOptions: --enable-helm --helm-command /usr/local/bin/helm --enable-alpha-plugins --load-restrictor LoadRestrictionsNone
                   applicationInstanceLabelKey: argocd.argoproj.io/instance
                   resourceTrackingMethod: annotation+label
+                  # THE CLUSTER CACHE IS THE CONTROLLER'S LARGEST ALLOCATION. It watches every API
+                  # kind in the cluster by default, so its footprint tracks whatever else is
+                  # installed rather than how many Applications exist. The Operator already excludes
+                  # a sane base set (endpoints, leases, subject access reviews, Kyverno reports);
+                  # this adds the kinds that are heavy on an OpenShift hub and that Argo CD never
+                  # manages, because they are generated rather than authored. Measured on one hub:
+                  # 43521 Events, 605 PackageManifests.
+                  #
+                  # Excluding a kind removes it from discovery and sync EVERYWHERE for this
+                  # instance, so anything listed here can no longer be deployed by it. Keep the list
+                  # to generated, never-authored resources. Set config.gitops.infra.resourceExclusions
+                  # to replace it wholesale.
+                  resourceExclusions: |
+                    {{ "{{hub" }} (index $infra "resourceExclusions" | default {{ $.Values.gitops.resourceExclusions | toJson }}) | autoindent {{ "hub}}" }}
                   sso:
                     dex:
                       resources:
@@ -329,6 +368,19 @@ spec:
                     processors:
                       status: {{ "{{hub" }} index $controller "statusProcessors" | default {{ $.Values.gitops.controller.statusProcessors }} {{ "hub}}" }}
                       operation: {{ "{{hub" }} index $controller "operationProcessors" | default {{ $.Values.gitops.controller.operationProcessors }} {{ "hub}}" }}
+                    # GOMEMLIMIT is a SOFT ceiling that makes the Go runtime collect harder as it
+                    # approaches, trading CPU for staying alive instead of being OOMKilled. Argo CD
+                    # recommends 80-90% of the container limit; $goMemLimit is derived from
+                    # controller.limits.memory above so the two cannot drift apart. Omitted entirely
+                    # when the limit is in a form the derivation does not parse.
+                    {{ "{{hub-" }} if $goMemLimit {{ "hub}}" }}
+                    env:
+                      - name: GOMEMLIMIT
+                        value: '{{ "{{hub" }} $goMemLimit {{ "hub}}" }}'
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    # Stop watching resource kinds this instance cannot list at all, rather than
+                    # retrying them forever.
+                    respectRBAC: {{ "{{hub" }} index $controller "respectRBAC" | default "{{ $.Values.gitops.controller.respectRBAC }}" {{ "hub}}" }}
                     resources:
                       limits:
                         cpu: {{ "{{hub" }} index $controllerLimits "cpu" | default "{{ $.Values.gitops.controller.limits.cpu }}" {{ "hub}}" }}
@@ -396,6 +448,33 @@ spec:
                   {{- range $clusterSet, $value := .Values.managedClusterSets }}
                     - {{ $clusterSet }}
                   {{- end }}
+                  # Hub cluster sets are included deliberately: under hub-of-hubs a regional hub is a
+                  # managed cluster of the global hub AND lives in a hub cluster set, so the global
+                  # hub's Argo CD can only reach it through a registration made here.
+                  #
+                  # This cluster itself is excluded. GitOpsCluster exists so an Argo CD can reach
+                  # OTHER clusters; Argo CD already reaches the one it runs on as the built-in
+                  # in-cluster destination, and every AutoShift Application targets exactly that. A
+                  # self registration adds a second entry for the same cluster reached through the
+                  # cluster-proxy addon, and the application controller builds a FULL CLUSTER CACHE
+                  # PER REGISTERED CLUSTER, so the hub pays for two complete caches of itself before
+                  # comparing a single Application. Measured on a hub with 58 Applications and 299
+                  # Policies: the controller was OOMKilled repeatedly against a 4Gi limit.
+                  #
+                  # local-cluster is the right discriminator and cluster-type is not. Red Hat
+                  # Advanced Cluster Management sets local-cluster on the cluster running THAT
+                  # instance, so a regional hub carries it in its own instance and never in the
+                  # global hub's. Excluding on cluster-type would drop every regional hub.
+                  #
+                  # NotIn also matches a cluster with no such label, which is every managed cluster.
+                  predicates:
+                    - requiredClusterSelector:
+                        labelSelector:
+                          matchExpressions:
+                            - key: 'local-cluster'
+                              operator: NotIn
+                              values:
+                                - 'true'
                   tolerations:
                     - key: cluster.open-cluster-management.io/unreachable
                       operator: Exists
