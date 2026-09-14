@@ -54,8 +54,10 @@
   {{- $eso := $.Values.externalSecretsOperator }}
   {{- $hb := (default (dict) $eso.hubBootstrap) }}
   {{- $sharedNamespace := (dig "hubBootstrap" "sharedNamespace" "" $eso | default $policyNamespace) }}
+  {{- $writebackNamespace := (dig "hubBootstrap" "writebackNamespace" "eso-writeback" $eso) }}
   {{- $storePrefix := (dig "storePrefix" "" $hb | default "hub-bootstrap") }}
   {{- $readerRole := (printf "%s-reader" $storePrefix) }}
+  {{- $writebackRole := (printf "%s-writeback" $storePrefix) }}
   {{- $clientCAConfigMap := (dig "clientCAConfigMap" "" $hb | default (printf "%s-client-ca" $storePrefix)) }}
   {{- /* Cert / mode tuning DEFAULTS — actual values read per-deployment from config.eso.hubBootstrap below. */}}
   {{- $defaultMode := (dig "mode" "" $hb | default "selfSigned") }}
@@ -129,6 +131,8 @@ spec:
                     ##### DERIVE (hub): load THIS cluster's rendered config + its hubBootstrap mode/cert/external-CA settings #####
                     {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
                     {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
+                    {{ "{{hub-" }} $writebackNs := "{{ $writebackNamespace }}" {{ "hub}}" }}
+                    {{ "{{hub-" }} if hasKey $hubBootstrap "writebackNamespace" {{ "hub}}" }}{{ "{{hub-" }} $writebackNs = (printf "%v" (index $hubBootstrap "writebackNamespace")) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ $defaultMode }}") {{ "hub}}" }}
                     ##### teardown: EXPLICIT opt-in decommission flag — a positive flag, never inferred from config #####
                     ##### absence, so a transient rendered-config read miss can never trigger a teardown. #####
@@ -143,6 +147,7 @@ spec:
                     ##### BRIDGE the derived settings to the runtime side #####
                     {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $writebackNs := `{{ "{{hub" }} $writebackNs {{ "hub}}" }}` {{ "}}" }}
                     ##### Collect precondition problems into $errors (no `fail`, which buries the reason under the whole #####
                     ##### policy string); surfaced via the status ConfigMap + inform gate below. #####
                     {{ "{{-" }} $errors := list {{ "}}" }}
@@ -165,6 +170,7 @@ spec:
                     ##### Per-cluster reader scope: "<ownerNs>|<identity>|<slug>" -> the hub Secret names THAT cluster #####
                     ##### declares. Drives one scoped Role per cluster, as in the selfSigned policy. #####
                     {{ "{{-" }} $nsScopes := dict {{ "}}" }}
+                    {{ "{{-" }} $pushScopes := dict {{ "}}" }}
                     {{ "{{-" }} $expectRBAC := dict {{ "}}" }}
                     {{ "{{-" }} $seenIds := dict {{ "}}" }}
                     ##### On teardown, skip enumeration entirely: $eligible/$nsIdentities stay empty, so the wiring never #####
@@ -298,8 +304,35 @@ spec:
                                 {{ "{{-" }} if and (ne $nm "") (not (has $nm $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $nm {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
                               {{ "{{-" }} end {{ "}}" }}
                             {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} range $se := (dig "eso" "externalSecrets" (list) $scopeCfg) {{ "}}" }}
+                              {{ "{{-" }} $se = ($se | default dict) {{ "}}" }}
+                              {{ "{{-" }} range $d := (index $se "data" | default list) {{ "}}" }}
+                                {{ "{{-" }} $k := (dig "remoteRef" "key" "" ($d | default dict)) {{ "}}" }}
+                                {{ "{{-" }} if and (ne $k "") (not (has $k $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $k {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} range $d := (index $se "dataFrom" | default list) {{ "}}" }}
+                                {{ "{{-" }} $k := (dig "extract" "key" "" ($d | default dict)) {{ "}}" }}
+                                {{ "{{-" }} if and (ne $k "") (not (has $k $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $k {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} if and (eq (len (index $se "data" | default list)) 0) (eq (len (index $se "dataFrom" | default list)) 0) {{ "}}" }}
+                                {{ "{{-" }} $nm := (index $se "name" | default "") {{ "}}" }}
+                                {{ "{{-" }} if and (ne $nm "") (not (has $nm $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $nm {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
                             {{ "{{-" }} $clusterShared := (dig "eso" "hubBootstrap" "sharedNamespace" "{{ $sharedNamespace }}" $scopeCfg) {{ "}}" }}
                             {{ "{{-" }} if eq $clusterShared "" {{ "}}" }}{{ "{{-" }} $clusterShared = $tenancyNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} $pushNames := list {{ "}}" }}
+                            {{ "{{-" }} range $se := (dig "eso" "pushSecrets" (list) $scopeCfg) {{ "}}" }}
+                              {{ "{{-" }} $se = ($se | default dict) {{ "}}" }}
+                              {{ "{{-" }} $rn := (index $se "remoteKey" | default "") {{ "}}" }}
+                              {{ "{{-" }} if eq $rn "" {{ "}}" }}{{ "{{-" }} $rn = (index $se "name" | default "") {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} if and (ne $rn "") (not (has $rn $pushNames)) {{ "}}" }}{{ "{{-" }} $pushNames = append $pushNames $rn {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} range $d := (index $se "data" | default list) {{ "}}" }}
+                                {{ "{{-" }} $rk := (dig "match" "remoteRef" "remoteKey" "" ($d | default dict)) {{ "}}" }}
+                                {{ "{{-" }} if and (ne $rk "") (not (has $rk $pushNames)) {{ "}}" }}{{ "{{-" }} $pushNames = append $pushNames $rk {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} $_ := set $pushScopes (printf "%s|%s|%s" $tenancyNs $identity ($identity | sha256sum | trunc 10)) $pushNames {{ "}}" }}
                             {{ "{{-" }} $_ := set $nsScopes (printf "%s|%s|%s|%s" $tenancyNs $identity ($identity | sha256sum | trunc 10) $clusterShared) $scopeNames {{ "}}" }}
                           {{ "{{-" }} end {{ "}}" }}
                         {{ "{{-" }} end {{ "}}" }}
@@ -481,6 +514,51 @@ spec:
                         {{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if ne $writebackNs "" {{ "}}" }}
+                    {{ "{{-" }} range $pushKey, $pushNames := $pushScopes {{ "}}" }}
+                      {{ "{{-" }} if gt (len $pushNames) 0 {{ "}}" }}
+                      {{ "{{-" }} $pp := (splitList "|" $pushKey) {{ "}}" }}
+                      {{ "{{-" }} $pIdent := (index $pp 1) {{ "}}" }}
+                      {{ "{{-" }} $pSeg := (index $pp 2) {{ "}}" }}
+                      {{ "{{-" }} $wbRole := (printf "%s-%s" "{{ $writebackRole }}" $pSeg) {{ "}}" }}
+                      {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s" $writebackNs $wbRole) true {{ "}}" }}
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: rbac.authorization.k8s.io/v1
+                        kind: Role
+                        metadata:
+                          name: {{ "{{" }} $wbRole {{ "}}" }}
+                          namespace: {{ "{{" }} $writebackNs {{ "}}" }}
+                          labels:
+                            autoshift.io/secret-reader-role: {{ $storePrefix }}
+                        rules:
+                          - apiGroups: [""]
+                            resources: ["secrets"]
+                            verbs: ["create"]
+                          - apiGroups: [""]
+                            resources: ["secrets"]
+                            resourceNames: {{ "{{" }} $pushNames | toRawJson {{ "}}" }}
+                            verbs: ["get", "update", "patch"]
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: rbac.authorization.k8s.io/v1
+                        kind: RoleBinding
+                        metadata:
+                          name: {{ "{{" }} $wbRole {{ "}}" }}
+                          namespace: {{ "{{" }} $writebackNs {{ "}}" }}
+                          labels:
+                            autoshift.io/secret-reader-rolebinding: {{ $storePrefix }}
+                        roleRef:
+                          apiGroup: rbac.authorization.k8s.io
+                          kind: Role
+                          name: {{ "{{" }} $wbRole {{ "}}" }}
+                        subjects:
+                          - kind: User
+                            name: {{ "{{" }} $pIdent {{ "}}" }}
+                            apiGroup: rbac.authorization.k8s.io
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     ##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): unwire the hub apiserver clientCA and #####
                     ##### remove the shared clientCA ConfigMap. Ordered: the APIServer pointer is emptied BEFORE the #####
                     ##### ConfigMap is deleted so the apiserver operator never sees a dangling reference. Emitted by BOTH #####
@@ -592,6 +670,8 @@ spec:
             ##### DERIVE (hub): load THIS cluster's rendered config + its hubBootstrap mode/cert/external-CA settings #####
             {{ "{{hub" }} $clusterConfig := (dig "data" "config" "" ((lookup "v1" "ConfigMap" "{{ $policyNamespace }}" (printf "%s.rendered-config" $.ManagedClusterName)) | default dict) | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $hubBootstrap := (dig "eso" "hubBootstrap" (dict) $clusterConfig) {{ "hub}}" }}
+            {{ "{{hub-" }} $writebackNs := "{{ $writebackNamespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} if hasKey $hubBootstrap "writebackNamespace" {{ "hub}}" }}{{ "{{hub-" }} $writebackNs = (printf "%v" (index $hubBootstrap "writebackNamespace")) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $mode := (index $hubBootstrap "mode" | default "{{ $defaultMode }}") {{ "hub}}" }}
             ##### teardown: EXPLICIT opt-in decommission flag — a positive flag, never inferred from config #####
             ##### absence, so a transient rendered-config read miss can never trigger a teardown. #####
@@ -606,6 +686,7 @@ spec:
             ##### BRIDGE the derived settings to the runtime side #####
             {{ "{{-" }} $mode := `{{ "{{hub" }} $mode {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $teardown := `{{ "{{hub" }} if $teardown {{ "hub}}" }}1{{ "{{hub" }} end {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $writebackNs := `{{ "{{hub" }} $writebackNs {{ "hub}}" }}` {{ "}}" }}
             ##### Collect precondition problems into $errors (no `fail`, which buries the reason under the whole #####
             ##### policy string); surfaced via the status ConfigMap + inform gate below. #####
             {{ "{{-" }} $errors := list {{ "}}" }}
@@ -626,6 +707,7 @@ spec:
             {{ "{{-" }} $eligible := list {{ "}}" }}
             {{ "{{-" }} $nsIdentities := dict {{ "}}" }}
             {{ "{{-" }} $nsScopes := dict {{ "}}" }}
+                    {{ "{{-" }} $pushScopes := dict {{ "}}" }}
             {{ "{{-" }} $expectRBAC := dict {{ "}}" }}
             {{ "{{-" }} $seenIds := dict {{ "}}" }}
             ##### On teardown, skip enumeration entirely: $eligible/$nsIdentities stay empty, so the wiring never #####
@@ -754,9 +836,36 @@ spec:
                         {{ "{{-" }} if and (ne $nm "") (not (has $nm $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $nm {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
                       {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} range $se := (dig "eso" "externalSecrets" (list) $scopeCfg) {{ "}}" }}
+                      {{ "{{-" }} $se = ($se | default dict) {{ "}}" }}
+                      {{ "{{-" }} range $d := (index $se "data" | default list) {{ "}}" }}
+                        {{ "{{-" }} $k := (dig "remoteRef" "key" "" ($d | default dict)) {{ "}}" }}
+                        {{ "{{-" }} if and (ne $k "") (not (has $k $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $k {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} range $d := (index $se "dataFrom" | default list) {{ "}}" }}
+                        {{ "{{-" }} $k := (dig "extract" "key" "" ($d | default dict)) {{ "}}" }}
+                        {{ "{{-" }} if and (ne $k "") (not (has $k $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $k {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} if and (eq (len (index $se "data" | default list)) 0) (eq (len (index $se "dataFrom" | default list)) 0) {{ "}}" }}
+                        {{ "{{-" }} $nm := (index $se "name" | default "") {{ "}}" }}
+                        {{ "{{-" }} if and (ne $nm "") (not (has $nm $scopeNames)) {{ "}}" }}{{ "{{-" }} $scopeNames = append $scopeNames $nm {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                     {{ "{{-" }} $clusterShared := (dig "eso" "hubBootstrap" "sharedNamespace" "{{ $sharedNamespace }}" $scopeCfg) {{ "}}" }}
                     {{ "{{-" }} if eq $clusterShared "" {{ "}}" }}{{ "{{-" }} $clusterShared = $tenancyNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
-                    {{ "{{-" }} $_ := set $nsScopes (printf "%s|%s|%s|%s" $tenancyNs $identity ($identity | sha256sum | trunc 10) $clusterShared) $scopeNames {{ "}}" }}
+                    {{ "{{-" }} $pushNames := list {{ "}}" }}
+                            {{ "{{-" }} range $se := (dig "eso" "pushSecrets" (list) $scopeCfg) {{ "}}" }}
+                              {{ "{{-" }} $se = ($se | default dict) {{ "}}" }}
+                              {{ "{{-" }} $rn := (index $se "remoteKey" | default "") {{ "}}" }}
+                              {{ "{{-" }} if eq $rn "" {{ "}}" }}{{ "{{-" }} $rn = (index $se "name" | default "") {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} if and (ne $rn "") (not (has $rn $pushNames)) {{ "}}" }}{{ "{{-" }} $pushNames = append $pushNames $rn {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} range $d := (index $se "data" | default list) {{ "}}" }}
+                                {{ "{{-" }} $rk := (dig "match" "remoteRef" "remoteKey" "" ($d | default dict)) {{ "}}" }}
+                                {{ "{{-" }} if and (ne $rk "") (not (has $rk $pushNames)) {{ "}}" }}{{ "{{-" }} $pushNames = append $pushNames $rk {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} $_ := set $pushScopes (printf "%s|%s|%s" $tenancyNs $identity ($identity | sha256sum | trunc 10)) $pushNames {{ "}}" }}
+                            {{ "{{-" }} $_ := set $nsScopes (printf "%s|%s|%s|%s" $tenancyNs $identity ($identity | sha256sum | trunc 10) $clusterShared) $scopeNames {{ "}}" }}
                   {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
@@ -933,6 +1042,51 @@ spec:
                 {{ "{{-" }} end {{ "}}" }}
                 {{ "{{-" }} end {{ "}}" }}
               {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} if ne $writebackNs "" {{ "}}" }}
+            {{ "{{-" }} range $pushKey, $pushNames := $pushScopes {{ "}}" }}
+              {{ "{{-" }} if gt (len $pushNames) 0 {{ "}}" }}
+              {{ "{{-" }} $pp := (splitList "|" $pushKey) {{ "}}" }}
+              {{ "{{-" }} $pIdent := (index $pp 1) {{ "}}" }}
+              {{ "{{-" }} $pSeg := (index $pp 2) {{ "}}" }}
+              {{ "{{-" }} $wbRole := (printf "%s-%s" "{{ $writebackRole }}" $pSeg) {{ "}}" }}
+              {{ "{{-" }} $_ := set $expectRBAC (printf "%s/%s" $writebackNs $wbRole) true {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: Role
+                metadata:
+                  name: {{ "{{" }} $wbRole {{ "}}" }}
+                  namespace: {{ "{{" }} $writebackNs {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-role: {{ $storePrefix }}
+                rules:
+                  - apiGroups: [""]
+                    resources: ["secrets"]
+                    verbs: ["create"]
+                  - apiGroups: [""]
+                    resources: ["secrets"]
+                    resourceNames: {{ "{{" }} $pushNames | toRawJson {{ "}}" }}
+                    verbs: ["get", "update", "patch"]
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: rbac.authorization.k8s.io/v1
+                kind: RoleBinding
+                metadata:
+                  name: {{ "{{" }} $wbRole {{ "}}" }}
+                  namespace: {{ "{{" }} $writebackNs {{ "}}" }}
+                  labels:
+                    autoshift.io/secret-reader-rolebinding: {{ $storePrefix }}
+                roleRef:
+                  apiGroup: rbac.authorization.k8s.io
+                  kind: Role
+                  name: {{ "{{" }} $wbRole {{ "}}" }}
+                subjects:
+                  - kind: User
+                    name: {{ "{{" }} $pIdent {{ "}}" }}
+                    apiGroup: rbac.authorization.k8s.io
+              {{ "{{-" }} end {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
             {{ "{{-" }} end {{ "}}" }}
             ##### TEARDOWN (explicit config.eso.hubBootstrap.teardown): unwire the hub apiserver clientCA and #####
             ##### remove the shared clientCA ConfigMap. Ordered: the APIServer pointer is emptied BEFORE the #####

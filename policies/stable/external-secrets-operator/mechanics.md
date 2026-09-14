@@ -25,8 +25,9 @@ detail — is [responsibilities.md](responsibilities.md#per-file-breakdown).*
 | `policy-eso-boot-clientca-self` (+ `-self-wire`) | `policyset-eso-boot-hub` | hubs | selfSigned mode: mint the bootstrap CA, per-cluster client certs, reader RBAC; wire `APIServer.spec.clientCA`. |
 | `policy-eso-boot-clientca-ext` | `policyset-eso-boot-hub` | hubs | External modes: materialize the external CA bundle into the clientCA ConfigMap + reader RBAC (no minting). |
 | `policy-eso-boot-serving-ca` | `policyset-eso-boot-hub` | hubs | Discover the hub apiserver's serving CA and stash it in owning-namespaces and `sharedNamespace` (`eso-shared` by default). |
-| `policy-eso-boot-store` | `policyset-eso-boot-spoke` | hubs + spokes | Copy the client cert + serving CA to the cluster and build the bootstrap `ClusterSecretStore`. |
+| `policy-eso-boot-store` | `policyset-eso-boot-spoke` | hubs + spokes | Copy the client cert + serving CA to the cluster and build the bootstrap `ClusterSecretStore`, plus `<storePrefix>-writeback` when `writebackNamespace` is set. |
 | `policy-eso-cluster-secrets` | `policyset-eso-secret-stores` | all placed clusters | `config.eso.secrets` on the landing cluster. |
+| `policy-eso-cluster-push-secrets` | `policyset-eso-secret-stores` | all placed clusters | `config.eso.pushSecrets` on the landing cluster. Children and site hubs target `hub-bootstrap-writeback`; the global hub targets Vault. |
 
 Placement is defined once per PolicySet in `templates/policysets.yaml` — policies are grouped
 by shared intent + placement, each group bound to a single Placement (hub-only groups render
@@ -160,6 +161,11 @@ Key mechanics:
   manual sequencing.
 - **Rotation is continuous.** cert-manager rotates the client cert, the serving-ca policy
   re-resolves the serving CA, and the copy policy re-copies both every evaluation.
+- **Write-back is a second store, not a second identity.** When `writebackNamespace` is set
+  (default `eso-writeback`), the same client cert and hub URL back `<storePrefix>-writeback`
+  with `remoteNamespace` equal to that namespace. Pull stays on `hub-bootstrap` /
+  `eso-shared`. Push uses the write-back store. Empty `writebackNamespace` disables the
+  extra store, the namespace, and write RBAC. See [§10](#10-push-back-spoke-to-parent-to-vault).
 
 ---
 
@@ -413,3 +419,139 @@ flowchart TB
   selectors, so explicit namespace lists only).
 - **`caSource`** — per-store delivery of a remote apiserver's serving CA: a hub ConfigMap is
   shipped into the ConfigMap the store's own `caProvider` names, so the two never drift.
+
+---
+
+## Secrets: Vault to parent to spoke
+
+*How-to: [Create Secrets](README.md#create-secrets-configesosecrets).
+Keys: [`config.eso.secrets[]`](config-reference.md#configesosecrets).*
+
+`config.eso.secrets` is the list of Secrets **this cluster** should have.
+`policy-eso-cluster-secrets` emits one `ExternalSecret` per entry. The global hub pulls
+from Vault into `eso-shared`. Site hubs and spokes pull that copy through `hub-bootstrap`.
+List the name on every hop. Nothing fans down on its own.
+
+```mermaid
+flowchart LR
+  Vault[(Vault)]
+  subgraph globalHub[global hub]
+    direction TB
+    gES["ExternalSecret<br/>config.eso.secrets"]
+    gSec["Secret in eso-shared"]
+    gES --> gSec
+  end
+  subgraph siteHub[site hub]
+    direction TB
+    sES["ExternalSecret<br/>config.eso.secrets"]
+    sSec["Secret in eso-shared"]
+    sES --> sSec
+  end
+  subgraph spoke[spoke]
+    direction TB
+    pES["ExternalSecret<br/>config.eso.secrets"]
+    pSec["Secret in the app namespace"]
+    pES --> pSec
+  end
+  Vault -->|"storeRef: eso-vault"| gES
+  gSec -->|"storeRef: hub-bootstrap"| sES
+  sSec -->|"storeRef: hub-bootstrap"| pES
+```
+
+Spoke and site hub `storeRef` is `hub-bootstrap`. Only the global hub points at a Vault
+store. Omit `namespace` to land in `eso-shared` so children can `list` it. Set `namespace`
+on a spoke to the workload namespace, and add that name to `consumerNamespaces`.
+
+---
+
+## 10. Push-back: spoke to parent to Vault
+
+*How-to and paste-ready hops: [Create a source Secret and push it](README.md#create-a-source-secret-and-push-it-configesopushsecrets).
+Keys: [`config.eso.pushSecrets[]`](config-reference.md#configesopushsecrets).*
+
+Pull (`config.eso.secrets`) copies a value **onto** a cluster. Push-back publishes a
+Secret that **already exists** on that cluster. AutoShift never creates the payload. Another
+policy, an operator, or an out-of-band process must create the source Secret first.
+`policy-eso-cluster-push-secrets` only emits a `PushSecret` (and the namespace if it is
+missing).
+
+**`hub-bootstrap-writeback` is a second store, not a second identity.**
+`policy-eso-boot-store` emits `<storePrefix>-writeback` (default `hub-bootstrap-writeback`)
+next to `hub-bootstrap`. Same client cert, hub URL, and serving CA. The read store's
+`remoteNamespace` is `eso-shared`. The write-back store's `remoteNamespace` is
+`eso-writeback`. Children `list` the former and cannot `list` the latter. Empty
+`writebackNamespace` disables the extra store, the namespace, and write RBAC.
+
+```mermaid
+flowchart LR
+  subgraph child[child cluster]
+    HB["hub-bootstrap"]
+    HBW["hub-bootstrap-writeback"]
+  end
+  subgraph parent[parent hub]
+    Shared["eso-shared"]
+    WB["eso-writeback"]
+  end
+  HB -->|"read"| Shared
+  HBW -->|"write"| WB
+```
+
+Hub-of-hubs is three explicit hops. There is no automatic fan-up. A site hub that must
+re-publish a spoke token lists that name. The global hub lists it again to write Vault.
+
+```mermaid
+flowchart LR
+  subgraph spoke[spoke]
+    direction TB
+    src["source Secret<br/>already exists"]
+    pPS["PushSecret<br/>config.eso.pushSecrets"]
+    src --> pPS
+  end
+  subgraph siteHub[site hub]
+    direction TB
+    sSec["Secret in eso-writeback"]
+    sPS["PushSecret<br/>config.eso.pushSecrets"]
+    sSec --> sPS
+  end
+  subgraph globalHub[global hub]
+    direction TB
+    gSec["Secret in eso-writeback"]
+    gPS["PushSecret<br/>config.eso.pushSecrets"]
+    gSec --> gPS
+  end
+  Vault[(Vault)]
+  pPS -->|"storeRef: hub-bootstrap-writeback"| sSec
+  sPS -->|"storeRef: hub-bootstrap-writeback"| gSec
+  gPS -->|"storeRef: eso-vault"| Vault
+```
+
+Spoke and site hub `storeRef` is `hub-bootstrap-writeback`. Only the global hub points at a
+Vault store. Pointing a child at `hub-bootstrap` writes `eso-shared` (or is Forbidden).
+Pointing a child at Vault fails: those clusters have no Vault auth.
+
+**Same cert, different RBAC.** The write-back store reuses the hub-bootstrap client cert,
+URL, and serving CA. Isolation is the namespace and the parent Role, not a second
+credential. Children do not get `list` on `eso-writeback`. Each child Role is `create` on
+Secrets (Kubernetes cannot name-scope `create`) plus `get` / `update` / `patch` on the
+`remoteKey` (or `name`) values collected from that child's `config.eso.pushSecrets`. Git is
+the ACL. Unique `remoteKey` values keep siblings from colliding.
+
+**`remoteKey` when `data` is omitted.** The policy emits a whole-secret `match` whose
+`remoteRef.remoteKey` is the entry's `remoteKey` (default `name`). Without that block, ESO
+names the remote Secret after the **source**, which is wrong when the producer set
+`remoteKey: spoke-app-sa-token` for source `app-sa-token`.
+
+**ACM versus ESO.** Red Hat Advanced Cluster Management keeps the `PushSecret` object
+present. External Secrets Operator copies bytes on `refreshInterval` (chart default `1h`)
+with `updatePolicy: Replace`. A rotated token moves on the next refresh of each hop.
+`deletionPolicy: None`: pruning the `PushSecret` does not delete the parent Secret or the
+Vault path.
+
+**Standing copies.** The payload exists on the producer, then in each parent's
+`eso-writeback`, then in Vault. Cluster-admin on a site hub can read spoke tokens. Empty
+`writebackNamespace` turns the whole path off.
+
+**Store conditions.** The write-back store allows the operand namespace and
+`writebackNamespace`. `consumerNamespaces` applies to the **read** store only, and it is a
+list of namespace name strings (`- app-ns`), not maps. A Vault store on the global hub that
+sets `spec.conditions` must include `eso-writeback`.

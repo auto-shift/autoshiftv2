@@ -38,8 +38,8 @@ clusters:
       trident:
         storage:
           - backendName:        # Name for the Trident backend
-            secretName:         # Name of the secret containing SVM credentials
-            secretNamespace:    # Namespace where the secret lives
+            secretName:         # Secret name: hub-bootstrap remoteRef.key and the target in namespace trident
+            svmLif:             # SVM NVMe/TCP data LIF IP address
             svmLif:             # SVM NVMe/TCP data LIF IP address
             storageClassName:   # Name of the StorageClass to create
             defaultStorageClass: # Set to "true" to make this the default StorageClass
@@ -55,23 +55,24 @@ The `authMethod` field in each storage backend entry controls how Trident authen
 
 ### `password` (default)
 
-The policy will copy `username` and `password` from a secret you pre-create on the **hub cluster**. The secret must exist in the namespace specified by `secretNamespace` and be named to match `secretName` before the policy runs. These credentials will be the credentials you use to reach the management LIF. The policy reads those values from the hub and propagates them as a new secret into the `trident` namespace on the managed cluster.
+The policy does not copy credentials through a hub template. On every cluster it lands on (hub or spoke) it creates an `ExternalSecret` in namespace `trident` that pulls the whole remote object through ClusterSecretStore `hub-bootstrap` (`dataFrom.extract`, `key: secretName`). ESO writes the Kubernetes Secret that `TridentBackendConfig` references.
+
+The Secret must already exist on the **parent hub** in the bootstrap store `remoteNamespace` (chart default `eso-shared`) under that same name. Land it there with `config.eso.secrets` on the parent hub, or seed it by hand. Set `secretStoreRef` on the storage entry only to use a store other than `hub-bootstrap`.
 
 ```yaml
 - backendName: <tbc-name>
-  secretName: <name-of-secret-on-hub>
-  secretNamespace: <namespace-where-secret-lives-on-hub>   # namespace on the hub where your secret lives
+  secretName: trident-svm    # name on the parent hub, and the Secret name in trident
   authMethod: password
 ```
 
-The secret on the hub must have the following keys:
+The Secret on the parent hub must have the following keys:
 
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: my-svm-secret
-  namespace: my-hub-namespace
+  name: trident-svm
+  namespace: eso-shared   # hub-bootstrap remoteNamespace; do not set this in trident config
 type: Opaque
 stringData:
   username: <svm-username>
@@ -80,7 +81,7 @@ stringData:
 
 ### `cert` / `certs`
 
-When using certificate-based authentication, the policy pulls the private key directly from the `api-tls` secret in the `openshift-config` namespace on the managed cluster. **This means a valid `api-tls` secret must already exist in `openshift-config`** — this is typically the cluster's API TLS certificate and is present on any standard OpenShift cluster.
+When using certificate-based authentication, the policy pulls the private key from the `api-tls` Secret in `openshift-config` **on the managed cluster** (spoke `fromSecret`, not a hub copy).
 
 
 ```yaml

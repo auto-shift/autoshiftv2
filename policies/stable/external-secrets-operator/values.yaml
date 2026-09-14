@@ -115,9 +115,15 @@ externalSecretsOperator:
     # Anything that must reach exactly one cluster stays in the policy namespace behind a
     # resourceNames grant. Per-cluster override: config.eso.hubBootstrap.sharedNamespace.
     sharedNamespace: eso-shared
-    # Namespaces on the CHILD that may reference the hub-bootstrap ClusterSecretStore, plus
-    # the operand namespace, sharedNamespace, and config.defaultSecretsNamespace. Per-cluster
-    # override: config.eso.hubBootstrap.consumerNamespaces.
+    # Namespace on the propagating hub that children WRITE into via PushSecret (config.eso.pushSecrets).
+    # Separate from sharedNamespace so siblings cannot list tokens they did not publish. Empty
+    # disables the write-back store, the namespace, and write RBAC. Runtime override:
+    # config.eso.hubBootstrap.writebackNamespace.
+    writebackNamespace: eso-writeback
+    # Namespaces on the CHILD that may reference the hub-bootstrap ClusterSecretStore (the
+    # READ store), plus the operand namespace, sharedNamespace, and config.defaultSecretsNamespace.
+    # List of namespace name strings (- app-ns), not maps (- name: app-ns). Not copied onto
+    # hub-bootstrap-writeback. Per-cluster override: config.eso.hubBootstrap.consumerNamespaces.
     consumerNamespaces: []
     # Optional label selector (OR with the namespace list) for the same allow-list.
     # Per-cluster override: config.eso.hubBootstrap.consumerNamespaceSelector.

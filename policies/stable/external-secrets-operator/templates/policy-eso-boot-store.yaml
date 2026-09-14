@@ -62,6 +62,7 @@
        (historical); a curated fan-out namespace is what makes broad child access safe.
        Runtime override: config.eso.hubBootstrap.sharedNamespace. */ -}}
 {{- $sharedNamespace := (dig "hubBootstrap" "sharedNamespace" "" $.Values.externalSecretsOperator | default $policyNamespace) }}
+{{- $writebackNamespace := (dig "hubBootstrap" "writebackNamespace" "eso-writeback" $.Values.externalSecretsOperator) }}
 {{- $eso := $.Values.externalSecretsOperator }}
 {{- $hb := (default (dict) $eso.hubBootstrap) }}
 {{- $defaultConsumerNs := (dig "consumerNamespaces" (list) $hb) }}
@@ -191,6 +192,8 @@ spec:
                     {{ "{{hub-" }} $storeName := (index $hubBootstrap "storeName" | default "{{ $storePrefix }}") {{ "hub}}" }}
                     {{ "{{hub-" }} $sharedNs := (index $hubBootstrap "sharedNamespace" | default "{{ $sharedNamespace }}") {{ "hub}}" }}
                     {{ "{{hub-" }} if eq $sharedNs "" {{ "hub}}" }}{{ "{{hub-" }} $sharedNs = "{{ $policyNamespace }}" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} $writebackNs := "{{ $writebackNamespace }}" {{ "hub}}" }}
+                    {{ "{{hub-" }} if hasKey $hubBootstrap "writebackNamespace" {{ "hub}}" }}{{ "{{hub-" }} $writebackNs = (printf "%v" (index $hubBootstrap "writebackNamespace")) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} $consumerNs := (index $hubBootstrap "consumerNamespaces" | default (`{{ $defaultConsumerNs | toJson }}` | fromJson)) {{ "hub}}" }}
                     {{ "{{hub-" }} $consumerSel := (index $hubBootstrap "consumerNamespaceSelector" | default (`{{ $defaultConsumerSel | toJson }}` | fromJson)) {{ "hub}}" }}
                     {{ "{{hub-" }} $dsn := (index $clusterConfig "defaultSecretsNamespace" | default "") {{ "hub}}" }}
@@ -302,6 +305,7 @@ spec:
                     {{ "{{-" }} $hubServer := `{{ "{{hub" }} $hubServer {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $sharedNs := `{{ "{{hub" }} $sharedNs {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $writebackNs := `{{ "{{hub" }} $writebackNs {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $consumerNs := `{{ "{{hub" }} $consumerNs | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
                     {{ "{{-" }} $consumerSel := `{{ "{{hub" }} $consumerSel | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
                     {{ "{{-" }} $dsn := `{{ "{{hub" }} $dsn {{ "hub}}" }}` {{ "}}" }}
@@ -329,6 +333,12 @@ spec:
                         kind: ClusterSecretStore
                         metadata:
                           name: {{ "{{" }} $storeName {{ "}}" }}
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: external-secrets.io/v1
+                        kind: ClusterSecretStore
+                        metadata:
+                          name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
                     - complianceType: mustnothave
                       objectDefinition:
                         apiVersion: v1
@@ -559,6 +569,48 @@ spec:
                                     name: {{ $clientSecret }}
                                     namespace: {{ $esoNamespace }}
                                     key: tls.key
+                      ##### Write-back store: same cert and hub URL, remoteNamespace is the parent's #####
+                      ##### write-back ns. Empty writebackNs disables it (mustnothave the leftover). #####
+                      {{ "{{-" }} if ne $writebackNs "" {{ "}}" }}
+                    - complianceType: musthave
+                      objectDefinition:
+                        apiVersion: external-secrets.io/v1
+                        kind: ClusterSecretStore
+                        metadata:
+                          name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
+                        spec:
+                          conditions:
+                            - namespaces:
+                                - {{ $esoNamespace }}
+                                - {{ "{{" }} $writebackNs {{ "}}" }}
+                          provider:
+                            kubernetes:
+                              server:
+                                url: {{ "{{" }} $hubServer {{ "}}" }}
+                                caProvider:
+                                  type: ConfigMap
+                                  name: {{ $servingCAConfigMap }}
+                                  key: ca.crt
+                                  namespace: {{ $esoNamespace }}
+                              remoteNamespace: {{ "{{" }} $writebackNs {{ "}}" }}
+                              auth:
+                                cert:
+                                  clientCert:
+                                    name: {{ $clientSecret }}
+                                    namespace: {{ $esoNamespace }}
+                                    key: tls.crt
+                                  clientKey:
+                                    name: {{ $clientSecret }}
+                                    namespace: {{ $esoNamespace }}
+                                    key: tls.key
+                      {{ "{{-" }} else {{ "}}" }}
+                    - complianceType: mustnothave
+                      objectDefinition:
+                        apiVersion: external-secrets.io/v1
+                        kind: ClusterSecretStore
+                        metadata:
+                          name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
                       ##### Consumers create their own ExternalSecrets referencing this store ($storeName, #####
                       ##### kind ClusterSecretStore) — this policy provisions ONLY the store + its auth. #####
                       {{ "{{-" }} end {{ "}}" }}
@@ -628,6 +680,8 @@ spec:
             {{ "{{hub-" }} $storeName := (index $hubBootstrap "storeName" | default "{{ $storePrefix }}") {{ "hub}}" }}
             {{ "{{hub-" }} $sharedNs := (index $hubBootstrap "sharedNamespace" | default "{{ $sharedNamespace }}") {{ "hub}}" }}
             {{ "{{hub-" }} if eq $sharedNs "" {{ "hub}}" }}{{ "{{hub-" }} $sharedNs = "{{ $policyNamespace }}" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $writebackNs := "{{ $writebackNamespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} if hasKey $hubBootstrap "writebackNamespace" {{ "hub}}" }}{{ "{{hub-" }} $writebackNs = (printf "%v" (index $hubBootstrap "writebackNamespace")) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $consumerNs := (index $hubBootstrap "consumerNamespaces" | default (`{{ $defaultConsumerNs | toJson }}` | fromJson)) {{ "hub}}" }}
             {{ "{{hub-" }} $consumerSel := (index $hubBootstrap "consumerNamespaceSelector" | default (`{{ $defaultConsumerSel | toJson }}` | fromJson)) {{ "hub}}" }}
             {{ "{{hub-" }} $dsn := (index $clusterConfig "defaultSecretsNamespace" | default "") {{ "hub}}" }}
@@ -739,6 +793,7 @@ spec:
             {{ "{{-" }} $hubServer := `{{ "{{hub" }} $hubServer {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $sharedNs := `{{ "{{hub" }} $sharedNs {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $writebackNs := `{{ "{{hub" }} $writebackNs {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $consumerNs := `{{ "{{hub" }} $consumerNs | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
             {{ "{{-" }} $consumerSel := `{{ "{{hub" }} $consumerSel | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
             {{ "{{-" }} $dsn := `{{ "{{hub" }} $dsn {{ "hub}}" }}` {{ "}}" }}
@@ -766,6 +821,12 @@ spec:
                 kind: ClusterSecretStore
                 metadata:
                   name: {{ "{{" }} $storeName {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: external-secrets.io/v1
+                kind: ClusterSecretStore
+                metadata:
+                  name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
             - complianceType: mustnothave
               objectDefinition:
                 apiVersion: v1
@@ -996,6 +1057,46 @@ spec:
                             name: {{ $clientSecret }}
                             namespace: {{ $esoNamespace }}
                             key: tls.key
+              {{ "{{-" }} if ne $writebackNs "" {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: external-secrets.io/v1
+                kind: ClusterSecretStore
+                metadata:
+                  name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
+                spec:
+                  conditions:
+                    - namespaces:
+                        - {{ $esoNamespace }}
+                        - {{ "{{" }} $writebackNs {{ "}}" }}
+                  provider:
+                    kubernetes:
+                      server:
+                        url: {{ "{{" }} $hubServer {{ "}}" }}
+                        caProvider:
+                          type: ConfigMap
+                          name: {{ $servingCAConfigMap }}
+                          key: ca.crt
+                          namespace: {{ $esoNamespace }}
+                      remoteNamespace: {{ "{{" }} $writebackNs {{ "}}" }}
+                      auth:
+                        cert:
+                          clientCert:
+                            name: {{ $clientSecret }}
+                            namespace: {{ $esoNamespace }}
+                            key: tls.crt
+                          clientKey:
+                            name: {{ $clientSecret }}
+                            namespace: {{ $esoNamespace }}
+                            key: tls.key
+              {{ "{{-" }} else {{ "}}" }}
+            - complianceType: mustnothave
+              objectDefinition:
+                apiVersion: external-secrets.io/v1
+                kind: ClusterSecretStore
+                metadata:
+                  name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
+              {{ "{{-" }} end {{ "}}" }}
               ##### Consumers create their own ExternalSecrets referencing this store ($storeName, #####
               ##### kind ClusterSecretStore) — this policy provisions ONLY the store + its auth. #####
               {{ "{{-" }} end {{ "}}" }}

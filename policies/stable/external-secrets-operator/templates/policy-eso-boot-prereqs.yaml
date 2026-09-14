@@ -29,6 +29,7 @@
 {{- /* Curated fan-out namespace the bootstrap store reads. Empty = the policy namespace, in which
        case there is nothing extra to create. Runtime override: config.eso.hubBootstrap.sharedNamespace. */ -}}
 {{- $sharedNamespace := (dig "hubBootstrap" "sharedNamespace" "" $.Values.externalSecretsOperator | default $policyNamespace) }}
+{{- $writebackNamespace := (dig "hubBootstrap" "writebackNamespace" "eso-writeback" $.Values.externalSecretsOperator) }}
 {{- $eso := $.Values.externalSecretsOperator }}
 {{- $rbac := (dig "bootPrereqs" "rbac" (list) $eso) }}
 {{- /* Validate the chart-baked grants at render time (fail fast). Rendered-config overrides bypass
@@ -97,6 +98,21 @@ spec:
                   labels:
                     autoshift.io/createdByAutoshift: "true"
                     autoshift.io/eso-shared-namespace: "true"
+            {{ "{{hub-" }} end {{ "hub}}" }}
+            ##### Write-back namespace children PushSecret into. Empty disables. Skipped when it IS #####
+            ##### the policy namespace (owned by policy-foundation). #####
+            {{ "{{hub-" }} $writebackNs := "{{ $writebackNamespace }}" {{ "hub}}" }}
+            {{ "{{hub-" }} if hasKey (dig "eso" "hubBootstrap" (dict) $clusterConfig) "writebackNamespace" {{ "hub}}" }}{{ "{{hub-" }} $writebackNs = (printf "%v" (dig "eso" "hubBootstrap" "writebackNamespace" "" $clusterConfig)) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if and (ne $writebackNs "") (ne $writebackNs "{{ $policyNamespace }}") {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} $writebackNs {{ "hub}}" }}
+                  labels:
+                    autoshift.io/createdByAutoshift: "true"
+                    autoshift.io/eso-writeback-namespace: "true"
             {{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $grants := (dig "eso" "bootPrereqs" "rbac" $baked.rbac $clusterConfig) {{ "hub}}" }}
             {{ "{{hub-" }} range $grant := $grants {{ "hub}}" }}

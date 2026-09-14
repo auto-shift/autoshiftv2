@@ -65,7 +65,8 @@ chart-only) can be overridden per deployment/cluster under `config.eso.hubBootst
 | `deriveHubUrl` | bool | `false` | If true AND `hubServer` is empty, the copy policy looks the hub apiserver URL up itself (hub-template lookup of the `apiserverurl.openshift.io` ClusterClaim on the **immediate propagating hub**). Prefer this over a static `hubServer` in multi-hop (global-hub → spoke-hub → leaf) topologies — each cluster resolves the hub that minted its cert. Runtime override: `config.eso.hubBootstrap.deriveHubUrl`. |
 | `storePrefix` | string | `hub-bootstrap` | Names everything the bootstrap mints/copies: store (default), `<prefix>-client` Secret, `<prefix>-hub-ca` ConfigMap, `<prefix>-reader` Role, `<prefix>-ca` / issuers, `<prefix>-client-ca` ConfigMap. Chart-only (the spoke store *name* alone can be overridden at runtime via `config.eso.hubBootstrap.storeName`). |
 | `sharedNamespace` | string | `eso-shared` | Namespace on the propagating hub that the bootstrap store READS, and that children get `get`/`list`/`watch` on. Default `eso-shared` is a curated fan-out namespace. Empty rolls back to the policy namespace (historical; that namespace also holds client keys and install credentials). Policy-namespace `resourceNames` grants are the opt-in for material that must reach exactly one cluster. Runtime override: `config.eso.hubBootstrap.sharedNamespace`. |
-| `consumerNamespaces` | list(string) | `[]` | Extra namespaces on the child that may reference the hub-bootstrap ClusterSecretStore. The operand namespace, `sharedNamespace`, and `config.defaultSecretsNamespace` are always allowed. Runtime override: `config.eso.hubBootstrap.consumerNamespaces`. |
+| `writebackNamespace` | string | `eso-writeback` | Namespace on the propagating hub that children WRITE into via `config.eso.pushSecrets`. Separate from `sharedNamespace` so siblings cannot `list` those tokens. Empty disables the write-back store, the namespace, and write RBAC. Runtime override: `config.eso.hubBootstrap.writebackNamespace`. |
+| `consumerNamespaces` | list(string) | `[]` | Extra namespaces on the child that may reference the **read** hub-bootstrap ClusterSecretStore. Write a list of name strings (`- app-ns`), never maps (`- name: app-ns`): a map list fails hub templating on `policy-eso-boot-store` with `failed to resolve the template`. Not copied onto `hub-bootstrap-writeback`. The operand namespace, `sharedNamespace`, and `config.defaultSecretsNamespace` are always allowed. Runtime override: `config.eso.hubBootstrap.consumerNamespaces`. |
 | `consumerNamespaceSelector` | map | `{}` | Optional label selector (OR with the namespace list) for the same allow-list. Runtime override: `config.eso.hubBootstrap.consumerNamespaceSelector`. |
 | `clientCAConfigMap` | string | `''` → `<storePrefix>-client-ca` | Name of the `openshift-config` ConfigMap `APIServer.spec.clientCA` points at. Chart-only. |
 | `authSecretRefreshInterval` | duration | `1h` | Default `refreshInterval` for the store-auth ExternalSecrets `policy-eso-secret-stores` emits (credential pulls through the bootstrap store). Per-store override: `secretStores[].authSecretConfig.refreshInterval`. Chart-only. |
@@ -189,14 +190,25 @@ values files (per-cluster files may override). Everything here is evaluated **pe
 |---|---|---|---|
 | `pruneRemovedStores` | bool | chart `pruneRemovedStores` (`true`) | Deployment-wide prune default for removed store entries. Baked as the `autoshift.io/eso-prune` label at emission time. Per-store override below. |
 | `secretStores` | list(map) | `[]` | The store list — see next section. |
-| `secrets` | list(map) | `[]` | Secrets this cluster consumes. `storeRef` names the provider. See `config.eso.secrets[]` below. |
+| `secrets` | list(map) | `[]` | Secrets this cluster should have. `storeRef` names the provider. See `config.eso.secrets[]` below. |
+| `externalSecrets` | list(map) | `[]` | Alias of `secrets`. The renderer concatenates both lists; do not declare the same name in both. |
+| `pushSecrets` | list(map) | `[]` | Secrets this cluster pushes. See `config.eso.pushSecrets[]` below. |
 | `externalSecretsConfig` | map | unset | Per-cluster `ExternalSecretsConfig` CR **spec** overlay — highest-precedence layer, deep-merged over the chart's `externalSecretsConfig` overlay and the `config*` defaults (this overlay wins; lists replaced wholesale). Zero values (`0`/`false`/`""`) here cannot override a non-zero chart default — set those at chart level. See README *ExternalSecretsConfig passthrough*. |
 | `hubBootstrap` | map | unset | Cluster→cluster bootstrap config — see below. Present ⇒ the boot policies provision the store; **absent ⇒ no-op** (removal never tears anything down; use `teardown: true`). |
 
 ### `config.eso.secrets[]`
 
-Rendered by `policy-eso-cluster-secrets` on whichever cluster the config lands on. `storeRef`
-names the provider (Vault, hub-bootstrap, or any other store).
+*How-to: [Create Secrets](README.md#create-secrets-configesosecrets).
+Paste-ready hops: [quickstart Step 4](quickstart.md#step-4--list-secrets-to-create-on-each-cluster).*
+
+Rendered by `policy-eso-cluster-secrets` on whichever cluster the config lands on. This is
+the list of Secrets **this cluster** should have. `storeRef` names the provider (Vault on
+the global hub, `hub-bootstrap` on site and spoke, or any other store).
+`config.eso.externalSecrets[]` is an alias of this list; the renderer concatenates both.
+
+List each name on every hop that must hold a copy. Omit `namespace` to land in `eso-shared`
+so children can `list` it. Set `namespace` on a spoke to the workload namespace, and add
+that name to `hubBootstrap.consumerNamespaces` (list of strings).
 
 `data`, `dataFrom` and `target` pass through to ESO verbatim; only the fields below are
 interpreted. A malformed entry is reported in `eso-cluster-secrets-status` and skipped.
@@ -215,6 +227,54 @@ interpreted. A malformed entry is reported in `eso-cluster-secrets-status` and s
 
 hub-bootstrap reads `eso-shared`. Children have list and get there by default. Policy-namespace
 keys need a declared `resourceNames` grant and are not visible through hub-bootstrap.
+
+### `config.eso.pushSecrets[]`
+
+*How-to: [Create a source Secret and push it](README.md#create-a-source-secret-and-push-it-configesopushsecrets).
+Mechanism: [push-back](mechanics.md#10-push-back-spoke-to-parent-to-vault).*
+
+Rendered by `policy-eso-cluster-push-secrets`. This list never creates the payload. The
+source Secret must already exist in `namespace` (another policy, an operator, or an
+out-of-band process). The policy creates the namespace if it is missing, then a
+`PushSecret` whose `selector.secret.name` is `name`.
+
+Children and site hubs set `storeRef` to `hub-bootstrap-writeback`. That is a second
+`ClusterSecretStore` on the child (`<storePrefix>-writeback`), same cert as `hub-bootstrap`,
+`remoteNamespace` = the parent `writebackNamespace` (`eso-writeback`). `hub-bootstrap` reads
+`eso-shared`. Only the global hub sets `storeRef` to a Vault store. Each hop is
+explicit: a site hub re-lists names that arrived from spokes. Do not point a child at
+`hub-bootstrap` (that store reads `eso-shared`) or at Vault (no Vault auth on site or
+spoke).
+
+`create` on Secrets cannot use `resourceNames`. The parent grants `create` plus
+`get`/`update`/`patch` on the collected `remoteKey` (or `name`) values. Use unique
+destination names across siblings. Git is the ACL.
+
+When `data` is omitted the policy emits a whole-secret `match` with
+`remoteRef.remoteKey` set to `remoteKey` (default `name`). That is required: without it
+ESO names the remote Secret after the source. If you set `data` yourself it is
+PushSecret `spec.data` verbatim; the top-level `remoteKey` is still collected for RBAC.
+
+`updatePolicy` is always `Replace`. `deletionPolicy` is always `None`: `prune` deletes
+the `PushSecret` object, not the parent Secret or the Vault path.
+
+A Vault store used on the global hub must allow `writebackNamespace` in `spec.conditions`
+when that store sets conditions. The write-back store itself allows the operand namespace
+and `writebackNamespace` only. `consumerNamespaces` is not copied onto it.
+
+A missing `name` or `storeRef.name` is reported in `eso-cluster-push-secrets-status` and
+that entry is skipped.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | required | Source Secret name on this cluster, and the PushSecret name. |
+| `namespace` | string | `hubBootstrap.writebackNamespace` (`eso-writeback`) | Namespace of the source Secret and the PushSecret. Created if missing. The Secret is not. |
+| `storeRef.name` | string | required | A store on this cluster. `secretStoreRef` (string) is accepted as an alias. |
+| `storeRef.kind` | string | `ClusterSecretStore` | `ClusterSecretStore` or `SecretStore`. |
+| `remoteKey` | string | `name` | Destination name in the remote store (parent Secret name, or Vault path under the store `path`). Collected for parent write RBAC. When `data` is omitted, emitted as `match.remoteRef.remoteKey`. |
+| `refreshInterval` | duration | `1h` | ESO re-push cadence. ACM only keeps the `PushSecret` object present. |
+| `data` | list(map) | unset | Per-key `match` entries, verbatim PushSecret. Omit to push every key under `remoteKey`. |
+| `prune` | bool | `config.eso.pruneRemovedStores` | Delete the `PushSecret` if the entry is later removed. Does not delete the remote Secret or Vault path. |
 
 ### `config.eso.secretStores[]` — list item wrapper
 
@@ -307,7 +367,8 @@ key for key. Only the keys below differ from or add to the chart surface:
 | `deriveHubUrl` | bool | chart `deriveHubUrl` (`false`) | Look the hub URL up via ClusterClaim when `hubServer` is empty. |
 | `storeName` | string | chart `storePrefix` (`hub-bootstrap`) | **Runtime-only.** Name of the ClusterSecretStore created on the spoke — the name consumers put in `secretStoreRef`. All *other* minted-object names still derive from the chart `storePrefix`. |
 | `sharedNamespace` | string | chart `hubBootstrap.sharedNamespace` (`eso-shared`) | Per-cluster override of the fan-out namespace the bootstrap store reads. Empty rolls back to the policy namespace. |
-| `consumerNamespaces` | list(string) | chart `consumerNamespaces` | Extra child namespaces allowed to reference hub-bootstrap. |
+| `writebackNamespace` | string | chart `hubBootstrap.writebackNamespace` (`eso-writeback`) | Per-cluster override of the namespace children write into. Empty disables the write-back store, the namespace, and write RBAC. |
+| `consumerNamespaces` | list(string) | chart `consumerNamespaces` | Extra child namespaces allowed to reference the **read** hub-bootstrap store. List of name strings (`- app-ns`), not maps. |
 | `consumerNamespaceSelector` | map | chart `consumerNamespaceSelector` | Optional label selector (OR with the namespace list). |
 | `mode` | string | chart `mode` (`selfSigned`) | Trust mode: `selfSigned` \| `externalCA` \| `externalCAReuseServingCert`. |
 | `teardown` | bool | chart `teardown` (`false`) | Explicit decommission flag — see §1 and README → Decommissioning. |

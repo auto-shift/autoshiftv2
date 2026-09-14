@@ -1210,7 +1210,7 @@ config:
   username). The client cert and the remote apiserver's `spec.clientCA` trust are provisioned
   separately (out of band, or via the hub-bootstrap flow).
 
-## Secrets this cluster consumes (`config.eso.secrets`)
+## Create Secrets (`config.eso.secrets`)
 
 *Key tables: [`config.eso.secrets[]`](config-reference.md#configesosecrets) in config-reference.md.*
 
@@ -1225,31 +1225,97 @@ config:
 >
 > Use `config.eso.secrets` for secrets that belong to **no** component, and for the
 > hub-to-spoke hop (`storeRef: eso-vault` on the global hub, `storeRef: hub-bootstrap` on
-> site and spoke).
+> site and spoke). To publish a Secret that
+> already exists on a cluster, use
+> [`config.eso.pushSecrets`](#create-a-source-secret-and-push-it-configesopushsecrets).
 
 `secretStores` above provisions stores and the credentials those stores authenticate with. This is
 data pulled **through** them. `policy-eso-cluster-secrets` renders each entry into an ExternalSecret
-on whichever cluster the config lands on.
+on whichever cluster the config lands on. List the name on **every** cluster type that should hold
+a copy. A site hub does not fan Vault keys down on its own.
+
+| Cluster | `storeRef.name` | Namespace (omit = `eso-shared`) | Result |
+|---|---|---|---|
+| Global hub | a Vault store (`eso-vault`) | Omit so children can `list` it | Secret in `eso-shared` from Vault |
+| Site hub | `hub-bootstrap` | Omit so *its* spokes can `list` it | Secret in `eso-shared` from the parent |
+| Spoke | `hub-bootstrap` | App namespace, or omit for `eso-shared` | Secret on this cluster from the parent |
+
+Do not point a spoke or site hub at Vault. Do not put install credentials in `eso-shared`.
+
+```mermaid
+flowchart LR
+  Vault[(Vault)]
+  subgraph globalHub[global hub]
+    direction TB
+    gES["ExternalSecret<br/>config.eso.secrets"]
+    gSec["Secret in eso-shared"]
+    gES --> gSec
+  end
+  subgraph siteHub[site hub]
+    direction TB
+    sES["ExternalSecret<br/>config.eso.secrets"]
+    sSec["Secret in eso-shared"]
+    sES --> sSec
+  end
+  subgraph spoke[spoke]
+    direction TB
+    pES["ExternalSecret<br/>config.eso.secrets"]
+    pSec["Secret in the app namespace"]
+    pES --> pSec
+  end
+  Vault -->|"storeRef: eso-vault"| gES
+  gSec -->|"storeRef: hub-bootstrap"| sES
+  sSec -->|"storeRef: hub-bootstrap"| pES
+```
+
+Each hop is an `ExternalSecret` on **that** cluster, from that cluster's `config.eso.secrets`
+list. The parent Secret in `eso-shared` is what `hub-bootstrap` reads.
 
 ```yaml
+# Global hub: pull from Vault into eso-shared (namespace omitted).
 config:
   eso:
     secrets:
       - name: demo-app-creds
-        namespace: app-secrets            # where the Secret lands on THIS cluster
         storeRef:
-          name: hub-bootstrap             # any store that exists on this cluster
+          name: eso-vault
           kind: ClusterSecretStore
         refreshInterval: 1h
-        data:
-          - secretKey: password
-            remoteRef:
-              key: demo-app-creds         # the Secret's name in the store's remoteNamespace
-              property: password
+        dataFrom:
+          - extract:
+              key: demo-app-creds         # key in the Vault store
+```
+
+```yaml
+# Site hub: re-create the parent's eso-shared copy.
+# Omit data/dataFrom to extract the whole Secret named `name`.
+config:
+  eso:
+    secrets:
+      - name: demo-app-creds
+        storeRef:
+          name: hub-bootstrap
+          kind: ClusterSecretStore
+```
+
+```yaml
+# Spoke: land the Secret where the workload reads it.
+config:
+  eso:
+    hubBootstrap:
+      consumerNamespaces:
+        - app-secrets                 # list of strings, not maps
+    secrets:
+      - name: demo-app-creds
+        namespace: app-secrets        # where the Secret lands on THIS cluster
+        storeRef:
+          name: hub-bootstrap
+          kind: ClusterSecretStore
 ```
 
 `data`, `dataFrom` and `target` pass through to ESO verbatim, so anything the installed ESO accepts
-works. `target` defaults to the entry's own name with `creationPolicy: Owner`.
+works. `target` defaults to the entry's own name with `creationPolicy: Owner`. If both `data` and
+`dataFrom` are omitted, a whole-secret extract of `name` is used.
 
 Validation reports rather than fails. A missing `name`, `namespace` or `storeRef.name`, neither or
 both of `data`/`dataFrom`, or a duplicate namespace and name is collected into the
@@ -1270,6 +1336,202 @@ never denied by its own RBAC. Two things follow from how that grant works:
 - What a cluster may read depends on which namespace the secret is in. See `sharedNamespace` below:
   material meant for every child belongs in the curated fan-out namespace, and anything that must
   reach exactly one cluster stays in the policy namespace.
+
+## Create a source Secret and push it (`config.eso.pushSecrets`)
+
+*Key tables: [`config.eso.pushSecrets[]`](config-reference.md#configesopushsecrets) in
+config-reference.md. Mechanism: [push-back](mechanics.md#10-push-back-spoke-to-parent-to-vault)
+in mechanics.md. Diagnosis: [troubleshooting R11](troubleshooting.md#r11--a-pushsecret-is-not-syncing).*
+
+`config.eso.secrets` **pulls** a value onto a cluster. `config.eso.pushSecrets`
+**publishes** a Secret that already exists on that cluster. The two lists are independent. A
+ServiceAccount token, a generated key, or any other Secret you want outside the cluster goes
+through `pushSecrets`.
+
+### What `hub-bootstrap-writeback` is
+
+`hub-bootstrap` and `hub-bootstrap-writeback` are two `ClusterSecretStore` objects on the
+**child**. Both talk to the parent apiserver over the same mTLS client cert. They are not
+two identities.
+
+| Store | Direction | Parent namespace | What a child may do |
+|---|---|---|---|
+| `hub-bootstrap` | read | `eso-shared` | `get` / `list` / `watch` |
+| `hub-bootstrap-writeback` | write | `eso-writeback` | `create`, plus `get` / `update` / `patch` on names from that child's `pushSecrets`. No `list`. |
+
+`policy-eso-boot-store` creates the write-back store when
+`config.eso.hubBootstrap.writebackNamespace` is set (default `eso-writeback`). The name is
+`<storePrefix>-writeback`, so a store named `hub-bootstrap` gets `hub-bootstrap-writeback`.
+Empty `writebackNamespace` disables the store, the namespace, and write RBAC.
+
+```mermaid
+flowchart LR
+  subgraph child[child cluster]
+    HB["ClusterSecretStore<br/>hub-bootstrap"]
+    HBW["ClusterSecretStore<br/>hub-bootstrap-writeback"]
+  end
+  subgraph parent[parent hub]
+    Shared["namespace eso-shared<br/>siblings can list"]
+    WB["namespace eso-writeback<br/>no list"]
+  end
+  HB -->|"read"| Shared
+  HBW -->|"write"| WB
+```
+
+A `PushSecret` with `storeRef: hub-bootstrap` writes `eso-shared` (or is Forbidden). Do not
+point a child at Vault; only the global hub has Vault auth. Full RBAC and conditions:
+[What a child may write](#what-a-child-may-write-writebacknamespace).
+
+### Create the source Secret
+
+`policy-eso-cluster-push-secrets` never creates the payload. It only emits a `PushSecret` that
+selects a Secret by name. Create that Secret first, in the same namespace you will put on the
+entry:
+
+- Another AutoShift policy (the usual case for a ServiceAccount token).
+- An operator or controller on the cluster.
+- A manual `oc create secret` while you prove the hop.
+
+The `PushSecret` `selector.secret.name` is the entry's `name`. If your policy creates
+`app-ns/app-sa-token`, the entry must use `name: app-sa-token` and `namespace: app-ns`. A
+mismatched name stays `Errored` with `could not get source secret`.
+
+The push-secrets policy creates the **namespace** when it is missing. It still never
+creates the Secret. Omit `namespace` and the `PushSecret` lands in `eso-writeback` (or
+`config.eso.hubBootstrap.writebackNamespace`). Put the source Secret there too, or set
+`namespace` to wherever the Secret already lives.
+
+### Declare the PushSecret (same shape on every cluster)
+
+Every hop uses the same fields. Change `storeRef` and, on the producing cluster, `namespace` /
+`remoteKey`.
+
+| Cluster | `storeRef.name` | Source Secret | `remoteKey` |
+|---|---|---|---|
+| Spoke | `hub-bootstrap-writeback` | The Secret you created | Unique name that lands on the **parent** |
+| Site hub | `hub-bootstrap-writeback` | The Secret that arrived in `eso-writeback` | Omit (defaults to `name`) |
+| Global hub | a Vault store (`eso-vault`) | The Secret that arrived in `eso-writeback` | Omit; this is the Vault path under the store's `path` |
+
+Do not point a spoke or site hub at Vault. Those clusters have no Vault auth. Do not point a
+push at `hub-bootstrap`: that store **reads** `eso-shared`, and children can `list` it.
+
+List every name **explicitly** on each cluster that must re-publish. A site hub does not
+fan spoke names up on its own. If the site hub must send `spoke-app-sa-token` to the
+global hub, the site hub lists that name. If the global hub must write it to Vault, the
+global hub lists it again.
+
+```mermaid
+flowchart LR
+  subgraph spoke[spoke]
+    direction TB
+    src["source Secret<br/>already exists"]
+    pPS["PushSecret<br/>config.eso.pushSecrets"]
+    src --> pPS
+  end
+  subgraph siteHub[site hub]
+    direction TB
+    sSec["Secret in eso-writeback"]
+    sPS["PushSecret<br/>config.eso.pushSecrets"]
+    sSec --> sPS
+  end
+  subgraph globalHub[global hub]
+    direction TB
+    gSec["Secret in eso-writeback"]
+    gPS["PushSecret<br/>config.eso.pushSecrets"]
+    gSec --> gPS
+  end
+  Vault[(Vault)]
+  pPS -->|"storeRef: hub-bootstrap-writeback"| sSec
+  sPS -->|"storeRef: hub-bootstrap-writeback"| gSec
+  gPS -->|"storeRef: eso-vault"| Vault
+```
+
+Each hop is a `PushSecret` on **that** cluster, from that cluster's `config.eso.pushSecrets`
+list. The source Secret must already exist before the first hop.
+
+```yaml
+# Spoke: publish a Secret this cluster created.
+config:
+  eso:
+    pushSecrets:
+      - name: app-sa-token
+        namespace: app-ns
+        storeRef:
+          name: hub-bootstrap-writeback
+          kind: ClusterSecretStore
+        remoteKey: spoke-app-sa-token   # unique across siblings
+        refreshInterval: 1h
+```
+
+```yaml
+# Site hub: re-publish what landed in eso-writeback.
+config:
+  eso:
+    pushSecrets:
+      - name: spoke-app-sa-token
+        storeRef:
+          name: hub-bootstrap-writeback
+          kind: ClusterSecretStore
+```
+
+```yaml
+# Global hub: write Vault. Namespace omitted -> eso-writeback.
+config:
+  eso:
+    pushSecrets:
+      - name: spoke-app-sa-token
+        storeRef:
+          name: eso-vault
+          kind: ClusterSecretStore
+```
+
+A Vault `ClusterSecretStore` with `spec.conditions` must include `eso-writeback` (or your
+`writebackNamespace`). With no conditions, every namespace may use the store.
+
+### Destination name (`remoteKey`) and `data`
+
+`remoteKey` is the destination name in the **remote** store (parent `eso-writeback`, or the
+Vault path). It defaults to `name`. The parent collects it for write RBAC, and when `data` is
+omitted the policy emits:
+
+```yaml
+data:
+  - match:
+      remoteRef:
+        remoteKey: spoke-app-sa-token
+```
+
+That pushes every key of the source Secret under that remote name. If you omit `data` and also
+omit `remoteKey`, the destination name is the source `name`. Set `remoteKey` on the producing
+cluster whenever siblings might otherwise collide (`app-sa-token` on two spokes).
+
+If you set `data` yourself, it is passed through as PushSecret `spec.data` (ESO `match` /
+`remoteRef` shape). You own `remoteKey` inside those entries; the top-level `remoteKey` is
+still collected for RBAC.
+
+### What ACM remediates and what ESO refreshes
+
+Red Hat Advanced Cluster Management keeps the `PushSecret` object present. It does not copy
+bytes. External Secrets Operator re-reads the source Secret on `refreshInterval` (chart
+default `1h`) and replaces the remote copy (`updatePolicy: Replace`). A rotated ServiceAccount token moves on the
+next refresh of **each** hop. Three hops at `1h` can take about three hours end to end.
+Override `refreshInterval` per entry when that is too slow.
+
+`deletionPolicy` is `None`. Removing a `pushSecrets` entry deletes the `PushSecret` when
+`autoshift.io/eso-prune` is true. It does **not** delete the Secret on the parent or the
+Vault path. Remove those by hand, or with a follow-up process.
+
+A missing `name` or `storeRef.name` is reported in `eso-cluster-push-secrets-status` and that
+entry is skipped. The `eso-cluster-push-secrets-gate` inform policy turns the report into
+NonCompliant.
+
+### Parent write RBAC and the second store
+
+`hub-bootstrap-writeback` is defined in
+[What `hub-bootstrap-writeback` is](#what-hub-bootstrap-writeback-is) above, and the parent
+Role details are in [What a child may write](#what-a-child-may-write-writebacknamespace).
+`create` cannot use `resourceNames`. Names in git are the ACL. Use unique `remoteKey`
+values.
 
 ## Cluster→cluster hub bootstrap (`config.eso.hubBootstrap`)
 
@@ -1414,7 +1676,7 @@ config:
 > our own CA honors the spec verbatim, so the mode-based defaults (incl. the `client auth` usage hub mTLS
 > needs) are applied. Only set these fields for an external issuer if you know it won't override them.
 
-This policy only provisions the store; it does not render `config.eso.secrets`. To consume Secrets
+There is **no `secrets` key** — this policy only provisions the store. To consume Secrets
 from the hub, a consumer creates its own `ExternalSecret` referencing the store by name (the
 `storeName` above, default `hub-bootstrap`):
 
@@ -1486,8 +1748,7 @@ pull needs no declarations. Publish into it only what is meant for children.
 
 The policy namespace stays off the store. Per-cluster `resourceNames` + `get` grants there are the
 opt-in for material that must reach exactly one cluster (`crs-<cluster>`, for example), collected
-from `authSecretConfig[].hubSecretName` and remote keys in `config.eso.secrets`.
-A cluster that declares nothing gets `rules: []` in the policy namespace.
+from `authSecretConfig[].hubSecretName` and remote keys in `config.eso.secrets`. A cluster that declares nothing gets `rules: []` in the policy namespace.
 
 ```yaml
 config:
@@ -1502,6 +1763,44 @@ The store also carries `spec.conditions`. By default only the operand namespace,
 
 Empty `sharedNamespace` rolls back to the historical model: the store reads the policy namespace
 and children have broad access there.
+
+### What a child may write (`writebackNamespace`)
+
+*How-to: [Create a source Secret and push it](#create-a-source-secret-and-push-it-configesopushsecrets).*
+
+Pull stays on `hub-bootstrap` / `eso-shared`. Write-back uses a **second** `ClusterSecretStore`
+named `<storePrefix>-writeback` (`hub-bootstrap-writeback` by default) whose
+`remoteNamespace` is `eso-writeback`. `policy-eso-boot-prereqs` creates that namespace.
+`policy-eso-boot-store` creates the store (same client cert, same hub URL, same serving CA as
+the read store). Empty `writebackNamespace` disables the store, the namespace, and write RBAC.
+
+Children do not get `list` on `eso-writeback`. The parent Role for each child is:
+
+- `create` on Secrets (Kubernetes cannot name-scope `create`)
+- `get` / `update` / `patch` on the `remoteKey` (or `name`) values collected from that
+  child's `config.eso.pushSecrets`
+
+The identity is the same client cert as the read store (`api.<cluster>.<baseDomain>` in
+`externalCAReuseServingCert`). Isolation is RBAC and namespace, not a second credential. A
+`PushSecret` with `storeRef: hub-bootstrap` writes `eso-shared` (or is Forbidden). Do not
+grant write on `eso-shared`.
+
+```yaml
+config:
+  eso:
+    hubBootstrap:
+      writebackNamespace: eso-writeback   # chart default; set '' to disable write-back
+```
+
+`spec.conditions` on the write-back store allow the operand namespace and
+`writebackNamespace`. `consumerNamespaces` applies to the **read** store only. It is a list of
+namespace **name strings** (`- app-ns`), not maps (`- name: app-ns`). A map list makes
+`policy-eso-boot-store` fail hub templating with `failed to resolve the template`.
+
+Standing copies: the payload is a Secret on the producing cluster, then in each parent's
+`eso-writeback`, then in Vault on the global hub. Cluster-admin on a site hub can read spoke
+tokens. `deletionPolicy: None` leaves parent Secrets and Vault paths after you drop the
+`PushSecret`.
 
 ### Trust modes (`config.eso.hubBootstrap.mode`)
 
@@ -1758,7 +2057,7 @@ and spokes in lockstep. The per-cluster form below is shown because that's what 
 
 `hubServer` is mode-independent (the copy policy uses it in every mode); only the
 **client-identity** keys differ between modes, so the three examples are otherwise identical. None
-of them lists `config.eso.secrets` — this policy provisions the store only; consumers create their own
+of them lists `secrets` — this policy provisions the store only; consumers create their own
 `ExternalSecret` against it (see [above](#clustercluster-hub-bootstrap-configesohubbootstrap)).
 
 #### 1. `selfSigned` (default) — hub mints the CA and a per-cluster client cert
@@ -2312,6 +2611,11 @@ is [troubleshooting.md](troubleshooting.md). The quick checks below cover the ba
 1. Validate rendering: `cd tools && go test -tags integration ./internal/resolver/...`
 2. Check hub escaping: Look for `{{ "{{hub" }} ... {{ "hub}}" }}` patterns
 3. Read the failure: the suite names the chart and the stage that failed (render, hub resolution, spoke resolution, YAML validation, label contract)
+
+### PushSecret is not Synced
+The source Secret is missing, `storeRef` points at the read store, `consumerNamespaces`
+is a list of maps, or a hop was not re-listed on the parent. Full runbook:
+[troubleshooting R11](troubleshooting.md#r11--a-pushsecret-is-not-syncing).
 
 ### Boot/readiness policy NonCompliant
 A boot or readiness Policy showing NonCompliant has hit a precondition — the detail is in its **status

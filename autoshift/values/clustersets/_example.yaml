@@ -429,6 +429,27 @@ hubClusterSets:
       #   versions:
       #     - 'odf-operator.vX.Y.Z'
       #   startingCSV: 'odf-operator.vX.Y.Z'
+      #   # Config-driven StorageCluster — when set, replaces the entire label-driven
+      #   # StorageCluster spec. When absent, the existing label-driven default applies.
+      #   storageCluster:
+      #     enableCephTools: true
+      #     resourceProfile: Lean
+      #     monDataDirHostPath: /var/lib/rook
+      #     multiCloudGateway:
+      #       reconcileStrategy: ignore
+      #     storageDeviceSets:
+      #       - name: nvme-set
+      #         deviceClass: nvme
+      #         count: 1
+      #         replica: 3
+      #         dataPVCTemplate:
+      #           spec:
+      #             storageClassName: local-nvme
+      #             accessModes: [ReadWriteOnce]
+      #             volumeMode: Block
+      #             resources:
+      #               requests:
+      #                 storage: 1
       # opentelemetry:
       #   versions:
       #     - 'opentelemetry-product.vX.Y.Z'
@@ -453,6 +474,31 @@ hubClusterSets:
       #   versions:
       #     - 'kubevirt-hyperconverged.vX.Y.Z'
       #   startingCSV: 'kubevirt-hyperconverged.vX.Y.Z'
+      # =======================================================================
+      # Local Storage (config-driven)
+      # Named volume sets under localVolumeSets.<id>; each field has a sensible
+      # default so you only need to set what you want to override:
+      #   storageClassName  → nvme-storageclass
+      #   volumeMode        → Block
+      #   deviceInclusionSpec → {deviceTypes: [disk], minSize: 200G}
+      #   nodeSelector      → cluster.ocs.openshift.io/openshift-storage: Exists
+      #   tolerations       → node.ocs.openshift.io/storage: NoSchedule
+      # When absent, a single default nvme-localvolumeset is created.
+      # =======================================================================
+      # localStorage:
+      #   localVolumeDiscovery:
+      #     nodeSelector:
+      #       nodeSelectorTerms:
+      #         - matchExpressions:
+      #             - key: cluster.ocs.openshift.io/openshift-storage
+      #               operator: Exists
+      #   localVolumeSets:
+      #     nvme:
+      #       storageClassName: local-nvme
+      #       volumeMode: Block
+      #       deviceInclusionSpec:
+      #         deviceTypes: [disk]
+      #         deviceMechanicalProperties: [NonRotational]
       # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
       # =======================================================================
@@ -568,10 +614,12 @@ hubClusterSets:
         #           - ports:
         #               - protocol: TCP
         #                 port: 8200
-        # Secrets this cluster consumes. storeRef names the provider
-        # (eso-vault, hub-bootstrap, or any other store). Rendered by
-        # policy-eso-cluster-secrets on whichever cluster the config lands on.
-        # Omit namespace to land in eso-shared (the hub-bootstrap remoteNamespace).
+        # Secrets this cluster should HAVE. List on every hop that must hold a copy.
+        # Global hub: storeRef eso-vault, omit namespace -> eso-shared.
+        # Site hub / spoke: storeRef hub-bootstrap. Omit namespace so children can
+        # list it; set namespace on a spoke to the workload ns and add that name to
+        # hubBootstrap.consumerNamespaces (list of strings: - app-secrets).
+        # See policies/stable/external-secrets-operator/quickstart.md Step 4.
         secrets:
           - name: demo-app-creds
             namespace: app-secrets            # where the Secret lands on THIS cluster
@@ -584,6 +632,18 @@ hubClusterSets:
                 remoteRef:
                   key: demo-app-creds         # the Secret's name in the store's remoteNamespace
                   property: password
+        # Secrets this cluster PUSHES. The source Secret must already exist; this list
+        # only emits a PushSecret. Children use hub-bootstrap-writeback (parent
+        # eso-writeback). The global hub uses a Vault store. Each hop is explicit:
+        # a site hub re-lists names that arrived from spokes. remoteKey defaults to
+        # name; set it on the producing cluster so siblings do not collide.
+        # consumerNamespaces is a list of strings (- app-ns), not maps (- name: app-ns).
+        # pushSecrets:
+        #   - name: demo-cluster-sa-token
+        #     storeRef:
+        #       name: hub-bootstrap-writeback
+        #       kind: ClusterSecretStore
+        #     remoteKey: spoke-a-demo-cluster-sa-token
         secretStores:
           - clusterSecretStore:
               name: vault-backend
@@ -1250,10 +1310,12 @@ hubClusterSets:
       acm-addon-gpf-eval-concurrency: '5'    # Concurrent policy evaluations (default: 2)
       acm-addon-gpf-client-qps: '75'         # K8s API client QPS (default: 30)
       acm-addon-gpf-client-burst: '100'      # K8s API client burst (default: 45)
-      # governance-policy-framework resource limits (via AddOnDeploymentConfig)
-      acm-addon-gpf-mem-request: '128Mi'
+      # governance-policy-framework resource limits (via AddOnDeploymentConfig).
+      # Keep at 1Gi or above: the addon OOMKills around 100 ConfigurationPolicies, and it
+      # delivers its own tuning, so it cannot raise the limit once it does.
+      acm-addon-gpf-mem-request: '256Mi'
       acm-addon-gpf-cpu-request: '100m'
-      acm-addon-gpf-mem-limit: '512Mi'
+      acm-addon-gpf-mem-limit: '1Gi'
 
       # =======================================================================
       # Tempo
@@ -1561,6 +1623,7 @@ hubClusterSets:
       vault: 'false'
       vault-version: '1.17.2'                 # server.image.tag injected into the upstream chart
       vault-tls-issuer: 'autoshift-ca'        # cert-manager ClusterIssuer for the Vault TLS cert
+      vault-replicas: '3'                    # HA StatefulSet replicas (use '1' for a tiny lab)
       vault-storage-size: '10Gi'              # raft data PVC size per node (applied via a kustomize patch)
       # Auto-unseal: seal backend per cluster. shamir=manual (independent, default); awskms/gcpckms/
       # azurekeyvault=cloud KMS auto-unseal (independent); transit=auto-unseal via the hub Vault (two-tier).
@@ -1580,6 +1643,14 @@ hubClusterSets:
       vault-seal-kms-vault-name: ''           # azurekeyvault vault_name
       # Image for the init/transit-provider Jobs. Override for disconnected/baremetal (no internal registry).
       vault-job-image: 'image-registry.openshift-image-registry.svc:5000/openshift/cli:latest'
+      # Kubernetes-side prerequisites for a cluster that AUTHENTICATES to Vault, hub only.
+      # Namespaces and ServiceAccounts named in config.hashicorp-vault-provider.auth, which the
+      # Vault Kubernetes/JWT auth role binds to.
+      hashicorp-vault-provider: 'false'
+      # Grant system:unauthenticated the service-account-issuer-discovery role, exposing the
+      # cluster's OIDC discovery and JWKS endpoints without a token. Required for Vault JWT auth
+      # against this cluster's public issuer. Only enable when that anonymous exposure is intended.
+      public-oidc: 'false'
 
       # =======================================================================
       # Developer OpenShift GitOps (team ArgoCD instances)

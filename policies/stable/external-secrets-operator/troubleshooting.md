@@ -78,6 +78,7 @@ Distilled invariants (each is a checkable claim):
 | I7 | spoke: `ClusterSecretStore` (bootstrap) condition `Ready=True` | all hub-sourced auth/consumer ES fail (R4) |
 | I8 | every status ConfigMap in `$ADDON_NS` is **absent** | the owning policy found precondition errors (R1) |
 | I9 | store-auth chain: hub Secret → spoke auth ES `Ready=True` → target Secret exists | that user store can't authenticate (R5/R6) |
+| I10 | when `writebackNamespace` is set: spoke `ClusterSecretStore` `$PREFIX-writeback` `Ready=True`, hub Namespace `eso-writeback` exists | PushSecrets targeting `hub-bootstrap-writeback` stay NotReady (R11) |
 
 ### Object inventory when healthy (derives from `$PREFIX`)
 
@@ -88,8 +89,13 @@ cluster; CM `$PREFIX-hub-ca`; hub-secrets credential Secrets + their ExternalSec
 **Hub, `openshift-config`:** CM `$PREFIX-client-ca` (external modes: materialized from the
 external bundle; selfSigned: the minted CA).
 **Spoke, in `$ESO_NS`:** Secret `$PREFIX-client`; `ClusterSecretStore` (name =
-`config.eso.hubBootstrap.storeName`, default `$PREFIX`); per-store auth ExternalSecrets +
+`config.eso.hubBootstrap.storeName`, default `$PREFIX`); `ClusterSecretStore`
+`$PREFIX-writeback` when `writebackNamespace` is set; per-store auth ExternalSecrets +
 target Secrets; delivered-CA ConfigMaps.
+**Hub, `eso-writeback` (when write-back is enabled):** Secrets published by children;
+write Role `$PREFIX-writeback-<segment>` + RoleBinding per child (no `list`).
+**Any cluster with `config.eso.pushSecrets`:** one `PushSecret` per entry in the entry's
+namespace, plus that namespace if it was missing.
 Ownership labels for all of these: README → *Cleanup reference — chart-managed labels*.
 
 ---
@@ -101,7 +107,7 @@ Ownership labels for all of these: README → *Cleanup reference — chart-manag
 | 1 | Policy compliance per cluster | hub, ns `$CLUSTER` (replicated policies `$POLICY_NS.<policy>`) | all Compliant |
 | 2 | Status ConfigMaps (the chart's own error channel) | target cluster, `$ADDON_NS` | **none exist** (self-clearing) |
 | 3 | Gate ConfigurationPolicy message | policy status details | names the status CM when NonCompliant |
-| 4 | ESO CR conditions | `ClusterSecretStore`/`SecretStore`/`ExternalSecret` `.status.conditions` | `Ready=True` / reason `SecretSynced` |
+| 4 | ESO CR conditions | `ClusterSecretStore`/`SecretStore`/`ExternalSecret`/`PushSecret` `.status.conditions` | `Ready=True` / reason `SecretSynced` or `Synced` |
 | 5 | cert-manager conditions | `Certificate`/`CertificateRequest`/issuer `.status` | `Ready=True`, stable `.status.revision` |
 | 6 | debug-render previews (opt-in) | `$POLICY_NS`, `<configpolicy>-debug-render` | only while `debugRender: true` |
 
@@ -125,7 +131,8 @@ oc get cm -n $ADDON_NS <name>-status -o jsonpath='{.data}' | python3 -m json.too
 # [spoke] 4 — ESO health:
 oc get clustersecretstore,secretstore -A
 oc get externalsecret -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,REASON:.status.conditions[?(@.type=="Ready")].reason'
-# expect: stores READY True/Valid; ExternalSecrets True/SecretSynced.
+oc get pushsecret -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,REASON:.status.conditions[?(@.type=="Ready")].reason'
+# expect: stores READY True/Valid; ExternalSecrets True/SecretSynced; PushSecrets True/Synced.
 
 # [hub] 5 — cert estate for this deployment:
 oc get certificate -n $POLICY_NS -l autoshift.io/hub-bootstrap-client-cert=$PREFIX \
@@ -137,7 +144,7 @@ Status ConfigMaps that can exist (all in `$ADDON_NS`, all self-clearing):
 `eso-boot-readiness-hub-status`, `eso-boot-readiness-spoke-status`, `eso-boot-store-status`,
 `eso-boot-clientca-self-status`, `eso-boot-clientca-ext-status`, `eso-secret-stores-status`
 (structured `errors.<store>.[hub|spoke]`, `storeCount`), `eso-cert-auth-rbac-status`,
-`eso-hub-secrets-status`.
+`eso-hub-secrets-status`, `eso-cluster-secrets-status`, `eso-cluster-push-secrets-status`.
 
 ---
 
@@ -153,6 +160,7 @@ flowchart TB
   C -->|"bootstrap store NotReady"| R3[→ R3 mTLS ladder]
   C -->|"user store NotReady /<br/>auth ES failing"| R45["→ R5 (store config) or<br/>R4/R6 (credential chain)"]
   C -->|"consumer ES failing,<br/>stores Ready"| R4["→ R4 (remoteRef/RBAC)"]
+  C -->|"PushSecret not Synced"| R11["→ R11 (source Secret, storeRef, hop list)"]
   C -->|objects missing or<br/>unexpectedly deleted| R8[→ R8 cleanup]
   C -->|all healthy| V[run the §6 validation<br/>pipeline to prove it]
 ```
@@ -399,6 +407,104 @@ oc annotate policy -n $POLICY_NS <policy-name> \
 Apply it to each affected policy; they go Compliant within a propagation cycle. The fix is
 one-time per install — once the binding exists, later resolutions succeed.
 
+### R11 — a PushSecret is not syncing
+
+*How-to: [Create a source Secret and push it](README.md#create-a-source-secret-and-push-it-configesopushsecrets).*
+
+**SYMPTOM.** `policy-eso-cluster-push-secrets` is NonCompliant, or Compliant while the
+`PushSecret` is `Errored` / not `Synced`. Or `policy-eso-boot-store` is NonCompliant with
+`failed to resolve the template`. The Secret never appears on the parent in `eso-writeback`,
+or it appears under the source name instead of `remoteKey`.
+
+**CONFIRM.** `[spoke]` (the cluster that should push):
+
+```bash
+oc get cm -n $ADDON_NS eso-cluster-push-secrets-status -o jsonpath='{.data.problems}'
+# expect: no such ConfigMap (absent = no malformed entries)
+
+oc get pushsecret -A
+oc get clustersecretstore hub-bootstrap-writeback -o jsonpath='{.status.conditions}'
+# expect: Ready=True. Missing store -> writebackNamespace empty or boot-store not yet applied.
+
+oc get secret -n <entry-namespace> <entry-name>
+# expect: the source Secret exists. PushSecret selector.secret.name == entry name.
+```
+
+`[hub]` (the parent that should receive):
+
+```bash
+oc get secret -n eso-writeback
+oc get role,rolebinding -n eso-writeback
+# expect: a Secret named remoteKey (or name); a write Role bound to this child's User CN,
+# resourceNames including that destination. No list verb.
+```
+
+1. **`consumerNamespaces` is a list of maps.**
+   CONFIRM `[hub]`: `policy-eso-boot-store` NonCompliant, details contain
+   `failed to resolve the template`. The values file has `- name: app-ns` under
+   `consumerNamespaces`.
+   FIX: write a list of strings:
+
+   ```yaml
+   config:
+     eso:
+       hubBootstrap:
+         consumerNamespaces:
+           - app-ns
+   ```
+
+   Not `- name: app-ns`. That field is `list(string)`. After the git change, wait for
+   rendered-config and boot-store to go Compliant.
+
+2. **Source Secret does not exist.**
+   CHECK `[spoke]`: PushSecret `.status.conditions` reason `Errored`, message
+   `could not get source secret`.
+   FIX: create the Secret **before** or beside the `PushSecret`. This chart does not
+   create payloads. Match `name` and `namespace` to the real Secret.
+
+3. **Wrong `storeRef`.**
+   CHECK `[spoke]`: `PushSecret.spec.secretStoreRefs[0].name`.
+   FIX: spokes and site hubs use `hub-bootstrap-writeback`. `hub-bootstrap` writes
+   `eso-shared` (or Forbidden). A Vault store on a child has no credentials. Only the
+   global hub uses `eso-vault` (or your Vault store name).
+
+4. **Hop not listed on the parent.**
+   CHECK: the site hub and global hub `config.eso.pushSecrets` lists. A name that
+   arrived in the site hub `eso-writeback` is not re-published until the site hub lists it. Vault is
+   not written until the global hub lists it. There is no automatic fan-up.
+   FIX: add the same destination name on each hop that must re-publish.
+
+5. **Parent RBAC missing that `remoteKey`.**
+   CHECK `[hub]`: Role `resourceNames` in `eso-writeback` for this child. The parent
+   collects names from **that child's** `pushSecrets`. A typo or a name only listed on
+   a grandchild never appears.
+   FIX: set `remoteKey` on the producing cluster and list that exact string on the
+   parent. Unique across siblings.
+
+6. **Remote Secret named after the source, not `remoteKey`.**
+   CAUSE: an older chart omitted `data.match.remoteRef.remoteKey` when `data` was
+   unset, so ESO used the source Secret name. Current chart always emits that match
+   when `data` is omitted.
+   FIX: upgrade the chart. Confirm the live `PushSecret` has
+   `spec.data[0].match.remoteRef.remoteKey` equal to the entry `remoteKey`.
+
+7. **Write-back store not Ready, or `writebackNamespace` empty.**
+   CHECK `[spoke]`: `oc get clustersecretstore hub-bootstrap-writeback`.
+   FIX: restore `config.eso.hubBootstrap.writebackNamespace` (default `eso-writeback`).
+   Empty disables the store, the namespace, and write RBAC. First apply can lag
+   `policy-eso-boot-prereqs` creating the namespace; wait one evaluation.
+
+8. **`PushSecret` in a namespace the write-back store does not allow.**
+   The write-back store `spec.conditions` allow the operand namespace and
+   `writebackNamespace` only. `consumerNamespaces` is not copied onto it.
+   FIX: omit `namespace` (lands in `eso-writeback`) and put the source Secret there,
+   or confirm your ESO version accepts the PushSecret namespace you chose.
+
+9. **Pruned on this cluster but still on the parent or in Vault.**
+   Expected. `deletionPolicy: None`. Removing a `pushSecrets` entry deletes the
+   `PushSecret` when `autoshift.io/eso-prune` is true. It does not delete the parent
+   Secret or the Vault path. Remove those by hand, or with a follow-up process.
+
 ---
 
 ## 5. Quick-reference lookup tables
@@ -408,8 +514,10 @@ one-time per install — once the binding exists, later resolutions succeed.
 readiness policies use `eso-boot-readiness-{hub,spoke}-report` + `-gate`.
 **Name derivations from `$PREFIX`**: client cert `$PREFIX-client-$CLUSTER` (hub) /
 `$PREFIX-client` (spoke copy); CA `$PREFIX-ca`; issuers `$PREFIX-selfsigned`,
-`$PREFIX-ca-issuer`; reader Role `$PREFIX-reader`; serving-CA CM `$PREFIX-hub-ca`; clientCA
-CM `$PREFIX-client-ca` (openshift-config); store name `storeName` (default `$PREFIX`).
+`$PREFIX-ca-issuer`; reader Role `$PREFIX-reader`; write-back Role `$PREFIX-writeback-<segment>`
+in `eso-writeback`; serving-CA CM `$PREFIX-hub-ca`; clientCA
+CM `$PREFIX-client-ca` (openshift-config); store name `storeName` (default `$PREFIX`);
+write-back store `$PREFIX-writeback`.
 **Ownership labels + audit commands**: README → *Cleanup reference — chart-managed labels*.
 
 ---

@@ -40,9 +40,9 @@ hubs+managed) and member intent. The two hub-only groups are wrapped in
 | PolicySet | Scope | Members | Responsibility |
 |---|---|---|---|
 | `policyset-eso-install` | all placed clusters | policy-eso-install | Operator installation and the ExternalSecretsConfig CR that deploys the controller pods. |
-| `policyset-eso-secret-stores` | all placed clusters | policy-eso-secret-stores, policy-eso-cert-auth-rbac, policy-eso-cluster-secrets | User-declared secret stores and secrets: the store objects, their auth-credential transport (spoke hop), kubernetes-provider cert-auth RBAC, and the ExternalSecrets declared in `config.eso.secrets`. |
+| `policyset-eso-secret-stores` | all placed clusters | policy-eso-secret-stores, policy-eso-cert-auth-rbac, policy-eso-cluster-secrets, policy-eso-cluster-push-secrets | User-declared secret stores and secrets: the store objects, their auth-credential transport (spoke hop), kubernetes-provider cert-auth RBAC, ExternalSecrets in `config.eso.secrets`, and PushSecrets in `config.eso.pushSecrets`. |
 | `policyset-eso-secret-reader` | all placed clusters | policy-eso-secret-reader | Read-only consumption ServiceAccount + RBAC for ESO-provisioned Secrets. |
-| `policyset-eso-boot-spoke` | all placed clusters | policy-eso-boot-readiness-spoke, policy-eso-boot-store | Spoke half of the hub bootstrap: per-mode readiness gate, then the hub-bootstrap ClusterSecretStore build. Hubs are members too — a hub gets a bootstrap store like any spoke. |
+| `policyset-eso-boot-spoke` | all placed clusters | policy-eso-boot-readiness-spoke, policy-eso-boot-store | Spoke half of the hub bootstrap: per-mode readiness gate, then the hub-bootstrap ClusterSecretStore and, when `writebackNamespace` is set, `hub-bootstrap-writeback`. Hubs are members too — a hub gets a bootstrap store like any spoke. |
 | `policyset-eso-boot-hub` | hubs only | policy-eso-boot-prereqs, policy-eso-boot-readiness-hub, policy-eso-boot-serving-ca, policy-eso-boot-clientca-self, policy-eso-boot-clientca-self-wire, policy-eso-boot-clientca-ext | Hub half of the hub bootstrap: hub-template RBAC prereqs, readiness gate, client-CA mint/wire (per trust mode), serving-CA discovery. |
 | `policyset-eso-hub-secrets` | hubs only | policy-eso-hub-secrets | Hop 1 of the two-hop credential transport: materialize external-origin store credentials into `sharedNamespace` (`eso-shared` by default). |
 
@@ -95,7 +95,7 @@ Companion to secret-stores for kubernetes-provider stores that authenticate with
 
 | CP | Responsibility |
 |---|---|
-| `eso-boot-prereqs` (enforce) | Hub-side RBAC scaffold for AutoShift internals: grant the ACM hub-template ServiceAccount the reads the other boot policies' hub templates need, driven by the config `bootPrereqs.rbac` grant list. Must be compliant before the hub readiness gate passes. |
+| `eso-boot-prereqs` (enforce) | Hub-side RBAC scaffold for AutoShift internals: grant the ACM hub-template ServiceAccount the reads the other boot policies' hub templates need, driven by the config `bootPrereqs.rbac` grant list. Must be compliant before the hub readiness gate passes. Also creates `writebackNamespace` (`eso-writeback` by default) when that value is non-empty. |
 
 ### `templates/policy-eso-boot-readiness-hub.yaml` *(hub-gated render)*
 
@@ -131,7 +131,7 @@ in `selfSigned` mode; renders inert otherwise.
 
 | CP | Responsibility |
 |---|---|
-| `eso-boot-clientca-self` (enforce) | Mint the self-signed bootstrap CA, then for every ManagedCluster carrying an `autoshift.io/owning-namespace` label (across ALL deployments, not just this one): mint a per-cluster client cert (CN = `<prefix>.<managedClusterName>.<baseDomain>` — the hub's OCM name for the cluster, with the CN-truncation rule; the DNS-derived identity is externalCA-only) into that cluster's owning namespace, and create the reader Role/RoleBinding there so the CN can read exactly its deployment's secrets. Tenancy is per-owning-namespace by design. Includes cleanup sweeps for departed clusters/certs. |
+| `eso-boot-clientca-self` (enforce) | Mint the self-signed bootstrap CA, then for every ManagedCluster carrying an `autoshift.io/owning-namespace` label (across ALL deployments, not just this one): mint a per-cluster client cert (CN = `<prefix>.<managedClusterName>.<baseDomain>` — the hub's OCM name for the cluster, with the CN-truncation rule; the DNS-derived identity is externalCA-only) into that cluster's owning namespace, and create the reader Role/RoleBinding there so the CN can read exactly its deployment's secrets. Tenancy is per-owning-namespace by design. Includes cleanup sweeps for departed clusters/certs. When `writebackNamespace` is set, also emit a per-child write Role/RoleBinding in that namespace (`create` plus `get`/`update`/`patch` on names collected from that child's `config.eso.pushSecrets`; no `list`). |
 | `eso-boot-clientca-self-gate` (inform) | Status-ConfigMap gate. |
 
 ### `templates/policy-eso-boot-clientca-self-wire.yaml` *(hub-gated render; twin-copy body)*
@@ -151,7 +151,7 @@ in the external trust modes (`externalCA`, `externalCAReuseServingCert`); no min
 
 | CP | Responsibility |
 |---|---|
-| `eso-boot-clientca-ext` (enforce) | Materialize the externally supplied CA bundle into the apiserver clientCA ConfigMap, and create per-owning-namespace reader RBAC for the spoke-derived cert CNs (the CN contract: spokes present certs the external CA issued; the hub must authorize those CNs without ever seeing the keys). |
+| `eso-boot-clientca-ext` (enforce) | Materialize the externally supplied CA bundle into the apiserver clientCA ConfigMap, and create per-owning-namespace reader RBAC for the spoke-derived cert CNs (the CN contract: spokes present certs the external CA issued; the hub must authorize those CNs without ever seeing the keys). When `writebackNamespace` is set, also emit the same per-child write Role/RoleBinding in that namespace as the selfSigned mint policy. |
 | `eso-boot-clientca-ext-gate` (inform) | Status-ConfigMap gate. |
 
 ### `templates/policy-eso-boot-store.yaml` *(twin-copy body)*
@@ -161,21 +161,34 @@ payoff of the boot chain: after this, the cluster can pull hub secrets.
 
 | CP | Responsibility |
 |---|---|
-| `eso-boot-store` (enforce) | Build the hub-bootstrap `ClusterSecretStore` on the cluster: copy this cluster's client-cert Secret and the hub serving CA from the owning deployment's policy namespace (via `copySecretData`/`fromConfigMap` — never a Secret lookup), and point a kubernetes-provider store at the hub apiserver over mTLS with `remoteNamespace` = the policy namespace. Store name comes from the runtime `storeName` override, else the chart `storePrefix`. |
+| `eso-boot-store` (enforce) | Build the hub-bootstrap `ClusterSecretStore` on the cluster: copy this cluster's client-cert Secret and the hub serving CA from the owning deployment's policy namespace (via `copySecretData`/`fromConfigMap` — never a Secret lookup), and point a kubernetes-provider store at the hub apiserver over mTLS with `remoteNamespace` = `sharedNamespace` (`eso-shared` by default). Store name comes from the runtime `storeName` override, else the chart `storePrefix`. When `writebackNamespace` is set, emit a second store named `<storeName>-writeback` with the same cert, URL, and CA, `remoteNamespace` = that write-back namespace. Empty `writebackNamespace` mustnothave-clears the leftover write-back store. |
 | `eso-boot-store-gate` (inform) | Status-ConfigMap gate. |
 
 ### `templates/policy-eso-cluster-secrets.yaml`
 
 **Policy `policy-eso-cluster-secrets`** — set: `policyset-eso-secret-stores` (all clusters).
-Renders `config.eso.secrets`.
-`storeRef` names the provider. Omit `namespace` to land in `eso-shared`. Omit `data`/`dataFrom`
-to extract the whole secret named `name`.
+Renders `config.eso.secrets`. `storeRef` names the provider. Omit `namespace` to land in
+`eso-shared`. Omit `data`/`dataFrom` to extract the whole secret named `name`.
 
 - `eso-cluster-secrets` (enforce) — one ExternalSecret per entry, labeled
   `autoshift.io/eso-cluster-secret` with the prune decision baked in as `autoshift.io/eso-prune`.
   `data`, `dataFrom` and `target` pass through to ESO verbatim. Validation reports rather than
   fails. Sweep is skipped while any entry is malformed.
 - `eso-cluster-secrets-gate` (inform) — asserts `eso-cluster-secrets-status` is absent.
+
+### `templates/policy-eso-cluster-push-secrets.yaml`
+
+**Policy `policy-eso-cluster-push-secrets`** — set: `policyset-eso-secret-stores` (all clusters).
+Renders `config.eso.pushSecrets`. Does **not** create the source Secret; another policy or
+process must. `storeRef` names the provider (`hub-bootstrap-writeback` toward the parent,
+a Vault store on the global hub). Omit `namespace` to use `eso-writeback`. Omit `data` to
+push every key of the source Secret under `remoteKey` (default `name`).
+
+- `eso-cluster-push-secrets` (enforce) — one Namespace (if missing) and one PushSecret per
+  entry, labeled `autoshift.io/eso-cluster-push-secret` with the prune decision baked in as
+  `autoshift.io/eso-prune`. `updatePolicy: Replace`, `deletionPolicy: None`. Validation
+  reports rather than fails. Sweep is skipped while any entry is malformed.
+- `eso-cluster-push-secrets-gate` (inform) — asserts `eso-cluster-push-secrets-status` is absent.
 
 ### `templates/policy-eso-hub-secrets.yaml` *(hub-gated render)*
 
