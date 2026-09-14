@@ -89,6 +89,9 @@ hubClusterSets:
           commonName: 'autoshift'
           country: 'US'
           organization: 'AutoShift'
+        # IMMUTABLE: the CRD rejects any change to size, accessMode or storageClass after the
+        # first deployment. Resizing means deleting the SpireServer resource, which discards the
+        # certificate authority. Choose these at install time.
         persistence:
           size: '5Gi'
           accessMode: 'ReadWriteOnce'
@@ -97,14 +100,25 @@ hubClusterSets:
           databaseType: 'sqlite3'
           connectionString: '/run/spire/data/datastore.sqlite3'
         # ---------------------------------------------------------------------------------
+        # >>> IMMUTABLE AND ONE-WAY KEYS. The CRDs enforce these with validation rules, so a
+        # >>> change after first deployment is REJECTED and the policy goes NonCompliant. It does
+        # >>> not silently drift, but it also cannot be undone without deleting the resource,
+        # >>> which discards the CA. Decide these at install time:
+        # >>>   trustDomain, clusterName, bundleConfigMap       (immutable)
+        # >>>   persistence.size / accessMode / storageClass    (immutable)
+        # >>>   federation                                      (cannot be REMOVED once set)
+        # >>>   federation.bundleEndpoint.profile               (immutable once set)
+        # >>>   federation.bundleEndpoint.httpsWeb              (cannot switch acme <-> servingCert)
+        # ---------------------------------------------------------------------------------
         # IDENTITY. Left unset so the built-in defaults apply:
-        #   trustDomain  defaults to the cluster base domain. Changing it after the first
-        #                deployment is DESTRUCTIVE (SPIRE caches its CA and every issued
-        #                identity against it). Nested SPIRE REQUIRES hub and spoke to share
-        #                one explicit value -- see the nested block at the end.
-        #   clusterName  defaults to the ManagedCluster name. A fixed literal would make
-        #                every cluster claim the same name in its agent SPIFFE IDs.
+        #   trustDomain  defaults to the cluster base domain. IMMUTABLE, and changing it is
+        #                destructive besides: SPIRE caches its CA and every issued identity
+        #                against it. Nested SPIRE REQUIRES hub and spoke to share one explicit
+        #                value -- see the nested block at the end.
+        #   clusterName  defaults to the ManagedCluster name. IMMUTABLE. A fixed literal would
+        #                make every cluster claim the same name in its agent SPIFFE IDs.
         #   jwtIssuer    derived from the cluster ingress domain as spire-oidc.<apps domain>.
+        #   bundleConfigMap  IMMUTABLE.
         # Uncomment to use:
         # trustDomain: 'spire.example.com'
         # clusterName: 'hub'
@@ -134,6 +148,11 @@ hubClusterSets:
         # agent:
         #   tolerations:
         #     - operator: 'Exists'
+        #   # workloadAttestorVerification: auto | hostCert | skip. 'hostCert' REQUIRES both
+        #   # hostCertBasePath and hostCertFileName or the CRD rejects the resource.
+        #   workloadAttestorVerification: 'auto'
+        #   hostCertBasePath: '/etc/kubernetes'
+        #   hostCertFileName: 'kubelet-ca.crt'
         # csiDriver:
         #   tolerations:
         #     - operator: 'Exists'
@@ -167,6 +186,7 @@ hubClusterSets:
         # cert-manager-ca labels both enabled. NOTE autoshift-ca is self-signed PER
         # CLUSTER, so this gives a chain, not a shared fleet root -- for that, also set
         # config.certManager.ca.issuer to a signer common to every cluster.
+        # upstreamAuthority: EXACTLY ONE of certManager or vault may be set; the CRD rejects both.
         # upstreamAuthority:
         #   certManager:
         #     issuerName: 'autoshift-ca'
@@ -174,7 +194,12 @@ hubClusterSets:
         #     issuerGroup: 'cert-manager.io'
         #     namespace: 'cert-manager'
         # ---------------------------------------------------------------------------------
-        # FEDERATION (needs the ztwim-federation label). Two distinct settings:
+        # FEDERATION (needs the ztwim-federation label). ONE-WAY: the CRD refuses to let
+        # federation be REMOVED once set, and bundleEndpoint.profile is immutable once chosen,
+        # with no switching between the acme and servingCert forms of httpsWeb. Enabling
+        # federation is a decision you cannot reverse without deleting the SpireServer resource.
+        # federatesWith entries using the https_spiffe profile MUST carry endpointSpiffeId.
+        # Two distinct settings:
         #   federation            -> SpireServer.spec.federation; how THIS server publishes
         #                            its bundle endpoint and which domains it federates with.
         #   federatedTrustDomains -> one ClusterFederatedTrustDomain CR per foreign domain.

@@ -4,6 +4,10 @@
 # verification type `auto` picks host-cert verification where the kubelet serving cert allows it and
 # falls back otherwise, which is the right default on OpenShift.
 #
+# hostCertBasePath and hostCertFileName are emitted only when set. The custom resource definition
+# REQUIRES both when type is `hostCert` and rejects the resource otherwise, so setting
+# config.ztwim.agent.workloadAttestorVerification to hostCert without them fails admission.
+#
 # SCHEDULING. This is a DaemonSet, and it is the reason the tolerations matter: a workload can be
 # scheduled onto ANY node that admits workloads, and if this pod is not on that node the workload
 # silently cannot obtain an SVID -- there is no error, the socket is simply absent. AutoShift's own
@@ -21,6 +25,9 @@ object-templates-raw: |
   {{hub- $agentRes := (index $agent "resources" | default (dict "requests" (dict "cpu" "50m" "memory" "128Mi"))) hub}}
   {{hub- $agentTol := (ternary (index $agent "tolerations") (list (dict "operator" "Exists")) (hasKey $agent "tolerations")) hub}}
   {{hub- $agentSel := (index $agent "nodeSelector" | default dict) hub}}
+  {{hub- $verify := (index $agent "workloadAttestorVerification" | default "auto") hub}}
+  {{hub- $caPath := (index $agent "hostCertBasePath" | default "") hub}}
+  {{hub- $caFile := (index $agent "hostCertFileName" | default "") hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: operator.openshift.io/v1alpha1
@@ -34,7 +41,13 @@ object-templates-raw: |
         workloadAttestors:
           k8sEnabled: 'true'
           workloadAttestorsVerification:
-            type: {{hub (index $agent "workloadAttestorVerification" | default "auto") hub}}
+            type: {{hub $verify hub}}
+            {{hub- if $caPath hub}}
+            hostCertBasePath: {{hub $caPath hub}}
+            {{hub- end hub}}
+            {{hub- if $caFile hub}}
+            hostCertFileName: {{hub $caFile hub}}
+            {{hub- end hub}}
         resources: {{hub $agentRes | toRawJson | toLiteral hub}}
         {{hub- if $agentTol hub}}
         tolerations: {{hub $agentTol | toRawJson | toLiteral hub}}

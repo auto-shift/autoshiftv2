@@ -8,6 +8,9 @@ The operator is the productized build of upstream SPIRE, the reference implement
 standard. AutoShift installs the operator and configures its operands; SPIRE itself then handles
 attestation, issuance and rotation.
 
+For a deployment that is misbehaving, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md). Several
+failure modes in this component report success, so start with the inform policies listed there.
+
 ## What it deploys
 
 | Policy | Creates | Placement |
@@ -132,9 +135,19 @@ generates, held in place by `CREATE_ONLY_MODE`. That flag is read from a single 
 variable by **every** ZTWIM controller, so once it is on, no operand change reconciles on that
 cluster until the resource is deleted and recreated.
 
-**The SPIRE server cannot run in high availability.** The `SpireServer` CRD carries no `replicas`
-field at v1.1.1, so one `spire-server` pod is the only configuration available, and there is no
-field for a `PodDisruptionBudget` either. Red Hat's own documentation for the `SpireServer` custom
+**High availability is a SPIRE feature that this Operator does not expose.** Upstream SPIRE
+documents it as a first-class mode: configure every server in the trust domain against one shared
+datastore, and each server maintains its own certificate authority, either self-signed or an
+intermediate beneath a shared root. No shared key manager is needed, so the `disk` key manager this
+Operator offers is sufficient. Scaling the StatefulSet by hand does produce a working pair, with
+each server signing under its own authority, both authorities in the shared trust bundle, and agents
+accepting an identity issued by either.
+
+Do not rely on it. Red Hat lists high availability for the SPIRE server and the OpenID Connect
+Discovery Provider as an unsupported configuration, which is why the `SpireServer` custom resource
+has no `replicas` field and no `PodDisruptionBudget` field at v1.1.1. The Operator also restores the
+replica count on any cluster not held in `CREATE_ONLY_MODE`. The gap is in the productization rather
+than in SPIRE, so exposing a replica count is a reasonable request to make of Red Hat. Red Hat's own documentation for the `SpireServer` custom
 resource, from OpenShift Container Platform 4.19 through 4.22, lists no such field and shows
 `spire-server 1/1` with a single `spire-server-0` pod as the expected result. The operator CSV
 declares `capabilities: Basic Install`, the lowest level. This is a limit of the operator, not of
@@ -142,12 +155,47 @@ AutoShift: no setting in this policy changes it. When the pod is down, agents ke
 `config.ztwim.defaultX509Validity` expires, one hour by default, after which the trust domain stops
 issuing. Plan maintenance inside that window.
 
-**The persistence fields are effectively immutable.** Red Hat documents `persistence.size`,
-`accessMode` and `storageClass` as unchangeable once set, and the underlying StatefulSet volume
-claim template cannot change either. Changing `config.ztwim.persistence` after the first deployment
-is accepted by the API and then does nothing. On a nested cluster `CREATE_ONLY_MODE` hides it a
-second time. Resizing means deleting the `SpireServer` resource, which discards the CA unless the
-volume is preserved by hand. Choose the size at install time.
+**The persistence fields are immutable, and the API enforces it.** The custom resource definition
+carries validation rules rejecting any change to `persistence.size`, `accessMode` or
+`storageClass`, so editing `config.ztwim.persistence` after the first deployment makes the policy
+fail rather than drift. Resizing means deleting the `SpireServer` resource, which discards the
+certificate authority unless the volume is preserved by hand, so choose the size at install time.
+
+**Federation cannot be turned off once enabled.** A further validation rule states that federation
+configuration cannot be removed once set. Removing `config.ztwim.federation` from values leaves the
+resource rejecting the update. Treat enabling federation as a one-way decision.
+
+**The SPIRE server is a singleton.** A validation rule requires `metadata.name` to be `cluster`, so
+a second `SpireServer` resource is rejected at admission. Running more than one SPIRE server is
+therefore not reachable by creating extra resources either. All five operand resources are
+singletons in the same way.
+
+### Fields the API refuses to change
+
+Every rule below is enforced by the custom resource definitions, so an edit after the first
+deployment is rejected and the policy reports NonCompliant rather than drifting quietly. Undoing one
+means deleting the resource, which discards the certificate authority.
+
+| Setting | Rule |
+|---|---|
+| `config.ztwim.trustDomain` | immutable |
+| `config.ztwim.clusterName` | immutable |
+| `config.ztwim.bundleConfigMap` | immutable |
+| `config.ztwim.persistence.size`, `.accessMode`, `.storageClass` | immutable |
+| `config.ztwim.federation` | cannot be removed once set |
+| `config.ztwim.federation.bundleEndpoint.profile` | immutable once set |
+| `config.ztwim.federation.bundleEndpoint.httpsWeb` | cannot switch between `acme` and `servingCert` |
+
+Three further rules reject a resource outright rather than on change: `upstreamAuthority` accepts
+exactly one of `certManager` or `vault`; a `federatesWith` entry that sets the `https_spiffe` profile
+requires `endpointSpiffeId`; and `agent.workloadAttestorVerification: hostCert` requires both
+`hostCertBasePath` and `hostCertFileName`.
+
+**PostgreSQL is the supported production datastore.** Red Hat added it in 1.0.0 for production
+persistence, so `config.ztwim.datastore.databaseType: postgres` is on supported ground, unlike
+multiple replicas. Note the connection string is a plain field with no secret reference, so the
+password is readable on the resource; client certificate authentication would avoid that but the
+operator mounts `tlsSecretName` world-readable at mode 0644, which the PostgreSQL driver rejects.
 
 **The datastore defaults to SQLite.** That is a single replica backed by one volume, which is
 appropriate for most clusters but is not highly available. The CRD also accepts `postgres` and
