@@ -52,6 +52,16 @@ policies:
       - name: policy-ztwim-operator-install
     manifests:
       - path: manifests/instance
+  # Opt-in shared datastore. Ordered BEFORE the operands: SpireServer's connectionString reads the
+  # password out of the Secret CNPG generates, so the database has to exist first or the server is
+  # configured with an empty password and fails to start.
+  - name: policy-ztwim-cnpg
+    placement:
+      placementPath: placement-ztwim-cnpg.yaml
+    dependencies:
+      - name: policy-ztwim-instance
+    manifests:
+      - path: manifests/cnpg
   # The operands: SPIRE server, agent, CSI driver and OIDC discovery provider.
   - name: policy-ztwim-config
     dependencies:

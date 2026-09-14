@@ -5,15 +5,16 @@
 # managed Route's host, so the default is built from the cluster's ingress domain exactly as the
 # server's is. managedRoute: 'true' lets the operator own that Route.
 #
-# SCHEDULING. Tolerations default to EMPTY: this is a singleton Deployment, not a DaemonSet, so it
-# belongs on an ordinary worker. Requests only, no limits -- see the note in spire-server.yaml.
+# SCHEDULING. Tolerations default to the INFRA taint, matching spire-server: this is platform
+# infrastructure, and AutoShift taints its own infra nodes. Requests only, no limits -- see the note
+# in spire-server.yaml.
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
   {{hub- $oidc := (index $cfg "oidcDiscoveryProvider" | default dict) hub}}
   {{hub- $issuer := (index $cfg "jwtIssuer" | default "") hub}}
   {{hub- $oidcRes := (index $oidc "resources" | default (dict "requests" (dict "cpu" "50m" "memory" "128Mi"))) hub}}
-  {{hub- $oidcTol := (index $oidc "tolerations" | default list) hub}}
+  {{hub- $oidcTol := (ternary (index $oidc "tolerations") (list (dict "key" "node-role.kubernetes.io/infra" "operator" "Exists")) (hasKey $oidc "tolerations")) hub}}
   {{hub- $oidcSel := (index $oidc "nodeSelector" | default dict) hub}}
   - complianceType: musthave
     objectDefinition:

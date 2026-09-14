@@ -18,9 +18,23 @@
 # emitted by default, limits are NOT: a CPU limit on a signing service buys throttling, and requests
 # alone are what move the pod out of BestEffort. Set config.ztwim.resources to add limits.
 #
-# Tolerations default to EMPTY here, unlike the two DaemonSets. spire-server is a singleton control
-# plane component and belongs on an ordinary worker; a cluster whose every worker is tainted cannot
-# run workloads either, so there is nothing to chase.
+# Tolerations default to the INFRA taint, not empty. SPIRE is platform infrastructure and belongs on
+# an infra node, and AutoShift's own infra-nodes policy taints those nodes, so an empty default is
+# wrong on precisely the clusters this ships to. Proven the hard way: with no tolerations the only
+# untolerated node was at pod capacity, and because the datastore is a ReadWriteOnce volume pinned to
+# one availability zone, the CA could not be scheduled ANYWHERE. Recovery meant destroying the volume
+# and losing the trust domain root -- there is no backup path for it. Storage taints are deliberately
+# NOT tolerated by default; add them through config.ztwim.tolerations if that is where SPIRE belongs.
+#
+# POSTGRES DATASTORE. When config.ztwim.datastore.databaseType is postgres and no explicit
+# connectionString is given, the string is derived from the CNPG cluster in manifests/cnpg. The
+# password is read on the MANAGED cluster -- a spoke template, not a hub one -- out of the Secret
+# CNPG generates, so it is never written to a values file or carried through git. It DOES land in
+# the SpireServer resource, because connectionString is a plain string with no secret reference and
+# the CRD offers no other way. The lookup is hoisted to its own line rather than written inline in
+# the connection string: a spoke template containing double quotes inside a quoted YAML scalar comes
+# back to the spoke engine with the quotes escaped, and fails to parse. Client certificate authentication through datastore.tlsSecretName
+# avoids that and is the right answer for production; it needs a client CA wired into CNPG first.
 #
 # federation.federatesWith and the bundle endpoint let this server exchange trust bundles with
 # SPIRE servers in OTHER trust domains. Lists and maps are passed through as JSON (toRawJson |
@@ -39,9 +53,13 @@ object-templates-raw: |
   {{hub- $bundleEndpoint := (index $fed "bundleEndpoint" | default dict) hub}}
   {{hub- $issuer := (index $cfg "jwtIssuer" | default "") hub}}
   {{hub- $storageClass := (index $pers "storageClass" | default "") hub}}
+  {{hub- $dsType := (index $ds "databaseType" | default "sqlite3") hub}}
+  {{hub- $dsConn := (index $ds "connectionString" | default "") hub}}
   {{hub- $resources := (index $cfg "resources" | default (dict "requests" (dict "cpu" "100m" "memory" "256Mi"))) hub}}
-  {{hub- $tolerations := (index $cfg "tolerations" | default list) hub}}
+  {{hub- $tolerations := (ternary (index $cfg "tolerations") (list (dict "key" "node-role.kubernetes.io/infra" "operator" "Exists")) (hasKey $cfg "tolerations")) hub}}
   {{hub- $nodeSelector := (index $cfg "nodeSelector" | default dict) hub}}
+  {{- $pgSecret := (lookup "v1" "Secret" "zero-trust-workload-identity-manager" "spire-db-app") | default dict }}
+  {{- $pgPass := (dig "data" "password" "" $pgSecret) | base64dec }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: operator.openshift.io/v1alpha1
@@ -64,8 +82,12 @@ object-templates-raw: |
           country: {{hub (index $ca "country" | default "US") hub}}
           organization: {{hub (index $ca "organization" | default "AutoShift") hub}}
         datastore:
-          databaseType: {{hub (index $ds "databaseType" | default "sqlite3") hub}}
-          connectionString: {{hub (index $ds "connectionString" | default "/run/spire/data/datastore.sqlite3") hub}}
+          databaseType: {{hub $dsType hub}}
+          {{hub- if and (eq $dsType "postgres") (not $dsConn) hub}}
+          connectionString: 'host=spire-db-rw.zero-trust-workload-identity-manager.svc port=5432 dbname=spire user=spire sslmode=require password={{ $pgPass }}'
+          {{hub- else hub}}
+          connectionString: {{hub $dsConn | default "/run/spire/data/datastore.sqlite3" hub}}
+          {{hub- end hub}}
           maxOpenConns: {{hub (index $ds "maxOpenConns" | default 100) hub}}
           maxIdleConns: {{hub (index $ds "maxIdleConns" | default 2) hub}}
         persistence:

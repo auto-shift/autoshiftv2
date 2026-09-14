@@ -9,10 +9,18 @@
 # them on its next reconcile.
 #
 # The ConfigMap edit is a read-modify-write of operator-generated JSON. `clusters` is a LIST OF
-# SINGLE-KEY MAPS keyed by cluster name, so the idempotency guard is a hasKey scan before appending.
-# That guard is essential: evaluationInterval `watch` tracks the lookup, so the policy re-evaluates
-# on its OWN write. With the guard, the ConfigMap resourceVersion goes constant after one write
-# (verified live over 3 minutes); without it the list would grow on every pass.
+# SINGLE-KEY MAPS keyed by cluster name.
+#
+# Every managed spoke entry is DROPPED AND REBUILT on each pass, rather than appended only when
+# absent. An earlier version skipped any spoke already present (a hasKey scan), which made the patch
+# add-only: it could never correct an entry whose content had changed. That cost a live outage when
+# the kubeconfig mount path moved -- server.conf kept pointing at the old path forever, TokenReview
+# failed, and the spoke silently never attested while every policy reported Compliant.
+#
+# Rebuilding is still idempotent, which matters because evaluationInterval `watch` tracks the lookup
+# and the policy re-evaluates on its OWN write: the same spokes in the same order produce identical
+# JSON, so the ConfigMap resourceVersion goes constant after one write. Entries for clusters NOT in
+# the spoke list -- the operator's own local-cluster entry -- are preserved untouched.
 #
 # ONE VOLUME, NOT ONE PER SPOKE. spoke-kubeconfigs.yaml keys every spoke into a single Secret, and
 # each key surfaces here as a file under one mount: /run/spire/spoke-kubeconfigs/<spoke>. The pod
@@ -52,13 +60,16 @@ object-templates-raw: |
   {{- $na := index (dig "plugins" "NodeAttestor" (list) $conf) 0 | default dict }}
   {{- $pd := dig "k8s_psat" "plugin_data" dict $na }}
   {{- $clusters := dig "clusters" (list) $pd }}
+  {{- $kept := list }}
+  {{- range $c := $clusters }}
+  {{- $managed := false }}
+  {{- range $spoke := $spokes }}{{- if hasKey $c $spoke }}{{- $managed = true }}{{- end }}{{- end }}
+  {{- if not $managed }}{{- $kept = append $kept $c }}{{- end }}
+  {{- end }}
   {{- range $spoke := $spokes }}
-  {{- $have := false }}
-  {{- range $c := $clusters }}{{- if hasKey $c $spoke }}{{- $have = true }}{{- end }}{{- end }}
-  {{- if not $have }}
-  {{- $clusters = append $clusters (dict $spoke (dict "audience" (list "spire-server") "allowed_node_label_keys" (list) "allowed_pod_label_keys" (list) "service_account_allow_list" (list (printf "%s:spire-agent-upstream" $ns)) "kube_config_file" (printf "/run/spire/spoke-kubeconfigs/%s" $spoke))) }}
+  {{- $kept = append $kept (dict $spoke (dict "audience" (list "spire-server") "allowed_node_label_keys" (list) "allowed_pod_label_keys" (list) "service_account_allow_list" (list (printf "%s:spire-agent-upstream" $ns)) "kube_config_file" (printf "/run/spire/spoke-kubeconfigs/%s" $spoke))) }}
   {{- end }}
-  {{- end }}
+  {{- $clusters = $kept }}
   {{- $_ := set $pd "clusters" $clusters }}
   - complianceType: musthave
     objectDefinition:
