@@ -331,6 +331,13 @@ Members federate only within their group, so the number of relationships follows
 than the fleet. Federation is not transitive, which makes that the right shape: a mesh is exactly
 the set of clusters that must authenticate one another.
 
+A member holds one `ClusterFederatedTrustDomain` per peer **trust domain**, not per peer cluster,
+named for the domain. Clusters and domains are not one to one: a nested hub and its spokes are a
+single domain across several clusters, so a mesh containing such a pair would otherwise produce two
+resources naming the same domain and differing only in whose endpoint they point at. The first peer
+to report a domain supplies the endpoint for it. Peers sharing the member's own domain are left out
+altogether, which is why a nested pair inside a mesh federates outward and not with itself.
+
 Every member needs `config.ztwim.federation.bundleEndpoint` set, which is what makes the Operator
 publish the endpoint peers fetch from. Note that enabling federation on a cluster already running
 in create-only mode for nesting does not take effect until its operands are recreated, because the
