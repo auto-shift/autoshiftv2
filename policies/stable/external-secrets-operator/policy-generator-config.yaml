@@ -10,6 +10,10 @@ metadata:
 # automatically — no edit to this file needed. Only edit this file to change the policy graph
 # itself (names, dependencies, per-policy remediation). Keep placement.yaml OUT of manifests/
 # (a Placement inside a wildcarded dir would be wrapped into the Policy as a managed object).
+# Required once more than one policy shares a placement: PolicyGenerator will not name the
+# PlacementBinding for you when several policies bind to the same Placement.
+placementBindingDefaults:
+  name: binding-policy-external-secrets-operator
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
   # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
@@ -35,3 +39,16 @@ policies:
   - name: policy-external-secrets-operator-install
     manifests:
       - path: manifests
+  # Separate from the install policy on purpose. The ExternalSecretsConfig custom resource
+  # definition does not exist until the operator has reconciled, so this policy is NonCompliant and
+  # retrying on a fresh cluster. Keeping it apart leaves the install policy's own compliance
+  # meaningful instead of red for a reason that has nothing to do with the subscription.
+  #
+  # Its own directory because manifests/ is a kustomize directory -- it renders the shared
+  # operator-install chart -- and kustomize rejects an object-templates-raw fragment as a resource
+  # with "missing Resource metadata".
+  - name: policy-external-secrets-config
+    dependencies:
+      - name: policy-external-secrets-operator-install
+    manifests:
+      - path: config

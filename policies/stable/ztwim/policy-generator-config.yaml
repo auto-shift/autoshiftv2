@@ -81,6 +81,18 @@ policies:
       - name: policy-ztwim-config
     manifests:
       - path: manifests/federation-mesh/endpoint-route.yaml
+  # Publishes this cluster's own bundle in JWKS, which is the only form trustDomainBundle accepts.
+  # Member-placed, because the fetch is local: it targets the Service and validates with the service
+  # certificate authority, so it needs no ingress and no public trust. Requires the External Secrets
+  # controller to be running and allowed out on 8443; both are configured through that policy, and
+  # the manifest documents exactly what to set.
+  - name: policy-ztwim-federation-bundle
+    placement:
+      placementPath: placement-ztwim-federation-mesh.yaml
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/federation-bundle
   - name: policy-ztwim-federation-views
     placement:
       placementPath: placement-ztwim-federation-views.yaml

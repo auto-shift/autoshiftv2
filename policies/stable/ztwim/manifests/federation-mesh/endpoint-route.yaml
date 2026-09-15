@@ -17,9 +17,14 @@
 # config.certManager.ingressCert with a real issuer. Clusters whose ingress already carries a
 # publicly issued wildcard need nothing.
 #
-# reencrypt rather than edge, because the SPIRE server serves the federation port over TLS. The
-# router presents the wildcard certificate to the peer and re-encrypts to the backend, whose own
-# certificate is the service-serving certificate and never has to be publicly valid.
+# The TLS termination follows config.ztwim.federation.bundleEndpoint.profile, and the two profiles
+# want opposite things. Under https_spiffe the peer authenticates the SPIRE server by its SVID, so
+# the connection must reach the server itself and the route is passthrough. Under https_web the peer
+# authenticates an ordinary web certificate, which is the router's wildcard, so the route terminates
+# there and re-encrypts to a backend whose own certificate never has to be publicly valid.
+#
+# The Operator's own federation Route makes the same switch, which is a useful cross-check: it is
+# reencrypt under https_web and passthrough under https_spiffe.
 #
 # WHAT THIS EXPOSES, and how to not do it. A trust bundle is certificate authority material, so the
 # contents are public by design and the https_web profile exists so a peer can fetch one with no

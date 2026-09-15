@@ -34,10 +34,15 @@
 # relationship count proportional to the group rather than to the fleet. Federation is not
 # transitive, so a mesh is exactly the set of clusters that need to authenticate one another.
 #
-# The https_web profile is used deliberately. It authenticates the endpoint with ordinary web public
-# key infrastructure, so no endpointSpiffeId is needed and there is no chicken-and-egg: the bundle
-# can be fetched before any SPIFFE trust exists between the two sides. The https_spiffe profile
-# would require already trusting the peer to fetch the bundle that establishes that trust.
+# The https_spiffe profile is used deliberately, and it is also the Operator's own default. The peer
+# is authenticated by the SVID its endpoint presents, so federation depends on no certificate
+# authority at all: not a public one, not a shared internal one, and nothing added to the SPIRE
+# server's trust store, which cannot be extended in any case.
+#
+# It does have a chicken-and-egg that https_web does not: validating the peer's SVID needs the peer's
+# bundle, which is what the relationship is for. trustDomainBundle breaks the circle by carrying the
+# first bundle, and SPIRE refreshes from the endpoint on its own afterwards. That is why this policy
+# depends on manifests/federation-bundle publishing each member's bundle in JWKS.
 #
 # A peer is skipped until all three of its views have reported, so a trust domain is never written
 # pointing at a cluster whose SPIRE is not up yet.
@@ -74,16 +79,18 @@ object-templates-raw: |
   {{hub- $peerGroup := (index $mc.metadata.labels "autoshift.io/ztwim-federation-mesh" | default "") hub}}
   {{hub- if and (eq $peerGroup $group) (ne $peer $self) hub}}
   {{hub- $bundleView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-bundle") | default dict hub}}
+  {{hub- $jwksView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-jwks") | default dict hub}}
   {{hub- $domainView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-domain") | default dict hub}}
   {{hub- $endpointView := (lookup "view.open-cluster-management.io/v1beta1" "ManagedClusterView" $peer "ztwim-fed-endpoint") | default dict hub}}
   {{hub- $bundle := (dig "status" "result" "data" "bundle.crt" "" $bundleView) hub}}
+  {{hub- $jwks := (dig "status" "result" "data" "bundle.jwks" "" $jwksView) hub}}
   {{hub- $domain := (dig "status" "result" "spec" "trustDomain" "" $domainView) hub}}
   {{hub- $peerCM := (lookup "v1" "ConfigMap" $polNs (printf "%s.rendered-config" $peer)) | default dict hub}}
   {{hub- $peerCfg := (index (index (index $peerCM "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
   {{hub- $cfgHost := (index (index $peerCfg "federation" | default dict) "bundleEndpointHost" | default "") hub}}
   {{hub- $host := ($cfgHost | default (dig "status" "result" "spec" "host" "" $endpointView)) hub}}
   {{hub- $domainName := ($domain | lower | replace "_" "-" | trunc 240) hub}}
-  {{hub- if and $bundle $domain $host (ne $domain $selfDomain) (not (hasKey $seen $domainName)) hub}}
+  {{hub- if and $bundle $jwks $domain $host (ne $domain $selfDomain) (not (hasKey $seen $domainName)) hub}}
   {{hub- $_ := set $seen $domainName $peer hub}}
   - complianceType: musthave
     objectDefinition:
@@ -96,7 +103,15 @@ object-templates-raw: |
         trustDomain: {{hub $domain hub}}
         bundleEndpointURL: https://{{hub $host hub}}
         bundleEndpointProfile:
-          type: https_web
+          type: https_spiffe
+          # The SPIRE server's own identity. SPIRE assigns itself /spire/server within its trust
+          # domain, so this follows from the domain the peer published and needs no discovery.
+          endpointSPIFFEID: spiffe://{{hub $domain hub}}/spire/server
+        # REQUIRED under https_spiffe, unlike https_web. The peer's endpoint is authenticated by the
+        # SVID it presents, and validating that SVID needs the peer's bundle -- which is the bundle
+        # this relationship exists to fetch. Seeding it here breaks the circle; SPIRE refreshes from
+        # the endpoint on its own afterwards.
+        trustDomainBundle: {{hub $jwks | toRawJson | toLiteral hub}}
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
