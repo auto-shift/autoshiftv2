@@ -7,12 +7,22 @@ managedClusterSets:
       ztwim:
         federation:
           bundleEndpoint:
-            profile: 'https_web'
+            # https_spiffe, which is also the Operator's own default. A peer's bundle endpoint is
+            # authenticated by its SPIFFE SVID rather than by a certificate authority, so federation
+            # needs no publicly trusted ingress certificate, no shared internal authority, and
+            # nothing added to the SPIRE server's trust store -- which cannot be extended anyway,
+            # because SpireServer exposes no volumes or environment and the Operator reverts edits
+            # to the generated StatefulSet within seconds.
+            #
+            # https_web is the alternative, and needs the ingress wildcard on EVERY member to chain
+            # to an authority already in the SPIRE image's trust store. That rules out fleets with
+            # their own authority, and disconnected sites.
+            #
+            # The profile is IMMUTABLE once the resource exists, so switching an existing deployment
+            # recreates the SpireServer. The trust domain and its certificate authority survive,
+            # because they live in the datastore rather than in the resource.
+            profile: 'https_spiffe'
             refreshHint: 300
-            httpsWeb:
-              servingCert:
-                externalSecretRef: 'spire-federation-cert'
-                fileSyncInterval: 3600
       uwm:
         # storageClass: 'gp3-csi'            # Omit to use cluster default StorageClass
         prometheus:

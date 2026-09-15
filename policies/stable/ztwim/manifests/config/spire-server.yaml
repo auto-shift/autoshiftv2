@@ -73,6 +73,17 @@ object-templates-raw: |
   {{- $pgPass := (dig "data" "password" "" $pgSecret) | base64dec }}
   {{- $usePg := and (eq $wantType "postgres") (not $wantConn) $pgPass }}
   - complianceType: musthave
+    # Several fields here are CEL-immutable: the bundle endpoint profile, the federation block and
+    # every persistence setting. An update that touches one is rejected outright and the policy
+    # reports "cannot be updated, likely due to immutable fields not matching", which is a dead end
+    # a human has to clear by hand. IfRequired lets the controller delete and recreate the resource
+    # ONLY when an ordinary update fails for that reason.
+    #
+    # Recreating is safe for the identity that matters: the trust domain's certificate authority and
+    # every registration entry live in the datastore, not in this resource. A postgres datastore is
+    # an external database and a sqlite one is a retained PersistentVolumeClaim, so neither is
+    # removed with the resource. Agents keep their SVIDs and do not re-attest.
+    recreateOption: IfRequired
     objectDefinition:
       apiVersion: operator.openshift.io/v1alpha1
       kind: SpireServer
