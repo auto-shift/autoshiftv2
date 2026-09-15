@@ -1,0 +1,19 @@
+object-templates-raw: |
+  {{hub- $configs := index (index (fromConfigMap .PolicyMetadata.namespace (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "dynatrace" | default dict) hub}}
+  {{hub- if empty ($configs.connection | default list) hub}}
+  {{hub- fail (printf "No connection details detected in config! Refer to the policy documentation for the correct configuration.") hub}}
+  {{hub- end hub}}
+  {{hub- $policyNamespace := .PolicyMetadata.namespace hub}}
+  {{hub- range $connections := $configs.connection hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: dynakube
+        namespace: dynatrace
+      type: Opaque
+      data:
+        apiToken: {{hub fromSecret $policyNamespace $connections.apiTokensSecretName "apiToken" hub}}
+        dataIngestToken: {{hub fromSecret $policyNamespace $connections.apiTokensSecretName "dataIngestToken" hub}}
+  {{hub- end hub}}

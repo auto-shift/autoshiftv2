@@ -1,0 +1,15 @@
+object-templates-raw: |
+  {{hub- $configs := index (index (fromConfigMap .PolicyMetadata.namespace (print .ManagedClusterName ".rendered-config") "config" | default "" | fromYaml) "dynatrace" | default dict) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cert
+        namespace: dynatrace
+      data:
+        certs: |
+          {{ fromConfigMap "openshift-monitoring" "serving-certs-ca-bundle" "service-ca.crt" | autoindent }}
+          {{hub- if eq ($configs.virtMetrics | default "false") "true" hub}}
+          {{ fromConfigMap "openshift-cnv" "kubevirt-ca" "ca-bundle" | autoindent }}
+          {{hub- end hub}}
