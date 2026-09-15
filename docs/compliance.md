@@ -208,6 +208,25 @@ oc get pods -A -o jsonpath='{..image}' | tr ' ' '\n' | cut -d/ -f1 | sort -u
             You are accessing a U.S. Government (USG) Information System (IS) ...
 ```
 
+The `color` and `backgroundColor` values in the example are the defaults. Each
+classification level carries a standard color, so pick the row for your site
+rather than choosing one by hand. The level colors come from the Standard
+Form labels (SF 706 through SF 712), with the Controlled Unclassified
+Information (CUI) color from SF 902. The
+Information Security Oversight Office marking handbook fixes the banner
+text and placement but does not assign a color, so the hex values that follow
+are a digital rendering of those standard colors, not a government-specified
+value.
+
+| Classification | `backgroundColor` | `color` |
+|---|---|---|
+| Unclassified | `#007a33` | `#ffffff` |
+| CUI | `#502b85` | `#ffffff` |
+| Confidential | `#0033a0` | `#ffffff` |
+| Secret | `#c8102e` | `#ffffff` |
+| Top Secret | `#ff8c00` | `#000000` |
+| Top Secret//SCI | `#fce83a` | `#000000` |
+
 ### oauth
 
 The templates are HTML held in Secrets that you create first. Key names are fixed:
