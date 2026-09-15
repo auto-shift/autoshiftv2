@@ -791,7 +791,7 @@ hubClusterSets:
         scanner: AutoSense                  # SecuredCluster Scanner v2: AutoSense | Disabled
         monitoring: true                    # OpenShift monitoring integration
         exposeMetrics: ''                   # Enabled | Disabled — Prometheus endpoint on Central/Scanner/ScannerV4
-        networkPolicies: Enabled            # Enabled | Disabled (network policy generation); omit to leave default
+        networkPolicies: ''                 # Enabled | Disabled; blank omits the field and leaves the Operator default
         # Technology Preview. 4.11 still has no CRD field, so this sets the ROX_VIRTUAL_MACHINES
         # environment variable. It only enables the platform side: scanning also needs a VM agent
         # installed inside each guest, which is in-guest software AutoShift does not manage.
@@ -813,11 +813,12 @@ hubClusterSets:
         db:
           size: ''                          # Central DB PVC size, e.g. 100Gi (blank = operator default)
           storageClassName: ''              # blank = cluster default storage class
-          # Blank uses the Operator's own claim name, central-db. Only set this to adopt an
-          # existing claim of a different name: the Operator manages exactly one PVC for
-          # central-db, so naming a second one leaves Central Irreconcilable while still
-          # reporting Available, and the only visible symptom is a failing readiness gate.
-          claimName: ''
+          # Defaults to central-db, which is the Operator's own claim name, and the policy always
+          # writes the field rather than leaving it unset. Only change this to adopt an existing
+          # claim of a different name: the Operator manages exactly one PVC for central-db, so
+          # naming a second one leaves Central Irreconcilable while still reporting Available, and
+          # the only visible symptom is a failing readiness gate.
+          claimName: 'central-db'
         collector:
           collection: CORE_BPF              # CORE_BPF (recommended); EBPF is deprecated
         processBaselines:
@@ -829,7 +830,7 @@ hubClusterSets:
         admissionControl:
           # listenOnCreates/listenOnUpdates/listenOnEvents and contactImageScanners are deprecated
           # in the 4.11 CRD; enforcement replaces them.
-          enabled: true                     # true -> enforcement: Enabled
+          enabled: false                    # true -> enforcement: Enabled; default is false
           bypass: BreakGlassAnnotation      # BreakGlassAnnotation | Disabled
           replicas: 3                       # admission control pod replicas
           failurePolicy: Ignore             # Ignore (fail-open, safe) | Fail (fail-closed, strict)
@@ -849,7 +850,10 @@ hubClusterSets:
         registration:
           validFor: 168h                    # only has to cover mint -> registration
           maxClusters: 1                    # registrations one token may perform; 0 = no limit
-          roxctlImage: ''                   # blank = tag matched to the installed operator version
+          # Blank builds registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9 at the tag
+          # matching the installed operator version. That is a TAG on registry.redhat.io, not a
+          # mirrored digest, so a disconnected deployment has to set this explicitly.
+          roxctlImage: ''
       # =======================================================================
       # AutoShift Console Plugin (hub only; ENABLE flag is the autoshift-console label).
       # Read-only OpenShift console plugin that surfaces AutoShift clustersets, the resolution

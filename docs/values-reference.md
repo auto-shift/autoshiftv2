@@ -536,12 +536,19 @@ clusters; every selected cluster runs `SecuredCluster`. Day 2 settings live in a
 labels are reserved for the operator subscription and for choices that decide which policies are
 placed on a cluster.
 
+Three settings are labels rather than config, because each one selects which policies a cluster
+receives: the authentication provider is `acs-auth-provider`, whether this cluster runs Central is
+`acs-central`, and the baseline policies are `acs-default-policies`. Earlier releases took these as
+`config.acs.auth.provider`, `config.acs.central.deploy` and `config.acs.defaultPolicies`; those keys
+are no longer read and setting them has no effect.
+
 **Labels:**
 
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `acs`                             | bool              |                           | If not set Advanced Cluster Security will not be managed |
 | `acs-central`                     | bool              | `true`                    | Deploys Central on this hub. Opt out with `false`; a cluster with no such label still gets Central |
+| `acs-default-policies`            | bool              | off                       | Deploy the baseline `SecurityPolicy` resources. Hub only, and requires the Config-as-Code component |
 | `acs-auth-provider`               | string            | (unset)                   | Identity provider for Central. `openshift` configures OpenShift auth, which grants Admin to `config.acs.auth.adminGroup`. A cluster with no such label gets no auth configuration at all |
 | `acs-registration`                | string            | `crs`                     | How secured clusters first authenticate to Central: `crs`, `manual`, or `initBundle` (legacy). Selects which registration policies are placed. Clusters with no such label get `crs` |
 | `acs-subscription-name`           | string            | `rhacs-operator`          |       |
@@ -561,7 +568,6 @@ placed on a cluster.
 | `exposeMetrics` | string | | `Enabled` or `Disabled`; Prometheus endpoint on Central, Scanner and Scanner V4 |
 | `networkPolicies` | string | | Network policy generation (`Enabled` or `Disabled`); omit to leave the default |
 | `vmScanning` | bool | `false` | Technology Preview. Sets `ROX_VIRTUAL_MACHINES`; scanning also needs an agent inside each guest, which AutoShift does not manage |
-| `defaultPolicies` | bool | `false` | Deploy the baseline `SecurityPolicy` resources. Hub only. Requires the Config-as-Code component |
 | `configAsCode` | string | | `Enabled` or `Disabled`. Deploys the component that reconciles `SecurityPolicy` resources into Central. Disabling it silently stops `defaultPolicies` from taking effect |
 | `telemetry` | bool | `false` | Central telemetry reporting |
 | `notifierSecretsEncryption` | bool | `false` | Encrypt notifier secrets at rest |
@@ -584,14 +590,12 @@ placed on a cluster.
 | `admissionControl.bypass` | string | `BreakGlassAnnotation` | `BreakGlassAnnotation` or `Disabled` |
 | `admissionControl.replicas` | int | `3` | Admission control pod replicas |
 | `admissionControl.failurePolicy` | string | `Ignore` | `Ignore` fails open; `Fail` fails closed |
-| `auth.provider` | string | `openshift` | Blank disables the declarative authentication configuration. Hub only |
 | `auth.minimumRole` | string | `None` | Minimum role for authenticated users. Hub only |
 | `auth.adminGroup` | string | `cluster-admins` | Group mapped to the Admin role. Hub only |
-| `central.deploy` | bool | `true` | `false` runs `SecuredCluster` only and registers with an external Central |
 | `central.endpoint` | string | | Blank discovers Central's route on this hub |
-| `registration.validFor` | string | `8760h` | Cluster registration secret lifetime |
-| `registration.maxClusters` | int | `0` | `0` means no limit on clusters registered with one secret |
-| `registration.roxctlImage` | string | | Blank takes the image Central itself is running, which the Operator has already resolved to a digest through `registryOverride` and the cluster mirrors. Set it only to pin a different image |
+| `registration.validFor` | string | `168h` | Cluster registration secret lifetime. It only has to cover mint through registration, not the life of the cluster |
+| `registration.maxClusters` | int | `1` | Clusters one secret may register. One secret is minted per secured cluster, so a leaked token registers exactly one cluster. `0` removes the limit |
+| `registration.roxctlImage` | string | | Blank builds `registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9` at the tag matching the installed operator version. Set it explicitly for a disconnected mirror, because the default is a tag on `registry.redhat.io` rather than a mirrored digest |
 
 See the [policy README](../policies/stable/advanced-cluster-security/README.md) for the registration
 modes and for where Central runs.
