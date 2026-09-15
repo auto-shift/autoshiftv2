@@ -1,0 +1,55 @@
+# inform: catches a datastore that was ASKED to be postgres and quietly is not.
+#
+# manifests/config/spire-server.yaml only switches to postgres once the CNPG password Secret
+# actually exists, and falls back to SQLite until then. That fallback is deliberate -- handing SPIRE
+# a connection string with an empty password would stop it starting -- but it is silent, and a
+# ConfigurationPolicy that wrote a valid SQLite config reports Compliant. So config.ztwim.datastore
+# can say postgres, the server can be running on SQLite, and every enforcing policy reads green.
+#
+# manifests/cnpg has the same shape from the other side: its object templates are wrapped in a guard
+# on databaseType, and an unsatisfied guard renders NO objects, which is also Compliant.
+#
+# This asserts the EFFECT instead, and deliberately reads the generated server.conf rather than the
+# SpireServer resource. Under CREATE_ONLY_MODE the resource can say postgres while the operator has
+# not regenerated the config, leaving the process on SQLite; only the config reflects what the
+# server is actually running.
+#
+# Compliant on every cluster that never asked for postgres, so it is safe to place everywhere.
+#
+# Spoke templates read the live state; the hub template does nothing but lift the requested type out
+# of rendered-config, which is the one value that genuinely lives on the hub.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $ds := (index $cfg "datastore" | default dict) hub}}
+  {{hub- $cfgType := (index $ds "databaseType" | default "sqlite3") hub}}
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $want := `{{hub $cfgType hub}}` }}
+  {{- if eq $want "postgres" }}
+  {{- $conf := (lookup "v1" "ConfigMap" $ns "spire-server") | default dict }}
+  {{- $raw := dig "data" "server.conf" "" $conf }}
+  {{- $actual := "" }}
+  {{- if $raw }}
+  {{- $sql := index (dig "plugins" "DataStore" (list) ($raw | fromJSON)) 0 | default dict }}
+  {{- $actual = dig "sql" "plugin_data" "database_type" "" $sql }}
+  {{- end }}
+  {{- $db := (lookup "postgresql.cnpg.io/v1" "Cluster" $ns "spire-db") | default dict }}
+  {{- if and $raw (ne $actual "postgres") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ztwim-server-conf-still-{{ $actual | default "unset" }}
+        namespace: {{ $ns }}
+  {{- end }}
+  {{- if not $db }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ztwim-cnpg-cluster-missing
+        namespace: {{ $ns }}
+  {{- end }}
+  {{- end }}

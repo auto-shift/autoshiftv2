@@ -1,0 +1,33 @@
+# inform-only: proves the nested CA chain actually formed, not merely that objects exist.
+#
+# WHY A SEPARATE CHECK: nested-spoke-effective.yaml catches "the policies rendered nothing". This
+# catches the harder failure -- everything rendered, every policy is green, and the spoke is STILL
+# serving its own self-signed root. That happens when the trust domain differs between hub and
+# spoke, when the upstream authority patch did not take, or when the datastore PVC was never
+# cleared so SPIRE kept the CA it minted on first boot.
+#
+# HOW IT WORKS, with no Job and no shell: a SPOKE-placed policy resolves hub templates ON THE HUB,
+# so it can read the hub's own spire-bundle and compare it against the spoke's. Once the spoke
+# chains to the hub it stops publishing its own root and serves the hub's, so the two become
+# byte-identical, so this reports NonCompliant while the chain is broken and Compliant once it
+# closes.
+#
+# autoindent (not nindent) is required -- the bundle is multi-line PEM inside a block scalar, and
+# plain output at column 0 would terminate the enclosing scalar.
+#
+# Requires the elevated hub-template service account: the read is cross-namespace on the hub.
+object-templates-raw: |
+  {{hub- $hubCM := (lookup "v1" "ConfigMap" "zero-trust-workload-identity-manager" "spire-bundle") | default dict hub}}
+  {{hub- $hubBundle := (dig "data" "bundle.crt" "" $hubCM) hub}}
+  {{- if `{{hub $hubBundle | b64enc hub}}` }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: spire-bundle
+        namespace: zero-trust-workload-identity-manager
+      data:
+        bundle.crt: |
+          {{hub $hubBundle | autoindent hub}}
+  {{- end }}

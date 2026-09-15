@@ -1,0 +1,187 @@
+# The upstream agent: a SECOND SPIRE agent on this spoke whose server is the HUB, not the local
+# spire-server. It attests to the hub with k8s_psat and exposes a Workload API socket that the local
+# spire-server then uses (via the upstream CSI driver) to request its intermediate CA.
+#
+# IMAGE SOURCING: the image comes from the installed operator's own RELATED_IMAGE_SPIRE_AGENT
+# environment variable, looked up at runtime -- never a hardcoded reference. On a productized
+# install that resolves to a digest-pinned registry.redhat.io image matching the operator version,
+# which is supported, mirrorable, and upgrades in lockstep. Every operand image the operator manages
+# is declared this way, so nothing here needs a hardcoded reference.
+#
+# TRUST DOMAIN IS DERIVED TOO. A nested spoke does not get to choose its trust domain -- it MUST
+# equal the hub's, or the upstream-authority plugin builds the wrong expected server ID and the TLS
+# handshake fails with "unexpected ID". So rather than asking an operator to retype the hub's value
+# (and inviting a typo that fails in a confusing way), this hub template reads the hub's own
+# ZeroTrustWorkloadIdentityManager CR. config.ztwim.trustDomain still overrides.
+#
+# HUB ENDPOINT IS DERIVED, not configured. These are HUB templates, so they resolve against the
+# hub and can read the spire-server-grpc Route that manifests/nested-hub/grpc-route.yaml created.
+# config.ztwim.nested.hubEndpoint is an override for what derivation cannot cover: an external load
+# balancer in front of the hub, or a hub that is not the propagating hub.
+#
+# hostPID and the podAffinity to spire-server are both load-bearing: the agent needs host PID for
+# workload attestation, and must land on the same node as the local spire-server so the CSI socket
+# is reachable.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $nested := (index $cfg "nested" | default dict) hub}}
+  {{hub- $cfgTd := (index $cfg "trustDomain" | default "") hub}}
+  {{hub- $hubZtwim := (lookup "operator.openshift.io/v1alpha1" "ZeroTrustWorkloadIdentityManager" "" "cluster") | default dict hub}}
+  {{hub- $td := ($cfgTd | default (dig "spec" "trustDomain" "" $hubZtwim)) hub}}
+  {{hub- $cfgEndpoint := (index $nested "hubEndpoint" | default "") hub}}
+  {{hub- $route := (lookup "route.openshift.io/v1" "Route" "zero-trust-workload-identity-manager" "spire-server-grpc") | default dict hub}}
+  {{hub- $endpoint := ($cfgEndpoint | default (dig "spec" "host" "" $route)) hub}}
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $trustDomain := `{{hub $td hub}}` }}
+  {{- $hubEndpoint := `{{hub $endpoint hub}}` }}
+  {{- $cluster := `{{hub .ManagedClusterName hub}}` }}
+  {{- $opDep := (lookup "apps/v1" "Deployment" $ns "zero-trust-workload-identity-manager-controller-manager") | default dict }}
+  {{- $agentImage := "" }}
+  {{- range $c := (dig "spec" "template" "spec" "containers" (list) $opDep) }}
+  {{- range $e := (dig "env" (list) $c) }}
+  {{- if eq (dig "name" "" $e) "RELATED_IMAGE_SPIRE_AGENT" }}{{- $agentImage = dig "value" "" $e }}{{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if and $trustDomain $hubEndpoint $agentImage }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: spire-agent-upstream
+        namespace: {{ $ns }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: spire-agent-upstream
+      rules:
+        - apiGroups: ['']
+          resources: ['pods', 'nodes', 'nodes/proxy']
+          verbs: ['get']
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: spire-agent-upstream
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: spire-agent-upstream
+      subjects:
+        - kind: ServiceAccount
+          name: spire-agent-upstream
+          namespace: {{ $ns }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: security.openshift.io/v1
+      kind: SecurityContextConstraints
+      metadata:
+        name: spire-agent-upstream
+      allowHostDirVolumePlugin: true
+      allowHostIPC: false
+      allowHostNetwork: false
+      allowHostPID: true
+      allowHostPorts: false
+      allowPrivilegeEscalation: false
+      allowPrivilegedContainer: false
+      readOnlyRootFilesystem: true
+      requiredDropCapabilities: ['ALL']
+      runAsUser:
+        type: RunAsAny
+      seLinuxContext:
+        type: MustRunAs
+      supplementalGroups:
+        type: MustRunAs
+      fsGroup:
+        type: MustRunAs
+      groups: []
+      users:
+        - system:serviceaccount:{{ $ns }}:spire-agent-upstream
+      volumes: ['configMap', 'hostPath', 'projected', 'secret', 'emptyDir']
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: spire-agent-upstream
+        namespace: {{ $ns }}
+      data:
+        agent.conf: '{"agent":{"data_dir":"/run/spire/data","log_level":"info","server_address":"{{ $hubEndpoint }}","server_port":"443","socket_path":"/run/spire/agent-sockets-upstream/spire-agent.sock","trust_bundle_path":"/run/spire/bundle/bundle.crt","trust_domain":"{{ $trustDomain }}"},"plugins":{"NodeAttestor":[{"k8s_psat":{"plugin_data":{"cluster":"{{ $cluster }}","token_path":"/var/run/secrets/tokens/spire-agent"}}}],"KeyManager":[{"disk":{"plugin_data":{"directory":"/run/spire/data"}}}],"WorkloadAttestor":[{"k8s":{"plugin_data":{"node_name_env":"MY_NODE_NAME","skip_kubelet_verification":true}}}]}}'
+  {{- /* mustonlyhave, not musthave: AutoShift owns this workload outright, and musthave MERGES --
+         it treats an existing containers[] list as already satisfied, so an edit to a container
+         (a securityContext, an arg, an image) is silently never applied and the DaemonSet's
+         generation never advances. mustonlyhave replaces the spec, so updates land. */}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: spire-agent-upstream
+        namespace: {{ $ns }}
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: spire-agent-upstream
+        template:
+          metadata:
+            labels:
+              app.kubernetes.io/name: spire-agent-upstream
+          spec:
+            serviceAccountName: spire-agent-upstream
+            hostPID: true
+            affinity:
+              podAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  - labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: spire-server
+                    topologyKey: kubernetes.io/hostname
+            containers:
+              - name: spire-agent
+                image: {{ $agentImage }}
+                args: ['-config', '/run/spire/config/agent.conf']
+                env:
+                  - name: MY_NODE_NAME
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: spec.nodeName
+                volumeMounts:
+                  - name: config
+                    mountPath: /run/spire/config
+                    readOnly: true
+                  - name: spire-token
+                    mountPath: /var/run/secrets/tokens
+                    readOnly: true
+                  - name: hub-trust-bundle
+                    mountPath: /run/spire/bundle
+                    readOnly: true
+                  - name: agent-sockets-upstream
+                    mountPath: /run/spire/agent-sockets-upstream
+                  - name: agent-data
+                    mountPath: /run/spire/data
+            volumes:
+              - name: config
+                configMap:
+                  name: spire-agent-upstream
+              - name: spire-token
+                projected:
+                  sources:
+                    - serviceAccountToken:
+                        path: spire-agent
+                        expirationSeconds: 7200
+                        audience: spire-server
+              - name: hub-trust-bundle
+                secret:
+                  secretName: hub-trust-bundle
+              - name: agent-sockets-upstream
+                hostPath:
+                  path: /run/spire/agent-sockets-upstream
+                  type: DirectoryOrCreate
+              - name: agent-data
+                emptyDir: {}
+  {{- end }}

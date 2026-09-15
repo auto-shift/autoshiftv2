@@ -1,0 +1,85 @@
+# Publishes what each mesh member needs to know about its peers, so federation can be bootstrapped
+# without anyone fetching a bundle by hand.
+#
+# Federation joins INDEPENDENT trust domains. Each side keeps its own certificate authority and they
+# exchange trust bundles over a federation endpoint. The exchange is self-sustaining once started --
+# the SPIRE controller manager refreshes bundles on its own -- but the FIRST bundle has to arrive
+# some other way, and the documented procedure is a person copying it between clusters.
+#
+# ClusterFederatedTrustDomain.spec.trustDomainBundle takes that first bundle as a field, so the step
+# is only manual because a human does the fetching. ManagedClusterView lets a policy do it instead.
+#
+# Placed on the cluster running Red Hat Advanced Cluster Management, because that is where views
+# live and where every member's ManagedCluster is visible. Four views per member:
+#   spire-bundle ConfigMap                the bundle in PEM, used only as a readiness signal that
+#                                         the member's SPIRE server is actually up
+#   ztwim-bundle-jwks ConfigMap           the same bundle in JWKS, which is the only form
+#                                         trustDomainBundle accepts; published by
+#                                         manifests/federation-bundle
+#   ZeroTrustWorkloadIdentityManager      the member's trust domain name
+#   spire-server-federation-public Route  the endpoint peers fetch from, published by
+#                                         endpoint-route.yaml under the apps wildcard so it resolves
+#                                         and carries a publicly valid certificate
+#
+# Views are read-only and namespaced to the member's cluster namespace, so this grants no new access:
+# it surfaces what the hub could already reach through its managed cluster connection.
+object-templates-raw: |
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items }}
+  {{- $group := index $mc.metadata.labels "autoshift.io/ztwim-federation-mesh" | default "" }}
+  {{- if $group }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: view.open-cluster-management.io/v1beta1
+      kind: ManagedClusterView
+      metadata:
+        name: ztwim-fed-bundle
+        namespace: {{ $mc.metadata.name }}
+      spec:
+        scope:
+          kind: ConfigMap
+          version: v1
+          name: spire-bundle
+          namespace: {{ $ns }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: view.open-cluster-management.io/v1beta1
+      kind: ManagedClusterView
+      metadata:
+        name: ztwim-fed-jwks
+        namespace: {{ $mc.metadata.name }}
+      spec:
+        scope:
+          kind: ConfigMap
+          version: v1
+          name: ztwim-bundle-jwks
+          namespace: {{ $ns }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: view.open-cluster-management.io/v1beta1
+      kind: ManagedClusterView
+      metadata:
+        name: ztwim-fed-domain
+        namespace: {{ $mc.metadata.name }}
+      spec:
+        scope:
+          apiGroup: operator.openshift.io
+          kind: ZeroTrustWorkloadIdentityManager
+          version: v1alpha1
+          name: cluster
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: view.open-cluster-management.io/v1beta1
+      kind: ManagedClusterView
+      metadata:
+        name: ztwim-fed-endpoint
+        namespace: {{ $mc.metadata.name }}
+      spec:
+        scope:
+          apiGroup: route.openshift.io
+          kind: Route
+          version: v1
+          name: spire-server-federation-public
+          namespace: {{ $ns }}
+  {{- end }}
+  {{- end }}

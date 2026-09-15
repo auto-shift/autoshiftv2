@@ -1,0 +1,36 @@
+# ClusterFederatedTrustDomain — one per FOREIGN trust domain this cluster should trust.
+#
+# Federation joins INDEPENDENT trust domains: each side keeps its own CA and they exchange trust
+# bundles over a federation endpoint. That is the opposite of nested SPIRE, where one CA signs the
+# other and both sides share a single trust domain.
+#
+# Federation is NOT transitive and it does NOT propagate down an upstream-authority chain: a bundle
+# this cluster federates does not reach a cluster whose SPIRE chains under it. Every cluster that
+# needs to authenticate the foreign domain needs its own entry here.
+#
+# className must be zero-trust-workload-identity-manager-spire — the class the operator's bundled
+# SPIRE controller-manager watches. Anything else is silently ignored.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $ftds := (index $cfg "federatedTrustDomains" | default list) hub}}
+  {{hub- range $ftd := $ftds hub}}
+  {{hub- $td := (index $ftd "trustDomain" | default "") hub}}
+  {{hub- if $td hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: spire.spiffe.io/v1alpha1
+      kind: ClusterFederatedTrustDomain
+      metadata:
+        name: {{hub (index $ftd "name" | default $td) hub}}
+      spec:
+        className: zero-trust-workload-identity-manager-spire
+        trustDomain: {{hub $td hub}}
+        bundleEndpointURL: {{hub (index $ftd "bundleEndpointURL" | default "") hub}}
+        bundleEndpointProfile: {{hub (index $ftd "bundleEndpointProfile" | default dict) | toRawJson | toLiteral hub}}
+        {{hub- $seed := (index $ftd "trustDomainBundle" | default "") hub}}
+        {{hub- if $seed hub}}
+        trustDomainBundle: {{hub $seed | toRawJson | toLiteral hub}}
+        {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

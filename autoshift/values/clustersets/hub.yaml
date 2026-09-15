@@ -2,6 +2,35 @@
 hubClusterSets:
   hub:
     config:
+      # Shared PostgreSQL datastore for SPIRE instead of the per-replica SQLite file. Requires
+      # cloudnative-pg: 'true' below. This is the prerequisite for running more than one SPIRE
+      # server: replicas share one datastore, and the bundle held there is the union of each
+      # server's CA, so an agent validates an SVID issued by any of them.
+      ztwim:
+        federation:
+          bundleEndpoint:
+            # https_spiffe, which is also the Operator's own default. A peer's bundle endpoint is
+            # authenticated by its SPIFFE SVID rather than by a certificate authority, so federation
+            # needs no publicly trusted ingress certificate, no shared internal authority, and
+            # nothing added to the SPIRE server's trust store -- which cannot be extended anyway,
+            # because SpireServer exposes no volumes or environment and the Operator reverts edits
+            # to the generated StatefulSet within seconds.
+            #
+            # https_web is the alternative, and needs the ingress wildcard on EVERY member to chain
+            # to an authority already in the SPIRE image's trust store. That rules out fleets with
+            # their own authority, and disconnected sites.
+            #
+            # The profile is IMMUTABLE once the resource exists. Changing it later therefore
+            # recreates the SpireServer, which policy-ztwim-config does through recreateOption. The
+            # trust domain and its certificate authority survive, because they live in the datastore
+            # rather than in the resource, so agents keep their SVIDs and do not re-attest.
+            profile: 'https_spiffe'
+            refreshHint: 300
+        datastore:
+          databaseType: 'postgres'
+          cnpg:
+            instances: 2
+            size: '10Gi'
       uwm:
         # storageClass: 'gp3-csi'            # Omit to use cluster default StorageClass
         prometheus:
@@ -55,6 +84,14 @@ hubClusterSets:
       # OpenShift version for cluster deployment and image mirroring
       openshift-version: '4.22.8'
       self-managed: 'true'
+      ### Zero Trust Workload Identity Manager (SPIRE)
+      ztwim: 'true'
+      ztwim-federation-mesh: 'demo'
+      # Nesting is OFF so this cluster federates instead. The two are mutually exclusive in practice:
+      # nesting puts the operator in CREATE_ONLY_MODE, which stops it writing the federation block
+      # into the generated server.conf, so a nested cluster publishes a bundle endpoint Route with
+      # nothing listening behind it. Set to 'hub' to sign spoke intermediates instead of federating.
+      ztwim-nested-role: ''
       ### OpenShift Gitops
       gitops: 'true' # is expected to be installed on all hub clusters
       gitops-subscription-name: openshift-gitops-operator
@@ -438,7 +475,7 @@ hubClusterSets:
       jfrog-node-replicas: '2'
       artifactory-db-backups: 'true'
       ### cloudnative-pg
-      cloudnative-pg: 'false'
+      cloudnative-pg: 'true'
       cloudnative-pg-subscription-name: cloudnative-pg
       cloudnative-pg-channel: stable-v1
       cloudnative-pg-source: certified-operators

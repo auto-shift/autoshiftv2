@@ -1,0 +1,123 @@
+# Teaches the hub's spire-server to attest agents from each spoke.
+#
+# Two edits the CRD cannot express:
+#   1. plugins.NodeAttestor[0].k8s_psat.plugin_data.clusters gets an entry per spoke. The operator
+#      hardcodes this list to exactly ONE entry (the local cluster), so it is patched in place.
+#   2. the spire-server StatefulSet mounts the spoke kubeconfigs, which the k8s_psat entries
+#      reference by path.
+# Both rely on CREATE_ONLY_MODE being on (set by policy-ztwim-operator-install) or the operator reverts
+# them on its next reconcile.
+#
+# The ConfigMap edit is a read-modify-write of operator-generated JSON. `clusters` is a LIST OF
+# SINGLE-KEY MAPS keyed by cluster name.
+#
+# Every managed spoke entry is DROPPED AND REBUILT on each pass rather than appended only when
+# absent. Skipping spokes already present would make the patch add-only, unable to correct an entry
+# whose content changed: a moved kubeconfig path would leave server.conf pointing at the old one
+# forever, TokenReview would fail, and the spoke would silently never attest while every policy
+# reported Compliant.
+#
+# Rebuilding is idempotent, which matters because evaluationInterval `watch` tracks the lookup
+# and the policy re-evaluates on its OWN write: the same spokes in the same order produce identical
+# JSON, so the ConfigMap resourceVersion goes constant after one write. Entries for clusters NOT in
+# the spoke list -- the operator's own local-cluster entry -- are preserved untouched.
+#
+# A SECOND VOLUME appears only when config.ztwim.nested.apiCaSecret names one: the shared
+# certificate authority that signs the fleet's API server certificates, mounted once so the
+# kubeconfigs can reference it by path instead of each carrying its own copy. See
+# spoke-kubeconfigs.yaml for what that saves.
+#
+# ONE VOLUME PER SPOKE IS WHAT THIS AVOIDS. spoke-kubeconfigs.yaml keys every spoke into a single Secret, and
+# each key surfaces here as a file under one mount: /run/spire/spoke-kubeconfigs/<spoke>. The pod
+# spec is therefore CONSTANT no matter how many spokes exist, which is what lets a hub carry more
+# than a handful. A volume per spoke would grow the pod spec without bound.
+#
+# THE RESTART IS EXPLICIT, and that is the point of the annotation. SPIRE reads server.conf once at
+# startup, so a newly added spoke does not take effect until the server restarts. A constant pod
+# spec means nothing would trigger that restart on its own, and the failure would be silent:
+# server.conf lists the spoke, the running process has never read it, and the spoke cannot attest.
+#
+# So the pod template carries the server.conf ConfigMap's resourceVersion. That value changes when,
+# and only when, this policy actually rewrites the config -- an MSA token rotation changes the
+# Secret but not the ConfigMap, and so does not restart the CA. The annotation lags the write by one
+# evaluation (it reads the resourceVersion from before its own write), which is the correct order:
+# the config lands first, the restart follows.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $cfgCaSecret := (index (index $cfg "nested" | default dict) "apiCaSecret" | default "") hub}}
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $caSecret := `{{hub $cfgCaSecret hub}}` }}
+  {{- $kcSecret := (lookup "v1" "Secret" $ns "spoke-kubeconfigs") | default dict }}
+  {{- $spokes := list }}
+  {{- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items }}
+  {{- if eq (index $mc.metadata.labels "autoshift.io/ztwim-nested-role" | default "") "spoke" }}
+  {{- if hasKey (dig "data" dict $kcSecret) $mc.metadata.name }}
+  {{- $spokes = append $spokes $mc.metadata.name }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if $spokes }}
+  {{- $cm := (lookup "v1" "ConfigMap" $ns "spire-server") | default dict }}
+  {{- $raw := dig "data" "server.conf" "" $cm }}
+  {{- $confVersion := dig "metadata" "resourceVersion" "" $cm }}
+  {{- if $raw }}
+  {{- $conf := $raw | fromJSON }}
+  {{- $na := index (dig "plugins" "NodeAttestor" (list) $conf) 0 | default dict }}
+  {{- $pd := dig "k8s_psat" "plugin_data" dict $na }}
+  {{- $clusters := dig "clusters" (list) $pd }}
+  {{- $kept := list }}
+  {{- range $c := $clusters }}
+  {{- $managed := false }}
+  {{- range $spoke := $spokes }}{{- if hasKey $c $spoke }}{{- $managed = true }}{{- end }}{{- end }}
+  {{- if not $managed }}{{- $kept = append $kept $c }}{{- end }}
+  {{- end }}
+  {{- range $spoke := $spokes }}
+  {{- $kept = append $kept (dict $spoke (dict "audience" (list "spire-server") "allowed_node_label_keys" (list) "allowed_pod_label_keys" (list) "service_account_allow_list" (list (printf "%s:spire-agent-upstream" $ns)) "kube_config_file" (printf "/run/spire/spoke-kubeconfigs/%s" $spoke))) }}
+  {{- end }}
+  {{- $clusters = $kept }}
+  {{- $_ := set $pd "clusters" $clusters }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: spire-server
+        namespace: {{ $ns }}
+      data:
+        server.conf: '{{ $conf | mustToJSON }}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: spire-server
+        namespace: {{ $ns }}
+      spec:
+        template:
+          metadata:
+            annotations:
+              autoshift.io/spire-server-conf-version: '{{ $confVersion }}'
+          spec:
+            volumes:
+              - name: spoke-kubeconfigs
+                secret:
+                  secretName: spoke-kubeconfigs
+              {{- if $caSecret }}
+              - name: spoke-api-ca
+                secret:
+                  secretName: {{ $caSecret }}
+              {{- end }}
+            containers:
+              - name: spire-server
+                volumeMounts:
+                  - name: spoke-kubeconfigs
+                    mountPath: /run/spire/spoke-kubeconfigs
+                    readOnly: true
+                  {{- if $caSecret }}
+                  - name: spoke-api-ca
+                    mountPath: /run/spire/spoke-api-ca
+                    readOnly: true
+                  {{- end }}
+  {{- end }}
+  {{- end }}

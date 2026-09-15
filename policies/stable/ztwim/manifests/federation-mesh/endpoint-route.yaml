@@ -1,0 +1,67 @@
+# A federation endpoint peers can actually reach.
+#
+# The Operator publishes its own Route for the bundle endpoint at federation.<baseDomain>, which is
+# outside the *.apps.<baseDomain> wildcard and so does not resolve on a default cluster. It also
+# carries the serving certificate from bundleEndpoint.httpsWeb.servingCert, which has to be supplied
+# and kept valid for a name that is not the cluster's own.
+#
+# This Route sidesteps both. It sits under the apps wildcard, so it resolves, and it terminates with
+# whatever certificate the default ingress controller already serves for *.apps.<baseDomain>, so
+# there is nothing here to issue, distribute or renew.
+#
+# THAT CERTIFICATE HAS TO BE ONE THE PEERS TRUST. A stock Red Hat OpenShift cluster signs its
+# ingress wildcard with a per-cluster self-signed authority, and the https_web profile authenticates
+# the endpoint with ordinary web public key infrastructure, so a peer fetching the bundle rejects it
+# with a self-signed chain. Replace the ingress certificate from an authority the fleet trusts
+# before relying on this Route: the cert-manager policy in this repository does it through
+# config.certManager.ingressCert with a real issuer. Clusters whose ingress already carries a
+# publicly issued wildcard need nothing.
+#
+# The TLS termination follows config.ztwim.federation.bundleEndpoint.profile, and the two profiles
+# want opposite things. Under https_spiffe the peer authenticates the SPIRE server by its SVID, so
+# the connection must reach the server itself and the route is passthrough. Under https_web the peer
+# authenticates an ordinary web certificate, which is the router's wildcard, so the route terminates
+# there and re-encrypts to a backend whose own certificate never has to be publicly valid.
+#
+# The Operator's own federation Route makes the same switch, which is a useful cross-check: it is
+# reencrypt under https_web and passthrough under https_spiffe.
+#
+# WHAT THIS EXPOSES, and how to not do it. A trust bundle is certificate authority material, so the
+# contents are public by design and the https_web profile exists so a peer can fetch one with no
+# pre-existing trust. Publishing it on the default ingress still makes the endpoint reachable from
+# wherever that ingress is reachable, which on a cloud cluster usually means the internet, and it
+# discloses the trust domain name and that this cluster runs SPIRE.
+#
+# Whether that is acceptable is a network decision rather than a data one. Clusters sharing a
+# private network do not need it at all. Set config.ztwim.federation.publishEndpointRoute to 'false'
+# to skip this Route and config.ztwim.federation.bundleEndpointHost to the name peers should use
+# instead, whether that is an internal load balancer, a service mesh gateway or a private ingress
+# controller.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $fed := (index $cfg "federation" | default dict) hub}}
+  {{hub- $cfgPublish := (index $fed "publishEndpointRoute" | default "true") hub}}
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $publish := `{{hub $cfgPublish hub}}` }}
+  {{- $domain := dig "spec" "domain" "" ((lookup "config.openshift.io/v1" "Ingress" "" "cluster") | default dict) }}
+  {{- if and $domain (ne $publish "false") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: route.openshift.io/v1
+      kind: Route
+      metadata:
+        name: spire-server-federation-public
+        namespace: {{ $ns }}
+      spec:
+        host: spire-federation.{{ $domain }}
+        to:
+          kind: Service
+          name: spire-server
+          weight: 100
+        port:
+          targetPort: federation
+        tls:
+          termination: reencrypt
+          insecureEdgeTerminationPolicy: Redirect
+  {{- end }}

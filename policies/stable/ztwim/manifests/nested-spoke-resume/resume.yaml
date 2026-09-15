@@ -1,0 +1,22 @@
+# Second half of the opt-in reset: bring the server back up after its datastore was cleared.
+#
+# UNCONDITIONAL on replicas, deliberately. Guarding this on the datastore volume being absent would
+# never fire: the StatefulSet controller recreates the claim almost immediately after the clear, so
+# the guard is already false by the time this evaluates and the spoke stays scaled to ZERO with
+# nothing to bring it back.
+#
+# Leaving the server down is strictly worse than starting it on a fresh datastore, so this asserts
+# replicas unconditionally and lets ordering -- it depends on the clear policy being Compliant -- do
+# the sequencing. The operator will NOT restore the replica count itself -- CREATE_ONLY_MODE skips
+# StatefulSet updates -- so something has to assert it, and that something is this.
+object-templates-raw: |
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: spire-server
+        namespace: {{ $ns }}
+      spec:
+        replicas: 1

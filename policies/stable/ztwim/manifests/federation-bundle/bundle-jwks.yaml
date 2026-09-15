@@ -1,0 +1,138 @@
+# Publishes this cluster's own trust bundle in JWKS form, which is the only form federation can seed
+# with.
+#
+# WHY THIS EXISTS AT ALL. ClusterFederatedTrustDomain.spec.trustDomainBundle takes a SPIFFE bundle in
+# JWKS, and the only bundle the Operator publishes as a Kubernetes object is the spire-bundle
+# ConfigMap, which is PEM. There is no conversion available: a JWKS entry for an RSA authority needs
+# the modulus and exponent as separate base64url fields, and a policy template cannot derive those
+# from a certificate. Handing the field an x5c entry built from the PEM does not work either --
+# measured on a live cluster, the controller manager rejects it with
+# "go-jose/go-jose: invalid RSA key, missing n/e values" -- and the rejection is silent in the sense
+# that the resource keeps an empty status and the policy still reports Compliant.
+#
+# The bundle ENDPOINT already serves exactly the right thing, so this fetches from there rather than
+# converting anything. External Secrets Operator does the fetching declaratively, on a refresh
+# interval, with conditions to assert on.
+#
+# THE FETCH IS LOCAL AND NEEDS NO PUBLIC TRUST. It targets the Service rather than the Route, so it
+# never leaves the cluster, and the endpoint's certificate is validated with the OpenShift service
+# certificate authority that every cluster already has in openshift-service-ca.crt. Nothing here
+# depends on the ingress wildcard, on a publicly trusted authority, or on outbound connectivity,
+# which is what makes it work on a disconnected cluster with its own authority.
+#
+# TWO PREREQUISITES, BOTH OWNED BY THE EXTERNAL SECRETS POLICY, NOT THIS ONE.
+#
+#   1. The controller has to be running. Installing the operator is not enough: without an
+#      ExternalSecretsConfig the operator deploys no controller pods at all, and every store here
+#      stays unready. policy-eso-install creates that singleton.
+#
+#   2. The controller has to be allowed out on 8443. The operator applies a deny-all egress
+#      NetworkPolicy to its operands and opens only 6443 and DNS, so a store on any other port fails
+#      with "InvalidProviderConfig ... i/o timeout" -- which names TLS nowhere and reads like a
+#      certificate problem. Egress is configured through the ExternalSecretsConfig itself, as
+#      config.eso.externalSecretsConfig.controllerConfig.networkPolicies.
+#
+#      That list REPLACES the chart default wholesale rather than merging, so an entry added for
+#      8443 has to restate the 443 rule or every other provider breaks:
+#
+#        config:
+#          eso:
+#            externalSecretsConfig:
+#              controllerConfig:
+#                networkPolicies:
+#                  - name: allow-https-egress
+#                    componentName: ExternalSecretsCoreController
+#                    egress:
+#                      - ports:
+#                          - protocol: TCP
+#                            port: 443
+#                  - name: allow-spire-bundle-egress
+#                    componentName: ExternalSecretsCoreController
+#                    egress:
+#                      # Scoped: there is exactly one destination, and an unscoped rule would let
+#                      # the controller reach any 8443 in the cluster.
+#                      - to:
+#                          - namespaceSelector:
+#                              matchLabels:
+#                                kubernetes.io/metadata.name: zero-trust-workload-identity-manager
+#                        ports:
+#                          - protocol: TCP
+#                            port: 8443
+#
+# The Secret is copied into a ConfigMap below because that is what the hub can actually read: a
+# ManagedClusterView refuses Secrets outright ("viewing secrets is not allowed"), and the bundle is
+# public key material anyway -- modulus, exponent and certificate chain, no private components, and
+# already served unauthenticated to any peer that asks. A Secret would add no protection while
+# blocking the one thing the bundle needs to do.
+#
+# THE CONFIGMAP IS A TRUST DECISION, NOT JUST DATA. Whoever can write it decides which authority this
+# cluster's PEERS will trust for this trust domain: the mesh policy copies it into their
+# ClusterFederatedTrustDomain, and SVIDs minted by that authority are then accepted as this domain's.
+# https_web has no equivalent, because there each server fetches and validates the bundle itself.
+#
+# The escalation is narrower than it first reads -- anyone with broad access to this namespace can
+# usually compromise this cluster's SPIRE anyway and mint genuine identities -- but a ConfigMap write
+# is a LOWER privilege than control of the signing key, so this lowers the bar rather than opening a
+# door that was shut. Treat write access to this namespace as equivalent to control of this cluster's
+# workload identity.
+object-templates-raw: |
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: external-secrets.io/v1
+      kind: SecretStore
+      metadata:
+        name: ztwim-bundle-endpoint
+        namespace: {{ $ns }}
+      spec:
+        provider:
+          webhook:
+            # The Service, not the Route: this stays inside the cluster.
+            url: 'https://spire-server.{{ $ns }}.svc:8443'
+            method: GET
+            timeout: 15s
+            # An empty result block returns the whole response body, which is already the JWKS
+            # document. No jsonPath is needed and none is correct -- the bundle is the payload.
+            result: {}
+            caProvider:
+              type: ConfigMap
+              name: openshift-service-ca.crt
+              namespace: {{ $ns }}
+              key: service-ca.crt
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: ztwim-bundle-jwks
+        namespace: {{ $ns }}
+      spec:
+        # Short enough that a rotated authority reaches peers quickly, long enough not to poll the
+        # server hard. The bundle itself carries a 300s refresh hint.
+        refreshInterval: 5m
+        secretStoreRef:
+          name: ztwim-bundle-endpoint
+          kind: SecretStore
+        target:
+          name: ztwim-bundle-jwks
+          creationPolicy: Owner
+        data:
+          - secretKey: bundle.jwks
+            # The webhook URL is static, so this key selects nothing. It is required by the schema.
+            remoteRef:
+              key: bundle
+  {{- $jwks := (lookup "v1" "Secret" $ns "ztwim-bundle-jwks") | default dict }}
+  {{- $b := (dig "data" "bundle.jwks" "" $jwks) }}
+  {{- if $b }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: ztwim-bundle-jwks
+        namespace: {{ $ns }}
+        labels:
+          autoshift.io/ztwim-federation-bundle: ''
+      data:
+        bundle.jwks: {{ $b | base64dec | toRawJson }}
+  {{- end }}

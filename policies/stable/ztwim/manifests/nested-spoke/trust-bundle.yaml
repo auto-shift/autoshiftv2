@@ -1,0 +1,35 @@
+# Delivers the HUB's SPIRE trust bundle to this spoke, where the upstream agent mounts it to
+# validate the hub SPIRE server before attesting.
+#
+# No external secret store is involved, for two reasons:
+#   1. A SPIRE trust bundle is a set of root CA certificates. It is PUBLIC data. It needs integrity,
+#      not confidentiality, so routing it through Vault or a cloud secret manager buys nothing.
+#   2. A hub template reads it directly off the hub. The reference implementation reached for AWS
+#      Secrets Manager only because `fromConfigMap` collapsed the multi-line PEM onto one line;
+#      base64-encoding it into a Secret's data field sidesteps that entirely, since base64 is
+#      single-line by construction.
+#
+# `lookup` rather than `fromConfigMap`: fromConfigMap raises a hard template error when the
+# ConfigMap is absent, which would fail the WHOLE policy on a hub where SPIRE has not finished
+# starting. lookup returns empty instead, so this degrades to "emit nothing yet" and converges once
+# the bundle exists.
+#
+# The read is cross-namespace (the bundle lives in the operator namespace on the hub, not the policy
+# namespace), so the consuming policy sets hubTemplateOptions.serviceAccountName -- without the
+# elevated service account the lookup is namespace-restricted and comes back empty forever.
+object-templates-raw: |
+  {{hub- $bundleCM := (lookup "v1" "ConfigMap" "zero-trust-workload-identity-manager" "spire-bundle") | default dict hub}}
+  {{hub- $bundle := (dig "data" "bundle.crt" "" $bundleCM) hub}}
+  {{- $b := `{{hub $bundle | b64enc hub}}` }}
+  {{- if $b }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: hub-trust-bundle
+        namespace: zero-trust-workload-identity-manager
+      type: Opaque
+      data:
+        bundle.crt: {{ $b }}
+  {{- end }}
