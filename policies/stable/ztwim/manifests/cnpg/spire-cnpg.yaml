@@ -1,9 +1,19 @@
 # OPT-IN (config.ztwim.datastore.databaseType: postgres + autoshift.io/cloudnative-pg: 'true'):
 # a CloudNativePG cluster to back the SPIRE datastore instead of the default SQLite file.
 #
-# WHAT THIS IS AND IS NOT FOR. It does NOT raise the spoke ceiling: a nested hub tops out around 45
-# spokes on the kubeconfig Secret size, which is roughly 50-60 attesting agents, and SQLite is
-# entirely comfortable at that load. Two things do motivate it:
+# WHAT THIS IS AND IS NOT FOR. It does not raise the spoke ceiling, which is set by the size of the
+# aggregated kubeconfig Secret rather than by the datastore: roughly 60 spokes by default, and
+# roughly 600 once config.ztwim.nested.apiCaSecret replaces the per-cluster API certificate
+# authority bundles with one shared file. See manifests/nested-hub/spoke-kubeconfigs.yaml.
+#
+# What the datastore DOES carry is every agent and every registration entry behind those spokes, and
+# that is not the spoke count -- each spoke contributes an agent per node, so 600 spokes is tens of
+# thousands of agents and their entries. SQLite is unremarkable at the default ceiling of 60. At the
+# flattened ceiling it has not been measured, and a single file on one ReadWriteOnce volume is a
+# poor shape for that load whatever the benchmark says. Size the datastore deliberately before
+# planning a hub in the hundreds.
+#
+# Two things motivate a database at any scale:
 #
 #   BACKUP. The SPIRE datastore holds the trust domain's root CA and every registration entry, and
 #   with SQLite on a PersistentVolumeClaim there is no backup path at all. Losing that volume

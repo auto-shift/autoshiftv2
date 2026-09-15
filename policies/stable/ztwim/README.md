@@ -405,12 +405,27 @@ referenced by path instead of inlined, and it rises into the hundreds.
 **The largest lever is `config.ztwim.nested.apiCaSecret`.** Certificate authority data is about
 15KB of the 17KB a kubeconfig costs. Naming a Secret on the hub that holds the authority signing the
 fleet's API server certificates lets every kubeconfig reference that one mounted file by path
-instead of carrying a copy, which drops the per-spoke cost to roughly 1.7KB and takes a hub from
-about sixty spokes to several hundred.
+instead of carrying a copy, which drops the per-spoke cost to a measured 1710 bytes and takes a hub
+from about sixty spokes to roughly 600.
 
 It requires the fleet to share that authority. Stock Red Hat OpenShift does not: each cluster signs
 its own API certificate with a per-cluster signer. Replacing the API serving certificate from one
 common issuer makes it true, which the `cert-manager` policy in this repository can do.
+
+**That shared signer is a shared liability**, and the trade is worth making deliberately. The hub
+validates every spoke's `k8s_psat` token against this one authority, so whoever holds it can present
+a certificate for any cluster's API endpoint and pass `TokenReview` as that cluster. With
+per-cluster signers the same compromise reaches exactly one spoke. The blast radius moves from one
+cluster to the fleet, in exchange for the ceiling moving from 60 spokes to 600.
+
+Two things make the trade smaller than it first sounds. The option exists only under nesting, where
+the fleet has already accepted a single authority for workload identity, so it adds a second shared
+authority rather than the first. And an API serving certificate is a narrower grant than the SPIRE
+root: it lets an attacker impersonate an API server, not mint workload identities directly.
+
+Two operational costs come with it. The hub reads one mounted file, so a wrong or stale copy fails
+every spoke at once rather than one. And rotating that authority becomes a coordinated fleet-wide
+event, where per-cluster signers rotate independently.
 
 Worth knowing even without it: of the seven certificates in a default bundle, only the one that
 signed the API endpoint takes part in verification. The rest cover localhost, the service network,

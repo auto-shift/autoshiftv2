@@ -17,7 +17,14 @@
 #   443  covers the common provider port -- Vault, the cloud secret managers, anything behind a
 #        Route.
 #   8443 covers the SPIRE bundle endpoint, which the ztwim federation policy fetches through a
-#        SecretStore to seed federated trust domains.
+#        SecretStore to seed federated trust domains. Unlike the 443 rule it is SCOPED to the
+#        zero-trust-workload-identity-manager namespace, because there is exactly one destination
+#        and an unscoped rule would let the controller reach any 8443 in the cluster.
+#
+# The defaults are written as YAML inside a raw string and parsed with fromYaml, rather than as an
+# inline JSON blob. Both produce the same map; only one of them can be reviewed. The embedded YAML
+# sits at the block scalar's own indentation so that it starts at column zero once the scalar is
+# unindented, which is what makes it parse.
 #
 # A per-cluster overlay at config.eso.externalSecretsConfig is deep-merged OVER the defaults below,
 # so any field the custom resource definition supports can be set without touching this file. Two
@@ -35,7 +42,33 @@
 object-templates-raw: |
   {{hub- $cfg := (index (index (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "eso" | default dict) hub}}
   {{hub- $overlay := (index $cfg "externalSecretsConfig" | default dict) hub}}
-  {{hub- $base := fromJson `{"appConfig":{"logLevel":1,"webhookConfig":{"certificateCheckInterval":"5m0s"}},"controllerConfig":{"networkPolicies":[{"name":"allow-https-egress","componentName":"ExternalSecretsCoreController","egress":[{"ports":[{"protocol":"TCP","port":443}]}]},{"name":"allow-spire-bundle-egress","componentName":"ExternalSecretsCoreController","egress":[{"ports":[{"protocol":"TCP","port":8443}]}]}]},"plugins":{"bitwardenSecretManagerProvider":{"mode":"Disabled"}}}` hub}}
+  {{hub- $base := fromYaml `
+  appConfig:
+    logLevel: 1
+    webhookConfig:
+      certificateCheckInterval: 5m0s
+  controllerConfig:
+    networkPolicies:
+      - name: allow-https-egress
+        componentName: ExternalSecretsCoreController
+        egress:
+          - ports:
+              - protocol: TCP
+                port: 443
+      - name: allow-spire-bundle-egress
+        componentName: ExternalSecretsCoreController
+        egress:
+          - to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: zero-trust-workload-identity-manager
+            ports:
+              - protocol: TCP
+                port: 8443
+  plugins:
+    bitwardenSecretManagerProvider:
+      mode: Disabled
+  ` hub}}
   {{hub- $spec := (merge $overlay $base) hub}}
   - complianceType: musthave
     objectDefinition:
