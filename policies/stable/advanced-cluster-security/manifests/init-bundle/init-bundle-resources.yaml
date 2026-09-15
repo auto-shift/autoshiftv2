@@ -1,4 +1,37 @@
 object-templates-raw: |
+  {{- /* CLI image resolution, highest priority first:
+       1. config.images.cli, read on the hub from this cluster's rendered-config
+       2. the cluster's own openshift/cli ImageStream, looked up at runtime. That is a digest
+          against the release payload, so an ImageDigestMirrorSet rewrites it in a disconnected
+          deployment and no ImageTagMirrorSet is needed.
+       3. the in-cluster registry, which does not exist wherever the registry Operator is Removed.
+     The fallback is assigned up front rather than written as `| default "<literal>"`, which the
+     validation suite strips. */ -}}
+  {{hub- $ownCM := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $ownCfg := (index ($ownCM.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{- $cliImage := "image-registry.openshift-image-registry.svc:5000/openshift/cli:latest" }}
+  {{- $cliOverride := "{{hub (index (index $ownCfg "images" | default dict) "cli" | default "") hub}}" }}
+  {{- $cliFromIS := "" }}
+  {{- $isCli := (lookup "image.openshift.io/v1" "ImageStream" "openshift" "cli") }}
+  {{- if $isCli }}
+  {{-   range $t := (index ($isCli.spec | default dict) "tags" | default list) }}
+  {{-     if eq (index $t "name" | default "") "latest" }}
+  {{-       $cliFromIS = (index ($t.from | default dict) "name" | default "") }}
+  {{-     end }}
+  {{-   end }}
+  {{-   if not $cliFromIS }}
+  {{-     range $t := (index ($isCli.status | default dict) "tags" | default list) }}
+  {{-       if eq (index $t "tag" | default "") "latest" }}
+  {{-         $items := (index $t "items" | default list) }}
+  {{-         if $items }}
+  {{-           $cliFromIS = (index (index $items 0) "dockerImageReference" | default "") }}
+  {{-         end }}
+  {{-       end }}
+  {{-     end }}
+  {{-   end }}
+  {{- end }}
+  {{- if $cliFromIS }}{{ $cliImage = $cliFromIS }}{{ end }}
+  {{- if $cliOverride }}{{ $cliImage = $cliOverride }}{{ end }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -95,7 +128,7 @@ object-templates-raw: |
                   secretKeyRef:
                     key: password
                     name: central-htpasswd
-              image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+              image: '{{ $cliImage }}'
               imagePullPolicy: Always
               name: create-cluster-init-bundle
             dnsPolicy: ClusterFirst

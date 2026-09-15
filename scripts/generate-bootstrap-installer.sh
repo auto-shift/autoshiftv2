@@ -63,10 +63,10 @@ command -v helm >/dev/null 2>&1 || error "helm is required"
 oc whoami >/dev/null 2>&1 || error "Not logged in to OpenShift. Run: oc login"
 
 GITOPS_NAMESPACE="${GITOPS_NAMESPACE:-openshift-gitops}"
-# Optional: override the CRD-wait Job's CLI image. The charts default to the in-cluster registry
-# (image-registry.openshift-image-registry.svc:5000/openshift/cli:latest), which can't be pulled on
-# clusters without the internal image registry (e.g. bare metal). To fix, run with:
-#   CLI_IMAGE=registry.redhat.io/openshift4/ose-cli:latest ./install-bootstrap.sh   (or a mirror)
+# Optional: pin the CRD-wait Job's CLI image. The charts resolve it from the cluster's own
+# openshift/cli ImageStream, which works disconnected and needs no internal image registry, so this
+# is only for pinning a specific mirrored image:
+#   CLI_IMAGE=<registry>/openshift4/ose-cli:latest ./install-bootstrap.sh
 CLI_IMAGE="${CLI_IMAGE:-}"
 
 log "Installing Advanced Cluster Management..."
@@ -476,11 +476,12 @@ oc wait --for=condition=Complete multiclusterhub multiclusterhub \
   -n open-cluster-management --timeout=900s
 ```
 
-> **Bare metal / no internal registry:** the CRD-wait Job defaults to the in-cluster CLI image
-> (`image-registry.openshift-image-registry.svc:5000/openshift/cli:latest`). If the internal image
-> registry is not enabled, add `--set image=registry.redhat.io/openshift4/ose-cli:latest` (or your
-> mirrored equivalent) to both bootstrap `helm upgrade` commands above, or run `install-bootstrap.sh`
-> with `CLI_IMAGE=registry.redhat.io/openshift4/ose-cli:latest`.
+> **CRD-wait image:** the charts resolve it from the cluster's own `openshift/cli` ImageStream at
+> install time. That entry is a digest against the release payload, so an ImageDigestMirrorSet
+> rewrites it in a disconnected deployment, and nothing depends on the internal image registry. The
+> in-cluster registry is only the last resort. To pin a specific mirrored image instead, add
+> `--set image=<image>` to both bootstrap `helm upgrade` commands above, or run
+> `install-bootstrap.sh` with `CLI_IMAGE=<image>`.
 
 #### Step 3: Deploy AutoShift
 
