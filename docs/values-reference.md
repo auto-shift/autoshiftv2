@@ -385,9 +385,13 @@ bootstrap and Day 2 agree. Set a field here to override it for one cluster or cl
 | `repo.limits` | map | cpu `2000m`, memory `2048Mi` | Repo server resource limits |
 | `repo.requests` | map | cpu `500m`, memory `512Mi` | Repo server resource requests |
 | `repo.cluster_ca_bundle` | bool | `false` | Inject the cluster trusted certificate authority bundle into the repo server. The `gitops-cluster-ca-bundle` label overrides this |
-| `controller.statusProcessors` | int | `50` | Concurrent status reconciliations. AutoShift creates an Application per policy, so even a small hub carries dozens. This is the main lever on how fast the fleet converges |
-| `controller.operationProcessors` | int | `25` | Concurrent sync operations |
-| `controller.limits` | map | cpu `2000m`, memory `4Gi` | Application controller resource limits, sized for a full refresh storm |
+| `controller.statusProcessors` | int | `20` | Concurrent status reconciliations. AutoShift creates an Application per policy, so even a small hub carries dozens. This is the main lever on how fast the fleet converges, and also on peak memory, because each in-flight comparison holds an Application's rendered and live state at once. Raise `controller.limits.memory` with it |
+| `controller.operationProcessors` | int | `10` | Concurrent sync operations |
+| `controller.goMemLimitPercent` | int | `85` | Soft ceiling for the Go runtime, as a percentage of `controller.limits.memory`. The runtime does not read the container memory limit, so without this a refresh storm is terminated before garbage collection runs. Argo CD recommends 80-90%. Derived, so the two cannot drift |
+| `controller.goMemLimit` | string | `''` | Explicit override for the derived ceiling, for memory limits not expressed in `Gi` or `Mi`. When neither this nor the derivation yields a value, the variable is omitted rather than guessed |
+| `controller.respectRBAC` | string | `normal` | `normal` or `strict`. Stops the controller watching resource kinds it has no permission to list |
+| `resourceExclusions` | string | Event, PackageManifest, compliance results | Kinds kept out of the cluster cache, which is the controller's largest allocation. Replaces the list rather than adding to it. A kind listed here cannot be deployed by this instance, so restrict it to generated resources |
+| `controller.limits` | map | cpu `2000m`, memory `8Gi` | Application controller resource limits, sized for a full refresh storm rather than steady state |
 | `controller.requests` | map | cpu `250m`, memory `1Gi` | Application controller resource requests. Measured peak was 843Mi on a hub with 51 Applications and 194 Policies during a full refresh. Requests are deliberately below limits so the pod is Burstable and does not reserve the ceiling |
 | `ha.enabled` | bool | `false` | Run Argo CD in high availability mode |
 | `ha.limits` | map | cpu `500m`, memory `256Mi` | High availability resource limits |
@@ -410,8 +414,8 @@ clusterSets:
       gitops:
         infra:
           controller:
-            statusProcessors: 50
-            operationProcessors: 25
+            statusProcessors: 20
+            operationProcessors: 10
           repo:
             replicas: 5
 ```
