@@ -25,7 +25,7 @@ detail — is [responsibilities.md](responsibilities.md#per-file-breakdown).*
 | `policy-eso-boot-clientca-self` (+ `-self-wire`) | `policyset-eso-boot-hub` | hubs | selfSigned mode: mint the bootstrap CA, per-cluster client certs, reader RBAC; wire `APIServer.spec.clientCA`. |
 | `policy-eso-boot-clientca-ext` | `policyset-eso-boot-hub` | hubs | External modes: materialize the external CA bundle into the clientCA ConfigMap + reader RBAC (no minting). |
 | `policy-eso-boot-serving-ca` | `policyset-eso-boot-hub` | hubs | Discover the hub apiserver's serving CA and stash it in owning-namespaces and `sharedNamespace` (`eso-shared` by default). |
-| `policy-eso-boot-store` | `policyset-eso-boot-spoke` | hubs + spokes | Copy the client cert + serving CA to the cluster and build the bootstrap `ClusterSecretStore`, plus `<storePrefix>-writeback` when `writebackNamespace` is set. |
+| `policy-eso-boot-store` | `policyset-eso-boot-spoke` | hubs + spokes | Copy the client cert + serving CA to the cluster and build the bootstrap `ClusterSecretStore`, plus `<storePrefix>-writeback` when this cluster has `config.eso.pushSecrets` and `writebackNamespace` is set. |
 | `policy-eso-cluster-secrets` | `policyset-eso-secret-stores` | all placed clusters | `config.eso.secrets` on the landing cluster. |
 | `policy-eso-cluster-push-secrets` | `policyset-eso-secret-stores` | all placed clusters | `config.eso.pushSecrets` on the landing cluster. Children and site hubs target `hub-bootstrap-writeback`; the global hub targets Vault. |
 
@@ -161,11 +161,13 @@ Key mechanics:
   manual sequencing.
 - **Rotation is continuous.** cert-manager rotates the client cert, the serving-ca policy
   re-resolves the serving CA, and the copy policy re-copies both every evaluation.
-- **Write-back is a second store, not a second identity.** When `writebackNamespace` is set
-  (default `eso-writeback`), the same client cert and hub URL back `<storePrefix>-writeback`
-  with `remoteNamespace` equal to that namespace. Pull stays on `hub-bootstrap` /
-  `eso-shared`. Push uses the write-back store. Empty `writebackNamespace` disables the
-  extra store, the namespace, and write RBAC. See [§10](#10-push-back-spoke-to-parent-to-vault).
+- **Write-back is a second store, not a second identity.** When **this cluster** has
+  `config.eso.pushSecrets` and `writebackNamespace` is set (default `eso-writeback`), the
+  same client cert and hub URL back `<storePrefix>-writeback` with `remoteNamespace` equal
+  to that namespace. Pull stays on `hub-bootstrap` / `eso-shared`. Push uses the write-back
+  store. No `pushSecrets` on this cluster, or empty `writebackNamespace`, disables the extra
+  store (empty `writebackNamespace` also drops the namespace and write RBAC). See
+  [§10](#10-push-back-spoke-to-parent-to-vault).
 
 ---
 
@@ -477,10 +479,12 @@ missing).
 
 **`hub-bootstrap-writeback` is a second store, not a second identity.**
 `policy-eso-boot-store` emits `<storePrefix>-writeback` (default `hub-bootstrap-writeback`)
-next to `hub-bootstrap`. Same client cert, hub URL, and serving CA. The read store's
+next to `hub-bootstrap` only when **this cluster** has `config.eso.pushSecrets` and
+`writebackNamespace` is set. Same client cert, hub URL, and serving CA. The read store's
 `remoteNamespace` is `eso-shared`. The write-back store's `remoteNamespace` is
-`eso-writeback`. Children `list` the former and cannot `list` the latter. Empty
-`writebackNamespace` disables the extra store, the namespace, and write RBAC.
+`eso-writeback`. Children `list` the former and cannot `list` the latter. No `pushSecrets`
+on this cluster, or empty `writebackNamespace`, disables the extra store (empty
+`writebackNamespace` also drops the namespace and write RBAC).
 
 ```mermaid
 flowchart LR

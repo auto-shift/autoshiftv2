@@ -194,6 +194,7 @@ spec:
                     {{ "{{hub-" }} if eq $sharedNs "" {{ "hub}}" }}{{ "{{hub-" }} $sharedNs = "{{ $policyNamespace }}" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
                     {{ "{{hub-" }} $writebackNs := "{{ $writebackNamespace }}" {{ "hub}}" }}
                     {{ "{{hub-" }} if hasKey $hubBootstrap "writebackNamespace" {{ "hub}}" }}{{ "{{hub-" }} $writebackNs = (printf "%v" (index $hubBootstrap "writebackNamespace")) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} $pushSecrets := (dig "eso" "pushSecrets" (list) $clusterConfig) {{ "hub}}" }}
                     {{ "{{hub-" }} $consumerNs := (index $hubBootstrap "consumerNamespaces" | default (`{{ $defaultConsumerNs | toJson }}` | fromJson)) {{ "hub}}" }}
                     {{ "{{hub-" }} $consumerSel := (index $hubBootstrap "consumerNamespaceSelector" | default (`{{ $defaultConsumerSel | toJson }}` | fromJson)) {{ "hub}}" }}
                     {{ "{{hub-" }} $dsn := (index $clusterConfig "defaultSecretsNamespace" | default "") {{ "hub}}" }}
@@ -306,6 +307,7 @@ spec:
                     {{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $sharedNs := `{{ "{{hub" }} $sharedNs {{ "hub}}" }}` {{ "}}" }}
                     {{ "{{-" }} $writebackNs := `{{ "{{hub" }} $writebackNs {{ "hub}}" }}` {{ "}}" }}
+                    {{ "{{-" }} $pushSecrets := `{{ "{{hub" }} $pushSecrets | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
                     {{ "{{-" }} $consumerNs := `{{ "{{hub" }} $consumerNs | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
                     {{ "{{-" }} $consumerSel := `{{ "{{hub" }} $consumerSel | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
                     {{ "{{-" }} $dsn := `{{ "{{hub" }} $dsn {{ "hub}}" }}` {{ "}}" }}
@@ -570,8 +572,11 @@ spec:
                                     namespace: {{ $esoNamespace }}
                                     key: tls.key
                       ##### Write-back store: same cert and hub URL, remoteNamespace is the parent's #####
-                      ##### write-back ns. Empty writebackNs disables it (mustnothave the leftover). #####
-                      {{ "{{-" }} if ne $writebackNs "" {{ "}}" }}
+                      ##### write-back ns. Only when THIS cluster has config.eso.pushSecrets AND #####
+                      ##### writebackNs is set — otherwise ESO Ready fails (parent write Role is #####
+                      ##### also gated on that cluster's pushSecrets). Empty writebackNs or no #####
+                      ##### pushSecrets mustnothave the leftover. #####
+                      {{ "{{-" }} if and (ne $writebackNs "") (gt (len ($pushSecrets | default list)) 0) {{ "}}" }}
                     - complianceType: musthave
                       objectDefinition:
                         apiVersion: external-secrets.io/v1
@@ -682,6 +687,7 @@ spec:
             {{ "{{hub-" }} if eq $sharedNs "" {{ "hub}}" }}{{ "{{hub-" }} $sharedNs = "{{ $policyNamespace }}" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $writebackNs := "{{ $writebackNamespace }}" {{ "hub}}" }}
             {{ "{{hub-" }} if hasKey $hubBootstrap "writebackNamespace" {{ "hub}}" }}{{ "{{hub-" }} $writebackNs = (printf "%v" (index $hubBootstrap "writebackNamespace")) {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} $pushSecrets := (dig "eso" "pushSecrets" (list) $clusterConfig) {{ "hub}}" }}
             {{ "{{hub-" }} $consumerNs := (index $hubBootstrap "consumerNamespaces" | default (`{{ $defaultConsumerNs | toJson }}` | fromJson)) {{ "hub}}" }}
             {{ "{{hub-" }} $consumerSel := (index $hubBootstrap "consumerNamespaceSelector" | default (`{{ $defaultConsumerSel | toJson }}` | fromJson)) {{ "hub}}" }}
             {{ "{{hub-" }} $dsn := (index $clusterConfig "defaultSecretsNamespace" | default "") {{ "hub}}" }}
@@ -794,6 +800,7 @@ spec:
             {{ "{{-" }} $storeName := `{{ "{{hub" }} $storeName {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $sharedNs := `{{ "{{hub" }} $sharedNs {{ "hub}}" }}` {{ "}}" }}
             {{ "{{-" }} $writebackNs := `{{ "{{hub" }} $writebackNs {{ "hub}}" }}` {{ "}}" }}
+            {{ "{{-" }} $pushSecrets := `{{ "{{hub" }} $pushSecrets | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
             {{ "{{-" }} $consumerNs := `{{ "{{hub" }} $consumerNs | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
             {{ "{{-" }} $consumerSel := `{{ "{{hub" }} $consumerSel | toJson {{ "hub}}" }}` | fromJson {{ "}}" }}
             {{ "{{-" }} $dsn := `{{ "{{hub" }} $dsn {{ "hub}}" }}` {{ "}}" }}
@@ -1057,7 +1064,12 @@ spec:
                             name: {{ $clientSecret }}
                             namespace: {{ $esoNamespace }}
                             key: tls.key
-              {{ "{{-" }} if ne $writebackNs "" {{ "}}" }}
+              ##### Write-back store: same cert and hub URL, remoteNamespace is the parent's #####
+              ##### write-back ns. Only when THIS cluster has config.eso.pushSecrets AND #####
+              ##### writebackNs is set — otherwise ESO Ready fails (parent write Role is #####
+              ##### also gated on that cluster's pushSecrets). Empty writebackNs or no #####
+              ##### pushSecrets mustnothave the leftover. #####
+              {{ "{{-" }} if and (ne $writebackNs "") (gt (len ($pushSecrets | default list)) 0) {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: external-secrets.io/v1

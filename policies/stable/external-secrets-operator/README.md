@@ -1359,10 +1359,13 @@ two identities.
 | `hub-bootstrap` | read | `eso-shared` | `get` / `list` / `watch` |
 | `hub-bootstrap-writeback` | write | `eso-writeback` | `create`, plus `get` / `update` / `patch` on names from that child's `pushSecrets`. No `list`. |
 
-`policy-eso-boot-store` creates the write-back store when
-`config.eso.hubBootstrap.writebackNamespace` is set (default `eso-writeback`). The name is
-`<storePrefix>-writeback`, so a store named `hub-bootstrap` gets `hub-bootstrap-writeback`.
-Empty `writebackNamespace` disables the store, the namespace, and write RBAC.
+`policy-eso-boot-store` creates the write-back store when **this cluster** has
+`config.eso.pushSecrets` **and** `config.eso.hubBootstrap.writebackNamespace` is set (default
+`eso-writeback`). The name is `<storePrefix>-writeback`, so a store named `hub-bootstrap`
+gets `hub-bootstrap-writeback`. No `pushSecrets` on this cluster (or empty
+`writebackNamespace`) `mustnothave`s the leftover — otherwise ESO marks the store NotReady
+(`client is not allowed to get secrets`) because the parent write Role is also gated on that
+cluster's `pushSecrets`. Empty `writebackNamespace` also disables the namespace and write RBAC.
 
 ```mermaid
 flowchart LR
@@ -1772,7 +1775,8 @@ Pull stays on `hub-bootstrap` / `eso-shared`. Write-back uses a **second** `Clus
 named `<storePrefix>-writeback` (`hub-bootstrap-writeback` by default) whose
 `remoteNamespace` is `eso-writeback`. `policy-eso-boot-prereqs` creates that namespace.
 `policy-eso-boot-store` creates the store (same client cert, same hub URL, same serving CA as
-the read store). Empty `writebackNamespace` disables the store, the namespace, and write RBAC.
+the read store) only when **this cluster** lists `config.eso.pushSecrets`. Empty
+`writebackNamespace` disables the store, the namespace, and write RBAC.
 
 Children do not get `list` on `eso-writeback`. The parent Role for each child is:
 

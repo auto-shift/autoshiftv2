@@ -65,7 +65,7 @@ chart-only) can be overridden per deployment/cluster under `config.eso.hubBootst
 | `deriveHubUrl` | bool | `false` | If true AND `hubServer` is empty, the copy policy looks the hub apiserver URL up itself (hub-template lookup of the `apiserverurl.openshift.io` ClusterClaim on the **immediate propagating hub**). Prefer this over a static `hubServer` in multi-hop (global-hub → spoke-hub → leaf) topologies — each cluster resolves the hub that minted its cert. Runtime override: `config.eso.hubBootstrap.deriveHubUrl`. |
 | `storePrefix` | string | `hub-bootstrap` | Names everything the bootstrap mints/copies: store (default), `<prefix>-client` Secret, `<prefix>-hub-ca` ConfigMap, `<prefix>-reader` Role, `<prefix>-ca` / issuers, `<prefix>-client-ca` ConfigMap. Chart-only (the spoke store *name* alone can be overridden at runtime via `config.eso.hubBootstrap.storeName`). |
 | `sharedNamespace` | string | `eso-shared` | Namespace on the propagating hub that the bootstrap store READS, and that children get `get`/`list`/`watch` on. Default `eso-shared` is a curated fan-out namespace. Empty rolls back to the policy namespace (historical; that namespace also holds client keys and install credentials). Policy-namespace `resourceNames` grants are the opt-in for material that must reach exactly one cluster. Runtime override: `config.eso.hubBootstrap.sharedNamespace`. |
-| `writebackNamespace` | string | `eso-writeback` | Namespace on the propagating hub that children WRITE into via `config.eso.pushSecrets`. Separate from `sharedNamespace` so siblings cannot `list` those tokens. Empty disables the write-back store, the namespace, and write RBAC. Runtime override: `config.eso.hubBootstrap.writebackNamespace`. |
+| `writebackNamespace` | string | `eso-writeback` | Namespace on the propagating hub that children WRITE into via `config.eso.pushSecrets`. Separate from `sharedNamespace` so siblings cannot `list` those tokens. The write-back `ClusterSecretStore` is created only when **this cluster** has `config.eso.pushSecrets` and this value is non-empty. Empty disables the write-back store, the namespace, and write RBAC even if `pushSecrets` is set. Runtime override: `config.eso.hubBootstrap.writebackNamespace`. |
 | `consumerNamespaces` | list(string) | `[]` | Extra namespaces on the child that may reference the **read** hub-bootstrap ClusterSecretStore. Write a list of name strings (`- app-ns`), never maps (`- name: app-ns`): a map list fails hub templating on `policy-eso-boot-store` with `failed to resolve the template`. Not copied onto `hub-bootstrap-writeback`. The operand namespace, `sharedNamespace`, and `config.defaultSecretsNamespace` are always allowed. Runtime override: `config.eso.hubBootstrap.consumerNamespaces`. |
 | `consumerNamespaceSelector` | map | `{}` | Optional label selector (OR with the namespace list) for the same allow-list. Runtime override: `config.eso.hubBootstrap.consumerNamespaceSelector`. |
 | `clientCAConfigMap` | string | `''` → `<storePrefix>-client-ca` | Name of the `openshift-config` ConfigMap `APIServer.spec.clientCA` points at. Chart-only. |
@@ -239,12 +239,12 @@ out-of-band process). The policy creates the namespace if it is missing, then a
 `PushSecret` whose `selector.secret.name` is `name`.
 
 Children and site hubs set `storeRef` to `hub-bootstrap-writeback`. That is a second
-`ClusterSecretStore` on the child (`<storePrefix>-writeback`), same cert as `hub-bootstrap`,
-`remoteNamespace` = the parent `writebackNamespace` (`eso-writeback`). `hub-bootstrap` reads
-`eso-shared`. Only the global hub sets `storeRef` to a Vault store. Each hop is
-explicit: a site hub re-lists names that arrived from spokes. Do not point a child at
-`hub-bootstrap` (that store reads `eso-shared`) or at Vault (no Vault auth on site or
-spoke).
+`ClusterSecretStore` on the child (`<storePrefix>-writeback`), created only when this
+cluster has `pushSecrets`, same cert as `hub-bootstrap`, `remoteNamespace` = the parent
+`writebackNamespace` (`eso-writeback`). `hub-bootstrap` reads `eso-shared`. Only the
+global hub sets `storeRef` to a Vault store. Each hop is explicit: a site hub re-lists
+names that arrived from spokes. Do not point a child at `hub-bootstrap` (that store reads
+`eso-shared`) or at Vault (no Vault auth on site or spoke).
 
 `create` on Secrets cannot use `resourceNames`. The parent grants `create` plus
 `get`/`update`/`patch` on the collected `remoteKey` (or `name`) values. Use unique
@@ -367,7 +367,7 @@ key for key. Only the keys below differ from or add to the chart surface:
 | `deriveHubUrl` | bool | chart `deriveHubUrl` (`false`) | Look the hub URL up via ClusterClaim when `hubServer` is empty. |
 | `storeName` | string | chart `storePrefix` (`hub-bootstrap`) | **Runtime-only.** Name of the ClusterSecretStore created on the spoke — the name consumers put in `secretStoreRef`. All *other* minted-object names still derive from the chart `storePrefix`. |
 | `sharedNamespace` | string | chart `hubBootstrap.sharedNamespace` (`eso-shared`) | Per-cluster override of the fan-out namespace the bootstrap store reads. Empty rolls back to the policy namespace. |
-| `writebackNamespace` | string | chart `hubBootstrap.writebackNamespace` (`eso-writeback`) | Per-cluster override of the namespace children write into. Empty disables the write-back store, the namespace, and write RBAC. |
+| `writebackNamespace` | string | chart `hubBootstrap.writebackNamespace` (`eso-writeback`) | Per-cluster override of the namespace children write into. The write-back store is created only when this cluster has `config.eso.pushSecrets` and this value is non-empty. Empty disables the write-back store, the namespace, and write RBAC. |
 | `consumerNamespaces` | list(string) | chart `consumerNamespaces` | Extra child namespaces allowed to reference the **read** hub-bootstrap store. List of name strings (`- app-ns`), not maps. |
 | `consumerNamespaceSelector` | map | chart `consumerNamespaceSelector` | Optional label selector (OR with the namespace list). |
 | `mode` | string | chart `mode` (`selfSigned`) | Trust mode: `selfSigned` \| `externalCA` \| `externalCAReuseServingCert`. |

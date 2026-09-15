@@ -224,6 +224,32 @@ func seedFor(t *testing.T, hubBootstrap map[string]interface{}) []unstructured.U
 	return append([]unstructured.Unstructured{renderedConfigCM(t, hubBootstrap)}, testdata...)
 }
 
+func renderedConfigCMESO(t *testing.T, eso map[string]interface{}) unstructured.Unstructured {
+	t.Helper()
+	cfgYAML, err := sigsyaml.Marshal(map[string]interface{}{"eso": eso})
+	if err != nil {
+		t.Fatalf("marshal rendered-config: %v", err)
+	}
+	return unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]interface{}{
+			"name":      "lint-cluster.rendered-config",
+			"namespace": "policies-autoshift",
+		},
+		"data": map[string]interface{}{"config": string(cfgYAML)},
+	}}
+}
+
+func seedForESO(t *testing.T, eso map[string]interface{}) []unstructured.Unstructured {
+	t.Helper()
+	testdata, err := LoadTestResources(filepath.Join(repoRoot(t), "tools", "testdata"))
+	if err != nil {
+		t.Fatalf("LoadTestResources: %v", err)
+	}
+	return append([]unstructured.Unstructured{renderedConfigCMESO(t, eso)}, testdata...)
+}
+
 func TestHubBootstrap_ExternalCA(t *testing.T) {
 	raw := renderESOChart(t)
 	selected := selectPolicies(t, raw, map[string]bool{
@@ -320,6 +346,45 @@ func TestHubBootstrap_DeriveHubUrl(t *testing.T) {
 	wantURL := "url: https://api.test-cluster.test.example.com:6443"
 	if !strings.Contains(out, wantURL) {
 		t.Errorf("deriveHubUrl: expected store URL from Infrastructure.status.apiServerURL (%q); not found in:\n%s", wantURL, out)
+	}
+}
+
+// The write-back ClusterSecretStore must exist only when THIS cluster lists pushSecrets.
+// writebackNamespace defaults to eso-writeback; that alone must not emit a store whose
+// parent Role is also gated on pushSecrets (ESO Ready: "client is not allowed to get secrets").
+func TestHubBootstrap_WritebackStoreGatedOnPushSecrets(t *testing.T) {
+	raw := renderESOChart(t)
+	selected := selectPolicies(t, raw, map[string]bool{spokeBootstrapName: true})
+	hb := map[string]interface{}{
+		"mode":      "selfSigned",
+		"hubServer": "https://api.hub.example.com:6443",
+	}
+
+	without := resolveBoth(t, selected, seedFor(t, hb))
+	if !strings.Contains(without, "kind: ClusterSecretStore") {
+		t.Errorf("without pushSecrets: the read hub-bootstrap store must still be created")
+	}
+	if strings.Contains(without, "remoteNamespace: eso-writeback") {
+		t.Errorf("without pushSecrets: must not create hub-bootstrap-writeback (found remoteNamespace: eso-writeback)")
+	}
+
+	with := resolveBoth(t, selected, seedForESO(t, map[string]interface{}{
+		"hubBootstrap": hb,
+		"pushSecrets": []interface{}{
+			map[string]interface{}{
+				"name": "app-sa-token",
+				"storeRef": map[string]interface{}{
+					"name": "hub-bootstrap-writeback",
+					"kind": "ClusterSecretStore",
+				},
+			},
+		},
+	}))
+	if !strings.Contains(with, "remoteNamespace: eso-writeback") {
+		t.Errorf("with pushSecrets: expected hub-bootstrap-writeback (remoteNamespace: eso-writeback); not found in:\n%s", with)
+	}
+	if !strings.Contains(with, "name: hub-bootstrap-writeback") {
+		t.Errorf("with pushSecrets: expected ClusterSecretStore name hub-bootstrap-writeback")
 	}
 }
 

@@ -78,7 +78,7 @@ Distilled invariants (each is a checkable claim):
 | I7 | spoke: `ClusterSecretStore` (bootstrap) condition `Ready=True` | all hub-sourced auth/consumer ES fail (R4) |
 | I8 | every status ConfigMap in `$ADDON_NS` is **absent** | the owning policy found precondition errors (R1) |
 | I9 | store-auth chain: hub Secret → spoke auth ES `Ready=True` → target Secret exists | that user store can't authenticate (R5/R6) |
-| I10 | when `writebackNamespace` is set: spoke `ClusterSecretStore` `$PREFIX-writeback` `Ready=True`, hub Namespace `eso-writeback` exists | PushSecrets targeting `hub-bootstrap-writeback` stay NotReady (R11) |
+| I10 | when this cluster has `pushSecrets` and `writebackNamespace` is set: spoke `ClusterSecretStore` `$PREFIX-writeback` `Ready=True`, hub Namespace `eso-writeback` exists | PushSecrets targeting `hub-bootstrap-writeback` stay NotReady (R11) |
 
 ### Object inventory when healthy (derives from `$PREFIX`)
 
@@ -90,7 +90,7 @@ cluster; CM `$PREFIX-hub-ca`; hub-secrets credential Secrets + their ExternalSec
 external bundle; selfSigned: the minted CA).
 **Spoke, in `$ESO_NS`:** Secret `$PREFIX-client`; `ClusterSecretStore` (name =
 `config.eso.hubBootstrap.storeName`, default `$PREFIX`); `ClusterSecretStore`
-`$PREFIX-writeback` when `writebackNamespace` is set; per-store auth ExternalSecrets +
+`$PREFIX-writeback` when this cluster has `pushSecrets` and `writebackNamespace` is set; per-store auth ExternalSecrets +
 target Secrets; delivered-CA ConfigMaps.
 **Hub, `eso-writeback` (when write-back is enabled):** Secrets published by children;
 write Role `$PREFIX-writeback-<segment>` + RoleBinding per child (no `list`).
@@ -488,11 +488,13 @@ oc get role,rolebinding -n eso-writeback
    FIX: upgrade the chart. Confirm the live `PushSecret` has
    `spec.data[0].match.remoteRef.remoteKey` equal to the entry `remoteKey`.
 
-7. **Write-back store not Ready, or `writebackNamespace` empty.**
+7. **Write-back store not Ready, missing, or `writebackNamespace` empty.**
    CHECK `[spoke]`: `oc get clustersecretstore hub-bootstrap-writeback`.
-   FIX: restore `config.eso.hubBootstrap.writebackNamespace` (default `eso-writeback`).
-   Empty disables the store, the namespace, and write RBAC. First apply can lag
-   `policy-eso-boot-prereqs` creating the namespace; wait one evaluation.
+   FIX: list `config.eso.pushSecrets` on **this** cluster and keep
+   `config.eso.hubBootstrap.writebackNamespace` set (default `eso-writeback`).
+   No `pushSecrets` on this cluster (or empty `writebackNamespace`) is supposed to
+   omit the store. First apply can lag `policy-eso-boot-prereqs` creating the
+   namespace; wait one evaluation.
 
 8. **`PushSecret` in a namespace the write-back store does not allow.**
    The write-back store `spec.conditions` allow the operand namespace and

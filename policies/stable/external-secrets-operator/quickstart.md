@@ -597,11 +597,12 @@ or `oc create secret` while you prove the hop). Then list it on **every** hop th
 re-publish. A site hub does not fan spoke names up on its own.
 
 `hub-bootstrap-writeback` is a second `ClusterSecretStore` on the child, created by
-`policy-eso-boot-store`. Same client cert and hub URL as `hub-bootstrap`. Different parent
-namespace: it **writes** `eso-writeback` on the parent. `hub-bootstrap` **reads**
-`eso-shared`. Children have `list` on `eso-shared` and do not have `list` on
-`eso-writeback`. The name is `<storePrefix>-writeback` (default `hub-bootstrap-writeback`).
-Empty `writebackNamespace` turns it off.
+`policy-eso-boot-store` only when **this cluster** has `config.eso.pushSecrets`. Same client
+cert and hub URL as `hub-bootstrap`. Different parent namespace: it **writes**
+`eso-writeback` on the parent. `hub-bootstrap` **reads** `eso-shared`. Children have `list`
+on `eso-shared` and do not have `list` on `eso-writeback`. The name is
+`<storePrefix>-writeback` (default `hub-bootstrap-writeback`). No `pushSecrets` on this
+cluster, or empty `writebackNamespace`, turns it off.
 
 ```mermaid
 flowchart LR
