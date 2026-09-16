@@ -16,10 +16,8 @@
 #
 #   443  covers the common provider port -- Vault, the cloud secret managers, anything behind a
 #        Route.
-#   8443 covers the SPIRE bundle endpoint, which the ztwim federation policy fetches through a
-#        SecretStore to seed federated trust domains. Unlike the 443 rule it is SCOPED to the
-#        zero-trust-workload-identity-manager namespace, because there is exactly one destination
-#        and an unscoped rule would let the controller reach any 8443 in the cluster.
+#   Providers on other ports need their own entry, and should be SCOPED with a `to` selector rather
+#        than opening the port fleet wide.
 #
 # The defaults are written as YAML inside a raw string and parsed with fromYaml, rather than as an
 # inline JSON blob. Both produce the same map; only one of them can be reviewed. The embedded YAML
@@ -37,8 +35,7 @@
 # RECONCILIATION NOTE. The eso-rework-merge branch carries this same resource as a Helm template in
 # policy-eso-install.yaml, with the defaults in that chart's values under
 # externalSecretsOperator.externalSecretsConfig. The spec and the overlay mechanism are deliberately
-# identical here so the two can be reconciled by deleting one of them; the only intended difference
-# is the 8443 rule, which that branch does not carry because federation does not live there.
+# identical here so the two can be reconciled by deleting one of them.
 object-templates-raw: |
   {{hub- $cfg := (index (index (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "eso" | default dict) hub}}
   {{hub- $overlay := (index $cfg "externalSecretsConfig" | default dict) hub}}
@@ -49,22 +46,12 @@ object-templates-raw: |
       certificateCheckInterval: 5m0s
   controllerConfig:
     networkPolicies:
-      - name: allow-https-egress
-        componentName: ExternalSecretsCoreController
-        egress:
-          - ports:
-              - protocol: TCP
-                port: 443
-      - name: allow-spire-bundle-egress
-        componentName: ExternalSecretsCoreController
-        egress:
-          - to:
-              - namespaceSelector:
-                  matchLabels:
-                    kubernetes.io/metadata.name: zero-trust-workload-identity-manager
-            ports:
-              - protocol: TCP
-                port: 8443
+    - name: allow-https-egress
+      componentName: ExternalSecretsCoreController
+      egress:
+      - ports:
+        - protocol: TCP
+          port: 443
   plugins:
     bitwardenSecretManagerProvider:
       mode: Disabled

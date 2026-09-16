@@ -1,138 +1,217 @@
-# Publishes this cluster's own trust bundle in JWKS form, which is the only form federation can seed
+# Republishes this cluster's own trust bundle as JWKS, which is the only form federation can seed
 # with.
 #
-# WHY THIS EXISTS AT ALL. ClusterFederatedTrustDomain.spec.trustDomainBundle takes a SPIFFE bundle in
-# JWKS, and the only bundle the Operator publishes as a Kubernetes object is the spire-bundle
-# ConfigMap, which is PEM. There is no conversion available: a JWKS entry for an RSA authority needs
-# the modulus and exponent as separate base64url fields, and a policy template cannot derive those
-# from a certificate. Handing the field an x5c entry built from the PEM does not work either --
-# measured on a live cluster, the controller manager rejects it with
-# "go-jose/go-jose: invalid RSA key, missing n/e values" -- and the rejection is silent in the sense
-# that the resource keeps an empty status and the policy still reports Compliant.
+# WHY A CONVERSION EXISTS AT ALL. ClusterFederatedTrustDomain.spec.trustDomainBundle takes a SPIFFE
+# bundle in JWKS. The only bundle the Operator publishes as a Kubernetes object is the spire-bundle
+# ConfigMap, which is PEM. Nothing in a policy template can convert between them: a JWKS entry for an
+# RSA authority needs the modulus and exponent as separate base64url fields, and neither the ACM
+# template functions nor Helm can parse a certificate to reach them.
 #
-# The bundle ENDPOINT already serves exactly the right thing, so this fetches from there rather than
-# converting anything. External Secrets Operator does the fetching declaratively, on a refresh
-# interval, with conditions to assert on.
+# Handing the field an x5c entry built from the PEM does not work either. Measured on a live cluster,
+# the controller manager rejects it with "go-jose/go-jose: invalid RSA key, missing n/e values" --
+# and the rejection is silent in the way that matters: the resource keeps an empty status and the
+# policy still reports Compliant, so federation looks configured while no bundle was ever accepted.
 #
-# THE FETCH IS LOCAL AND NEEDS NO PUBLIC TRUST. It targets the Service rather than the Route, so it
-# never leaves the cluster, and the endpoint's certificate is validated with the OpenShift service
-# certificate authority that every cluster already has in openshift-service-ca.crt. Nothing here
-# depends on the ingress wildcard, on a publicly trusted authority, or on outbound connectivity,
-# which is what makes it work on a disconnected cluster with its own authority.
+# WHY A POD. Parsing DER is the whole job, and a pod is the only thing in Kubernetes that can do it.
+# This one is a pure function: it reads a ConfigMap, does arithmetic, and writes a ConfigMap. No
+# credentials, no external system, no side effects, safe to re-run at any time. That is a different
+# animal from a Job that MINTS something, which cannot safely repeat.
 #
-# TWO PREREQUISITES, BOTH OWNED BY THE EXTERNAL SECRETS POLICY, NOT THIS ONE.
+# An earlier revision fetched the bundle over HTTP with External Secrets instead, because the
+# federation endpoint already serves JWKS. That worked only by accident of which certificate the
+# endpoint happened to present: under https_web it serves the service-serving certificate, which any
+# client can validate, but under https_spiffe -- the profile that actually needs a seed -- it serves
+# a SPIFFE SVID whose only SAN is a URI. No generic HTTPS client can complete hostname verification
+# against it, with any certificate authority. Converting locally avoids the endpoint entirely.
 #
-#   1. The controller has to be running. Installing the operator is not enough: without an
-#      ExternalSecretsConfig the operator deploys no controller pods at all, and every store here
-#      stays unready. policy-eso-install creates that singleton.
+# WHY IT REPEATS. A trust domain's authority rotates. The CronJob keeps the published JWKS in step
+# with whatever spire-bundle currently holds, so a rotated authority reaches peers without anyone
+# intervening. Federation refreshes from the endpoint once established; this only has to keep the
+# SEED honest for peers that have not federated yet, or that federate after a rotation.
 #
-#   2. The controller has to be allowed out on 8443. The operator applies a deny-all egress
-#      NetworkPolicy to its operands and opens only 6443 and DNS, so a store on any other port fails
-#      with "InvalidProviderConfig ... i/o timeout" -- which names TLS nowhere and reads like a
-#      certificate problem. Egress is configured through the ExternalSecretsConfig itself, as
-#      config.eso.externalSecretsConfig.controllerConfig.networkPolicies.
+# WHY https_web DOES NOT NEED THIS. Under https_web a peer fetches the bundle from the endpoint and
+# validates it with ordinary web public key infrastructure, so nothing is seeded and this policy does
+# nothing useful. Only https_spiffe, which authenticates the peer by its SVID, needs the bundle in
+# hand before it can talk to the peer at all.
 #
-#      That list REPLACES the chart default wholesale rather than merging, so an entry added for
-#      8443 has to restate the 443 rule or every other provider breaks:
+# DOING IT BY HAND INSTEAD. Nothing here is required. Set
+# config.ztwim.federation.publishBundleJwks to 'false' to skip the CronJob and maintain the ConfigMap
+# yourself, which is the right choice if policy-driven pods are unwelcome or the schedule is not.
+# The equivalent by hand, on each member:
 #
-#        config:
-#          eso:
-#            externalSecretsConfig:
-#              controllerConfig:
-#                networkPolicies:
-#                  - name: allow-https-egress
-#                    componentName: ExternalSecretsCoreController
-#                    egress:
-#                      - ports:
-#                          - protocol: TCP
-#                            port: 443
-#                  - name: allow-spire-bundle-egress
-#                    componentName: ExternalSecretsCoreController
-#                    egress:
-#                      # Scoped: there is exactly one destination, and an unscoped rule would let
-#                      # the controller reach any 8443 in the cluster.
-#                      - to:
-#                          - namespaceSelector:
-#                              matchLabels:
-#                                kubernetes.io/metadata.name: zero-trust-workload-identity-manager
-#                        ports:
-#                          - protocol: TCP
-#                            port: 8443
+#   oc get cm spire-bundle -n zero-trust-workload-identity-manager \
+#     -o jsonpath='{.data.bundle\.crt}' > bundle.pem
 #
-# The Secret is copied into a ConfigMap below because that is what the hub can actually read: a
-# ManagedClusterView refuses Secrets outright ("viewing secrets is not allowed"), and the bundle is
-# public key material anyway -- modulus, exponent and certificate chain, no private components, and
-# already served unauthenticated to any peer that asks. A Secret would add no protection while
-# blocking the one thing the bundle needs to do.
+#   python3 - <<'EOF' > bundle.jwks
+#   import base64, json, re, subprocess
+#   pem = open("bundle.pem").read()
+#   b64u = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
+#   keys = []
+#   for cert in re.findall(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", pem, re.S):
+#       c = cert.encode()
+#       der = subprocess.run(["openssl","x509","-outform","DER"], input=c, capture_output=True).stdout
+#       mod = subprocess.run(["openssl","x509","-noout","-modulus"], input=c, capture_output=True).stdout.decode()
+#       txt = subprocess.run(["openssl","x509","-noout","-text"], input=c, capture_output=True).stdout.decode()
+#       n = bytes.fromhex(mod.strip().split("Modulus=")[1])
+#       e = int(re.search(r"Exponent: (\d+)", txt).group(1))
+#       keys.append({"use":"x509-svid","kty":"RSA","n":b64u(n),
+#                    "e":b64u(e.to_bytes((e.bit_length()+7)//8,"big")),
+#                    "x5c":[base64.b64encode(der).decode()]})
+#   print(json.dumps({"keys": keys}))
+#   EOF
+#
+#   oc create cm ztwim-bundle-jwks -n zero-trust-workload-identity-manager \
+#     --from-file=bundle.jwks=bundle.jwks --dry-run=client -o yaml \
+#     | oc label -f - --local -o yaml autoshift.io/ztwim-federation-bundle='' \
+#     | oc apply -f -
+#
+# Re-run it after the trust domain's authority rotates, or peers that federate later seed a bundle
+# that no longer validates.
+#
+# WHY A CONFIGMAP AND NOT A SECRET. A ManagedClusterView refuses Secrets outright ("viewing secrets
+# is not allowed"), and the hub has to read this to reach peers. The bundle is public key material
+# anyway -- modulus, exponent and certificate chain, no private components -- and is already served
+# unauthenticated to any peer that asks.
 #
 # THE CONFIGMAP IS A TRUST DECISION, NOT JUST DATA. Whoever can write it decides which authority this
 # cluster's PEERS will trust for this trust domain: the mesh policy copies it into their
 # ClusterFederatedTrustDomain, and SVIDs minted by that authority are then accepted as this domain's.
-# https_web has no equivalent, because there each server fetches and validates the bundle itself.
-#
-# The escalation is narrower than it first reads -- anyone with broad access to this namespace can
-# usually compromise this cluster's SPIRE anyway and mint genuine identities -- but a ConfigMap write
-# is a LOWER privilege than control of the signing key, so this lowers the bar rather than opening a
-# door that was shut. Treat write access to this namespace as equivalent to control of this cluster's
-# workload identity.
+# The CronJob rewrites it from spire-bundle on every run, so an edit does not survive, but treat
+# write access to this namespace as equivalent to control of this cluster's workload identity.
 object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $fed := (index $cfg "federation" | default dict) hub}}
+  {{hub- $cfgPublish := (index $fed "publishBundleJwks" | default "true") hub}}
+  {{hub- $cfgSchedule := (index $fed "bundleJwksSchedule" | default "*/10 * * * *") hub}}
+  {{hub- $cfgImage := (index $fed "bundleJwksImage" | default "image-registry.openshift-image-registry.svc:5000/openshift/cli:latest") hub}}
   {{- $ns := "zero-trust-workload-identity-manager" }}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: external-secrets.io/v1
-      kind: SecretStore
-      metadata:
-        name: ztwim-bundle-endpoint
-        namespace: {{ $ns }}
-      spec:
-        provider:
-          webhook:
-            # The Service, not the Route: this stays inside the cluster.
-            url: 'https://spire-server.{{ $ns }}.svc:8443'
-            method: GET
-            timeout: 15s
-            # An empty result block returns the whole response body, which is already the JWKS
-            # document. No jsonPath is needed and none is correct -- the bundle is the payload.
-            result: {}
-            caProvider:
-              type: ConfigMap
-              name: openshift-service-ca.crt
-              namespace: {{ $ns }}
-              key: service-ca.crt
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: external-secrets.io/v1
-      kind: ExternalSecret
-      metadata:
-        name: ztwim-bundle-jwks
-        namespace: {{ $ns }}
-      spec:
-        # Short enough that a rotated authority reaches peers quickly, long enough not to poll the
-        # server hard. The bundle itself carries a 300s refresh hint.
-        refreshInterval: 5m
-        secretStoreRef:
-          name: ztwim-bundle-endpoint
-          kind: SecretStore
-        target:
-          name: ztwim-bundle-jwks
-          creationPolicy: Owner
-        data:
-          - secretKey: bundle.jwks
-            # The webhook URL is static, so this key selects nothing. It is required by the schema.
-            remoteRef:
-              key: bundle
-  {{- $jwks := (lookup "v1" "Secret" $ns "ztwim-bundle-jwks") | default dict }}
-  {{- $b := (dig "data" "bundle.jwks" "" $jwks) }}
-  {{- if $b }}
+  {{- $publish := `{{hub $cfgPublish hub}}` }}
+  {{- $schedule := `{{hub $cfgSchedule hub}}` }}
+  {{- $image := `{{hub $cfgImage hub}}` }}
+  {{- if ne $publish "false" }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
-      kind: ConfigMap
+      kind: ServiceAccount
       metadata:
         name: ztwim-bundle-jwks
         namespace: {{ $ns }}
-        labels:
-          autoshift.io/ztwim-federation-bundle: ''
-      data:
-        bundle.jwks: {{ $b | base64dec | toRawJson }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: ztwim-bundle-jwks
+        namespace: {{ $ns }}
+      rules:
+        # Read the Operator's bundle, write only our own derived copy. resourceNames keeps this from
+        # being a general ConfigMap write in a namespace where that would mean rather more.
+        - apiGroups:
+            - ''
+          resources:
+            - configmaps
+          resourceNames:
+            - spire-bundle
+          verbs:
+            - get
+        - apiGroups:
+            - ''
+          resources:
+            - configmaps
+          resourceNames:
+            - ztwim-bundle-jwks
+          verbs:
+            - get
+            - update
+            - patch
+        # create cannot be restricted by resourceName, because the name does not exist to match on
+        # until the object does. The pair above still bounds what can be changed afterwards.
+        - apiGroups:
+            - ''
+          resources:
+            - configmaps
+          verbs:
+            - create
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: ztwim-bundle-jwks
+        namespace: {{ $ns }}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: ztwim-bundle-jwks
+      subjects:
+        - kind: ServiceAccount
+          name: ztwim-bundle-jwks
+          namespace: {{ $ns }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: ztwim-bundle-jwks
+        namespace: {{ $ns }}
+      spec:
+        schedule: '{{ $schedule }}'
+        concurrencyPolicy: Replace
+        successfulJobsHistoryLimit: 1
+        failedJobsHistoryLimit: 3
+        jobTemplate:
+          spec:
+            backoffLimit: 2
+            template:
+              spec:
+                restartPolicy: OnFailure
+                serviceAccountName: ztwim-bundle-jwks
+                containers:
+                  - name: convert
+                    image: '{{ $image }}'
+                    command:
+                      - /bin/bash
+                      - -c
+                      - |
+                        set -euo pipefail
+                        NS=zero-trust-workload-identity-manager
+                        oc get cm spire-bundle -n "$NS" -o jsonpath='{.data.bundle\.crt}' > /tmp/bundle.pem
+                        test -s /tmp/bundle.pem
+                        python3 - <<'PYEOF' > /tmp/bundle.jwks
+                        import base64, json, re, subprocess
+                        pem = open("/tmp/bundle.pem").read()
+                        b64u = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
+                        keys = []
+                        for cert in re.findall(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", pem, re.S):
+                            c = cert.encode()
+                            der = subprocess.run(["openssl","x509","-outform","DER"], input=c, capture_output=True, check=True).stdout
+                            mod = subprocess.run(["openssl","x509","-noout","-modulus"], input=c, capture_output=True, check=True).stdout.decode()
+                            txt = subprocess.run(["openssl","x509","-noout","-text"], input=c, capture_output=True, check=True).stdout.decode()
+                            n = bytes.fromhex(mod.strip().split("Modulus=")[1])
+                            e = int(re.search(r"Exponent: (\d+)", txt).group(1))
+                            keys.append({"use":"x509-svid","kty":"RSA","n":b64u(n),
+                                         "e":b64u(e.to_bytes((e.bit_length()+7)//8,"big")),
+                                         "x5c":[base64.b64encode(der).decode()]})
+                        if not keys:
+                            raise SystemExit("no certificates found in spire-bundle")
+                        print(json.dumps({"keys": keys}))
+                        PYEOF
+                        oc create cm ztwim-bundle-jwks -n "$NS" \
+                          --from-file=bundle.jwks=/tmp/bundle.jwks \
+                          --dry-run=client -o yaml \
+                          | oc label -f - --local -o yaml autoshift.io/ztwim-federation-bundle='' \
+                          | oc apply -f -
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                        drop:
+                          - ALL
+                      runAsNonRoot: true
+                      seccompProfile:
+                        type: RuntimeDefault
+                    resources:
+                      requests:
+                        cpu: 10m
+                        memory: 64Mi
   {{- end }}

@@ -212,6 +212,24 @@ hubClusterSets:
         # federation:
         #   publishEndpointRoute: 'false'
         #   bundleEndpointHost: 'spire-federation.internal.example.com'
+        #
+        #   publishBundleJwks     'true' (default) runs a small CronJob on each member that converts
+        #                         the Operator's spire-bundle ConfigMap, which is PEM, into the JWKS
+        #                         that ClusterFederatedTrustDomain.trustDomainBundle requires. Only
+        #                         https_spiffe needs it: https_web fetches bundles from the endpoint
+        #                         and seeds nothing. Set 'false' to maintain the ztwim-bundle-jwks
+        #                         ConfigMap by hand instead; the exact commands are in
+        #                         policies/stable/ztwim/manifests/federation-bundle/bundle-jwks.yaml.
+        #   bundleJwksSchedule    cron schedule for that conversion, default '*/10 * * * *'. It only
+        #                         has to track authority rotation, so it can be far less frequent.
+        #   bundleJwksImage       image the conversion runs in; needs oc, python3 and openssl.
+        #                         Defaults to the in-cluster CLI image. Override it where the
+        #                         internal registry is disabled or in a disconnected mirror, the
+        #                         same way the bootstrap charts do.
+        #
+        #   publishBundleJwks: 'false'
+        #   bundleJwksSchedule: '0 * * * *'
+        #   bundleJwksImage: 'registry.redhat.io/openshift4/ose-cli:latest'
         # ---------------------------------------------------------------------------------
         # FEDERATION (needs the ztwim-federation label). ONE-WAY: the CRD refuses to let
         # federation be REMOVED once set, and bundleEndpoint.profile is immutable once chosen,
