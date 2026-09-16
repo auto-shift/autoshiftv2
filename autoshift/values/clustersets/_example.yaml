@@ -78,6 +78,246 @@ hubClusterSets:
             group: 'cert-manager.io'
           extraSANs: []
       # =======================================================================
+      # Zero Trust Workload Identity Manager / SPIRE (DATA; the ENABLE flags are the
+      # ztwim, ztwim-federation and ztwim-nested-role labels below). Every key is optional
+      # for a standalone cluster -- nested SPIRE is the exception, noted below.
+      # Only keys SAFE ON ANY CLUSTER are set live, because this file gets copied.
+      # =======================================================================
+      ztwim:
+        logLevel: 'info'
+        caSubject:
+          commonName: 'autoshift'
+          country: 'US'
+          organization: 'AutoShift'
+        # IMMUTABLE: the CRD rejects any change to size, accessMode or storageClass after the
+        # first deployment. Resizing means deleting the SpireServer resource, which discards the
+        # certificate authority. Choose these at install time.
+        persistence:
+          size: '5Gi'
+          accessMode: 'ReadWriteOnce'
+          # storageClass omitted -> the cluster default. A literal is platform-specific.
+        datastore:
+          databaseType: 'sqlite3'
+          connectionString: '/run/spire/data/datastore.sqlite3'
+          maxOpenConns: 100
+          maxIdleConns: 2
+          # POSTGRES. Three ways to reach one, tried in this order:
+          #
+          #   1. connectionString above, used verbatim. Full escape hatch, works for any
+          #      databaseType. Put NO password in it: this file is committed to git.
+          #   2. external, below. A database AutoShift does not run: you give the location here
+          #      and the credentials as a Secret you create on the cluster yourself. This is the
+          #      option that does not depend on CloudNativePG.
+          #   3. Nothing set -> derived from the CloudNativePG cluster AutoShift stands up, which
+          #      also needs autoshift.io/cloudnative-pg: 'true'.
+          #
+          # Setting external SUPPRESSES the CloudNativePG cluster rather than adding to it.
+          #
+          # SPIRE is not deployed at all while the password Secret is missing. SQLite is not used
+          # as a placeholder, because a server started on it mints the trust domain's certificate
+          # authority there and swapping the datastore later discards it.
+          # policy-ztwim-datastore-creds holds the operands until the Secret exists.
+          #
+          # Switching datastore is DESTRUCTIVE: a different datastore is an empty one, so SPIRE
+          # mints a new certificate authority and the old trust domain root is gone.
+          # external:
+          #   host: 'postgres.example.com'
+          #   port: 5432                       # default: 5432
+          #   databaseName: 'spire'            # default: spire
+          #   sslMode: 'require'               # default: require
+          #   user: 'spire'                    # default: spire; ignored when the Secret holds one
+          #   # The Secret is read on the MANAGED cluster, so create it there, not on the hub.
+          #   configSecretRef:
+          #     name: 'spire-db-credentials'
+          #     namespace: 'zero-trust-workload-identity-manager'   # default: shown
+          #     usernameKey: 'username'        # default: username
+          #     passwordKey: 'password'        # default: password
+          #
+          # Client certificate authentication instead of a password. The CRD's own answer to the
+          # connection string carrying a password: with this set there is no password anywhere.
+          # The certificate has to be trusted by the database, which is work on the database.
+          # tlsSecretName: 'spire-db-client-cert'
+        # ---------------------------------------------------------------------------------
+        # >>> IMMUTABLE AND ONE-WAY KEYS. The CRDs enforce these with validation rules, so
+        # >>> CHANGING one after first deployment is REJECTED and the policy goes NonCompliant.
+        # >>> REMOVING a key does something different and quieter: these policies use musthave,
+        # >>> which merges, so the field stays on the resource, the setting stays in effect, and
+        # >>> the policy stays Compliant. Deleting a key stops AutoShift managing it rather than
+        # >>> turning it off. Decide these at install time:
+        # >>>   trustDomain, clusterName, bundleConfigMap       (immutable)
+        # >>>   persistence.size / accessMode / storageClass    (immutable)
+        # >>>   federation                                      (cannot be REMOVED once set)
+        # >>>   federation.bundleEndpoint.profile               (immutable once set)
+        # >>>   federation.bundleEndpoint.httpsWeb              (cannot switch acme <-> servingCert)
+        # ---------------------------------------------------------------------------------
+        # IDENTITY. Left unset so the built-in defaults apply:
+        #   trustDomain  defaults to the cluster base domain. IMMUTABLE, and changing it is
+        #                destructive besides: SPIRE caches its CA and every issued identity
+        #                against it. Nested SPIRE REQUIRES hub and spoke to share one explicit
+        #                value -- see the nested block at the end.
+        #   clusterName  defaults to the ManagedCluster name. IMMUTABLE. A fixed literal would
+        #                make every cluster claim the same name in its agent SPIFFE IDs.
+        #   jwtIssuer    derived from the cluster ingress domain as spire-oidc.<apps domain>.
+        #   bundleConfigMap  IMMUTABLE.
+        # Uncomment to use:
+        # trustDomain: 'spire.example.com'
+        # clusterName: 'hub'
+        # jwtIssuer: 'https://spire-oidc.apps.example.com'
+        # bundleConfigMap: 'spire-bundle'
+        # subscriptionName: 'openshift-zero-trust-workload-identity-manager'
+        # ---------------------------------------------------------------------------------
+        # SCHEDULING AND RESOURCES. Every operand accepts resources, tolerations and nodeSelector;
+        # top-level keys apply to the SPIRE SERVER, and each operand sub-map overrides for itself.
+        #
+        # The two DaemonSets (agent, csiDriver) default to TOLERATING ALL TAINTS, because a workload
+        # can land on any node that admits workloads and without the agent and the CSI driver on
+        # that node it silently cannot obtain an SVID -- there is no error, the socket is just
+        # absent. AutoShift's own infra-nodes and storage-nodes policies taint nodes, and the
+        # previous default of no tolerations left SPIRE covering one node out of seven on a live
+        # cluster. Set an explicit empty list to clear the default rather than replace it.
+        #
+        # Requests are set by default and limits are not: requests are what lift the pods out of
+        # BestEffort, where the kubelet evicts the trust domain's CA ahead of almost anything else,
+        # while a CPU limit on a signing service only buys throttling. Add limits here if wanted.
+        # resources:
+        #   requests:
+        #     cpu: '100m'
+        #     memory: '256Mi'
+        # tolerations: []
+        # nodeSelector: {}
+        # agent:
+        #   tolerations:
+        #     - operator: 'Exists'
+        #   # workloadAttestorVerification: auto | hostCert | skip. 'hostCert' REQUIRES both
+        #   # hostCertBasePath and hostCertFileName or the CRD rejects the resource.
+        #   workloadAttestorVerification: 'auto'
+        #   hostCertBasePath: '/etc/kubernetes'
+        #   hostCertFileName: 'kubelet-ca.crt'
+        # csiDriver:
+        #   tolerations:
+        #     - operator: 'Exists'
+        # oidcDiscoveryProvider:
+        #   resources:
+        #     requests:
+        #       cpu: '50m'
+        #       memory: '128Mi'
+        # ---------------------------------------------------------------------------------
+        # CERTIFICATE AND TOKEN LIFETIMES. Key types are restricted by the CRD to
+        # FIPS-approved algorithms: rsa-2048 | rsa-4096 | ec-p256 | ec-p384.
+        # caKeyType: 'rsa-2048'
+        # caValidity: '24h'
+        # defaultX509Validity: '1h'
+        # defaultJWTValidity: '5m'
+        # ---------------------------------------------------------------------------------
+        # PER-COMPONENT OVERRIDES. Each falls back to the top-level logLevel.
+        # agent:
+        #   logLevel: 'info'
+        #   workloadAttestorVerification: 'auto'
+        # csiDriver:
+        #   pluginName: 'csi.spiffe.io'
+        #   agentSocketPath: '/run/spire/agent-sockets'
+        # oidcDiscoveryProvider:
+        #   logLevel: 'info'
+        #   replicaCount: 1
+        #   managedRoute: 'true'
+        # ---------------------------------------------------------------------------------
+        # ROOT OF TRUST. Omitted -> SPIRE self-signs its own root. The CRD supports exactly
+        # two plugins, certManager and vault. certManager requires the cert-manager and
+        # cert-manager-ca labels both enabled. NOTE autoshift-ca is self-signed PER
+        # CLUSTER, so this gives a chain, not a shared fleet root -- for that, also set
+        # config.certManager.ca.issuer to a signer common to every cluster.
+        # upstreamAuthority: EXACTLY ONE of certManager or vault may be set; the CRD rejects both.
+        # upstreamAuthority:
+        #   certManager:
+        #     issuerName: 'autoshift-ca'
+        #     issuerKind: 'ClusterIssuer'
+        #     issuerGroup: 'cert-manager.io'
+        #     namespace: 'cert-manager'
+        # ---------------------------------------------------------------------------------
+        #   publishEndpointRoute   'true' (default) publishes the bundle endpoint on the cluster's
+        #                          default ingress, under the apps wildcard so it resolves and is
+        #                          covered by the existing public certificate. A trust bundle is
+        #                          certificate authority material, so its contents are public by
+        #                          design, but the endpoint is then reachable from wherever that
+        #                          ingress is, which on a cloud cluster usually means the internet.
+        #                          Set 'false' where clusters share a private network or the
+        #                          exposure is unwanted.
+        #   bundleEndpointHost     the name peers should fetch this cluster's bundle from when the
+        #                          default ingress is not it -- an internal load balancer, a service
+        #                          mesh gateway, a private ingress controller. Peers read this from
+        #                          this cluster's own configuration, so only the cluster that serves
+        #                          the endpoint needs to set it.
+        # federation:
+        #   publishEndpointRoute: 'false'
+        #   bundleEndpointHost: 'spire-federation.internal.example.com'
+        #
+        #   publishBundleJwks     'true' (default) runs a small CronJob on each member that converts
+        #                         the Operator's spire-bundle ConfigMap, which is PEM, into the JWKS
+        #                         that ClusterFederatedTrustDomain.trustDomainBundle requires. Only
+        #                         https_spiffe needs it: https_web fetches bundles from the endpoint
+        #                         and seeds nothing. Set 'false' to maintain the ztwim-bundle-jwks
+        #                         ConfigMap by hand instead; the exact commands are in
+        #                         policies/stable/ztwim/manifests/federation-bundle/bundle-jwks.yaml.
+        #   bundleJwksSchedule    cron schedule for that conversion, default '*/10 * * * *'. It only
+        #                         has to track authority rotation, so it can be far less frequent.
+        #                         The conversion runs in the shared AutoShift CLI image, resolved the
+        #                         same way every other helper Job resolves it: config.images.cli,
+        #                         then this cluster's openshift/cli ImageStream, then the in-cluster
+        #                         registry. It needs oc, python3 and openssl.
+        #
+        #   publishBundleJwks: 'false'
+        #   bundleJwksSchedule: '0 * * * *'
+        # ---------------------------------------------------------------------------------
+        # FEDERATION (needs the ztwim-federation label). ONE-WAY: the CRD refuses to let
+        # federation be REMOVED once set, and bundleEndpoint.profile is immutable once chosen,
+        # with no switching between the acme and servingCert forms of httpsWeb. Enabling
+        # federation is a decision you cannot reverse without deleting the SpireServer resource.
+        # federatesWith entries using the https_spiffe profile MUST carry endpointSpiffeId.
+        # Two distinct settings:
+        #   federation            -> SpireServer.spec.federation; how THIS server publishes
+        #                            its bundle endpoint and which domains it federates with.
+        #   federatedTrustDomains -> one ClusterFederatedTrustDomain CR per foreign domain.
+        # federation:
+        #   bundleEndpoint:
+        #     profile: 'https_spiffe'
+        #     refreshHint: 300
+        #   federatesWith:
+        #     - trustDomain: 'other.example.com'
+        #       bundleEndpointUrl: 'https://spire-federation.apps.other.example.com'
+        #       endpointSpiffeId: 'spiffe://other.example.com/spire/server'
+        # federatedTrustDomains:
+        #   - trustDomain: 'other.example.com'
+        #     bundleEndpointURL: 'https://spire-federation.apps.other.example.com'
+        #     bundleEndpointProfile:
+        #       type: 'https_spiffe'
+        #       endpointSPIFFEID: 'spiffe://other.example.com/spire/server'
+        # ---------------------------------------------------------------------------------
+        # NESTED SPIRE (needs the ztwim-nested-role label set to hub or spoke).
+        #   trustDomain        REQUIRED, and must be the SAME literal on hub and spoke (above).
+        #                      Deliberately not derived: it is a fleet-wide choice, and changing
+        #                      it later is destructive.
+        #   nested.hubEndpoint DERIVED by default. The spoke-side policy runs hub templates, so it
+        #                      reads the spire-server-grpc Route straight off the hub. Set this
+        #                      only to override -- an external load balancer in front of the hub,
+        #                      or a hub that is not the propagating hub.
+        #   apiCaSecret  BIGGEST lever on how many spokes one hub carries. Name a Secret on the
+        #                hub holding the certificate authority that signs the fleet's API server
+        #                certificates. Each spoke kubeconfig then references that one mounted file
+        #                instead of inlining its own copy, which is about 15KB of the 17KB a
+        #                kubeconfig costs. Per-spoke cost falls to roughly 1.7KB, taking a hub from
+        #                about 60 spokes to several hundred.
+        #
+        #                Requires the fleet to SHARE that authority. Stock Red Hat OpenShift does
+        #                not: each cluster signs its own API certificate with a per-cluster signer.
+        #                Replacing the API serving certificate from one common issuer makes it true,
+        #                which the cert-manager policy in this repository can do.
+        #   apiCaKey     key within that Secret. Default 'ca.crt'.
+        # nested:
+        #   hubEndpoint: 'spire-server-grpc.apps.hub.example.com'
+        #   apiCaSecret: 'fleet-api-ca'
+        #   apiCaKey: 'ca.crt'
+
+      # =======================================================================
       # User Workload Monitoring (config section - read via rendered-config)
       # =======================================================================
       uwm:
@@ -1598,3 +1838,69 @@ hubClusterSets:
       trident-source-namespace: openshift-marketplace
       trident-channel: stable
       trident-version: 'trident-operator.v25.06.0'   # optional CSV version pin
+
+      # Zero Trust Workload Identity Manager (SPIRE)
+      # =======================================================================
+      ztwim: 'false'
+      ztwim-subscription-name: openshift-zero-trust-workload-identity-manager
+      ztwim-channel: stable-v1
+      ztwim-version: 'zero-trust-workload-identity-manager.v1.1.1'
+      ztwim-source: redhat-operators
+      ztwim-source-namespace: openshift-marketplace
+      # Opt-in: trust foreign trust domains listed in config.ztwim.federatedTrustDomains.
+      ztwim-federation: 'false'
+      # Federation MESH. Clusters sharing a non-empty value here federate with each other and with
+      # nothing outside it, so the number of relationships follows the group rather than the fleet.
+      # Each member trusts its peers' INDEPENDENT trust domains, so chains stay one certificate deep
+      # on every side, unlike nesting where each tier adds an intermediate to every handshake.
+      #
+      # The usual manual step does not apply: the first trust bundle is fetched from each peer
+      # through a ManagedClusterView and written into ClusterFederatedTrustDomain.trustDomainBundle,
+      # after which the SPIRE controller manager refreshes bundles itself.
+      #
+      # Requires config.ztwim.federation.bundleEndpoint to be set on every member, which is what
+      # makes the operator publish the endpoint peers fetch from.
+      ztwim-federation-mesh: ''
+      # Nested SPIRE role: 'hub' signs, 'spoke' is signed, 'both' does each in one place. Empty
+      # (the default) means not nested.
+      #
+      # 'both' is how a fleet SHARDS past what one hub can carry. That capacity is set by the 1MB
+      # decoded-data limit on the Secret holding one kubeconfig per spoke, so it depends on the
+      # size of each cluster's API server CA bundle -- see the policy README before assuming one. It is the middle tier of a hub-of-hubs: a regional hub is a nested
+      # spoke of the hub-of-hubs and a nested hub to its own spokes. Both manifest sets are placed
+      # by the HUB-OF-HUBS instance, because a regional hub is not managed by its own Red Hat
+      # Advanced Cluster Management and so cannot place policies on itself, which is why one label
+      # has to express both roles.
+      #
+      # The templates need no change for this, and the reason is worth knowing: the spoke-side
+      # manifests use HUB templates, which resolve against whichever cluster placed the policy --
+      # the hub-of-hubs -- so a regional hub correctly dials the root. The hub-side manifests
+      # enumerate clusters with SPOKE templates, evaluated locally on the regional hub, where its
+      # own Red Hat Advanced Cluster Management can see its spokes. The hub-of-hubs cannot see those
+      # spokes at all, so a hub template there would find nothing.
+      # Setting this REQUIRES config.ztwim.trustDomain to the SAME value on both ends, and puts the
+      # ZTWIM operator into CREATE_ONLY_MODE on that cluster, after which no operand change
+      # reconciles until the resource is deleted and recreated.
+      ztwim-nested-role: ''
+      # OPT-IN, and the only setting that lets AutoShift delete a PersistentVolumeClaim. On a nested
+      # spoke SPIRE self-signs a root on first boot and keeps it; clearing the datastore is what
+      # makes it re-mint from the hub. Leave this off and do the documented manual step unless the
+      # fleet is large enough to justify the trade -- if the chain can never form, this clears the
+      # datastore repeatedly instead of converging.
+      ztwim-nested-auto-reset: 'false'
+      # Upgrade approval for the ZTWIM operator. DERIVED when unset: 'None' (pinned, no InstallPlan
+      # is approved) on any cluster with ztwim-nested-role set, 'Automatic' everywhere else. Nested
+      # clusters run in CREATE_ONLY_MODE, where an operator upgrade leaves every SPIRE workload on
+      # the previous release's images with nothing reporting it, so they pin themselves. Set this
+      # explicitly to override in either direction. Valid values: Automatic | None.
+      # Declared EMPTY so the derivation above stays in effect; a literal here would apply to every
+      # cluster and defeat it, exactly as it would for ztwim-nested-role.
+      ztwim-upgrade-approval: ''
+      # OPT-IN. Lets AutoShift DELETE a running SPIRE operand so the operator recreates it from the
+      # current CR. This is the only way to apply an operand change under CREATE_ONLY_MODE, which
+      # skips updates but still runs the create path. Needed after an operator upgrade on a nested
+      # cluster, or to apply a changed tolerations/resources setting there. On a nested HUB this
+      # restarts the SPIRE server and therefore the trust domain's CA: agents serve cached SVIDs
+      # only until config.ztwim.defaultX509Validity expires. policy-ztwim-operand-drift reports
+      # when this is needed and stays Compliant when it is not.
+      ztwim-operand-reconcile: 'false'

@@ -2,6 +2,28 @@
 managedClusterSets:
   managed:
     config:
+      # Publishes this cluster's bundle endpoint, which is what makes it a usable federation peer.
+      # Without it the operator writes no federation block and peers have nothing to fetch from.
+      ztwim:
+        federation:
+          bundleEndpoint:
+            # https_spiffe, which is also the Operator's own default. A peer's bundle endpoint is
+            # authenticated by its SPIFFE SVID rather than by a certificate authority, so federation
+            # needs no publicly trusted ingress certificate, no shared internal authority, and
+            # nothing added to the SPIRE server's trust store -- which cannot be extended anyway,
+            # because SpireServer exposes no volumes or environment and the Operator reverts edits
+            # to the generated StatefulSet within seconds.
+            #
+            # https_web is the alternative, and needs the ingress wildcard on EVERY member to chain
+            # to an authority already in the SPIRE image's trust store. That rules out fleets with
+            # their own authority, and disconnected sites.
+            #
+            # The profile is IMMUTABLE once the resource exists. Changing it later therefore
+            # recreates the SpireServer, which policy-ztwim-config does through recreateOption. The
+            # trust domain and its certificate authority survive, because they live in the datastore
+            # rather than in the resource, so agents keep their SVIDs and do not re-attest.
+            profile: 'https_spiffe'
+            refreshHint: 300
       uwm:
         # storageClass: 'gp3-csi'            # Omit to use cluster default StorageClass
         prometheus:
@@ -16,6 +38,14 @@ managedClusterSets:
     labels:
       # OpenShift version for cluster deployment and image mirroring
       openshift-version: '4.22.8'
+      ### Zero Trust Workload Identity Manager (SPIRE)
+      ztwim: 'true'
+      ztwim-federation-mesh: 'demo'
+      # Nesting is OFF so this cluster federates instead. The two are mutually exclusive in practice:
+      # nesting puts the operator in CREATE_ONLY_MODE, which stops it writing the federation block
+      # into the generated server.conf, so a nested cluster publishes a bundle endpoint Route with
+      # nothing listening behind it. Set to 'spoke' to take an intermediate from the hub instead.
+      ztwim-nested-role: ''
       ### tempo
       tempo: 'true'
       tempo-subscription-name: tempo-product

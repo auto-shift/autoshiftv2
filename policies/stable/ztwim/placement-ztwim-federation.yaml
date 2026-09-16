@@ -1,0 +1,25 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-ztwim-federation
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Federation is opt-in: it only makes sense where config.ztwim.federatedTrustDomains names a
+  # foreign trust domain, so it is gated on its own label rather than defaulting on wherever SPIRE is.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/ztwim'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/ztwim-federation'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
