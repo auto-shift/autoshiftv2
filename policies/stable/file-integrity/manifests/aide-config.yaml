@@ -1,0 +1,44 @@
+# The AIDE configuration the FileIntegrity instances read.
+#
+# The machine config daemon keeps the previous container log of every restart under /etc, which
+# AIDE watches, so every restart makes each node report NodeHasIntegrityFailure for a change
+# nobody made. Red Hat excludes the same kind of churn elsewhere: multus certificates in
+# OCPBUGS-31257, machine config operator paths in OCPBUGS-41628.
+#
+# spec.config replaces the operator default outright, there is no additive form, so this reads
+# that default and inserts one line. The operator regenerates it even once an instance points
+# elsewhere, so exclusions Red Hat adds later are picked up rather than drifting against a copy.
+# The lookup is spoke side: each managed cluster generates its own.
+#
+# Emits nothing until that default exists, because an empty aide.conf monitors nothing and still
+# reports healthy. If the anchor line ever goes away the default is copied through unmodified,
+# which brings the alert back rather than reordering the rules unnoticed.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $fi := (dig "fileIntegrity" dict $cfg) hub}}
+  {{- $spoke := `
+  instances:
+    {{hub (dig "instances" (list) $fi) | toYaml | autoindent hub}}
+  ` | fromYaml }}
+  {{- $anchor := "!/hostroot/etc/machine-config-daemon/node-annotation.json*" }}
+  {{- $extra := "!/hostroot/etc/machine-config-daemon/previous-logs" }}
+  {{- range $inst := (dig "instances" (list) $spoke) }}
+  {{- $src := ((lookup "v1" "ConfigMap" "openshift-file-integrity" $inst.name) | default dict) }}
+  {{- $conf := (dig "data" "aide.conf" "" $src) }}
+  {{- if $conf }}
+  {{- if and (contains $anchor $conf) (not (contains $extra $conf)) }}
+  {{- $conf = (replace $anchor (printf "%s\n%s" $anchor $extra) $conf) }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: autoshift-aide-conf
+        namespace: openshift-file-integrity
+      data:
+        aide.conf: |
+          {{ (join "\n" (without (splitList "\n" $conf) "")) | autoindent }}
+  {{- end }}
+  {{- end }}

@@ -1,0 +1,51 @@
+# STIG oauth-login-template-set, oauth-provider-selection-set and oauth-logout-url-set, and NIST
+# oauth-or-oauthclient-token-maxage. The
+# templates are HTML held in Secrets in openshift-config, created out of band; config names them.
+# logoutRedirect is on the Console CR, not OAuth, despite the rule wording.
+#
+# musthave on both: mustonlyhave on OAuth.spec would delete spec.identityProviders and lock every
+# user out of the cluster.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $oauth := (dig "manualRemediations" "oauth" dict $cfg) hub}}
+  {{hub- $templates := dict hub}}
+  {{hub- range $field := (list "login" "providerSelection" "error") hub}}
+  {{hub- $secret := (dig (printf "%sTemplateSecret" $field) "" $oauth) hub}}
+  {{hub- if $secret hub}}
+  {{hub- $_ := set $templates $field (dict "name" $secret) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if $templates hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: OAuth
+      metadata:
+        name: cluster
+      spec:
+        templates:
+          {{hub $templates | toYaml | autoindent hub}}
+  {{hub- end hub}}
+  {{hub- if (dig "tokenMaxAgeSeconds" 0 $oauth) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: OAuth
+      metadata:
+        name: cluster
+      spec:
+        tokenConfig:
+          accessTokenMaxAgeSeconds: {{hub (dig "tokenMaxAgeSeconds" 0 $oauth) hub}}
+  {{hub- end hub}}
+  {{hub- if (dig "logoutRedirect" "" $oauth) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: Console
+      metadata:
+        name: cluster
+      spec:
+        authentication:
+          logoutRedirect: {{hub (dig "logoutRedirect" "" $oauth) | quote hub}}
+  {{hub- end hub}}
