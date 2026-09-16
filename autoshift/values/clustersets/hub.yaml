@@ -31,6 +31,22 @@ hubClusterSets:
           cnpg:
             instances: 2
             size: '10Gi'
+          # Exercises the external datastore path against the CloudNativePG database already
+          # running here. The location and credentials below reach the same database, so the server
+          # keeps its datastore, its certificate authority and its entries; only the code path that
+          # builds the connection string changes. Setting this also stops policy-ztwim-cnpg managing
+          # the Cluster resource, which keeps running untouched.
+          #
+          # The host is the fully qualified service name so the resulting string is visibly
+          # different from the one the CNPG path derives. Same endpoint, and sslmode=require does
+          # not verify the hostname, so it proves which branch built the string.
+          external:
+            host: 'spire-db-rw.zero-trust-workload-identity-manager.svc.cluster.local'
+            port: 5432
+            databaseName: 'spire'
+            sslMode: 'require'
+            configSecretRef:
+              name: 'spire-db-app'
       uwm:
         # storageClass: 'gp3-csi'            # Omit to use cluster default StorageClass
         prometheus:
