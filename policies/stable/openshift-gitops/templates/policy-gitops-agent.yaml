@@ -191,12 +191,16 @@ spec:
                     - key: cluster.open-cluster-management.io/unavailable
                       operator: Exists
             #
-            # Bind this hub's OWN cluster sets into the Argo CD namespace so the placement above can
-            # see them. Declared rather than discovered: on a managed hub the correct names are that
-            # hub's, which the authoring layer does not know. List them in
-            # config.gitops.agent.clusterSets in that hub's values. Left empty, the bindings the
-            # push-model policy already created are used as they stand, which is the right answer on
-            # a self-managed hub and is why this is not required there.
+            # Bind cluster sets into the PRINCIPAL namespace so the placement above can see them.
+            # A Placement with no clusterSets selects across the bindings in its own namespace, and
+            # this namespace is not the one the push-model policy binds into, so without these the
+            # placement reports NoManagedClusterSetBindings and selects nothing at all.
+            #
+            # config.gitops.agent.clusterSets wins when set, which is how a MANAGED hub names its own
+            # spoke cluster sets: the layer that authors this policy is the one above and does not
+            # know them. Left empty, fall back to the cluster sets this chart was rendered with,
+            # which are the right ones on a self-managed hub.
+            {{ "{{hub" }} if $clusterSets {{ "hub}}" }}
             {{ "{{hub" }} range $cs := $clusterSets {{ "hub}}" }}
             - complianceType: musthave
               objectDefinition:
@@ -207,6 +211,30 @@ spec:
                   namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
                 spec:
                   clusterSet: {{ "{{hub" }} $cs {{ "hub}}" }}
+            {{ "{{hub" }} end {{ "hub}}" }}
+            {{ "{{hub" }} else {{ "hub}}" }}
+            {{- range $clusterSet, $value := .Values.managedClusterSets }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ $clusterSet }}
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                spec:
+                  clusterSet: {{ $clusterSet }}
+            {{- end }}
+            {{- range $clusterSet, $value := .Values.hubClusterSets }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ $clusterSet }}
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                spec:
+                  clusterSet: {{ $clusterSet }}
+            {{- end }}
             {{ "{{hub" }} end {{ "hub}}" }}
             #
             # The add-on itself. The controller derives the whole agent public key infrastructure
