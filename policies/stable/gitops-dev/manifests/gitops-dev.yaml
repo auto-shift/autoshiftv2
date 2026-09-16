@@ -3,6 +3,7 @@ object-templates-raw: |
   {{hub- $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
   {{hub- $isHub := ne (index .ManagedClusterLabels "autoshift.io/self-managed") "" hub}}
+  {{hub- $clusterName := .ManagedClusterName hub}}
   {{hub- $clusterSets := list hub}}
   {{hub- $mcsList := (lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "") | default dict hub}}
   {{hub- range $_, $mcs := ($mcsList.items | default list) hub}}
@@ -17,6 +18,13 @@ object-templates-raw: |
   {{hub- range (dig "gitops_rbac_policies" list $spec) hub}}
   {{hub- $rbac = printf "%s%s\n" $rbac . hub}}
   {{hub- end hub}}
+  {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
+  {{hub- $agentOn := (dig "enabled" false $agentCfg) hub}}
+  {{hub- $agentNs := printf "openshift-gitops-%s-agent" $team hub}}
+  {{hub- $pName := printf "%s-principal" $team hub}}
+  {{hub- $pSvc := printf "%s-agent-principal" $pName hub}}
+  {{hub- $pRoute := (lookup "route.openshift.io/v1" "Route" $agentNs $pSvc) | default dict hub}}
+  {{hub- $pHost := (dig "spec" "host" "" $pRoute) hub}}
   {{hub- $route := (lookup "route.openshift.io/v1" "Route" (printf "openshift-gitops-%s" $team) "argocd-dev-server") | default dict hub}}
   {{hub- $host := (dig "spec" "host" "" $route) hub}}
   {{hub- if or (and (eq $mode "hub") $isHub) (and (eq $mode "standalone") (not $isHub)) hub}}
@@ -196,14 +204,7 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
-  {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
-  {{hub- $agentOn := (dig "enabled" false $agentCfg) hub}}
   {{hub- if and $isHub $agentOn hub}}
-  {{hub- $agentNs := printf "openshift-gitops-%s-agent" $team hub}}
-  {{hub- $pName := printf "%s-principal" $team hub}}
-  {{hub- $pSvc := printf "%s-agent-principal" $pName hub}}
-  {{hub- $pRoute := (lookup "route.openshift.io/v1" "Route" $agentNs $pSvc) | default dict hub}}
-  {{hub- $pHost := (dig "spec" "host" "" $pRoute) hub}}
   # The team's Argo CD agent principal. It lives in its OWN namespace, not the team's, because
   # enabling the principal requires the application controller to be OFF and the team's instance
   # needs its controller for the applications it deploys itself. Their instance is untouched.
@@ -335,6 +336,94 @@ object-templates-raw: |
             resourceProxy:
               secretName: argocd-agent-resource-proxy-tls
               caSecretName: argocd-agent-ca
+  # One client certificate per cluster that has opted into THIS team's agent. Enumerated from the
+  # managed clusters carrying gitops-dev-team-<team>: 'agent', so adding a cluster to a team is a
+  # label change and the certificate follows. The common name is what the principal's auth pattern
+  # matches, and it is namespaced by cluster and team so no two agents share an identity.
+  {{hub- $mcList := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
+  {{hub- range $_, $mc := ($mcList.items | default list) hub}}
+  {{hub- $mcName := (dig "metadata" "name" "" $mc) hub}}
+  {{hub- $mcLabels := (dig "metadata" "labels" dict $mc) hub}}
+  {{hub- if eq (dig (printf "autoshift.io/gitops-dev-team-%s" $team) "" $mcLabels) "agent" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: {{hub printf "%s-%s-client" $mcName $team hub}}
+        namespace: {{hub $agentNs hub}}
+      spec:
+        secretName: {{hub printf "%s-%s-client-tls" $mcName $team hub}}
+        commonName: {{hub printf "%s-%s" $mcName $team hub}}
+        duration: 720h0m0s
+        renewBefore: 240h0m0s
+        usages:
+          - client auth
+        issuerRef:
+          name: argocd-agent-ca
+          kind: Issuer
+          group: cert-manager.io
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  # The SPOKE half: this cluster runs an agent for the team, reporting to that team's principal on
+  # the hub. Because gitops-dev-team-<team> is a per-team label, a cluster may carry 'agent' for
+  # several teams at once and get an agent for each, which is the thing the Red Hat Advanced
+  # Cluster Management add-on cannot do with its single hardcoded add-on name.
+  {{hub- if and (eq $mode "agent") (not $isHub) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: openshift-gitops-{{hub $team hub}}
+        labels:
+          openshift.io/cluster-monitoring: 'true'
+  # Trust anchor only. The certificate authority PRIVATE key never leaves the hub; the agent needs
+  # nothing more than the public certificate to verify the principal it dials.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      type: Opaque
+      metadata:
+        name: argocd-agent-ca
+        namespace: openshift-gitops-{{hub $team hub}}
+      data:
+        ca.crt: {{hub fromSecret $agentNs "argocd-agent-ca" "tls.crt" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      type: kubernetes.io/tls
+      metadata:
+        name: argocd-agent-client-tls
+        namespace: openshift-gitops-{{hub $team hub}}
+      data:
+        tls.crt: {{hub fromSecret $agentNs (printf "%s-%s-client-tls" $clusterName $team) "tls.crt" hub}}
+        tls.key: {{hub fromSecret $agentNs (printf "%s-%s-client-tls" $clusterName $team) "tls.key" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: {{hub printf "%s-agent" $team hub}}
+        namespace: openshift-gitops-{{hub $team hub}}
+      spec:
+        server:
+          enabled: false
+        argoCDAgent:
+          agent:
+            enabled: true
+            allowedNamespaces:
+              - '*'
+            client:
+              mode: {{hub (dig "mode" "autonomous" $agentCfg) hub}}
+              principalServerAddress: {{hub $pHost hub}}
+              principalServerPort: '443'
+            tls:
+              rootCASecretName: argocd-agent-ca
+              secretName: argocd-agent-client-tls
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
