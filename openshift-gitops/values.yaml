@@ -84,22 +84,56 @@ gitops:
     - 'g, cluster-admins, role:admin'
     - 'g, openshift-systems, role:admin'
   # OPTIONAL
+  # Added to the Operator's own default exclusions, not replacing them. These are generated,
+  # never-authored kinds that are heavy on an OpenShift hub, and the controller caches every kind in
+  # the cluster unless told otherwise. Anything listed here can no longer be deployed by this
+  # instance, so keep the list to resources nobody writes by hand.
+  resourceExclusions: |
+    - apiGroups:
+        - ''
+      kinds:
+        - Event
+    - apiGroups:
+        - packages.operators.coreos.com
+      kinds:
+        - PackageManifest
+    - apiGroups:
+        - compliance.openshift.io
+      kinds:
+        - ComplianceCheckResult
+        - ComplianceRemediation
   controller:
-    # Scaling: increase processors for environments with many Applications
-    # Recommended: 50 status / 25 operation for 1000+ Applications
-    # AutoShift generates an Application per policy directory, so even a minimal hub carries dozens.
-    # Measured on a 51-Application hub: a full refresh took 141s at 50/25 against 225s at the Argo CD
-    # defaults of 20/10, for 640Mi of controller memory. Raise further for a much larger policy set.
-    statusProcessors: 50 # concurrent status reconciliations (Argo CD default: 20)
-    operationProcessors: 25 # concurrent sync operations (Argo CD default: 10)
-    # Measured peak 843Mi on a hub with 51 Applications and 194 Policies at 50 processors, during a
-    # full hard-refresh storm. Requests sized for steady state and limits for that storm with room to
-    # spare; deliberately NOT equal, so the pod is Burstable and does not reserve the ceiling. A hub
-    # running several AutoShift deployments multiplies the per-Application share but not the cluster
-    # cache, which is the larger half. Re-measure before lowering rather than assuming.
+    # Scaling: raise processors for environments with many Applications. AutoShift generates an
+    # Application per policy directory, so even a minimal hub carries dozens.
+    #
+    # These sit at the Argo CD defaults, and must stay in step with
+    # policies/stable/openshift-gitops/values.yaml, which takes over once AutoShift manages this
+    # Argo CD. Concurrency multiplies peak memory, because each in-flight comparison holds that
+    # Application's rendered and live state at once. A hub with 58 Applications and 299 Policies was
+    # OOMKilled repeatedly at 50/25 against the previous 4Gi ceiling: it held for an hour at rest and
+    # died the moment every Application was synced at once. Raise these only together with
+    # limits.memory below, and re-measure.
+    statusProcessors: 20 # concurrent status reconciliations (Argo CD default: 20)
+    operationProcessors: 10 # concurrent sync operations (Argo CD default: 10)
+    # GOMEMLIMIT is DERIVED as this percentage of limits.memory below, so the two cannot drift.
+    # Argo CD recommends 80-90%. Only Gi and Mi limits are parsed; for anything else set goMemLimit
+    # explicitly, which overrides the derivation. When neither yields a value the variable is
+    # omitted rather than guessed.
+    goMemLimitPercent: 85
+    goMemLimit: ''
+    # normal | strict. Stops the controller watching kinds it has no permission to list.
+    respectRBAC: 'normal'
+    # THE CLUSTER CACHE IS THE LARGE HALF. The controller builds a full cache per REGISTERED
+    # cluster, and caches every API kind in each unless resourceExclusions says otherwise, so the
+    # footprint tracks what is installed on the cluster rather than how many Applications exist.
+    # An older 843Mi peak recorded here predates both that exclusion list and the Red Hat Advanced
+    # Cluster Management cluster-proxy registration, and is not a safe number to size against.
+    #
+    # Requests are sized for steady state and limits for a full hard-refresh storm, deliberately NOT
+    # equal so the pod stays Burstable rather than reserving the ceiling.
     limits:
       cpu: 2000m
-      memory: 4Gi
+      memory: 8Gi
     requests:
       cpu: 250m
       memory: 1Gi

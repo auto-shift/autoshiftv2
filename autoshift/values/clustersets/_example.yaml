@@ -635,8 +635,23 @@ hubClusterSets:
         # A `g` line takes a user or a group, but with OpenShift login the user identity is an
         # opaque Dex sub rather than a username, so name OpenShift Groups here.
         # repo.replicas defaults to 1; raise it for availability or a much larger policy set.
-        # Controller memory is 4Gi limit / 1Gi request, from a measured 843Mi peak.
-        # controller.statusProcessors is the main lever on how fast the fleet converges.
+        # Controller memory is 8Gi limit / 1Gi request. The limit covers a full hard-refresh storm
+        # rather than steady state: a hub with 58 Applications and 299 Policies sat comfortably for
+        # an hour and was OOMKilled the moment every Application synced at once.
+        # controller.statusProcessors is the main lever on how fast the fleet converges, and also on
+        # peak memory, since each in-flight comparison holds an Application's rendered and live state
+        # at once. It sits at the Argo CD default of 20; raise it and raise controller.limits.memory
+        # with it. The controller also builds a FULL CLUSTER CACHE per registered cluster, which is
+        # the larger half of its footprint and is charged before any Application is compared.
+        # controller.goMemLimitPercent sets a soft ceiling for the Go runtime, which does not read
+        # the container limit and would otherwise be killed before it collected. It is DERIVED from
+        # controller.limits.memory, so the two cannot drift. Argo CD recommends 80-90%. Only Gi and
+        # Mi limits are parsed; for any other form set controller.goMemLimit explicitly, which
+        # overrides the derivation. When neither yields a value the variable is omitted, not guessed.
+        # controller.respectRBAC stops the controller watching kinds it cannot list.
+        # resourceExclusions REPLACES the built-in list of kinds kept out of the cluster cache, so
+        # carry the defaults over unless you mean to drop them. A kind listed there cannot be
+        # deployed by this instance at all, so keep it to generated, never-authored resources.
         # The gitops-cluster-ca-bundle label overrides repo.cluster_ca_bundle. policyGenerator sizes the CMP sidecar that performs the render,
         # so raise it when manifest generation times out, and its tarExclusions trim the repository
         # tarball streamed to that sidecar. tarExclusions is repo-server WIDE, so keep it to .git;
@@ -670,12 +685,20 @@ hubClusterSets:
         #     requests:
         #       cpu: '500m'
         #       memory: '512Mi'
+        #   resourceExclusions: |
+        #     - apiGroups:
+        #         - ''
+        #       kinds:
+        #         - Event
         #   controller:
-        #     statusProcessors: 50
-        #     operationProcessors: 25
+        #     statusProcessors: 20
+        #     operationProcessors: 10
+        #     goMemLimitPercent: 85
+        #     goMemLimit: ''
+        #     respectRBAC: 'normal'
         #     limits:
         #       cpu: '2000m'
-        #       memory: '4Gi'
+        #       memory: '8Gi'
         #     requests:
         #       cpu: '250m'
         #       memory: '1Gi'
