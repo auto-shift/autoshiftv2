@@ -129,8 +129,8 @@ network.
 HTTPS client looks like the shorter path. It works only under `https_web`, where the endpoint
 presents the service-serving certificate that any client can validate. Under `https_spiffe`, the
 profile that actually needs a seed, the endpoint presents a SPIFFE SVID whose only subject
-alternative name is a URI. No generic client can complete hostname verification against that with any
-certificate authority, and the attempt fails with `x509svid: could not get leaf SPIFFE ID:
+alternative name is a URI. No generic client can complete hostname verification against that with
+any certificate authority, and the attempt fails with `x509svid: could not get leaf SPIFFE ID:
 certificate contains no URI SAN`. Converting locally avoids the endpoint entirely and works under
 both profiles.
 
@@ -150,10 +150,16 @@ already served unauthenticated to anyone who asks.
 the manifest carries the equivalent commands for maintaining the ConfigMap by hand, including the
 warning that it must be re-run after the authority rotates.
 
-### The datastore is SQLite by default and CloudNativePG by choice
+### The datastore is SQLite by default, and a database is named three ways
 
-**Decision.** `config.ztwim.datastore.databaseType` defaults to `sqlite3`. Setting it to `postgres`,
-with `autoshift.io/cloudnative-pg: 'true'`, backs SPIRE with a CloudNativePG cluster instead.
+**Decision.** `config.ztwim.datastore.databaseType` defaults to `sqlite3`. Setting it to `postgres`
+selects a database, and three keys can name one. They are tried in order: an explicit
+`connectionString`, used verbatim; `external`, which puts the location in configuration and the
+credentials in a Secret; or nothing, which derives the CloudNativePG cluster AutoShift runs on a
+cluster labeled `autoshift.io/cloudnative-pg: 'true'`.
+
+Setting `external` suppresses the CloudNativePG cluster rather than adding to it. Running a database
+AutoShift does not use would consume storage and leave a second set of credentials to rotate.
 
 **Why it is usually not about scale.** The spoke ceiling is set by the size of the aggregated
 kubeconfig Secret, not by the datastore, so a database does not raise it. See
@@ -186,13 +192,31 @@ node loss even though SPIRE does not.
 **Switching datastore destroys the trust domain.** A different datastore is an empty datastore, so
 SPIRE mints a new authority and the old root is gone. Choose before the first deployment.
 
-**The switch is guarded on the database actually existing.** The CloudNativePG cluster and the
-`SpireServer` are separate policies with no ordering between them, and adding a dependency would
-stall every cluster that does not run CloudNativePG. So the policy uses postgres only once the
-generated password Secret is present, and stays on SQLite until then. The password is read on the
-managed cluster rather than the hub, so it never passes through a values file or Git. It does land
-in the `SpireServer` resource, because the connection string is a plain field with no secret
-reference.
+**Credentials are named, not carried.** `external.configSecretRef` names a Secret that an
+administrator creates on the managed cluster, and the lookup that reads it runs there rather than on
+the hub, so the password never passes through a values file or Git. The CloudNativePG path reads the
+Secret that CloudNativePG generates in the same way. The password does land in the `SpireServer`
+resource on both paths, because the connection string is a plain field with no secret reference.
+`datastore.tlsSecretName` is the only option with no password anywhere, authenticating with a client
+certificate instead, and it requires a certificate the database trusts.
+
+**The operands wait for credentials rather than falling back.** SQLite is not a safe placeholder for
+a database that is not reachable yet. A server started against it mints the trust domain's authority
+there, and swapping the datastore afterwards discards that authority and makes every agent
+re-attest. On a running cluster the same substitution is destructive outright, replacing a live
+database with an empty one.
+
+An inform barrier therefore holds the operand policy until the password Secret exists, leaving it
+Pending until then. A new cluster waits instead of building an authority it is going to
+throw away, and a running server keeps its datastore. The barrier is Compliant on every cluster that
+did not ask for postgres, so it gates nothing else. The template carries the same protection
+independently: rather than write SQLite over a live database it omits the datastore key, and the
+policy engine never removes a field it is not given.
+
+**A configured backend that nothing selects is reported.** Naming `external` or `tlsSecretName`
+while leaving `databaseType` at `sqlite3` wires up a database that no code path reads. Every policy
+involved correctly has nothing to do and reports Compliant, so an inform check reports the
+combination directly.
 
 ### SPIRE is scheduled as platform infrastructure
 
