@@ -409,6 +409,43 @@ object-templates-raw: |
       data:
         tls.crt: {{hub fromSecret $agentNs (printf "%s-%s-client-tls" $clusterName $team) "tls.crt" hub}}
         tls.key: {{hub fromSecret $agentNs (printf "%s-%s-client-tls" $clusterName $team) "tls.key" hub}}
+  # LEAST PRIVILEGE, and the reason this is not done through ARGOCD_CLUSTER_CONFIG_NAMESPACES.
+  # The agent synchronises a CLUSTER-SCOPED Namespace informer at startup and exits with "unable to
+  # sync Namespace informer" without it, which presents as a connection failure because the agent
+  # dies before it ever dials the principal. Naming the namespace in that operator variable would
+  # fix it by turning the instance into a cluster-scoped Argo CD with broad rights over the whole
+  # cluster. It needs three verbs on one resource, so that is what it gets.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: {{hub printf "argocd-agent-%s-namespaces" $team hub}}
+      rules:
+        - apiGroups:
+            - ''
+          resources:
+            - namespaces
+          verbs:
+            - get
+            - list
+            - watch
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{hub printf "argocd-agent-%s-namespaces" $team hub}}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: {{hub printf "argocd-agent-%s-namespaces" $team hub}}
+      subjects:
+        - kind: ServiceAccount
+          # The operator names the agent's service account after the Argo CD instance:
+          # <instance>-agent-agent, and the instance here is <team>-agent.
+          name: {{hub printf "%s-agent-agent-agent" $team hub}}
+          namespace: openshift-gitops-{{hub $team hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: argoproj.io/v1beta1
