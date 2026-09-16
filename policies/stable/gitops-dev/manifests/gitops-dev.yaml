@@ -357,7 +357,14 @@ object-templates-raw: |
         commonName: {{hub printf "%s-%s" $mcName $team hub}}
         duration: 720h0m0s
         renewBefore: 240h0m0s
+        # All three, and not 'client auth' alone. cert-manager treats usages as a REPLACEMENT for
+        # its defaults rather than an addition, so naming only the extended usage produces a
+        # certificate with no X509v3 Key Usage extension at all. TLS needs digitalSignature to
+        # complete a handshake, and the agent fails at startup without ever reaching the principal,
+        # which makes it look like a connectivity problem rather than a certificate one.
         usages:
+          - digital signature
+          - key encipherment
           - client auth
         issuerRef:
           name: argocd-agent-ca
