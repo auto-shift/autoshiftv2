@@ -56,7 +56,7 @@ spec:
             {{ "{{hub" }} $clusterSets := (index $agentCfg "clusterSets" | default list) {{ "hub}}" }}
             {{ "{{hub" }} $serverAddress := (index $agentCfg "serverAddress" | default "") {{ "hub}}" }}
             {{ "{{hub" }} $serverPort := (index $agentCfg "serverPort" | default "") {{ "hub}}" }}
-            {{ "{{hub" }} $agentMode := (index $agentCfg "mode" | default "") {{ "hub}}" }}
+            {{ "{{hub" }} $agentMode := (index $agentCfg "mode" | default "autonomous") {{ "hub}}" }}
             {{ "{{hub" }} $agentNs := (index $agentCfg "namespace" | default "openshift-gitops-agent") {{ "hub}}" }}
             #
             # A DEDICATED Argo CD instance for the principal, not the one AutoShift runs its own
@@ -244,9 +244,13 @@ spec:
                       {{ "{{hub" }} if ne $serverPort "" {{ "hub}}" }}
                       serverPort: '{{ "{{hub" }} $serverPort {{ "hub}}" }}'
                       {{ "{{hub" }} end {{ "hub}}" }}
-                      {{ "{{hub" }} if ne $agentMode "" {{ "hub}}" }}
+                      # autonomous by default, deliberately. AutoShift already delivers
+                      # configuration to spokes through Red Hat Advanced Cluster Management
+                      # policies, and managed mode would put a second mechanism in competition with
+                      # that one for desired state. Autonomous mode instead fills the gap AutoShift
+                      # has: the spoke keeps ownership of its own applications and the hub gains one
+                      # real-time view of the fleet. Set 'managed' to make the hub authoritative.
                       mode: {{ "{{hub" }} $agentMode {{ "hub}}" }}
-                      {{ "{{hub" }} end {{ "hub}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

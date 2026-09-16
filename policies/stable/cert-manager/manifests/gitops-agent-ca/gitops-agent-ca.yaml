@@ -44,6 +44,19 @@ object-templates-raw: |
   {{hub- $issuer := (index $caCfg "issuer" | default dict) hub}}
   {{hub- $key := (index $caCfg "privateKey" | default dict) hub}}
   {{hub- $ns := (index $agentCfg "namespace" | default "openshift-gitops-agent") hub}}
+  # The principal namespace, declared here as well as in the agent policy. The two are placed by
+  # DIFFERENT labels (gitops-agent-ca and gitops-agent) and either may be enabled on its own, so
+  # neither can assume the other created this. Both declare the same object with musthave, which is
+  # idempotent, and each policy stays self-sufficient. Without this, enabling gitops-agent-ca alone
+  # emits a Certificate into a namespace nothing creates and it never issues.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $ns hub}}
+        labels:
+          openshift.io/cluster-monitoring: 'true'
   - complianceType: musthave
     objectDefinition:
       apiVersion: cert-manager.io/v1
