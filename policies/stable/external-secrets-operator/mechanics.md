@@ -555,7 +555,8 @@ Vault path.
 `eso-writeback`, then in Vault. Cluster-admin on a site hub can read spoke tokens. Empty
 `writebackNamespace` turns the whole path off.
 
-**Store conditions.** The write-back store allows the operand namespace and
-`writebackNamespace`. `consumerNamespaces` applies to the **read** store only, and it is a
-list of namespace name strings (`- app-ns`), not maps. A Vault store on the global hub that
-sets `spec.conditions` must include `eso-writeback`.
+**Store conditions.** The write-back store allows the operand namespace,
+`writebackNamespace`, and every entry in `consumerNamespaces` — that list widens both the
+read and write-back stores together, and it is a list of namespace name strings (`- app-ns`),
+not maps. A Vault store on the global hub that sets `spec.conditions` must include
+`eso-writeback`.

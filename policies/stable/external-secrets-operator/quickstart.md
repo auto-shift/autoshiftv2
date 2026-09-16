@@ -682,7 +682,8 @@ config:
 ```
 
 `consumerNamespaces` is a list of strings (`- app-ns`), not maps. It allow-lists namespaces
-on the **read** store. It does not grant write on `eso-writeback`.
+on **both** the read store and, when this cluster has `pushSecrets`, the write-back store —
+so a namespace listed here can also write to `eso-writeback`.
 
 ## Responsibilities — who does what
 

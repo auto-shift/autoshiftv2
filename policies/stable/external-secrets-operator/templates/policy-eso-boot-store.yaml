@@ -530,7 +530,11 @@ spec:
                       ##### The store itself is created only when NO precondition error was collected — otherwise it would #####
                       ##### wire auth.cert at a client secret that nothing minted/copied this pass. #####
                       {{ "{{-" }} if not $errors {{ "}}" }}
-                    - complianceType: musthave
+                    ##### mustonlyhave: musthave only merges list entries (docs/policy-behavior.md), so a #####
+                    ##### changed consumerNamespaces would leave the old conditions.namespaces entry stranded #####
+                    ##### alongside the new one instead of replacing it. spec here is fully declared #####
+                    ##### (conditions + provider), so mustonlyhave is exact, not lossy. #####
+                    - complianceType: mustonlyhave
                       objectDefinition:
                         apiVersion: external-secrets.io/v1
                         kind: ClusterSecretStore
@@ -575,19 +579,33 @@ spec:
                       ##### write-back ns. Only when THIS cluster has config.eso.pushSecrets AND #####
                       ##### writebackNs is set — otherwise ESO Ready fails (parent write Role is #####
                       ##### also gated on that cluster's pushSecrets). Empty writebackNs or no #####
-                      ##### pushSecrets mustnothave the leftover. #####
+                      ##### pushSecrets mustnothave the leftover. conditions.namespaces reuses the #####
+                      ##### SAME hubBootstrap.consumerNamespaces list as the read store — a namespace #####
+                      ##### granted read access to eso-shared is granted write access to the #####
+                      ##### write-back namespace too. #####
                       {{ "{{-" }} if and (ne $writebackNs "") (gt (len ($pushSecrets | default list)) 0) {{ "}}" }}
-                    - complianceType: musthave
+                    ##### mustonlyhave: same reasoning as the read store above — conditions.namespaces #####
+                    ##### must be replaced wholesale when consumerNamespaces changes, not merged. #####
+                    - complianceType: mustonlyhave
                       objectDefinition:
                         apiVersion: external-secrets.io/v1
                         kind: ClusterSecretStore
                         metadata:
                           name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
                         spec:
+                          {{ "{{-" }} $condNsWb := list "{{ $esoNamespace }}" {{ "}}" }}
+                          {{ "{{-" }} if not (has $writebackNs $condNsWb) {{ "}}" }}{{ "{{-" }} $condNsWb = append $condNsWb $writebackNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} range $n := ($consumerNs | default list) {{ "}}" }}
+                            {{ "{{-" }} if and (ne $n "") (not (has $n $condNsWb)) {{ "}}" }}{{ "{{-" }} $condNsWb = append $condNsWb $n {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                          {{ "{{-" }} end {{ "}}" }}
                           conditions:
                             - namespaces:
-                                - {{ $esoNamespace }}
-                                - {{ "{{" }} $writebackNs {{ "}}" }}
+                              {{ "{{-" }} range $n := $condNsWb {{ "}}" }}
+                                - {{ "{{" }} $n {{ "}}" }}
+                              {{ "{{-" }} end {{ "}}" }}
+                            {{ "{{-" }} if or (hasKey ($consumerSel | default dict) "matchLabels") (hasKey ($consumerSel | default dict) "matchExpressions") {{ "}}" }}
+                            - namespaceSelector: {{ "{{" }} $consumerSel | toRawJson {{ "}}" }}
+                            {{ "{{-" }} end {{ "}}" }}
                           provider:
                             kubernetes:
                               server:
@@ -1023,7 +1041,11 @@ spec:
               ##### The store itself is created only when NO precondition error was collected — otherwise it would #####
               ##### wire auth.cert at a client secret that nothing minted/copied this pass. #####
               {{ "{{-" }} if not $errors {{ "}}" }}
-            - complianceType: musthave
+            ##### mustonlyhave: musthave only merges list entries (docs/policy-behavior.md), so a #####
+            ##### changed consumerNamespaces would leave the old conditions.namespaces entry stranded #####
+            ##### alongside the new one instead of replacing it. spec here is fully declared #####
+            ##### (conditions + provider), so mustonlyhave is exact, not lossy. #####
+            - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: external-secrets.io/v1
                 kind: ClusterSecretStore
@@ -1068,19 +1090,33 @@ spec:
               ##### write-back ns. Only when THIS cluster has config.eso.pushSecrets AND #####
               ##### writebackNs is set — otherwise ESO Ready fails (parent write Role is #####
               ##### also gated on that cluster's pushSecrets). Empty writebackNs or no #####
-              ##### pushSecrets mustnothave the leftover. #####
+              ##### pushSecrets mustnothave the leftover. conditions.namespaces reuses the #####
+              ##### SAME hubBootstrap.consumerNamespaces list as the read store — a namespace #####
+              ##### granted read access to eso-shared is granted write access to the #####
+              ##### write-back namespace too. #####
               {{ "{{-" }} if and (ne $writebackNs "") (gt (len ($pushSecrets | default list)) 0) {{ "}}" }}
-            - complianceType: musthave
+            ##### mustonlyhave: same reasoning as the read store above — conditions.namespaces #####
+            ##### must be replaced wholesale when consumerNamespaces changes, not merged. #####
+            - complianceType: mustonlyhave
               objectDefinition:
                 apiVersion: external-secrets.io/v1
                 kind: ClusterSecretStore
                 metadata:
                   name: {{ "{{" }} (printf "%s-writeback" $storeName) {{ "}}" }}
                 spec:
+                  {{ "{{-" }} $condNsWb := list "{{ $esoNamespace }}" {{ "}}" }}
+                  {{ "{{-" }} if not (has $writebackNs $condNsWb) {{ "}}" }}{{ "{{-" }} $condNsWb = append $condNsWb $writebackNs {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} range $n := ($consumerNs | default list) {{ "}}" }}
+                    {{ "{{-" }} if and (ne $n "") (not (has $n $condNsWb)) {{ "}}" }}{{ "{{-" }} $condNsWb = append $condNsWb $n {{ "}}" }}{{ "{{-" }} end {{ "}}" }}
+                  {{ "{{-" }} end {{ "}}" }}
                   conditions:
                     - namespaces:
-                        - {{ $esoNamespace }}
-                        - {{ "{{" }} $writebackNs {{ "}}" }}
+                      {{ "{{-" }} range $n := $condNsWb {{ "}}" }}
+                        - {{ "{{" }} $n {{ "}}" }}
+                      {{ "{{-" }} end {{ "}}" }}
+                    {{ "{{-" }} if or (hasKey ($consumerSel | default dict) "matchLabels") (hasKey ($consumerSel | default dict) "matchExpressions") {{ "}}" }}
+                    - namespaceSelector: {{ "{{" }} $consumerSel | toRawJson {{ "}}" }}
+                    {{ "{{-" }} end {{ "}}" }}
                   provider:
                     kubernetes:
                       server:

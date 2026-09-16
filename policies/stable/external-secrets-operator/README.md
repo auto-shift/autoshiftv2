@@ -1464,6 +1464,13 @@ config:
           kind: ClusterSecretStore
         remoteKey: spoke-app-sa-token   # unique across siblings
         refreshInterval: 1h
+        data:                          # required alongside stripServiceAccountTokenType below
+          - match:
+              secretKey: token
+              remoteRef:
+                remoteKey: spoke-app-sa-token
+                property: token
+        stripServiceAccountTokenType: true   # source is a ServiceAccount token; see note below
 ```
 
 ```yaml
@@ -1511,6 +1518,27 @@ cluster whenever siblings might otherwise collide (`app-sa-token` on two spokes)
 If you set `data` yourself, it is passed through as PushSecret `spec.data` (ESO `match` /
 `remoteRef` shape). You own `remoteKey` inside those entries; the top-level `remoteKey` is
 still collected for RBAC.
+
+### Pushing a ServiceAccount token (`stripServiceAccountTokenType`)
+
+*Key table: [`config.eso.pushSecrets[]`](config-reference.md#configesopushsecrets).*
+
+A whole-secret push (no `data`, or `data` without `secretKey`/`property`) copies the source
+Secret's `type` verbatim. A source of `type: kubernetes.io/service-account-token` therefore
+produces a same-typed destination — and Kubernetes' own controller-manager garbage-collects
+any `kubernetes.io/service-account-token` Secret whose referenced `ServiceAccount` doesn't
+exist (by UID) in *that Secret's own namespace*, which it never will in `eso-writeback` or any
+other cross-cluster write-back target. The Secret disappears seconds after ESO creates it,
+repeatedly, with no error surfaced anywhere in this chart's own signals. Full symptom and
+confirmation steps: [troubleshooting R11 cause 10](troubleshooting.md#r11--a-pushsecret-is-not-syncing).
+
+Set `stripServiceAccountTokenType: true` on the entry to fix it. The policy stages an
+intermediate plain `Opaque` Secret (`<name>-opaque`) in the same namespace, containing only
+the key(s) named by `data[].match.secretKey`, and points the `PushSecret` at that staged copy
+instead of the original. This requires at least one `data[].match.secretKey` entry — there is
+no way to discover key names for a whole-secret staging copy from hub-side config alone — and
+is only meant for the ServiceAccount-token case. Leave it unset for TLS, `dockerconfigjson`,
+or other sources, where preserving the source `type` is correct and desired.
 
 ### What ACM remediates and what ESO refreshes
 
@@ -1796,10 +1824,12 @@ config:
       writebackNamespace: eso-writeback   # chart default; set '' to disable write-back
 ```
 
-`spec.conditions` on the write-back store allow the operand namespace and
-`writebackNamespace`. `consumerNamespaces` applies to the **read** store only. It is a list of
-namespace **name strings** (`- app-ns`), not maps (`- name: app-ns`). A map list makes
-`policy-eso-boot-store` fail hub templating with `failed to resolve the template`.
+`spec.conditions` on the write-back store allow the operand namespace, `writebackNamespace`,
+and every entry in `consumerNamespaces` — the same list that widens the read store also widens
+the write-back store, so a namespace granted read access to `eso-shared` is granted write access
+to `eso-writeback` too. It is a list of namespace **name strings** (`- app-ns`), not maps
+(`- name: app-ns`). A map list makes `policy-eso-boot-store` fail hub templating with
+`failed to resolve the template`.
 
 Standing copies: the payload is a Secret on the producing cluster, then in each parent's
 `eso-writeback`, then in Vault on the global hub. Cluster-admin on a site hub can read spoke

@@ -497,15 +497,48 @@ oc get role,rolebinding -n eso-writeback
    namespace; wait one evaluation.
 
 8. **`PushSecret` in a namespace the write-back store does not allow.**
-   The write-back store `spec.conditions` allow the operand namespace and
-   `writebackNamespace` only. `consumerNamespaces` is not copied onto it.
-   FIX: omit `namespace` (lands in `eso-writeback`) and put the source Secret there,
-   or confirm your ESO version accepts the PushSecret namespace you chose.
+   The write-back store `spec.conditions` allow the operand namespace,
+   `writebackNamespace`, and every entry in `hubBootstrap.consumerNamespaces`.
+   FIX: either add the `PushSecret`'s namespace to `consumerNamespaces` (grants it read
+   access to `eso-shared` too), or omit `namespace` (lands in `eso-writeback`) and put
+   the source Secret there instead.
 
 9. **Pruned on this cluster but still on the parent or in Vault.**
    Expected. `deletionPolicy: None`. Removing a `pushSecrets` entry deletes the
    `PushSecret` when `autoshift.io/eso-prune` is true. It does not delete the parent
    Secret or the Vault path. Remove those by hand, or with a follow-up process.
+
+10. **Source Secret is `type: kubernetes.io/service-account-token` and the destination
+    keeps disappearing seconds after it's created.** PushSecret has no field to override
+    the destination Secret's `type` — the `kubernetes`-provider push always copies the
+    SOURCE Secret's `type` verbatim, whole-secret or per-key alike. Extracting just the
+    `token` key via `data[].match.secretKey` does **not** fix this by itself: the
+    destination is still typed `kubernetes.io/service-account-token`. Kubernetes' own
+    controller-manager garbage-collects any Secret of that type whose referenced
+    `ServiceAccount` doesn't exist (by UID) in *that Secret's own namespace* — which it
+    never will in `eso-writeback` or any other cross-cluster write-back target. This
+    delete is not ACM, ESO, or AutoShift; `oc get secret -o jsonpath='{.type}'` on the
+    destination confirms it, and nothing in this chart's own signals surfaces the cause.
+
+    FIX: set `stripServiceAccountTokenType: true` on the entry, alongside at least one
+    `data[].match.secretKey` naming the key(s) to keep:
+
+    ```yaml
+    data:
+      - match:
+          secretKey: token
+          remoteRef:
+            remoteKey: labocpty01-app-sa-token
+            property: token
+    stripServiceAccountTokenType: true
+    ```
+
+    The policy stages an intermediate plain `Opaque` Secret (`<name>-opaque`) containing
+    just the configured keys, sourced from THIS cluster's own copy of the Secret, and
+    points the `PushSecret` at that staged copy instead of the original — so the
+    destination is `Opaque` with no SA linkage for Kubernetes to clean up. Field
+    reference: [`config.eso.pushSecrets[]`](config-reference.md#configesopushsecrets).
+    How-to: [Pushing a ServiceAccount token](README.md#pushing-a-serviceaccount-token-stripserviceaccounttokentype).
 
 ---
 
