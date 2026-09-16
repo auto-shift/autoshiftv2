@@ -1,0 +1,189 @@
+# Argo CD agent (the Red Hat Advanced Cluster Management GitOps add-on).
+#
+# SEPARATE from policy-gitops-systems-argocd on purpose. That policy owns the push-model
+# GitOpsCluster (argo-acm-importer), which registers every managed cluster into this hub's Argo CD
+# and is load-bearing for the whole fleet. Enabling the add-on on that object would switch every
+# registered cluster to agent mode at once. This policy creates its OWN GitOpsCluster against its
+# OWN placement, so enrolling a cluster in the agent is opt-in per cluster and leaves the push model
+# untouched.
+#
+# Two labels, two meanings:
+#   autoshift.io/gitops-agent          on a HUB    -- run the principal here (places THIS policy)
+#   autoshift.io/gitops-agent-enroll   on a SPOKE  -- deploy an agent there (selected below)
+#
+# Opting in at a managed hub alone works because cluster-type hub selects the self-managed hub AND
+# every managed hub, while a managed hub's labels are consumed by the layer above it. Setting
+# gitops-agent in a managed hub's clusterset values therefore enables that hub and nothing above it.
+#
+# Technology Preview in Red Hat Advanced Cluster Management 2.17 with OpenShift GitOps 1.21.
+{{- if .Values.hubClusterSets }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-gitops-agent
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  dependencies:
+    - name: policy-gitops-systems-argocd
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-agent
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
+            {{ "{{hub" }} $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
+            {{ "{{hub" }} $agentCfg := (index (index (index (index $rcm "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) "agent" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $clusterSets := (index $agentCfg "clusterSets" | default list) {{ "hub}}" }}
+            {{ "{{hub" }} $serverAddress := (index $agentCfg "serverAddress" | default "") {{ "hub}}" }}
+            {{ "{{hub" }} $serverPort := (index $agentCfg "serverPort" | default "") {{ "hub}}" }}
+            {{ "{{hub" }} $agentMode := (index $agentCfg "mode" | default "") {{ "hub}}" }}
+            #
+            # Which clusters get an agent. No clusterSets stanza: a Placement with none selects
+            # across every ManagedClusterSet bound to its namespace, which is what makes this work
+            # unchanged on a managed hub. The push-model placement cannot be reused, because it
+            # bakes its cluster sets from the Helm values of the layer that AUTHORED the policy,
+            # and on a managed hub those are the names of the layer above, not that hub's own.
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta1
+                kind: Placement
+                metadata:
+                  name: systems-argocd-agent-placement
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                spec:
+                  predicates:
+                    - requiredClusterSelector:
+                        labelSelector:
+                          matchExpressions:
+                            - key: 'autoshift.io/gitops-agent-enroll'
+                              operator: In
+                              values:
+                                - 'true'
+                            # The hub reaches itself as the built-in in-cluster destination and
+                            # never runs an agent against itself. The controller skips
+                            # local-cluster when propagating the trust bundle for the same reason.
+                            - key: 'local-cluster'
+                              operator: NotIn
+                              values:
+                                - 'true'
+                  tolerations:
+                    - key: cluster.open-cluster-management.io/unreachable
+                      operator: Exists
+                    - key: cluster.open-cluster-management.io/unavailable
+                      operator: Exists
+            #
+            # Bind this hub's OWN cluster sets into the Argo CD namespace so the placement above can
+            # see them. Declared rather than discovered: on a managed hub the correct names are that
+            # hub's, which the authoring layer does not know. List them in
+            # config.gitops.agent.clusterSets in that hub's values. Left empty, the bindings the
+            # push-model policy already created are used as they stand, which is the right answer on
+            # a self-managed hub and is why this is not required there.
+            {{ "{{hub" }} range $cs := $clusterSets {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ "{{hub" }} $cs {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                spec:
+                  clusterSet: {{ "{{hub" }} $cs {{ "hub}}" }}
+            {{ "{{hub" }} end {{ "hub}}" }}
+            #
+            # The add-on itself. The controller derives the whole agent public key infrastructure
+            # from the argocd-agent-ca secret in this namespace: principal serving certificate,
+            # resource proxy certificate, the trust bundle it pushes to each spoke, and every agent
+            # client certificate. Issue that secret with cert-manager (the gitops-agent-ca label,
+            # policy-cert-manager-gitops-agent-ca) to put the mesh under a known certificate
+            # authority; leave it alone and the controller self-signs one per hub.
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps.open-cluster-management.io/v1beta1
+                kind: GitOpsCluster
+                metadata:
+                  name: argo-acm-importer-agent
+                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                spec:
+                  argoServer:
+                    cluster: notused
+                    argoNamespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  placementRef:
+                    kind: Placement
+                    apiVersion: cluster.open-cluster-management.io/v1beta1
+                    name: systems-argocd-agent-placement
+                    namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  gitopsAddon:
+                    enabled: true
+                    argoCDAgent:
+                      enabled: true
+                      # Whether the controller ships the trust bundle to each spoke itself. Turn it
+                      # off only where the organization distributes that trust by its own means.
+                      propagateHubCA: {{ "{{hub" }} (index $agentCfg "propagateHubCA" | default true) {{ "hub}}" }}
+                      {{ "{{hub" }} if ne $serverAddress "" {{ "hub}}" }}
+                      serverAddress: {{ "{{hub" }} $serverAddress {{ "hub}}" }}
+                      {{ "{{hub" }} end {{ "hub}}" }}
+                      {{ "{{hub" }} if ne $serverPort "" {{ "hub}}" }}
+                      serverPort: '{{ "{{hub" }} $serverPort {{ "hub}}" }}'
+                      {{ "{{hub" }} end {{ "hub}}" }}
+                      {{ "{{hub" }} if ne $agentMode "" {{ "hub}}" }}
+                      mode: {{ "{{hub" }} $agentMode {{ "hub}}" }}
+                      {{ "{{hub" }} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-gitops-agent
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops-agent'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-gitops-agent
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-gitops-agent
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-gitops-agent
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

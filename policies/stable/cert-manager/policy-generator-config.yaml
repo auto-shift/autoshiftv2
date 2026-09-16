@@ -89,3 +89,30 @@ policies:
       - name: policy-cert-manager-ingress-cert
     manifests:
       - path: test/ingress-cert-ready.yaml
+  # Opt-in (gitops-agent-ca, hub only): the signing CA the Red Hat Advanced Cluster Management
+  # GitOps add-on derives the whole Argo CD agent PKI from. Issuing it here puts the agent mesh
+  # under autoshift-ca, or under a customer issuer, instead of the per-hub self-signed certificate
+  # authority the add-on would otherwise generate. object-templates-raw -> consolidateManifests: false.
+  #
+  # Depends on operator-install rather than policy-cert-manager-ca on purpose: a customer issuer
+  # does not need autoshift-ca, and requiring it would block the bring-your-own path. When the
+  # issuer ref is left at its autoshift-ca default and that ClusterIssuer is not ready yet,
+  # cert-manager simply holds the Certificate not-Ready and issues once it appears.
+  - name: policy-cert-manager-gitops-agent-ca
+    placement:
+      placementPath: placement-cert-manager-gitops-agent-ca.yaml
+    consolidateManifests: false
+    dependencies:
+      - name: policy-cert-manager-operator-install
+    manifests:
+      - path: manifests/gitops-agent-ca
+  # inform: surfaces the agent CA NOT being Ready. The warning before the add-on overwrites a stale
+  # certificate with a self-signed one of its own.
+  - name: policy-cert-manager-gitops-agent-ca-ready
+    placement:
+      placementPath: placement-cert-manager-gitops-agent-ca.yaml
+    remediationAction: inform
+    dependencies:
+      - name: policy-cert-manager-gitops-agent-ca
+    manifests:
+      - path: test/gitops-agent-ca-ready.yaml

@@ -35,6 +35,32 @@ hubClusterSets:
       # come from the gitops-dev-team-<team> labels below; this block supplies
       # each team's ArgoCD RBAC + resource sizing (all fields optional).
       gitops:
+        # Argo CD agent (Red Hat Advanced Cluster Management GitOps add-on). Technology Preview on
+        # Red Hat Advanced Cluster Management 2.17 with OpenShift GitOps 1.21. Enabled by the
+        # gitops-agent and gitops-agent-ca labels below.
+        agent:
+          # Empty on a self-managed hub: the push-model policy already binds the right cluster sets.
+          # A MANAGED hub must list its own spoke cluster sets here instead.
+          clusterSets: []
+          propagateHubCA: true
+          serverAddress: ''
+          serverPort: ''
+          mode: ''
+          ca:
+            # autoshift-ca makes the agent authority an intermediate under the same root that signs
+            # the API server, Ingress and component certificates. Point it at an existing issuer to
+            # chain the agent mesh to an organization public key infrastructure instead.
+            issuer:
+              name: 'autoshift-ca'
+              kind: 'ClusterIssuer'
+              group: 'cert-manager.io'
+            # renewBefore MUST stay above duration / 5, or the add-on overwrites this certificate
+            # authority with a self-signed one of its own and the chain is lost without an error.
+            duration: '8760h0m0s'
+            renewBefore: '2160h0m0s'
+            privateKey:
+              algorithm: 'RSA'
+              size: 4096
         teams:
           dev:
             gitops_rbac_policies:
@@ -63,6 +89,12 @@ hubClusterSets:
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
       # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
+      # Argo CD agent. gitops-agent runs the principal on this hub; gitops-agent-ca has cert-manager
+      # issue the signing certificate authority the add-on derives the whole agent public key
+      # infrastructure from, instead of letting it self-sign one per hub. Spokes opt in separately
+      # with gitops-agent-enroll (see clustersets/managed.yaml).
+      gitops-agent: 'true'
+      gitops-agent-ca: 'true'
       ### AutoShift Console Plugin
       autoshift-console: 'true' # AutoShift section in the Fleet management perspective
       ### Advanced Cluster Management

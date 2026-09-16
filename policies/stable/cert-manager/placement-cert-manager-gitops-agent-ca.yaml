@@ -1,0 +1,36 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-cert-manager-gitops-agent-ca
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Opt-in: AutoShift manages the Argo CD agent signing CA (argocd-agent-ca) on a HUB.
+  #
+  # cluster-type: hub selects hub-clusterset members, which under a stacked topology is BOTH the
+  # self-managed hub and every managed hub. Opting in at one layer only is therefore a matter of
+  # where the gitops-agent-ca label is set: put it in clustersets/hubofhubs.yaml for the global hub,
+  # or in clustersets/hub1.yaml (consumed by the global hub instance, which is what places policies
+  # onto a managed hub) to enable a managed hub and nothing above it.
+  #
+  # cert-manager must be on because the CA is issued by a cert-manager Certificate.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/cert-manager'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/gitops-agent-ca'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
