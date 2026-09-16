@@ -417,11 +417,18 @@ object-templates-raw: |
             enabled: true
             allowedNamespaces:
               - '*'
+            # WITHOUT creds the agent falls back to userpass authentication, waits on a
+            # argocd-agent-agent-userpass secret that nothing creates, and the pod never becomes
+            # ready. The operator turns this into ARGOCD_AGENT_CREDS on the agent deployment, and
+            #'mtls:any' is what makes it present the client certificate below. Verified against the
+            # add-on's own working agent, which sets exactly this.
+            creds: 'mtls:any'
             client:
               mode: {{hub (dig "mode" "autonomous" $agentCfg) hub}}
               principalServerAddress: {{hub $pHost hub}}
               principalServerPort: '443'
             tls:
+              insecure: false
               rootCASecretName: argocd-agent-ca
               secretName: argocd-agent-client-tls
   {{hub- end hub}}
