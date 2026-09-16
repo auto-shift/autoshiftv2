@@ -46,6 +46,7 @@ spec:
             {{ "{{hub" }} $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
             {{ "{{hub" }} $agentCfg := (index (index (index (index $rcm "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) "agent" | default dict) {{ "hub}}" }}
             {{ "{{hub" }} $propagate := (index $agentCfg "propagateHubCA" | default true) {{ "hub}}" }}
+            {{ "{{hub" }} $agentNs := (index $agentCfg "namespace" | default "openshift-gitops-agent") {{ "hub}}" }}
             #
             # The signing certificate authority exists at all. This is the only check that holds for
             # every way of supplying it, including a secret delivered out of band with no
@@ -56,7 +57,7 @@ spec:
                 kind: Secret
                 metadata:
                   name: argocd-agent-ca
-                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
             #
             # The controller has signed the principal and resource proxy certificates from it.
             - complianceType: musthave
@@ -65,7 +66,7 @@ spec:
                 kind: GitOpsCluster
                 metadata:
                   name: argo-acm-importer-agent
-                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
                 status:
                   conditions:
                     - type: CertificatesReady
@@ -81,7 +82,7 @@ spec:
                 kind: GitOpsCluster
                 metadata:
                   name: argo-acm-importer-agent
-                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
                 status:
                   conditions:
                     - type: ManifestWorksApplied

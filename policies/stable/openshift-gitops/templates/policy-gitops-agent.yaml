@@ -57,6 +57,105 @@ spec:
             {{ "{{hub" }} $serverAddress := (index $agentCfg "serverAddress" | default "") {{ "hub}}" }}
             {{ "{{hub" }} $serverPort := (index $agentCfg "serverPort" | default "") {{ "hub}}" }}
             {{ "{{hub" }} $agentMode := (index $agentCfg "mode" | default "") {{ "hub}}" }}
+            {{ "{{hub" }} $agentNs := (index $agentCfg "namespace" | default "openshift-gitops-agent") {{ "hub}}" }}
+            #
+            # A DEDICATED Argo CD instance for the principal, not the one AutoShift runs its own
+            # configuration from. Two independent reasons. The Red Hat Advanced Cluster Management
+            # side of this is Technology Preview, and it has no business sharing a process with the
+            # instance that reconciles every policy on the fleet. And in autonomous mode the
+            # principal mirrors each spoke Application into a hub namespace named after that
+            # cluster, so the instance hosting it grows a namespace and a cache per managed cluster.
+            # The main instance is already sized for the work it does.
+            #
+            # argoServer.argoNamespace below points the add-on at this namespace, and the controller
+            # honours it (GetEffectiveArgoNamespace), so the whole automatic public key
+            # infrastructure lands here: the cert-manager CA, the principal and resource proxy
+            # certificates the controller derives from it, and the JSON web token signing key.
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                  labels:
+                    openshift.io/cluster-monitoring: 'true'
+            #
+            # The principal. It will not start until the controller has created
+            # argocd-agent-principal-tls and argocd-agent-jwt, so a crash loop on first install is
+            # expected and self-resolving; the controller creates those before it looks for this
+            # service. insecureGenerate stays false on both because they are supplied, never
+            # self-signed here.
+            #
+            # The auth pattern is NOT the upstream `mtls:CN=([^,]+)`. Agent client certificates are
+            # issued through the add-on certificate signing request flow and carry that framework's
+            # identity, so the generic pattern rejects every agent while presenting valid
+            # certificates. This value matches what the add-on actually issues.
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: argoproj.io/v1beta1
+                kind: ArgoCD
+                metadata:
+                  name: argocd-agent-principal
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                spec:
+                  # DISABLED DELIBERATELY, and this is why the principal needs an instance of its
+                  # own. Red Hat documents agent mode as replacing the Argo CD custom resource with
+                  # one whose application controller is off, because that instance becomes a
+                  # principal rather than a reconciler. Doing that to the instance AutoShift runs
+                  # its own configuration from would stop the fleet reconciling, so the principal
+                  # gets a separate instance and infra-gitops keeps its controller.
+                  controller:
+                    enabled: false
+                  # Autonomous mode mirrors each spoke Application into a hub namespace named after
+                  # its cluster, and those namespaces have to be source namespaces for this instance.
+                  sourceNamespaces:
+                    - '*'
+                  argoCDAgent:
+                    principal:
+                      enabled: true
+                      destinationBasedMapping: true
+                      auth: 'mtls:CN=system:open-cluster-management:cluster:([^:]+):addon:gitops-addon:agent:gitops-addon-agent'
+                      logLevel: {{ "{{hub" }} (index $agentCfg "logLevel" | default "info") {{ "hub}}" }}
+                      namespace:
+                        allowedNamespaces:
+                          - '*'
+                        enableNamespaceCreate: true
+                      server:
+                        route:
+                          enabled: true
+                      tls:
+                        insecureGenerate: false
+                        secretName: argocd-agent-principal-tls
+                        rootCASecretName: argocd-agent-ca
+                      jwt:
+                        insecureGenerate: false
+                        secretName: argocd-agent-jwt
+                      resourceProxy:
+                        secretName: argocd-agent-resource-proxy-tls
+                        caSecretName: argocd-agent-ca
+            #
+            # The principal only propagates AppProject resources whose destinations and source
+            # namespaces match the agent configuration. Without the wildcards the propagation is
+            # skipped silently and agents never find their AppProject, so applications simply do
+            # not appear. Red Hat documents this as a required step, not a convenience.
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: argoproj.io/v1alpha1
+                kind: AppProject
+                metadata:
+                  name: default
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                spec:
+                  sourceNamespaces:
+                    - '*'
+                  sourceRepos:
+                    - '*'
+                  destinations:
+                    - namespace: '*'
+                      server: '*'
+                  clusterResourceWhitelist:
+                    - group: '*'
+                      kind: '*'
             #
             # Which clusters get an agent. No clusterSets stanza: a Placement with none selects
             # across every ManagedClusterSet bound to its namespace, which is what makes this work
@@ -69,7 +168,7 @@ spec:
                 kind: Placement
                 metadata:
                   name: systems-argocd-agent-placement
-                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
                 spec:
                   predicates:
                     - requiredClusterSelector:
@@ -105,7 +204,7 @@ spec:
                 kind: ManagedClusterSetBinding
                 metadata:
                   name: {{ "{{hub" }} $cs {{ "hub}}" }}
-                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
                 spec:
                   clusterSet: {{ "{{hub" }} $cs {{ "hub}}" }}
             {{ "{{hub" }} end {{ "hub}}" }}
@@ -122,16 +221,16 @@ spec:
                 kind: GitOpsCluster
                 metadata:
                   name: argo-acm-importer-agent
-                  namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
                 spec:
                   argoServer:
                     cluster: notused
-                    argoNamespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                    argoNamespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
                   placementRef:
                     kind: Placement
                     apiVersion: cluster.open-cluster-management.io/v1beta1
                     name: systems-argocd-agent-placement
-                    namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
+                    namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
                   gitopsAddon:
                     enabled: true
                     argoCDAgent:

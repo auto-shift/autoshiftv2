@@ -624,6 +624,14 @@ hubClusterSets:
         # Red Hat Advanced Cluster Management 2.17 with OpenShift GitOps 1.21, so it is off unless
         # both the label and this block are set.
         agent:
+          # Namespace for the DEDICATED principal Argo CD instance. Deliberately not the main Argo
+          # CD namespace: the Red Hat Advanced Cluster Management side of this is Technology
+          # Preview, and in autonomous mode the principal mirrors every spoke Application into a hub
+          # namespace named after its cluster, so the hosting instance grows a namespace and a cache
+          # per managed cluster. The agent certificate authority and the certificates derived from
+          # it all live here.
+          namespace: 'openshift-gitops-agent'
+          logLevel: 'info'
           # Cluster sets to bind into the Argo CD namespace so the agent enrollment placement can
           # see them. Leave empty on a self-managed hub: the push-model policy already binds the
           # right ones. On a MANAGED hub set this to that hub's OWN spoke cluster sets, because the
@@ -639,7 +647,9 @@ hubClusterSets:
           # internal load balancer or a private ingress controller.
           serverAddress: ''
           serverPort: ''
-          # Agent mode. Empty takes the add-on default.
+          # Agent mode. 'autonomous' leaves the spoke owning its Application resources and mirrors
+          # them to the hub for visibility and for sync or terminate. 'managed' makes the hub the
+          # source of truth. Empty takes the add-on default.
           mode: ''
           # The signing certificate authority the add-on derives the ENTIRE agent public key
           # infrastructure from: principal serving certificate, resource proxy certificate, the

@@ -39,10 +39,11 @@
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $gitopsCfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) hub}}
-  {{hub- $caCfg := (index (index $gitopsCfg "agent" | default dict) "ca" | default dict) hub}}
+  {{hub- $agentCfg := (index $gitopsCfg "agent" | default dict) hub}}
+  {{hub- $caCfg := (index $agentCfg "ca" | default dict) hub}}
   {{hub- $issuer := (index $caCfg "issuer" | default dict) hub}}
   {{hub- $key := (index $caCfg "privateKey" | default dict) hub}}
-  {{hub- $ns := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default (index $gitopsCfg "namespace" | default "openshift-gitops")) hub}}
+  {{hub- $ns := (index $agentCfg "namespace" | default "openshift-gitops-agent") hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: cert-manager.io/v1
@@ -53,7 +54,9 @@ object-templates-raw: |
       spec:
         isCA: true
         commonName: argocd-agent-ca
-        # The name is fixed by the GitOpsCluster controller and is not configurable.
+        # The name is fixed by the GitOpsCluster controller and is not configurable. It must sit in
+        # the namespace named by the agent GitOpsCluster's argoServer.argoNamespace, which is the
+        # dedicated principal namespace rather than the main Argo CD one.
         secretName: argocd-agent-ca
         duration: {{hub (index $caCfg "duration" | default "8760h0m0s") hub}}
         # MUST stay above duration / 5. See the 80% rule above.

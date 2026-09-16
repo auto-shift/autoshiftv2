@@ -1,16 +1,27 @@
-# Inform-only: Compliant once the Argo CD agent signing CA is Ready.
+# Inform-only: Compliant once the Argo CD agent signing certificate authority is Ready.
 #
-# This is the backstop for the 80% rule described in manifests/gitops-agent-ca/. If issuance fails,
-# or renewal stalls, or the certificate was delivered out of band and nobody renewed it, the
+# This is the backstop for the 80 percent rule described in manifests/gitops-agent-ca/. If issuance
+# fails, or renewal stalls, or the certificate was delivered out of band and nobody renewed it, the
 # GitOpsCluster controller eventually overwrites the secret with a self-signed certificate authority
-# of its own and every chain to the customer root is broken without an error anywhere. A failing
-# certificate surfacing as NonCompliant is the warning that arrives before that happens.
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: argocd-agent-ca
-  namespace: '{{hub index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops" hub}}'
-status:
-  conditions:
-    - type: Ready
-      status: 'True'
+# of its own and every chain to the organization root breaks with no error raised anywhere. A
+# failing certificate surfacing as NonCompliant is the warning that arrives before that happens.
+#
+# object-templates-raw rather than a plain manifest because the namespace comes from configuration.
+# Hub variables need their own lines to resolve reliably; the same expression inlined into a plain
+# manifest's namespace field does not resolve and reaches the spoke parser intact.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $gitopsCfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) hub}}
+  {{hub- $agentCfg := (index $gitopsCfg "agent" | default dict) hub}}
+  {{hub- $ns := (index $agentCfg "namespace" | default "openshift-gitops-agent") hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: argocd-agent-ca
+        namespace: {{hub $ns hub}}
+      status:
+        conditions:
+          - type: Ready
+            status: 'True'
