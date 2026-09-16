@@ -148,7 +148,6 @@ hubClusterSets:
       acs:
         networkPolicies: Enabled
         vmScanning: true
-        defaultPolicies: true
         admissionControl:
     labels:
       # OpenShift version for cluster deployment and image mirroring
@@ -191,10 +190,12 @@ hubClusterSets:
       acm-addon-gpf-eval-concurrency: '5'    # Concurrent policy evaluations (default: 2)
       acm-addon-gpf-client-qps: '75'         # K8s API client QPS (default: 30)
       acm-addon-gpf-client-burst: '100'      # K8s API client burst (default: 45)
-      # governance-policy-framework resource limits (via AddOnDeploymentConfig)
-      acm-addon-gpf-mem-request: '128Mi'
+      # governance-policy-framework resource limits (via AddOnDeploymentConfig).
+      # Keep at 1Gi or above: the addon OOMKills around 100 ConfigurationPolicies, and it
+      # delivers its own tuning, so it cannot raise the limit once it does.
+      acm-addon-gpf-mem-request: '256Mi'
       acm-addon-gpf-cpu-request: '100m'
-      acm-addon-gpf-mem-limit: '512Mi'
+      acm-addon-gpf-mem-limit: '1Gi'
       ### User Workload Monitoring
       uwm: 'true'
       ### node-maintenance
@@ -383,6 +384,7 @@ hubClusterSets:
       # See _example.yaml for full nmstate label reference
       ### Advanced Cluster Security
       acs: 'true'
+      acs-default-policies: 'true'          # baseline SecurityPolicy resources (was config.acs.defaultPolicies)
       acs-subscription-name: rhacs-operator
       # acs-version: 'rhacs-operator.v4.11.3'
       acs-channel: stable

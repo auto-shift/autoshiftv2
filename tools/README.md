@@ -41,7 +41,10 @@ to produce the uploadable artifact).
 **Hub lookups (Secrets/ConfigMaps on the hub)** — drop mock YAML in `tools/testdata/`.
 The lookup is matched by `(kind, namespace, name)`.
 
-**New API group** — register in the fake discovery client in `resolver.go`.
+**New API group**: no code change. The fake discovery client is built from whatever
+`tools/testdata/` holds, so adding a stub of the new kind registers it. A namespaced kind must
+carry `metadata.namespace` in the stub, or it registers as cluster-scoped and every namespaced
+lookup misses.
 
 ## Testdata
 

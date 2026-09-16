@@ -490,6 +490,17 @@ hubClusterSets:
           #   name: 'autoshift-repo-secret'
           #   namespace: 'policies-autoshift'
       # =======================================================================
+      # Images for AutoShift's own helper Jobs (read via rendered-config ConfigMap)
+      # =======================================================================
+      # Leave blank. Each Job resolves its image at runtime from the cluster's own
+      # openshift/cli ImageStream, which is a digest against the release payload and so
+      # follows the cluster's ImageDigestMirrorSet in a disconnected deployment. The
+      # in-cluster registry is only the last resort, and it does not exist on bare metal
+      # or wherever the registry Operator is Removed.
+      # Set a value only to pin a specific mirrored image.
+      images:
+        cli: ''                                # oc/kubectl image for AutoShift Jobs
+      # =======================================================================
       # Disconnected Mirror (read via rendered-config ConfigMap)
       # =======================================================================
       disconnected:
@@ -718,6 +729,27 @@ hubClusterSets:
       #   versions:
       #     - 'odf-operator.vX.Y.Z'
       #   startingCSV: 'odf-operator.vX.Y.Z'
+      #   # Config-driven StorageCluster — when set, replaces the entire label-driven
+      #   # StorageCluster spec. When absent, the existing label-driven default applies.
+      #   storageCluster:
+      #     enableCephTools: true
+      #     resourceProfile: Lean
+      #     monDataDirHostPath: /var/lib/rook
+      #     multiCloudGateway:
+      #       reconcileStrategy: ignore
+      #     storageDeviceSets:
+      #       - name: nvme-set
+      #         deviceClass: nvme
+      #         count: 1
+      #         replica: 3
+      #         dataPVCTemplate:
+      #           spec:
+      #             storageClassName: local-nvme
+      #             accessModes: [ReadWriteOnce]
+      #             volumeMode: Block
+      #             resources:
+      #               requests:
+      #                 storage: 1
       # opentelemetry:
       #   versions:
       #     - 'opentelemetry-product.vX.Y.Z'
@@ -742,6 +774,31 @@ hubClusterSets:
       #   versions:
       #     - 'kubevirt-hyperconverged.vX.Y.Z'
       #   startingCSV: 'kubevirt-hyperconverged.vX.Y.Z'
+      # =======================================================================
+      # Local Storage (config-driven)
+      # Named volume sets under localVolumeSets.<id>; each field has a sensible
+      # default so you only need to set what you want to override:
+      #   storageClassName  → nvme-storageclass
+      #   volumeMode        → Block
+      #   deviceInclusionSpec → {deviceTypes: [disk], minSize: 200G}
+      #   nodeSelector      → cluster.ocs.openshift.io/openshift-storage: Exists
+      #   tolerations       → node.ocs.openshift.io/storage: NoSchedule
+      # When absent, a single default nvme-localvolumeset is created.
+      # =======================================================================
+      # localStorage:
+      #   localVolumeDiscovery:
+      #     nodeSelector:
+      #       nodeSelectorTerms:
+      #         - matchExpressions:
+      #             - key: cluster.ocs.openshift.io/openshift-storage
+      #               operator: Exists
+      #   localVolumeSets:
+      #     nvme:
+      #       storageClassName: local-nvme
+      #       volumeMode: Block
+      #       deviceInclusionSpec:
+      #         deviceTypes: [disk]
+      #         deviceMechanicalProperties: [NonRotational]
       # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
       # =======================================================================
@@ -867,8 +924,23 @@ hubClusterSets:
         # A `g` line takes a user or a group, but with OpenShift login the user identity is an
         # opaque Dex sub rather than a username, so name OpenShift Groups here.
         # repo.replicas defaults to 1; raise it for availability or a much larger policy set.
-        # Controller memory is 4Gi limit / 1Gi request, from a measured 843Mi peak.
-        # controller.statusProcessors is the main lever on how fast the fleet converges.
+        # Controller memory is 8Gi limit / 1Gi request. The limit covers a full hard-refresh storm
+        # rather than steady state: a hub with 58 Applications and 299 Policies sat comfortably for
+        # an hour and was OOMKilled the moment every Application synced at once.
+        # controller.statusProcessors is the main lever on how fast the fleet converges, and also on
+        # peak memory, since each in-flight comparison holds an Application's rendered and live state
+        # at once. It sits at the Argo CD default of 20; raise it and raise controller.limits.memory
+        # with it. The controller also builds a FULL CLUSTER CACHE per registered cluster, which is
+        # the larger half of its footprint and is charged before any Application is compared.
+        # controller.goMemLimitPercent sets a soft ceiling for the Go runtime, which does not read
+        # the container limit and would otherwise be killed before it collected. It is DERIVED from
+        # controller.limits.memory, so the two cannot drift. Argo CD recommends 80-90%. Only Gi and
+        # Mi limits are parsed; for any other form set controller.goMemLimit explicitly, which
+        # overrides the derivation. When neither yields a value the variable is omitted, not guessed.
+        # controller.respectRBAC stops the controller watching kinds it cannot list.
+        # resourceExclusions REPLACES the built-in list of kinds kept out of the cluster cache, so
+        # carry the defaults over unless you mean to drop them. A kind listed there cannot be
+        # deployed by this instance at all, so keep it to generated, never-authored resources.
         # The gitops-cluster-ca-bundle label overrides repo.cluster_ca_bundle. policyGenerator sizes the CMP sidecar that performs the render,
         # so raise it when manifest generation times out, and its tarExclusions trim the repository
         # tarball streamed to that sidecar. tarExclusions is repo-server WIDE, so keep it to .git;
@@ -902,12 +974,20 @@ hubClusterSets:
         #     requests:
         #       cpu: '500m'
         #       memory: '512Mi'
+        #   resourceExclusions: |
+        #     - apiGroups:
+        #         - ''
+        #       kinds:
+        #         - Event
         #   controller:
-        #     statusProcessors: 50
-        #     operationProcessors: 25
+        #     statusProcessors: 20
+        #     operationProcessors: 10
+        #     goMemLimitPercent: 85
+        #     goMemLimit: ''
+        #     respectRBAC: 'normal'
         #     limits:
         #       cpu: '2000m'
-        #       memory: '4Gi'
+        #       memory: '8Gi'
         #     requests:
         #       cpu: '250m'
         #       memory: '1Gi'
@@ -1020,20 +1100,72 @@ hubClusterSets:
         # startingCSV: 'rhacs-operator.vX.Y.Z'
         egressConnectivity: Online          # Online | Offline (disconnected)
         scannerV4: Enabled                  # Enabled | Disabled | Default (SecuredCluster maps Enabled -> AutoSense)
+        scanner: AutoSense                  # SecuredCluster Scanner v2: AutoSense | Disabled
         monitoring: true                    # OpenShift monitoring integration
-        networkPolicies: Enabled            # Enabled | Disabled (network policy generation); omit to leave default
-        vmScanning: false                   # ROX_VIRTUAL_MACHINES (Tech Preview)
-        defaultPolicies: false              # deploy the baseline SecurityPolicy CRs
+        exposeMetrics: ''                   # Enabled | Disabled — Prometheus endpoint on Central/Scanner/ScannerV4
+        networkPolicies: ''                 # Enabled | Disabled; blank omits the field and leaves the Operator default
+        # Technology Preview. 4.11 still has no CRD field, so this sets the ROX_VIRTUAL_MACHINES
+        # environment variable. It only enables the platform side: scanning also needs a VM agent
+        # installed inside each guest, which is in-guest software AutoShift does not manage.
+        vmScanning: false
+        configAsCode: ''                    # Enabled | Disabled — Central Config-as-Code component
+        telemetry: false                    # Central telemetry reporting
+        notifierSecretsEncryption: false    # encrypt notifier secrets at rest
+        registryOverride: ''                # override the image registry, for disconnected mirrors
+        # Scheduling applied once at the CR level, which the operator propagates to every
+        # Deployment-based component. The Collector DaemonSet is not affected.
+        # Set EITHER pinToNodes OR the explicit pair: pinToNodes already sets nodeSelector and
+        # tolerations for you, and the operator rejects the combination.
+        pinToNodes: ''                      # None | InfraRole — shorthand for infra nodes
+        nodeSelector: {}                    # custom placement; ignored when pinToNodes is set
+        tolerations: []                     # custom taints; ignored when pinToNodes is set
+        auditLogs: Auto                     # Auto | Enabled | Disabled — OpenShift audit log collection
+        fileActivityMonitoring: Disabled    # Enabled | Disabled — per-node File Activity Monitoring
+        additionalCAs: []                   # extra trusted root CAs: [{name: my-ca.pem, content: <PEM>}]
+        db:
+          size: ''                          # Central DB PVC size, e.g. 100Gi (blank = operator default)
+          storageClassName: ''              # blank = cluster default storage class
+          # Defaults to central-db, which is the Operator's own claim name, and the policy always
+          # writes the field rather than leaving it unset. Only change this to adopt an existing
+          # claim of a different name: the Operator manages exactly one PVC for central-db, so
+          # naming a second one leaves Central Irreconcilable while still reporting Available, and
+          # the only visible symptom is a failing readiness gate.
+          claimName: 'central-db'
         collector:
           collection: CORE_BPF              # CORE_BPF (recommended); EBPF is deprecated
+        processBaselines:
+          autoLock: Disabled                # Enabled | Disabled — lock baselines when observation ends
+        processIndicators:
+          persistence: Enabled              # Enabled | Disabled
+          excludeOpenshiftNs: Disabled      # Enabled drops indicators from openshift namespaces
+          excludeNamespaceRegex: ''         # additional namespaces to exclude
         admissionControl:
-          enabled: true                     # listen on create/update (monitor admissions)
-          contactImageScanners: ScanIfMissing  # ScanIfMissing | DoNotScanInline (inline scan at admission)
+          # listenOnCreates/listenOnUpdates/listenOnEvents and contactImageScanners are deprecated
+          # in the 4.11 CRD; enforcement replaces them.
+          enabled: false                    # true -> enforcement: Enabled; default is false
+          bypass: BreakGlassAnnotation      # BreakGlassAnnotation | Disabled
+          replicas: 3                       # admission control pod replicas
           failurePolicy: Ignore             # Ignore (fail-open, safe) | Fail (fail-closed, strict)
+        # The provider itself is the acs-auth-provider label; these tune it.
         auth:
-          provider: openshift               # '' disables the declarative auth config
           minimumRole: None                 # minimum role for authenticated users
           adminGroup: cluster-admins        # group mapped to the Admin role
+        # Where Central lives. Whether this cluster runs one is the acs-central LABEL,
+        # because it decides which policies are placed; this is only its address.
+        central:
+          endpoint: ''                      # blank = discover Central's route on this hub
+        # How secured clusters authenticate to Central for the first time.
+        # Mode itself is the acs-registration LABEL, because it selects which policies are
+        # placed. These are the settings for whichever mode is selected.
+        # One registration secret is minted per secured cluster, so a leaked token registers
+        # exactly one cluster and revoking it affects only that cluster.
+        registration:
+          validFor: 168h                    # only has to cover mint -> registration
+          maxClusters: 1                    # registrations one token may perform; 0 = no limit
+          # Blank builds registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9 at the tag
+          # matching the installed operator version. That is a TAG on registry.redhat.io, not a
+          # mirrored digest, so a disconnected deployment has to set this explicitly.
+          roxctlImage: ''
       # =======================================================================
       # AutoShift Console Plugin (hub only; ENABLE flag is the autoshift-console label).
       # Read-only OpenShift console plugin that surfaces AutoShift clustersets, the resolution
@@ -1124,6 +1256,7 @@ hubClusterSets:
       gitops-source-namespace: openshift-marketplace
       gitops-namespace: 'openshift-gitops'          # Override ArgoCD namespace per-cluster
       gitops-cluster-ca-bundle: 'true'              # Inject cluster trusted CA bundle into ArgoCD repo server
+      gitops-console-plugin: 'false'                  # GitOps console plugin (tech preview) — adds ArgoCD to OCP console
 
       # =======================================================================
       # AutoShift Console Plugin (hub only — reads hub-side AutoShift ConfigMaps)
@@ -1169,10 +1302,12 @@ hubClusterSets:
       acm-addon-gpf-eval-concurrency: '5'    # Concurrent policy evaluations (default: 2)
       acm-addon-gpf-client-qps: '75'         # K8s API client QPS (default: 30)
       acm-addon-gpf-client-burst: '100'      # K8s API client burst (default: 45)
-      # governance-policy-framework resource limits (via AddOnDeploymentConfig)
-      acm-addon-gpf-mem-request: '128Mi'
+      # governance-policy-framework resource limits (via AddOnDeploymentConfig).
+      # Keep at 1Gi or above: the addon OOMKills around 100 ConfigurationPolicies, and it
+      # delivers its own tuning, so it cannot raise the limit once it does.
+      acm-addon-gpf-mem-request: '256Mi'
       acm-addon-gpf-cpu-request: '100m'
-      acm-addon-gpf-mem-limit: '512Mi'
+      acm-addon-gpf-mem-limit: '1Gi'
 
       # =======================================================================
       # Tempo
@@ -1418,6 +1553,17 @@ hubClusterSets:
       # Advanced Cluster Security
       # =======================================================================
       acs: 'false'                           # enable toggle (placement gate)
+      # crs (default, also when unset) | manual | initBundle (legacy). Selects which
+      # registration policies are placed on the cluster.
+      # Whether this cluster runs Central. 'false' means SecuredCluster only, registering
+      # with an external Central named by config.acs.central.endpoint.
+      acs-central: 'true'
+      # Names the identity provider for Central. 'openshift' configures OpenShift auth, which
+      # grants Admin to config.acs.auth.adminGroup. Omit the label to configure no auth.
+      acs-auth-provider: 'openshift'
+      # Deploy the baseline SecurityPolicy resources. Hub only, opt-in.
+      acs-default-policies: 'false'
+      acs-registration: 'crs'
       acs-subscription-name: rhacs-operator
       acs-version: 'rhacs-operator.v4.11.3'
       acs-channel: stable
@@ -1508,8 +1654,6 @@ hubClusterSets:
       vault-seal-kms-key-ring: ''             # gcpckms key_ring
       vault-seal-kms-tenant-id: ''            # azurekeyvault tenant_id
       vault-seal-kms-vault-name: ''           # azurekeyvault vault_name
-      # Image for the init/transit-provider Jobs. Override for disconnected/baremetal (no internal registry).
-      vault-job-image: 'image-registry.openshift-image-registry.svc:5000/openshift/cli:latest'
 
       # =======================================================================
       # Developer OpenShift GitOps (team ArgoCD instances)
@@ -1721,6 +1865,11 @@ hubClusterSets:
       artifactory-db-backups: 'true'            # Enable CNPG backups (requires cloudnative-pg + odf)
       # --- Config values go in config.jfrog (see config section above) ---
       # dbBackupSchedule, dbBackupRetention
+
+      # =======================================================================
+      # Remove Kubeadmin
+      # =======================================================================
+      remove-kubeadmin: 'false'              # Remove kubeadmin secret (disables OAuth-based kubeadmin login)
 
       # =======================================================================
       # Disconnected Mirror Settings

@@ -1,0 +1,149 @@
+# Non-HA ACP Spoke Cluster Sets — ODF & local-storage custom config example.
+#
+# Demonstrates config-driven overrides for the ODF StorageCluster and
+# local-storage LocalVolumeSet / LocalVolumeDiscovery CRs.  The config
+# section is merged into the per-cluster rendered-config ConfigMap on the
+# hub; policy templates consume it via hub template lookups.
+#
+# Operators whose templates read from rendered-config:
+#   - ODF StorageCluster  (config.odf.storageCluster)
+#   - Local Storage        (config.localStorage.{localVolumeDiscovery,localVolumeSets})
+#   - cert-manager        (config.certManager.{ca,apiCert,ingressCert})
+#   - NMState             (config.networking)
+#   - UWM                 (config.uwm)
+managedClusterSets:
+  non-ha-acps:
+    config:
+      # ── ODF StorageCluster overrides ──────────────────────────────────
+      # Everything under config.odf.storageCluster maps 1-to-1 with the
+      # StorageCluster CR spec.  When present, it replaces the default
+      # label-driven spec entirely.
+      odf:
+        storageCluster:
+          enableCephTools: true
+          manageNodes: false
+          failureDomain: host
+          failureDomainKey: kubernetes.io/hostname
+          performanceProfile: Lean
+          managedResources:
+            cephBlockPools:
+              reconcileStrategy: ignore
+          storageDeviceSets:
+            - name: nvme-set
+              deviceClass: nvme
+              count: 1
+              replica: 3
+              placement: {}
+              dataPVCTemplate:
+                spec:
+                  storageClassName: local-nvme
+                  accessModes:
+                    - ReadWriteOnce
+                  volumeMode: Block
+                  resources:
+                    requests:
+                      storage: 1
+              resources:
+                limits:
+                  cpu: "2"
+                  memory: 4Gi
+                requests:
+                  cpu: "1"
+                  memory: 2Gi
+            - name: ssd-set
+              deviceClass: ssd
+              count: 1
+              replica: 3
+              placement: {}
+              dataPVCTemplate:
+                spec:
+                  storageClassName: local-ssd
+                  accessModes:
+                    - ReadWriteOnce
+                  volumeMode: Block
+                  resources:
+                    requests:
+                      storage: 1
+              resources:
+                limits:
+                  cpu: "2"
+                  memory: 4Gi
+                requests:
+                  cpu: "1"
+                  memory: 2Gi
+      # ── Local Storage overrides ─────────────────────────────────────
+      # localVolumeDiscovery: creates a LocalVolumeDiscovery CR (optional).
+      # localVolumeSets: dict keyed by name; each entry becomes a
+      #   LocalVolumeSet CR named "<key>-localvolumeset".
+      # When localVolumeSets is absent, the default hardcoded
+      # nvme-localvolumeset (disks >= 200G on OCS nodes) is created.
+      localStorage:
+        localVolumeDiscovery:
+          nodeSelector:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: cluster.ocs.openshift.io/openshift-storage
+                    operator: Exists
+          tolerations:
+            - effect: NoSchedule
+              key: node.ocs.openshift.io/storage
+              operator: Exists
+        localVolumeSets:
+          nvme:
+            storageClassName: local-nvme
+            volumeMode: Block
+            deviceInclusionSpec:
+              deviceTypes:
+                - disk
+              deviceMechanicalProperties:
+                - NonRotational
+              minSize: 200G
+            nodeSelector:
+              nodeSelectorTerms:
+                - matchExpressions:
+                    - key: cluster.ocs.openshift.io/openshift-storage
+                      operator: Exists
+            tolerations:
+              - effect: NoSchedule
+                key: node.ocs.openshift.io/storage
+                operator: Exists
+          ssd:
+            storageClassName: local-ssd
+            volumeMode: Block
+            deviceInclusionSpec:
+              deviceTypes:
+                - disk
+              deviceMechanicalProperties:
+                - Rotational
+              minSize: 100G
+            nodeSelector:
+              nodeSelectorTerms:
+                - matchExpressions:
+                    - key: cluster.ocs.openshift.io/openshift-storage
+                      operator: Exists
+            tolerations:
+              - effect: NoSchedule
+                key: node.ocs.openshift.io/storage
+                operator: Exists
+    labels:
+      ### Local Storage Operator
+      local-storage: 'true'
+      local-storage-subscription-name: local-storage-operator
+      local-storage-channel: stable
+      local-storage-source: redhat-operators
+      local-storage-source-namespace: openshift-marketplace
+      ### OpenShift Data Foundation
+      odf: 'true'
+      odf-subscription-name: odf-operator
+      odf-multi-cloud-gateway: standard
+      # Label-driven ODF knobs still apply as fallback defaults when the
+      # config block doesn't specify a value.  With a full
+      # config.odf.storageCluster block (above), these are secondary:
+      odf-ocs-storage-class-name: gp3-csi
+      odf-ocs-storage-size: ''
+      odf-ocs-storage-count: ''
+      odf-ocs-storage-replicas: ''
+      odf-resource-profile: lean
+      odf-channel: stable-4.20
+      odf-source: redhat-operators
+      odf-source-namespace: openshift-marketplace

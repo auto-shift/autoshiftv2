@@ -92,7 +92,7 @@ hubClusterSets:
     labels:
       acs: 'true'
       acs-channel: 'stable'
-      acs-version: 'rhacs-operator.v4.6.1'
+      acs-version: 'rhacs-operator.v4.11.2'
 
 # Example: Pin OpenShift Pipelines to specific version and channel
 managedClusterSets:
@@ -116,7 +116,7 @@ Every managed operator supports version control through its respective label:
 | Operator                    | Version Label           | Example CSV                                        |
 | --------------------------- | ----------------------- | -------------------------------------------------- |
 | Red Hat Advanced Cluster Management | `acm-version`           | `advanced-cluster-management.v2.14.0`              |
-| Advanced Cluster Security   | `acs-version`           | `rhacs-operator.v4.6.1`                            |
+| Advanced Cluster Security   | `acs-version`           | `rhacs-operator.v4.11.2`                           |
 | OpenShift GitOps            | `gitops-version`        | `openshift-gitops-operator.v1.18.0`                |
 | OpenShift Pipelines         | `pipelines-version`     | `openshift-pipelines-operator-rh.v1.18.1`          |
 | OpenShift Data Foundation   | `odf-version`           | `odf-operator.v4.22.2-rhodf`                       |
@@ -189,9 +189,9 @@ created for each replica of the image service. Sized to hold the image catalog: 
 | `acm-addon-gpf-eval-concurrency` | string | `5`                  | governance-policy-framework concurrent policy evaluations (default: 2) |
 | `acm-addon-gpf-client-qps`  | string    | `75`                     | governance-policy-framework K8s API client QPS (default: 30) |
 | `acm-addon-gpf-client-burst` | string   | `100`                    | governance-policy-framework K8s API client burst (default: 45) |
-| `acm-addon-gpf-mem-request`  | string   | `128Mi`                  | governance-policy-framework memory request |
+| `acm-addon-gpf-mem-request`  | string   | `256Mi`                  | governance-policy-framework memory request |
 | `acm-addon-gpf-cpu-request`  | string   | `100m`                   | governance-policy-framework CPU request |
-| `acm-addon-gpf-mem-limit`    | string   | `512Mi`                  | governance-policy-framework memory limit |
+| `acm-addon-gpf-mem-limit`    | string   | `1Gi`                    | governance-policy-framework memory limit. The add-on delivers its own tuning, so an OOMKilled one has to be patched by hand |
 
 **Config block** (`config.acm.provisioning`):
 
@@ -385,9 +385,13 @@ bootstrap and Day 2 agree. Set a field here to override it for one cluster or cl
 | `repo.limits` | map | cpu `2000m`, memory `2048Mi` | Repo server resource limits |
 | `repo.requests` | map | cpu `500m`, memory `512Mi` | Repo server resource requests |
 | `repo.cluster_ca_bundle` | bool | `false` | Inject the cluster trusted certificate authority bundle into the repo server. The `gitops-cluster-ca-bundle` label overrides this |
-| `controller.statusProcessors` | int | `50` | Concurrent status reconciliations. AutoShift creates an Application per policy, so even a small hub carries dozens. This is the main lever on how fast the fleet converges |
-| `controller.operationProcessors` | int | `25` | Concurrent sync operations |
-| `controller.limits` | map | cpu `2000m`, memory `4Gi` | Application controller resource limits, sized for a full refresh storm |
+| `controller.statusProcessors` | int | `20` | Concurrent status reconciliations. AutoShift creates an Application per policy, so even a small hub carries dozens. This is the main lever on how fast the fleet converges, and also on peak memory, because each in-flight comparison holds an Application's rendered and live state at once. Raise `controller.limits.memory` with it |
+| `controller.operationProcessors` | int | `10` | Concurrent sync operations |
+| `controller.goMemLimitPercent` | int | `85` | Soft ceiling for the Go runtime, as a percentage of `controller.limits.memory`. The runtime does not read the container memory limit, so without this a refresh storm is terminated before garbage collection runs. Argo CD recommends 80-90%. Derived, so the two cannot drift |
+| `controller.goMemLimit` | string | `''` | Explicit override for the derived ceiling, for memory limits not expressed in `Gi` or `Mi`. When neither this nor the derivation yields a value, the variable is omitted rather than guessed |
+| `controller.respectRBAC` | string | `normal` | `normal` or `strict`. Stops the controller watching resource kinds it has no permission to list |
+| `resourceExclusions` | string | Event, PackageManifest, compliance results | Kinds kept out of the cluster cache, which is the controller's largest allocation. Replaces the list rather than adding to it. A kind listed here cannot be deployed by this instance, so restrict it to generated resources |
+| `controller.limits` | map | cpu `2000m`, memory `8Gi` | Application controller resource limits, sized for a full refresh storm rather than steady state |
 | `controller.requests` | map | cpu `250m`, memory `1Gi` | Application controller resource requests. Measured peak was 843Mi on a hub with 51 Applications and 194 Policies during a full refresh. Requests are deliberately below limits so the pod is Burstable and does not reserve the ceiling |
 | `ha.enabled` | bool | `false` | Run Argo CD in high availability mode |
 | `ha.limits` | map | cpu `500m`, memory `256Mi` | High availability resource limits |
@@ -410,8 +414,8 @@ clusterSets:
       gitops:
         infra:
           controller:
-            statusProcessors: 50
-            operationProcessors: 25
+            statusProcessors: 20
+            operationProcessors: 10
           repo:
             replicas: 5
 ```
@@ -531,23 +535,74 @@ Automated node health monitoring and remediation.
 
 ### Red Hat Advanced Cluster Security
 
+Container security across build, deploy, and runtime. Central and its configuration run on hub
+clusters; every selected cluster runs `SecuredCluster`. Day 2 settings live in a `config.acs` block;
+labels are reserved for the operator subscription and for choices that decide which policies are
+placed on a cluster.
+
+Three settings are labels rather than config, because each one selects which policies a cluster
+receives: the authentication provider is `acs-auth-provider`, whether this cluster runs Central is
+`acs-central`, and the baseline policies are `acs-default-policies`. Earlier releases took these as
+`config.acs.auth.provider`, `config.acs.central.deploy` and `config.acs.defaultPolicies`; those keys
+are no longer read and setting them has no effect.
+
+**Labels:**
+
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `acs`                             | bool              |                           | If not set Advanced Cluster Security will not be managed |
-| `acs-egress-connectivity`         | string            | `Online`                  | Options are `Online` or `Offline`, use `Offline` if disconnected |
+| `acs-central`                     | bool              | `true`                    | Deploys Central on this hub. Opt out with `false`; a cluster with no such label still gets Central |
+| `acs-default-policies`            | bool              | off                       | Deploy the baseline `SecurityPolicy` resources. Hub only, and requires the Config-as-Code component |
+| `acs-auth-provider`               | string            | (unset)                   | Identity provider for Central. `openshift` configures OpenShift auth, which grants Admin to `config.acs.auth.adminGroup`. A cluster with no such label gets no auth configuration at all |
+| `acs-registration`                | string            | `crs`                     | How secured clusters first authenticate to Central: `crs`, `manual`, or `initBundle` (legacy). Selects which registration policies are placed. Clusters with no such label get `crs` |
+| `acs-subscription-name`           | string            | `rhacs-operator`          |       |
 | `acs-channel`                     | string            | `stable`                  |       |
 | `acs-version`                     | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `acs-source`                      | string            | `redhat-operators`        |       |
 | `acs-source-namespace`            | string            | `openshift-marketplace`   |       |
-| `acs-scanner-v4`                  | string            | `Enabled`                 | Scanner V4 component state (`Enabled` or `Disabled`) |
-| `acs-monitoring`                  | bool              | `true`                    | Enable OpenShift monitoring integration for Central and `SecuredCluster` |
-| `acs-vm-scanning`                 | bool              |                           | Enable VM scanning (Developer Preview, opt-in) |
-| `acs-admission-control`           | bool              |                           | Enable admission control enforcement on `SecuredCluster` (opt-in, can block deployments) |
-| `acs-network-policies`            | string            |                           | Network policy generation (`Enabled` or `Disabled`), only set when explicit control needed |
-| `acs-auth-provider`               | string            | `openshift`               | Auth provider type (`openshift`). Hub only. Configures declarative RBAC |
-| `acs-auth-min-role`               | string            | `None`                    | Minimum role for authenticated users. Hub only |
-| `acs-auth-admin-group`            | string            | `cluster-admins`          | Group mapped to Admin role. Hub only |
-| `acs-default-policies`            | bool              |                           | Deploy baseline `SecurityPolicy` CRDs (no privilege escalation, no root, no shell). Hub only |
+
+**Config block** (`config.acs`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `egressConnectivity` | string | `Online` | `Online` or `Offline`; use `Offline` when disconnected |
+| `scannerV4` | string | `Enabled` | Scanner V4 state. `SecuredCluster` maps `Enabled` to `AutoSense` |
+| `scanner` | string | `AutoSense` | `SecuredCluster` Scanner v2: `AutoSense` or `Disabled` |
+| `monitoring` | bool | `true` | OpenShift monitoring integration |
+| `exposeMetrics` | string | | `Enabled` or `Disabled`; Prometheus endpoint on Central, Scanner and Scanner V4 |
+| `networkPolicies` | string | | Network policy generation (`Enabled` or `Disabled`); omit to leave the default |
+| `vmScanning` | bool | `false` | Technology Preview. Sets `ROX_VIRTUAL_MACHINES`; scanning also needs an agent inside each guest, which AutoShift does not manage |
+| `configAsCode` | string | | `Enabled` or `Disabled`. Deploys the component that reconciles `SecurityPolicy` resources into Central. Disabling it silently stops `defaultPolicies` from taking effect |
+| `telemetry` | bool | `false` | Central telemetry reporting |
+| `notifierSecretsEncryption` | bool | `false` | Encrypt notifier secrets at rest |
+| `registryOverride` | string | | Override the image registry, for disconnected mirrors |
+| `auditLogs` | string | `Auto` | OpenShift audit log collection: `Auto`, `Enabled`, `Disabled` |
+| `fileActivityMonitoring` | string | `Disabled` | Technology Preview. Per-node file activity monitoring |
+| `additionalCAs` | list | | Extra trusted root certificate authorities, as `{name, content}` entries |
+| `pinToNodes` | string | | `None` or `InfraRole`. Shorthand that sets `nodeSelector` and `tolerations` itself; cannot be combined with them |
+| `nodeSelector` | map | | Custom placement for Deployment-based components; ignored when `pinToNodes` is set |
+| `tolerations` | list | | Custom taints to tolerate; ignored when `pinToNodes` is set |
+| `db.size` | string | | Central database volume size, for example `100Gi` |
+| `db.storageClassName` | string | | Blank uses the cluster default storage class |
+| `db.claimName` | string | `central-db` | The Central database claim. Blank uses the Operator's own name. Naming a second claim leaves Central `Irreconcilable` while still reporting `Available` |
+| `collector.collection` | string | `CORE_BPF` | `CORE_BPF` is recommended; `EBPF` is deprecated |
+| `processBaselines.autoLock` | string | `Disabled` | Lock process baselines when the observation period ends |
+| `processIndicators.persistence` | string | `Enabled` | Persist process indicators |
+| `processIndicators.excludeOpenshiftNs` | string | `Disabled` | Drop indicators originating in OpenShift namespaces |
+| `processIndicators.excludeNamespaceRegex` | string | | Additional namespaces to exclude |
+| `admissionControl.enabled` | bool | `false` | Sets `enforcement`. The older `listenOn*` and `contactImageScanners` fields are deprecated |
+| `admissionControl.bypass` | string | `BreakGlassAnnotation` | `BreakGlassAnnotation` or `Disabled` |
+| `admissionControl.replicas` | int | `3` | Admission control pod replicas |
+| `admissionControl.failurePolicy` | string | `Ignore` | `Ignore` fails open; `Fail` fails closed |
+| `auth.minimumRole` | string | `None` | Minimum role for authenticated users. Hub only |
+| `auth.adminGroup` | string | `cluster-admins` | Group mapped to the Admin role. Hub only |
+| `central.endpoint` | string | | Blank discovers Central's route on this hub |
+| `registration.validFor` | string | `168h` | Cluster registration secret lifetime. It only has to cover mint through registration, not the life of the cluster |
+| `registration.maxClusters` | int | `1` | Clusters one secret may register. One secret is minted per secured cluster, so a leaked token registers exactly one cluster. `0` removes the limit |
+| `registration.roxctlImage` | string | | Blank builds `registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9` at the tag matching the installed operator version. Set it explicitly for a disconnected mirror, because the default is a tag on `registry.redhat.io` rather than a mirrored digest |
+
+See the [policy README](../policies/stable/advanced-cluster-security/README.md) for the registration
+modes and for where Central runs.
 
 ### Developer spaces
 
@@ -899,3 +954,23 @@ One policy per Security Technical Implementation Guide finding the Compliance Op
 | Variable                          | Type              | Default Value             | Notes |
 |-----------------------------------|-------------------|---------------------------|-------|
 | `manual-remediations`             | bool              |                           | Enables the whole set. Each remediation is configured under `config.manualRemediations` and renders nothing until its key is set; see [Compliance and STIG](compliance.md) |
+
+### Helper job images
+
+AutoShift runs a small number of its own Jobs that need only the `oc` command, such as the Red Hat
+Advanced Cluster Security registration Job and the Vault initialization Job. Each resolves its image
+at runtime, highest priority first:
+
+1. `config.images.cli`, if set.
+2. The cluster's own `openshift/cli` ImageStream. That entry is a digest against the release payload,
+   so an ImageDigestMirrorSet rewrites it in a disconnected deployment and no ImageTagMirrorSet is
+   required.
+3. The in-cluster registry, which is the last resort and is absent wherever the registry Operator is
+   set to `Removed`, as on bare metal and in most disconnected deployments.
+
+Set the value only to pin a specific mirrored image. It belongs in `config`, not in a label: an image
+reference contains characters that are not legal in a Kubernetes label value.
+
+| Variable | Type | Default Value | Notes |
+|----------|------|---------------|-------|
+| `images.cli` | string | | Image for AutoShift helper Jobs. Blank resolves from the `openshift/cli` ImageStream |
