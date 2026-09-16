@@ -42,8 +42,10 @@ object-templates-raw: |
   {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
   {{hub- $fed := (index $cfg "federation" | default dict) hub}}
   {{hub- $cfgPublish := (index $fed "publishEndpointRoute" | default "true") hub}}
+  {{hub- $cfgProfile := (index (index $fed "bundleEndpoint" | default dict) "profile" | default "https_spiffe") hub}}
   {{- $ns := "zero-trust-workload-identity-manager" }}
   {{- $publish := `{{hub $cfgPublish hub}}` }}
+  {{- $profile := `{{hub $cfgProfile hub}}` }}
   {{- $domain := dig "spec" "domain" "" ((lookup "config.openshift.io/v1" "Ingress" "" "cluster") | default dict) }}
   {{- if and $domain (ne $publish "false") }}
   - complianceType: musthave
@@ -62,6 +64,17 @@ object-templates-raw: |
         port:
           targetPort: federation
         tls:
-          termination: reencrypt
+          # TERMINATION FOLLOWS THE PROFILE, and passthrough is not an optimisation.
+          #
+          # https_spiffe authenticates the server by the SPIFFE SVID it presents, so the peer has to
+          # complete TLS with the SPIRE server ITSELF. A reencrypt Route terminates at the router
+          # and presents the router's own certificate, and the peer then fails with
+          # "x509svid: could not get leaf SPIFFE ID: certificate contains no URI SAN" -- measured on
+          # a live cluster, because a wildcard certificate has no URI SAN and never will.
+          #
+          # https_web is the opposite: the peer validates an ordinary web certificate, which IS the
+          # router's wildcard, so reencrypt is what puts it there. The Operator's own federation
+          # Route makes the same switch, which is a useful cross-check.
+          termination: {{ ternary "reencrypt" "passthrough" (eq $profile "https_web") }}
           insecureEdgeTerminationPolicy: Redirect
   {{- end }}
