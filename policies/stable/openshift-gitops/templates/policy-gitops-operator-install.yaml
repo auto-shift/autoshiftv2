@@ -75,16 +75,14 @@ spec:
               # the cluster, plus openshift-gitops-<team>-agent for each team running an Argo CD agent
               # principal, plus the infra agent namespace.
               #
-              # A team AGENT is deliberately NOT listed here. It needs one thing at cluster scope,
-              # get/list/watch on namespaces, and naming its namespace here would instead make that
-              # Argo CD a cluster-scoped instance with broad rights over the cluster. The agent gets
-              # a purpose-built ClusterRole in the gitops-dev policy instead.
+              # NEITHER a team agent NOR a team principal is listed here, deliberately. Naming a
+              # namespace in this variable makes that Argo CD a CLUSTER-SCOPED instance with broad
+              # rights over the cluster. Infra GitOps is meant to hold that power; team GitOps
+              # serves application teams and is kept least privileged, so both team components get
+              # purpose-built ClusterRoles in the gitops-dev policy instead.
               #
-              # The team principal namespaces are NOT optional. The operator only grants a principal
-              # its cluster-scoped permissions, including listing Applications, for namespaces named
-              # here; without it the principal starts, fails to build its application cache and exits.
-              # This list is also enforced by this policy, so patching the Subscription by hand does
-              # not hold.
+              # A team may still opt in explicitly through the gitops-dev-team-<team>-cluster-scoped
+              # label handled above, which is the existing per-team escape hatch.
               - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
                 value: >-
                   {{ "{{hub-" }} $namespaces := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") {{ "hub}}" }}
@@ -92,12 +90,6 @@ spec:
                   {{ "{{hub-" }} if and ($label | hasPrefix "autoshift.io/gitops-dev-team-") ($label | hasSuffix "-cluster-scoped") (eq $val "true") {{ "hub}}" }}
                   {{ "{{hub-" }} $team := $label | replace "autoshift.io/gitops-dev-team-" "" | replace "-cluster-scoped" "" {{ "hub}}" }}
                   {{ "{{hub-" }} $namespaces = printf "%s,openshift-gitops-%s" $namespaces $team {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                  {{ "{{hub-" }} end {{ "hub}}" }}
-                  {{ "{{hub-" }} $rcTeams := (dig "gitops" "teams" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
-                  {{ "{{hub-" }} range $tName, $tSpec := $rcTeams {{ "hub}}" }}
-                  {{ "{{hub-" }} if (dig "agent" "enabled" false $tSpec) {{ "hub}}" }}
-                  {{ "{{hub-" }} $namespaces = printf "%s,openshift-gitops-%s-agent" $namespaces $tName {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-agent" | default "false") "true" {{ "hub}}" }}

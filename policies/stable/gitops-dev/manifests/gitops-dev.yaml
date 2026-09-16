@@ -302,6 +302,56 @@ object-templates-raw: |
   # The principal itself. auth is OUR pattern, not the pattern the Red Hat Advanced Cluster
   # Management add-on uses, because these client certificates are minted by cert-manager and we
   # choose the naming: CN=<cluster>-<team>.
+  # The principal's cluster-scoped permissions, granted narrowly rather than by naming this
+  # namespace in ARGOCD_CLUSTER_CONFIG_NAMESPACES. That variable would make this a cluster-scoped
+  # Argo CD instance, which is right for infra GitOps and wrong for a team's. These are the rules
+  # the operator would have generated, and no more: the principal mirrors applications from its
+  # agents and creates a namespace per connected cluster, so it needs both at cluster scope.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: {{hub printf "argocd-agent-%s-principal" $team hub}}
+      rules:
+        - apiGroups:
+            - argoproj.io
+          resources:
+            - applications
+            - appprojects
+            - applicationsets
+          verbs:
+            - create
+            - get
+            - list
+            - watch
+            - update
+            - delete
+            - patch
+        - apiGroups:
+            - ''
+          resources:
+            - namespaces
+          verbs:
+            - create
+            - get
+            - list
+            - watch
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{hub printf "argocd-agent-%s-principal" $team hub}}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: {{hub printf "argocd-agent-%s-principal" $team hub}}
+      subjects:
+        - kind: ServiceAccount
+          # The operator names it after the instance: <instance>-agent-principal.
+          name: {{hub printf "%s-agent-principal" $pName hub}}
+          namespace: {{hub $agentNs hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: argoproj.io/v1beta1
