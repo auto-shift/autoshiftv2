@@ -66,6 +66,81 @@ step is **not automated** here (default-off, disruptive) — prefer a **real/ent
 **Rollout order:** enable `cert-manager-api-cert` first (low risk), confirm `oc get co kube-apiserver`
 settles (PROGRESSING True→False), then `cert-manager-ingress-cert`.
 
+## Argo CD agent signing CA (opt-in, hub only)
+
+The Red Hat Advanced Cluster Management GitOps add-on derives the entire Argo CD agent public key
+infrastructure from a single secret, `argocd-agent-ca`, in the hub Argo CD namespace. From it the
+GitOpsCluster controller signs the principal serving certificate, the resource proxy certificate,
+the trust bundle it pushes to every spoke, and each agent client certificate.
+
+Left alone, the controller generates a self-signed certificate authority per hub. That is turnkey,
+and it also means a fleet of unrelated roots that chain to nothing the organization already trusts.
+
+The controller adopts an existing secret rather than forcing its own. It writes only when the
+certificate is missing, unparseable, expired, or past 80 percent of its own lifetime. Issuing that
+secret with cert-manager therefore places the agent mesh under a known certificate authority without
+a fork and without unsupported configuration.
+
+Enable it with the `autoshift.io/gitops-agent-ca` label on a hub, alongside `autoshift.io/gitops-agent`
+which runs the principal there. Both are hub labels. Spokes enroll separately with
+`autoshift.io/gitops-agent-enroll`.
+
+### The 80 percent rule
+
+`renewBefore` must stay above `duration` divided by 5. Past 80 percent of the certificate lifetime
+the controller replaces this secret with a self-signed certificate authority of its own, and every
+chain to the organization root breaks with no error raised anywhere. Keeping `renewBefore` above
+that threshold means cert-manager always refreshes first and the controller never considers the
+certificate stale. The defaults renew at 25 percent:
+
+```yaml
+config:
+  gitops:
+    agent:
+      ca:
+        duration: '8760h0m0s'
+        renewBefore: '2160h0m0s'
+```
+
+Change one of those and you must change the other.
+
+### Choosing the signer
+
+`config.gitops.agent.ca.issuer` selects which issuer signs it. The default, `autoshift-ca`, makes the
+agent authority an intermediate under the same root that signs the API server, Ingress and component
+certificates. Point it at an existing issuer to chain the agent mesh to an organization public key
+infrastructure instead:
+
+```yaml
+config:
+  gitops:
+    agent:
+      ca:
+        issuer:
+          name: 'vault-issuer'
+          kind: 'ClusterIssuer'
+          group: 'cert-manager.io'
+```
+
+The signer must be able to issue a certificate authority certificate, so a public ACME issuer cannot
+serve here.
+
+Where the certificate authority cannot be reached by cert-manager at all, leave the
+`gitops-agent-ca` label off and deliver the secret by other means. Nothing then renews it
+automatically, and `policy-gitops-agent-ready` becomes the only warning that arrives before the
+controller overwrites it.
+
+The private key has to live in this secret, because the controller signs agent certificate signing
+requests online. A root held offline or in hardware can only delegate an intermediate here.
+
+### Rotation
+
+Rotation is safe by construction. The controller keeps the outgoing and incoming certificate
+authority in its bundle together, reissues any leaf whose parent has left the bundle, and updates the
+propagation ManifestWork when the bundle changes, so spokes follow a swap without being stranded.
+Leaf validity is also capped to the remaining life of the signer, so certificates issued by an ageing
+authority are shorter than their nominal lifetime. That is a further reason to renew well ahead.
+
 ## Status
 ✅ **Operator Installation**: Ready to deploy  
 🔧 **Configuration**: Requires operator-specific setup (see below)

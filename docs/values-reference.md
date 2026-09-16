@@ -355,6 +355,9 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-cluster-ca-bundle`      | bool      | `false`                   | Inject cluster trusted CA bundle into ArgoCD repo server |
 | `gitops-namespace`              | string    | (`gitopsNamespace`)       | Per-cluster override of the ArgoCD namespace, e.g. in hub-of-hubs setups |
 | `gitops-disable-default-argocd` | bool      | `true`                    | Controls `DISABLE_DEFAULT_ARGOCD_INSTANCE` on the operator Subscription |
+| `gitops-agent`                  | bool      | `false`                   | Hub label. Run the Argo CD agent principal on this hub. Technology Preview |
+| `gitops-agent-ca`               | bool      | `false`                   | Hub label. Issue the agent signing certificate authority with cert-manager instead of letting the add-on self-sign one per hub |
+| `gitops-agent-enroll`           | bool      | `false`                   | Cluster label. Deploy an Argo CD agent here, connecting to the principal on the hub that manages this cluster |
 
 **Config block** (`config.gitops`):
 
@@ -365,6 +368,32 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `policyGenerator` | bool | (deployment flag) | Install the PolicyGenerator plugin sidecar in the infra repo server. Git and source hubs must set `true`. Read only from the self-managed hub cluster set |
 | `teams` | map | | Developer Argo CD instances, one entry per team. See [Developer OpenShift gitops](#developer-openshift-gitops) |
 | `infra` | map | | Tuning for the infra Argo CD instance. See the table below |
+| `agent` | map | | Argo CD agent settings. See the table below |
+
+**Config block** (`config.gitops.agent`):
+
+The Red Hat Advanced Cluster Management GitOps add-on derives the whole Argo CD agent public key
+infrastructure from one secret, `argocd-agent-ca`, in the hub Argo CD namespace. The controller
+adopts that secret when it already exists, so issuing it with cert-manager places the agent mesh
+under a known certificate authority. Enable that with the `gitops-agent-ca` label.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `clusterSets` | list | `[]` | Cluster sets to bind into the Argo CD namespace so the enrollment placement can see them. Leave empty on a self-managed hub. A managed hub must list its own spoke cluster sets |
+| `propagateHubCA` | bool | `true` | Whether the add-on ships the agent trust bundle to each spoke. Turn it off only where the organization distributes that trust by other means |
+| `serverAddress` | string | | Where agents reach the principal. Empty lets the add-on derive it from the principal Route |
+| `serverPort` | string | | Port for the address above |
+| `mode` | string | | Agent mode. Empty takes the add-on default |
+| `ca.issuer` | map | `autoshift-ca` ClusterIssuer | Issuer that signs the agent certificate authority. Point it at an existing issuer to chain the agent mesh to an organization public key infrastructure. The issuer must be able to issue a certificate authority certificate, so a public ACME issuer cannot serve here |
+| `ca.duration` | string | `8760h0m0s` | Lifetime of the agent certificate authority |
+| `ca.renewBefore` | string | `2160h0m0s` | How far ahead of expiry to renew. Must stay above `duration` divided by 5. See the warning below |
+| `ca.privateKey` | map | RSA 4096 | Key algorithm and size. This key is shared by several controllers and the agent transport, so RSA is the conservative default |
+
+!!! warning "Keep `renewBefore` above one fifth of `duration`"
+    Once the certificate passes 80 percent of its lifetime, the GitOpsCluster controller replaces
+    the secret with a self-signed certificate authority of its own, and every chain to the
+    organization root breaks with no error raised. Keeping `renewBefore` above that threshold means
+    cert-manager always refreshes first. Change one of the two values and you must change the other.
 
 **Config block** (`config.gitops.infra`):
 
