@@ -99,6 +99,43 @@ hubClusterSets:
         datastore:
           databaseType: 'sqlite3'
           connectionString: '/run/spire/data/datastore.sqlite3'
+          maxOpenConns: 100
+          maxIdleConns: 2
+          # POSTGRES. Three ways to reach one, tried in this order:
+          #
+          #   1. connectionString above, used verbatim. Full escape hatch, works for any
+          #      databaseType. Put NO password in it: this file is committed to git.
+          #   2. external, below. A database AutoShift does not run: you give the location here
+          #      and the credentials as a Secret you create on the cluster yourself. This is the
+          #      option that does not depend on CloudNativePG.
+          #   3. Nothing set -> derived from the CloudNativePG cluster AutoShift stands up, which
+          #      also needs autoshift.io/cloudnative-pg: 'true'.
+          #
+          # Setting external SUPPRESSES the CloudNativePG cluster rather than adding to it.
+          #
+          # Either postgres path falls back to SQLite while the password Secret is missing, so a
+          # misnamed Secret shows up as a server still on SQLite rather than a crash loop.
+          # policy-ztwim-datastore-effective reports that.
+          #
+          # Switching datastore is DESTRUCTIVE: a different datastore is an empty one, so SPIRE
+          # mints a new certificate authority and the old trust domain root is gone.
+          # external:
+          #   host: 'postgres.example.com'
+          #   port: 5432                       # default: 5432
+          #   databaseName: 'spire'            # default: spire
+          #   sslMode: 'require'               # default: require
+          #   user: 'spire'                    # default: spire; ignored when the Secret holds one
+          #   # The Secret is read on the MANAGED cluster, so create it there, not on the hub.
+          #   configSecretRef:
+          #     name: 'spire-db-credentials'
+          #     namespace: 'zero-trust-workload-identity-manager'   # default: shown
+          #     usernameKey: 'username'        # default: username
+          #     passwordKey: 'password'        # default: password
+          #
+          # Client certificate authentication instead of a password. The CRD's own answer to the
+          # connection string carrying a password: with this set there is no password anywhere.
+          # The certificate has to be trusted by the database, which is work on the database.
+          # tlsSecretName: 'spire-db-client-cert'
         # ---------------------------------------------------------------------------------
         # >>> IMMUTABLE AND ONE-WAY KEYS. The CRDs enforce these with validation rules, so
         # >>> CHANGING one after first deployment is REJECTED and the policy goes NonCompliant.

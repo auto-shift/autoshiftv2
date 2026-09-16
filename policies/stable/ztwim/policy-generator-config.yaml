@@ -3,7 +3,7 @@ kind: PolicyGenerator
 metadata:
   name: ztwim
 # Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
-# `kustomize build` runs. They live here and in the placement files — never in manifests/, whose hub
+# `kustomize build` runs. They live here and in the placement files, never in manifests/, whose hub
 # templates contain `$vars` that substitution would clobber.
 #
 # manifests[].path is a DIRECTORY: drop a new manifest into it and it is picked up automatically.
@@ -32,7 +32,7 @@ policyDefaults:
   placement:
     placementPath: placement.yaml
 policies:
-  # The operator itself. consolidateManifests: true here only — this policy is the shared
+  # The operator itself. consolidateManifests: true here only, because this policy is the shared
   # operator-install chart (a raw Namespace plus a first-class OperatorPolicy), not a raw template.
   - name: policy-ztwim-operator-install
     consolidateManifests: true
@@ -43,7 +43,7 @@ policies:
   - name: policy-ztwim-instance
     # On a nested SPOKE this manifest reads the HUB's ZeroTrustWorkloadIdentityManager CR to derive
     # the shared trust domain. That CR is CLUSTER-SCOPED, and a hub template may not look up
-    # cluster-scoped resources at all without an elevated service account -- it fails with
+    # cluster-scoped resources at all without an elevated service account: it fails with
     # "lookup of cluster-scoped resource ... is not allowed", which is a different error from an
     # RBAC denial and easy to misread.
     hubTemplateOptions:
@@ -63,9 +63,23 @@ policies:
     manifests:
       - path: manifests/cnpg
   # The operands: SPIRE server, agent, CSI driver and OIDC discovery provider.
+  # Barrier: the operand policy waits here whenever postgres is configured and its credential Secret
+  # does not exist. Inform only, and Compliant on every cluster that did not ask for postgres, so it
+  # gates nothing else. Shares placement.yaml with policy-ztwim-config on purpose: an ACM dependency
+  # resolves against the depending cluster's own copy, so a differently-placed barrier would leave
+  # the operand Pending forever instead of gating it.
+  - name: policy-ztwim-datastore-creds
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-instance
+    manifests:
+      - path: test/datastore-creds.yaml
+  # Depends on the barrier as well as the instance, so the operands wait for a datastore password
+  # rather than being built against SQLite and rebuilt when it arrives.
   - name: policy-ztwim-config
     dependencies:
       - name: policy-ztwim-instance
+      - name: policy-ztwim-datastore-creds
     manifests:
       - path: manifests/config
   # Opt-in (autoshift.io/ztwim-federation-mesh): automates the one manual step in federation.
@@ -82,10 +96,10 @@ policies:
     manifests:
       - path: manifests/federation-mesh/endpoint-route.yaml
   # Publishes this cluster's own bundle in JWKS, which is the only form trustDomainBundle accepts.
-  # Member-placed, because the fetch is local: it targets the Service and validates with the service
-  # certificate authority, so it needs no ingress and no public trust. Requires the External Secrets
-  # controller to be running and allowed out on 8443; both are configured through that policy, and
-  # the manifest documents exactly what to set.
+  # Member-placed, because the conversion is local: a CronJob reads the Operator's spire-bundle
+  # ConfigMap and republishes it, with no network access and no dependency on any other policy. Only
+  # https_spiffe needs it; set config.ztwim.federation.publishBundleJwks to 'false' to maintain the
+  # ConfigMap by hand instead.
   - name: policy-ztwim-federation-bundle
     placement:
       placementPath: placement-ztwim-federation-mesh.yaml
@@ -203,7 +217,7 @@ policies:
     manifests:
       - path: manifests/nested-spoke-resume
   # inform: catches a nested pair that reports green while silently doing nothing. An unsatisfied
-  # guard renders no object templates, and an empty ConfigurationPolicy reports Compliant -- so
+  # guard renders no object templates, and an empty ConfigurationPolicy reports Compliant, so
   # these assert the EFFECTS exist rather than trusting the enforcing policies' own status.
   # Deliberately NOT depended on by the enforcing policies: they detect, they do not gate, so
   # making them a dependency would deadlock (the effect cannot exist until the enforcer runs).
@@ -238,7 +252,7 @@ policies:
         the hub. An empty render reports Compliant, so policy-ztwim-nested-spoke being green is
         not evidence that it did anything.
   # inform: proves the nested CA chain actually FORMED. The two checks above catch "rendered
-  # nothing"; this catches "rendered everything and still did not chain" -- a trust domain mismatch,
+  # nothing"; this catches "rendered everything and still did not chain": a trust domain mismatch,
   # an upstream authority patch that did not take, or a datastore PVC that was never cleared.
   - name: policy-ztwim-nested-spoke-chained
     placement:
@@ -287,7 +301,7 @@ policies:
         this restarts the SPIRE server and therefore the trust domain's CA -- see the policy README.
   # inform: catches a datastore that was asked to be postgres and silently is not. The switch is
   # gated on the CNPG password existing and falls back to SQLite until then, which is a valid
-  # config and therefore reports Compliant -- so the request has to be checked against the effect.
+  # config and therefore reports Compliant, so the request has to be checked against the effect.
   - name: policy-ztwim-datastore-effective
     remediationAction: inform
     dependencies:

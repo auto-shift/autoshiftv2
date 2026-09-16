@@ -7,8 +7,8 @@
 # RSA authority needs the modulus and exponent as separate base64url fields, and neither the ACM
 # template functions nor Helm can parse a certificate to reach them.
 #
-# Handing the field an x5c entry built from the PEM does not work either. Measured on a live cluster,
-# the controller manager rejects it with "go-jose/go-jose: invalid RSA key, missing n/e values" --
+# Handing the field an x5c entry built from the PEM does not work either. The controller manager
+# rejects it with "go-jose/go-jose: invalid RSA key, missing n/e values" --
 # and the rejection is silent in the way that matters: the resource keeps an empty status and the
 # policy still reports Compliant, so federation looks configured while no bundle was ever accepted.
 #
@@ -17,12 +17,12 @@
 # credentials, no external system, no side effects, safe to re-run at any time. That is a different
 # animal from a Job that MINTS something, which cannot safely repeat.
 #
-# An earlier revision fetched the bundle over HTTP with External Secrets instead, because the
-# federation endpoint already serves JWKS. That worked only by accident of which certificate the
-# endpoint happened to present: under https_web it serves the service-serving certificate, which any
-# client can validate, but under https_spiffe -- the profile that actually needs a seed -- it serves
-# a SPIFFE SVID whose only SAN is a URI. No generic HTTPS client can complete hostname verification
-# against it, with any certificate authority. Converting locally avoids the endpoint entirely.
+# WHY NOT FETCH IT. The federation endpoint already serves JWKS, so fetching it with a generic HTTPS
+# client looks like the shorter path. It only works under https_web, where the endpoint presents the
+# service-serving certificate that any client can validate. Under https_spiffe, the profile that
+# actually needs a seed, it presents a SPIFFE SVID whose only SAN is a URI, and no generic client
+# can complete hostname verification against that with any certificate authority. Converting locally
+# avoids the endpoint entirely and works under both.
 #
 # WHY IT REPEATS. A trust domain's authority rotates. The CronJob keeps the published JWKS in step
 # with whatever spire-bundle currently holds, so a rotated authority reaches peers without anyone
@@ -70,7 +70,7 @@
 #
 # WHY A CONFIGMAP AND NOT A SECRET. A ManagedClusterView refuses Secrets outright ("viewing secrets
 # is not allowed"), and the hub has to read this to reach peers. The bundle is public key material
-# anyway -- modulus, exponent and certificate chain, no private components -- and is already served
+# anyway (modulus, exponent and certificate chain, no private components) and is already served
 # unauthenticated to any peer that asks.
 #
 # THE CONFIGMAP IS A TRUST DECISION, NOT JUST DATA. Whoever can write it decides which authority this

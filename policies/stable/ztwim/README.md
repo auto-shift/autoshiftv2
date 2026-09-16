@@ -17,13 +17,21 @@ failure modes in this component report success, so start with the inform policie
 |---|---|---|
 | `policy-ztwim-operator-install` | Operator subscription and namespace | `autoshift.io/ztwim: 'true'` |
 | `policy-ztwim-instance` | `ZeroTrustWorkloadIdentityManager` (trust domain, cluster name) | same |
+| `policy-ztwim-cnpg` | `Cluster` for the SPIRE datastore, and its credentials | `+ autoshift.io/cloudnative-pg: 'true'` |
+| `policy-ztwim-datastore-creds` | inform barrier: holds the operands back until the database password exists | same as install |
 | `policy-ztwim-config` | `SpireServer`, `SpireAgent`, `SpiffeCSIDriver`, `SpireOIDCDiscoveryProvider` | same |
 | `policy-ztwim-federation` | `ClusterFederatedTrustDomain` per foreign trust domain | `autoshift.io/ztwim-federation: 'true'` |
+| `policy-ztwim-federation-endpoint` | Route publishing the bundle endpoint under the `*.apps` wildcard | `autoshift.io/ztwim-federation-mesh` set |
+| `policy-ztwim-federation-bundle` | CronJob republishing this cluster's bundle as JWKS | same |
 | `policy-ztwim-federation-views` | `ManagedClusterView` per mesh member, publishing its bundle and endpoint | `autoshift.io/cluster-type: 'hub'` |
 | `policy-ztwim-federation-mesh` | `ClusterFederatedTrustDomain` per peer, bundle included | `autoshift.io/ztwim-federation-mesh` set |
+| `policy-ztwim-federation-mesh-effective` | inform only: the mesh produced a resource per peer domain | same |
 | `policy-ztwim-ready` | inform only: SPIRE server readiness | same as install |
+| `policy-ztwim-datastore-effective` | inform only: the server runs on the datastore that was asked for | same as install |
 | `policy-ztwim-nested-hub` | gRPC Route, per-spoke kubeconfig, `k8s_psat` patch, downstream entries | `ztwim-nested-role: 'hub'` |
 | `policy-ztwim-nested-spoke` | trust bundle, upstream agent, upstream CSI, upstream authority | `ztwim-nested-role: 'spoke'` |
+| `policy-ztwim-nested-auto-reset` | deletes the spoke's operands so a changed chain takes effect | `+ ztwim-nested-auto-reset: 'true'` |
+| `policy-ztwim-nested-auto-resume` | restores create-only mode once the reset has been applied | same |
 | `policy-ztwim-nested-hub-effective` | inform only: hub-side policies actually produced something | `ztwim-nested-role: 'hub'` |
 | `policy-ztwim-nested-spoke-effective` | inform only: spoke-side policies actually produced something | `ztwim-nested-role: 'spoke'` |
 | `policy-ztwim-nested-spoke-chained` | inform only: the CA chain actually formed | `ztwim-nested-role: 'spoke'` |
@@ -60,9 +68,16 @@ Every key is optional for a standalone cluster. Nested SPIRE is the exception: i
 | `caSubject` | `autoshift` / `US` / `AutoShift` | Subject of the SPIRE CA certificate. |
 | `persistence` | `5Gi`, `ReadWriteOnce` | Datastore volume. `storageClass` is omitted unless set. |
 | `datastore` | `sqlite3` | See the database note below. |
+| `datastore.external` | omitted | Points SPIRE at a database AutoShift does not run. Suppresses the CloudNativePG cluster. |
+| `datastore.tlsSecretName` | omitted | Client certificate authentication instead of a password. |
 | `upstreamAuthority` | omitted | Chains the SPIRE CA under an external authority. |
 | `federatedTrustDomains` | empty | One `ClusterFederatedTrustDomain` per foreign domain. Requires the `ztwim-federation` label. |
 | `federation` | omitted | `SpireServer.spec.federation`: this server's own bundle endpoint and peers. Distinct from the row above. |
+| `federation.bundleEndpoint.profile` | `https_spiffe` | How peers authenticate this endpoint. Immutable once set. |
+| `federation.publishEndpointRoute` | `'true'` | Publishes the bundle endpoint under the `*.apps` wildcard. |
+| `federation.bundleEndpointHost` | derived from the Route | The name peers fetch from when the Route is off. |
+| `federation.publishBundleJwks` | `'true'` | Runs the CronJob that republishes this bundle as JWKS. Only `https_spiffe` needs it. |
+| `federation.bundleJwksSchedule` | `'*/10 * * * *'` | Schedule for that conversion. |
 | `bundleConfigMap` | `spire-bundle` | ConfigMap the server publishes its trust bundle into. |
 | `subscriptionName` | operator package name | Override only for a mirrored or renamed package. |
 | `caKeyType` | `rsa-2048` | CRD restricts this to FIPS-approved algorithms. |
@@ -102,6 +117,82 @@ config:
 
 The `vault` plugin is the other option, taking a Vault address, PKI mount point and Kubernetes auth
 role.
+
+### Backing the datastore with an external database
+
+SQLite is the default and is a file on the SPIRE server's own volume. For a database instead, there
+are three ways to name one, tried in this order.
+
+**1. An explicit connection string.** `config.ztwim.datastore.connectionString` is used verbatim and
+works for any `databaseType`. It is the escape hatch, and the one option that carries no
+credential handling: whatever you put in it is what SPIRE gets, so put no password in it. This file
+is committed to git.
+
+**2. An external database you name, with credentials in a Secret.** This is the option that does not
+depend on CloudNativePG. The location is configuration and the credentials are not:
+
+```yaml
+config:
+  ztwim:
+    datastore:
+      databaseType: 'postgres'
+      external:
+        host: 'postgres.example.com'
+        port: 5432
+        databaseName: 'spire'
+        sslMode: 'require'
+        configSecretRef:
+          name: 'spire-db-credentials'
+          namespace: 'zero-trust-workload-identity-manager'
+          usernameKey: 'username'
+          passwordKey: 'password'
+```
+
+Create that Secret **on the managed cluster**, not on the hub. The lookup that reads it is a spoke
+template, so the password is never written to a values file and never passes through git. Only
+`name` is required; every other key of `configSecretRef` defaults to what is shown. A `user` under
+`external` supplies the username when the Secret does not carry one.
+
+Setting `external` **suppresses** the CloudNativePG cluster rather than adding to it. Standing one up
+beside a database AutoShift does not manage would leave an unused database consuming storage and a
+second set of credentials to rotate.
+
+**3. Nothing, which derives the database AutoShift runs.** With `databaseType: 'postgres'` and
+`autoshift.io/cloudnative-pg: 'true'`, the connection string is built from the CloudNativePG cluster
+in `manifests/cnpg` and the password read from the Secret it generates.
+
+> **The password lands in the `SpireServer` resource on all three paths.** `connectionString` is a
+> plain string and the CRD has no secret reference for it, so options 2 and 3 keep the credential out
+> of git but not off the cluster. `datastore.tlsSecretName` is the CRD's own answer: client
+> certificate authentication, with no password in the string at all. It is passed through when set
+> and is the right choice for production, but the certificate has to be trusted by the database,
+> which is work on the database rather than here.
+
+**`policy-ztwim-datastore-creds` holds the operands back until the password exists.** SPIRE cannot be
+handed a connection string with an empty password, and SQLite is not a safe placeholder: the server
+would mint the trust domain's certificate authority against it, and swapping the datastore later
+discards that authority and makes every agent re-attest. On a running cluster the same substitution
+is destructive outright, putting SQLite over a live database under `musthave` and enforce.
+
+The barrier is inform only and Compliant on every cluster that did not ask for postgres, so it stalls
+nothing else. It shares a placement with `policy-ztwim-config` because an ACM dependency resolves
+against the depending cluster's own copy of a policy. While it is NonCompliant the operand policy is
+Pending, so a new cluster waits and a running `SpireServer` keeps its datastore. The template carries
+the same protection independently: it omits the `datastore` key rather than write SQLite over a live
+database, and `musthave` never removes a field it is not given.
+
+A cluster that asks for postgres and supplies no credentials therefore does not deploy SPIRE at all.
+That is deliberate. The alternative builds a certificate authority on the wrong datastore and
+destroys it later.
+
+`policy-ztwim-datastore-effective` reports the other half, a datastore that is not what was asked for,
+by reading the generated `server.conf` rather than the resource. It also catches the quieter mistake
+of configuring `external` or `tlsSecretName` while leaving `databaseType` at `sqlite3`, where every
+policy involved correctly has nothing to do and reports Compliant.
+
+> **Changing the datastore is destructive.** A different datastore is an empty datastore, so SPIRE
+> mints a new certificate authority and the previous trust domain root is gone. Decide this before
+> the first deployment, alongside the trust domain.
 
 ### Federating with another trust domain
 
@@ -327,13 +418,21 @@ federation endpoint as `ManagedClusterView` resources, and each member reads its
 writes a `ClusterFederatedTrustDomain` for each peer domain. SPIRE then fetches the bundle from the
 endpoint and keeps it current on its own.
 
-AutoShift does not seed `trustDomainBundle`. The field is optional and takes a SPIFFE bundle in JWKS
-form rather than the PEM that SPIRE's own `spire-bundle` ConfigMap holds, and nothing in a policy
-template can convert between them. Setting it to PEM is worse than leaving it off: the API server
-accepts it, the resource keeps an empty status, the policy reports Compliant, and the controller
-manager silently drops the relationship with `Ignoring invalid ClusterFederatedTrustDomain` in its
-log. Omitting it is also the right shape for `https_web`, whose whole point is that no trust has to
-exist in advance.
+AutoShift seeds `trustDomainBundle`, because the default profile needs it. Under `https_spiffe` a
+member authenticates its peer by the SPIFFE SVID that peer presents, so it must already hold the
+peer's bundle before it can complete the first fetch. The field takes a SPIFFE bundle in JWKS form
+rather than the PEM that SPIRE's own `spire-bundle` ConfigMap holds, and nothing in a policy
+template can convert between them, so each member runs a small CronJob that republishes its own
+bundle as JWKS into a `ztwim-bundle-jwks` ConfigMap. The mesh policy reads that through a
+`ManagedClusterView` and writes it into each peer's resource.
+
+Setting the field to PEM is worse than leaving it off: the API server accepts it, the resource keeps
+an empty status, the policy reports Compliant, and the controller manager silently drops the
+relationship with `Ignoring invalid ClusterFederatedTrustDomain` in its log. Under `https_web` the
+seed is unnecessary, because that profile's whole point is that no trust has to exist in advance,
+and the CronJob can be turned off with `config.ztwim.federation.publishBundleJwks: 'false'`. See
+[Workload identity topology](../../../docs/workload-identity-topology.md) for why the conversion runs
+locally rather than fetching the endpoint.
 
 Members federate only within their group, so the number of relationships follows the group rather
 than the fleet. Federation is not transitive, which makes that the right shape: a mesh is exactly
@@ -357,14 +456,18 @@ publish the endpoint peers fetch from. Note that enabling federation on a cluste
 in create-only mode for nesting does not take effect until its operands are recreated, because the
 Operator cannot rewrite the generated configuration while that mode is on.
 
-**Each member's ingress wildcard certificate has to be one its peers trust.** AutoShift publishes
-the bundle endpoint on a Route under `*.apps.<baseDomain>`, and the `https_web` profile
+**Under `https_web`, each member's ingress wildcard certificate has to be one its peers trust.**
+AutoShift publishes the bundle endpoint on a Route under `*.apps.<baseDomain>`, and `https_web`
 authenticates that endpoint with ordinary web public key infrastructure. A stock Red Hat OpenShift
 cluster signs its ingress wildcard with a per-cluster self-signed authority, which a peer rejects.
 Set `config.certManager.ingressCert` with a real issuer on every member, or run the mesh on
-clusters whose ingress already carries a publicly issued wildcard. The backend certificate is the
-service-serving certificate and is not part of this: the Route re-encrypts, so only what the router
-presents has to be trusted.
+clusters whose ingress already carries a publicly issued wildcard. The backend certificate is not
+part of this: the Route re-encrypts, so only what the router presents has to be trusted.
+
+The default profile avoids that requirement entirely. `https_spiffe` authenticates the endpoint by
+its SVID rather than by a web certificate, so the Route is passthrough and no certificate authority
+outside SPIFFE is involved on either side. That is what makes the mesh work on a stock cluster and
+in a disconnected environment with its own authority.
 
 **No policy can tell you the bundle actually transferred.** `ClusterFederatedTrustDomain` carries no
 status, so a relationship that SPIRE accepted but cannot fetch looks identical to a working one from
@@ -374,8 +477,10 @@ the transfer in the server log:
 ```bash
 oc logs -n zero-trust-workload-identity-manager spire-server-0 -c spire-server | grep bundle_client
 # "Trust domain is now managed"  -> the relationship was accepted
-# "Error updating bundle ... certificate signed by unknown authority"  -> the peer's ingress
-#                                                                        certificate is not trusted
+# "Bundle refreshed"             -> the fetch itself succeeded; wait for a SECOND one, which
+#                                   confirms the client is on its normal cycle
+# "certificate contains no URI SAN"          -> https_spiffe against a terminating Route
+# "certificate signed by unknown authority"  -> https_web, peer's ingress certificate not trusted
 
 oc logs -n zero-trust-workload-identity-manager spire-server-0 -c spire-controller-manager \
   | grep "Ignoring invalid"
@@ -514,7 +619,7 @@ The spoke's trust bundle becomes byte-identical to the hub's root once nesting t
 ```bash
 # on the hub
 oc get cm spire-bundle -n zero-trust-workload-identity-manager -o jsonpath='{.data.bundle\.crt}' | sha256sum
-# on the spoke -- same digest means the spoke trusts the hub root
+# on the spoke; same digest means the spoke trusts the hub root
 ```
 
 On the hub, the spoke's agent appears in `spire-server agent list` as

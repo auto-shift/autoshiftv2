@@ -1,4 +1,4 @@
-# SpireServer — the SPIRE control plane. caSubject, datastore, jwtIssuer and persistence are all
+# SpireServer: the SPIRE control plane. caSubject, datastore, jwtIssuer and persistence are all
 # REQUIRED by the CRD, so each is emitted with a default rather than left off.
 #
 # jwtIssuer is a URL; the operator strips the scheme and uses the remainder as the managed Route's
@@ -9,8 +9,9 @@
 # root. It is also omitted on any cluster with a nested role, whatever config says: nesting supplies
 # its own upstream authority by patching the generated server.conf, and that patch REPLACES the
 # UpstreamAuthority block. Emitting a configured plugin here as well would leave the resource
-# claiming one authority while the running server used another. The CRD supports exactly two plugins, certManager and vault — there is no aws_pca and no
-# nested `spire` plugin, so neither can be expressed here. Pointing certManager at the built-in
+# claiming one authority while the running server used another. The CRD supports exactly two
+# plugins, certManager and vault. There is no aws_pca and no nested `spire` plugin, so neither can
+# be expressed here. Pointing certManager at the built-in
 # `autoshift-ca` ClusterIssuer chains this cluster's SPIRE CA under AutoShift's CA; note that
 # autoshift-ca is self-signed PER CLUSTER, so a shared fleet root additionally needs
 # config.certManager.ca.issuer set to a common signer. See the README.
@@ -27,22 +28,36 @@
 # with it the trust domain root, which has no backup path. Storage taints are deliberately NOT
 # tolerated; add them through config.ztwim.tolerations if that is where SPIRE belongs.
 #
-# POSTGRES DATASTORE. When config.ztwim.datastore.databaseType is postgres and no explicit
-# connectionString is given, the string is derived from the CNPG cluster in manifests/cnpg. The
-# password is read on the MANAGED cluster -- a spoke template, not a hub one -- out of the Secret
-# CNPG generates, so it is never written to a values file or carried through git. It DOES land in
-# the SpireServer resource, because connectionString is a plain string with no secret reference and
-# the CRD offers no other way. The lookup is hoisted to its own line rather than written inline in
-# the connection string: a spoke template containing double quotes inside a quoted YAML scalar comes
-# back to the spoke engine with the quotes escaped, and fails to parse. Client certificate authentication through datastore.tlsSecretName
-# avoids that and is the right answer for production; it needs a client CA wired into CNPG first.
+# POSTGRES DATASTORE. Three ways to reach one, tried in this order:
 #
-# The switch to postgres is GATED on that password actually existing. The CNPG cluster and this
-# resource are separate policies with no ordering between them -- adding a dependency would stall
-# ztwim on every cluster that does not run CNPG -- so without the guard the server would be handed
-# a connection string with an empty password and fail to start. Until the database is up, SQLite
-# stays in effect. Note the transition itself is destructive whenever it happens: a different
-# datastore is an empty datastore, so SPIRE mints a new CA and the old trust domain root is gone.
+#   1. config.ztwim.datastore.connectionString, used verbatim. Full escape hatch, any database type,
+#      and the only option that does not assume postgres. Put no password in it: it comes from a
+#      values file and lands in git.
+#   2. config.ztwim.datastore.external, for a database AutoShift does not run. The location is
+#      config (host, port, databaseName, sslMode) and the credentials are a Secret you create on
+#      the cluster and name with configSecretRef. This is the option that does not depend on CNPG.
+#   3. The CNPG cluster in manifests/cnpg, derived automatically when nothing else is set.
+#
+# Options 2 and 3 read their password on the MANAGED cluster, in a spoke template rather than a hub
+# one, so it is never written to a values file or carried through git. It DOES land in the SpireServer
+# resource either way, because connectionString is a plain string with no secret reference and the
+# CRD offers no other way. Every lookup is hoisted to its own line rather than written inline in the
+# connection string: a spoke template containing double quotes inside a quoted YAML scalar comes back
+# to the spoke engine with the quotes escaped, and fails to parse.
+#
+# datastore.tlsSecretName is the CRD's own answer to the password landing in the resource: client
+# certificate authentication, no password in the string at all. It is passed through when set and is
+# the right answer for production, but the certificate has to be trusted by the database, which is
+# work on the database rather than here.
+#
+# BOTH postgres paths are GATED on the password actually existing, because a connection string with
+# an empty password stops the server starting. policy-ztwim-datastore-creds is the barrier that
+# holds this policy Pending until the Secret is there, so a cluster waits instead of coming up on
+# SQLite; policy-ztwim-datastore-effective reports a datastore that is not what was asked for.
+#
+# Switching datastore is destructive whenever it happens: a different datastore is an empty
+# datastore, so SPIRE mints a new CA and the trust domain root is gone. That is what the barrier and
+# the downgrade guard below exist to prevent.
 #
 # federation.federatesWith and the bundle endpoint let this server exchange trust bundles with
 # SPIRE servers in OTHER trust domains. Lists and maps are passed through as JSON (toRawJson |
@@ -64,14 +79,44 @@ object-templates-raw: |
   {{hub- $storageClass := (index $pers "storageClass" | default "") hub}}
   {{hub- $dsType := (index $ds "databaseType" | default "sqlite3") hub}}
   {{hub- $dsConn := (index $ds "connectionString" | default "") hub}}
+  {{hub- $ext := (index $ds "external" | default dict) hub}}
+  {{hub- $extRef := (index $ext "configSecretRef" | default dict) hub}}
+  {{hub- $extHostCfg := (index $ext "host" | default "") hub}}
+  {{hub- $extPortCfg := (index $ext "port" | default 5432) hub}}
+  {{hub- $extDbCfg := (index $ext "databaseName" | default "spire") hub}}
+  {{hub- $extSslCfg := (index $ext "sslMode" | default "require") hub}}
+  {{hub- $extUserCfg := (index $ext "user" | default "spire") hub}}
+  {{hub- $extSecretNsCfg := (index $extRef "namespace" | default "zero-trust-workload-identity-manager") hub}}
+  {{hub- $extSecretNameCfg := (index $extRef "name" | default "") hub}}
+  {{hub- $extUserKeyCfg := (index $extRef "usernameKey" | default "username") hub}}
+  {{hub- $extPassKeyCfg := (index $extRef "passwordKey" | default "password") hub}}
   {{hub- $resources := (index $cfg "resources" | default (dict "requests" (dict "cpu" "100m" "memory" "256Mi"))) hub}}
   {{hub- $tolerations := (ternary (index $cfg "tolerations") (list (dict "key" "node-role.kubernetes.io/infra" "operator" "Exists")) (hasKey $cfg "tolerations")) hub}}
   {{hub- $nodeSelector := (index $cfg "nodeSelector" | default dict) hub}}
   {{- $wantType := `{{hub $dsType hub}}` }}
   {{- $wantConn := `{{hub $dsConn hub}}` }}
+  {{- $extHost := `{{hub $extHostCfg hub}}` }}
+  {{- $extPort := `{{hub $extPortCfg hub}}` }}
+  {{- $extDb := `{{hub $extDbCfg hub}}` }}
+  {{- $extSsl := `{{hub $extSslCfg hub}}` }}
+  {{- $extSecretNs := `{{hub $extSecretNsCfg hub}}` }}
+  {{- $extSecretName := `{{hub $extSecretNameCfg hub}}` }}
+  {{- $extUserKey := `{{hub $extUserKeyCfg hub}}` }}
+  {{- $extPassKey := `{{hub $extPassKeyCfg hub}}` }}
+  {{- $extSecret := dict }}
+  {{- if and $extSecretName $extSecretNs }}
+  {{- $extSecret = (lookup "v1" "Secret" $extSecretNs $extSecretName) | default dict }}
+  {{- end }}
+  {{- $extPass := (dig "data" $extPassKey "" $extSecret) | base64dec }}
+  {{- $extUserSecret := (dig "data" $extUserKey "" $extSecret) | base64dec }}
+  {{- $extUser := $extUserSecret | default `{{hub $extUserCfg hub}}` }}
+  {{- $useExt := and (eq $wantType "postgres") (not $wantConn) $extHost $extPass }}
   {{- $pgSecret := (lookup "v1" "Secret" "zero-trust-workload-identity-manager" "spire-db-app") | default dict }}
   {{- $pgPass := (dig "data" "password" "" $pgSecret) | base64dec }}
-  {{- $usePg := and (eq $wantType "postgres") (not $wantConn) $pgPass }}
+  {{- $usePg := and (eq $wantType "postgres") (not $wantConn) (not $useExt) $pgPass }}
+  {{- $live := (lookup "operator.openshift.io/v1alpha1" "SpireServer" "" "cluster") | default dict }}
+  {{- $liveType := dig "spec" "datastore" "databaseType" "" $live }}
+  {{- $wouldDowngrade := and (eq $liveType "postgres") (not $wantConn) (not $useExt) (not $usePg) }}
   - complianceType: musthave
     # Several fields here are CEL-immutable: the bundle endpoint profile, the federation block and
     # every persistence setting. An update that touches one is rejected outright and the policy
@@ -104,19 +149,32 @@ object-templates-raw: |
           commonName: {{hub (index $ca "commonName" | default "autoshift") hub}}
           country: {{hub (index $ca "country" | default "US") hub}}
           organization: {{hub (index $ca "organization" | default "AutoShift") hub}}
+        {{- if $wouldDowngrade }}
+        # DATASTORE OMITTED, not defaulted. The live server runs postgres and this evaluation has no
+        # password, so writing sqlite3 here would replace a working datastore with an empty one and
+        # take the trust domain with it. musthave never removes a field it is not given, so leaving
+        # the key out holds the running configuration as it is.
+        {{- else }}
         datastore:
-          {{- if $usePg }}
-          databaseType: postgres
-          connectionString: 'host=spire-db-rw.zero-trust-workload-identity-manager.svc port=5432 dbname=spire user=spire sslmode=require password={{ $pgPass }}'
-          {{- else if $wantConn }}
+          {{- if $wantConn }}
           databaseType: {{ $wantType }}
           connectionString: {{ $wantConn }}
+          {{- else if $useExt }}
+          databaseType: postgres
+          connectionString: 'host={{ $extHost }} port={{ $extPort }} dbname={{ $extDb }} user={{ $extUser }} sslmode={{ $extSsl }} password={{ $extPass }}'
+          {{- else if $usePg }}
+          databaseType: postgres
+          connectionString: 'host=spire-db-rw.zero-trust-workload-identity-manager.svc port=5432 dbname=spire user=spire sslmode=require password={{ $pgPass }}'
           {{- else }}
           databaseType: sqlite3
           connectionString: /run/spire/data/datastore.sqlite3
           {{- end }}
           maxOpenConns: {{hub (index $ds "maxOpenConns" | default 100) hub}}
           maxIdleConns: {{hub (index $ds "maxIdleConns" | default 2) hub}}
+          {{hub- if (index $ds "tlsSecretName" | default "") hub}}
+          tlsSecretName: {{hub (index $ds "tlsSecretName") hub}}
+          {{hub- end hub}}
+        {{- end }}
         persistence:
           size: {{hub (index $pers "size" | default "5Gi") hub}}
           accessMode: {{hub (index $pers "accessMode" | default "ReadWriteOnce") hub}}

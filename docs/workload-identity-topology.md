@@ -44,8 +44,9 @@ Start here. The two shapes answer different questions, and only one of them is a
 
 ### They are mutually exclusive on a cluster
 
-This is not a style preference, it is a consequence of how the Operator works. Nesting requires `CREATE_ONLY_MODE`, which tells the Operator to create objects it does not
-find and never to update the ones it does. AutoShift needs that so its hand written additions to the
+This is not a style preference, it is a consequence of how the Operator works. Nesting
+requires `CREATE_ONLY_MODE`, which tells the Operator to create objects it does not find and
+never to update the ones it does. AutoShift needs that so its hand written additions to the
 generated `server.conf` survive.
 
 The federation configuration is written into that same generated file by the Operator. Under
@@ -91,8 +92,9 @@ datastore rather than in the resource.
 
 **Why.** `https_spiffe` requires the peer to complete TLS with the SPIRE server itself, so it can
 see the server's SVID. A `reencrypt` Route terminates at the router and presents the router's own
-certificate, so the peer would validate the wrong identity. In practice it fails earlier: the router
-cannot validate the SVID the backend serves and returns `503`.
+wildcard certificate, which has no URI subject alternative name and never will, so the peer fails
+with `x509svid: could not get leaf SPIFFE ID: certificate contains no URI SAN`. The wrong
+termination also returns `503`, because the router cannot validate the SVID the backend serves.
 
 `https_web` wants the opposite, because the certificate the peer validates is the router's wildcard.
 
@@ -110,40 +112,43 @@ the circle. SPIRE refreshes from the endpoint on its own afterwards.
 The field accepts a SPIFFE bundle in JWKS only. The sole bundle the Operator publishes as a
 Kubernetes object is the `spire-bundle` ConfigMap, which is PEM, and no policy template can convert
 one to the other: a JWKS entry for an RSA authority needs the modulus and exponent as separate
-base64url fields. Building an entry from the certificate alone does not work either. Measured on a
-live cluster, the controller manager rejects it with `go-jose/go-jose: invalid RSA key, missing n/e
-values`.
+base64url fields. Building an entry from the certificate alone does not work either: the controller
+manager rejects it with `go-jose/go-jose: invalid RSA key, missing n/e values`.
 
 **The failure mode is silent**, which is why this is worth stating. A rejected bundle leaves the
 resource with an empty status and the policy reporting Compliant, while the relationship is dropped.
 Only the controller manager log shows `Ignoring invalid ClusterFederatedTrustDomain`.
 
-### Bundles are fetched by External Secrets Operator, not a Job
+### The bundle is converted locally, not fetched
 
-**Decision.** A `SecretStore` using the webhook provider fetches each cluster's own bundle endpoint,
-and an `ExternalSecret` materialises it. AutoShift copies the result into a ConfigMap.
+**Decision.** A small CronJob on each member reads the Operator's `spire-bundle` ConfigMap, converts
+it from PEM to JWKS, and publishes `ztwim-bundle-jwks`. Two `openssl` calls per certificate, no
+network.
 
-**Why a fetch at all.** Given the JWKS constraint above, the bundle has to come from the endpoint,
-which already serves exactly the right document.
+**Why not fetch it.** The federation endpoint already serves JWKS, so fetching it with a generic
+HTTPS client looks like the shorter path. It works only under `https_web`, where the endpoint
+presents the service-serving certificate that any client can validate. Under `https_spiffe`, the
+profile that actually needs a seed, the endpoint presents a SPIFFE SVID whose only subject
+alternative name is a URI. No generic client can complete hostname verification against that with any
+certificate authority, and the attempt fails with `x509svid: could not get leaf SPIFFE ID:
+certificate contains no URI SAN`. Converting locally avoids the endpoint entirely and works under
+both profiles.
 
-**Why External Secrets.** It is declarative, refreshes on an interval, and reports conditions that a
-policy can assert on. A Job would need its own scheduling, image and rotation handling.
+**Why a pod.** Parsing a certificate is the whole task and a pod is the only thing in Kubernetes
+that can do it. Neither the policy template functions nor Helm can reach a modulus and exponent.
 
-**Why it needs no trust.** The fetch targets the Service rather than the Route, so it never leaves
-the cluster, and the endpoint's certificate is validated with the OpenShift service certificate
-authority that every cluster already has. Nothing depends on the ingress wildcard, on a public
-authority, or on outbound connectivity, which is what makes it work disconnected.
+This is a different animal from a Job that mints something. It reads a ConfigMap, does arithmetic,
+and writes a ConfigMap: no credentials, no external system, no side effects, safe to re-run at any
+time. That is why it is a CronJob rather than a one-shot. A trust domain's authority rotates, and
+each run republishes whatever `spire-bundle` currently holds.
 
-**Why a ConfigMap and not a Secret.** `ManagedClusterView` refuses Secrets outright, and the hub
-needs to read this to reach peers. The bundle is public key material in any case, with no private
-components, and is already served unauthenticated to anyone who asks. A Secret would add no
-protection while blocking the one thing the bundle must do.
+**Why a ConfigMap rather than a Secret.** `ManagedClusterView` refuses Secrets outright, and the hub
+has to read this to reach peers. The bundle is public key material with no private components and is
+already served unauthenticated to anyone who asks.
 
-**Two prerequisites, both owned by the External Secrets policy.** The controller only runs when an
-`ExternalSecretsConfig` exists, and the Operator applies a deny all egress policy to its operands
-that opens only `6443` and DNS. A store on any other port fails with
-`InvalidProviderConfig ... i/o timeout`, which names neither TLS nor network policy and reads like a
-certificate problem. Egress for `8443` is configured in that resource.
+**It is optional.** `config.ztwim.federation.publishBundleJwks: 'false'` skips the CronJob entirely;
+the manifest carries the equivalent commands for maintaining the ConfigMap by hand, including the
+warning that it must be re-run after the authority rotates.
 
 ### The datastore is SQLite by default and CloudNativePG by choice
 
@@ -214,9 +219,10 @@ them.
 around it.
 
 **Why.** The `SpireServer` resource has no replicas field, so the Operator creates exactly one
-server. A shared datastore is the prerequisite for running more, and SPIRE supports it — several
+server. A shared datastore is the prerequisite for running more, and SPIRE supports it: several
 servers against one database, each minting its own authority, with the datastore bundle holding the
-union so an agent validates an SVID from any of them — but the resource offers no way to ask for it.
+union so an agent validates an SVID from any of them, but the resource offers no way to ask for
+it.
 
 Scaling the generated StatefulSet by hand is not a workaround, and it behaves differently by
 topology:
@@ -299,11 +305,10 @@ there is nothing on the path to tamper with. Under `https_spiffe` the first bund
 which authority that member's peers will trust for its trust domain**. Poisoning it means peers
 accept SVIDs minted by the attacker as belonging to that domain.
 
-**Two reconcilers narrow that considerably.** External Secrets rewrites the Secret from the live
-endpoint every five minutes, and the policy rewrites the ConfigMap from that Secret on every
-evaluation with `musthave` and enforce. Both therefore converge on what the cluster's own SPIRE
-server actually serves, so an edit to either object is corrected rather than persisting. Poisoning
-the seed is not a write, it is a write that has to be sustained against two controllers.
+**Two reconcilers narrow that considerably.** The CronJob rewrites the ConfigMap from `spire-bundle`
+on every run, and the policy reconciles the CronJob itself, so both converge on what the Operator
+actually published. An edit to the ConfigMap is overwritten on the next run rather than persisting.
+Poisoning the seed is not a write, it is a write that has to be sustained against a schedule.
 
 **What remains.** A poisoned value can still reach peers inside one reconcile window, and once a
 bundle has been applied to a peer's datastore it is not obvious that correcting the resource removes
@@ -312,11 +317,11 @@ key, so the path lowers the bar even though it does not open one that was closed
 to that namespace as equivalent to control of that cluster's workload identity, and keep it scoped
 accordingly.
 
-**What does not widen the surface.** The fetch runs against the in-cluster Service and is validated
-with the OpenShift service certificate authority, so it never leaves the cluster and adds no
-external dependency. `ManagedClusterView` is read only, and the hub could already read those
-ConfigMaps through its managed cluster connection. The egress rule that lets External Secrets reach
-the endpoint is scoped to the SPIRE namespace rather than opening the port fleet wide.
+**What does not widen the surface.** The conversion reads a ConfigMap in its own namespace and
+writes another, with a Role restricted by `resourceNames` to exactly those two. It opens no network
+connection at all, so it adds no external dependency and nothing to intercept.
+`ManagedClusterView` is read only, and the hub could already read those ConfigMaps through its
+managed cluster connection.
 
 **One exposure that does change.** Under `https_spiffe` the endpoint Route is `passthrough`, so the
 SPIRE server terminates TLS itself rather than the router doing it. The server is directly reachable
@@ -336,7 +341,8 @@ control on one namespace.
 - `autoshift.io/ztwim-federation-mesh` set to the same value on every member of the mesh
 - `config.ztwim.federation.bundleEndpoint` configured, which is what makes the Operator publish an
   endpoint for peers to fetch from
-- The External Secrets controller running, with egress allowed on `8443`
+- Under `https_spiffe`, the bundle published as JWKS on each member, by the CronJob or by hand
+  when `publishBundleJwks` is `false`
 
 Members federate only within their mesh group, so the number of relationships follows the group
 rather than the fleet. Federation is not transitive, which makes that the right shape: a mesh is
@@ -344,16 +350,47 @@ exactly the set of clusters that must authenticate one another.
 
 ## Verifying it works
 
-No policy can tell you a bundle actually transferred. `ClusterFederatedTrustDomain` carries no
-status, so a relationship SPIRE accepted but cannot fetch looks identical to a working one. Check
-the server log:
+**No policy can tell you a bundle actually transferred.** `ClusterFederatedTrustDomain` carries no
+status, so a relationship SPIRE accepted but cannot fetch looks identical to a working one from
+Kubernetes. The inform policy checks that the resource exists, which is as far as it can see. The
+server log is the only place the truth appears.
+
+### What a working federation looks like
 
 ```bash
 oc logs -n zero-trust-workload-identity-manager spire-server-0 -c spire-server | grep bundle_client
-# "Trust domain is now managed"  the relationship was accepted
-# "Bundle refreshed"             the fetch succeeded
-# "Error updating bundle"        it did not
+```
 
+```
+level=info msg="Trust domain is now managed" bundle_endpoint_profile=https_spiffe \
+  bundle_endpoint_url="https://spire-federation.apps.peer.example.com"
+level=info msg="Bundle refreshed" trust_domain=peer.example.com
+```
+
+Both lines matter. The first says the relationship was accepted; the second says the fetch
+succeeded. A single `Bundle refreshed` at startup and nothing after is not yet success. Wait for
+a second one, which confirms the client is on its normal cycle rather than having worked once.
+
+The resource should show all four fields populated:
+
+```bash
+oc get clusterfederatedtrustdomain -o yaml | grep -E "trustDomain:|type:|endpointSPIFFEID:|trustDomainBundle:"
+```
+
+### What the failures look like
+
+| symptom | cause |
+|---|---|
+| `Error updating bundle ... certificate contains no URI SAN` | the peer's Route is `reencrypt`; `https_spiffe` needs `passthrough` |
+| `Error updating bundle ... certificate signed by unknown authority` | `https_web` against an ingress certificate the peer does not trust |
+| `unexpected status 503 fetching bundle` | the peer publishes a Route with nothing serving behind it, usually `CREATE_ONLY_MODE` suppressing the federation block |
+| `Ignoring invalid ClusterFederatedTrustDomain ... unable to parse JWKS` | `trustDomainBundle` was given PEM, or a JWKS entry lacking `n` and `e` |
+| nothing at all in `bundle_client` | no trust domain exists for that peer, or its views have not reported |
+
+The last one is the quiet failure worth knowing: both enforcing mesh policies report Compliant when
+they render nothing, so their status is not evidence that federation was configured.
+
+```bash
 oc logs -n zero-trust-workload-identity-manager spire-server-0 -c spire-controller-manager \
   | grep "Ignoring invalid"
 # any output means a trust domain was dropped before SPIRE ever saw it

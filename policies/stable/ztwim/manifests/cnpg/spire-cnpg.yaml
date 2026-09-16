@@ -1,13 +1,18 @@
 # OPT-IN (config.ztwim.datastore.databaseType: postgres + autoshift.io/cloudnative-pg: 'true'):
 # a CloudNativePG cluster to back the SPIRE datastore instead of the default SQLite file.
 #
+# NOT rendered when config.ztwim.datastore.external is set. That key points SPIRE at a database
+# AutoShift does not run, so standing a CNPG cluster up beside it would leave an unused database
+# consuming storage and a second set of credentials to rotate. External is the deliberate choice of
+# a different backend, not an addition to this one.
+#
 # WHAT THIS IS AND IS NOT FOR. It does not raise the spoke ceiling, which is set by the size of the
 # aggregated kubeconfig Secret rather than by the datastore: roughly 60 spokes by default, and
 # roughly 600 once config.ztwim.nested.apiCaSecret replaces the per-cluster API certificate
 # authority bundles with one shared file. See manifests/nested-hub/spoke-kubeconfigs.yaml.
 #
 # What the datastore DOES carry is every agent and every registration entry behind those spokes, and
-# that is not the spoke count -- each spoke contributes an agent per node, so 600 spokes is tens of
+# that is not the spoke count: each spoke contributes an agent per node, so 600 spokes is tens of
 # thousands of agents and their entries. SQLite is unremarkable at the default ceiling of 60. At the
 # flattened ceiling it has not been measured, and a single file on one ReadWriteOnce volume is a
 # poor shape for that load whatever the benchmark says. Size the datastore deliberately before
@@ -17,7 +22,7 @@
 #
 #   BACKUP. The SPIRE datastore holds the trust domain's root CA and every registration entry, and
 #   with SQLite on a PersistentVolumeClaim there is no backup path at all. Losing that volume
-#   invalidates every identity in the domain -- and because persistence is immutable, an operator
+#   invalidates every identity in the domain, and because persistence is immutable, an operator
 #   cannot even resize it without destroying the CA. CNPG gives scheduled backup and point-in-time
 #   recovery for the one piece of state that cannot be reconstructed.
 #
@@ -37,7 +42,7 @@
 # which genuinely lives on the hub. Each hub value is hoisted to its own line and captured into a
 # spoke variable rather than inlined: an inline hub expression inside a backtick raw string fails to
 # parse, because the spoke resolver templates the whole policy JSON and its quotes arrive escaped.
-# Keeping the logic on the spoke is also what lets this run on a SPOKE and not just the hub -- the
+# Keeping the logic on the spoke is also what lets this run on a SPOKE and not just the hub: the
 # database belongs wherever the SPIRE server it backs is running.
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
@@ -46,6 +51,7 @@ object-templates-raw: |
   {{hub- $db := (index $ds "cnpg" | default dict) hub}}
   {{hub- $res := (index $db "resources" | default dict) hub}}
   {{hub- $cfgType := (index $ds "databaseType" | default "sqlite3") hub}}
+  {{hub- $cfgExtHost := (index (index $ds "external" | default dict) "host" | default "") hub}}
   {{hub- $cfgInstances := (index $db "instances" | default 2) hub}}
   {{hub- $cfgSize := (index $db "size" | default "10Gi") hub}}
   {{hub- $cfgClass := (index $db "storageClass" | default "") hub}}
@@ -58,7 +64,8 @@ object-templates-raw: |
   {{- $class := `{{hub $cfgClass hub}}` }}
   {{- $cpu := `{{hub $cfgCpu hub}}` }}
   {{- $mem := `{{hub $cfgMem hub}}` }}
-  {{- if eq $type "postgres" }}
+  {{- $extHost := `{{hub $cfgExtHost hub}}` }}
+  {{- if and (eq $type "postgres") (not $extHost) }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: postgresql.cnpg.io/v1

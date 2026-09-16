@@ -2,7 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # Renders the shared components/operator-install chart, which owns the OperatorPolicy structure and
 # creates the namespace (with the cluster-monitoring label). The per-operator ACM lookups below are the
-# visible, greppable inputs — every autoshift.io/ztwim-* label this operator consumes is here.
+# visible, greppable inputs: every autoshift.io/ztwim-* label this operator consumes is here.
 # ${REMEDIATION} is substituted by the CMP before kustomize runs.
 helmGlobals:
   chartHome: ../../../../../components/
@@ -19,7 +19,7 @@ helmCharts:
       # The reason is CREATE_ONLY_MODE. Nested clusters run the operator in create-only mode, where
       # it creates absent objects but never updates existing ones. An automatic operator upgrade
       # there leaves every SPIRE workload on the PREVIOUS release's images indefinitely, and nothing
-      # reports it -- the CSV is Succeeded and the operand CRs still say "All components are ready".
+      # reports it: the CSV is Succeeded and the operand CRs still say "All components are ready".
       # AutoShift also owns hand-patched content inside the operator-generated server.conf, which is
       # written against a specific release's shape. Both make an unattended upgrade a bad trade on
       # exactly the clusters that opt into nesting.
@@ -34,7 +34,7 @@ helmCharts:
         sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/ztwim-source-namespace" | default "openshift-marketplace" hub}}'
         # Version resolution (config lives in the rendered-config ConfigMap on the hub):
         #   config mode (config.ztwim.versions set): versions = that list; startingCSV = config.ztwim.startingCSV
-        #     (explicit — the list says what's ALLOWED, not where to START; default "" = let OLM pick).
+        #     (explicit: the list says what is ALLOWED, not where to START; default "" = let OLM pick).
         #   label mode (no config): versions = [ztwim-version label]; startingCSV = that same version.
         # $vers is computed here and reused by `versions` below.
         startingCSV: |-
@@ -47,7 +47,7 @@ helmCharts:
         # CREATE_ONLY_MODE is set HERE, on the OperatorPolicy that owns this Subscription, rather
         # than by a second policy patching spec.config afterwards. It stops the operator reverting
         # the hand-edited server.conf that nested SPIRE depends on, and it must be in effect before
-        # anything patches that file -- setting it at install time makes that ordering automatic.
+        # anything patches that file, and setting it at install time makes that ordering automatic.
         #
         # 'true' on any cluster with ztwim-nested-role set, 'false' everywhere else. Writing false
         # explicitly rather than omitting the variable keeps the Subscription identical in shape on
