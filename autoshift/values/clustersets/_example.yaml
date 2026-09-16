@@ -1033,10 +1033,18 @@ hubClusterSets:
       # Deploy an agent on THIS cluster, dialling the principal on the hub that manages it. A spoke
       # label, unlike the two hub labels here; the hub never enrolls itself.
       gitops-agent-enroll: 'false'
-      # Let AutoShift issue the agent signing certificate authority with cert-manager instead of
-      # letting the add-on self-sign one. Signer and lifetime come from config.gitops.agent.ca.
-      # Leave 'false' when the certificate authority is delivered out of band, and see
-      # policies/stable/cert-manager/test/gitops-agent-ca-ready.yaml for why that needs watching.
+      # Who issues the agent signing certificate authority, the one secret the add-on derives the
+      # whole agent public key infrastructure from. Three states:
+      #   'false'     the add-on generates a self-signed authority per hub. Turnkey, and a fleet of
+      #               unrelated roots chaining to nothing the organization already trusts.
+      #   'true'      cert-manager issues it, from config.gitops.agent.ca.issuer. That issuer
+      #               defaults to autoshift-ca, which makes the agent authority an intermediate
+      #               under the same root that signs the API server and Ingress certificates; point
+      #               it at your own issuer to chain to an existing public key infrastructure.
+      #   'external'  you deliver the secret yourself, by any means. AutoShift creates no
+      #               Certificate but still places the monitoring, which matters more here than
+      #               anywhere else because nothing renews it and the add-on silently overwrites a
+      #               stale authority with a self-signed one of its own.
       gitops-agent-ca: 'false'
       gitops-channel: gitops-1.21
       gitops-version: 'openshift-gitops-operator.v1.21.4'

@@ -1,0 +1,30 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-cert-manager-gitops-agent-ca-monitor
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Monitoring for the agent signing certificate authority, placed for BOTH states in which
+  # AutoShift expects that secret to exist:
+  #   'true'     AutoShift issues it with cert-manager
+  #   'external' it is supplied out of band, and nothing renews it automatically
+  # The second is the case that most needs watching, because the add-on overwrites a stale
+  # certificate authority with a self-signed one of its own and no error is raised anywhere.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/gitops-agent-ca'
+              operator: In
+              values:
+                - 'true'
+                - 'external'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
