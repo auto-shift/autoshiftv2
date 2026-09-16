@@ -807,6 +807,20 @@ hubClusterSets:
         #     useManifestGeneratePaths: true
         teams:
           dev:
+            # Argo CD agent for THIS team. Enabling it stands up a per-team agent principal on the
+            # hub, in its own namespace openshift-gitops-<team>-agent, with a per-team certificate
+            # authority intermediate under the shared autoshift-ca root. Clusters opt in per team
+            # with the gitops-dev-team-<team> label set to 'agent', and because that label is
+            # per-team a single cluster can run an agent for several teams at once, which the Red
+            # Hat Advanced Cluster Management add-on cannot do.
+            agent:
+              enabled: false
+              # Signer for this team's agent certificate authority. Defaults to the built-in
+              # autoshift-ca, so every team chains to one fleet root while staying a separate
+              # intermediate. A separate intermediate per team is what stops one team's client
+              # certificate from authenticating against another team's principal.
+              caIssuer: 'autoshift-ca'
+              logLevel: 'info'
             gitops_rbac_policies:
               - 'g, openshift-systems, role:admin'
               - 'g, openshift-dev-leads, role:admin'

@@ -196,5 +196,145 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
+  {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
+  {{hub- $agentOn := (dig "enabled" false $agentCfg) hub}}
+  {{hub- if and $isHub $agentOn hub}}
+  {{hub- $agentNs := printf "openshift-gitops-%s-agent" $team hub}}
+  {{hub- $pName := printf "%s-principal" $team hub}}
+  {{hub- $pSvc := printf "%s-agent-principal" $pName hub}}
+  {{hub- $pRoute := (lookup "route.openshift.io/v1" "Route" $agentNs $pSvc) | default dict hub}}
+  {{hub- $pHost := (dig "spec" "host" "" $pRoute) hub}}
+  # The team's Argo CD agent principal. It lives in its OWN namespace, not the team's, because
+  # enabling the principal requires the application controller to be OFF and the team's instance
+  # needs its controller for the applications it deploys itself. Their instance is untouched.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $agentNs hub}}
+        labels:
+          openshift.io/cluster-monitoring: 'true'
+  # A per-team INTERMEDIATE under the shared autoshift-ca root, deliberately not one shared agent
+  # authority. With a single authority a team's client certificate would authenticate against
+  # another team's principal and only the auth pattern would stand between them. Separate
+  # intermediates make that a cryptographic boundary instead of a naming convention.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: argocd-agent-ca
+        namespace: {{hub $agentNs hub}}
+      spec:
+        isCA: true
+        commonName: {{hub printf "argocd-agent-ca-%s" $team hub}}
+        secretName: argocd-agent-ca
+        duration: 8760h0m0s
+        renewBefore: 2160h0m0s
+        privateKey:
+          algorithm: RSA
+          size: 4096
+        issuerRef:
+          name: {{hub (dig "caIssuer" "autoshift-ca" $agentCfg) hub}}
+          kind: ClusterIssuer
+          group: cert-manager.io
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Issuer
+      metadata:
+        name: argocd-agent-ca
+        namespace: {{hub $agentNs hub}}
+      spec:
+        ca:
+          secretName: argocd-agent-ca
+  # Serving certificates for the principal and its resource proxy. The Route host is not known on
+  # the first pass, because the Route does not exist until the instance below is created, so the
+  # certificate is issued for the in-cluster names first and reissued with the host once the
+  # lookup above resolves. Two passes of an already-reconciling policy, no ordering required.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: argocd-agent-principal-tls
+        namespace: {{hub $agentNs hub}}
+      spec:
+        secretName: argocd-agent-principal-tls
+        duration: 720h0m0s
+        renewBefore: 240h0m0s
+        dnsNames:
+          - {{hub printf "%s.%s.svc" $pSvc $agentNs hub}}
+          - {{hub printf "%s.%s.svc.cluster.local" $pSvc $agentNs hub}}
+          - localhost
+          {{hub- if ne $pHost "" hub}}
+          - {{hub $pHost hub}}
+          {{hub- end hub}}
+        ipAddresses:
+          - 127.0.0.1
+        issuerRef:
+          name: argocd-agent-ca
+          kind: Issuer
+          group: cert-manager.io
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: argocd-agent-resource-proxy-tls
+        namespace: {{hub $agentNs hub}}
+      spec:
+        secretName: argocd-agent-resource-proxy-tls
+        duration: 720h0m0s
+        renewBefore: 240h0m0s
+        dnsNames:
+          - {{hub printf "%s-resource-proxy" $pSvc hub}}
+          - {{hub printf "%s-resource-proxy.%s.svc" $pSvc $agentNs hub}}
+          - localhost
+        ipAddresses:
+          - 127.0.0.1
+        issuerRef:
+          name: argocd-agent-ca
+          kind: Issuer
+          group: cert-manager.io
+  # The principal itself. auth is OUR pattern, not the pattern the Red Hat Advanced Cluster
+  # Management add-on uses, because these client certificates are minted by cert-manager and we
+  # choose the naming: CN=<cluster>-<team>.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: {{hub $pName hub}}
+        namespace: {{hub $agentNs hub}}
+      spec:
+        controller:
+          enabled: false
+        sourceNamespaces:
+          - '*'
+        argoCDAgent:
+          principal:
+            enabled: true
+            destinationBasedMapping: true
+            auth: 'mtls:CN=([^,]+)'
+            logLevel: {{hub (dig "logLevel" "info" $agentCfg) hub}}
+            namespace:
+              allowedNamespaces:
+                - '*'
+              enableNamespaceCreate: true
+            server:
+              route:
+                enabled: true
+            tls:
+              insecureGenerate: false
+              secretName: argocd-agent-principal-tls
+              rootCASecretName: argocd-agent-ca
+            jwt:
+              insecureGenerate: true
+            resourceProxy:
+              secretName: argocd-agent-resource-proxy-tls
+              caSecretName: argocd-agent-ca
+  {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
