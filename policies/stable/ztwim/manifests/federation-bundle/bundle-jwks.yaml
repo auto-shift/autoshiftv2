@@ -80,15 +80,43 @@
 # write access to this namespace as equivalent to control of this cluster's workload identity.
 object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $cfgAll := (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $cfg := (index $cfgAll "ztwim" | default dict) hub}}
   {{hub- $fed := (index $cfg "federation" | default dict) hub}}
   {{hub- $cfgPublish := (index $fed "publishBundleJwks" | default "true") hub}}
   {{hub- $cfgSchedule := (index $fed "bundleJwksSchedule" | default "*/10 * * * *") hub}}
-  {{hub- $cfgImage := (index $fed "bundleJwksImage" | default "image-registry.openshift-image-registry.svc:5000/openshift/cli:latest") hub}}
   {{- $ns := "zero-trust-workload-identity-manager" }}
   {{- $publish := `{{hub $cfgPublish hub}}` }}
   {{- $schedule := `{{hub $cfgSchedule hub}}` }}
-  {{- $image := `{{hub $cfgImage hub}}` }}
+  {{- /* CLI image, highest priority first: config.images.cli, then this cluster's own
+     openshift/cli ImageStream, then the in-cluster registry. The ImageStream entry is a digest
+     against the release payload, so an ImageDigestMirrorSet rewrites it in a disconnected
+     deployment; the in-cluster registry does not exist wherever the registry Operator is
+     Removed. The fallback is assigned up front rather than written as `| default "<literal>"`,
+     which the validation suite strips. */ -}}
+  {{- $cliImage := "image-registry.openshift-image-registry.svc:5000/openshift/cli:latest" }}
+  {{- $cliOverride := "{{hub (index (index $cfgAll "images" | default dict) "cli" | default "") hub}}" }}
+  {{- $cliFromIS := "" }}
+  {{- $isCli := (lookup "image.openshift.io/v1" "ImageStream" "openshift" "cli") }}
+  {{- if $isCli }}
+  {{-   range $t := (index ($isCli.spec | default dict) "tags" | default list) }}
+  {{-     if eq (index $t "name" | default "") "latest" }}
+  {{-       $cliFromIS = (index ($t.from | default dict) "name" | default "") }}
+  {{-     end }}
+  {{-   end }}
+  {{-   if not $cliFromIS }}
+  {{-     range $t := (index ($isCli.status | default dict) "tags" | default list) }}
+  {{-       if eq (index $t "tag" | default "") "latest" }}
+  {{-         $items := (index $t "items" | default list) }}
+  {{-         if $items }}
+  {{-           $cliFromIS = (index (index $items 0) "dockerImageReference" | default "") }}
+  {{-         end }}
+  {{-       end }}
+  {{-     end }}
+  {{-   end }}
+  {{- end }}
+  {{- if $cliFromIS }}{{ $cliImage = $cliFromIS }}{{ end }}
+  {{- if $cliOverride }}{{ $cliImage = $cliOverride }}{{ end }}
   {{- if ne $publish "false" }}
   - complianceType: musthave
     objectDefinition:
@@ -169,7 +197,7 @@ object-templates-raw: |
                 serviceAccountName: ztwim-bundle-jwks
                 containers:
                   - name: convert
-                    image: '{{ $image }}'
+                    image: '{{ $cliImage }}'
                     command:
                       - /bin/bash
                       - -c
