@@ -128,14 +128,25 @@ spec:
                   # A spoke template would carry its own permissions and need no service account,
                   # but object-templates-raw is serialized before it reaches the spoke and the
                   # double quotes inside the action come back escaped, so it fails to parse.
+                  # Built first, emitted only if non-empty. A key whose items are all conditional
+                  # renders as null when none match, and musthave WRITES that null over whatever is
+                  # live -- so a lookup that momentarily returns nothing would silently wipe the
+                  # principal's source namespaces and still report Compliant. Omitting the key
+                  # leaves the live value alone instead.
+                  {{ "{{hub-" }} $mcs := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "hub}}" }}
+                  {{ "{{hub-" }} $enrolled := list {{ "hub}}" }}
+                  {{ "{{hub-" }} range $mc := ($mcs.items | default list) {{ "hub}}" }}
+                  {{ "{{hub-" }} $mcLabels := (dig "metadata" "labels" dict $mc) {{ "hub}}" }}
+                  {{ "{{hub-" }} if and (eq (dig "autoshift.io/gitops-agent-enroll" "" $mcLabels) "true") (ne (dig "local-cluster" "" $mcLabels) "true") {{ "hub}}" }}
+                  {{ "{{hub-" }} $enrolled = append $enrolled (dig "metadata" "name" "" $mc) {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if $enrolled {{ "hub}}" }}
                   sourceNamespaces:
-                    {{ "{{hub-" }} $mcs := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "hub}}" }}
-                    {{ "{{hub-" }} range $mc := ($mcs.items | default list) {{ "hub}}" }}
-                    {{ "{{hub-" }} $mcLabels := (dig "metadata" "labels" dict $mc) {{ "hub}}" }}
-                    {{ "{{hub-" }} if and (eq (dig "autoshift.io/gitops-agent-enroll" "" $mcLabels) "true") (ne (dig "local-cluster" "" $mcLabels) "true") {{ "hub}}" }}
-                    - '{{ "{{hub" }} dig "metadata" "name" "" $mc {{ "hub}}" }}'
+                    {{ "{{hub-" }} range $enrolled {{ "hub}}" }}
+                    - '{{ "{{hub" }} . {{ "hub}}" }}'
                     {{ "{{hub-" }} end {{ "hub}}" }}
-                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
                   argoCDAgent:
                     principal:
                       enabled: true
