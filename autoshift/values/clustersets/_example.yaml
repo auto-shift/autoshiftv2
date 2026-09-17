@@ -815,6 +815,32 @@ hubClusterSets:
             # Hat Advanced Cluster Management add-on cannot do.
             agent:
               enabled: false
+              # autonomous (default): the spoke owns its Application resources and they are mirrored
+              # to this team's principal on the hub for visibility and for sync or terminate.
+              # managed: the hub becomes the source of truth and pushes Application specs down.
+              # Only autonomous has been exercised.
+              mode: 'autonomous'
+              # Namespaces this team may deploy INTO, as the AppProject destinations. Defaults to
+              # '<team>-*', so a team is confined to namespaces carrying its own name. Widen it
+              # deliberately; the project grants no cluster-scoped resources either way.
+              # destinationNamespaces:
+              #   - 'dev-*'
+              #   - 'shared-tooling'
+              # Repositories the team may deploy FROM. Defaults to any.
+              # sourceRepos:
+              #   - 'https://github.com/acme/dev-apps.git'
+              # Namespaces the team's Application resources live IN. Follows the mode by default
+              # and rarely needs setting: autonomous uses the team's own GitOps namespace on the
+              # spoke, managed uses the per-cluster namespaces on the hub, because that is where
+              # the Applications are authored in each case. Setting this wrongly does not error;
+              # the principal skips propagating the project and the applications never appear.
+              # sourceNamespaces:
+              #   - 'openshift-gitops-dev'
+              # Cluster-scoped resources the team may manage. EMPTY by default, which denies them
+              # all. Widen only where a team genuinely needs to create its own namespaces.
+              # clusterResources:
+              #   - group: ''
+              #     kind: 'Namespace'
               # Signer for this team's agent certificate authority. Defaults to the built-in
               # autoshift-ca, so every team chains to one fleet root while staying a separate
               # intermediate. A separate intermediate per team is what stops one team's client

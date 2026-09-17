@@ -386,15 +386,76 @@ object-templates-raw: |
             resourceProxy:
               secretName: argocd-agent-resource-proxy-tls
               caSecretName: argocd-agent-ca
+  # The team's AppProject. The principal only propagates AppProjects whose destinations and source
+  # namespaces match the agent configuration, and it skips propagation SILENTLY when they do not,
+  # so a team whose applications never appear should be checked here first.
+  #
+  # Scoped, not wildcarded. A team deploys into namespaces carrying its own name as a prefix, which
+  # is the normal posture for an application team and matches how the rest of team GitOps is
+  # treated. Override destinationNamespaces to widen it; nothing here grants cluster-scoped
+  # resources, because clusterResourceWhitelist is deliberately absent.
+  {{hub- $agentMode := (dig "mode" "autonomous" $agentCfg) hub}}
+  {{hub- $destNs := (dig "destinationNamespaces" (list (printf "%s-*" $team)) $agentCfg) hub}}
+  # The clusters enrolled in THIS team's agent, enumerated once and reused below for both the
+  # project's source namespaces in managed mode and the per-cluster client certificates.
+  {{hub- $mcList := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
+  {{hub- $enrolled := list hub}}
+  {{hub- range $_, $mc := ($mcList.items | default list) hub}}
+  {{hub- if eq (dig (printf "autoshift.io/gitops-dev-team-%s" $team) "" (dig "metadata" "labels" dict $mc)) "agent" hub}}
+  {{hub- $enrolled = append $enrolled (dig "metadata" "name" "" $mc) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  # Where the team's Application resources LIVE. This is the UNION of both modes, not a choice
+  # between them:
+  #   autonomous  the spoke owns them, in the team's own GitOps namespace there
+  #   managed     the HUB owns them, in the per-cluster namespace the principal maps each agent to
+  # Both are listed because mode is a PER-AGENT setting, so one team may legitimately run some
+  # clusters managed and others autonomous at the same time. Listing both costs nothing: source
+  # namespaces are a permit list, and naming one the team does not use permits nothing. Naming too
+  # FEW does not error either, which is the trap -- the principal silently skips propagating the
+  # project and the team's applications simply never appear.
+  {{hub- $modeNs := list (printf "openshift-gitops-%s" $team) hub}}
+  {{hub- range $c := $enrolled hub}}
+  {{hub- $modeNs = append $modeNs $c hub}}
+  {{hub- end hub}}
+  {{hub- $srcNs := (dig "sourceNamespaces" $modeNs $agentCfg) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: default
+        namespace: {{hub $agentNs hub}}
+      spec:
+        sourceNamespaces:
+          {{hub- range $srcNs hub}}
+          - {{hub . hub}}
+          {{hub- end hub}}
+        sourceRepos:
+          {{hub- range (dig "sourceRepos" (list "*") $agentCfg) hub}}
+          - {{hub . hub}}
+          {{hub- end hub}}
+        destinations:
+          {{hub- range $destNs hub}}
+          - namespace: {{hub . hub}}
+            server: '*'
+          {{hub- end hub}}
+        # Empty by default, which denies every cluster-scoped resource. A team that genuinely needs
+        # to create its own Namespaces or custom resources widens this deliberately rather than
+        # inheriting the ability.
+        {{hub- $clusterRes := (dig "clusterResources" (list) $agentCfg) hub}}
+        {{hub- if $clusterRes hub}}
+        clusterResourceWhitelist:
+          {{hub- range $clusterRes hub}}
+          - group: {{hub (dig "group" "" .) hub}}
+            kind: {{hub (dig "kind" "" .) hub}}
+          {{hub- end hub}}
+        {{hub- end hub}}
   # One client certificate per cluster that has opted into THIS team's agent. Enumerated from the
   # managed clusters carrying gitops-dev-team-<team>: 'agent', so adding a cluster to a team is a
   # label change and the certificate follows. The common name is what the principal's auth pattern
   # matches, and it is namespaced by cluster and team so no two agents share an identity.
-  {{hub- $mcList := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
-  {{hub- range $_, $mc := ($mcList.items | default list) hub}}
-  {{hub- $mcName := (dig "metadata" "name" "" $mc) hub}}
-  {{hub- $mcLabels := (dig "metadata" "labels" dict $mc) hub}}
-  {{hub- if eq (dig (printf "autoshift.io/gitops-dev-team-%s" $team) "" $mcLabels) "agent" hub}}
+  {{hub- range $mcName := $enrolled hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: cert-manager.io/v1
@@ -420,7 +481,6 @@ object-templates-raw: |
           name: argocd-agent-ca
           kind: Issuer
           group: cert-manager.io
-  {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
   # The SPOKE half: this cluster runs an agent for the team, reporting to that team's principal on
