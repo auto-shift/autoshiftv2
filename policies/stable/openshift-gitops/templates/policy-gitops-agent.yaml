@@ -31,6 +31,10 @@ spec:
   remediationAction: inform
 {{ end }}
   disabled: false
+  # Required by the ManagedCluster lookup in the principal's sourceNamespaces below. Cluster-scoped
+  # lookups in a hub template are refused without it.
+  hubTemplateOptions:
+    serviceAccountName: autoshift-policy-service-account
   dependencies:
     - name: policy-gitops-systems-argocd
       namespace: {{ .Values.policy_namespace }}
@@ -114,12 +118,24 @@ spec:
                   # and writes Application RBAC there. A namespace carries only ONE such claim, so a
                   # wildcard here silently takes the team principals' agent namespaces away from
                   # them and their informers are denied with nothing logged above debug.
+                  #
+                  # This list needs hubTemplateOptions.serviceAccountName on the policy spec below.
+                  # A hub template may not list a CLUSTER-SCOPED resource without one, failing with
+                  # "lookup of cluster-scoped resource 'ManagedCluster/' is not allowed", and a
+                  # template error puts the whole policy NonCompliant, which its dependents then
+                  # treat as unmet and un-enforce themselves over.
+                  #
+                  # A spoke template would carry its own permissions and need no service account,
+                  # but object-templates-raw is serialized before it reaches the spoke and the
+                  # double quotes inside the action come back escaped, so it fails to parse.
                   sourceNamespaces:
-                    {{ "{{hub" }} range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list {{ "hub}}" }}
-                    {{ "{{hub" }} if and (eq (dig "metadata" "labels" "autoshift.io/gitops-agent-enroll" "" $mc) "true") (ne (dig "metadata" "labels" "local-cluster" "" $mc) "true") {{ "hub}}" }}
+                    {{ "{{hub-" }} $mcs := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "hub}}" }}
+                    {{ "{{hub-" }} range $mc := ($mcs.items | default list) {{ "hub}}" }}
+                    {{ "{{hub-" }} $mcLabels := (dig "metadata" "labels" dict $mc) {{ "hub}}" }}
+                    {{ "{{hub-" }} if and (eq (dig "autoshift.io/gitops-agent-enroll" "" $mcLabels) "true") (ne (dig "local-cluster" "" $mcLabels) "true") {{ "hub}}" }}
                     - '{{ "{{hub" }} dig "metadata" "name" "" $mc {{ "hub}}" }}'
-                    {{ "{{hub" }} end {{ "hub}}" }}
-                    {{ "{{hub" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                    {{ "{{hub-" }} end {{ "hub}}" }}
                   argoCDAgent:
                     principal:
                       enabled: true
