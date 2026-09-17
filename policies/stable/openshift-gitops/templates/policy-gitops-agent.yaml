@@ -113,11 +113,10 @@ spec:
                   # Autonomous mode mirrors each spoke Application into a hub namespace named after
                   # its cluster, and those namespaces have to be source namespaces for this instance.
                   #
-                  # Enumerated, NOT '*'. A wildcard makes the Argo CD operator claim every namespace
-                  # on the cluster: it stamps argocd.argoproj.io/managed-by-cluster-argocd on each
-                  # and writes Application RBAC there. A namespace carries only ONE such claim, so a
-                  # wildcard here silently takes the team principals' agent namespaces away from
-                  # them and their informers are denied with nothing logged above debug.
+                  # The enrolled clusters, never '*'. The operator claims each namespace listed
+                  # here with argocd.argoproj.io/managed-by-cluster-argocd and writes Application
+                  # RBAC into it. A namespace carries one claim, so a wildcard would take the team
+                  # principals' agent namespaces away from them.
                   #
                   # This list needs hubTemplateOptions.serviceAccountName on the policy spec below.
                   # A hub template may not list a CLUSTER-SCOPED resource without one, failing with
@@ -130,7 +129,7 @@ spec:
                   # double quotes inside the action come back escaped, so it fails to parse.
                   # Built first, emitted only if non-empty. A key whose items are all conditional
                   # renders as null when none match, and musthave WRITES that null over whatever is
-                  # live -- so a lookup that momentarily returns nothing would silently wipe the
+                  # live, so a lookup that momentarily returns nothing would silently wipe the
                   # principal's source namespaces and still report Compliant. Omitting the key
                   # leaves the live value alone instead.
                   {{ "{{hub-" }} $mcs := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "hub}}" }}
@@ -150,7 +149,21 @@ spec:
                   argoCDAgent:
                     principal:
                       enabled: true
-                      destinationBasedMapping: true
+                      # How the principal maps an Application to an agent. Not symmetric, and the
+                      # asymmetry shows only in MANAGED mode:
+                      #   false  map by NAMESPACE. On the way back the principal rewrites an
+                      #          incoming status update's namespace to the agent name
+                      #          (`if !m.destinationBasedMapping { incoming.SetNamespace(namespace) }`
+                      #          in internal/manager/application/application.go).
+                      #   true   map by DESTINATION. The namespace is left alone, so a status update
+                      #          arrives naming the SPOKE's namespace and is looked up under that
+                      #          name on the hub, where nothing of that name exists.
+                      # Autonomous mode is unaffected either way, because the agent mirrors into the
+                      # hub namespace that already matches its own agent name, so nothing needs
+                      # rewriting. Managed mode with true pushes applications down correctly and
+                      # then never reports status, which reads as working until someone looks at the
+                      # hub and finds sync and health empty forever.
+                      destinationBasedMapping: {{ "{{hub" }} (index $agentCfg "destinationBasedMapping" | default false) {{ "hub}}" }}
                       auth: 'mtls:CN=system:open-cluster-management:cluster:([^:]+):addon:gitops-addon:agent:gitops-addon-agent'
                       logLevel: {{ "{{hub" }} (index $agentCfg "logLevel" | default "info") {{ "hub}}" }}
                       namespace:

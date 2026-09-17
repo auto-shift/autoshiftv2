@@ -42,14 +42,9 @@ object-templates-raw: |
   #   agent             the team default from config.gitops.teams.<team>.agent.mode, autonomous
   #   agent-autonomous  the spoke owns its Applications, mirrored to the hub
   #   agent-managed     the hub owns them and the agent pulls them down
-  # Gated on the LABEL ALONE, deliberately not on $isHub. That variable means "carries a
-  # self-managed label at all", which is TRUE for a managed hub as well as a self-managed one, so
-  # `not $isHub` silently stopped this rendering the moment a spoke was promoted to a managed hub.
-  # Nothing appeared to break, because musthave never deletes and the agent kept running on the
-  # objects created while the cluster was still a spoke.
-  #
-  # A managed hub is a managed cluster of the layer above, so it can legitimately run an agent. The
-  # per-team label is the whole answer: if it says agent, this cluster runs that team's agent.
+  # The per-team label is the only gate. Any cluster whose label says agent runs that team's agent,
+  # including a managed hub, which is a managed cluster of the layer above. Do not add an $isHub
+  # test here: that variable is true for a managed hub as well as a self-managed one.
   {{hub- if hasPrefix "agent" $mode hub}}
   {{hub- $clientMode := (dig "mode" "autonomous" $agentCfg) hub}}
   {{hub- if eq $mode "agent-managed" hub}}{{hub- $clientMode = "managed" hub}}{{hub- end hub}}

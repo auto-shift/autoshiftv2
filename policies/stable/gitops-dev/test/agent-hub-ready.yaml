@@ -12,11 +12,9 @@ object-templates-raw: |
   {{hub- $hubLabels := .ManagedClusterLabels hub}}
   {{hub- range $team, $spec := $teamSpecs hub}}
   {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
-  # Skipped once this hub's label for the team reads uninstall. Teardown is driven by the LABEL
-  # while this loop reads CONFIG, so without this test a torn-down team would go on being asserted
-  # and this policy would sit NonCompliant forever. Requiring the operator to clear agent.enabled as
-  # well as setting the label would be the same two-labels-must-move-together trap that already cost
-  # us an afternoon.
+  # Skipped once this hub's label for the team reads uninstall. Teardown is driven by the label
+  # while this loop reads config, so a torn-down team would otherwise stay asserted here forever.
+  # Keying on the label alone means the operator sets one value rather than two.
   {{hub- if and (dig "enabled" false $agentCfg) (ne (index $hubLabels (printf "autoshift.io/gitops-dev-team-%s" $team) | default "") "uninstall") hub}}
   {{hub- $agentNs := (printf "openshift-gitops-%s-agent" $team) hub}}
   # The namespace, which exists whenever this policy has ever run. Asserting it means a Compliant
@@ -69,11 +67,9 @@ object-templates-raw: |
             status: 'True'
           - type: Progressing
             status: 'True'
-  # PER ENROLLED CLUSTER. Everything above is team-scoped, and team-scoped assertions cannot see the
-  # failure mode that actually happens: the team stays healthy while one cluster silently falls out
-  # of enrollment. Two separate bugs did exactly that -- a gate that misread a managed hub, and an
-  # exact label match that stopped matching once a cluster pinned its mode -- and this policy
-  # reported Compliant through both, because musthave never deletes what it already created.
+  # PER ENROLLED CLUSTER. The assertions above are team-scoped, which cannot detect one cluster
+  # falling out of enrollment while the team itself stays healthy. musthave never removes what it
+  # created, so that cluster's objects persist and only a per-cluster assertion notices.
   {{hub- $mcList := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
   {{hub- range $_, $mc := ($mcList.items | default list) hub}}
   {{hub- $mcName := (dig "metadata" "name" "" $mc) hub}}

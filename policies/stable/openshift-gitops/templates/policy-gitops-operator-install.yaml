@@ -83,16 +83,13 @@ spec:
               #
               # A team may still opt in explicitly through the gitops-dev-team-<team>-cluster-scoped
               # label handled above, which is the existing per-team escape hatch.
-              # The list also carries each TEAM PRINCIPAL namespace. That is not a privilege
-              # choice: OpenShift GitOps reconciles sourceNamespaces only for a CLUSTER-SCOPED
-              # instance, logging "Skipping sourceNamespaces reconciliation for namespace <ns>" at
-              # info and nothing else otherwise. A principal that cannot manage its source
-              # namespaces never claims its agent namespaces, so its Application informer is denied
-              # and applications flow in neither direction while every policy reports Compliant.
-              # The instance this elevates runs controller.enabled: false and reconciles nothing.
+              # The list also carries each team principal namespace. Red Hat OpenShift GitOps
+              # reconciles sourceNamespaces only for a cluster-scoped instance, so a principal
+              # outside this list never claims its agent namespaces and no application reaches it.
+              # The instance this covers runs with controller.enabled false and reconciles nothing.
               #
-              # Comments CANNOT go inside the value below: it is a folded scalar, hub templates have
-              # no comment syntax, and a # line there is folded into the VALUE itself.
+              # Comments belong here rather than inside the value: it is a folded scalar, and hub
+              # templates have no comment syntax, so a # line there becomes part of the value.
               - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
                 value: >-
                   {{ "{{hub-" }} $namespaces := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") {{ "hub}}" }}

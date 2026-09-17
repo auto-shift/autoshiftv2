@@ -31,17 +31,14 @@ object-templates-raw: |
         namespace: openshift-gitops-{{hub $team hub}}
       status:
         phase: Available
-  # THE AGENT IS ACTUALLY THE ONE RUNNING. Asserting the ArgoCD custom resource is not enough: the
-  # operator reports Available off minimum availability, which a HALF-FINISHED rollout satisfies.
-  # At replicas 1 a rolling update needs maxSurge 1, so on a node at its pod limit the new pod never
-  # schedules, the old one keeps serving, and the deployment sits at replicas 2 / updated 1 / ready 1
-  # forever. The agent announces its mode in its authentication token, so the principal goes on
-  # reporting the OLD pod's mode and a mode change appears to have been applied when it has not.
+  # The rollout, which the custom resource above does not cover: the operator reports Available off
+  # minimum availability, and a stalled rolling update satisfies that while the previous pod goes on
+  # serving the previous configuration.
   #
-  # Progressing is the direct signal: it stays True after a completed rollout and flips to False
-  # with ProgressDeadlineExceeded when one stalls. Replica counts do NOT catch this -- spec.replicas
-  # and readyReplicas both read 1 and look perfectly healthy. The operator owns this deployment, so
-  # maxSurge 0 is not available to us; reporting it is.
+  # Progressing is the signal. It stays True after a completed rollout and goes False with
+  # ProgressDeadlineExceeded when one stalls. Replica counts do not catch it, because spec.replicas
+  # and readyReplicas both read 1 throughout. The operator owns this deployment, so maxSurge cannot
+  # be set to 0 to avoid the stall; only reporting it is available.
   - complianceType: musthave
     objectDefinition:
       apiVersion: apps/v1

@@ -1,13 +1,10 @@
 object-templates-raw: |
-  # SPOKE teardown. Acts only on a team whose gitops-dev-team-<team> label on THIS cluster reads
-  # 'uninstall', so the default of doing nothing is the absence of that value rather than a
-  # separate switch. A label that merely disappears removes NOTHING: deletion has to be asked for,
-  # because a typing error in a values file or a clusterset reshuffle would otherwise revoke a
-  # team's agent silently.
+  # SPOKE teardown, for a team whose gitops-dev-team-<team> label on this cluster reads
+  # 'uninstall'. Removal is opt-in by that value alone: a label that merely disappears removes
+  # nothing, so a values mistake cannot revoke a team's agent.
   #
-  # Rendering nothing is the normal result here. Most clusters have no team being torn down, and
-  # customMessage.compliant in policy-generator-config.yaml says so rather than leaving a bare
-  # Compliant that reads as ambiguous.
+  # Rendering nothing is the normal result, since most clusters have no team being torn down.
+  # customMessage.compliant in policy-generator-config.yaml states that.
   {{hub- range $label, $val := .ManagedClusterLabels hub}}
   {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) (eq $val "uninstall") hub}}
   {{hub- $team := replace "autoshift.io/gitops-dev-team-" "" $label hub}}

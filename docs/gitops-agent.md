@@ -109,10 +109,13 @@ the hub gains one real-time view of the fleet. Managed mode makes the hub author
 a second mechanism in competition with AutoShift policies for desired state. Choose autonomous
 unless the hub genuinely needs to own team applications.
 
-`destinationBasedMapping` decides how the principal maps an `Application` to an agent, and it
-defaults to `false`, which means mapping by namespace. Leave it alone unless the design changes,
-because the setting is not symmetric. For the reason, see
+`destinationBasedMapping` decides how the principal maps an `Application` to an agent. It defaults
+to `false` on both paths, which means mapping by namespace, and it is worth leaving alone. The
+setting is not symmetric, and the asymmetry appears only in managed mode. For the detail, see
 [Status never returns to the hub](#status-never-returns-to-the-hub).
+
+Autonomous mode is unaffected by it, because the agent mirrors into the hub namespace that already
+matches its own agent name, so nothing needs rewriting on the way back.
 
 ## Privilege
 
@@ -213,10 +216,13 @@ That namespace is missing from `ARGOCD_CLUSTER_CONFIG_NAMESPACES`.
 
 ### Status never returns to the hub
 
-The `Application` appears on the spoke and the hub shows empty sync and health values forever.
-`destinationBasedMapping` is `true`. The principal rewrites an incoming status update's namespace to
-the agent name only when that setting is `false`, so with it enabled the update names the spoke
-namespace and is looked up under that name on the hub, where nothing of that name exists.
+Applications reach the spoke, and the hub shows empty sync and health values forever. In managed
+mode, `destinationBasedMapping` is `true`. The principal rewrites an incoming status update's
+namespace to the agent name only when that setting is `false`, so with it enabled the update names
+the spoke namespace and is looked up under that name on the hub, where nothing of that name exists.
+
+This affects managed mode alone. In autonomous mode the agent mirrors into the hub namespace that
+already carries its agent name, so the value makes no difference and status returns either way.
 
 ### A configuration change appears to apply and does not
 

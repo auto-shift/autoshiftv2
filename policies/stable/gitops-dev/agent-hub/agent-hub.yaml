@@ -36,10 +36,9 @@ object-templates-raw: |
   {{hub- $pHost := (dig "spec" "host" "" $pRoute) hub}}
   {{hub- $route := (lookup "route.openshift.io/v1" "Route" (printf "openshift-gitops-%s" $team) "argocd-dev-server") | default dict hub}}
   {{hub- $host := (dig "spec" "host" "" $route) hub}}
-  # Keyed on the mode, not on $isHub. That variable only means "carries a self-managed label",
-  # which is true for a managed hub as well, so a managed hub running this team's AGENT would also
-  # have rendered this team's PRINCIPAL the moment it defined any team config. The principal belongs
-  # wherever the team's Argo CD instance is, and that is exactly mode hub.
+  # The principal belongs wherever the team's Argo CD instance is, which is mode hub. Keyed on the
+  # mode rather than $isHub, because that variable is also true for a managed hub, which may run
+  # this team's agent instead.
   {{hub- if and (eq $mode "hub") $agentOn hub}}
   # The team's Argo CD agent principal. It lives in its OWN namespace, not the team's, because
   # enabling the principal requires the application controller to be OFF and the team's instance
@@ -140,7 +139,7 @@ object-templates-raw: |
   # JWT signing key. Red Hat documents only `argocd-agentctl jwt create-key` to produce this, and
   # in the same breath says the CLI-generated public key infrastructure "is intended for development
   # and testing purposes only. For production environments, use certificates issued by your
-  # organization's PKI". So we issue it, which is the documented production posture rather than a
+  # organization's PKI", so issuing it here is the documented production posture rather than a
   # departure from it. The contract is what matters and it is precisely specified: an Opaque secret
   # named argocd-agent-jwt carrying a PEM RSA private key in a jwt.key field.
   #
@@ -184,7 +183,7 @@ object-templates-raw: |
   # GUARDED, and this is not optional. Hub templates resolve BEFORE any object in this policy is
   # applied, so on the first pass the certificate above has not produced its secret yet. fromSecret
   # ERRORS on a missing secret and that error fails the WHOLE policy, including the Certificate that
-  # would have created it -- a deadlock it can never resolve. lookup returns empty instead, so this
+  # would have created it: a deadlock it can never resolve. lookup returns empty instead, so this
   # simply waits and appears on the next pass.
   {{hub- $jwtSec := (lookup "v1" "Secret" $agentNs "argocd-agent-jwt-cert") | default dict hub}}
   {{hub- $jwtKey := (dig "data" "tls.key" "" $jwtSec) hub}}
@@ -259,8 +258,8 @@ object-templates-raw: |
   {{hub- $enrolled := list hub}}
   {{hub- $agentNames := list hub}}
   {{hub- range $_, $mc := ($mcList.items | default list) hub}}
-  # hasPrefix, not eq: the label carries the mode as agent-managed or agent-autonomous as well as
-  # bare agent. An exact match enrolled nobody once a cluster pinned its mode, dropping that
+  # hasPrefix, not eq: the label carries the mode, so the value may be agent, agent-managed or
+  # agent-autonomous. Everything below is per enrolled cluster, so an exact match would drop that
   # cluster's client certificate, mapping secret, namespace and sourceNamespaces entry.
   {{hub- if hasPrefix "agent" (dig (printf "autoshift.io/gitops-dev-team-%s" $team) "" (dig "metadata" "labels" dict $mc)) hub}}
   {{hub- $enrolled = append $enrolled (dig "metadata" "name" "" $mc) hub}}
@@ -273,13 +272,13 @@ object-templates-raw: |
   #   managed     the HUB owns them, in the per-cluster namespace the principal maps each agent to
   # The hub side uses the AGENT NAME, not the cluster name. Red Hat is explicit that this is a
   # namespace-to-agent mapping model and that "the namespace names specified in sourceNamespaces
-  # must exactly match the corresponding Agent names" -- get it wrong and the principal can neither
+  # must exactly match the corresponding Agent names"; get it wrong and the principal can neither
   # deploy nor monitor, in either mode, without reporting anything.
   #
   # Both are listed because mode is a PER-AGENT setting, so one team may legitimately run some
   # clusters managed and others autonomous at the same time. Listing both costs nothing: source
   # namespaces are a permit list, and naming one the team does not use permits nothing. Naming too
-  # FEW does not error either, which is the trap -- the principal silently skips propagating the
+  # FEW does not error either, which is the trap: the principal silently skips propagating the
   # project and the team's applications simply never appear.
   {{hub- $modeNs := list (printf "openshift-gitops-%s" $team) hub}}
   {{hub- range $an := $agentNames hub}}
@@ -296,13 +295,10 @@ object-templates-raw: |
       spec:
         controller:
           enabled: false
-        # NOT '*'. A wildcard makes the Argo CD operator claim EVERY namespace on the cluster: it
-        # stamps argocd.argoproj.io/managed-by-cluster-argocd on each one and writes a Role and
-        # RoleBinding granting Application access there. A namespace can only carry ONE such claim,
-        # so two wildcard principals fight over all of them and the loser is locked out of its own
-        # agent namespaces, with no error anywhere -- the informer is simply denied. Listing exactly
-        # the namespaces this team owns is both least privilege and the only way the infra and team
-        # principals coexist.
+        # Exactly the namespaces this team owns, never '*'. The operator claims each namespace
+        # listed here with argocd.argoproj.io/managed-by-cluster-argocd and writes Application RBAC
+        # into it. A namespace carries one claim, so a wildcard would take every namespace on the
+        # cluster and deny the other principals their own agent namespaces.
         sourceNamespaces:
           {{hub- range $srcNs hub}}
           - '{{hub . hub}}'
@@ -320,7 +316,7 @@ object-templates-raw: |
             #          arrives naming the SPOKE's namespace and is looked up under that name on the
             #          hub, where nothing of that name exists.
             # With true, spec still flows hub to spoke and the applications appear, so it looks like
-            # it works -- but status never comes back and the hub shows empty sync and health
+            # it works, but status never comes back and the hub shows empty sync and health
             # forever. Namespace mapping is also what the rest of this policy already assumes, since
             # sourceNamespaces above is a list of agent names.
             destinationBasedMapping: {{hub (dig "destinationBasedMapping" false $agentCfg) hub}}
@@ -469,7 +465,7 @@ object-templates-raw: |
   # THE AGENT-TO-CLUSTER MAPPING. Without it the principal authenticates the agent and then logs
   # "Agent <name> is not mapped to any cluster", and no Application can flow in EITHER direction.
   # Red Hat Advanced Cluster Management creates this automatically for its own add-on; a principal
-  # we run ourselves has to create its own.
+  # outside the add-on has to create its own.
   #
   # `server` is NOT the managed cluster's API endpoint. The hub reaches the workload cluster
   # THROUGH the principal's resource proxy, selecting the agent by query parameter, and the

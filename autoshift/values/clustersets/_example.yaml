@@ -652,6 +652,16 @@ hubClusterSets:
           # 'managed' makes the hub the source of truth, which puts the agent in competition with
           # the policies AutoShift already uses to deliver configuration, so it is not the default.
           mode: 'autonomous'
+          # How the principal maps an Application to an agent. false maps by NAMESPACE, which is the
+          # hub namespace named after the cluster; true maps by the Application's destination.
+          #
+          # Keep it false unless you have a reason. The setting is not symmetric, and it only shows
+          # in MANAGED mode: with true the principal leaves an incoming status update's namespace
+          # alone, so the update names the SPOKE's namespace and is looked up under that name on the
+          # hub, where nothing of that name exists. Applications reach the spoke and the hub then
+          # shows sync and health empty forever. Autonomous mode is unaffected either way, because
+          # the agent mirrors into the hub namespace that already matches its agent name.
+          destinationBasedMapping: false
           # The signing certificate authority the add-on derives the ENTIRE agent public key
           # infrastructure from: principal serving certificate, resource proxy certificate, the
           # trust bundle pushed to every spoke, and each agent client certificate.
@@ -861,7 +871,9 @@ hubClusterSets:
               # Whether the principal may CREATE per-cluster namespaces. Turning this off also lets
               # the create verb be dropped from its ClusterRole.
               # enableNamespaceCreate: true
-              # destinationBasedMapping: true
+              # As on the infra agent: false maps by namespace and is the default, true maps by
+              # destination and loses status back-propagation in managed mode.
+              # destinationBasedMapping: false
               # Lifetime of the JWT signing key this team's principal uses. The key itself is
               # stable across renewals (rotationPolicy Never reuses it), so this governs the
               # certificate wrapped around it rather than the key.
