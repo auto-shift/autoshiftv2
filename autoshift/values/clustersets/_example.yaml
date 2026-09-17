@@ -815,9 +815,13 @@ hubClusterSets:
             # Hat Advanced Cluster Management add-on cannot do.
             agent:
               enabled: false
-              # autonomous (default): the spoke owns its Application resources and they are mirrored
-              # to this team's principal on the hub for visibility and for sync or terminate.
-              # managed: the hub becomes the source of truth and pushes Application specs down.
+              # The team-wide DEFAULT mode, used by any cluster whose label is a bare 'agent'.
+              # A cluster overrides it per team with gitops-dev-team-<team>: 'agent-managed' or
+              # 'agent-autonomous', because mode is genuinely a per-cluster choice and one team may
+              # run some clusters managed and others autonomous.
+              #   autonomous  the spoke owns its Application resources and they are mirrored to
+              #               this team's principal on the hub for visibility and sync or terminate
+              #   managed     the hub becomes the source of truth and pushes Application specs down
               # Only autonomous has been exercised.
               mode: 'autonomous'
               # Namespaces this team may deploy INTO, as the AppProject destinations. Defaults to
@@ -1528,6 +1532,15 @@ hubClusterSets:
       # Developer OpenShift GitOps (team ArgoCD instances)
       # =======================================================================
       gitops-dev: 'false'
+      # Does this HUB run team Argo CD agent principals? A label rather than config because
+      # placement cannot read config.gitops.teams.<team>.agent.enabled, and a config-only gate
+      # would leave a hub with no team agents holding a policy that renders nothing and reports
+      # Compliant. Which teams get a principal is still decided by that config; this only decides
+      # whether the policy is placed at all.
+      gitops-agent-teams: 'false'
+      # Does this cluster run any team agents? The per-team gitops-dev-team-<team>: 'agent' labels
+      # decide WHICH teams; this exists because a placement selector cannot match a label prefix.
+      gitops-agent-enrolled: 'false'
       gitops-dev-team-dev: 'hub'             # 'hub' or 'standalone'
       gitops-dev-team-test: 'hub'            # 'hub' or 'standalone'
 

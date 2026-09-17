@@ -1,0 +1,49 @@
+# Inform-only: the hub half of each team's agent is actually serving.
+#
+# EVERY assertion here is unconditional for a team that has the agent enabled. That is the point:
+# an inform policy that renders nothing reports Compliant, which reads as "verified" when in fact
+# nothing was examined. The placement decides whether this policy exists at all; once it exists it
+# always checks something.
+object-templates-raw: |
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
+  {{hub- range $team, $spec := $teamSpecs hub}}
+  {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
+  {{hub- if (dig "enabled" false $agentCfg) hub}}
+  {{hub- $agentNs := (printf "openshift-gitops-%s-agent" $team) hub}}
+  # The namespace, which exists whenever this policy has ever run. Asserting it means a Compliant
+  # verdict can never mean "checked nothing".
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $agentNs hub}}
+  # The signing certificate authority, and the JSON web token key the principal needs to start.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: argocd-agent-ca
+        namespace: {{hub $agentNs hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: argocd-agent-jwt
+        namespace: {{hub $agentNs hub}}
+  # The principal itself, reconciled by the operator.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: {{hub printf "%s-principal" $team hub}}
+        namespace: {{hub $agentNs hub}}
+      status:
+        phase: Available
+  {{hub- end hub}}
+  {{hub- end hub}}

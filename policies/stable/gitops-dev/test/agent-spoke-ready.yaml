@@ -1,0 +1,31 @@
+# Inform-only: this cluster's team agents have their credentials and their instance.
+#
+# The agent-to-cluster mapping is deliberately NOT asserted here: it lives on the hub, and a policy
+# cannot assert an object on another cluster. It is covered by agent-hub-ready.yaml instead.
+object-templates-raw: |
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- range $label, $val := .ManagedClusterLabels hub}}
+  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) (hasPrefix "agent" $val) hub}}
+  {{hub- $team := replace "autoshift.io/gitops-dev-team-" "" $label hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: openshift-gitops-{{hub $team hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: argocd-agent-client-tls
+        namespace: openshift-gitops-{{hub $team hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: {{hub printf "%s-agent" $team hub}}
+        namespace: openshift-gitops-{{hub $team hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

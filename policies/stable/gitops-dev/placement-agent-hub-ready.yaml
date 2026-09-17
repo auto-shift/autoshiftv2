@@ -1,0 +1,27 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-gitops-dev-agent-hub-ready
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Gated by a LABEL rather than by config, deliberately. Placement cannot read
+  # config.gitops.teams.<team>.agent.enabled, so a config-only gate would force the whole decision
+  # in-template, and a hub with no team agents would get a policy that renders nothing and reports
+  # Compliant. An absent policy is unambiguous; a present, empty one is not.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/gitops-agent-teams'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

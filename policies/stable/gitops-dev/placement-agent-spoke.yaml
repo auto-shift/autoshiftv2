@@ -1,0 +1,22 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-gitops-dev-agent-spoke
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Which clusters run a team agent. The per-team gitops-dev-team-<team>: 'agent' labels decide
+  # WHICH teams; this one exists so placement can tell whether the cluster runs any at all, because
+  # a selector cannot match a label prefix.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops-agent-enrolled'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
