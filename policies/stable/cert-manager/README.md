@@ -68,6 +68,10 @@ settles (PROGRESSING True→False), then `cert-manager-ingress-cert`.
 
 ## Argo CD agent signing CA (opt-in, hub only)
 
+The full two-path agent architecture, including the team agents AutoShift builds itself, is
+documented in [docs/gitops-agent.md](../../../docs/gitops-agent.md). This section covers only the
+signing certificate authority this policy issues.
+
 The Red Hat Advanced Cluster Management GitOps add-on derives the entire Argo CD agent public key
 infrastructure from a single secret, `argocd-agent-ca`, in the hub Argo CD namespace. From it the
 GitOpsCluster controller signs the principal serving certificate, the resource proxy certificate,

@@ -1,0 +1,103 @@
+object-templates-raw: |
+  # HUB teardown, at two scopes, both driven by the same 'uninstall' value on a
+  # gitops-dev-team-<team> label. Doing nothing is the default: only that value removes anything.
+  #
+  #   on a SPOKE's label   that cluster leaves the team. Its credentials and mapping go.
+  #   on THIS hub's label  the team is finished. Its whole principal goes.
+  #
+  # Rendering nothing is the normal result. customMessage.compliant in policy-generator-config.yaml
+  # says as much, so a bare Compliant is not mistaken for a teardown that failed to happen.
+  #
+  # No dependency on the spoke removal, deliberately. An ACM dependency resolves against the SAME
+  # cluster's copy of the other policy, and the spoke half is placed on spokes, so requiring it here
+  # would leave this Pending forever. Ordering is not needed anyway: revoking first only makes the
+  # departing agent fail to authenticate, which is the intended end state regardless.
+  #
+  # PER CLUSTER. Every managed cluster is read, because the hub holds the credentials for all of
+  # them and a departing cluster cannot remove anything from here itself.
+  {{hub- $mcs := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
+  {{hub- range $_, $mc := ($mcs.items | default list) hub}}
+  {{hub- $mcName := (dig "metadata" "name" "" $mc) hub}}
+  {{hub- range $label, $val := (dig "metadata" "labels" dict $mc) hub}}
+  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) (eq $val "uninstall") hub}}
+  {{hub- $team := replace "autoshift.io/gitops-dev-team-" "" $label hub}}
+  {{hub- $agentNs := printf "openshift-gitops-%s-agent" $team hub}}
+  {{hub- $agentName := printf "%s-%s" $mcName $team hub}}
+  # The agent-to-cluster mapping. Removing it is what actually stops the principal routing to that
+  # agent, so it leads.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub printf "cluster-%s" $agentName hub}}
+        namespace: {{hub $agentNs hub}}
+  # The certificates, and then the secrets they issued into. Both are needed: deleting only the
+  # secret leaves cert-manager to reissue it from the Certificate that is still there.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: {{hub printf "%s-client" $agentName hub}}
+        namespace: {{hub $agentNs hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: {{hub printf "%s-proxy" $agentName hub}}
+        namespace: {{hub $agentNs hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub printf "%s-client-tls" $agentName hub}}
+        namespace: {{hub $agentNs hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub printf "%s-proxy-tls" $agentName hub}}
+        namespace: {{hub $agentNs hub}}
+  # The per-agent namespace, whose name is the agent name. In autonomous mode this holds the hub's
+  # mirror of that cluster's applications, and in managed mode it holds the ones the hub owned for
+  # it. Either way it belongs to a cluster that has left, so it goes with it.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $agentName hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  # THE WHOLE TEAM, when this hub's own label says so. Removing the principal namespace takes the
+  # principal, its certificate authority, the token signing key, the project and every remaining
+  # per-cluster credential with it, so nothing else needs listing here.
+  {{hub- range $label, $val := .ManagedClusterLabels hub}}
+  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) (eq $val "uninstall") hub}}
+  {{hub- $team := replace "autoshift.io/gitops-dev-team-" "" $label hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub printf "openshift-gitops-%s-agent" $team hub}}
+  # Cluster-scoped, so it does not go with the namespace.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{hub printf "argocd-agent-%s-principal" $team hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: {{hub printf "argocd-agent-%s-principal" $team hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

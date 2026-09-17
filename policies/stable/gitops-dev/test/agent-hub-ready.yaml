@@ -8,9 +8,16 @@ object-templates-raw: |
   {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
+  # Hoisted: range rebinds the dot, and the uninstall test below needs this hub's own labels.
+  {{hub- $hubLabels := .ManagedClusterLabels hub}}
   {{hub- range $team, $spec := $teamSpecs hub}}
   {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
-  {{hub- if (dig "enabled" false $agentCfg) hub}}
+  # Skipped once this hub's label for the team reads uninstall. Teardown is driven by the LABEL
+  # while this loop reads CONFIG, so without this test a torn-down team would go on being asserted
+  # and this policy would sit NonCompliant forever. Requiring the operator to clear agent.enabled as
+  # well as setting the label would be the same two-labels-must-move-together trap that already cost
+  # us an afternoon.
+  {{hub- if and (dig "enabled" false $agentCfg) (ne (index $hubLabels (printf "autoshift.io/gitops-dev-team-%s" $team) | default "") "uninstall") hub}}
   {{hub- $agentNs := (printf "openshift-gitops-%s-agent" $team) hub}}
   # The namespace, which exists whenever this policy has ever run. Asserting it means a Compliant
   # verdict can never mean "checked nothing".

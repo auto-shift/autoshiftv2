@@ -1,0 +1,56 @@
+object-templates-raw: |
+  # SPOKE teardown. Acts only on a team whose gitops-dev-team-<team> label on THIS cluster reads
+  # 'uninstall', so the default of doing nothing is the absence of that value rather than a
+  # separate switch. A label that merely disappears removes NOTHING: deletion has to be asked for,
+  # because a typing error in a values file or a clusterset reshuffle would otherwise revoke a
+  # team's agent silently.
+  #
+  # Rendering nothing is the normal result here. Most clusters have no team being torn down, and
+  # customMessage.compliant in policy-generator-config.yaml says so rather than leaving a bare
+  # Compliant that reads as ambiguous.
+  {{hub- range $label, $val := .ManagedClusterLabels hub}}
+  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) (eq $val "uninstall") hub}}
+  {{hub- $team := replace "autoshift.io/gitops-dev-team-" "" $label hub}}
+  {{hub- $teamNs := printf "openshift-gitops-%s" $team hub}}
+  # The agent instance. Removing this stops the process dialling the principal, so it goes first.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: {{hub printf "%s-agent" $team hub}}
+        namespace: {{hub $teamNs hub}}
+  # The credentials it authenticated with. Worth removing even though the hub half revokes the
+  # certificate too, because a private key left on a spoke is a private key left on a spoke.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: argocd-agent-client-tls
+        namespace: {{hub $teamNs hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: argocd-agent-ca
+        namespace: {{hub $teamNs hub}}
+  # The cluster-scoped namespace reader the agent needs for its Namespace informer.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{hub printf "argocd-agent-%s-namespaces" $team hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: {{hub printf "argocd-agent-%s-namespaces" $team hub}}
+  # openshift-gitops-<team> is deliberately NOT removed. In hub and standalone modes that namespace
+  # holds the team's own Argo CD, and even in agent mode it can hold whatever the team deployed into
+  # it. Deleting a namespace deletes everything inside it, which is far beyond taking an agent out.
+  {{hub- end hub}}
+  {{hub- end hub}}

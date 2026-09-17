@@ -53,3 +53,25 @@ Because the `Policy` objects here are hand-written Helm templates (not PolicyGen
 Version pinning still behaves like every other operator: set `config.gitops.versions` (and optional
 `config.gitops.startingCSV`), else the `autoshift.io/gitops-version` label is used — implemented inline
 in `policy-gitops-operator-install.yaml`.
+
+## Argo CD agent
+
+`templates/policy-gitops-agent.yaml` runs the **infrastructure** Argo CD agent principal, in a
+dedicated instance so the principal never shares a process with the instance that reconciles every
+policy on the fleet. Its `sourceNamespaces` is enumerated from the clusters carrying
+`gitops-agent-enroll`, never `'*'`, because a wildcard makes the operator claim every namespace on
+the cluster and locks the per-team principals out of their own agent namespaces.
+
+That lookup is cluster-scoped, so the policy sets
+`hubTemplateOptions.serviceAccountName: autoshift-policy-service-account`. Without it the hub
+template fails with `lookup of cluster-scoped resource 'ManagedCluster/' is not allowed`, and a
+template error puts the policy NonCompliant, which every dependent policy then treats as unmet and
+un-enforces itself over.
+
+`policy-gitops-operator-install.yaml` adds each team principal namespace to
+`ARGOCD_CLUSTER_CONFIG_NAMESPACES`, because OpenShift GitOps reconciles `sourceNamespaces` only for
+a cluster-scoped instance. Comments belong **above** that env key, never inside its value: it is a
+folded scalar, hub templates have no comment syntax, and a `#` line there is folded into the value.
+
+See [docs/gitops-agent.md](../../../docs/gitops-agent.md) for the user-facing guide and
+[policies/stable/gitops-dev](../gitops-dev/README.md) for the per-team agents.
