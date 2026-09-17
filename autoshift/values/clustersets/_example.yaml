@@ -826,6 +826,50 @@ hubClusterSets:
               # destinationNamespaces:
               #   - 'dev-*'
               #   - 'shared-tooling'
+              # Port of the principal's resource proxy service, used in the agent-to-cluster
+              # mapping secret. The hub reaches workload clusters through that proxy.
+              # resourceProxyPort: '9090'
+              # Port the agent dials the principal on. Defaults to the Route's 443.
+              # principalServerPort: '443'
+              # Lifetime of every leaf this team issues: principal, resource proxy, agent client
+              # and hub proxy client. renewBefore must stay comfortably inside duration.
+              # leafDuration: '720h0m0s'
+              # leafRenewBefore: '240h0m0s'
+              # The agent certificate authority for this team. Same keys as config.gitops.agent.ca,
+              # so a team can set its own lifetime or key algorithm independently of the fleet.
+              # ca:
+              #   duration: '8760h0m0s'
+              #   renewBefore: '2160h0m0s'      # MUST stay above duration / 5
+              #   privateKey:
+              #     algorithm: 'RSA'
+              #     size: 4096
+              # Identity pattern the principal accepts. Any common name by default; isolation
+              # between teams rests on each having its own certificate authority, so tighten this
+              # only when you want the pattern to constrain identity too.
+              # auth: 'mtls:CN=([^,]+-dev)'
+              # Namespaces the PRINCIPAL may manage on the hub. Wildcard by default because it
+              # mirrors into a namespace per connected cluster.
+              # principalNamespaces:
+              #   - '*'
+              # Namespaces the AGENT may manage on its own cluster.
+              # agentNamespaces:
+              #   - '*'
+              # Whether the principal may CREATE per-cluster namespaces. Turning this off also lets
+              # the create verb be dropped from its ClusterRole.
+              # enableNamespaceCreate: true
+              # destinationBasedMapping: true
+              # Lifetime of the JWT signing key this team's principal uses. The key itself is
+              # stable across renewals (rotationPolicy Never reuses it), so this governs the
+              # certificate wrapped around it rather than the key.
+              # jwtDuration IS the cryptoperiod of the signing key when rotation is on: the key
+              # changes at renewal. Rotating invalidates outstanding agent tokens and the agents
+              # re-authenticate, which is cheap and has been observed working unattended.
+              # jwtDuration: '8760h0m0s'
+              # jwtRenewBefore: '2160h0m0s'
+              # Always (default) rotates the signing key at each renewal, matching Red Hat's advice
+              # to rotate periodically. Never pins the key forever, which avoids re-authentication
+              # but leaves a signing key with no cryptoperiod at all.
+              # jwtRotationPolicy: 'Always'
               # Repositories the team may deploy FROM. Defaults to any.
               # sourceRepos:
               #   - 'https://github.com/acme/dev-apps.git'
