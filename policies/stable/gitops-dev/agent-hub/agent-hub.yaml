@@ -312,7 +312,10 @@ object-templates-raw: |
   {{hub- $enrolled := list hub}}
   {{hub- $agentNames := list hub}}
   {{hub- range $_, $mc := ($mcList.items | default list) hub}}
-  {{hub- if eq (dig (printf "autoshift.io/gitops-dev-team-%s" $team) "" (dig "metadata" "labels" dict $mc)) "agent" hub}}
+  # hasPrefix, not eq: the label carries the mode as agent-managed or agent-autonomous as well as
+  # bare agent. An exact match enrolled nobody once a cluster pinned its mode, dropping that
+  # cluster's client certificate, mapping secret, namespace and sourceNamespaces entry.
+  {{hub- if hasPrefix "agent" (dig (printf "autoshift.io/gitops-dev-team-%s" $team) "" (dig "metadata" "labels" dict $mc)) hub}}
   {{hub- $enrolled = append $enrolled (dig "metadata" "name" "" $mc) hub}}
   {{hub- $agentNames = append $agentNames (printf "%s-%s" (dig "metadata" "name" "" $mc) $team) hub}}
   {{hub- end hub}}

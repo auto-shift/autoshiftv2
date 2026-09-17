@@ -45,5 +45,53 @@ object-templates-raw: |
         namespace: {{hub $agentNs hub}}
       status:
         phase: Available
+  # PER ENROLLED CLUSTER. Everything above is team-scoped, and team-scoped assertions cannot see the
+  # failure mode that actually happens: the team stays healthy while one cluster silently falls out
+  # of enrollment. Two separate bugs did exactly that -- a gate that misread a managed hub, and an
+  # exact label match that stopped matching once a cluster pinned its mode -- and this policy
+  # reported Compliant through both, because musthave never deletes what it already created.
+  {{hub- $mcList := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
+  {{hub- range $_, $mc := ($mcList.items | default list) hub}}
+  {{hub- $mcName := (dig "metadata" "name" "" $mc) hub}}
+  {{hub- if hasPrefix "agent" (dig (printf "autoshift.io/gitops-dev-team-%s" $team) "" (dig "metadata" "labels" dict $mc)) hub}}
+  {{hub- $agentName := printf "%s-%s" $mcName $team hub}}
+  # The agent's own namespace, whose name must equal the agent name for the principal to map it.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $agentName hub}}
+  # The client certificate this cluster's agent authenticates with.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub printf "%s-client-tls" $agentName hub}}
+        namespace: {{hub $agentNs hub}}
+  # The agent-to-cluster mapping. Absent, the principal authenticates the agent and then refuses to
+  # route anything to it, logging only "is not mapped to any cluster".
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub printf "cluster-%s" $agentName hub}}
+        namespace: {{hub $agentNs hub}}
+  # The permit list actually naming this agent. Naming too few namespaces is not an error: the
+  # principal just never propagates the project, and the team's applications never appear.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: default
+        namespace: {{hub $agentNs hub}}
+      spec:
+        sourceNamespaces:
+          - '{{hub $agentName hub}}'
+  {{hub- end hub}}
+  {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
