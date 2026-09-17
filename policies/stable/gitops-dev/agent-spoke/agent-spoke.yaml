@@ -7,7 +7,6 @@ object-templates-raw: |
   {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
-  {{hub- $isHub := ne (index .ManagedClusterLabels "autoshift.io/self-managed") "" hub}}
   {{hub- $clusterName := .ManagedClusterName hub}}
   {{hub- $clusterSets := list hub}}
   {{hub- $mcsList := (lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "") | default dict hub}}
@@ -43,7 +42,15 @@ object-templates-raw: |
   #   agent             the team default from config.gitops.teams.<team>.agent.mode, autonomous
   #   agent-autonomous  the spoke owns its Applications, mirrored to the hub
   #   agent-managed     the hub owns them and the agent pulls them down
-  {{hub- if and (hasPrefix "agent" $mode) (not $isHub) hub}}
+  # Gated on the LABEL ALONE, deliberately not on $isHub. That variable means "carries a
+  # self-managed label at all", which is TRUE for a managed hub as well as a self-managed one, so
+  # `not $isHub` silently stopped this rendering the moment a spoke was promoted to a managed hub.
+  # Nothing appeared to break, because musthave never deletes and the agent kept running on the
+  # objects created while the cluster was still a spoke.
+  #
+  # A managed hub is a managed cluster of the layer above, so it can legitimately run an agent. The
+  # per-team label is the whole answer: if it says agent, this cluster runs that team's agent.
+  {{hub- if hasPrefix "agent" $mode hub}}
   {{hub- $clientMode := (dig "mode" "autonomous" $agentCfg) hub}}
   {{hub- if eq $mode "agent-managed" hub}}{{hub- $clientMode = "managed" hub}}{{hub- end hub}}
   {{hub- if eq $mode "agent-autonomous" hub}}{{hub- $clientMode = "autonomous" hub}}{{hub- end hub}}

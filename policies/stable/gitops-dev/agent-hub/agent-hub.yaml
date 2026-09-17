@@ -8,7 +8,6 @@ object-templates-raw: |
   {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
-  {{hub- $isHub := ne (index .ManagedClusterLabels "autoshift.io/self-managed") "" hub}}
   {{hub- $clusterName := .ManagedClusterName hub}}
   {{hub- $clusterSets := list hub}}
   {{hub- $mcsList := (lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "") | default dict hub}}
@@ -37,7 +36,11 @@ object-templates-raw: |
   {{hub- $pHost := (dig "spec" "host" "" $pRoute) hub}}
   {{hub- $route := (lookup "route.openshift.io/v1" "Route" (printf "openshift-gitops-%s" $team) "argocd-dev-server") | default dict hub}}
   {{hub- $host := (dig "spec" "host" "" $route) hub}}
-  {{hub- if and $isHub $agentOn hub}}
+  # Keyed on the mode, not on $isHub. That variable only means "carries a self-managed label",
+  # which is true for a managed hub as well, so a managed hub running this team's AGENT would also
+  # have rendered this team's PRINCIPAL the moment it defined any team config. The principal belongs
+  # wherever the team's Argo CD instance is, and that is exactly mode hub.
+  {{hub- if and (eq $mode "hub") $agentOn hub}}
   # The team's Argo CD agent principal. It lives in its OWN namespace, not the team's, because
   # enabling the principal requires the application controller to be OFF and the team's instance
   # needs its controller for the applications it deploys itself. Their instance is untouched.
