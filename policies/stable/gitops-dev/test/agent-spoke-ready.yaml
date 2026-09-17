@@ -20,6 +20,8 @@ object-templates-raw: |
       metadata:
         name: argocd-agent-client-tls
         namespace: openshift-gitops-{{hub $team hub}}
+  # The instance, reconciled by the operator. server is deliberately off on an agent instance, so
+  # that component reports Unknown; phase still reaches Available.
   - complianceType: musthave
     objectDefinition:
       apiVersion: argoproj.io/v1beta1
@@ -27,5 +29,31 @@ object-templates-raw: |
       metadata:
         name: {{hub printf "%s-agent" $team hub}}
         namespace: openshift-gitops-{{hub $team hub}}
+      status:
+        phase: Available
+  # THE AGENT IS ACTUALLY THE ONE RUNNING. Asserting the ArgoCD custom resource is not enough: the
+  # operator reports Available off minimum availability, which a HALF-FINISHED rollout satisfies.
+  # At replicas 1 a rolling update needs maxSurge 1, so on a node at its pod limit the new pod never
+  # schedules, the old one keeps serving, and the deployment sits at replicas 2 / updated 1 / ready 1
+  # forever. The agent announces its mode in its authentication token, so the principal goes on
+  # reporting the OLD pod's mode and a mode change appears to have been applied when it has not.
+  #
+  # Progressing is the direct signal: it stays True after a completed rollout and flips to False
+  # with ProgressDeadlineExceeded when one stalls. Replica counts do NOT catch this -- spec.replicas
+  # and readyReplicas both read 1 and look perfectly healthy. The operator owns this deployment, so
+  # maxSurge 0 is not available to us; reporting it is.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: {{hub printf "%s-agent-agent-agent" $team hub}}
+        namespace: openshift-gitops-{{hub $team hub}}
+      status:
+        conditions:
+          - type: Available
+            status: 'True'
+          - type: Progressing
+            status: 'True'
   {{hub- end hub}}
   {{hub- end hub}}

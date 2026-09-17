@@ -108,8 +108,18 @@ spec:
                     enabled: false
                   # Autonomous mode mirrors each spoke Application into a hub namespace named after
                   # its cluster, and those namespaces have to be source namespaces for this instance.
+                  #
+                  # Enumerated, NOT '*'. A wildcard makes the Argo CD operator claim every namespace
+                  # on the cluster: it stamps argocd.argoproj.io/managed-by-cluster-argocd on each
+                  # and writes Application RBAC there. A namespace carries only ONE such claim, so a
+                  # wildcard here silently takes the team principals' agent namespaces away from
+                  # them and their informers are denied with nothing logged above debug.
                   sourceNamespaces:
-                    - '*'
+                    {{ "{{hub" }} range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items | default list {{ "hub}}" }}
+                    {{ "{{hub" }} if and (eq (dig "metadata" "labels" "autoshift.io/gitops-agent-enroll" "" $mc) "true") (ne (dig "metadata" "labels" "local-cluster" "" $mc) "true") {{ "hub}}" }}
+                    - '{{ "{{hub" }} dig "metadata" "name" "" $mc {{ "hub}}" }}'
+                    {{ "{{hub" }} end {{ "hub}}" }}
+                    {{ "{{hub" }} end {{ "hub}}" }}
                   argoCDAgent:
                     principal:
                       enabled: true

@@ -96,6 +96,21 @@ spec:
                   {{ "{{hub-" }} $agentCfg := (index (index (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) "gitops" | default dict) "agent" | default dict) {{ "hub}}" }}
                   {{ "{{hub-" }} $namespaces = printf "%s,%s" $namespaces (index $agentCfg "namespace" | default "openshift-gitops-agent") {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
+                  # TEAM PRINCIPAL namespaces. Not a privilege choice: OpenShift GitOps reconciles
+                  # sourceNamespaces only for a CLUSTER-SCOPED instance, logging "Skipping
+                  # sourceNamespaces reconciliation for namespace <ns>" at info and nothing else
+                  # otherwise. A principal that cannot manage its source namespaces never claims its
+                  # agent namespaces, so its Application informer is denied and applications flow in
+                  # neither direction while every policy still reports Compliant. The instance this
+                  # elevates runs controller.enabled: false and reconciles nothing; the team's own
+                  # Argo CD keeps its scope from the -cluster-scoped label above.
+                  {{ "{{hub-" }} $mcLabels := .ManagedClusterLabels {{ "hub}}" }}
+                  {{ "{{hub-" }} $teamSpecs := (dig "gitops" "teams" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
+                  {{ "{{hub-" }} range $team, $spec := $teamSpecs {{ "hub}}" }}
+                  {{ "{{hub-" }} if and (dig "agent" "enabled" false $spec) (eq (index $mcLabels (printf "autoshift.io/gitops-dev-team-%s" $team) | default "") "hub") {{ "hub}}" }}
+                  {{ "{{hub-" }} $namespaces = printf "%s,openshift-gitops-%s-agent" $namespaces $team {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} $namespaces {{ "hub}}" }}
               # Argo CD agent principal settings. Both are read only by the principal component, so
               # they are inert on a cluster that does not run one, and the keys are set everywhere

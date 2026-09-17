@@ -253,6 +253,39 @@ object-templates-raw: |
           # The operator names it after the instance: <instance>-agent-principal.
           name: {{hub printf "%s-agent-principal" $pName hub}}
           namespace: {{hub $agentNs hub}}
+  # The clusters enrolled in THIS team's agent, enumerated once and reused below for both the
+  # project's source namespaces in managed mode and the per-cluster client certificates.
+  {{hub- $mcList := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
+  {{hub- $enrolled := list hub}}
+  {{hub- $agentNames := list hub}}
+  {{hub- range $_, $mc := ($mcList.items | default list) hub}}
+  # hasPrefix, not eq: the label carries the mode as agent-managed or agent-autonomous as well as
+  # bare agent. An exact match enrolled nobody once a cluster pinned its mode, dropping that
+  # cluster's client certificate, mapping secret, namespace and sourceNamespaces entry.
+  {{hub- if hasPrefix "agent" (dig (printf "autoshift.io/gitops-dev-team-%s" $team) "" (dig "metadata" "labels" dict $mc)) hub}}
+  {{hub- $enrolled = append $enrolled (dig "metadata" "name" "" $mc) hub}}
+  {{hub- $agentNames = append $agentNames (printf "%s-%s" (dig "metadata" "name" "" $mc) $team) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  # Where the team's Application resources LIVE. This is the UNION of both modes, not a choice
+  # between them:
+  #   autonomous  the spoke owns them, in the team's own GitOps namespace there
+  #   managed     the HUB owns them, in the per-cluster namespace the principal maps each agent to
+  # The hub side uses the AGENT NAME, not the cluster name. Red Hat is explicit that this is a
+  # namespace-to-agent mapping model and that "the namespace names specified in sourceNamespaces
+  # must exactly match the corresponding Agent names" -- get it wrong and the principal can neither
+  # deploy nor monitor, in either mode, without reporting anything.
+  #
+  # Both are listed because mode is a PER-AGENT setting, so one team may legitimately run some
+  # clusters managed and others autonomous at the same time. Listing both costs nothing: source
+  # namespaces are a permit list, and naming one the team does not use permits nothing. Naming too
+  # FEW does not error either, which is the trap -- the principal silently skips propagating the
+  # project and the team's applications simply never appear.
+  {{hub- $modeNs := list (printf "openshift-gitops-%s" $team) hub}}
+  {{hub- range $an := $agentNames hub}}
+  {{hub- $modeNs = append $modeNs $an hub}}
+  {{hub- end hub}}
+  {{hub- $srcNs := (dig "sourceNamespaces" $modeNs $agentCfg) hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: argoproj.io/v1beta1
@@ -263,12 +296,34 @@ object-templates-raw: |
       spec:
         controller:
           enabled: false
+        # NOT '*'. A wildcard makes the Argo CD operator claim EVERY namespace on the cluster: it
+        # stamps argocd.argoproj.io/managed-by-cluster-argocd on each one and writes a Role and
+        # RoleBinding granting Application access there. A namespace can only carry ONE such claim,
+        # so two wildcard principals fight over all of them and the loser is locked out of its own
+        # agent namespaces, with no error anywhere -- the informer is simply denied. Listing exactly
+        # the namespaces this team owns is both least privilege and the only way the infra and team
+        # principals coexist.
         sourceNamespaces:
-          - '*'
+          {{hub- range $srcNs hub}}
+          - '{{hub . hub}}'
+          {{hub- end hub}}
         argoCDAgent:
           principal:
             enabled: true
-            destinationBasedMapping: {{hub (dig "destinationBasedMapping" true $agentCfg) hub}}
+            # FALSE, and the default matters. This selects how the principal maps an Application
+            # to an agent, and it is not symmetric:
+            #   false  by NAMESPACE. The hub namespace is the agent name, and on the way BACK the
+            #          principal rewrites the incoming namespace to the agent name
+            #          (`if !m.destinationBasedMapping { incoming.SetNamespace(namespace) }` in
+            #          internal/manager/application/application.go).
+            #   true   by DESTINATION. The principal leaves the namespace alone, so a status update
+            #          arrives naming the SPOKE's namespace and is looked up under that name on the
+            #          hub, where nothing of that name exists.
+            # With true, spec still flows hub to spoke and the applications appear, so it looks like
+            # it works -- but status never comes back and the hub shows empty sync and health
+            # forever. Namespace mapping is also what the rest of this policy already assumes, since
+            # sourceNamespaces above is a list of agent names.
+            destinationBasedMapping: {{hub (dig "destinationBasedMapping" false $agentCfg) hub}}
             # Matches any common name by default. Isolation between teams rests on each team having
             # its OWN certificate authority intermediate, not on this pattern, so tighten it when a
             # deployment wants identity constrained by the pattern as well.
@@ -306,39 +361,6 @@ object-templates-raw: |
   # treated. Override destinationNamespaces to widen it; nothing here grants cluster-scoped
   # resources, because clusterResourceWhitelist is deliberately absent.
   {{hub- $destNs := (dig "destinationNamespaces" (list (printf "%s-*" $team)) $agentCfg) hub}}
-  # The clusters enrolled in THIS team's agent, enumerated once and reused below for both the
-  # project's source namespaces in managed mode and the per-cluster client certificates.
-  {{hub- $mcList := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
-  {{hub- $enrolled := list hub}}
-  {{hub- $agentNames := list hub}}
-  {{hub- range $_, $mc := ($mcList.items | default list) hub}}
-  # hasPrefix, not eq: the label carries the mode as agent-managed or agent-autonomous as well as
-  # bare agent. An exact match enrolled nobody once a cluster pinned its mode, dropping that
-  # cluster's client certificate, mapping secret, namespace and sourceNamespaces entry.
-  {{hub- if hasPrefix "agent" (dig (printf "autoshift.io/gitops-dev-team-%s" $team) "" (dig "metadata" "labels" dict $mc)) hub}}
-  {{hub- $enrolled = append $enrolled (dig "metadata" "name" "" $mc) hub}}
-  {{hub- $agentNames = append $agentNames (printf "%s-%s" (dig "metadata" "name" "" $mc) $team) hub}}
-  {{hub- end hub}}
-  {{hub- end hub}}
-  # Where the team's Application resources LIVE. This is the UNION of both modes, not a choice
-  # between them:
-  #   autonomous  the spoke owns them, in the team's own GitOps namespace there
-  #   managed     the HUB owns them, in the per-cluster namespace the principal maps each agent to
-  # The hub side uses the AGENT NAME, not the cluster name. Red Hat is explicit that this is a
-  # namespace-to-agent mapping model and that "the namespace names specified in sourceNamespaces
-  # must exactly match the corresponding Agent names" -- get it wrong and the principal can neither
-  # deploy nor monitor, in either mode, without reporting anything.
-  #
-  # Both are listed because mode is a PER-AGENT setting, so one team may legitimately run some
-  # clusters managed and others autonomous at the same time. Listing both costs nothing: source
-  # namespaces are a permit list, and naming one the team does not use permits nothing. Naming too
-  # FEW does not error either, which is the trap -- the principal silently skips propagating the
-  # project and the team's applications simply never appear.
-  {{hub- $modeNs := list (printf "openshift-gitops-%s" $team) hub}}
-  {{hub- range $an := $agentNames hub}}
-  {{hub- $modeNs = append $modeNs $an hub}}
-  {{hub- end hub}}
-  {{hub- $srcNs := (dig "sourceNamespaces" $modeNs $agentCfg) hub}}
   # mustonlyhave, NOT musthave. Argo CD ships a `default` project wildcarded to
   # destinations '*' and clusterResourceWhitelist '*'. musthave MERGES lists and never removes a
   # field, so a scoped destination would be APPENDED to the wildcard and the restriction would be

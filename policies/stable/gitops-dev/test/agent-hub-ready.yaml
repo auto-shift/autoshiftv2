@@ -45,6 +45,23 @@ object-templates-raw: |
         namespace: {{hub $agentNs hub}}
       status:
         phase: Available
+  # The principal deployment's rollout, for the same reason the spoke asserts the agent's: the
+  # operator reports the custom resource Available off minimum availability, which a stalled rolling
+  # update still satisfies while the OLD pod serves the OLD configuration. Progressing stays True
+  # after a completed rollout and goes False on ProgressDeadlineExceeded.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: {{hub printf "%s-principal-agent-principal" $team hub}}
+        namespace: {{hub $agentNs hub}}
+      status:
+        conditions:
+          - type: Available
+            status: 'True'
+          - type: Progressing
+            status: 'True'
   # PER ENROLLED CLUSTER. Everything above is team-scoped, and team-scoped assertions cannot see the
   # failure mode that actually happens: the team stays healthy while one cluster silently falls out
   # of enrollment. Two separate bugs did exactly that -- a gate that misread a managed hub, and an
