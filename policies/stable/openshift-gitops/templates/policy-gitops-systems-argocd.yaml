@@ -94,6 +94,15 @@ spec:
             {{ "{{hub-" }} $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $infra := (index (index $cfg "gitops" | default dict) "infra" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $pgEnabled := (index (index $cfg "gitops" | default dict) "policyGenerator" | default false) {{ "hub}}" }}
+            {{ "{{hub-" }} $agentCfg := (index $infra "agent" | default dict) {{ "hub}}" }}
+            {{ "{{hub-" }} $agentNs := (index $infra "agentNamespace" | default "openshift-gitops-infra-agent") {{ "hub}}" }}
+            {{ "{{hub-" }} $infraModeDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") {{ "hub}}" }}
+            {{ "{{hub-" }} $infraMode := (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraModeDefault) {{ "hub}}" }}
+            {{ "{{hub-" }} $pRoute := (lookup "route.openshift.io/v1" "Route" $agentNs "infra-principal-agent-principal") | default dict {{ "hub}}" }}
+            {{ "{{hub-" }} $pHost := (dig "spec" "host" "" $pRoute) {{ "hub}}" }}
+            {{ "{{hub-" }} $clientMode := (index $agentCfg "mode" | default "autonomous") {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $infraMode "agent-managed" {{ "hub}}" }}{{ "{{hub-" }} $clientMode = "managed" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
+            {{ "{{hub-" }} if eq $infraMode "agent-autonomous" {{ "hub}}" }}{{ "{{hub-" }} $clientMode = "autonomous" {{ "hub}}" }}{{ "{{hub-" }} end {{ "hub}}" }}
             {{ "{{hub-" }} $server := (index $infra "server" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $serverAutoscale := (index $server "autoscale" | default dict) {{ "hub}}" }}
             {{ "{{hub-" }} $serverLimits := (index $server "limits" | default dict) {{ "hub}}" }}
@@ -177,6 +186,35 @@ spec:
                   namespace: {{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}
                 spec:
                   disableAdmin: {{ "{{hub" }} ternary (index $infra "disableAdmin") {{ $.Values.gitops.disableAdmin }} (hasKey $infra "disableAdmin") {{ "hub}}" }}
+                  {{ "{{hub-" }} if and (hasPrefix "agent" $infraMode) (ne $pHost "") {{ "hub}}" }}
+                  # The Argo CD agent, when gitops-infra selects an agent mode. It belongs on THIS instance
+                  # rather than a sibling: a namespace holds one Argo CD, and the Applications worth mirroring
+                  # are the ones this instance already owns. This policy is placed on hub clustersets, which is
+                  # also the only place an infra instance exists, so the placement is the gate. The credentials
+                  # and the principal come from the gitops-agent policies. Guarded on the principal Route,
+                  # because an empty address yields an agent that never connects. The server stays enabled,
+                  # unlike a team agent: this is the cluster's working Argo CD and its console is expected to
+                  # keep answering.
+                  argoCDAgent:
+                    agent:
+                      enabled: true
+                      allowedNamespaces:
+                        {{ "{{hub-" }} range (index $agentCfg "agentNamespaces" | default (list "*")) {{ "hub}}" }}
+                        - '{{ "{{hub" }} . {{ "hub}}" }}'
+                        {{ "{{hub-" }} end {{ "hub}}" }}
+                      # Without creds the agent falls back to userpass, waits on a secret nothing creates, and never
+                      # becomes ready. The operator turns this into ARGOCD_AGENT_CREDS, and mtls:any is what makes
+                      # it present the client certificate below.
+                      creds: 'mtls:any'
+                      client:
+                        mode: {{ "{{hub" }} $clientMode {{ "hub}}" }}
+                        principalServerAddress: {{ "{{hub" }} $pHost {{ "hub}}" }}
+                        principalServerPort: '{{ "{{hub" }} (index $agentCfg "principalServerPort" | default "443") {{ "hub}}" }}'
+                      tls:
+                        insecure: false
+                        rootCASecretName: gitops-agent-ca
+                        secretName: gitops-agent-client-tls
+                  {{ "{{hub-" }} end {{ "hub}}" }}
                   server:
                     {{ "{{hub-" }} if (ternary (index $serverAutoscale "enabled") {{ $.Values.gitops.server.autoscale.enabled }} (hasKey $serverAutoscale "enabled")) {{ "hub}}" }}
                     autoscale:

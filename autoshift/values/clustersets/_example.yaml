@@ -1151,6 +1151,12 @@ hubClusterSets:
       #   'agent'             a local agent instance, mode from config.gitops.agent.mode
       #   'agent-autonomous'  the spoke owns its Applications and mirrors them to the hub
       #   'agent-managed'     the hub owns them and the agent pulls them down
+      #
+      # The agent modes are aimed at a HUB, where infra-gitops already exists and the agent attaches
+      # to it. On a managed hub that mirrors the AutoShift Applications it owns, which is the fleet
+      # view. A plain spoke may opt in by setting an agent mode here, and gets an instance of its
+      # own in openshift-gitops-infra, but it owns no Applications of its own, so that instance is
+      # empty until something puts Applications in it.
       gitops-infra: 'push'
       gitops-agent: 'false'                  # run the agent principal on this hub
       # Deploy the ADD-ON agent on THIS cluster rather than the one AutoShift builds. Opt-in: the
@@ -1175,7 +1181,11 @@ hubClusterSets:
       gitops-version: 'openshift-gitops-operator.v1.21.4'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
-      gitops-namespace: 'openshift-gitops'          # Override ArgoCD namespace per-cluster
+      # Always stamped, on every cluster. Set it here or per cluster to override; leave it out
+      # and it is stamped from config.gitops.namespace, else the global gitopsNamespace. It is
+      # the single source of truth for the namespace, because the Helm policies and the
+      # PolicyGenerator ones cannot share a default any other way.
+      gitops-namespace: 'openshift-gitops'
       gitops-cluster-ca-bundle: 'true'              # Inject cluster trusted CA bundle into ArgoCD repo server
       gitops-console-plugin: 'false'                  # GitOps console plugin (tech preview) — adds ArgoCD to OCP console
 

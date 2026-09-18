@@ -5,6 +5,9 @@ object-templates-raw: |
   #
   # Rendering nothing is the normal result, since most clusters have no team being torn down.
   # customMessage.compliant in policy-generator-config.yaml states that.
+  # Read before the loop: range rebinds the dot, so .ManagedClusterLabels is unreachable inside it.
+  {{hub- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") hub}}
+  {{hub- $isHubCluster := eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub" hub}}
   {{hub- range $label, $val := .ManagedClusterLabels hub}}
   {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
   {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") hub}}
@@ -14,7 +17,13 @@ object-templates-raw: |
   # and failing without config would leave the objects behind forever. The namespace falls back to
   # the default, which is what it was if config never named another.
   {{hub- $spec := (index (dig "gitops" "teams" dict (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml | default dict)) $team | default dict) hub}}
-  {{hub- $teamNs := (dig "namespace" (printf "openshift-gitops-%s" $team) $spec) hub}}
+  # Where this team's Argo CD instance lives on THIS cluster, defaulting to openshift-gitops-<team>.
+  # infra on a HUB is the exception: policy-gitops-systems-argocd places infra-gitops there, in the
+  # gitops namespace, so infra resolves to that and attaches rather than building a rival instance.
+  # That policy is placed on hub clustersets only, so on a spoke there is nothing to attach to and
+  # infra takes the openshift-gitops-<team> default like anyone else.
+  {{hub- $nsDefault := ternary $gitopsNs (printf "openshift-gitops-%s" $team) (and $isInfra $isHubCluster) hub}}
+  {{hub- $teamNs := (dig "namespace" $nsDefault $spec) hub}}
   # The agent instance. Removing this stops the process dialling the principal, so it goes first.
   - complianceType: mustnothave
     objectDefinition:

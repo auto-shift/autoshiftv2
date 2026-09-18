@@ -15,9 +15,26 @@ from:
 | A team | `gitops-dev-team-<team>` | `config.gitops.teams.<team>` |
 | infra | `gitops-infra` | `config.gitops.infra` |
 
-infra is handled as a team named `infra`. Its instance and principal namespaces come from
-`namespace` and `agentNamespace`, which default to `openshift-gitops-<team>` and
-`openshift-gitops-<team>-agent`, so infra points them at the shared gitops namespaces.
+infra is handled as a team named `infra`, with one structural difference: on a hub its Argo CD
+already exists. `policy-gitops-systems-argocd` places `infra-gitops` in the gitops namespace, and it
+is placed on hub clustersets only. So infra's agent ATTACHES there, and that chart carries the agent
+stanza, because a namespace holds one Argo CD and the Applications worth mirroring are the ones that
+instance already owns.
+
+On a spoke there is no such instance, so infra builds one like a team does, in
+`openshift-gitops-<team>`. A spoke derives `push`, so this happens only where someone sets
+`gitops-infra` to an agent mode deliberately. The case that pays is a MANAGED HUB, which runs its
+own AutoShift and owns real Applications; a plain spoke is configured by push from its hub and has
+nothing of its own to mirror.
+
+The principal namespace is `agentNamespace`, default `openshift-gitops-<team>-agent`, and is this
+chart's own on both sides.
+
+The instance namespace is per cluster and the two halves resolve it independently, which is correct:
+a hub template sees the TARGET cluster's labels, so the hub half reads the hub's gitops namespace
+and the spoke half reads the spoke's. They are different clusters' namespaces and are meant to
+differ. What must match across the halves is the agent name and the principal namespace, and both
+derive from cluster name plus team, so they agree by construction.
 
 The Red Hat Advanced Cluster Management add-on is the alternative, not part of this chart: see
 `policy-gitops-addon` in [openshift-gitops](../openshift-gitops/README.md). The two are mutually
@@ -77,12 +94,11 @@ on, including the synthetic `infra` entry. Change it in one place and you must c
 other.
 
 **Build the mode map before looping, never iterate labels directly.** Iterating
-`.ManagedClusterLabels` skips infra on any cluster without a `gitops-infra` label, which produced a
-principal and no per-cluster credentials at all. The map always carries `infra`, deriving `hub` on a
-hub and `push` elsewhere.
+`.ManagedClusterLabels` skips infra on any cluster without a `gitops-infra` label. The map always
+carries `infra`, deriving `hub` on a hub and `push` elsewhere.
 
 **The enrollment label key differs for infra.** Reading `gitops-dev-team-infra` finds no clusters,
-so infra got a principal with no mapping, certificate or namespace. Use the `$enrollKey` ternary.
+leaving a principal with no mapping, certificate or namespace. Use the `$enrollKey` ternary.
 
 **Match the mode with `hasPrefix "agent"`, never `eq "agent"`.** The label carries the mode, so the
 value may be `agent`, `agent-managed` or `agent-autonomous`.

@@ -29,6 +29,9 @@ object-templates-raw: |
   {{hub- $modes = set $modes (replace "autoshift.io/gitops-dev-team-" "" $label) $val hub}}
   {{hub- end hub}}
   {{hub- end hub}}
+  # Read before the loop: range rebinds the dot, so .ManagedClusterLabels is unreachable inside it.
+  {{hub- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") hub}}
+  {{hub- $isHubCluster := eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub" hub}}
   {{hub- $infraDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") hub}}
   {{hub- $modes = set $modes "infra" (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraDefault) hub}}
   {{hub- range $team, $mode := $modes hub}}
@@ -37,7 +40,13 @@ object-templates-raw: |
   {{hub- $spec := ternary (dig "gitops" "infra" dict $cfg) (index $teamSpecs $team | default dict) $isInfra hub}}
   # Where this team's Argo CD instance lives. Defaults to openshift-gitops-<team>; infra overrides
   # it to the shared gitops namespace, which is what lets infra use this same machinery.
-  {{hub- $teamNs := (dig "namespace" (printf "openshift-gitops-%s" $team) $spec) hub}}
+  # Where this team's Argo CD instance lives on THIS cluster, defaulting to openshift-gitops-<team>.
+  # infra on a HUB is the exception: policy-gitops-systems-argocd places infra-gitops there, in the
+  # gitops namespace, so infra resolves to that and attaches rather than building a rival instance.
+  # That policy is placed on hub clustersets only, so on a spoke there is nothing to attach to and
+  # infra takes the openshift-gitops-<team> default like anyone else.
+  {{hub- $nsDefault := ternary $gitopsNs (printf "openshift-gitops-%s" $team) (and $isInfra $isHubCluster) hub}}
+  {{hub- $teamNs := (dig "namespace" $nsDefault $spec) hub}}
   {{hub- $rbac := "g, system:cluster-admins, role:admin\n" hub}}
   {{hub- range (dig "gitops_rbac_policies" list $spec) hub}}
   {{hub- $rbac = printf "%s%s\n" $rbac . hub}}
@@ -66,6 +75,12 @@ object-templates-raw: |
   # including a managed hub, which is a managed cluster of the layer above. Do not add an $isHub
   # test here: that variable is true for a managed hub as well as a self-managed one.
   {{hub- if hasPrefix "agent" $mode hub}}
+  # The Argo CD instance the agent runs inside, and whether this chart builds it. A team always gets
+  # one of its own, named <team>-agent. infra on a HUB attaches to infra-gitops, which
+  # policy-gitops-systems-argocd owns and which carries infra's agent stanza, so nothing is built
+  # here. infra on a spoke has no such instance, so it gets one like a team does.
+  {{hub- $infraAttaches := and $isInfra $isHubCluster hub}}
+  {{hub- $instName := ternary "infra-gitops" (printf "%s-agent" $team) $infraAttaches hub}}
   {{hub- $clientMode := (dig "mode" "autonomous" $agentCfg) hub}}
   {{hub- if eq $mode "agent-managed" hub}}{{hub- $clientMode = "managed" hub}}{{hub- end hub}}
   {{hub- if eq $mode "agent-autonomous" hub}}{{hub- $clientMode = "autonomous" hub}}{{hub- end hub}}
@@ -145,15 +160,16 @@ object-templates-raw: |
       subjects:
         - kind: ServiceAccount
           # The operator names the agent's service account after the Argo CD instance:
-          # <instance>-agent-agent, and the instance here is <team>-agent.
-          name: {{hub printf "%s-agent-agent-agent" $team hub}}
+          # <instance>-agent-agent.
+          name: {{hub printf "%s-agent-agent" $instName hub}}
           namespace: {{hub $teamNs hub}}
+  {{hub- if not $infraAttaches hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: argoproj.io/v1beta1
       kind: ArgoCD
       metadata:
-        name: {{hub printf "%s-agent" $team hub}}
+        name: {{hub $instName hub}}
         namespace: {{hub $teamNs hub}}
       spec:
         server:
@@ -179,6 +195,7 @@ object-templates-raw: |
               insecure: false
               rootCASecretName: gitops-agent-ca
               secretName: gitops-agent-client-tls
+  {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}

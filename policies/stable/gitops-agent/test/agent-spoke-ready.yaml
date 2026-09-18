@@ -6,13 +6,22 @@ object-templates-raw: |
   # fromConfigMap: without this cluster's values there is nothing to assert against, so failing is
   # more honest than asserting defaults.
   {{hub- $rcmCfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  # Read before the loop: range rebinds the dot, so .ManagedClusterLabels is unreachable inside it.
+  {{hub- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") hub}}
+  {{hub- $isHubCluster := eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub" hub}}
   {{hub- range $label, $val := .ManagedClusterLabels hub}}
   {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
   {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (hasPrefix "agent" $val) hub}}
   {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
   {{hub- $cfgAll := $rcmCfg hub}}
   {{hub- $spec := ternary (dig "gitops" "infra" dict $cfgAll) (index (dig "gitops" "teams" dict $cfgAll) $team | default dict) $isInfra hub}}
-  {{hub- $teamNs := (dig "namespace" (printf "openshift-gitops-%s" $team) $spec) hub}}
+  # Where this team's Argo CD instance lives on THIS cluster, defaulting to openshift-gitops-<team>.
+  # infra on a HUB is the exception: policy-gitops-systems-argocd places infra-gitops there, in the
+  # gitops namespace, so infra resolves to that and attaches rather than building a rival instance.
+  # That policy is placed on hub clustersets only, so on a spoke there is nothing to attach to and
+  # infra takes the openshift-gitops-<team> default like anyone else.
+  {{hub- $nsDefault := ternary $gitopsNs (printf "openshift-gitops-%s" $team) (and $isInfra $isHubCluster) hub}}
+  {{hub- $teamNs := (dig "namespace" $nsDefault $spec) hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
