@@ -37,9 +37,8 @@
 # The private key has to live in this secret because the controller signs agent certificate signing
 # requests online. An offline or hardware-held root can only ever delegate an intermediate here.
 object-templates-raw: |
-  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $gitopsCfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) hub}}
-  {{hub- $agentCfg := (index $gitopsCfg "agent" | default dict) hub}}
+  {{hub- $gitopsCfg := (dig "gitops" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) hub}}
+  {{hub- $agentCfg := (dig "infra" "addon" dict $gitopsCfg) hub}}
   {{hub- $caCfg := (index $agentCfg "ca" | default dict) hub}}
   {{hub- $issuer := (index $caCfg "issuer" | default dict) hub}}
   {{hub- $key := (index $caCfg "privateKey" | default dict) hub}}

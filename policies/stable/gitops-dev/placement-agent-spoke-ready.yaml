@@ -7,6 +7,8 @@ spec:
   # Which clusters run a team agent. The per-team gitops-dev-team-<team>: 'agent' labels decide
   # WHICH teams; this one exists so placement can tell whether the cluster runs any at all, because
   # a selector cannot match a label prefix.
+  # Two predicates are ORed. The first is the team agents; the second is infra, which carries its
+  # mode on gitops-infra rather than on a per-team label.
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -15,6 +17,15 @@ spec:
               operator: In
               values:
                 - 'true'
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops-infra'
+              operator: In
+              values:
+                - 'agent'
+                - 'agent-autonomous'
+                - 'agent-managed'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

@@ -5,8 +5,11 @@ object-templates-raw: |
   # The preamble below is MIRRORED in gitops-dev.yaml, agent-hub/ and agent-spoke/. It derives the
   # per-team loop that all three depend on. Change it in one place and you must change it in all
   # three, or the files silently disagree about which teams exist.
-  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  # fromConfigMap, NOT lookup. A missing rendered-config means this cluster's values are not ready
+  # yet, and every dig below would silently fall back to a default: an agent instance built in
+  # openshift-gitops-<team> when config names another namespace, which musthave then never removes.
+  # fromConfigMap errors instead, so the policy waits rather than creating the wrong objects.
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
   {{hub- $clusterName := .ManagedClusterName hub}}
   {{hub- $clusterSets := list hub}}
@@ -14,18 +17,26 @@ object-templates-raw: |
   {{hub- range $_, $mcs := ($mcsList.items | default list) hub}}
   {{hub- $clusterSets = append $clusterSets $mcs.metadata.name hub}}
   {{hub- end hub}}
+  # infra is handled as a team named infra, driven by gitops-infra instead of
+  # gitops-dev-team-infra, and reading config.gitops.infra instead of config.gitops.teams.infra. The
+  # two differ only in where the mode and the config come from; everything after this point is the
+  # same machinery, which is the point of naming it a team.
   {{hub- range $label, $val := .ManagedClusterLabels hub}}
-  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) hub}}
-  {{hub- $team := replace "autoshift.io/gitops-dev-team-" "" $label hub}}
+  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
+  {{hub- if or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label))) hub}}
+  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
   {{hub- $mode := $val hub}}
-  {{hub- $spec := (index $teamSpecs $team | default dict) hub}}
+  {{hub- $spec := ternary (dig "gitops" "infra" dict $cfg) (index $teamSpecs $team | default dict) $isInfra hub}}
+  # Where this team's Argo CD instance lives. Defaults to openshift-gitops-<team>; infra overrides
+  # it to the shared gitops namespace, which is what lets infra use this same machinery.
+  {{hub- $teamNs := (dig "namespace" (printf "openshift-gitops-%s" $team) $spec) hub}}
   {{hub- $rbac := "g, system:cluster-admins, role:admin\n" hub}}
   {{hub- range (dig "gitops_rbac_policies" list $spec) hub}}
   {{hub- $rbac = printf "%s%s\n" $rbac . hub}}
   {{hub- end hub}}
   {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
   {{hub- $agentOn := (dig "enabled" false $agentCfg) hub}}
-  {{hub- $agentNs := printf "openshift-gitops-%s-agent" $team hub}}
+  {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) hub}}
   {{hub- $caCfg := (dig "ca" dict $agentCfg) hub}}
   {{hub- $keyCfg := (dig "privateKey" dict $caCfg) hub}}
   {{hub- $leafDur := (dig "leafDuration" "720h0m0s" $agentCfg) hub}}
@@ -34,7 +45,7 @@ object-templates-raw: |
   {{hub- $pSvc := printf "%s-agent-principal" $pName hub}}
   {{hub- $pRoute := (lookup "route.openshift.io/v1" "Route" $agentNs $pSvc) | default dict hub}}
   {{hub- $pHost := (dig "spec" "host" "" $pRoute) hub}}
-  {{hub- $route := (lookup "route.openshift.io/v1" "Route" (printf "openshift-gitops-%s" $team) "argocd-dev-server") | default dict hub}}
+  {{hub- $route := (lookup "route.openshift.io/v1" "Route" $teamNs "argocd-dev-server") | default dict hub}}
   {{hub- $host := (dig "spec" "host" "" $route) hub}}
   # The principal belongs wherever the team's Argo CD instance is, which is mode hub. Keyed on the
   # mode rather than $isHub, because that variable is also true for a managed hub, which may run
@@ -280,7 +291,7 @@ object-templates-raw: |
   # namespaces are a permit list, and naming one the team does not use permits nothing. Naming too
   # FEW does not error either, which is the trap: the principal silently skips propagating the
   # project and the team's applications simply never appear.
-  {{hub- $modeNs := list (printf "openshift-gitops-%s" $team) hub}}
+  {{hub- $modeNs := list $teamNs hub}}
   {{hub- range $an := $agentNames hub}}
   {{hub- $modeNs = append $modeNs $an hub}}
   {{hub- end hub}}

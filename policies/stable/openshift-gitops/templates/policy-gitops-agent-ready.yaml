@@ -44,7 +44,7 @@ spec:
           object-templates-raw: |
             {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
             {{ "{{hub" }} $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
-            {{ "{{hub" }} $agentCfg := (index (index (index (index $rcm "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) "agent" | default dict) {{ "hub}}" }}
+            {{ "{{hub" }} $agentCfg := (dig "gitops" "infra" "addon" dict (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict)) {{ "hub}}" }}
             {{ "{{hub" }} $propagate := (index $agentCfg "propagateHubCA" | default true) {{ "hub}}" }}
             {{ "{{hub" }} $agentNs := (index $agentCfg "namespace" | default "openshift-gitops-agent") {{ "hub}}" }}
             #

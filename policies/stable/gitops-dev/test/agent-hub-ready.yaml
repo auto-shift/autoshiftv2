@@ -5,9 +5,16 @@
 # nothing was examined. The placement decides whether this policy exists at all; once it exists it
 # always checks something.
 object-templates-raw: |
-  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  # fromConfigMap: without this cluster's values there is nothing to assert against, so failing is
+  # more honest than asserting defaults.
+  {{hub- $rcmCfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $cfg := $rcmCfg hub}}
+  # infra joins the iteration as a team named infra when this hub's gitops-infra label puts it in
+  # hub mode, which is the only mode where its principal lives here.
   {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
+  {{hub- if eq (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default "hub") "hub" hub}}
+  {{hub- $teamSpecs = merge (dict "infra" (dig "gitops" "infra" dict $cfg)) $teamSpecs hub}}
+  {{hub- end hub}}
   # Hoisted: range rebinds the dot, and the uninstall test below needs this hub's own labels.
   {{hub- $hubLabels := .ManagedClusterLabels hub}}
   {{hub- range $team, $spec := $teamSpecs hub}}
@@ -16,7 +23,7 @@ object-templates-raw: |
   # while this loop reads config, so a torn-down team would otherwise stay asserted here forever.
   # Keying on the label alone means the operator sets one value rather than two.
   {{hub- if and (dig "enabled" false $agentCfg) (ne (index $hubLabels (printf "autoshift.io/gitops-dev-team-%s" $team) | default "") "uninstall") hub}}
-  {{hub- $agentNs := (printf "openshift-gitops-%s-agent" $team) hub}}
+  {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) hub}}
   # The namespace, which exists whenever this policy has ever run. Asserting it means a Compliant
   # verdict can never mean "checked nothing".
   - complianceType: musthave

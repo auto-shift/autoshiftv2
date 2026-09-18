@@ -55,9 +55,7 @@ spec:
             noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
           object-templates-raw: |
             {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
-            {{ "{{hub" }} $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
-            {{ "{{hub" }} $agentCfg := (index (index (index (index $rcm "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) "agent" | default dict) {{ "hub}}" }}
-            {{ "{{hub" }} $clusterSets := (index $agentCfg "clusterSets" | default list) {{ "hub}}" }}
+            {{ "{{hub" }} $agentCfg := (dig "gitops" "infra" "addon" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
             {{ "{{hub" }} $serverAddress := (index $agentCfg "serverAddress" | default "") {{ "hub}}" }}
             {{ "{{hub" }} $serverPort := (index $agentCfg "serverPort" | default "") {{ "hub}}" }}
             {{ "{{hub" }} $agentMode := (index $agentCfg "mode" | default "autonomous") {{ "hub}}" }}
@@ -241,52 +239,6 @@ spec:
                     - key: cluster.open-cluster-management.io/unavailable
                       operator: Exists
             #
-            # Bind cluster sets into the PRINCIPAL namespace so the placement above can see them.
-            # A Placement with no clusterSets selects across the bindings in its own namespace, and
-            # this namespace is not the one the push-model policy binds into, so without these the
-            # placement reports NoManagedClusterSetBindings and selects nothing at all.
-            #
-            # config.gitops.agent.clusterSets wins when set, which is how a MANAGED hub names its own
-            # spoke cluster sets: the layer that authors this policy is the one above and does not
-            # know them. Left empty, fall back to the cluster sets this chart was rendered with,
-            # which are the right ones on a self-managed hub.
-            {{ "{{hub" }} if $clusterSets {{ "hub}}" }}
-            {{ "{{hub" }} range $cs := $clusterSets {{ "hub}}" }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: cluster.open-cluster-management.io/v1beta2
-                kind: ManagedClusterSetBinding
-                metadata:
-                  name: {{ "{{hub" }} $cs {{ "hub}}" }}
-                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
-                spec:
-                  clusterSet: {{ "{{hub" }} $cs {{ "hub}}" }}
-            {{ "{{hub" }} end {{ "hub}}" }}
-            {{ "{{hub" }} else {{ "hub}}" }}
-            {{- range $clusterSet, $value := .Values.managedClusterSets }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: cluster.open-cluster-management.io/v1beta2
-                kind: ManagedClusterSetBinding
-                metadata:
-                  name: {{ $clusterSet }}
-                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
-                spec:
-                  clusterSet: {{ $clusterSet }}
-            {{- end }}
-            {{- range $clusterSet, $value := .Values.hubClusterSets }}
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: cluster.open-cluster-management.io/v1beta2
-                kind: ManagedClusterSetBinding
-                metadata:
-                  name: {{ $clusterSet }}
-                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
-                spec:
-                  clusterSet: {{ $clusterSet }}
-            {{- end }}
-            {{ "{{hub" }} end {{ "hub}}" }}
-            #
             # The add-on itself. The controller derives the whole agent public key infrastructure
             # from the argocd-agent-ca secret in this namespace: principal serving certificate,
             # resource proxy certificate, the trust bundle it pushes to each spoke, and every agent
@@ -329,6 +281,44 @@ spec:
                       # has: the spoke keeps ownership of its own applications and the hub gains one
                       # real-time view of the fleet. Set 'managed' to make the hub authoritative.
                       mode: {{ "{{hub" }} $agentMode {{ "hub}}" }}
+    # A SECOND ConfigurationPolicy, because this block is LOCAL-templated and the one above is hub
+    # templated. Each ConfigurationPolicy carries its own object-templates-raw, so the two kinds of
+    # templating stay in separate blocks.
+    #
+    # The bindings have to be local. A ManagedClusterSetBinding grants a namespace the use of a
+    # cluster set, and the Placement that reads it runs on THIS cluster, so the names must come from
+    # this cluster's own Red Hat Advanced Cluster Management. A hub template would resolve against
+    # the instance that PLACED the policy, which on a managed hub is the layer above and names sets
+    # that do not exist here.
+    #
+    # Enumerated rather than listed: a managed hub's own sets are not knowable when this policy is
+    # authored, and a versionTag renames a set under blue/green.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-agent-cluster-set-bindings
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            #Indentation Anchor
+            {{ "{{hub-" }} $bindCfg := (dig "gitops" "infra" "addon" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
+            {{ "{{-" }} $ns := "{{ "{{hub" }} (index $bindCfg "namespace" | default "openshift-gitops-agent") {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} range $_, $mcs := ((lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "").items | default list) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ "{{" }} $mcs.metadata.name {{ "}}" }}
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+                spec:
+                  clusterSet: {{ "{{" }} $mcs.metadata.name {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
 ---
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement

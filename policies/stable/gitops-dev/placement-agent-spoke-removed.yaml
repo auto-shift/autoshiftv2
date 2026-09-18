@@ -8,11 +8,17 @@ spec:
   # out of team agents, and the operator doing that will often flip gitops-agent-enrolled to 'false'
   # in the same change that sets a team to 'uninstall'. Selecting only 'true' would un-place the
   # removal policy before it had removed anything, leaving the agent running forever.
+  # Two predicates are ORed: team agents, then infra.
   predicates:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
             - key: 'autoshift.io/gitops-agent-enrolled'
+              operator: Exists
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops-infra'
               operator: Exists
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable

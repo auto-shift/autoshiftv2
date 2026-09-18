@@ -15,13 +15,21 @@ object-templates-raw: |
   #
   # PER CLUSTER. Every managed cluster is read, because the hub holds the credentials for all of
   # them and a departing cluster cannot remove anything from here itself.
+  # Hoisted: range rebinds the dot, and both loops need the policy namespace to read a cluster's
+  # rendered config.
+  {{hub- $polNs := .PolicyMetadata.namespace hub}}
+  # lookup, NOT fromConfigMap: this walks EVERY managed cluster, and a cluster with no
+  # rendered-config is normal. fromConfigMap would fail the whole teardown over one unrelated
+  # cluster.
+  {{hub- $hubTeams := (dig "gitops" "teams" dict (index ((lookup "v1" "ConfigMap" $polNs (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml | default dict)) hub}}
   {{hub- $mcs := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
   {{hub- range $_, $mc := ($mcs.items | default list) hub}}
   {{hub- $mcName := (dig "metadata" "name" "" $mc) hub}}
   {{hub- range $label, $val := (dig "metadata" "labels" dict $mc) hub}}
-  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) (eq $val "uninstall") hub}}
-  {{hub- $team := replace "autoshift.io/gitops-dev-team-" "" $label hub}}
-  {{hub- $agentNs := printf "openshift-gitops-%s-agent" $team hub}}
+  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
+  {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") hub}}
+  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
+  {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) (index (dig "gitops" "teams" dict (index ((lookup "v1" "ConfigMap" $polNs (printf "%s.rendered-config" $mcName)).data | default dict) "config" | default "" | fromYaml | default dict)) $team | default dict)) hub}}
   {{hub- $agentName := printf "%s-%s" $mcName $team hub}}
   # The agent-to-cluster mapping. Removing it is what actually stops the principal routing to that
   # agent, so it leads.
@@ -78,14 +86,15 @@ object-templates-raw: |
   # principal, its certificate authority, the token signing key, the project and every remaining
   # per-cluster credential with it, so nothing else needs listing here.
   {{hub- range $label, $val := .ManagedClusterLabels hub}}
-  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) (eq $val "uninstall") hub}}
-  {{hub- $team := replace "autoshift.io/gitops-dev-team-" "" $label hub}}
+  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
+  {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") hub}}
+  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
   - complianceType: mustnothave
     objectDefinition:
       apiVersion: v1
       kind: Namespace
       metadata:
-        name: {{hub printf "openshift-gitops-%s-agent" $team hub}}
+        name: {{hub (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) (index $hubTeams $team | default dict)) hub}}
   # Cluster-scoped, so it does not go with the namespace.
   - complianceType: mustnothave
     objectDefinition:

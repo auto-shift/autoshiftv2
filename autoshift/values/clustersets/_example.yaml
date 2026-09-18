@@ -623,72 +623,72 @@ hubClusterSets:
         # enable flags are the gitops-agent and gitops-agent-ca labels below. Technology Preview in
         # Red Hat Advanced Cluster Management 2.17 with OpenShift GitOps 1.21, so it is off unless
         # both the label and this block are set.
-        agent:
-          # Namespace for the DEDICATED principal Argo CD instance. Deliberately not the main Argo
-          # CD namespace: the Red Hat Advanced Cluster Management side of this is Technology
-          # Preview, and in autonomous mode the principal mirrors every spoke Application into a hub
-          # namespace named after its cluster, so the hosting instance grows a namespace and a cache
-          # per managed cluster. The agent certificate authority and the certificates derived from
-          # it all live here.
-          namespace: 'openshift-gitops-agent'
-          logLevel: 'info'
-          # Cluster sets to bind into the Argo CD namespace so the agent enrollment placement can
-          # see them. Leave empty on a self-managed hub: the push-model policy already binds the
-          # right ones. On a MANAGED hub set this to that hub's OWN spoke cluster sets, because the
-          # layer that authors the policy binds its own names, which are not that hub's.
-          clusterSets: []
-          # clusterSets:
-          #   - 'managed'
-          # Whether the add-on ships the agent trust bundle to each spoke itself. Turn it off only
-          # where the organization distributes that trust by its own means.
-          propagateHubCA: true
-          # Where agents dial the principal. Empty lets the add-on derive it from the principal
-          # Route. Set them when the principal is reached through something else, such as an
-          # internal load balancer or a private ingress controller.
-          serverAddress: ''
-          serverPort: ''
-          # Agent mode. 'autonomous' (the default here) leaves the spoke owning its Application
-          # resources and mirrors them to the hub for visibility and for sync or terminate.
-          # 'managed' makes the hub the source of truth, which puts the agent in competition with
-          # the policies AutoShift already uses to deliver configuration, so it is not the default.
-          mode: 'autonomous'
-          # How the principal maps an Application to an agent. false maps by NAMESPACE, which is the
-          # hub namespace named after the cluster; true maps by the Application's destination.
-          #
-          # Keep it false unless you have a reason. The setting is not symmetric, and it only shows
-          # in MANAGED mode: with true the principal leaves an incoming status update's namespace
-          # alone, so the update names the SPOKE's namespace and is looked up under that name on the
-          # hub, where nothing of that name exists. Applications reach the spoke and the hub then
-          # shows sync and health empty forever. Autonomous mode is unaffected either way, because
-          # the agent mirrors into the hub namespace that already matches its agent name.
-          destinationBasedMapping: false
-          # The signing certificate authority the add-on derives the ENTIRE agent public key
-          # infrastructure from: principal serving certificate, resource proxy certificate, the
-          # trust bundle pushed to every spoke, and each agent client certificate.
-          #
-          # Leave the gitops-agent-ca label off and the add-on generates a self-signed authority per
-          # hub. That is turnkey, and it is also a fleet of unrelated roots chaining to nothing the
-          # organization already trusts. Turn the label on and cert-manager issues it instead.
-          ca:
-            # The signer. Defaults to the built-in autoshift-ca, which makes the agent authority an
-            # intermediate under the same root that signs the API server, Ingress and component
-            # certificates. Point it at your own issuer to chain the agent mesh to an existing
-            # public key infrastructure -- a `ca` issuer over your root, Vault, Venafi, step-ca.
-            # The signer must be able to issue a CA certificate, so public ACME cannot serve here.
-            issuer:
-              name: 'autoshift-ca'
-              kind: 'ClusterIssuer'
-              group: 'cert-manager.io'
-            # renewBefore MUST stay above duration / 5. The add-on overwrites this secret with a
-            # self-signed authority of its own once the certificate passes 80% of its lifetime, and
-            # the customer chain is then gone with no error raised anywhere. These defaults renew at
-            # 25%, comfortably ahead of that. Change one and you must change the other.
-            duration: '8760h0m0s'
-            renewBefore: '2160h0m0s'
-            # Defaults to RSA.
-            privateKey:
-              algorithm: 'RSA'
-              size: 4096
+        # Infra GitOps. Two mutually exclusive ways to run an infra agent live under here: agent,
+        # which AutoShift builds itself and is the default, and addon, the Red Hat Advanced
+        # Cluster Management GitOps add-on. A cluster runs one or the other, never both.
+        infra:
+          # THE ADD-ON. Opt-in: it brings its own GitOps installer and allows a single agent for
+          # each cluster. Turn it on for a cluster with no cert-manager, where the self-signed
+          # authority it generates is the point.
+          addon:
+            # Namespace for the DEDICATED principal Argo CD instance. Deliberately not the main Argo
+            # CD namespace: the Red Hat Advanced Cluster Management side of this is Technology
+            # Preview, and in autonomous mode the principal mirrors every spoke Application into a hub
+            # namespace named after its cluster, so the hosting instance grows a namespace and a cache
+            # per managed cluster. The agent certificate authority and the certificates derived from
+            # it all live here.
+            namespace: 'openshift-gitops-agent'
+            logLevel: 'info'
+            # Whether the add-on ships the agent trust bundle to each spoke itself. Turn it off only
+            # where the organization distributes that trust by its own means.
+            propagateHubCA: true
+            # Where agents dial the principal. Empty lets the add-on derive it from the principal
+            # Route. Set them when the principal is reached through something else, such as an
+            # internal load balancer or a private ingress controller.
+            serverAddress: ''
+            serverPort: ''
+            # Agent mode. 'autonomous' (the default here) leaves the spoke owning its Application
+            # resources and mirrors them to the hub for visibility and for sync or terminate.
+            # 'managed' makes the hub the source of truth, which puts the agent in competition with
+            # the policies AutoShift already uses to deliver configuration, so it is not the default.
+            mode: 'autonomous'
+            # How the principal maps an Application to an agent. false maps by NAMESPACE, which is the
+            # hub namespace named after the cluster; true maps by the Application's destination.
+            #
+            # Keep it false unless you have a reason. The setting is not symmetric, and it only shows
+            # in MANAGED mode: with true the principal leaves an incoming status update's namespace
+            # alone, so the update names the SPOKE's namespace and is looked up under that name on the
+            # hub, where nothing of that name exists. Applications reach the spoke and the hub then
+            # shows sync and health empty forever. Autonomous mode is unaffected either way, because
+            # the agent mirrors into the hub namespace that already matches its agent name.
+            destinationBasedMapping: false
+            # The signing certificate authority the add-on derives the ENTIRE agent public key
+            # infrastructure from: principal serving certificate, resource proxy certificate, the
+            # trust bundle pushed to every spoke, and each agent client certificate.
+            #
+            # Leave the gitops-agent-ca label off and the add-on generates a self-signed authority per
+            # hub. That is turnkey, and it is also a fleet of unrelated roots chaining to nothing the
+            # organization already trusts. Turn the label on and cert-manager issues it instead.
+            ca:
+              # The signer. Defaults to the built-in autoshift-ca, which makes the agent authority an
+              # intermediate under the same root that signs the API server, Ingress and component
+              # certificates. Point it at your own issuer to chain the agent mesh to an existing
+              # public key infrastructure -- a `ca` issuer over your root, Vault, Venafi, step-ca.
+              # The signer must be able to issue a CA certificate, so public ACME cannot serve here.
+              issuer:
+                name: 'autoshift-ca'
+                kind: 'ClusterIssuer'
+                group: 'cert-manager.io'
+              # renewBefore MUST stay above duration / 5. The add-on overwrites this secret with a
+              # self-signed authority of its own once the certificate passes 80% of its lifetime, and
+              # the customer chain is then gone with no error raised anywhere. These defaults renew at
+              # 25%, comfortably ahead of that. Change one and you must change the other.
+              duration: '8760h0m0s'
+              renewBefore: '2160h0m0s'
+              # Defaults to RSA.
+              privateKey:
+                algorithm: 'RSA'
+                size: 4096
         #
         # Infra (main) ArgoCD instance config: the same knobs as teams.<team> below, plus the
         # infra-only fields server.autoscale, controller.statusProcessors,
@@ -731,6 +731,21 @@ hubClusterSets:
         #
         # Full table: docs/values-reference.md, "OpenShift GitOps".
         # infra:
+        #   # Where the infra instance and its agent principal live. Both default to today's
+        #   # values, so the keys exist for the agent modes rather than for ordinary use.
+        #   namespace: 'openshift-gitops'
+        #   agentNamespace: 'openshift-gitops-agent'
+        #   # Infra's agent, selected per cluster by the gitops-infra label. The project values are
+        #   # what make infra different from a team: infra configures whole clusters, so it needs
+        #   # every destination and cluster-scoped resources, where a team gets neither.
+        #   agent:
+        #     enabled: false
+        #     caIssuer: 'autoshift-ca'
+        #     destinationNamespaces:
+        #       - '*'
+        #     clusterResources:
+        #       - group: '*'
+        #         kind: '*'
         #   rbac_policies:
         #     - 'g, system:cluster-admins, role:admin'
         #     - 'g, cluster-admins, role:admin'
@@ -1126,9 +1141,22 @@ hubClusterSets:
       # Management 2.17. Hub-only labels: cluster-type hub selects the self-managed hub AND every
       # managed hub, so setting these in a managed hub's clusterset values enables that hub alone
       # and nothing above it.
+      # What shape of infra Argo CD this cluster runs. The same mode set the per-team
+      # gitops-dev-team-<team> labels take, so infra and teams read alike.
+      #   'hub'               infra-gitops runs here. Placed by clusterset membership, so a hub
+      #                       gets this whether or not the label is set
+      #   'push'              no local instance; the hub deploys in through the cluster secret
+      #                       argo-acm-importer registers. The default for a spoke
+      #   'standalone'        a local instance, owning its own Applications, reporting to nothing
+      #   'agent'             a local agent instance, mode from config.gitops.agent.mode
+      #   'agent-autonomous'  the spoke owns its Applications and mirrors them to the hub
+      #   'agent-managed'     the hub owns them and the agent pulls them down
+      gitops-infra: 'push'
       gitops-agent: 'false'                  # run the agent principal on this hub
-      # Deploy an agent on THIS cluster, dialling the principal on the hub that manages it. A spoke
-      # label, unlike the two hub labels here; the hub never enrolls itself.
+      # Deploy the ADD-ON agent on THIS cluster rather than the one AutoShift builds. Opt-in: the
+      # add-on brings its own GitOps installer and allows one agent for each cluster, so the
+      # gitops-infra agent modes are the default path. Turn this on for a cluster with no
+      # cert-manager, where the add-on's self-signed authority is the whole point.
       gitops-agent-enroll: 'false'
       # Who issues the agent signing certificate authority, the one secret the add-on derives the
       # whole agent public key infrastructure from. Three states:
