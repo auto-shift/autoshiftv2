@@ -105,9 +105,15 @@ spec:
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} $mcLabels := .ManagedClusterLabels {{ "hub}}" }}
                   {{ "{{hub-" }} $teamSpecs := (dig "gitops" "teams" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
+                  # infra joins the map so its principal namespace is covered too. Without it, Red Hat
+                  # OpenShift GitOps skips sourceNamespaces reconciliation for that instance and no
+                  # application ever reaches the agent.
+                  {{ "{{hub-" }} $teamSpecs = set $teamSpecs "infra" (dig "gitops" "infra" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
                   {{ "{{hub-" }} range $team, $spec := $teamSpecs {{ "hub}}" }}
-                  {{ "{{hub-" }} if and (dig "agent" "enabled" false $spec) (eq (index $mcLabels (printf "autoshift.io/gitops-dev-team-%s" $team) | default "") "hub") {{ "hub}}" }}
-                  {{ "{{hub-" }} $namespaces = printf "%s,openshift-gitops-%s-agent" $namespaces $team {{ "hub}}" }}
+                  {{ "{{hub-" }} $modeKey := ternary "autoshift.io/gitops-infra" (printf "autoshift.io/gitops-dev-team-%s" $team) (eq $team "infra") {{ "hub}}" }}
+                  {{ "{{hub-" }} $modeDflt := ternary "hub" "push" (eq (index $mcLabels "autoshift.io/cluster-type" | default "") "hub") {{ "hub}}" }}
+                  {{ "{{hub-" }} if and (dig "agent" "enabled" false $spec) (eq (index $mcLabels $modeKey | default (ternary $modeDflt "" (eq $team "infra"))) "hub") {{ "hub}}" }}
+                  {{ "{{hub-" }} $namespaces = printf "%s,%s" $namespaces (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} $namespaces {{ "hub}}" }}

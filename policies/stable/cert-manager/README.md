@@ -131,7 +131,7 @@ serve here.
 
 Where the certificate authority cannot be reached by cert-manager at all, leave the
 `gitops-agent-ca` label off and deliver the secret by other means. Nothing then renews it
-automatically, and `policy-gitops-agent-ready` becomes the only warning that arrives before the
+automatically, and `policy-gitops-addon-ready` becomes the only warning that arrives before the
 controller overwrites it.
 
 The private key has to live in this secret, because the controller signs agent certificate signing

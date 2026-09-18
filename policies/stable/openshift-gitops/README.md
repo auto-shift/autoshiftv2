@@ -56,7 +56,7 @@ in `policy-gitops-operator-install.yaml`.
 
 ## Argo CD agent
 
-`templates/policy-gitops-agent.yaml` runs the **infrastructure** Argo CD agent principal, in a
+`templates/policy-gitops-addon.yaml` runs the **infrastructure** Argo CD agent principal, in a
 dedicated instance so the principal never shares a process with the instance that reconciles every
 policy on the fleet. Its `sourceNamespaces` is enumerated from the clusters carrying
 `gitops-agent-enroll`, never `'*'`, because a wildcard makes the operator claim every namespace on

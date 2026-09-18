@@ -17,15 +17,24 @@ object-templates-raw: |
   {{hub- range $_, $mcs := ($mcsList.items | default list) hub}}
   {{hub- $clusterSets = append $clusterSets $mcs.metadata.name hub}}
   {{hub- end hub}}
-  # infra is handled as a team named infra, driven by gitops-infra instead of
-  # gitops-dev-team-infra, and reading config.gitops.infra instead of config.gitops.teams.infra. The
-  # two differ only in where the mode and the config come from; everything after this point is the
-  # same machinery, which is the point of naming it a team.
+  # A team-to-mode map, built BEFORE the loop so infra is always present. Iterating labels directly
+  # would skip infra on any cluster without a gitops-infra label, which silently produced no
+  # principal at all: the label would have to be remembered or nothing appeared.
+  #
+  # infra is a team named infra whose mode comes from gitops-infra and whose config comes from
+  # config.gitops.infra. Absent that label it DERIVES: hub on a hub, push anywhere else, which is
+  # the documented default rather than a value someone has to set.
+  {{hub- $modes := dict hub}}
   {{hub- range $label, $val := .ManagedClusterLabels hub}}
-  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
-  {{hub- if or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label))) hub}}
-  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
-  {{hub- $mode := $val hub}}
+  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) hub}}
+  {{hub- $modes = set $modes (replace "autoshift.io/gitops-dev-team-" "" $label) $val hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $infraDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") hub}}
+  {{hub- $modes = set $modes "infra" (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraDefault) hub}}
+  {{hub- range $team, $mode := $modes hub}}
+  {{hub- $isInfra := eq $team "infra" hub}}
+  {{hub- if ne $mode "" hub}}
   {{hub- $spec := ternary (dig "gitops" "infra" dict $cfg) (index $teamSpecs $team | default dict) $isInfra hub}}
   # Where this team's Argo CD instance lives. Defaults to openshift-gitops-<team>; infra overrides
   # it to the shared gitops namespace, which is what lets infra use this same machinery.
@@ -71,12 +80,12 @@ object-templates-raw: |
       apiVersion: cert-manager.io/v1
       kind: Certificate
       metadata:
-        name: argocd-agent-ca
+        name: gitops-agent-ca
         namespace: {{hub $agentNs hub}}
       spec:
         isCA: true
-        commonName: {{hub printf "argocd-agent-ca-%s" $team hub}}
-        secretName: argocd-agent-ca
+        commonName: {{hub printf "gitops-agent-ca-%s" $team hub}}
+        secretName: gitops-agent-ca
         # renewBefore MUST stay above duration/5: past 80 percent of its lifetime the add-on
         # replaces this authority with a self-signed one of its own, silently.
         duration: {{hub (dig "duration" "8760h0m0s" $caCfg) hub}}
@@ -93,11 +102,11 @@ object-templates-raw: |
       apiVersion: cert-manager.io/v1
       kind: Issuer
       metadata:
-        name: argocd-agent-ca
+        name: gitops-agent-ca
         namespace: {{hub $agentNs hub}}
       spec:
         ca:
-          secretName: argocd-agent-ca
+          secretName: gitops-agent-ca
   # Serving certificates for the principal and its resource proxy. The Route host is not known on
   # the first pass, because the Route does not exist until the instance below is created, so the
   # certificate is issued for the in-cluster names first and reissued with the host once the
@@ -107,10 +116,10 @@ object-templates-raw: |
       apiVersion: cert-manager.io/v1
       kind: Certificate
       metadata:
-        name: argocd-agent-principal-tls
+        name: gitops-agent-principal-tls
         namespace: {{hub $agentNs hub}}
       spec:
-        secretName: argocd-agent-principal-tls
+        secretName: gitops-agent-principal-tls
         duration: {{hub $leafDur hub}}
         renewBefore: {{hub $leafRenew hub}}
         dnsNames:
@@ -123,7 +132,7 @@ object-templates-raw: |
         ipAddresses:
           - 127.0.0.1
         issuerRef:
-          name: argocd-agent-ca
+          name: gitops-agent-ca
           kind: Issuer
           group: cert-manager.io
   - complianceType: musthave
@@ -131,10 +140,10 @@ object-templates-raw: |
       apiVersion: cert-manager.io/v1
       kind: Certificate
       metadata:
-        name: argocd-agent-resource-proxy-tls
+        name: gitops-agent-resource-proxy-tls
         namespace: {{hub $agentNs hub}}
       spec:
-        secretName: argocd-agent-resource-proxy-tls
+        secretName: gitops-agent-resource-proxy-tls
         duration: {{hub $leafDur hub}}
         renewBefore: {{hub $leafRenew hub}}
         dnsNames:
@@ -144,7 +153,7 @@ object-templates-raw: |
         ipAddresses:
           - 127.0.0.1
         issuerRef:
-          name: argocd-agent-ca
+          name: gitops-agent-ca
           kind: Issuer
           group: cert-manager.io
   # JWT signing key. Red Hat documents only `argocd-agentctl jwt create-key` to produce this, and
@@ -152,7 +161,8 @@ object-templates-raw: |
   # and testing purposes only. For production environments, use certificates issued by your
   # organization's PKI", so issuing it here is the documented production posture rather than a
   # departure from it. The contract is what matters and it is precisely specified: an Opaque secret
-  # named argocd-agent-jwt carrying a PEM RSA private key in a jwt.key field.
+  # carrying a PEM RSA private key in a jwt.key field. The secret name is ours, set on the
+  # principal's jwt.secretName below.
   #
   # encoding PKCS8 is REQUIRED: cert-manager defaults to PKCS1 for RSA, while the documented format
   # is PKCS#8.
@@ -172,11 +182,11 @@ object-templates-raw: |
       apiVersion: cert-manager.io/v1
       kind: Certificate
       metadata:
-        name: argocd-agent-jwt
+        name: gitops-agent-jwt
         namespace: {{hub $agentNs hub}}
       spec:
-        secretName: argocd-agent-jwt-cert
-        commonName: {{hub printf "argocd-agent-jwt-%s" $team hub}}
+        secretName: gitops-agent-jwt-cert
+        commonName: {{hub printf "gitops-agent-jwt-%s" $team hub}}
         duration: {{hub (dig "jwtDuration" "8760h0m0s" $agentCfg) hub}}
         renewBefore: {{hub (dig "jwtRenewBefore" "2160h0m0s" $agentCfg) hub}}
         privateKey:
@@ -185,7 +195,7 @@ object-templates-raw: |
           encoding: PKCS8
           rotationPolicy: {{hub (dig "jwtRotationPolicy" "Always" $agentCfg) hub}}
         issuerRef:
-          name: argocd-agent-ca
+          name: gitops-agent-ca
           kind: Issuer
           group: cert-manager.io
   # The secret the principal actually reads. Only the private key is carried across; the
@@ -196,7 +206,7 @@ object-templates-raw: |
   # ERRORS on a missing secret and that error fails the WHOLE policy, including the Certificate that
   # would have created it: a deadlock it can never resolve. lookup returns empty instead, so this
   # simply waits and appears on the next pass.
-  {{hub- $jwtSec := (lookup "v1" "Secret" $agentNs "argocd-agent-jwt-cert") | default dict hub}}
+  {{hub- $jwtSec := (lookup "v1" "Secret" $agentNs "gitops-agent-jwt-cert") | default dict hub}}
   {{hub- $jwtKey := (dig "data" "tls.key" "" $jwtSec) hub}}
   {{hub- if ne $jwtKey "" hub}}
   - complianceType: musthave
@@ -205,7 +215,7 @@ object-templates-raw: |
       kind: Secret
       type: Opaque
       metadata:
-        name: argocd-agent-jwt
+        name: gitops-agent-jwt
         namespace: {{hub $agentNs hub}}
       data:
         jwt.key: {{hub $jwtKey hub}}
@@ -223,7 +233,7 @@ object-templates-raw: |
       apiVersion: rbac.authorization.k8s.io/v1
       kind: ClusterRole
       metadata:
-        name: {{hub printf "argocd-agent-%s-principal" $team hub}}
+        name: {{hub printf "gitops-agent-%s-principal" $team hub}}
       rules:
         - apiGroups:
             - argoproj.io
@@ -253,11 +263,11 @@ object-templates-raw: |
       apiVersion: rbac.authorization.k8s.io/v1
       kind: ClusterRoleBinding
       metadata:
-        name: {{hub printf "argocd-agent-%s-principal" $team hub}}
+        name: {{hub printf "gitops-agent-%s-principal" $team hub}}
       roleRef:
         apiGroup: rbac.authorization.k8s.io
         kind: ClusterRole
-        name: {{hub printf "argocd-agent-%s-principal" $team hub}}
+        name: {{hub printf "gitops-agent-%s-principal" $team hub}}
       subjects:
         - kind: ServiceAccount
           # The operator names it after the instance: <instance>-agent-principal.
@@ -272,7 +282,11 @@ object-templates-raw: |
   # hasPrefix, not eq: the label carries the mode, so the value may be agent, agent-managed or
   # agent-autonomous. Everything below is per enrolled cluster, so an exact match would drop that
   # cluster's client certificate, mapping secret, namespace and sourceNamespaces entry.
-  {{hub- if hasPrefix "agent" (dig (printf "autoshift.io/gitops-dev-team-%s" $team) "" (dig "metadata" "labels" dict $mc)) hub}}
+  # The label key differs for infra, which carries its mode on gitops-infra. Reading
+  # gitops-dev-team-infra instead would find no clusters, so infra got a principal and no per-cluster
+  # credentials, mapping or namespace.
+  {{hub- $enrollKey := ternary "autoshift.io/gitops-infra" (printf "autoshift.io/gitops-dev-team-%s" $team) $isInfra hub}}
+  {{hub- if hasPrefix "agent" (dig $enrollKey "" (dig "metadata" "labels" dict $mc)) hub}}
   {{hub- $enrolled = append $enrolled (dig "metadata" "name" "" $mc) hub}}
   {{hub- $agentNames = append $agentNames (printf "%s-%s" (dig "metadata" "name" "" $mc) $team) hub}}
   {{hub- end hub}}
@@ -351,14 +365,14 @@ object-templates-raw: |
                 enabled: true
             tls:
               insecureGenerate: false
-              secretName: argocd-agent-principal-tls
-              rootCASecretName: argocd-agent-ca
+              secretName: gitops-agent-principal-tls
+              rootCASecretName: gitops-agent-ca
             jwt:
               insecureGenerate: false
-              secretName: argocd-agent-jwt
+              secretName: gitops-agent-jwt
             resourceProxy:
-              secretName: argocd-agent-resource-proxy-tls
-              caSecretName: argocd-agent-ca
+              secretName: gitops-agent-resource-proxy-tls
+              caSecretName: gitops-agent-ca
   # The team's AppProject. The principal only propagates AppProjects whose destinations and source
   # namespaces match the agent configuration, and it skips propagation SILENTLY when they do not,
   # so a team whose applications never appear should be checked here first.
@@ -435,7 +449,7 @@ object-templates-raw: |
           - key encipherment
           - client auth
         issuerRef:
-          name: argocd-agent-ca
+          name: gitops-agent-ca
           kind: Issuer
           group: cert-manager.io
   # A second client certificate, for the HUB's Argo CD to authenticate to the principal's resource
@@ -458,7 +472,7 @@ object-templates-raw: |
           - key encipherment
           - client auth
         issuerRef:
-          name: argocd-agent-ca
+          name: gitops-agent-ca
           kind: Issuer
           group: cert-manager.io
   # One namespace per agent on the hub, named EXACTLY for the agent. Red Hat documents this as a
@@ -489,7 +503,7 @@ object-templates-raw: |
   {{hub- $proxySvc := printf "%s-resource-proxy.%s.svc" $pSvc $agentNs hub}}
   # Same guard as the JSON web token key above: the proxy certificate is created by this very
   # policy, so its secret does not exist on the first pass. lookup waits; fromSecret would deadlock.
-  {{hub- $caSec := (lookup "v1" "Secret" $agentNs "argocd-agent-ca") | default dict hub}}
+  {{hub- $caSec := (lookup "v1" "Secret" $agentNs "gitops-agent-ca") | default dict hub}}
   {{hub- $pxSec := (lookup "v1" "Secret" $agentNs (printf "%s-%s-proxy-tls" $mcName $team)) | default dict hub}}
   {{hub- $pxCrt := (dig "data" "tls.crt" "" $pxSec) hub}}
   {{hub- $pxKey := (dig "data" "tls.key" "" $pxSec) hub}}

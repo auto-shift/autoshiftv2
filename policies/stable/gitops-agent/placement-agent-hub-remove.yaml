@@ -1,13 +1,13 @@
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-gitops-dev-agent-hub
+  name: placement-policy-gitops-agent-hub-remove
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Gated by a LABEL rather than by config, deliberately. Placement cannot read
-  # config.gitops.teams.<team>.agent.enabled, so a config-only gate would force the whole decision
-  # in-template, and a hub with no team agents would get a policy that renders nothing and reports
-  # Compliant. An absent policy is unambiguous; a present, empty one is not.
+  # cluster-type hub only, and gitops-agent-teams by Exists rather than by value, for the same
+  # reason the spoke removal placement does: the change that sets a team to 'uninstall' commonly
+  # flips gitops-agent-teams to 'false' at the same time, and un-placing the removal policy before
+  # it has removed anything would leave the principal and every credential behind.
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -17,11 +17,8 @@ spec:
               values:
                 - 'hub'
             - key: 'autoshift.io/gitops-agent-teams'
-              operator: In
-              values:
-                - 'true'
-    # ORed with the above: infra's principal runs on a hub that carries gitops-agent, which is the
-    # existing label for running the agent principal here.
+              operator: Exists
+    # ORed with the above: infra's principal, kept placed while teardown runs.
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
@@ -30,9 +27,7 @@ spec:
               values:
                 - 'hub'
             - key: 'autoshift.io/gitops-agent'
-              operator: In
-              values:
-                - 'true'
+              operator: Exists
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

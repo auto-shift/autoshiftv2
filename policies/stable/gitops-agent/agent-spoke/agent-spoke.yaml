@@ -16,15 +16,24 @@ object-templates-raw: |
   {{hub- range $_, $mcs := ($mcsList.items | default list) hub}}
   {{hub- $clusterSets = append $clusterSets $mcs.metadata.name hub}}
   {{hub- end hub}}
-  # infra is handled as a team named infra, driven by gitops-infra instead of
-  # gitops-dev-team-infra, and reading config.gitops.infra instead of config.gitops.teams.infra. The
-  # two differ only in where the mode and the config come from; everything after this point is the
-  # same machinery, which is the point of naming it a team.
+  # A team-to-mode map, built BEFORE the loop so infra is always present. Iterating labels directly
+  # would skip infra on any cluster without a gitops-infra label, which silently produced no
+  # principal at all: the label would have to be remembered or nothing appeared.
+  #
+  # infra is a team named infra whose mode comes from gitops-infra and whose config comes from
+  # config.gitops.infra. Absent that label it DERIVES: hub on a hub, push anywhere else, which is
+  # the documented default rather than a value someone has to set.
+  {{hub- $modes := dict hub}}
   {{hub- range $label, $val := .ManagedClusterLabels hub}}
-  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
-  {{hub- if or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label))) hub}}
-  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
-  {{hub- $mode := $val hub}}
+  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) hub}}
+  {{hub- $modes = set $modes (replace "autoshift.io/gitops-dev-team-" "" $label) $val hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $infraDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") hub}}
+  {{hub- $modes = set $modes "infra" (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraDefault) hub}}
+  {{hub- range $team, $mode := $modes hub}}
+  {{hub- $isInfra := eq $team "infra" hub}}
+  {{hub- if ne $mode "" hub}}
   {{hub- $spec := ternary (dig "gitops" "infra" dict $cfg) (index $teamSpecs $team | default dict) $isInfra hub}}
   # Where this team's Argo CD instance lives. Defaults to openshift-gitops-<team>; infra overrides
   # it to the shared gitops namespace, which is what lets infra use this same machinery.
@@ -65,7 +74,7 @@ object-templates-raw: |
   # fromSecret errors on a missing secret and that error fails the entire policy, deadlocking the
   # very objects that would create them. lookup returns empty and the spoke half simply appears one
   # pass later. The namespace below is emitted unconditionally so the spoke is never left bare.
-  {{hub- $caSecS := (lookup "v1" "Secret" $agentNs "argocd-agent-ca") | default dict hub}}
+  {{hub- $caSecS := (lookup "v1" "Secret" $agentNs "gitops-agent-ca") | default dict hub}}
   {{hub- $clSecS := (lookup "v1" "Secret" $agentNs (printf "%s-%s-client-tls" $clusterName $team)) | default dict hub}}
   {{hub- $spokeCa := (dig "data" "tls.crt" "" $caSecS) hub}}
   {{hub- $spokeCrt := (dig "data" "tls.crt" "" $clSecS) hub}}
@@ -87,7 +96,7 @@ object-templates-raw: |
       kind: Secret
       type: Opaque
       metadata:
-        name: argocd-agent-ca
+        name: gitops-agent-ca
         namespace: {{hub $teamNs hub}}
       data:
         ca.crt: {{hub $spokeCa hub}}
@@ -97,7 +106,7 @@ object-templates-raw: |
       kind: Secret
       type: kubernetes.io/tls
       metadata:
-        name: argocd-agent-client-tls
+        name: gitops-agent-client-tls
         namespace: {{hub $teamNs hub}}
       data:
         tls.crt: {{hub $spokeCrt hub}}
@@ -113,7 +122,7 @@ object-templates-raw: |
       apiVersion: rbac.authorization.k8s.io/v1
       kind: ClusterRole
       metadata:
-        name: {{hub printf "argocd-agent-%s-namespaces" $team hub}}
+        name: {{hub printf "gitops-agent-%s-namespaces" $team hub}}
       rules:
         - apiGroups:
             - ''
@@ -128,11 +137,11 @@ object-templates-raw: |
       apiVersion: rbac.authorization.k8s.io/v1
       kind: ClusterRoleBinding
       metadata:
-        name: {{hub printf "argocd-agent-%s-namespaces" $team hub}}
+        name: {{hub printf "gitops-agent-%s-namespaces" $team hub}}
       roleRef:
         apiGroup: rbac.authorization.k8s.io
         kind: ClusterRole
-        name: {{hub printf "argocd-agent-%s-namespaces" $team hub}}
+        name: {{hub printf "gitops-agent-%s-namespaces" $team hub}}
       subjects:
         - kind: ServiceAccount
           # The operator names the agent's service account after the Argo CD instance:
@@ -168,8 +177,8 @@ object-templates-raw: |
               principalServerPort: '{{hub (dig "principalServerPort" "443" $agentCfg) hub}}'
             tls:
               insecure: false
-              rootCASecretName: argocd-agent-ca
-              secretName: argocd-agent-client-tls
+              rootCASecretName: gitops-agent-ca
+              secretName: gitops-agent-client-tls
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}

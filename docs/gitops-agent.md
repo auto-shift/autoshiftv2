@@ -23,11 +23,13 @@ alongside one agent for each team.
 
 ## Public key infrastructure
 
-Both paths trust one secret: `argocd-agent-ca` in the principal namespace. Everything else is
-derived from it, including the principal serving certificate, the resource proxy certificate, the
-trust bundle each spoke receives, and every agent client certificate.
+Each path trusts one secret in its principal namespace, and everything else is derived from it:
+the principal serving certificate, the resource proxy certificate, the trust bundle each spoke
+receives, and every agent client certificate. The add-on path calls that secret `argocd-agent-ca`,
+a name the `GitOpsCluster` controller fixes; the AutoShift path calls it `gitops-agent-ca`, because
+there every name is set on the `ArgoCD` CR and so is ours to choose.
 
-The add-on adopts that secret rather than replacing it. Create it with cert-manager before enabling
+The add-on adopts its secret rather than replacing it. Create it with cert-manager before enabling
 the add-on and the whole agent mesh chains to an existing certificate authority. Leave it absent and
 the add-on generates a self-signed authority of its own.
 
@@ -136,9 +138,9 @@ Each path ships an inform policy that asserts the result rather than the intent:
 
 | Policy | What it asserts |
 |---|---|
-| `policy-gitops-agent-ready` | The infrastructure principal is serving, and the trust bundle reached the spokes |
-| `policy-gitops-dev-agent-hub-ready` | For each team: namespace, signing authority, token key, principal, and rollout. For each enrolled cluster: agent namespace, client certificate, mapping secret, and the `AppProject` permit list |
-| `policy-gitops-dev-agent-spoke-ready` | For each team on this cluster: namespace, client certificate, instance, and that the agent rollout completed |
+| `policy-gitops-addon-ready` | The infrastructure principal is serving, and the trust bundle reached the spokes |
+| `policy-gitops-agent-hub-ready` | For each team: namespace, signing authority, token key, principal, and rollout. For each enrolled cluster: agent namespace, client certificate, mapping secret, and the `AppProject` permit list |
+| `policy-gitops-agent-spoke-ready` | For each team on this cluster: namespace, client certificate, instance, and that the agent rollout completed |
 
 A useful manual check is the principal log, which names each agent as it authenticates:
 
@@ -161,7 +163,7 @@ Read the compliance message on the policy before anything else. Rendering nothin
 result, so both agent policies state what a Compliant verdict covered:
 
 ```bash
-oc get policy -n <cluster> policies-autoshift.policy-gitops-dev-agent-spoke \
+oc get policy -n <cluster> policies-autoshift.policy-gitops-agent-spoke \
   -o jsonpath='{.status.details[0].history[0].message}'
 ```
 
@@ -175,7 +177,7 @@ two disagree, which is a defect rather than a configuration error. Confirm it by
 objects the hub distributed:
 
 ```bash
-oc get policy -n <cluster> policies-autoshift.policy-gitops-dev-agent-spoke \
+oc get policy -n <cluster> policies-autoshift.policy-gitops-agent-spoke \
   -o jsonpath='{.spec.policy-templates[0].objectDefinition.spec.object-templates-raw}' \
   | grep -c 'complianceType'
 ```

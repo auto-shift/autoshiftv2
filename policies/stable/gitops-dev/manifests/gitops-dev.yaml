@@ -19,15 +19,24 @@ object-templates-raw: |
   {{hub- range $_, $mcs := ($mcsList.items | default list) hub}}
   {{hub- $clusterSets = append $clusterSets $mcs.metadata.name hub}}
   {{hub- end hub}}
-  # infra is handled as a team named infra, driven by gitops-infra instead of
-  # gitops-dev-team-infra, and reading config.gitops.infra instead of config.gitops.teams.infra. The
-  # two differ only in where the mode and the config come from; everything after this point is the
-  # same machinery, which is the point of naming it a team.
+  # A team-to-mode map, built BEFORE the loop so infra is always present. Iterating labels directly
+  # would skip infra on any cluster without a gitops-infra label, which silently produced no
+  # principal at all: the label would have to be remembered or nothing appeared.
+  #
+  # infra is a team named infra whose mode comes from gitops-infra and whose config comes from
+  # config.gitops.infra. Absent that label it DERIVES: hub on a hub, push anywhere else, which is
+  # the documented default rather than a value someone has to set.
+  {{hub- $modes := dict hub}}
   {{hub- range $label, $val := .ManagedClusterLabels hub}}
-  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
-  {{hub- if or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label))) hub}}
-  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
-  {{hub- $mode := $val hub}}
+  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) hub}}
+  {{hub- $modes = set $modes (replace "autoshift.io/gitops-dev-team-" "" $label) $val hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $infraDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") hub}}
+  {{hub- $modes = set $modes "infra" (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraDefault) hub}}
+  {{hub- range $team, $mode := $modes hub}}
+  {{hub- $isInfra := eq $team "infra" hub}}
+  {{hub- if ne $mode "" hub}}
   {{hub- $spec := ternary (dig "gitops" "infra" dict $cfg) (index $teamSpecs $team | default dict) $isInfra hub}}
   # Where this team's Argo CD instance lives. Defaults to openshift-gitops-<team>; infra overrides
   # it to the shared gitops namespace, which is what lets infra use this same machinery.

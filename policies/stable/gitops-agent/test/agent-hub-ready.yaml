@@ -38,14 +38,14 @@ object-templates-raw: |
       apiVersion: v1
       kind: Secret
       metadata:
-        name: argocd-agent-ca
+        name: gitops-agent-ca
         namespace: {{hub $agentNs hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
       kind: Secret
       metadata:
-        name: argocd-agent-jwt
+        name: gitops-agent-jwt
         namespace: {{hub $agentNs hub}}
   # The principal itself, reconciled by the operator.
   - complianceType: musthave
@@ -80,7 +80,8 @@ object-templates-raw: |
   {{hub- $mcList := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
   {{hub- range $_, $mc := ($mcList.items | default list) hub}}
   {{hub- $mcName := (dig "metadata" "name" "" $mc) hub}}
-  {{hub- if hasPrefix "agent" (dig (printf "autoshift.io/gitops-dev-team-%s" $team) "" (dig "metadata" "labels" dict $mc)) hub}}
+  {{hub- $enrollKey := ternary "autoshift.io/gitops-infra" (printf "autoshift.io/gitops-dev-team-%s" $team) (eq $team "infra") hub}}
+  {{hub- if hasPrefix "agent" (dig $enrollKey "" (dig "metadata" "labels" dict $mc)) hub}}
   {{hub- $agentName := printf "%s-%s" $mcName $team hub}}
   # The agent's own namespace, whose name must equal the agent name for the principal to map it.
   - complianceType: musthave
