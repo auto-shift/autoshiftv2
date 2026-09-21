@@ -319,6 +319,26 @@ object-templates-raw: |
   {{hub- $modeNs = append $modeNs $an hub}}
   {{hub- end hub}}
   {{hub- $srcNs := (dig "sourceNamespaces" $modeNs $agentCfg) hub}}
+  # sourceNamespaces has to be AUTHORITATIVE, and the musthave below cannot make it so: musthave merges
+  # lists, so an entry never leaves and a stale one keeps its namespace claimed. A namespace carries
+  # one argocd.argoproj.io/managed-by-cluster-argocd claim, so that blocks the next legitimate one.
+  #
+  # Read-modify-write, not a partial mustonlyhave: mustonlyhave compares the WHOLE object, so a
+  # partial one strips the metadata and spec defaults the operator owns and then fights it. Starting
+  # from the live object preserves them. status is dropped because it is not ours to assert.
+  #
+  # ORDER IS LOAD-BEARING. Two object-templates naming the same object collapse and the FIRST one
+  # wins; the second has no effect and the policy still reports Compliant. This one must therefore
+  # precede the musthave below, which is what creates the principal on the first pass, when the
+  # lookup here is empty and this block renders nothing.
+  {{hub- $livePrincipal := (lookup "argoproj.io/v1beta1" "ArgoCD" $agentNs $pName) | default dict hub}}
+  {{hub- if not (empty $livePrincipal) hub}}
+  {{hub- $pSpec := set (dig "spec" dict $livePrincipal) "sourceNamespaces" $srcNs hub}}
+  {{hub- $pObj := set (unset $livePrincipal "status") "spec" $pSpec hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      {{hub $pObj | toYaml | autoindent hub}}
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: argoproj.io/v1beta1
@@ -382,23 +402,6 @@ object-templates-raw: |
             resourceProxy:
               secretName: gitops-agent-resource-proxy-tls
               caSecretName: gitops-agent-ca
-  # sourceNamespaces has to be AUTHORITATIVE, and musthave above cannot make it so: musthave merges
-  # lists, so an entry never leaves and a stale one keeps its namespace claimed. A namespace carries
-  # one argocd.argoproj.io/managed-by-cluster-argocd claim, so that blocks the next legitimate one.
-  #
-  # Read-modify-write, not a partial mustonlyhave: mustonlyhave compares the WHOLE object, so a
-  # partial one strips the metadata and spec defaults the operator owns and then fights it. Starting
-  # from the live object preserves them. status is dropped because it is not ours to assert. Guarded
-  # on the lookup because the object does not exist on the first pass, when the musthave above is
-  # what creates it.
-  {{hub- $livePrincipal := (lookup "argoproj.io/v1beta1" "ArgoCD" $agentNs $pName) | default dict hub}}
-  {{hub- if not (empty $livePrincipal) hub}}
-  {{hub- $pSpec := set (dig "spec" dict $livePrincipal) "sourceNamespaces" $srcNs hub}}
-  {{hub- $pObj := set (unset $livePrincipal "status") "spec" $pSpec hub}}
-  - complianceType: mustonlyhave
-    objectDefinition:
-      {{hub $pObj | toYaml | autoindent hub}}
-  {{hub- end hub}}
 
   # The team's AppProject. The principal only propagates AppProjects whose destinations and source
   # namespaces match the agent configuration, and it skips propagation SILENTLY when they do not,

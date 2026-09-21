@@ -5,12 +5,16 @@ solves a different problem, and a cluster can run both at once.
 
 | Path | Who owns it | Principal namespace | Agent name |
 |---|---|---|---|
-| Infrastructure | The Red Hat Advanced Cluster Management for Kubernetes GitOps add-on | `openshift-gitops-agent` | The cluster name |
+| Infrastructure | AutoShift policies | `openshift-gitops-infra-agent` | `<cluster>-infra` |
+| Infrastructure, add-on | The Red Hat Advanced Cluster Management for Kubernetes GitOps add-on | `openshift-gitops-agent` | The cluster name |
 | Team | AutoShift policies | `openshift-gitops-<team>-agent` | `<cluster>-<team>` |
 
-The infrastructure path is turnkey. The GitOps add-on in Red Hat Advanced Cluster Management
-creates the whole public key infrastructure, the agent, and the cluster mapping. The limitation is
-that the add-on is named `gitops-addon`, which allows exactly one agent for each cluster.
+The infrastructure path has two implementations, and a cluster runs one or the other. AutoShift
+builds the agent itself when `gitops-infra` carries an agent mode, which is the default path. The
+GitOps add-on in Red Hat Advanced Cluster Management is the opt-in alternative, selected with
+`gitops-agent-enroll`: it creates the whole public key infrastructure, the agent, and the cluster
+mapping, which suits a cluster with no cert-manager. The limitation is that the add-on is named
+`gitops-addon`, which allows exactly one agent for each cluster.
 
 The team path exists because application teams share clusters. Each team gets its own principal,
 its own signing certificate authority, and a scoped `AppProject`, so one team cannot see or deploy
@@ -48,19 +52,27 @@ that key by its own means.
 
 ## Enable the infrastructure path
 
-On the hub clusterset:
+On the hub clusterset, for either implementation:
 
 ```yaml
 labels:
-  gitops-agent: 'true'      # run the principal on this hub
-  gitops-agent-ca: 'true'   # issue the signing certificate authority with cert-manager
+  gitops-agent: 'true'      # run the infrastructure principal on this hub
 ```
 
-On each managed clusterset:
+Then enroll each cluster. The AutoShift path carries the mode on `gitops-infra`, the same label that
+selects the shape of the infrastructure instance:
 
 ```yaml
 labels:
-  gitops-agent-enroll: 'true'   # deploy the add-on agent here
+  gitops-infra: 'agent-autonomous'   # a local instance, reporting to the hub principal
+```
+
+The add-on path is the alternative, and a cluster runs one or the other:
+
+```yaml
+labels:
+  gitops-agent-enroll: 'true'   # deploy the add-on agent here instead
+  gitops-agent-ca: 'true'       # issue the add-on signing authority with cert-manager
 ```
 
 ## Enable the team path
@@ -95,6 +107,12 @@ labels:
 > certificate, the mapping secret, and the source namespace entry, no agent is ever deployed, and
 > every policy reports `Compliant`.
 
+Enrollment decides reach, and nothing else: a team's applications land only on the clusters whose
+labels name that team. Two teams share a cluster by both being enrolled on it, and each keeps its
+own instance, project and namespaces.
+
+[![Which teams deploy where](diagrams/autoshift-gitops-team-clusters.drawio.svg)](diagrams/autoshift-gitops-team-clusters.drawio.svg)
+
 ## Modes
 
 Mode is a per-agent setting, so one team can run some clusters managed and others autonomous at the
@@ -105,6 +123,11 @@ same time.
 | `agent` | Whatever `config.gitops.teams.<team>.agent.mode` says, default autonomous | Follows the team default |
 | `agent-autonomous` | Autonomous | The spoke. The agent mirrors each one up to the hub |
 | `agent-managed` | Managed | The hub. The agent pulls them down |
+
+The same label also carries the two values that are not agent modes, `standalone` and `push`, so all
+four sit on one scale: where the instance runs, and which side owns the `Application`.
+
+[![AutoShift GitOps modes](diagrams/autoshift-gitops-modes.drawio.svg)](diagrams/autoshift-gitops-modes.drawio.svg)
 
 Autonomous mode fills the gap AutoShift has: the spoke keeps ownership of its own applications, and
 the hub gains one real-time view of the fleet. Managed mode makes the hub authoritative, which puts

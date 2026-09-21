@@ -78,6 +78,31 @@ renders into a ConfigMap that policies read through hub templates. Both paths ar
 [Config and labels](config-and-labels.md), and every available label and config key is listed in the
 [Values reference](values-reference.md).
 
+## GitOps for application teams
+
+AutoShift runs two kinds of Red Hat OpenShift GitOps instance, for two different audiences. The
+infrastructure instance configures the platform, holds cluster-admin, and owns the ApplicationSet
+that deploys every AutoShift policy. A team instance belongs to one application team, stays
+namespaced, and deploys that team's own workloads, which AutoShift does not manage.
+
+Both are driven the same way. The `gitops-infra` label carries the mode for the infrastructure
+instance, and a `gitops-dev-team-<team>` label carries it for each team, so one cluster can run
+several team instances alongside the infrastructure one.
+
+[![Infrastructure and team GitOps](diagrams/autoshift-gitops-infra-vs-team.drawio.svg)](diagrams/autoshift-gitops-infra-vs-team.drawio.svg)
+
+The value of that label picks the mode, and the mode decides where the instance runs and which side
+owns the `Application` resources. A standalone instance runs on the cluster and answers to nothing
+else. Push keeps the instance on the hub and deploys across the cluster boundary. The two agent
+modes run an instance on the cluster and connect it to a principal on the hub, which gives one view
+of every cluster and differ only in whether the hub or the cluster owns the Application.
+
+[![AutoShift GitOps modes](diagrams/autoshift-gitops-modes.drawio.svg)](diagrams/autoshift-gitops-modes.drawio.svg)
+
+Enrollment is a separate question from mode. A team deploys only to the clusters whose labels name
+it, so two teams can share a cluster while each keeps its own instance and namespaces. Both are
+covered in [Argo CD agent](gitops-agent.md).
+
 ## Scaling the fleet
 
 Both of the following reduce to the same primitive: which cluster set a cluster belongs to.
