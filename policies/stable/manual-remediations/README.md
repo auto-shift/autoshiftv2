@@ -35,8 +35,11 @@ sets what a new project is born with, `policy-quota-guard` reports a quota that 
 the rest belongs with whatever creates the application namespace.
 
 Some findings live with the operator they concern rather than here: `cluster-logging-operator-exist`
-and the two audit forwarding rules are covered by `logging`, and
-`container-security-operator-exists` by `container-security`.
+and the two audit forwarding rules are covered by `logging`.
+`container-security-operator-exists` names an operator that Red Hat deprecated in Red Hat Quay 3.16
+and AutoShift does not install. Enable `acs` instead and accept the rule in
+`config.compliance.manualReview.accepted`, as
+[docs/compliance.md](../../../docs/compliance.md#the-container-security-operator) describes.
 
 Findings that cannot be remediated at all are reported by `policy-stig-manual-review` in
 `openshift-compliance-operator`.

@@ -269,7 +269,6 @@ Existing namespaces are unaffected, as are namespaces an operator creates direct
 
 ```yaml
           projectTemplate:
-            enabled: true
             name: 'project-request'
             networkPolicies: false
             quota:
@@ -304,19 +303,26 @@ oc rollout restart deployment/apiserver -n openshift-apiserver
 ### Node and operating system settings
 
 `kubeletEviction`, `auditdConfig` and `sshdAccess` each write node configuration and **roll every
-node in the pools listed**. All three are off by default and the shipped values are the ones the
-profiles check for.
+node in the pools listed**. Each is placed by its own `manual-remediations-<name>` label rather than
+by a key here, so none of them apply until that label is set. Every key below is optional and the
+shipped defaults are the values the profiles check for.
 
 ```yaml
           kubeletEviction:
-            enabled: true
+            evictionHard:
+              imagefs.available: '15%'
           auditdConfig:
-            enabled: true
+            settings:
+              space_left_action: 'email'
           sshdAccess:
-            enabled: true
             AllowGroups:
               - 'core'
 ```
+
+All three take `pools`. `kubeletEviction` also takes `overrides`, keyed by pool name and merged over
+`evictionHard` per key, for a pool whose disks or workload differ. It defaults to every
+`MachineConfigPool` found on the cluster, because naming only master and worker leaves a custom pool
+unhardened. `auditdConfig` and `sshdAccess` default to master and worker.
 
 Read these before turning them on:
 
@@ -330,15 +336,14 @@ Read these before turning them on:
 
 ```yaml
           rejectUnsignedImages:
-            enabled: false
             pools:
               - 'master'
               - 'worker'
 ```
 
 Writes a `MachineConfig` setting `/etc/containers/policy.json` to reject by default. This reboots
-every node in the listed pools and stops unsigned image pulls. Leave it off until image signing is
-in place.
+every node in the listed pools and stops unsigned image pulls. Leave the
+`manual-remediations-reject-unsigned-images` label off until image signing is in place.
 
 ## Audit log forwarding
 

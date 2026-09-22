@@ -267,9 +267,17 @@ Collects all errors and reports them together.
     {{/* diskPartitions.device must be the disk the install actually lands on. rootDeviceHints is
          per host and chooses that disk; the partition MachineConfig is per role and carries one
          device path, so a disagreement silently partitions the wrong disk. Only deviceName can be
-         compared here: size and hardware hints are resolved by Ironic at provision time. */}}
+         compared here: size and hardware hints are resolved by Ironic at provision time.
+
+         An absent device is the more dangerous case, because nothing downstream defaults it. The
+         manifests emit the field unconditionally, so the template resolver writes the literal
+         <no value> into the Ignition config and the node fails its first boot rather than failing
+         here. */}}
     {{- $dp := (dig "config" "clusterInstall" "diskPartitions" dict $cluster) }}
     {{- $dpDevice := (dig "device" "" $dp) }}
+    {{- if and $dpParts (not $dpDevice) }}
+      {{- $errors = append $errors (printf "%s: clusterInstall.diskPartitions.partitions is set but clusterInstall.diskPartitions.device is empty; the partition MachineConfig carries a single device path and an empty one reaches Ignition as <no value>, failing the node on first boot. Set it to the install disk, preferring a /dev/disk/by-id/ path because device names move between boots" $path) }}
+    {{- end }}
     {{- if $dpDevice }}
       {{- range $hostname, $host := $hosts }}
         {{- $hint := (dig "rootDeviceHints" "deviceName" "" $host) }}
