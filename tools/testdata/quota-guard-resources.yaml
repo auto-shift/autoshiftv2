@@ -1,0 +1,44 @@
+# ResourceQuota and LimitRange stubs for policy-quota-guard's spoke lookups. Three cases the
+# template branches on: a compute quota with no LimitRange (the hazard it reports), a compute quota
+# with one (safe), and an object-count quota (ignored, it imposes nothing on pods).
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: unsafe-quota
+  namespace: example-app
+spec:
+  hard:
+    requests.cpu: '4'
+    limits.memory: 16Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: counts-only
+  namespace: example-app
+spec:
+  hard:
+    pods: '10'
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: autoshift-limits
+  namespace: openshift-monitoring
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: locked-shut
+  namespace: openshift-host-network
+spec:
+  hard:
+    limits.cpu: '0'
+    limits.memory: '0'
+    pods: '0'
