@@ -82,11 +82,41 @@ Red Hat Advanced Cluster Management version rather than on the validation suite.
 - **`lookup` calls are restricted to the policy namespace** unless the policy service account has
   been granted wider access. A cross-namespace lookup that works when tested by hand can return
   nothing when the policy runs.
-- **`lookup` returns a Go map, not a string.** A missing resource returns nil, so pipe results
-  through `| default dict` before indexing into them.
+- **`lookup` returns a Go map, not a string.** A missing resource returns nil, so an optional lookup
+  needs `| default dict` before anything indexes into it. Do not reach for that on a lookup the
+  policy cannot work without: see [Failing on missing input](#failing-on-missing-input).
 
 The escaping rules, trim markers, and the `autoindent` requirement are covered in the
 [developer guide](developer-guide.md#hub-template-pitfalls).
+
+## Failing on missing input
+
+A `ConfigurationPolicy` whose `object-templates-raw` resolves to an empty list is **Compliant**.
+There is no object to compare, so there is no violation. A policy that renders nothing when its
+configuration is absent therefore reports the same green as a policy that did its job, and the rule
+it was meant to satisfy keeps failing in the scan. A policy that is placed has been asked for, so
+missing input is an error rather than a reason to do nothing.
+
+This is the standard for new and changed policies. Most existing policies still open with
+`lookup ... | default dict` and report Compliant when the rendered config is absent, so treat the
+guidance below as the target rather than a description of the current codebase.
+
+- **Read required configuration with `fromConfigMap`, not `lookup`.** `fromConfigMap` returns an
+  error when the ConfigMap is absent, and the message names the ConfigMap and namespace. `lookup`
+  returns nil, and `| default dict` then turns that into silence.
+- **A missing key is still silent.** `fromConfigMap` reads the key with the found flag discarded, so
+  a ConfigMap that exists without the key returns an empty string. Check a required key explicitly
+  rather than assuming the read failed loudly.
+- **Failures do not cascade.** Each policy resolves on its own, so one failing to resolve is a fact
+  about that policy. When the rendered config is genuinely missing, every policy reporting it is the
+  accurate signal, not noise.
+- **Prefer failing at render time where the chart can see the problem.** The Helm chart holds both
+  the labels and the configuration, so a member label set without its required configuration key can
+  fail `helm template` and never reach a cluster. Runtime has no `fail` function: neither Sprig's
+  function set nor the resolver's own helpers provide one.
+- **An empty result is not always an error.** An inform policy that reports findings, such as
+  `policy-quota-guard`, is legitimately empty when there is nothing to report. The rule is to fail
+  on missing input, not on empty output.
 
 ## Recovering a stuck policy
 

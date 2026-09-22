@@ -80,8 +80,8 @@ oc get profile.compliance -n openshift-compliance
 
 Alongside the STIG, that includes the NIST 800-53 moderate and high baselines
 (`ocp4-moderate-rev-4`, `ocp4-high-rev-4`), CIS, PCI-DSS, BSI, Essential Eight and NERC-CIP. The
-`-rev-4` and `-1-9` style suffixes are the pinned revisions; the unsuffixed names follow whatever
-ships next.
+`-rev-4` and `-1-9` style suffixes are the pinned revisions; the names without a suffix follow
+whatever ships next.
 
 ## Applying remediations
 
@@ -162,15 +162,19 @@ The member label is `manual-remediations-<policy name without the policy- prefix
 | `imageRegistries` | `ocp-allowed-registries`, `ocp-allowed-registries-for-import` |
 | `classificationBanner` | `classification-banner` |
 | `motd` | `openshift-motd-exists` |
-| `oauth` | `oauth-login-template-set`, `oauth-provider-selection-set`, `oauth-logout-url-set` |
+| `oauth` | `oauth-login-template-set`, `oauth-provider-selection-set`, `oauth-logout-url-set`, `oauth-or-oauthclient-token-maxage` |
 | `routeRateLimits` | `routes-rate-limit` |
-| `projectTemplate` | `project-config-and-template-resource-quota` |
+| `projectTemplate` | `project-config-and-template-resource-quota`, and `-network-policy` when `networkPolicies` is on |
 | `kubeletEviction` | `kubelet-eviction-thresholds-set-hard-imagefs-available`, `-nodefs-available` |
 | `auditdConfig` | `auditd-data-disk-error-action`, `-disk-full-action`, `-retention-flush`, `-retention-space-left-action` |
+| `auditRuleOrder` | `audit-rules-unsuccessful-file-modification-open-rule-order`, `-openat-rule-order`, `-open-by-handle-at-rule-order` |
 | `sshdAccess` | `sshd-limit-user-access` |
-| `clusterProxy` | `cluster-wide-proxy-set` |
+| `clusterProxy` | `cluster-wide-proxy-set`, only where egress goes through a proxy |
 | `rejectUnsignedImages` | `reject-unsigned-images-by-default` |
-| `removeSamplesOperator` | none; stops the Samples Operator pulling from a blocked registry |
+
+`policy-remove-samples-operator` and `policy-quota-guard` take no configuration. The member label is
+the whole interface: the first stops the Samples Operator pulling from a registry `imageRegistries`
+blocks, and the second reports quotas that reject pods.
 
 Every key and its default is in `autoshift/values/clustersets/_example.yaml` under
 `manualRemediations`.
@@ -190,7 +194,7 @@ Every key and its default is in `autoshift/values/clustersets/_example.yaml` und
 
 `allowed` is enforced on every node, and anything not listed cannot be pulled. List every registry
 your enabled policies use, not only the ones above. Running pods keep running, so a missing entry
-appears at the next pull rather than at sync. Enumerate what the cluster uses:
+fails at the next pull rather than at sync. Enumerate what the cluster uses:
 
 ```console
 oc get pods -A -o jsonpath='{..image}' | tr ' ' '\n' | cut -d/ -f1 | sort -u
@@ -229,7 +233,10 @@ value.
 
 ### oauth
 
-The templates are HTML held in Secrets that you create first. Key names are fixed:
+The templates are HTML held in Secrets that you create first. The key names are fixed, and
+OpenShift Container Platform looks for `login.html`, `providers.html` and `errors.html`. A Secret
+whose key does not match falls back to the default page without reporting an error, so the file
+names below matter:
 
 ```console
 oc adm create-login-template > login.html
@@ -250,7 +257,12 @@ sign in after each change.
             providerSelectionTemplateSecret: 'providerselect-template'
             errorTemplateSecret: 'error-template'
             logoutRedirect: 'https://example.com/logged-out'
+            tokenMaxAgeSeconds: 86400
 ```
+
+`logoutRedirect` is written to the `Console` resource rather than `OAuth`, despite the wording of
+the rule. `tokenMaxAgeSeconds` caps the lifetime of an access token and satisfies the NIST
+`oauth-or-oauthclient-token-maxage` rule. Leave it unset to keep the cluster default.
 
 ### routeRateLimits
 
@@ -389,8 +401,8 @@ so there is no day two remediation.
 
 Every one of these rules reports MANUAL, on a partitioned cluster and an unpartitioned one alike.
 The check does not inspect the filesystem, it asks a person to confirm, so partitioning satisfies
-the control an auditor checks without turning the result green. Accept each rule in `manualReview`
-either way, and treat the partitions as the evidence behind that decision.
+the control an auditor checks without turning the result into a `PASS`. Accept each rule in
+`manualReview` either way, and treat the partitions as the evidence behind that decision.
 
 There are five of them, and each checks its own path: `/var/log`, `/var/log/audit`,
 `/var/log/kube-apiserver`, `/var/log/oauth-apiserver` and `/var/log/openshift-apiserver`. A separate
@@ -478,6 +490,12 @@ remediation, and any `INCONSISTENT` result that failed on at least one node, com
 on the cluster so it stays accurate as coverage changes. It stays NonCompliant while anything is
 outstanding, which is the report rather than a fault.
 
+Accepting a finding in `manualReview.accepted` also holds its `ComplianceRemediation` at
+`apply: false`, so a scan running with `autoApply: true` does not change the cluster underneath a
+decision to leave it as it is. A remediation name is the check name plus an optional `-1` or `-2`
+suffix, and both are matched. Accepting a finding that was already remediated reverts it, in the
+same way that adding it to a scan's `exclude` list does.
+
 `INCONSISTENT` means a check returned different results across nodes. Most are simply
 `NOT-APPLICABLE` on one node role and are not worth anyone's time, so only those with a `FAIL` among
 their sources are reported. The detail is on the result itself:
@@ -512,7 +530,7 @@ oc get complianceremediation -n openshift-compliance \
 
 | Symptom | Cause |
 |---|---|
-| No `ScanSettingBinding` appears | `config.compliance.scans` is not set |
+| No `ScanSettingBinding` is created | `config.compliance.scans` is not set |
 | Scan never leaves `LAUNCHING` | the storage class cannot bind on a control plane node; set `compliance-storage-class` |
 | Remediations stay `apply: false` | `autoApply` is false, or `compliance-auto-remediate` is `false` on the cluster |
 | A rule stays `FAIL` after remediating | the scan has not rerun, or the node reboot it needs has not happened |

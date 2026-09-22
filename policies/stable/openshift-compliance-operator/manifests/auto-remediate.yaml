@@ -11,6 +11,18 @@
 # mustonlyhave would be destructive: spec also carries current.object, the whole remediation payload
 # the scan generated, and type.
 #
+# A finding accepted in config.compliance.manualReview.accepted is held at apply: false too.
+# Accepting a finding records that the cluster stays as it is; applying a remediation for it would
+# change the cluster out from under that decision, and policy-stig-manual-review would still report
+# green because the name is accepted. Both lists reach the same apply: false, so accepting a finding
+# that was already remediated reverts it, exactly as adding it to exclude would.
+#
+# Acceptance names a ComplianceCheckResult. One rule needing several objects produces one
+# remediation per object, the second onward carrying a -1, -2 suffix, so the match is the name
+# itself or the name followed by a numeric suffix. A plain hasPrefix would be wrong: rule names
+# prefix one another, and accepting audit-rules-usergroup-modification would silently suppress
+# -group, -gshadow, -opasswd, -passwd and -shadow alongside it.
+#
 # The scan config is read on the hub and passed through as literal YAML; the remediations are looked
 # up SPOKE side, because each cluster has its own set from its own scan. A hub lookup would stamp
 # the hub's remediation names onto every managed cluster.
@@ -20,11 +32,23 @@ object-templates-raw: |
   {{- $spoke := `
   scans:
     {{hub (dig "compliance" "scans" (list) $cfg) | toYaml | autoindent hub}}
+  accepted:
+    {{hub (dig "compliance" "manualReview" "accepted" (list) $cfg) | toYaml | autoindent hub}}
   ` | fromYaml }}
+  {{- $accepted := list }}
+  {{- range $a := (dig "accepted" (list) $spoke) }}
+  {{- $accepted = append $accepted (dig "name" "" $a) }}
+  {{- end }}
   {{- range $scan := (dig "scans" (list) $spoke) }}
   {{- $exclude := (dig "exclude" (list) $scan) }}
   {{- range $rem := (dig "items" (list) ((lookup "compliance.openshift.io/v1alpha1" "ComplianceRemediation" "openshift-compliance" "") | default dict)) }}
   {{- if eq (dig "metadata" "labels" "compliance.openshift.io/suite" "" $rem) $scan.name }}
+  {{- $isAccepted := false }}
+  {{- range $acc := $accepted }}
+  {{- if and $acc (or (eq $rem.metadata.name $acc) (regexMatch (printf "^%s-[0-9]+$" $acc) $rem.metadata.name)) }}
+  {{- $isAccepted = true }}
+  {{- end }}
+  {{- end }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: compliance.openshift.io/v1alpha1
@@ -33,7 +57,7 @@ object-templates-raw: |
         name: {{ $rem.metadata.name }}
         namespace: openshift-compliance
       spec:
-        apply: {{ and (dig "autoApply" false $scan) (not (has $rem.metadata.name $exclude)) }}
+        apply: {{ and (dig "autoApply" false $scan) (not (has $rem.metadata.name $exclude)) (not $isAccepted) }}
   {{- end }}
   {{- end }}
   {{- end }}
