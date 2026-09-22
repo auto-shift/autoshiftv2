@@ -71,30 +71,18 @@ spec:
                   {{ "{{hub-" }} $gitops := (index $renderedConfig "gitops" | default dict) {{ "hub}}" }}
                   {{ "{{hub-" }} $defaultInstance := (index $gitops "defaultInstance" | default false) {{ "hub}}" }}
                   {{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default (printf "%v" (not $defaultInstance)) {{ "hub}}" }}
-              # Base ArgoCD namespace, plus openshift-gitops-<team> for each cluster-scoped dev team on
-              # the cluster, plus openshift-gitops-<team>-agent for each team running an Argo CD agent
-              # principal, plus the infra agent namespace.
+              # The namespaces whose Argo CD instance is CLUSTER SCOPED. Naming one here grants that instance
+              # broad rights, so the list stays narrow: the base Argo CD namespace; openshift-gitops-<team>
+              # only where a team opts in with gitops-dev-team-<team>-cluster-scoped; and each principal
+              # namespace, infra included, for a team whose agent is enabled and whose mode here is hub.
               #
-              # NEITHER a team agent NOR a team principal is listed here, deliberately. Naming a
-              # namespace in this variable makes that Argo CD a CLUSTER-SCOPED instance with broad
-              # rights over the cluster. Infra GitOps is meant to hold that power; team GitOps
-              # serves application teams and is kept least privileged, so both team components get
-              # purpose-built ClusterRoles in the gitops-dev policy instead.
+              # Principals must be listed. Red Hat OpenShift GitOps reconciles sourceNamespaces only for a
+              # cluster-scoped instance, so a principal left out never claims its agent namespaces. It runs
+              # with controller.enabled false and reconciles nothing itself. A team's own instance stays least
+              # privileged and uses purpose-built ClusterRoles in the gitops-dev policy instead.
               #
-              # A team may still opt in explicitly through the gitops-dev-team-<team>-cluster-scoped
-              # label handled above, which is the existing per-team escape hatch.
-              # The list also carries each team principal namespace. Red Hat OpenShift GitOps
-              # reconciles sourceNamespaces only for a cluster-scoped instance, so a principal
-              # outside this list never claims its agent namespaces and no application reaches it.
-              # The instance this covers runs with controller.enabled false and reconciles nothing.
-              #
-              # infra joins the team map below so its principal namespace is covered too. Without
-              # it, Red Hat OpenShift GitOps skips sourceNamespaces reconciliation for that
-              # instance and no application ever reaches the agent.
-              #
-              # Comments belong here rather than inside the value: it is a folded scalar, and hub
-              # templates have no comment syntax, so a # line there becomes part of the value, and
-              # the first namespace in the list is swallowed by it.
+              # Comments belong here, not inside the value: it is a folded scalar and hub templates have no
+              # comment syntax, so a # line there becomes part of the value and swallows the first namespace.
               - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
                 value: >-
                   {{ "{{hub-" }} $namespaces := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") {{ "hub}}" }}

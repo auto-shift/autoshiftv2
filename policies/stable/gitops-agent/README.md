@@ -42,9 +42,10 @@ exclusive, which is why their config sits side by side under `config.gitops.infr
 
 ## Files
 
-One policy per concern, each with its own placement file, because PolicyGenerator derives the
-`PlacementBinding` name from the policy and two policies sharing a placement collide with
-`already registered id`.
+One policy per concern, each with its own placement file. Two policies pointing at one placement
+fail with `placementBindingDefaults.name must be set but is empty`, and setting that name then
+collides as soon as a second placement is shared. One placement per policy keeps the generated
+`PlacementBinding` names unique without that knob.
 
 | Manifest | Policy | Action | What it covers |
 |---|---|---|---|
@@ -93,9 +94,16 @@ trust anchor, and both reporting Compliant.
 on, including the synthetic `infra` entry. Change it in one place and you must change it in the
 other.
 
-**Build the mode map before looping, never iterate labels directly.** Iterating
-`.ManagedClusterLabels` skips infra on any cluster without a `gitops-infra` label. The map always
-carries `infra`, deriving `hub` on a hub and `push` elsewhere.
+**Build the mode map before looping WHERE A DERIVED MODE CAN SATISFY THE GATE.** Iterating
+`.ManagedClusterLabels` only sees clusters that carry the label, so it misses infra wherever infra's
+mode is derived rather than set. The map always carries `infra`, deriving `hub` on a hub and `push`
+elsewhere.
+
+That matters for a gate a derived value can pass. `agent-hub.yaml` gates on `eq $mode "hub"` and
+`gitops-dev.yaml` on `hub` or `standalone`, so both need the map. It does NOT matter for a gate only
+an explicit value can pass: the readiness and teardown manifests gate on `hasPrefix "agent"` or
+`eq "uninstall"`, and no derived mode is ever either of those, so iterating labels there is
+equivalent and is not a bug to fix.
 
 **The enrollment label key differs for infra.** Reading `gitops-dev-team-infra` finds no clusters,
 leaving a principal with no mapping, certificate or namespace. Use the `$enrollKey` ternary.
