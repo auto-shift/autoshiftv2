@@ -1,81 +1,120 @@
 # Argo CD agent
 
-AutoShift can run the Argo CD agent in two independent configurations on the same fleet. Each one
-solves a different problem, and a cluster can run both at once.
+AutoShift runs the Argo CD agent in two tiers. They solve different problems and a cluster can run
+both at once.
 
-| Path | Who owns it | Principal namespace | Agent name |
-|---|---|---|---|
-| Infrastructure | AutoShift policies | `openshift-gitops-infra-agent` | `<cluster>-infra` |
-| Infrastructure, add-on | The Red Hat Advanced Cluster Management for Kubernetes GitOps add-on | `openshift-gitops-agent` | The cluster name |
-| Team | AutoShift policies | `openshift-gitops-<team>-agent` | `<cluster>-<team>` |
+| Tier | What it solves | Agents for each cluster |
+|---|---|---|
+| Infrastructure | The cluster's own Argo CD reports to, or is driven by, a principal on the hub | One |
+| Team | Application teams share a cluster without seeing each other's namespaces | One for each enrolled team |
 
-The infrastructure path has two implementations, and a cluster runs one or the other. AutoShift
-builds the agent itself when `gitops-infra` carries an agent mode, which is the default path. The
-GitOps add-on in Red Hat Advanced Cluster Management is the opt-in alternative, selected with
-`gitops-agent-enroll`: it creates the whole public key infrastructure, the agent, and the cluster
-mapping, which suits a cluster with no cert-manager. The limitation is that the add-on is named
-`gitops-addon`, which allows exactly one agent for each cluster.
-
-The team path exists because application teams share clusters. Each team gets its own principal,
-its own signing certificate authority, and a scoped `AppProject`, so one team cannot see or deploy
-into another team's namespaces. A single cluster can therefore run the infrastructure agent
-alongside one agent for each team.
+The infrastructure tier has **two implementations, and a cluster runs one or the other**. The team
+tier is unaffected by that choice and is always built from AutoShift policies.
 
 > [!NOTE]
-> The Red Hat Advanced Cluster Management side of this feature is Technology Preview. The team path
-> is built from AutoShift policies and does not depend on the add-on.
+> The Red Hat Advanced Cluster Management for Kubernetes side of this feature is Technology Preview.
+> The team tier is built from AutoShift policies and does not depend on the add-on.
 
-## Public key infrastructure
+## Choosing an infrastructure implementation
 
-Each path trusts one secret in its principal namespace, and everything else is derived from it:
-the principal serving certificate, the resource proxy certificate, the trust bundle each spoke
-receives, and every agent client certificate. The add-on path calls that secret `argocd-agent-ca`,
-a name the `GitOpsCluster` controller fixes; the AutoShift path calls it `gitops-agent-ca`, because
-there every name is set on the `ArgoCD` CR and so is ours to choose.
+|  | AutoShift agent | Red Hat Advanced Cluster Management GitOps add-on |
+|---|---|---|
+| Selected with | `gitops-infra` set to an agent mode | `gitops-agent-enroll: 'true'` |
+| Principal namespace | `openshift-gitops-infra-agent` | `openshift-gitops-agent` |
+| Agent name | `<cluster>-infra` | The cluster name |
+| Public key infrastructure | cert-manager, under your own root | Created and automated by the add-on |
+| Agents for each cluster | Several, so team agents can run alongside | One, because every object it creates is fixed |
+| Requires cert-manager | Yes | No |
+| Installs GitOps on the spoke | No, the operator policy does | Yes, it brings its own installer |
+| Choose it when | The mesh must chain to an organization authority, or teams need agents on the same cluster | The cluster has no cert-manager and one agent is enough |
 
-The add-on adopts its secret rather than replacing it. Create it with cert-manager before enabling
-the add-on and the whole agent mesh chains to an existing certificate authority. Leave it absent and
-the add-on generates a self-signed authority of its own.
+Both put the same thing on the cluster in the end: an Argo CD agent talking to a principal on the
+hub. They differ in who builds the plumbing.
 
-The `gitops-agent-ca` label drives the cert-manager `Certificate` for the infrastructure path. Team
-principals each get an intermediate under the same root, set by
-`config.gitops.teams.<team>.agent.caIssuer`.
+## Infrastructure with the AutoShift agent
 
-> [!WARNING]
-> `renewBefore` must stay above `duration` divided by five. The add-on re-generates any signing
-> certificate that is past eighty percent of its lifetime, and it does so without reporting an
-> error. The default of `8760h0m0s` with `2160h0m0s` leaves a margin of several days.
+This is the default path. AutoShift creates the principal, issues every certificate with
+cert-manager, and enrolls each cluster.
 
-To integrate an external certificate authority instead, set the `gitops-agent-ca` label to
-`external`. AutoShift then monitors the secret without issuing it, so an organization can deliver
-that key by its own means.
+### Enable
 
-## Enable the infrastructure path
-
-On the hub clusterset, for either implementation:
+On the hub clusterset:
 
 ```yaml
 labels:
   gitops-agent: 'true'      # run the infrastructure principal on this hub
 ```
 
-Then enroll each cluster. The AutoShift path carries the mode on `gitops-infra`, the same label that
-selects the shape of the infrastructure instance:
+Then enroll each cluster with the mode label, which also selects the shape of the instance:
 
 ```yaml
 labels:
   gitops-infra: 'agent-autonomous'   # a local instance, reporting to the hub principal
 ```
 
-The add-on path is the alternative, and a cluster runs one or the other:
+### Public key infrastructure
+
+Everything derives from one secret in the principal namespace, `gitops-agent-ca`: the principal
+serving certificate, the resource proxy certificate, the trust bundle each spoke receives, and every
+agent client certificate. Every name is set on the `ArgoCD` CR, so AutoShift chooses them.
+
+The `gitops-agent-ca` label drives the cert-manager `Certificate`. Team principals each get an
+intermediate under the same root, set by `config.gitops.teams.<team>.agent.caIssuer`.
+
+To integrate an external certificate authority instead, set the `gitops-agent-ca` label to
+`external`. AutoShift then monitors the secret without issuing it, so an organization can deliver
+that key by its own means.
+
+## Infrastructure with the GitOps add-on
+
+The opt-in alternative. The `GitOpsCluster` controller
+[creates and automates the public key infrastructure](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/2.17/html/gitops/gitops-overview),
+deploys the agent, and propagates the hub certificate authority to each managed cluster. It also
+brings its own GitOps installer, which is what makes it useful on a cluster with no cert-manager.
+
+### Enable
+
+On the hub clusterset, the same principal label as the other implementation:
 
 ```yaml
 labels:
-  gitops-agent-enroll: 'true'   # deploy the add-on agent here instead
+  gitops-agent: 'true'      # run the infrastructure principal on this hub
+```
+
+On each cluster that should run the add-on agent instead:
+
+```yaml
+labels:
+  gitops-agent-enroll: 'true'   # deploy the add-on agent here
   gitops-agent-ca: 'true'       # issue the add-on signing authority with cert-manager
 ```
 
-## Enable the team path
+### Public key infrastructure
+
+The add-on derives everything from one secret in its principal namespace, `argocd-agent-ca`. That
+name is fixed by the `GitOpsCluster` controller, as are the agent instance name and its client
+secrets, which is why the add-on allows only one agent for each cluster.
+
+The add-on adopts that secret rather than replacing it. Create it with cert-manager before enabling
+the add-on and the whole mesh chains to an existing authority. Leave it absent and the add-on
+generates a self-signed authority of its own.
+
+> [!WARNING]
+> `renewBefore` must stay above `duration` divided by five. The add-on re-generates any signing
+> certificate past eighty percent of its lifetime, and does so without reporting an error, which
+> silently replaces an adopted authority with one of its own. The default of `8760h0m0s` with
+> `2160h0m0s` leaves a margin of several days.
+>
+> This renewal behavior is observed, not documented by Red Hat. Red Hat documents that the
+> controller automates the public key infrastructure, but not how it renews it.
+
+## Team agents
+
+Application teams share clusters. Each team gets its own principal, its own signing certificate
+authority, and a scoped `AppProject`, so one team cannot see or deploy into another team's
+namespaces. A cluster runs the infrastructure agent alongside one agent for each enrolled team.
+
+### Enable
 
 The hub needs the policy placed, and each team needs its principal enabled in configuration:
 
@@ -129,10 +168,17 @@ four sit on one scale: where the instance runs, and which side owns the `Applica
 
 [![AutoShift GitOps modes](diagrams/autoshift-gitops-modes.drawio.svg)](diagrams/autoshift-gitops-modes.drawio.svg)
 
-Autonomous mode fills the gap AutoShift has: the spoke keeps ownership of its own applications, and
-the hub gains one real-time view of the fleet. Managed mode makes the hub authoritative, which puts
-a second mechanism in competition with AutoShift policies for desired state. Choose autonomous
-unless the hub genuinely needs to own team applications.
+Neither mode conflicts with AutoShift. AutoShift builds the instance, its RBAC and its
+`AppProject`, and never creates an `Application`, so the applications themselves belong to whoever
+the mode says. Pick on where the team wants to work: autonomous keeps authoring on the cluster and
+gives the hub a live view of what is already running there, while managed makes the hub the place
+applications are declared and pushes them down.
+
+One place the two would otherwise contend is handled for you. `policy-managed-autoshift` writes
+the AutoShift `Application` into a managed hub's own Argo CD, and in `agent-managed` mode the hub
+above owns that same object through the principal. Its placement excludes `agent-managed`, so
+AutoShift steps back and the principal is the only writer. Setting a managed hub to `agent-managed`
+therefore means the hub above supplies its AutoShift `Application`.
 
 `destinationBasedMapping` decides how the principal maps an `Application` to an agent. It defaults
 to `false` on both paths, which means mapping by namespace, and it is worth leaving alone. The
