@@ -1,6 +1,6 @@
-# Argo CD agent
+# Argo CD Agent
 
-AutoShift runs the Argo CD agent in two tiers. They solve different problems and a cluster can run
+AutoShift runs the Argo CD Agent in two tiers. They solve different problems and a cluster can run
 both at once.
 
 | Tier | What it solves | Agents for each cluster |
@@ -11,30 +11,32 @@ both at once.
 The infrastructure tier has **two implementations, and a cluster runs one or the other**. The team
 tier is unaffected by that choice and is always built from AutoShift policies.
 
+[![Infrastructure and team GitOps](diagrams/autoshift-gitops-infra-vs-team.drawio.svg)](diagrams/autoshift-gitops-infra-vs-team.drawio.svg)
+
 > [!NOTE]
 > The Red Hat Advanced Cluster Management for Kubernetes side of this feature is Technology Preview.
 > The team tier is built from AutoShift policies and does not depend on the add-on.
 
 ## Choosing an infrastructure implementation
 
-|  | AutoShift agent | Red Hat Advanced Cluster Management GitOps add-on |
-|---|---|---|
-| Selected with | `gitops-infra` set to an agent mode | `gitops-agent-enroll: 'true'` |
-| Principal namespace | `openshift-gitops-infra-agent` | `openshift-gitops-agent` |
-| Agent name | `<cluster>-infra` | The cluster name |
-| Public key infrastructure | cert-manager, under your own root | Created and automated by the add-on |
-| Agents for each cluster | Several, so team agents can run alongside | One, because every object it creates is fixed |
-| Requires cert-manager | Yes | No |
-| Installs GitOps on the spoke | No, the operator policy does | Yes, it brings its own installer |
-| Choose it when | The mesh must chain to an organization authority, or teams need agents on the same cluster | The cluster has no cert-manager and one agent is enough |
+Four things separate them.
 
-Both put the same thing on the cluster in the end: an Argo CD agent talking to a principal on the
-hub. They differ in who builds the plumbing.
+| | AutoShift agent | GitOps add-on |
+|---|---|---|
+| **Choose it when** | The agent mesh must chain to an organization certificate authority, or teams need their own agents on the same cluster | The cluster has no cert-manager, and one agent for each cluster is enough |
+| Certificate authority | cert-manager issues it, under a root you choose | The add-on creates and rotates its own |
+| Agents for each cluster | Several, so team agents run alongside the infrastructure one | One. Every object the add-on creates has a fixed name |
+| Installs GitOps on the spoke | No. The operator policy does that | Yes. It brings its own installer |
+
+Both produce the same pieces: an Argo CD Agent on the cluster, a trust bundle and a client
+certificate beside it, and a principal on the hub. They differ in who builds those pieces and what
+each one is named.
 
 ## Infrastructure with the AutoShift agent
 
 This is the default path. AutoShift creates the principal, issues every certificate with
-cert-manager, and enrolls each cluster.
+cert-manager, and enrolls each cluster. The principal runs in `openshift-gitops-infra-agent`, and
+each cluster's agent is named `<cluster>-infra`.
 
 ### Enable
 
@@ -71,6 +73,7 @@ The opt-in alternative. The `GitOpsCluster` controller
 [creates and automates the public key infrastructure](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/2.17/html/gitops/gitops-overview),
 deploys the agent, and propagates the hub certificate authority to each managed cluster. It also
 brings its own GitOps installer, which is what makes it useful on a cluster with no cert-manager.
+The principal runs in `openshift-gitops-agent`, and each cluster's agent takes the cluster's name.
 
 ### Enable
 

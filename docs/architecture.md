@@ -101,7 +101,7 @@ of every cluster and differ only in whether the hub or the cluster owns the Appl
 
 Enrollment is a separate question from mode. A team deploys only to the clusters whose labels name
 it, so two teams can share a cluster while each keeps its own instance and namespaces. Both are
-covered in [Argo CD agent](gitops-agent.md).
+covered in [Argo CD Agent](gitops-agent.md).
 
 ## Scaling the fleet
 

@@ -355,9 +355,9 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `gitops-cluster-ca-bundle`      | bool      | `false`                   | Inject cluster trusted CA bundle into ArgoCD repo server |
 | `gitops-namespace`              | string    | (`gitopsNamespace`)       | Per-cluster override of the ArgoCD namespace, e.g. in hub-of-hubs setups |
 | `gitops-disable-default-argocd` | bool      | `true`                    | Controls `DISABLE_DEFAULT_ARGOCD_INSTANCE` on the operator Subscription |
-| `gitops-agent`                  | bool      | `false`                   | Hub label. Run the Argo CD agent principal on this hub. Technology Preview |
+| `gitops-agent`                  | bool      | `false`                   | Hub label. Run the Argo CD Agent principal on this hub. Technology Preview |
 | `gitops-agent-ca`               | string    | `false`                   | Hub label, three states. `false`: the add-on self-signs an authority per hub. `true`: cert-manager issues it from `config.gitops.agent.ca.issuer`. `external`: you deliver the secret yourself and AutoShift places only the monitoring |
-| `gitops-agent-enroll`           | bool      | `false`                   | Cluster label. Deploy an Argo CD agent here, connecting to the principal on the hub that manages this cluster |
+| `gitops-agent-enroll`           | bool      | `false`                   | Cluster label. Deploy an Argo CD Agent here, connecting to the principal on the hub that manages this cluster |
 
 **Config block** (`config.gitops`):
 
@@ -368,11 +368,11 @@ Manages the OpenShift GitOps operator installation and systems ArgoCD instance. 
 | `policyGenerator` | bool | (deployment flag) | Install the PolicyGenerator plugin sidecar in the infra repo server. Git and source hubs must set `true`. Read only from the self-managed hub cluster set |
 | `teams` | map | | Developer Argo CD instances, one entry per team. See [Developer OpenShift gitops](#developer-openshift-gitops) |
 | `infra` | map | | Tuning for the infra Argo CD instance. See the table below |
-| `agent` | map | | Argo CD agent settings. See the table below |
+| `agent` | map | | Argo CD Agent settings. See the table below |
 
 **Config block** (`config.gitops.agent`):
 
-The Red Hat Advanced Cluster Management GitOps add-on derives the whole Argo CD agent public key
+The Red Hat Advanced Cluster Management GitOps add-on derives the whole Argo CD Agent public key
 infrastructure from one secret, `argocd-agent-ca`, in the hub Argo CD namespace. The controller
 adopts that secret when it already exists, so issuing it with cert-manager places the agent mesh
 under a known certificate authority. The `gitops-agent-ca` label selects which of the three applies.
