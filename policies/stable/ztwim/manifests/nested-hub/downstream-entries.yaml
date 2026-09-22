@@ -1,0 +1,60 @@
+# Registration entries the hub needs for each spoke. Unlike the two patches in this directory,
+# these ARE first-class CRDs, so they are declared rather than patched.
+#
+# Two entries per spoke, and the parent/child relationship between them matters:
+#
+#   node alias  parentID spiffe://<td>/spire/server, selected by k8s_psat:cluster:<spoke>
+#               Collapses every attested upstream-agent node on that spoke into ONE stable parent
+#               ID, so the downstream entry below does not have to name individual node UIDs.
+#
+#   downstream  parentID is that alias, selected by the spoke's spire-server ServiceAccount.
+#               `downstream: true` is what makes the hub willing to sign an intermediate CA for it
+#               rather than a leaf SVID. This is the entry that makes nesting work.
+#
+# Both share the hub's trust domain, because nested SPIRE requires hub and spoke to be in ONE trust
+# domain: the spoke's `spire` upstream-authority plugin builds the expected upstream server ID
+# from its own trust domain, so a mismatch fails the handshake with "unexpected ID".
+#
+# className must match the class the operator's bundled SPIRE controller-manager watches; anything
+# else is silently ignored.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $cfgTd := (index $cfg "trustDomain" | default "") hub}}
+  {{- $cfgTrustDomain := "{{hub $cfgTd hub}}" }}
+  {{- $localZtwim := (lookup "operator.openshift.io/v1alpha1" "ZeroTrustWorkloadIdentityManager" "" "cluster") | default dict }}
+  {{- $trustDomain := ($cfgTrustDomain | default (dig "spec" "trustDomain" "" $localZtwim)) }}
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- if $trustDomain }}
+  {{- range $mc := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "").items }}
+  {{- if eq (index $mc.metadata.labels "autoshift.io/ztwim-nested-role" | default "") "spoke" }}
+  {{- $spoke := $mc.metadata.name }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: spire.spiffe.io/v1alpha1
+      kind: ClusterStaticEntry
+      metadata:
+        name: ztwim-node-alias-{{ $spoke }}
+      spec:
+        className: zero-trust-workload-identity-manager-spire
+        parentID: spiffe://{{ $trustDomain }}/spire/server
+        spiffeID: spiffe://{{ $trustDomain }}/upstream-agents/{{ $spoke }}
+        selectors:
+          - k8s_psat:cluster:{{ $spoke }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: spire.spiffe.io/v1alpha1
+      kind: ClusterStaticEntry
+      metadata:
+        name: ztwim-downstream-{{ $spoke }}
+      spec:
+        className: zero-trust-workload-identity-manager-spire
+        parentID: spiffe://{{ $trustDomain }}/upstream-agents/{{ $spoke }}
+        spiffeID: spiffe://{{ $trustDomain }}/spoke/{{ $spoke }}/server
+        downstream: true
+        selectors:
+          - k8s:ns:{{ $ns }}
+          - k8s:sa:spire-server
+  {{- end }}
+  {{- end }}
+  {{- end }}
