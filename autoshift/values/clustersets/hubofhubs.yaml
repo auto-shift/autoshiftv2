@@ -4,7 +4,34 @@
 # Hub Cluster Sets with Feature Flags. Blank will remove
 hubClusterSets:
   hubofhubs:
-    config: {}
+    config:
+      # Compliance Operator scans. Profiles are PINNED to a version: ocp4-stig tracks whatever
+      # DISA publishes next, so an unpinned name would silently change what is measured and, with
+      # autoApply on, change the cluster. Adopting a new release means adding an entry.
+      #
+      # autoApply is false: this scans and reports and changes nothing. Turning it on applies every
+      # remediation the scan produced except those in exclude, and several are MachineConfigs that
+      # reboot every node, in more than one round. Hardening is a deliberate choice, so layer
+      # hub-hardened.yaml on top rather than flipping this. See docs/compliance.md.
+      compliance:
+        scans:
+          - name: stig-v2r3
+            profiles:
+              - ocp4-stig-v2r3
+              - ocp4-stig-node-v2r3
+              - rhcos4-stig-v2r3
+            scanSetting: default
+            autoApply: false
+            # These four rewrite the default project template so every new project gets a
+            # deny-by-default NetworkPolicy and a ResourceQuota, and ship only that restrictive
+            # half. Deny-by-default blocks the kube-apiserver, breaking admission webhooks (Red Hat
+            # Advanced Cluster Security) and the cluster-manager namespaces; the quota rejects every
+            # pod that declares no resources. Use manualRemediations.projectTemplate instead.
+            exclude:
+              - ocp4-stig-v2r3-project-config-and-template-network-policy
+              - ocp4-stig-v2r3-project-config-and-template-network-policy-1
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
     labels:
       # OpenShift version for cluster deployment and image mirroring
       openshift-version: '4.22.8'

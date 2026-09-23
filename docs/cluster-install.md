@@ -283,7 +283,7 @@ clusterInstall:
   workerAgents: 0                    # default: (len hosts) - controlPlaneAgents
   apiVip: '10.0.0.1'                # required for multi-node
   ingressVip: '10.0.0.2'            # required for multi-node
-  mastersSchedulable: false          # default: false
+  mastersSchedulable: false          # default: false, bare metal multi-node only
   cpuPartitioning: 'None'            # 'None' (default) or 'AllNodes' — install-time only, see docs/workload-partitioning.md
   pullSecretRef: 'default-pull-secret'
   bmcCredentialRef: 'default-bmc-cred'
