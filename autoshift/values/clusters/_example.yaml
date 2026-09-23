@@ -221,6 +221,36 @@ clusters:
       node-maintenance-version: 'node-maintenance-operator.v5.7.1'
 
       # =======================================================================
+      # Workload Availability: Node Health Check, Self Node Remediation,
+      # Fence Agents Remediation. All three install into
+      # openshift-workload-availability alongside Node Maintenance.
+      # CSV pins match the RHWA 4.22-1 release. Confirm with
+      # `oc get packagemanifest <package> -o jsonpath='{.status.channels}'`.
+      # =======================================================================
+      node-health-check: 'false'             # Do not combine with machine-health-checks: 'true'. NHC disables itself while a custom MachineHealthCheck exists
+      node-health-check-subscription-name: node-healthcheck-operator
+      node-health-check-channel: stable
+      node-health-check-source: redhat-operators
+      node-health-check-source-namespace: openshift-marketplace
+      node-health-check-version: 'node-healthcheck-operator.v0.12.1'
+      node-health-check-remediation: 'self-node-remediation'  # Default provider for each check: self-node-remediation | fence-agents-remediation
+
+      self-node-remediation: 'false'         # Required when any check uses self-node-remediation
+      self-node-remediation-subscription-name: self-node-remediation
+      self-node-remediation-channel: stable
+      self-node-remediation-source: redhat-operators
+      self-node-remediation-source-namespace: openshift-marketplace
+      self-node-remediation-version: 'self-node-remediation.v0.13.1'
+
+      fence-agents-remediation: 'false'      # Power-fences nodes through their BMC. Reads config.hosts and config.fenceAgentsRemediation
+      fence-agents-remediation-subscription-name: fence-agents-remediation
+      fence-agents-remediation-channel: stable
+      fence-agents-remediation-source: redhat-operators
+      fence-agents-remediation-source-namespace: openshift-marketplace
+      fence-agents-remediation-version: 'fence-agents-remediation.v0.8.1'
+      fence-agents-remediation-credentials: 'hub'  # hub: copy the BMC Secret from the hub | existing: you create the Secret on the cluster (for example with ESO)
+
+      # =======================================================================
       # External Secrets Operator
       # =======================================================================
       external-secrets-operator: 'false'

@@ -1,0 +1,37 @@
+# Registers the MachineHealthCheck and NodeHealthCheck kinds for spoke lookups in the
+# node-health-check policy.
+# The default termination-handler MHC is ignored by the conflict check; the custom one
+# exercises the violation signal.
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineHealthCheck
+metadata:
+  name: machine-api-termination-handler
+  namespace: openshift-machine-api
+spec:
+  selector:
+    matchLabels:
+      machine.openshift.io/interruptible-instance: ''
+---
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineHealthCheck
+metadata:
+  name: lint-custom-mhc
+  namespace: openshift-machine-api
+spec:
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-machineset: lint-machineset
+---
+# An autoshift-managed NodeHealthCheck that no config declares: exercises the prune path.
+apiVersion: remediation.medik8s.io/v1alpha1
+kind: NodeHealthCheck
+metadata:
+  name: nhc-lint-stale
+  labels:
+    app.kubernetes.io/managed-by: autoshift
+spec:
+  minHealthy: 51%
+  selector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/worker
+        operator: Exists

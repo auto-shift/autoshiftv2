@@ -1,0 +1,55 @@
+object-templates-raw: |
+  {{hub- $config := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $nhc := (index $config "nodeHealthCheck" | default dict) hub}}
+  {{hub- $defaultRemediation := (index .ManagedClusterLabels "autoshift.io/node-health-check-remediation" | default "self-node-remediation") hub}}
+  {{hub- $templates := dict hub}}
+  {{hub- $_ := set $templates "self-node-remediation" (dict "apiVersion" "self-node-remediation.medik8s.io/v1alpha1" "kind" "SelfNodeRemediationTemplate" "name" "self-node-remediation-automatic-strategy-template" "namespace" "openshift-workload-availability") hub}}
+  {{hub- $_ := set $templates "fence-agents-remediation" (dict "apiVersion" "fence-agents-remediation.medik8s.io/v1alpha1" "kind" "FenceAgentsRemediationTemplate" "name" "fenceagentsremediationtemplate-default" "namespace" "openshift-workload-availability") hub}}
+  {{hub- $readyFalse := (dict "type" "Ready" "status" "False" "duration" "300s") hub}}
+  {{hub- $readyUnknown := (dict "type" "Ready" "status" "Unknown" "duration" "300s") hub}}
+  {{hub- $defaultChecks := dict hub}}
+  {{hub- $_ := set $defaultChecks "nhc-workers" (dict "selector" (dict "matchExpressions" (list (dict "key" "node-role.kubernetes.io/worker" "operator" "Exists") (dict "key" "node-role.kubernetes.io/control-plane" "operator" "DoesNotExist")))) hub}}
+  {{hub- $_ := set $defaultChecks "nhc-control-plane" (dict "selector" (dict "matchExpressions" (list (dict "key" "node-role.kubernetes.io/control-plane" "operator" "Exists")))) hub}}
+  {{hub- $checks := (index $nhc "checks" | default $defaultChecks) hub}}
+  {{- /* Spoke list of the checks this policy owns; any other autoshift-managed NodeHealthCheck is pruned. */}}
+  {{- $expected := list {{hub range $name, $_ := $checks hub}}"{{hub $name hub}}" {{hub end hub}} }}
+  {{hub- range $name, $check := $checks hub}}
+  {{hub- $remediation := (index $check "remediation" | default $defaultRemediation) hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: remediation.medik8s.io/v1alpha1
+      kind: NodeHealthCheck
+      metadata:
+        name: {{hub $name | toRawJson hub}}
+        labels:
+          app.kubernetes.io/managed-by: autoshift
+      spec:
+        {{- /* No default: a check without a selector renders null and the API rejects it, rather than matching every node. */}}
+        selector: {{hub index $check "selector" | toRawJson hub}}
+        unhealthyConditions: {{hub index $check "unhealthyConditions" | default (list $readyFalse $readyUnknown) | toRawJson hub}}
+        {{hub- if hasKey $check "maxUnhealthy" hub}}
+        maxUnhealthy: {{hub index $check "maxUnhealthy" | toRawJson hub}}
+        {{hub- else hub}}
+        minHealthy: {{hub ternary (index $check "minHealthy") "51%" (hasKey $check "minHealthy") | toRawJson hub}}
+        {{hub- end hub}}
+        {{hub- if hasKey $check "escalatingRemediations" hub}}
+        escalatingRemediations: {{hub index $check "escalatingRemediations" | toRawJson hub}}
+        {{hub- else hub}}
+        remediationTemplate: {{hub index $check "remediationTemplate" | default (index $templates $remediation) | toRawJson hub}}
+        {{hub- end hub}}
+        {{hub- range $field := (list "healthyDelay" "stormCooldownDuration" "pauseRequests") hub}}
+        {{hub- if hasKey $check $field hub}}
+        {{hub $field hub}}: {{hub index $check $field | toRawJson hub}}
+        {{hub- end hub}}
+        {{hub- end hub}}
+  {{hub- end hub}}
+  {{- range $existing := (lookup "remediation.medik8s.io/v1alpha1" "NodeHealthCheck" "" "" "app.kubernetes.io/managed-by=autoshift").items }}
+  {{- if not (has $existing.metadata.name $expected) }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: remediation.medik8s.io/v1alpha1
+      kind: NodeHealthCheck
+      metadata:
+        name: {{ $existing.metadata.name }}
+  {{- end }}
+  {{- end }}

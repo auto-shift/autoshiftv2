@@ -1,0 +1,64 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: fence-agents-remediation
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement*.yaml, never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# Policy names use the short form `far`: `<policy namespace>.<policy name>` must fit in 63 characters.
+placementBindingDefaults:
+  name: binding-policy-far
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-far-operator-install
+    consolidateManifests: true
+    manifests:
+      - path: manifests/operator-install
+  # Copies the BMC credentials from the hub, renamed to the fence-agent flags. Not placed when the
+  # cluster sets fence-agents-remediation-credentials: existing and brings its own Secret.
+  - name: policy-far-credentials
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    placement:
+      placementPath: placement-credentials-hub.yaml
+    manifests:
+      - path: manifests/credentials.yaml
+  # No dependency on policy-far-credentials: it is not placed in `existing` mode, and a dependency on
+  # an absent policy stays Pending. policy-far-test reports a missing Secret instead.
+  - name: policy-far-template
+    dependencies:
+      - name: policy-far-operator-install
+    manifests:
+      - path: manifests/template.yaml
+  - name: policy-far-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-far-template
+    manifests:
+      - path: test/far-validated.yaml
+    customMessage:
+      noncompliant: >-
+        Fence Agents Remediation cannot fence this cluster's nodes yet. Either the credentials Secret
+        named in config.fenceAgentsRemediation.credentials.secretName is missing from
+        openshift-workload-availability, or the fence agent status check has not passed for every
+        node. Read status.validationFailed on FenceAgentsRemediationTemplate
+        fenceagentsremediationtemplate-default. If the condition is absent, no node has BMC
+        parameters: set bmcIP under config.hosts or --ip under
+        config.fenceAgentsRemediation.nodeParameters, and keep statusValidationSample above zero.

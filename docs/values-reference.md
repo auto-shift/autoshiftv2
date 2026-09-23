@@ -133,6 +133,9 @@ Every managed operator supports version control through its respective label:
 | Local Storage               | `local-storage-version` | `local-storage-operator.v4.22.0-202608122145`      |
 | NMState                     | `nmstate-version`       | `kubernetes-nmstate-operator.4.22.0-202608130510`  |
 | OpenShift Virtualization    | `virt-version`          | `kubevirt-hyperconverged-operator.v4.22.6`         |
+| Node Health Check           | `node-health-check-version` | `node-healthcheck-operator.v0.12.1`          |
+| Self Node Remediation       | `self-node-remediation-version` | `self-node-remediation.v0.13.1`          |
+| Fence Agents Remediation    | `fence-agents-remediation-version` | `fence-agents-remediation.v0.8.1`     |
 
 ### Finding available CSV versions
 
@@ -495,6 +498,37 @@ Automated node health monitoring and remediation.
 - Storage nodes are identified by `cluster.ocs.openshift.io/openshift-storage` label (same as OpenShift Data Foundation)
 - Storage uses longer timeouts and `maxUnhealthy`=1 to allow Ceph recovery
 - Never create `MachineHealthChecks` for control plane nodes
+- Do not enable this policy on a cluster that uses `node-health-check`. The Node Health Check Operator disables itself while any `MachineHealthCheck` other than the default `machine-api-termination-handler` exists.
+
+### Workload availability
+
+Node health checks and remediation from Workload Availability for Red Hat OpenShift. Each operator is its own policy, and all of them install into `openshift-workload-availability` alongside `node-maintenance`.
+
+| Variable                                   | Type   | Default                     | Notes |
+|--------------------------------------------|--------|-----------------------------|-------|
+| `node-health-check`                        | bool   | `false`                     | Install the Node Health Check Operator and create the `NodeHealthCheck` resources in `config.nodeHealthCheck` |
+| `node-health-check-channel`                | string | `stable`                    | Operator channel |
+| `node-health-check-version`                | string | (optional)                  | Specific CSV version, for example `node-healthcheck-operator.v0.12.1` |
+| `node-health-check-remediation`            | string | `self-node-remediation`     | Remediation provider for checks that do not set one: `self-node-remediation` or `fence-agents-remediation` |
+| `self-node-remediation`                    | bool   | `false`                     | Install the Self Node Remediation Operator. Required when a check uses `self-node-remediation` |
+| `self-node-remediation-channel`            | string | `stable`                    | Operator channel |
+| `self-node-remediation-version`            | string | (optional)                  | Specific CSV version, for example `self-node-remediation.v0.13.1` |
+| `fence-agents-remediation`                 | bool   | `false`                     | Install the Fence Agents Remediation Operator and create the `FenceAgentsRemediationTemplate` |
+| `fence-agents-remediation-channel`         | string | `stable`                    | Operator channel |
+| `fence-agents-remediation-version`         | string | (optional)                  | Specific CSV version, for example `fence-agents-remediation.v0.8.1` |
+| `fence-agents-remediation-credentials`     | string | `hub`                       | `hub` copies the BMC Secret from the hub. `existing` uses a Secret you create on the cluster, for example with the External Secrets Operator |
+
+Each operator also takes the standard `-subscription-name`, `-source` and `-source-namespace` labels.
+
+**Configuration:**
+- `config.nodeHealthCheck.checks` holds one entry per `NodeHealthCheck`, keyed by resource name. Without it, the policy creates `nhc-workers` and `nhc-control-plane`. Setting it replaces both, and removing an entry deletes that `NodeHealthCheck`.
+- `config.fenceAgentsRemediation` sets the fence agent, its shared parameters and the credentials source. Per-node `--ip` and `--systems-uri` values come from `config.hosts`, the same data the cluster installation uses.
+- See `autoshift/values/clustersets/_example.yaml` for every key.
+
+**Notes:**
+- Keep control plane and worker nodes in separate checks, and do not let two selectors match the same node.
+- `policy-far-test` reports NonCompliant until the operator's status check has reached every node's BMC with the configured credentials.
+- `policy-nhc-test` reports NonCompliant while a custom `MachineHealthCheck` exists on the cluster.
 
 ### Infra nodes
 

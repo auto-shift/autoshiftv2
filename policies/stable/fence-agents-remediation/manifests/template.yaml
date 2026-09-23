@@ -1,0 +1,81 @@
+object-templates-raw: |
+  {{hub- $config := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $far := (index $config "fenceAgentsRemediation" | default dict) hub}}
+  {{hub- $creds := (index $far "credentials" | default dict) hub}}
+  {{hub- $ci := (index $config "clusterInstall" | default dict) hub}}
+  {{hub- $hosts := (index $config "hosts" | default dict) hub}}
+  {{hub- $credMode := (index .ManagedClusterLabels "autoshift.io/fence-agents-remediation-credentials" | default "hub") hub}}
+  {{hub- $agent := (index $far "agent" | default "fence_redfish") hub}}
+  {{hub- $sample := "100%" hub}}
+  {{hub- if hasKey $far "statusValidationSample" hub}}
+  {{hub- $sample = (index $far "statusValidationSample") hub}}
+  {{hub- end hub}}
+  {{hub- $shared := dict "--action" "reboot" hub}}
+  {{hub- range $k, $v := (index $far "sharedParameters" | default dict) hub}}
+  {{hub- $_ := set $shared $k $v hub}}
+  {{hub- end hub}}
+  {{hub- $nodeParams := (index $far "nodeParameters" | default dict) hub}}
+  {{hub- $nodeSecrets := (index $creds "nodeSecretNames" | default dict) hub}}
+  {{hub- $defaultEndpoint := (index $ci "bmcEndpoint" | default "/redfish/v1/Systems/1") hub}}
+  {{hub- $bmcHosts := dict hub}}
+  {{hub- $credHosts := dict hub}}
+  {{hub- range $hostname, $host := $hosts hub}}
+  {{hub- if (index $host "bmcIP") hub}}
+  {{hub- $_ := set $bmcHosts $hostname $host hub}}
+  {{hub- end hub}}
+  {{hub- if and (eq $credMode "hub") (index $host "bmcCredentialRef") hub}}
+  {{hub- $_ := set $credHosts $hostname $host hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $deriveIp := (and $bmcHosts (not (hasKey $nodeParams "--ip")) (not (hasKey $shared "--ip"))) hub}}
+  {{hub- $deriveUri := (and $bmcHosts (eq $agent "fence_redfish") (not (hasKey $nodeParams "--systems-uri")) (not (hasKey $shared "--systems-uri"))) hub}}
+  {{- /* Node names follow the nmstate policy: hosts.<key>.hostname, else <key>.<cluster base domain>. */}}
+  {{- $clusterDomain := ((lookup "config.openshift.io/v1" "DNS" "" "cluster").spec.baseDomain | default "") }}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: fence-agents-remediation.medik8s.io/v1alpha1
+      kind: FenceAgentsRemediationTemplate
+      metadata:
+        name: fenceagentsremediationtemplate-default
+        namespace: openshift-workload-availability
+      spec:
+        statusValidationSample: {{hub $sample | toRawJson hub}}
+        template:
+          spec:
+            agent: {{hub $agent | toRawJson hub}}
+            remediationStrategy: {{hub index $far "remediationStrategy" | default "ResourceDeletion" | toRawJson hub}}
+            retrycount: {{hub index $far "retryCount" | default 5 hub}}
+            retryinterval: {{hub index $far "retryInterval" | default "5s" | toRawJson hub}}
+            timeout: {{hub index $far "timeout" | default "1m0s" | toRawJson hub}}
+            sharedSecretName: {{hub index $creds "secretName" | default "fence-agents-credentials-shared" | toRawJson hub}}
+            sharedparameters:
+            {{hub- range $param, $value := $shared hub}}
+              {{hub $param | toRawJson hub}}: {{hub $value | toRawJson hub}}
+            {{hub- end hub}}
+            {{hub- if or $deriveIp $deriveUri $nodeParams hub}}
+            nodeparameters:
+            {{hub- if $deriveIp hub}}
+              "--ip":
+              {{hub- range $hostname, $host := $bmcHosts hub}}
+                "{{hub index $host "hostname" | default (printf "%s.{{ $clusterDomain }}" $hostname) hub}}": {{hub index $host "bmcIP" | toRawJson hub}}
+              {{hub- end hub}}
+            {{hub- end hub}}
+            {{hub- if $deriveUri hub}}
+              "--systems-uri":
+              {{hub- range $hostname, $host := $bmcHosts hub}}
+                "{{hub index $host "hostname" | default (printf "%s.{{ $clusterDomain }}" $hostname) hub}}": {{hub index $host "bmcEndpoint" | default $defaultEndpoint | toRawJson hub}}
+              {{hub- end hub}}
+            {{hub- end hub}}
+            {{hub- range $param, $nodes := $nodeParams hub}}
+              {{hub $param | toRawJson hub}}: {{hub $nodes | toRawJson hub}}
+            {{hub- end hub}}
+            {{hub- end hub}}
+            {{hub- if or $credHosts $nodeSecrets hub}}
+            nodeSecretNames:
+            {{hub- range $hostname, $host := $credHosts hub}}
+              "{{hub index $host "hostname" | default (printf "%s.{{ $clusterDomain }}" $hostname) hub}}": "fence-agents-credentials-{{hub $hostname hub}}"
+            {{hub- end hub}}
+            {{hub- range $node, $secret := $nodeSecrets hub}}
+              {{hub $node | toRawJson hub}}: {{hub $secret | toRawJson hub}}
+            {{hub- end hub}}
+            {{hub- end hub}}

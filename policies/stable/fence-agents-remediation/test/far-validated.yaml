@@ -1,0 +1,22 @@
+object-templates-raw: |
+  {{hub- $config := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $far := (index $config "fenceAgentsRemediation" | default dict) hub}}
+  {{hub- $creds := (index $far "credentials" | default dict) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub index $creds "secretName" | default "fence-agents-credentials-shared" | toRawJson hub}}
+        namespace: openshift-workload-availability
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: fence-agents-remediation.medik8s.io/v1alpha1
+      kind: FenceAgentsRemediationTemplate
+      metadata:
+        name: fenceagentsremediationtemplate-default
+        namespace: openshift-workload-availability
+      status:
+        conditions:
+          - type: FenceAgentStatusValidationSucceeded
+            status: 'True'

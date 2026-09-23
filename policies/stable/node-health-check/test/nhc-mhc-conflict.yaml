@@ -1,0 +1,24 @@
+object-templates-raw: |
+  {{hub- $config := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $checks := (index (index $config "nodeHealthCheck" | default dict) "checks" | default (dict "nhc-workers" "" "nhc-control-plane" "")) hub}}
+  {{hub- range $name, $_ := $checks hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: remediation.medik8s.io/v1alpha1
+      kind: NodeHealthCheck
+      metadata:
+        name: {{hub $name | toRawJson hub}}
+  {{hub- end hub}}
+  {{- /* NHC disables itself while any MachineHealthCheck other than the default termination handler
+         exists. The Deployment is a violation signal: it has no spec, so nothing can create it. */}}
+  {{- range $mhc := (lookup "machine.openshift.io/v1beta1" "MachineHealthCheck" "openshift-machine-api" "").items }}
+  {{- if ne $mhc.metadata.name "machine-api-termination-handler" }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: nhc-disabled-by-mhc-{{ $mhc.metadata.name }}
+        namespace: openshift-workload-availability
+  {{- end }}
+  {{- end }}

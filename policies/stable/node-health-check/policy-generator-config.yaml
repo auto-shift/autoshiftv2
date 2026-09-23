@@ -1,0 +1,54 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: node-health-check
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml, never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# Policy names use the short form `nhc` to match the other Workload Availability policies.
+placementBindingDefaults:
+  name: binding-policy-nhc
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-nhc-operator-install
+    consolidateManifests: true
+    manifests:
+      - path: manifests/operator-install
+  # No dependency on the remediation providers: they are separate policies that may not be placed on
+  # this cluster, and a dependency on an absent policy stays Pending. NHC reports a missing template.
+  - name: policy-nhc-checks
+    pruneObjectBehavior: DeleteIfCreated
+    dependencies:
+      - name: policy-nhc-operator-install
+    manifests:
+      - path: manifests/node-health-checks.yaml
+  - name: policy-nhc-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-nhc-checks
+    manifests:
+      - path: test/nhc-mhc-conflict.yaml
+    customMessage:
+      noncompliant: >-
+        Node Health Check is not protecting this cluster. Either a NodeHealthCheck declared in
+        config.nodeHealthCheck.checks is missing, or a MachineHealthCheck other than
+        machine-api-termination-handler exists in openshift-machine-api. NodeHealthCheck disables
+        itself while any custom MachineHealthCheck exists. Set machine-health-checks to 'false' for
+        this cluster, and remove any MachineHealthCheck created outside AutoShift.

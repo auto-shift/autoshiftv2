@@ -525,6 +525,97 @@ hubClusterSets:
             - size: '1G'
               count: 4
       # =======================================================================
+      # Node Health Check (label node-health-check: 'true')
+      # =======================================================================
+      # One NodeHealthCheck per key; the key is the CR name. Omit `checks` for the defaults
+      # below: nhc-workers and nhc-control-plane, each minHealthy 51%, Ready False or Unknown
+      # for 300s, remediated by the node-health-check-remediation label's provider.
+      # Setting `checks` replaces the defaults. Keep control-plane and worker nodes in separate
+      # checks, and never let two selectors overlap. A removed key deletes its NodeHealthCheck.
+      nodeHealthCheck:
+        checks:
+          nhc-workers:
+            selector:                          # required
+              matchExpressions:
+                - key: node-role.kubernetes.io/worker
+                  operator: Exists
+                - key: node-role.kubernetes.io/control-plane
+                  operator: DoesNotExist
+            minHealthy: '51%'                  # OR maxUnhealthy, never both
+            remediation: fence-agents-remediation  # self-node-remediation | fence-agents-remediation
+            # Try power fencing first, then fall back to a self reboot. Replaces `remediation`.
+            # escalatingRemediations:
+            #   - remediationTemplate:
+            #       apiVersion: fence-agents-remediation.medik8s.io/v1alpha1
+            #       kind: FenceAgentsRemediationTemplate
+            #       name: fenceagentsremediationtemplate-default
+            #       namespace: openshift-workload-availability
+            #     order: 1
+            #     timeout: 300s
+            #   - remediationTemplate:
+            #       apiVersion: self-node-remediation.medik8s.io/v1alpha1
+            #       kind: SelfNodeRemediationTemplate
+            #       name: self-node-remediation-automatic-strategy-template
+            #       namespace: openshift-workload-availability
+            #     order: 2
+            #     timeout: 300s
+          nhc-control-plane:
+            selector:
+              matchExpressions:
+                - key: node-role.kubernetes.io/control-plane
+                  operator: Exists
+            maxUnhealthy: 1                    # NHC also never remediates more than one control-plane node at a time
+            unhealthyConditions:               # default: Ready False and Unknown for 300s
+              - type: Ready
+                status: 'False'
+                duration: 300s
+              - type: Ready
+                status: Unknown
+                duration: 300s
+            # healthyDelay: 0s                 # optional; negative = a person must mark the node healthy
+            # stormCooldownDuration: 5m0s      # optional
+            # pauseRequests:                   # optional; any entry pauses new remediations
+            #   - maintenance-window
+      # =======================================================================
+      # Fence Agents Remediation (label fence-agents-remediation: 'true')
+      # =======================================================================
+      # Builds FenceAgentsRemediationTemplate fenceagentsremediationtemplate-default. Per-node
+      # parameters come from config.hosts (see clusters/_example-cluster-install-baremetal.yaml):
+      # --ip from bmcIP and, for fence_redfish, --systems-uri from bmcEndpoint. Node names are
+      # hosts.<key>.hostname, else <key>.<cluster base domain>, as in the nmstate policy.
+      # Durations must be written the way Kubernetes prints them (1m0s, not 60s) or the policy
+      # sees a difference on every evaluation.
+      fenceAgentsRemediation:
+        agent: fence_redfish                   # default fence_redfish; fence_ipmilan, fence_aws, ... see the RHWA supported agents list
+        remediationStrategy: ResourceDeletion  # or OutOfServiceTaint
+        retryCount: 5
+        retryInterval: 5s
+        timeout: 1m0s
+        # Nodes whose BMC the operator probes with the read-only status action. Unset = '100%';
+        # 0 disables it, and policy-far-test then stays NonCompliant.
+        statusValidationSample: '100%'
+        sharedParameters:                      # --action defaults to reboot
+          '--action': reboot
+          '--ipport': '443'
+          '--ssl-insecure': ''                 # only for BMCs with self-signed certificates
+        # Per-node parameters, parameter -> node name -> value. Setting --ip or --systems-uri here
+        # replaces the values derived from config.hosts.
+        # nodeParameters:
+        #   '--ip':
+        #     master-0.cluster.example.com: '192.168.1.10'
+        # NEVER put credentials here. With fence-agents-remediation-credentials: hub (default) the
+        # policy copies username and password from a hub Secret, renamed to --username and
+        # --password. Hosts with their own bmcCredentialRef get a per-node Secret.
+        credentials:
+          secretName: fence-agents-credentials-shared  # the Secret on the cluster, in both modes
+          sourceName: default-bmc-cred         # hub Secret; default clusterInstall.bmcCredentialRef
+          sourceNamespace: cluster-install-secrets  # default clusterInstall.secretSourceNamespace
+          usernameKey: username
+          passwordKey: password
+          # With fence-agents-remediation-credentials: existing, map node names to Secrets you created.
+          # nodeSecretNames:
+          #   master-0.cluster.example.com: fence-creds-master-0
+      # =======================================================================
       # NMState Networking (clusterset defaults for network interfaces)
       # Example: bond with two ports, VLAN on top, static route, DNS
       # Per-cluster overrides go in clusters/<name>.yaml config section
@@ -1570,6 +1661,36 @@ hubClusterSets:
       node-maintenance-source: redhat-operators
       node-maintenance-source-namespace: openshift-marketplace
       node-maintenance-version: 'node-maintenance-operator.v5.7.1'
+
+      # =======================================================================
+      # Workload Availability: Node Health Check, Self Node Remediation,
+      # Fence Agents Remediation. All three install into
+      # openshift-workload-availability alongside Node Maintenance.
+      # CSV pins match the RHWA 4.22-1 release. Confirm with
+      # `oc get packagemanifest <package> -o jsonpath='{.status.channels}'`.
+      # =======================================================================
+      node-health-check: 'false'             # Do not combine with machine-health-checks: 'true'. NHC disables itself while a custom MachineHealthCheck exists
+      node-health-check-subscription-name: node-healthcheck-operator
+      node-health-check-channel: stable
+      node-health-check-source: redhat-operators
+      node-health-check-source-namespace: openshift-marketplace
+      node-health-check-version: 'node-healthcheck-operator.v0.12.1'
+      node-health-check-remediation: 'self-node-remediation'  # Default provider for each check: self-node-remediation | fence-agents-remediation
+
+      self-node-remediation: 'false'         # Required when any check uses self-node-remediation
+      self-node-remediation-subscription-name: self-node-remediation
+      self-node-remediation-channel: stable
+      self-node-remediation-source: redhat-operators
+      self-node-remediation-source-namespace: openshift-marketplace
+      self-node-remediation-version: 'self-node-remediation.v0.13.1'
+
+      fence-agents-remediation: 'false'      # Power-fences nodes through their BMC. Reads config.hosts and config.fenceAgentsRemediation
+      fence-agents-remediation-subscription-name: fence-agents-remediation
+      fence-agents-remediation-channel: stable
+      fence-agents-remediation-source: redhat-operators
+      fence-agents-remediation-source-namespace: openshift-marketplace
+      fence-agents-remediation-version: 'fence-agents-remediation.v0.8.1'
+      fence-agents-remediation-credentials: 'hub'  # hub: copy the BMC Secret from the hub | existing: you create the Secret on the cluster (for example with ESO)
 
       # =======================================================================
       # External Secrets Operator
