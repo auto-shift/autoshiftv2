@@ -1,0 +1,125 @@
+# Inform-only: the hub half of each team's agent is actually serving.
+#
+# EVERY assertion here is unconditional for a team that has the agent enabled. That is the point:
+# an inform policy that renders nothing reports Compliant, which reads as "verified" when in fact
+# nothing was examined. The placement decides whether this policy exists at all; once it exists it
+# always checks something.
+object-templates-raw: |
+  # fromConfigMap: without this cluster's values there is nothing to assert against, so failing is
+  # more honest than asserting defaults.
+  {{hub- $rcmCfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $cfg := $rcmCfg hub}}
+  # infra joins the iteration as a team named infra when this hub's gitops-infra label puts it in
+  # hub mode, which is the only mode where its principal lives here.
+  {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
+  {{hub- if eq (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default "hub") "hub" hub}}
+  {{hub- $teamSpecs = merge (dict "infra" (dig "gitops" "infra" dict $cfg)) $teamSpecs hub}}
+  {{hub- end hub}}
+  # Hoisted: range rebinds the dot, and the uninstall test below needs this hub's own labels.
+  {{hub- $hubLabels := .ManagedClusterLabels hub}}
+  {{hub- range $team, $spec := $teamSpecs hub}}
+  {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
+  # Skipped once this hub's label for the team reads uninstall. Teardown is driven by the label
+  # while this loop reads config, so a torn-down team would otherwise stay asserted here forever.
+  # Keying on the label alone means the operator sets one value rather than two.
+  {{hub- if and (dig "enabled" false $agentCfg) (ne (index $hubLabels (printf "autoshift.io/gitops-dev-team-%s" $team) | default "") "uninstall") hub}}
+  {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) hub}}
+  # The namespace, which exists whenever this policy has ever run. Asserting it means a Compliant
+  # verdict can never mean "checked nothing".
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $agentNs hub}}
+  # The signing certificate authority, and the JSON web token key the principal needs to start.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gitops-agent-ca
+        namespace: {{hub $agentNs hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gitops-agent-jwt
+        namespace: {{hub $agentNs hub}}
+  # The principal itself, reconciled by the operator.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: {{hub printf "%s-principal" $team hub}}
+        namespace: {{hub $agentNs hub}}
+      status:
+        phase: Available
+  # The principal deployment's rollout, for the same reason the spoke asserts the agent's: the
+  # operator reports the custom resource Available off minimum availability, which a stalled rolling
+  # update still satisfies while the OLD pod serves the OLD configuration. Progressing stays True
+  # after a completed rollout and goes False on ProgressDeadlineExceeded.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: {{hub printf "%s-principal-agent-principal" $team hub}}
+        namespace: {{hub $agentNs hub}}
+      status:
+        conditions:
+          - type: Available
+            status: 'True'
+          - type: Progressing
+            status: 'True'
+  # PER ENROLLED CLUSTER. The assertions above are team-scoped, which cannot detect one cluster
+  # falling out of enrollment while the team itself stays healthy. musthave never removes what it
+  # created, so that cluster's objects persist and only a per-cluster assertion notices.
+  {{hub- $mcList := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
+  {{hub- range $_, $mc := ($mcList.items | default list) hub}}
+  {{hub- $mcName := (dig "metadata" "name" "" $mc) hub}}
+  {{hub- $enrollKey := ternary "autoshift.io/gitops-infra" (printf "autoshift.io/gitops-dev-team-%s" $team) (eq $team "infra") hub}}
+  {{hub- if hasPrefix "agent" (dig $enrollKey "" (dig "metadata" "labels" dict $mc)) hub}}
+  {{hub- $agentName := printf "%s-%s" $mcName $team hub}}
+  # The agent's own namespace, whose name must equal the agent name for the principal to map it.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $agentName hub}}
+  # The client certificate this cluster's agent authenticates with.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub printf "%s-client-tls" $agentName hub}}
+        namespace: {{hub $agentNs hub}}
+  # The agent-to-cluster mapping. Absent, the principal authenticates the agent and then refuses to
+  # route anything to it, logging only "is not mapped to any cluster".
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub printf "cluster-%s" $agentName hub}}
+        namespace: {{hub $agentNs hub}}
+  # The permit list actually naming this agent. Naming too few namespaces is not an error: the
+  # principal just never propagates the project, and the team's applications never appear.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: default
+        namespace: {{hub $agentNs hub}}
+      spec:
+        sourceNamespaces:
+          - '{{hub $agentName hub}}'
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

@@ -2,6 +2,20 @@
 hubClusterSets:
   hub1:
     config:
+      # AutoShift deployed ONTO this managed hub. The managed-autoshift policy creates an Argo CD
+      # Application in this cluster's OWN Argo CD pointing at itself, which is the per-hub shape.
+      # This hub then runs its own AutoShift, configuring only ITS spokes; it cannot target
+      # itself, because only the hub-of-hubs' Red Hat Advanced Cluster Management manages it.
+      managedAutoshift:
+        - appName: 'hub1'             # 11 characters or fewer, and never 'autoshift'
+          repoUrl: 'https://github.com/auto-shift/autoshiftv2.git'
+          targetRevision: 'feature/gitops-agent-modes'
+          gitopsNamespace: 'openshift-gitops'
+          argoProject: 'default'
+          argoServer: 'https://kubernetes.default.svc'
+          valuesFiles:
+            - 'values/global.yaml'
+            - 'values/clustersets/managed.yaml'
       # Compliance Operator scans. Profiles are PINNED to a version: ocp4-stig tracks whatever
       # DISA publishes next, so an unpinned name would silently change what is measured and, with
       # autoApply on, change the cluster. Adopting a new release means adding an entry.
@@ -33,6 +47,9 @@ hubClusterSets:
       # OpenShift version for cluster deployment and image mirroring
       openshift-version: '4.22.8'
       self-managed: 'false'
+      # Lets the managed-autoshift policy place here. With cluster-type hub (injected by this entry
+      # living under hubClusterSets), gitops and self-managed false, this is the full predicate set.
+      autoshift-enable-install: 'true'
       ### OpenShift Gitops
       gitops: 'true' # is expected to be installed on all hub clusters
       gitops-subscription-name: openshift-gitops-operator
@@ -131,6 +148,16 @@ hubClusterSets:
       quay-source-namespace: openshift-marketplace
       ### Developer OpenShift Gitops
       gitops-dev: 'true'
+      # This hub also runs team test's Argo CD agent, reporting to that team's principal on the
+      # hub-of-hubs. A managed hub is still a managed cluster from the layer above, so it can carry
+      # team agents like any other.
+      # This cluster runs at least one team agent, which is what places the spoke policy. The
+      # per-team label below decides which teams and in which mode.
+      gitops-agent-enrolled: 'false'
+      # agent-managed: the HUB owns this team's Application resources for this cluster and the
+      # agent pulls them down, rather than the spoke owning them and mirroring up. Per-cluster, so
+      # another of team test's clusters could still run autonomous.
+      # gitops-dev-team-test: 'agent-managed'
       ### Loki
       loki: 'true'
       loki-subscription-name: loki-operator

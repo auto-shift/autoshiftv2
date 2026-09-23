@@ -135,6 +135,34 @@ hubClusterSets:
       # come from the gitops-dev-team-<team> labels below; this block supplies
       # each team's ArgoCD RBAC + resource sizing (all fields optional).
       gitops:
+        # Infra GitOps. agent and addon are mutually exclusive ways to run an infra agent: agent
+        # is the one AutoShift builds and is the default, addon is the Red Hat Advanced Cluster
+        # Management GitOps add-on, enabled by the gitops-agent and gitops-agent-ca labels below.
+        infra:
+          addon:
+            # Dedicated namespace for the principal Argo CD instance, kept away from infra-gitops.
+            namespace: 'openshift-gitops-agent'
+            logLevel: 'info'
+            propagateHubCA: true
+            serverAddress: ''
+            serverPort: ''
+            # autonomous: spokes own their Applications, the hub gets one real-time view of the fleet.
+            mode: 'autonomous'
+            ca:
+              # autoshift-ca makes the agent authority an intermediate under the same root that signs
+              # the API server, Ingress and component certificates. Point it at an existing issuer to
+              # chain the agent mesh to an organization public key infrastructure instead.
+              issuer:
+                name: 'autoshift-ca'
+                kind: 'ClusterIssuer'
+                group: 'cert-manager.io'
+              # renewBefore MUST stay above duration / 5, or the add-on overwrites this certificate
+              # authority with a self-signed one of its own and the chain is lost without an error.
+              duration: '8760h0m0s'
+              renewBefore: '2160h0m0s'
+              privateKey:
+                algorithm: 'RSA'
+                size: 4096
         teams:
           dev:
             gitops_rbac_policies:
@@ -142,6 +170,13 @@ hubClusterSets:
               - 'g, openshift-dev-leads, role:admin'
               - 'g, openshift-developers, role:readonly'
           test:
+            # Argo CD agent principal for this team, in openshift-gitops-test-agent, with its own
+            # certificate authority intermediate under autoshift-ca. Clusters join by setting
+            # gitops-dev-team-test: 'agent'.
+            agent:
+              enabled: true
+              caIssuer: 'autoshift-ca'
+              logLevel: 'info'
             gitops_rbac_policies:
               - 'g, openshift-systems, role:admin'
       # Advanced Cluster Security Day-2 settings (non-default; defaults cover scanner/collector/auth).
@@ -161,7 +196,16 @@ hubClusterSets:
       # gitops-version: 'openshift-gitops-operator.v1.21.4'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
-      # gitops-namespace: 'openshift-gitops'  # Override ArgoCD namespace per-cluster
+      # gitops-namespace: 'openshift-gitops'  # Override; stamped from gitopsNamespace if unset
+      # Argo CD agent. gitops-agent runs the principal on this hub; gitops-agent-ca has cert-manager
+      # issue the signing certificate authority the add-on derives the whole agent public key
+      # infrastructure from, instead of letting it self-sign one per hub. Spokes opt in separately
+      # with gitops-agent-enroll (see clustersets/managed.yaml).
+      # This hub runs team Argo CD agent principals. Which teams get one is decided by
+      # config.gitops.teams.<team>.agent.enabled; this only places the policy.
+      gitops-agent-teams: 'false'
+      gitops-agent: 'false'
+      gitops-agent-ca: 'false'
       ### AutoShift Console Plugin
       autoshift-console: 'true' # AutoShift section in the Fleet management perspective
       ### Advanced Cluster Management

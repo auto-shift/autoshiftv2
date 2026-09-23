@@ -1,0 +1,71 @@
+# Inform-only: this cluster's team agents have their credentials and their instance.
+#
+# The agent-to-cluster mapping is deliberately NOT asserted here: it lives on the hub, and a policy
+# cannot assert an object on another cluster. It is covered by agent-hub-ready.yaml instead.
+object-templates-raw: |
+  # fromConfigMap: without this cluster's values there is nothing to assert against, so failing is
+  # more honest than asserting defaults.
+  {{hub- $rcmCfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  # Read before the loop: range rebinds the dot, so .ManagedClusterLabels is unreachable inside it.
+  {{hub- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") hub}}
+  {{hub- $isHubCluster := eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub" hub}}
+  {{hub- range $label, $val := .ManagedClusterLabels hub}}
+  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
+  {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (hasPrefix "agent" $val) hub}}
+  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
+  {{hub- $cfgAll := $rcmCfg hub}}
+  {{hub- $spec := ternary (dig "gitops" "infra" dict $cfgAll) (index (dig "gitops" "teams" dict $cfgAll) $team | default dict) $isInfra hub}}
+  # Where this team's Argo CD instance lives on THIS cluster, defaulting to openshift-gitops-<team>.
+  # infra on a HUB is the exception: policy-gitops-systems-argocd places infra-gitops there, in the
+  # gitops namespace, so infra resolves to that and attaches rather than building a rival instance.
+  # That policy is placed on hub clustersets only, so on a spoke there is nothing to attach to and
+  # infra takes the openshift-gitops-<team> default like anyone else.
+  {{hub- $nsDefault := ternary $gitopsNs (printf "openshift-gitops-%s" $team) (and $isInfra $isHubCluster) hub}}
+  {{hub- $teamNs := (dig "namespace" $nsDefault $spec) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $teamNs hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gitops-agent-client-tls
+        namespace: {{hub $teamNs hub}}
+  # The instance, reconciled by the operator. server is deliberately off on an agent instance, so
+  # that component reports Unknown; phase still reaches Available.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: {{hub printf "%s-agent" $team hub}}
+        namespace: {{hub $teamNs hub}}
+      status:
+        phase: Available
+  # The rollout, which the custom resource above does not cover: the operator reports Available off
+  # minimum availability, and a stalled rolling update satisfies that while the previous pod goes on
+  # serving the previous configuration.
+  #
+  # Progressing is the signal. It stays True after a completed rollout and goes False with
+  # ProgressDeadlineExceeded when one stalls. Replica counts do not catch it, because spec.replicas
+  # and readyReplicas both read 1 throughout. The operator owns this deployment, so maxSurge cannot
+  # be set to 0 to avoid the stall; only reporting it is available.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: {{hub printf "%s-agent-agent-agent" $team hub}}
+        namespace: {{hub $teamNs hub}}
+      status:
+        conditions:
+          - type: Available
+            status: 'True'
+          - type: Progressing
+            status: 'True'
+  {{hub- end hub}}
+  {{hub- end hub}}
