@@ -10,9 +10,14 @@ object-templates-raw: |
   {{- range $c := (index $status "conditions" | default list) }}
   {{-   if and (eq (index $c "type") "Progressing") (eq (index $c "status") "True") }}{{- $progressing = true }}{{- end }}
   {{- end }}
-  {{- /* Trigger only: assert scalar spec fields (upstream always; desiredUpdate only when a real
-         upgrade is needed and none is already in flight). Completion is reported by the separate
-         status policy — no status-list assertion here (ACM does not match those reliably). */ -}}
+  {{- /* Image is never authored in git — read it from the cluster's availableUpdates so musthave
+         overwrites a stale desiredUpdate.image. Version-only leaves the old digest and CVO refuses
+         to start. */ -}}
+  {{- $image := "" }}
+  {{- range $u := (index $status "availableUpdates" | default list) }}
+  {{-   $cand := (index $u "image" | default "") }}
+  {{-   if and (eq $image "") (eq (index $u "version") $target) (ne $cand "") }}{{- $image = $cand }}{{- end }}
+  {{- end }}
   {{- if and (ne $target "") (or (eq $current "") (semverCompare (printf "> %s" $current) $target)) }}
   - complianceType: musthave
     objectDefinition:
@@ -22,8 +27,9 @@ object-templates-raw: |
         name: version
       spec:
         upstream: '{{ $upstream }}'
-        {{- if not $progressing }}
+        {{- if and (not $progressing) (ne $image "") }}
         desiredUpdate:
           version: '{{ $target }}'
+          image: '{{ $image }}'
         {{- end }}
   {{- end }}
