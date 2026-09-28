@@ -54,6 +54,8 @@ object-templates-raw: |
   {{- $wkIops := (index $wkRootVolume "iops" | default 2000 | toInt) }}
   {{- $wkSize := (index $wkRootVolume "size" | default 100 | toInt) }}
   {{- $wkVolType := (index $wkRootVolume "type" | default "gp3") }}
+  {{- /* Unset spreads the cluster over every zone in the region, one NAT gateway and Elastic IP each */ -}}
+  {{- $zones := (index $aws "zones" | default list) }}
   {{- $networking := (index $config "networking") }}
   {{- $clusterNetwork := (index $networking "clusterNetwork") }}
   {{- $machineNetwork := (index $networking "machineNetwork") }}
@@ -106,6 +108,10 @@ object-templates-raw: |
       "pullSecret" ""
       "sshKey" $sshPublicKey
   ) }}
+  {{- if $zones }}
+  {{- $_ := set $installConfig.controlPlane.platform.aws "zones" $zones }}
+  {{- $_ := set (index $installConfig.compute 0).platform.aws "zones" $zones }}
+  {{- end }}
   {{- if (gt (len $mirrors) 0) }}
   {{- $imageSources := list }}
   {{- range $_, $entry := $mirrors }}
@@ -314,6 +320,12 @@ object-templates-raw: |
               size: {{ $wkSize }}
               type: {{ $wkVolType }}
             type: {{ $wkInstanceType }}
+            {{- if $zones }}
+            zones:
+            {{- range $_, $z := $zones }}
+              - {{ $z }}
+            {{- end }}
+            {{- end }}
 
   - complianceType: musthave
     objectDefinition:
