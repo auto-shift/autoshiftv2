@@ -81,8 +81,10 @@ in `secret/vault-bootstrap-token` (key `token`) so `policy-vault-transit-provide
     copies them to the mirror registry.
   - Add a **tag** redirect to your disconnected config `mirrorRegistry.tagMirrors`
     (`source: docker.io/hashicorp`) — tag-referenced images need an ImageTagMirrorSet, not IDMS.
-  - Set `autoshift.io/vault-job-image` to a mirrored CLI image on baremetal/clusters without the internal
-    image registry (the init/transit-provider Jobs default to the internal `openshift/cli`).
+  - The init and transit-provider Jobs resolve their CLI image from the cluster's own `openshift/cli`
+    ImageStream, which is a digest against the release payload and so follows your
+    ImageDigestMirrorSet. Nothing more is needed. Set `config.images.cli` only to pin a different
+    mirrored image.
 - **Deploy mode**: use **OCI mode**. The upstream Vault chart is rendered to plain manifests at release
   time (baked into the OCI artifact), so nothing pulls `helm.releases.hashicorp.com` on the cluster. Git
   mode (on-cluster CMP render) would pull the chart at deploy time and needs the chart vendored/mirrored.

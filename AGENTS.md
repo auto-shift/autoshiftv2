@@ -85,6 +85,9 @@ vale sync && vale --minAlertLevel=error README.md docs/   # sync is required: st
   directory is deliberately not allowlisted in `.gitleaks.toml`.
 - **Keep the `evaluationInterval` block** on every ConfigurationPolicy, with both `compliant` and
   `noncompliant`. The default is `watch`, and the value must be a literal rather than a hub template.
+- **New and changed policies must fail loudly when required input is missing**, rather than mask a
+  required lookup with `| default dict` or render nothing: an empty `ConfigurationPolicy` reports
+  Compliant. Most existing policies still mask it. [Failing on missing input](docs/policy-behavior.md#failing-on-missing-input).
 - **Do not edit `tools/internal/resolver/e2e_test.go`** to make a policy pass. Fix the policy, or add
   a testdata stub.
 - **Never run an SVG optimizer over `docs/diagrams/`.** Each `.drawio.svg` carries its own editable
@@ -149,7 +152,8 @@ Three rules cause most of the breakage:
 2. Any expression producing multiple lines must be piped through `autoindent`. Plain `toYaml`
    outputs at column 0, which terminates the enclosing block scalar.
 3. Blank lines inside a block scalar must carry spaces to the block's indentation, or Kubernetes
-   re-serializes `|` as `>` and merges the lines.
+   re-serializes `|` as `>` and merges the lines. Inside `object-templates-raw` that padding instead
+   forces the whole block into a quoted scalar and breaks hub resolution, so use a `#` line there.
 
 Hub templates do not support Go comments; `{{hub /* ... */ hub}}` is a parse error. Use `{{/* */}}`
 only in `object-templates-raw`, written as exactly `{{- /*` with one space.

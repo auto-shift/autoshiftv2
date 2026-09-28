@@ -484,6 +484,31 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 - `# YAML comment` — survives into output. Can merge with subsequent template lines.
 - **Hub templates do NOT support comments.** `{{hub /* comment */ hub}}` is invalid and will cause a parse error. Only use Go-style comments (`{{/* */}}`) outside of `{{hub ... hub}}` delimiters.
 
+#### Blank lines inside `object-templates-raw`
+
+A blank line in a shell script nested inside `object-templates-raw` is squeezed from both sides, and
+each of the two obvious fixes breaks a different layer.
+
+- A **truly empty** line is the case the block scalar rule warns about. Kubernetes can re-serialize
+  the enclosing `|` as `>` and merge the surrounding lines.
+- A **whitespace-only** line makes the outer `object-templates-raw` block impossible to represent as
+  a literal scalar, so the YAML emitter falls back to a double-quoted flow scalar. Every quote in the
+  block is then escaped, and hub resolution fails on the first template action with
+  `unexpected "\" in operand`. That is a parse error, so the whole policy stays raw and never
+  deploys, the same silent failure mode as calling a function the hub does not have.
+
+Use a comment line instead. It carries content, so neither rule applies:
+
+```yaml
+                  - |
+                    set -eo pipefail
+                    NS=vault
+                    #
+                    echo "waiting for vault-0..."
+```
+
+`grep -rn '^[[:space:]]\+$' policies/` finds any that have crept back in.
+
 #### Other gotchas
 
 **`fromYaml`, `fromJson`, `toYaml`, `toJson` work in hub templates.** This enables reading structured data from ConfigMaps directly:

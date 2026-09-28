@@ -4,6 +4,18 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  # Manual runs exercise this workflow without cutting a release: the same container, the same
+  # toolchain, the same make target, with the registry push skipped. Select the branch to test a
+  # workflow change before it reaches main.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the leading v (for example 0.1.0)'
+        required: true
+      dry_run:
+        description: 'Skip pushing charts to the registry'
+        type: boolean
+        default: true
 
 env:
   REGISTRY: quay.io
@@ -19,35 +31,35 @@ jobs:
       packages: write
     env:
       PULL_SECRET: ${{ secrets.PULL_SECRET }}
+      # Gated on the event, not just on the input being empty: a tag push can never be dry, so a
+      # mistake in the dry-run plumbing cannot turn a real release into a silent no-op.
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
 
     steps:
-      - name: Install dependencies
-        run: |
-          dnf -y install \
-            make \
-            jq \
-            git \
-            findutils \
-            https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
-          dnf -y install yq
-          # Install Helm from official releases
-          curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar xz -C /tmp
-          mv /tmp/linux-amd64/helm /usr/local/bin/helm
-          chmod +x /usr/local/bin/helm
-          helm version
-          # Install oras CLI for OCI tagging
-          curl -fsSL https://github.com/oras-project/oras/releases/download/v1.2.2/oras_1.2.2_linux_amd64.tar.gz | tar xz -C /tmp
-          mv /tmp/oras /usr/local/bin/oras
-          chmod +x /usr/local/bin/oras
-          # Install OpenShift CLI from Red Hat mirror
-          curl -fsSL https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
-          mv oc kubectl /usr/local/bin/
-          oc version --client
+      # actions/checkout needs git in the container, and fetch-depth: 0 falls back to an API
+      # tarball without it, so this one package cannot come from the shared script below.
+      - name: Install git
+        run: dnf -y install git
 
       - name: Checkout code
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      # Shared with the release-dry-run job in ci.yaml, so a PR exercises the same container this
+      # job does and a tool added for a new release step cannot be missing here.
+      - name: Install release toolchain
+        run: ./scripts/install-release-toolchain.sh
+
+      # make release renders the PolicyGenerator policy directories into Helm charts, which needs
+      # kustomize and the PolicyGenerator plugin, and both are installed with `go install`. The
+      # version tracks tools/go.mod rather than being pinned here, so it cannot drift from CI.
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: tools/go.mod
+          cache: true
+          cache-dependency-path: tools/go.sum
 
       - name: Setup Red Hat registry pull secret
         if: ${{ env.PULL_SECRET != '' }}
@@ -56,24 +68,30 @@ jobs:
           echo "$PULL_SECRET" > ~/.docker/config.json
           chmod 600 ~/.docker/config.json
 
-      - name: Extract version from tag
+      - name: Extract version
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Log in to Quay.io
+        if: env.DRY_RUN != 'true'
         env:
           QUAY_USER: ${{ secrets.QUAY_USERNAME }}
           QUAY_PASS: ${{ secrets.QUAY_PASSWORD }}
         run: |
           echo "$QUAY_PASS" | helm registry login ${{ env.REGISTRY }} -u "$QUAY_USER" --password-stdin
-          echo "$QUAY_PASS" | oras login ${{ env.REGISTRY }} -u "$QUAY_USER" --password-stdin
 
       - name: Run release
         run: |
-          make release VERSION=${{ steps.version.outputs.version }}
+          make release VERSION=${{ steps.version.outputs.version }} DRY_RUN=${{ env.DRY_RUN }}
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
@@ -94,6 +112,8 @@ jobs:
 
   create-release:
     needs: release
+    # Only a tag push publishes a GitHub release; a manual run stops after the build.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write

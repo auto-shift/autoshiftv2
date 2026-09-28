@@ -58,20 +58,21 @@ If your clone of AutoShiftv2 requires credentials or you want to add credentials
 > so no policies ever render or sync. You do **not** need to wait for `MultiClusterHub` to reach `Running` — only for
 > Red Hat Advanced Cluster Management's operator to be installed (the `multicluster-operators-hub-subscription` deployment to exist).
 
-> [!IMPORTANT]
-> Both bootstrap charts run a short-lived Job that waits for CRDs, using a CLI image that defaults to the
-> in-cluster registry: `image-registry.openshift-image-registry.svc:5000/openshift/cli:latest`. On clusters
-> where the internal image registry is **not** enabled (e.g. bare metal, or when the registry
-> `managementState` is `Removed`), that image cannot be pulled and the bootstrap Job hangs in
-> `ImagePullBackOff`. Override it with an external CLI image on **both** bootstrap installs (this step and the
+> [!NOTE]
+> Both bootstrap charts run a short-lived Job that waits for CRDs. The charts resolve its CLI image
+> from the cluster's own `openshift/cli` ImageStream at install time. That entry is a digest against
+> the release payload, so an ImageDigestMirrorSet rewrites it in a disconnected deployment and it
+> needs no internal image registry. This matters on bare metal and wherever the registry
+> `managementState` is `Removed`, because
+> `image-registry.openshift-image-registry.svc:5000` does not exist there.
+> To pin a specific mirrored image instead, set it on **both** bootstrap installs (this step and the
 > GitOps step):
 > ```console
 > helm upgrade --install advanced-cluster-management advanced-cluster-management \
->   --set image=registry.redhat.io/openshift4/ose-cli:latest
+>   --set image=<registry>/openshift4/ose-cli:latest
 > helm upgrade --install openshift-gitops openshift-gitops -f policies/stable/openshift-gitops/values.yaml \
->   --set image=registry.redhat.io/openshift4/ose-cli:latest
+>   --set image=<registry>/openshift4/ose-cli:latest
 > ```
-> In a disconnected environment, use your mirrored equivalent of the `openshift4/ose-cli` image.
 
 Using helm, install OpenShift Red Hat Advanced Cluster Management on the hub cluster:
 
@@ -373,11 +374,11 @@ helm upgrade --install openshift-gitops ${OCI_REPO}/bootstrap/openshift-gitops \
     --timeout 10m
 ```
 
-> [!IMPORTANT]
-> As with the source install, the bootstrap CRD-wait Job defaults to the in-cluster CLI image
-> (`image-registry.openshift-image-registry.svc:5000/openshift/cli:latest`). On clusters without the
-> internal image registry (e.g. bare metal), add `--set image=registry.redhat.io/openshift4/ose-cli:latest`
-> (or your mirrored equivalent) to **both** bootstrap installs (Step 2 and Step 3).
+> [!NOTE]
+> As with the source install, the bootstrap CRD-wait Job resolves its CLI image from the cluster's own
+> `openshift/cli` ImageStream, so it needs no internal image registry. To pin a specific mirrored
+> image instead, add `--set image=<registry>/openshift4/ose-cli:latest` to **both** bootstrap installs
+> (Step 2 and Step 3).
 
 Verify GitOps is running:
 
