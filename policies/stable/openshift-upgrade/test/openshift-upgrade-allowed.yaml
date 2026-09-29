@@ -17,15 +17,14 @@ object-templates-raw: |
   {{- if regexMatch "^[0-9]+[.][0-9]+[.][0-9]+" $target }}
   {{-   $done = and (ne $current "") (semverCompare (printf ">= %s" $target) $current) }}
   {{- end }}
-  {{- /* Unconstructible Deployment: metadata only is invalid, so an enforce override of this
-         inform policy cannot create it, and cannot delete ClusterVersion. customMessage is the
-         operator-visible error. */ -}}
+  {{- /* Validity is decided in Go (reliable). When invalid, force NonCompliant with a mustnothave on
+         the ClusterVersion (which always exists) — a scalar existence check, not status-list matching.
+         customMessage is the operator-visible error. */ -}}
   {{- if or (eq $target "") (and (not $done) (not $found)) }}
-  - complianceType: musthave
+  - complianceType: mustnothave
     objectDefinition:
-      apiVersion: apps/v1
-      kind: Deployment
+      apiVersion: config.openshift.io/v1
+      kind: ClusterVersion
       metadata:
-        name: openshift-upgrade-version-not-available
-        namespace: openshift-cluster-version
+        name: version
   {{- end }}
