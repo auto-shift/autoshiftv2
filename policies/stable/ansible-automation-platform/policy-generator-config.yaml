@@ -4,6 +4,7 @@ metadata:
   name: ansible-automation-platform
 # Layout convention:
 #   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE; ALWAYS remediationAction: inform
 # A policy's path points at a single FILE, or a DIRECTORY when it has 2+ manifests (a dir is a
 # wildcard: drop a file in, no config edit). Keep placement*.yaml at the dir root, NOT inside a
 # wildcarded manifests dir (a Placement there would be wrapped into the Policy as a managed object).
@@ -38,6 +39,31 @@ policies:
       - name: policy-aap-operator-install
     manifests:
       - path: manifests/aap-instance.yaml
+  # Readiness: the instance's last reconcile succeeded across every enabled component.
+  - name: policy-aap-ready-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-aap-instance
+    customMessage:
+      noncompliant: >-
+        The AnsibleAutomationPlatform has not reconciled successfully. Check the Failure condition on
+        the aap instance and the conditions on its AutomationController, EDA and AutomationHub, which
+        name the failing step. Common causes are a Hub storage backend that is unreachable or
+        misconfigured, and a config.aap.instance value the operator rejects.
+    manifests:
+      - path: test/aap-ready.yaml
+  # Hub S3 Secret check: the Secret the instance names for S3 storage exists with its required keys.
+  - name: policy-aap-hub-s3-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-aap-instance
+    customMessage:
+      noncompliant: >-
+        Automation hub uses S3 storage, but the Secret named in spec.hub.object_storage_s3_secret is
+        missing from ansible-automation-platform or lacks s3-access-key-id, s3-secret-access-key or
+        s3-bucket-name. Create it on the cluster, then check the AnsibleAutomationPlatform status.
+    manifests:
+      - path: test/aap-hub-s3-secret.yaml
   # NooBaa S3 storage: ObjectBucketClaim + derived S3 credentials Secret. Own placement predicate.
   - name: policy-aap-nooba-storage
     dependencies:
