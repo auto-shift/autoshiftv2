@@ -1,0 +1,37 @@
+# NIST auditd-data-disk-error-action, -disk-full-action, -retention-flush and
+# -retention-space-left-action.
+#
+# Writes /etc/audit/auditd.conf through a MachineConfig, which ROLLS EVERY NODE in the listed pools.
+# The whole file is written because auditd.conf has no drop-in directory.
+#
+# The defaults are the values the profile checks for. Note what they mean before enabling:
+# disk_error_action and disk_full_action of single drop the node to single-user mode rather than
+# let auditing stop, which is the control's intent and is disruptive by design. space_left_action
+# of email needs a working local mailer, or the warning goes nowhere.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $ad := (dig "manualRemediations" "auditdConfig" dict $cfg) hub}}
+  {{hub- $s := (dig "settings" dict $ad) hub}}
+  {{hub- $conf := printf "local_events = yes\nwrite_logs = yes\nlog_file = /var/log/audit/audit.log\nlog_group = root\nlog_format = ENRICHED\nflush = %s\nfreq = %v\nmax_log_file = %v\nnum_logs = %v\nname_format = %s\nmax_log_file_action = %s\nspace_left = %v\nspace_left_action = %s\nverify_email = no\naction_mail_acct = %s\nadmin_space_left = 50\nadmin_space_left_action = %s\ndisk_full_action = %s\ndisk_error_action = %s\nuse_libwrap = yes\n" (dig "flush" "data" $s) (dig "freq" 50 $s) (dig "max_log_file" 6 $s) (dig "num_logs" 5 $s) (dig "name_format" "hostname" $s) (dig "max_log_file_action" "rotate" $s) (dig "space_left" 100 $s) (dig "space_left_action" "email" $s) (dig "action_mail_acct" "root" $s) (dig "admin_space_left_action" "single" $s) (dig "disk_full_action" "single" $s) (dig "disk_error_action" "single" $s) hub}}
+  {{hub- range $pool := (dig "pools" (list "master" "worker") $ad) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: machineconfiguration.openshift.io/v1
+      kind: MachineConfig
+      metadata:
+        name: 75-{{hub $pool hub}}-auditd-config
+        labels:
+          machineconfiguration.openshift.io/role: {{hub $pool hub}}
+      spec:
+        config:
+          ignition:
+            version: 3.2.0
+          storage:
+            files:
+              - path: /etc/audit/auditd.conf
+                mode: 416
+                overwrite: true
+                contents:
+                  source: data:text/plain;charset=utf-8;base64,{{hub $conf | b64enc hub}}
+  {{hub- end hub}}

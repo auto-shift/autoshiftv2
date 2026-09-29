@@ -85,6 +85,9 @@ vale sync && vale --minAlertLevel=error README.md docs/   # sync is required: st
   directory is deliberately not allowlisted in `.gitleaks.toml`.
 - **Keep the `evaluationInterval` block** on every ConfigurationPolicy, with both `compliant` and
   `noncompliant`. The default is `watch`, and the value must be a literal rather than a hub template.
+- **New and changed policies must fail loudly when required input is missing**, rather than mask a
+  required lookup with `| default dict` or render nothing: an empty `ConfigurationPolicy` reports
+  Compliant. Most existing policies still mask it. [Failing on missing input](docs/policy-behavior.md#failing-on-missing-input).
 - **Do not edit `tools/internal/resolver/e2e_test.go`** to make a policy pass. Fix the policy, or add
   a testdata stub.
 - **Never run an SVG optimizer over `docs/diagrams/`.** Each `.drawio.svg` carries its own editable
