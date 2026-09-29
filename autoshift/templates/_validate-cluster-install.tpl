@@ -181,7 +181,7 @@ Collects all errors and reports them together.
 {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
 {{- $validRouteKeys := list "destination" "gateway" "interface" "metric" "tableId" }}
 {{- $validSshRefKeys := list "name" "key" "namespace" }}
-{{- $validAwsKeys := list "region" "credentialRef" "sshPrivateKeyRef" "sshPublicKey" "sshKeyRef" "fips" "networkType" "controlPlane" "workers" }}
+{{- $validAwsKeys := list "region" "credentialRef" "sshPrivateKeyRef" "sshPublicKey" "sshKeyRef" "fips" "networkType" "zones" "controlPlane" "workers" }}
 {{- $validAwsCpKeys := list "instanceType" "rootVolume" }}
 {{- $validAwsWorkerKeys := list "replicas" "instanceType" "rootVolume" }}
 {{- $validAwsVolumeKeys := list "iops" "size" "type" }}
@@ -339,6 +339,17 @@ Collects all errors and reports them together.
       {{- end }}
       {{- if not $aws.sshPrivateKeyRef }}
         {{- $errors = append $errors (printf "%s: aws.sshPrivateKeyRef is required" $path) }}
+      {{- end }}
+      {{- if hasKey $aws "zones" }}
+        {{- if not (kindIs "slice" $aws.zones) }}
+          {{- $errors = append $errors (printf "%s: aws.zones must be a list" $path) }}
+        {{- else }}
+          {{- range $z := $aws.zones }}
+            {{- if not (hasPrefix (printf "%v" $aws.region) (printf "%v" $z)) }}
+              {{- $errors = append $errors (printf "%s: aws.zones entry '%v' is not in region '%v'" $path $z $aws.region) }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
       {{- end }}
       {{- range $key, $_ := $aws }}
         {{- if not (has $key $validAwsKeys) }}
