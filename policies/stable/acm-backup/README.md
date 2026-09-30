@@ -32,6 +32,7 @@ Compliant — which for a backup policy means a hub that appears healthy while b
 | Policy | Runs on | Description |
 |--------|---------|-------------|
 | `policy-acm-backup-storage` | Both modes | The `ObjectBucketClaim` (obc backend only) and the `DataProtectionApplication` that points Velero at the bucket |
+| `policy-acm-backup-credentials-test` | Both modes | Inform: the credentials Secret Velero opens exists. Existence only, never contents |
 | `policy-acm-backup-storage-test` | Both modes | Inform: the `DataProtectionApplication` is Reconciled and the `BackupStorageLocation` is Available |
 | `policy-acm-backup-schedule` | `active` | The `BackupSchedule` |
 | `policy-acm-backup-schedule-test` | `active` | Inform: the schedule phase is `Enabled` |
@@ -138,6 +139,26 @@ While the claim is still binding the policy emits the claim but no `DataProtecti
 rather than one pointing at an empty bucket. `policy-acm-backup-storage-test` reports the
 not-ready state.
 
+## Nothing is allowed to fail quietly
+
+Every input that the policy cannot do without stops it loudly rather than rendering something
+harmless. An empty `ConfigurationPolicy` reports Compliant, so silence is the failure mode this
+policy set is built to avoid.
+
+| Missing or wrong | What happens |
+|---|---|
+| `storage.type` not one of the four | Template fails, naming the value it got |
+| `storage.bucket` empty on any backend but `obc` | Template fails rather than configure Velero with no bucket |
+| `storage.azure.*` incomplete | Template fails, naming the missing field |
+| `caRef` set but the ConfigMap is absent or the key empty | Template fails; omitting `caCert` would leave Velero unable to verify the endpoint while the policy looked healthy |
+| The credentials Secret is absent | `policy-acm-backup-credentials-test` reports it by name |
+| `active.veleroSchedule` empty | Template fails; a schedule with no cron never produces a backup |
+| `passive.cleanupBeforeRestore` invalid | Template fails, listing the accepted values |
+| The `ObjectBucketClaim` has not bound | No `DataProtectionApplication` is written, and the claim itself keeps the policy non-empty so it cannot report Compliant having done nothing |
+
+The remaining defaults are genuine documented fallbacks (`veleroTtl`, `restoreSyncInterval`, the
+conventional Secret name and key), each with a check behind it.
+
 ## Promotion is manual, by design
 
 The standby's `Restore` sets `veleroManagedClustersBackupName: skip`. It keeps pulling credentials
@@ -168,24 +189,19 @@ Setting `cleanupBeforeRestore: CleanupAll` additionally requires the
 rather than from a Velero snapshot, which is what you want: the snapshot would carry the old hub's
 Application state. Do not remove those labels, and add the same label to any new Argo CD object.
 
-## Known limitation: the MultiClusterHub component list is a one-way door
+## Known limitation: enabling a MultiClusterHub component is not reversible from values
 
 Enabling this policy adds `cluster-backup` to `spec.overrides.components` on the `MultiClusterHub`,
 alongside `siteconfig` from the cluster provisioning flow.
 
-`musthave` merges lists by appending and never removes from them, so setting `acm-backup` back to
-`false` leaves the component enabled and the policy still reports Compliant. Emitting
-`enabled: false` instead does not help: it appends a second entry for the same component rather
-than replacing the first.
+`musthave` does not remove list entries, so setting `acm-backup` back to `false` leaves the
+component enabled and the policy still reports Compliant. Disable it by editing the
+`MultiClusterHub` directly.
 
-This is pre-existing behaviour, not something this policy introduced — `siteconfig` has the same
-property today. Turning a component off currently means editing the `MultiClusterHub` by hand.
-
-The fix is the read-modify-write plus `mustonlyhave` pattern that `policy-acm-addon-tuning` already
-uses on `ClusterManagementAddOn` for exactly this problem: read the live `MultiClusterHub`, replace
-only `spec.overrides.components`, and apply `mustonlyhave`. It is deliberately not done here,
-because the `MultiClusterHub` is the most load-bearing object on the hub and that change deserves
-its own review.
+This is pre-existing behaviour rather than something this policy introduced: `siteconfig` has the
+same property. Making it reversible needs the read-modify-write plus `mustonlyhave` pattern that
+`policy-acm-addon-tuning` already uses on `ClusterManagementAddOn`, which is a change to the most
+load-bearing object on the hub and belongs in its own review.
 
 ## Verification
 

@@ -1,25 +1,23 @@
 # Continuous passive sync, on a STANDBY hub only.
 #
 # veleroManagedClustersBackupName: skip is the whole point of this resource. The standby keeps
-# pulling credentials and hub resources so it is always warm, but it never restores the
+# pulling credentials and hub resources so it stays warm, but it never restores the
 # managed-cluster activation data, so it never tries to take the fleet from a healthy active hub.
 #
 # Promotion to active is a deliberate human act and is NOT automated here: an operator sets
 # acm-backup to 'active' on the standby and 'false' on the failed hub. See the policy README.
+#
+# Entirely hub-side, like the schedule: every value comes from config.acm-backup.passive.
 object-templates-raw: |
   # INDENTATION ANCHOR
   {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $bk := (index $rcmConfig "acm-backup" | default dict) hub}}
   {{hub- $passive := (index $bk "passive" | default dict) hub}}
-  #
-  {{- $syncInterval := "{{hub index $passive "restoreSyncInterval" | default "30m" hub}}" }}
-  {{- $cleanup := "{{hub index $passive "cleanupBeforeRestore" | default "CleanupRestored" hub}}" }}
-  #
-  {{- if not (has $cleanup (list "None" "CleanupRestored" "CleanupAll")) }}
-  {{- fail (printf "acm-backup: config.acm-backup.passive.cleanupBeforeRestore must be 'None', 'CleanupRestored' or 'CleanupAll', got %q" $cleanup) }}
-  {{- end }}
-  #
+  {{hub- $cleanup := (index $passive "cleanupBeforeRestore" | default "CleanupRestored") hub}}
+  {{hub- if not (has $cleanup (list "None" "CleanupRestored" "CleanupAll")) hub}}
+  {{hub- fail (printf "acm-backup: config.acm-backup.passive.cleanupBeforeRestore must be 'None', 'CleanupRestored' or 'CleanupAll', got %q" $cleanup) hub}}
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: cluster.open-cluster-management.io/v1beta1
@@ -29,8 +27,8 @@ object-templates-raw: |
         namespace: open-cluster-management-backup
       spec:
         syncRestoreWithNewBackups: true
-        restoreSyncInterval: '{{ $syncInterval }}'
-        cleanupBeforeRestore: {{ $cleanup }}
+        restoreSyncInterval: '{{hub index $passive "restoreSyncInterval" | default "30m" hub}}'
+        cleanupBeforeRestore: {{hub $cleanup hub}}
         veleroManagedClustersBackupName: skip
         veleroCredentialsBackupName: latest
         veleroResourcesBackupName: latest

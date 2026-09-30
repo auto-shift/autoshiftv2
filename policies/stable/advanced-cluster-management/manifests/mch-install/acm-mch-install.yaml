@@ -13,13 +13,9 @@ object-templates-raw: |
         disableHubSelfManagement: true
         {{- end }}
         {{- /* Optional MultiClusterHub components, each gated on its own label.
-               ONE-WAY DOOR: musthave merges lists by appending, so an entry added here can never
-               be removed by flipping its label back — the component stays enabled and the policy
-               still reports Compliant. Emitting `enabled: false` instead does not help; it appends
-               a SECOND entry for the same component rather than replacing the first. Undoing this
-               means a read-modify-write plus mustonlyhave against the live MultiClusterHub, which
-               is deliberately not done here: see the acm-backup policy README. To turn a component
-               off today, edit the MultiClusterHub by hand. */ -}}
+               Enabling a component here is not reversible from values: musthave does not remove
+               list entries, so clearing the label leaves the component enabled and the policy
+               still reports Compliant. Disable one by editing the MultiClusterHub directly. */ -}}
         {{- $clusterInstall := {{hub (index .ManagedClusterLabels "autoshift.io/cluster-install") | default "false" hub}} }}
         {{- $backupMode := "{{hub (index .ManagedClusterLabels "autoshift.io/acm-backup") | default "false" hub}}" }}
         {{- $siteconfig := eq (print $clusterInstall) "true" }}
