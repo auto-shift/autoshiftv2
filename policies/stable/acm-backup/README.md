@@ -60,7 +60,12 @@ against a storage location that does not work.
 
 ### `s3`
 
-A bucket outside the fleet. The only correct choice for real hub recovery: backup storage has to
+Amazon Simple Storage Service, or **any S3-compatible object store** reached through
+`storage.endpoint`: NetApp StorageGRID, Pure Storage FlashBlade, Dell ECS, MinIO, Ceph RADOS
+Gateway, Wasabi. Setting `endpoint` also turns on path-style addressing, which on-premises
+appliances need because virtual-host style addressing requires wildcard DNS.
+
+A bucket outside the fleet is the only correct choice for real hub recovery: backup storage has to
 outlive the hub it protects.
 
 Credentials are never in values. Create the Secret out of band:
@@ -84,6 +89,40 @@ comes from a ConfigMap on the hub named by `caRef`.
 
 If `bucket` is empty the policy fails with an explicit message rather than creating a
 `DataProtectionApplication` with no bucket.
+
+### `azure` and `gcp`
+
+Azure Blob Storage and Google Cloud Storage. `azure` additionally needs
+`storage.azure.resourceGroup`, `.storageAccount` and `.subscriptionId`; the policy fails loudly if
+any is missing.
+
+### Object stores this policy has never heard of
+
+The backends above are conveniences, not a closed list. Three escape hatches keep an unforeseen
+appliance configurable from values alone, with no change to this policy:
+
+| Key | Effect |
+|---|---|
+| `storage.config` | Free-form map merged **last** into the Velero configuration, so it wins over everything derived |
+| `storage.provider` | Overrides the Velero provider derived from `type` |
+| `storage.plugins` | Overrides the derived `defaultPlugins` list |
+
+The case that comes up most: several S3-compatible appliances reject the newer checksum headers
+Velero sends, and need `checksumAlgorithm` set to an empty string.
+
+```yaml
+storage:
+  type: s3
+  bucket: acm-hub-backups
+  region: us-east-1
+  endpoint: https://storagegrid.example.com:8082
+  caRef:
+    name: storagegrid-ca
+    namespace: open-cluster-management-backup
+    key: ca-bundle.crt
+  config:
+    checksumAlgorithm: ''
+```
 
 ### `obc`
 
@@ -151,11 +190,15 @@ its own review.
 ## Verification
 
 ```bash
-oc get schedules -A | grep acm            # four schedule.velero.io on the active hub
+oc get schedules -A | grep acm
 oc get backupschedule -n open-cluster-management-backup
 oc get restore -n open-cluster-management-backup
 oc get backupstoragelocation -n open-cluster-management-backup
 ```
+
+A healthy active hub on Red Hat Advanced Cluster Management 2.17 produces five
+`schedule.velero.io` resources, not the four the product documentation lists: credentials,
+resources, generic resources, managed clusters, and validation policy.
 
 A `BackupSchedule` phase of `BackupCollision` means a second hub is writing to the same storage
 location and backups have stopped on both.

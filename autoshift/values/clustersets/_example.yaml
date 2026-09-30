@@ -169,15 +169,22 @@ hubClusterSets:
       # bucket the active hub writes.
       acm-backup:
         storage:
-          # 's3'  the bucket lives outside the fleet. The only correct choice for real hub
-          #       recovery: backup storage has to outlive the hub it protects.
-          # 'obc' an ObjectBucketClaim against the local ODF NooBaa. Lab and sandbox only.
+          # Names the object store. The Velero provider and plugin follow from it.
+          #   's3'    Amazon Simple Storage Service, or ANY S3-compatible appliance reached
+          #           through endpoint: NetApp StorageGRID, Pure Storage FlashBlade, Dell ECS,
+          #           MinIO, Ceph RADOS Gateway, Wasabi.
+          #   'azure' Azure Blob Storage. Requires the azure block below.
+          #   'gcp'   Google Cloud Storage.
+          #   'obc'   an ObjectBucketClaim against the local ODF NooBaa. Lab and sandbox only:
+          #           a bucket on the hub cannot survive the hub.
           type: s3
           bucket: acm-backup              # change this; an empty bucket fails the policy
           prefix: ''
           region: us-east-2
-          endpoint: ''                    # S3-compatible endpoint URL; blank for AWS S3
+          endpoint: ''                    # S3-compatible endpoint URL; blank for AWS S3.
+                                          # Setting it also turns on path-style addressing.
           # Optional trust bundle for a private endpoint, read from a ConfigMap on the hub.
+          # Needed by most on-premises appliances, whose certificates are privately signed.
           # caRef:
           #   name: my-s3-ca
           #   namespace: open-cluster-management-backup
@@ -191,6 +198,24 @@ hubClusterSets:
             key: cloud
           # type: obc only. The ODF NooBaa storage class the claim is made against.
           storageClassName: openshift-storage.noobaa.io
+          # type: azure only.
+          azure:
+            resourceGroup: ''
+            storageAccount: ''
+            subscriptionId: ''
+          # ESCAPE HATCHES, so an object store nobody anticipated is still configurable from
+          # values alone rather than needing a change to the policy.
+          # provider overrides the Velero provider derived from type.
+          provider: ''
+          # plugins overrides the derived defaultPlugins list.
+          # plugins:
+          #   - openshift
+          #   - aws
+          # config is merged LAST into the Velero config, so it wins over everything derived
+          # above. The common case: several S3-compatible appliances reject Velero's newer
+          # checksum headers and need checksumAlgorithm set to an empty string.
+          # config:
+          #   checksumAlgorithm: ''
         active:
           # Quote the cron. A value starting with an asterisk is a YAML alias when unquoted and
           # the whole policy then fails to render.

@@ -200,11 +200,15 @@ The label value is the mode, and the mode names are the keys of the mode-specifi
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `storage.type` | string | `s3` | `s3` for a bucket outside the fleet, `obc` for an `ObjectBucketClaim` against the local ODF NooBaa. Only `s3` is suitable for production: backup storage has to outlive the hub it protects |
+| `storage.type` | string | `s3` | Names the object store; the Velero provider and plugin follow from it. `s3` covers Amazon Simple Storage Service and any S3-compatible appliance reached through `endpoint` (NetApp StorageGRID, Pure Storage FlashBlade, Dell ECS, MinIO, Ceph RADOS Gateway). `azure` and `gcp` use their own providers. `obc` is an `ObjectBucketClaim` against the local ODF NooBaa and is lab-only: backup storage has to outlive the hub it protects |
 | `storage.bucket` | string | | Bucket name. Required when `storage.type` is `s3`; the policy fails rather than configure Velero with no bucket |
 | `storage.prefix` | string | | Optional key prefix inside the bucket |
 | `storage.region` | string | | Bucket region |
-| `storage.endpoint` | string | | Endpoint URL for an S3-compatible store. Leave blank for AWS S3 |
+| `storage.endpoint` | string | | Endpoint URL for an S3-compatible store. Leave blank for AWS S3. Setting it also turns on path-style addressing, which on-premises appliances need because virtual-host style requires wildcard DNS |
+| `storage.azure` | map | | `azure` only: `resourceGroup`, `storageAccount` and `subscriptionId`. All three are required and the policy fails loudly without them |
+| `storage.provider` | string | | Overrides the Velero provider derived from `type` |
+| `storage.plugins` | list | | Overrides the derived `defaultPlugins` list |
+| `storage.config` | map | | Free-form keys merged last into the Velero configuration, so they win over everything derived. This is the escape hatch for an object store the policy does not know about. Several S3-compatible appliances reject Velero's newer checksum headers and need `checksumAlgorithm` set to an empty string |
 | `storage.caRef` | map | | Optional trust bundle for a private endpoint, as `name`, `namespace` and `key` of a ConfigMap on the hub |
 | `storage.configSecretRef` | map | `cloud-credentials` / `cloud` | Name and key of the Velero credentials Secret, which an administrator creates out of band in `open-cluster-management-backup`. Credentials are never in values files |
 | `storage.storageClassName` | string | `openshift-storage.noobaa.io` | The `obc` backend only: the storage class the claim is made against |
