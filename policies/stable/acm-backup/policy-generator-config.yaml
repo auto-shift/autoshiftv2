@@ -70,11 +70,32 @@ policies:
       - path: test/acm-backup-credentials-ready.yaml
     customMessage:
       noncompliant: >-
-        The object store credentials Secret does not exist in open-cluster-management-backup on
-        this cluster, so Velero cannot authenticate and no backup can succeed. For the s3, azure
-        and gcp backends an administrator creates it out of band and names it through
-        config.acm-backup.storage.configSecretRef; it is never in values. For the obc backend it is
-        derived from the ObjectBucketClaim, so this stays noncompliant until that claim binds.
+        Velero has no credentials for the object store, so no backup can succeed. Create the Secret
+        in open-cluster-management-backup and name it in config.acm-backup.storage.configSecretRef;
+        credentials never go in values. The file holds a Velero credentials block, [default] then
+        aws_access_key_id and aws_secret_access_key for any S3-compatible store:
+        oc create secret generic cloud-credentials -n open-cluster-management-backup
+        --from-file=cloud=./credentials-velero
+        With the obc backend it is derived from the ObjectBucketClaim instead, so this stays
+        noncompliant until that claim binds and needs no action.
+  # 1-test-a2) Is the ROOT AutoShift Application excluded from hub backups? It carries this hub's
+  #   own configuration, so a standby that restores it adopts this hub's config and both hubs end in
+  #   BackupCollision. Scoped to that one Application: the generated ones already carry the label,
+  #   and a user's own Applications should be backed up. Reported, not enforced.
+  - name: policy-acm-backup-exclusions-test
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: test/acm-backup-exclusions-ready.yaml
+    customMessage:
+      noncompliant: >-
+        Hub backups capture Argo CD Applications, so a standby hub that restores this one adopts
+        this hub's configuration: its acm-backup mode flips to active, it starts a second
+        BackupSchedule against the same storage location, and both hubs enter BackupCollision, which
+        stops backups everywhere. Add this to the Application's metadata.labels where it is declared,
+        so GitOps keeps it: velero.io/exclude-from-backup: "true". To stop the exposure immediately,
+        oc label application.argoproj.io <name> -n <namespace> velero.io/exclude-from-backup=true
   # 1-test-b) Storage readiness (status observation → inform, its own Policy in test/).
   - name: policy-acm-backup-storage-test
     remediationAction: inform
@@ -84,10 +105,13 @@ policies:
       - path: test/acm-backup-storage-ready.yaml
     customMessage:
       noncompliant: >-
-        The backup storage location is not Available. Velero cannot write hub backups until it is,
-        so this hub currently has no disaster recovery. Check the DataProtectionApplication in
-        open-cluster-management-backup, the bucket named by config.acm-backup.storage, and the
-        credentials Secret it references.
+        The backup storage location is not Available, so this hub currently has no disaster
+        recovery. The real error is on the DataProtectionApplication rather than here:
+        oc get dataprotectionapplication acm-backup -n open-cluster-management-backup
+        -o jsonpath='{.status.conditions}'
+        Usual causes: the bucket does not exist, the endpoint is unreachable from this cluster, a
+        private endpoint's trust bundle is missing so storage.caRef is needed, or the credentials do
+        not authorise that bucket.
   # 2) BackupSchedule — ACTIVE hub only, by placement.
   - name: policy-acm-backup-schedule
     hubTemplateOptions:
@@ -109,9 +133,12 @@ policies:
       - path: test/acm-backup-schedule-ready.yaml
     customMessage:
       noncompliant: >-
-        The BackupSchedule is not Enabled. A phase of BackupCollision means another hub is writing
-        to the same storage location and backups have stopped on both; FailedValidation usually
-        means the cron expression or the storage location is wrong.
+        The BackupSchedule is not Enabled, so this hub is not producing backups. BackupCollision
+        means a second hub is writing to the same storage location and backups have stopped on BOTH:
+        give one of them its own bucket or its own storage.prefix, then DELETE and recreate this
+        BackupSchedule, because the operator does not resume a collided one on its own. Paused means
+        someone set active.paused. FailedValidation usually means the cron expression or the storage
+        location is wrong.
   # 3) Passive-sync Restore — STANDBY hub only, by placement.
   - name: policy-acm-backup-restore
     hubTemplateOptions:
@@ -133,6 +160,8 @@ policies:
       - path: test/acm-backup-restore-ready.yaml
     customMessage:
       noncompliant: >-
-        The standby hub is not syncing from the backup storage location, so it is not a usable
-        recovery target. Check that it reads the same bucket as the active hub and that the
-        credentials Secret exists in open-cluster-management-backup.
+        The standby is not syncing from the backup storage location, so it is not a usable recovery
+        target. A phase that stays Started, or FinishedWithErrors, most often means a BackupSchedule
+        also exists on this hub: a hub cannot back up and restore at the same time, so remove it.
+        Otherwise confirm this hub reads the same bucket as the active hub, and that it can see the
+        backups at all: oc get backups.velero.io -n open-cluster-management-backup

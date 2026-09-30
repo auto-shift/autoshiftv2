@@ -195,6 +195,12 @@ kind: Application
 metadata:
   name: $APP_NAME
   namespace: $GITOPS_NAMESPACE
+  labels:
+    # Keep this Application out of Red Hat Advanced Cluster Management hub backups. Argo CD
+    # resources are backed up, so without this label a standby hub restores THIS Application and
+    # adopts the active hub's whole configuration. Everything AutoShift creates itself already
+    # carries the label; this one is created by hand, so set it here.
+    velero.io/exclude-from-backup: "true"
 spec:
   destination:
     namespace: $GITOPS_NAMESPACE
@@ -400,6 +406,12 @@ kind: Application
 metadata:
   name: autoshift
   namespace: openshift-gitops
+  labels:
+    # Keep this Application out of Red Hat Advanced Cluster Management hub backups. Argo CD
+    # resources are backed up, so without this label a standby hub restores THIS Application and
+    # adopts the active hub's whole configuration. Everything AutoShift creates itself already
+    # carries the label; this one is created by hand, so set it here.
+    velero.io/exclude-from-backup: "true"
 spec:
   project: default
   source:

@@ -1,0 +1,33 @@
+---
+# Argo CD Applications on the hub, so the acm-backup exclusion check can resolve its lookup.
+#
+# Both carry velero.io/exclude-from-backup, which is the state the check requires: Red Hat Advanced
+# Cluster Management backs up the argoproj.io group, and an Application captured in a hub backup is
+# restored onto a standby hub, which then adopts this hub's configuration.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: autoshift
+  namespace: openshift-gitops
+  labels:
+    velero.io/exclude-from-backup: "true"
+spec: {}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: autoshift-acm-backup
+  namespace: openshift-gitops
+  labels:
+    velero.io/exclude-from-backup: "true"
+spec: {}
+---
+# The ApplicationSet AutoShift always creates, under either deployment model.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: autoshift-policies
+  namespace: openshift-gitops
+  labels:
+    velero.io/exclude-from-backup: "true"
+spec: {}
