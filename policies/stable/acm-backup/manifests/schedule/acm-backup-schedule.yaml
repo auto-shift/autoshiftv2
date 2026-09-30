@@ -1,0 +1,35 @@
+# The backup schedule, on the ACTIVE hub only. Creates four schedule.velero.io resources
+# (credentials, resources, generic resources, managed clusters); check them with
+# `oc get schedules -A | grep acm`.
+#
+# Placement, not a template conditional, keeps this off the standby: two hubs scheduling into one
+# storage location put both BackupSchedules into BackupCollision and stop backups on both.
+object-templates-raw: |
+  # INDENTATION ANCHOR
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $bk := (index $rcmConfig "acm-backup" | default dict) hub}}
+  {{hub- $active := (index $bk "active" | default dict) hub}}
+  #
+  {{- /* Both cron values MUST stay quoted. A cron expression beginning with an asterisk is a YAML
+         alias when unquoted, and the whole policy fails to render with
+         "did not find expected alphabetic or numeric character". */ -}}
+  {{- $schedule := "{{hub index $active "veleroSchedule" | default "0 */2 * * *" hub}}" }}
+  {{- $ttl := "{{hub index $active "veleroTtl" | default "720h" hub}}" }}
+  {{- $msa := "{{hub index $active "useManagedServiceAccount" | default "true" hub}}" }}
+  #
+  {{- if empty $schedule }}
+  {{- fail "acm-backup: config.acm-backup.active.veleroSchedule is required on an active hub. A BackupSchedule with no cron expression never produces a backup." }}
+  {{- end }}
+  #
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cluster.open-cluster-management.io/v1beta1
+      kind: BackupSchedule
+      metadata:
+        name: acm-backup-schedule
+        namespace: open-cluster-management-backup
+      spec:
+        veleroSchedule: '{{ $schedule }}'
+        veleroTtl: '{{ $ttl }}'
+        useManagedServiceAccount: {{ $msa }}

@@ -159,6 +159,49 @@ hubClusterSets:
                 - sample_metrics
 
       # =======================================================================
+      # Hub backup and restore - policy: acm-backup
+      # =======================================================================
+      # Red Hat Advanced Cluster Management hub disaster recovery. The acm-backup LABEL carries the
+      # mode, and its values are the keys of the mode blocks below:
+      #   active  -> config.acm-backup.active   (this hub writes the backups)
+      #   passive -> config.acm-backup.passive  (this hub is the standby)
+      # Both modes read config.acm-backup.storage, because the standby restores from the same
+      # bucket the active hub writes.
+      acm-backup:
+        storage:
+          # 's3'  the bucket lives outside the fleet. The only correct choice for real hub
+          #       recovery: backup storage has to outlive the hub it protects.
+          # 'obc' an ObjectBucketClaim against the local ODF NooBaa. Lab and sandbox only.
+          type: s3
+          bucket: acm-backup              # change this; an empty bucket fails the policy
+          prefix: ''
+          region: us-east-2
+          endpoint: ''                    # S3-compatible endpoint URL; blank for AWS S3
+          # Optional trust bundle for a private endpoint, read from a ConfigMap on the hub.
+          # caRef:
+          #   name: my-s3-ca
+          #   namespace: open-cluster-management-backup
+          #   key: ca-bundle.crt
+          # Credentials are NEVER in values. Create the Secret out of band in
+          # open-cluster-management-backup, holding a Velero credentials file under the key:
+          #   oc create secret generic cloud-credentials -n open-cluster-management-backup \
+          #     --from-file=cloud=./credentials-velero
+          configSecretRef:
+            name: cloud-credentials
+            key: cloud
+          # type: obc only. The ODF NooBaa storage class the claim is made against.
+          storageClassName: openshift-storage.noobaa.io
+        active:
+          # Quote the cron. A value starting with an asterisk is a YAML alias when unquoted and
+          # the whole policy then fails to render.
+          veleroSchedule: '0 */2 * * *'
+          veleroTtl: 720h
+          useManagedServiceAccount: true  # reconnect managed clusters automatically on restore
+        passive:
+          restoreSyncInterval: 30m
+          cleanupBeforeRestore: CleanupRestored   # 'None' | 'CleanupRestored' | 'CleanupAll'
+
+      # =======================================================================
       # File integrity - policy: file-integrity
       # =======================================================================
       # NIST file-integrity-exists. AIDE runs in a privileged daemon set on each selected node.
@@ -1282,6 +1325,8 @@ hubClusterSets:
       acm-search-storage: 'false'
       acm-search-storage-class: ''           # unset -> the cluster's default StorageClass; set to pin a class
       acm-search-storage-size: '100Gi'
+      # Hub backup and restore (hub only) — settings in config.acm-backup above
+      acm-backup: 'false'                    # 'active' | 'passive' | 'false'
       # Cluster provisioning (hive-based cluster install flow)
       cluster-install: 'false'                     # hub only — enables the cluster-install policy set
       acm-enable-provisioning: 'false'            # hub only

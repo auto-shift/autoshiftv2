@@ -192,6 +192,27 @@ created for each replica of the image service. Sized to hold the image catalog: 
 | `acm-addon-gpf-mem-request`  | string   | `256Mi`                  | governance-policy-framework memory request |
 | `acm-addon-gpf-cpu-request`  | string   | `100m`                   | governance-policy-framework CPU request |
 | `acm-addon-gpf-mem-limit`    | string   | `1Gi`                    | governance-policy-framework memory limit. The add-on delivers its own tuning, so an OOMKilled one has to be patched by hand |
+| `acm-backup`                | string    | `active`, `passive` or `false` | Hub disaster recovery mode. `active` writes the backups, `passive` keeps a standby hub syncing from the same object store. Settings live in `config.acm-backup`. See the [acm-backup policy](https://github.com/auto-shift/autoshiftv2/tree/main/policies/stable/acm-backup) |
+
+**Config block** (`config.acm-backup`):
+
+The label value is the mode, and the mode names are the keys of the mode-specific blocks below.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `storage.type` | string | `s3` | `s3` for a bucket outside the fleet, `obc` for an `ObjectBucketClaim` against the local ODF NooBaa. Only `s3` is suitable for production: backup storage has to outlive the hub it protects |
+| `storage.bucket` | string | | Bucket name. Required when `storage.type` is `s3`; the policy fails rather than configure Velero with no bucket |
+| `storage.prefix` | string | | Optional key prefix inside the bucket |
+| `storage.region` | string | | Bucket region |
+| `storage.endpoint` | string | | Endpoint URL for an S3-compatible store. Leave blank for AWS S3 |
+| `storage.caRef` | map | | Optional trust bundle for a private endpoint, as `name`, `namespace` and `key` of a ConfigMap on the hub |
+| `storage.configSecretRef` | map | `cloud-credentials` / `cloud` | Name and key of the Velero credentials Secret, which an administrator creates out of band in `open-cluster-management-backup`. Credentials are never in values files |
+| `storage.storageClassName` | string | `openshift-storage.noobaa.io` | The `obc` backend only: the storage class the claim is made against |
+| `active.veleroSchedule` | string | `0 */2 * * *` | Backup cron. Quote it: a value starting with an asterisk is a YAML alias when unquoted |
+| `active.veleroTtl` | string | `720h` | How long each backup is kept |
+| `active.useManagedServiceAccount` | bool | `true` | Reconnect managed clusters automatically during a restore |
+| `passive.restoreSyncInterval` | string | `30m` | How often the standby checks for a new backup |
+| `passive.cleanupBeforeRestore` | string | `CleanupRestored` | `None`, `CleanupRestored` or `CleanupAll`. `CleanupAll` additionally needs the `cluster.open-cluster-management.io/restore-cleanup-all-confirmed` annotation |
 
 **Config block** (`config.acm.provisioning`):
 

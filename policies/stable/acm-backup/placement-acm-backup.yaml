@@ -1,0 +1,27 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-acm-backup
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Object store wiring and the readiness gate: needed on BOTH sides of an active/passive pair,
+  # because the standby hub reads the same bucket the active hub writes.
+  # cluster-type: hub is a derived label managed clusters never carry, so this stays hub-only.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/acm-backup'
+              operator: In
+              values:
+                - 'active'
+                - 'passive'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

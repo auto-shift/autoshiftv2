@@ -1,0 +1,23 @@
+# Storage readiness gate. Wrapped by PolicyGenerator into a musthave ConfigurationPolicy; its PG
+# entry is remediationAction: inform, because a status can only be observed, never enforced.
+#
+# The BackupStorageLocation is named by OADP, not by this policy, so it is matched by kind and
+# namespace rather than by name: any BackupStorageLocation in the backup namespace must be
+# Available. Without this, a hub with a misconfigured bucket looks healthy right up until a
+# restore is attempted.
+apiVersion: oadp.openshift.io/v1alpha1
+kind: DataProtectionApplication
+metadata:
+  name: acm-backup
+  namespace: open-cluster-management-backup
+status:
+  conditions:
+    - status: 'True'
+      type: Reconciled
+---
+apiVersion: velero.io/v1
+kind: BackupStorageLocation
+metadata:
+  namespace: open-cluster-management-backup
+status:
+  phase: Available

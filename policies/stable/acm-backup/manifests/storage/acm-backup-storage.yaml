@@ -1,0 +1,159 @@
+# The object store the hub backups are written to, and the OADP DataProtectionApplication that
+# points Velero at it. Both sides of an active/passive pair get this: the standby reads the same
+# bucket the active hub writes.
+#
+# config.acm-backup.storage.type picks the backend:
+#   s3  — a bucket outside the fleet. Credentials come from a Secret created out of band and named
+#         through configSecretRef; they are never in values.
+#   obc — an ObjectBucketClaim against the local ODF NooBaa. Lab and sandbox only: a bucket that
+#         lives on the hub cannot survive the hub, which is the exact failure this policy exists
+#         to cover.
+#
+# The OBC branch always emits the claim itself, so the ConfigurationPolicy is never empty while the
+# bucket is still binding — an empty ConfigurationPolicy reports Compliant and would hide a hub
+# with no backup storage at all.
+object-templates-raw: |
+  # INDENTATION ANCHOR — every directive below sits at this indent. A shallower trim marker eats
+  # past the newline into the previous line and produces invalid YAML.
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $bk := (index $rcmConfig "acm-backup" | default dict) hub}}
+  {{hub- $store := (index $bk "storage" | default dict) hub}}
+  {{hub- $credRef := (index $store "configSecretRef" | default dict) hub}}
+  {{hub- $caRef := (index $store "caRef" | default dict) hub}}
+  {{hub- $hubCa := "" hub}}
+  {{hub- if not (empty $caRef) hub}}
+  {{hub- $caCM := (lookup "v1" "ConfigMap" (index $caRef "namespace" | default .PolicyMetadata.namespace) (index $caRef "name")) | default dict hub}}
+  {{hub- $hubCa = (index ($caCM.data | default dict) (index $caRef "key") | default "") hub}}
+  {{hub- end hub}}
+  #
+  {{- /* Hub-side scalars hoisted into spoke variables, so the branching below is plain spoke
+         templating rather than interleaved hub and spoke directives. */ -}}
+  {{- $type := "{{hub index $store "type" | default "s3" hub}}" }}
+  {{- $bucket := "{{hub index $store "bucket" | default "" hub}}" }}
+  {{- $prefix := "{{hub index $store "prefix" | default "" hub}}" }}
+  {{- $region := "{{hub index $store "region" | default "" hub}}" }}
+  {{- $endpoint := "{{hub index $store "endpoint" | default "" hub}}" }}
+  {{- $credName := "{{hub index $credRef "name" | default "cloud-credentials" hub}}" }}
+  {{- $credKey := "{{hub index $credRef "key" | default "cloud" hub}}" }}
+  {{- $obcClass := "{{hub index $store "storageClassName" | default "openshift-storage.noobaa.io" hub}}" }}
+  {{- $storeCa := "{{hub $hubCa hub}}" }}
+  #
+  {{- if not (has $type (list "s3" "obc")) }}
+  {{- fail (printf "acm-backup: config.acm-backup.storage.type must be 's3' or 'obc', got %q" $type) }}
+  {{- end }}
+  #
+  {{- $s3Url := "" }}
+  {{- $forcePathStyle := "false" }}
+  {{- $emitDpa := true }}
+  #
+  {{- if eq $type "obc" }}
+  {{- /* The service CA signs the in-cluster NooBaa endpoint, so Velero needs it in the trust
+         bundle. The annotation makes OpenShift populate service-ca.crt for us.
+         This comment deliberately closes WITHOUT a trailing dash. A trailing dash before literal
+         content eats the newline and glues the first object onto the previous line. */}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: acm-backup-service-ca
+        namespace: open-cluster-management-backup
+        annotations:
+          service.beta.openshift.io/inject-cabundle: 'true'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: objectbucket.io/v1alpha1
+      kind: ObjectBucketClaim
+      metadata:
+        name: acm-backup
+        namespace: open-cluster-management-backup
+      spec:
+        generateBucketName: acm-backup
+        storageClassName: {{ $obcClass }}
+  {{- $obcCM := (lookup "v1" "ConfigMap" "open-cluster-management-backup" "acm-backup") | default dict }}
+  {{- $obcCMData := ($obcCM.data | default dict) }}
+  {{- $obcSecret := (lookup "v1" "Secret" "open-cluster-management-backup" "acm-backup") | default dict }}
+  {{- $obcSecData := ($obcSecret.data | default dict) }}
+  {{- $caCM := (lookup "v1" "ConfigMap" "open-cluster-management-backup" "acm-backup-service-ca") | default dict }}
+  {{- $accessKey := (index $obcSecData "AWS_ACCESS_KEY_ID" | default "" | base64dec) }}
+  {{- $secretKey := (index $obcSecData "AWS_SECRET_ACCESS_KEY" | default "" | base64dec) }}
+  {{- $bucket = (index $obcCMData "BUCKET_NAME" | default "") }}
+  {{- $host := (index $obcCMData "BUCKET_HOST" | default "") }}
+  {{- $port := (index $obcCMData "BUCKET_PORT" | default "443") }}
+  {{- $region = (index $obcCMData "BUCKET_REGION" | default "noobaa") }}
+  {{- $storeCa = (index ($caCM.data | default dict) "service-ca.crt" | default "") }}
+  {{- $forcePathStyle = "true" }}
+  {{- if $host }}
+  {{- $s3Url = (printf "https://%s:%s" $host $port) }}
+  {{- end }}
+  {{- if or (empty $bucket) (empty $accessKey) }}
+  {{- /* Claim placed, credentials not issued yet. Emit no DataProtectionApplication rather than
+         one pointing at an empty bucket; policy-acm-backup-test reports the not-ready state. */ -}}
+  {{- $emitDpa = false }}
+  {{- else }}
+  {{- $credName = "acm-backup-cloud-credentials" }}
+  {{- $credKey = "cloud" }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: acm-backup-cloud-credentials
+        namespace: open-cluster-management-backup
+      type: Opaque
+      stringData:
+        cloud: |
+          [default]
+          aws_access_key_id={{ $accessKey }}
+          aws_secret_access_key={{ $secretKey }}
+  {{- end }}
+  {{- else }}
+  {{- if empty $bucket }}
+  {{- fail "acm-backup: config.acm-backup.storage.bucket is required when storage.type is 's3'. Refusing to configure a DataProtectionApplication with no bucket, which would report Compliant while backing up nothing." }}
+  {{- end }}
+  {{- if $endpoint }}
+  {{- $s3Url = $endpoint }}
+  {{- $forcePathStyle = "true" }}
+  {{- end }}
+  {{- end }}
+  #
+  {{- if $emitDpa }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: oadp.openshift.io/v1alpha1
+      kind: DataProtectionApplication
+      metadata:
+        name: acm-backup
+        namespace: open-cluster-management-backup
+      spec:
+        configuration:
+          velero:
+            defaultPlugins:
+              - openshift
+              - aws
+        backupLocations:
+          - name: default
+            velero:
+              provider: aws
+              default: true
+              objectStorage:
+                bucket: {{ $bucket }}
+                {{- if $prefix }}
+                prefix: {{ $prefix }}
+                {{- end }}
+                {{- if $storeCa }}
+                caCert: {{ $storeCa | base64enc }}
+                {{- end }}
+              config:
+                {{- if $region }}
+                region: {{ $region }}
+                {{- end }}
+                {{- if $s3Url }}
+                s3Url: {{ $s3Url }}
+                s3ForcePathStyle: '{{ $forcePathStyle }}'
+                {{- end }}
+              credential:
+                name: {{ $credName }}
+                key: {{ $credKey }}
+  {{- end }}
