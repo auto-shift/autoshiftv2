@@ -1,0 +1,71 @@
+# inform BARRIER: holds policy-ztwim-config back until the datastore credentials exist.
+#
+# WHAT IT PROTECTS. manifests/config/spire-server.yaml cannot write a connection string without a
+# password, and the SQLite it would otherwise fall back to is not a safe placeholder. On a first
+# install SPIRE would mint the trust domain's certificate authority against that SQLite file, and
+# swapping the datastore later discards it: a different datastore is an empty one, so the authority
+# is regenerated and every agent re-attests. On a running cluster the same fallback is destructive
+# outright, because a credential Secret that becomes unreadable would put sqlite3 over a live
+# postgres datastore under musthave and enforce.
+#
+# Pending is the correct failure for both. The operand policy does not reconcile, so a running
+# SpireServer keeps its datastore and a new cluster waits rather than building an authority it is
+# going to throw away.
+#
+# Compliant on every cluster that did not ask for postgres, so it gates nothing else.
+#
+# Placed on placement.yaml, the SAME placement as policy-ztwim-config. An ACM dependency resolves
+# against the depending cluster's own copy of a policy, so a barrier placed anywhere else leaves the
+# operand Pending forever rather than gating it.
+#
+# Which Secret is required follows the same precedence as the connection string itself: an explicit
+# connectionString needs none, external names its own, otherwise it is the one CloudNativePG
+# generates.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $ds := (index $cfg "datastore" | default dict) hub}}
+  {{hub- $ext := (index $ds "external" | default dict) hub}}
+  {{hub- $extRef := (index $ext "configSecretRef" | default dict) hub}}
+  {{hub- $cfgType := (index $ds "databaseType" | default "sqlite3") hub}}
+  {{hub- $cfgConn := (index $ds "connectionString" | default "") hub}}
+  {{hub- $cfgExtHost := (index $ext "host" | default "") hub}}
+  {{hub- $cfgExtNs := (index $extRef "namespace" | default "zero-trust-workload-identity-manager") hub}}
+  {{hub- $cfgExtName := (index $extRef "name" | default "") hub}}
+  {{hub- $cfgExtPassKey := (index $extRef "passwordKey" | default "password") hub}}
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $want := `{{hub $cfgType hub}}` }}
+  {{- $conn := `{{hub $cfgConn hub}}` }}
+  {{- $extHost := `{{hub $cfgExtHost hub}}` }}
+  {{- $extNs := `{{hub $cfgExtNs hub}}` }}
+  {{- $extName := `{{hub $cfgExtName hub}}` }}
+  {{- $extPassKey := `{{hub $cfgExtPassKey hub}}` }}
+  {{- if and (eq $want "postgres") (not $conn) }}
+  {{- $secretNs := $ns }}
+  {{- $secretName := "spire-db-app" }}
+  {{- $secretKey := "password" }}
+  {{- $which := "the CloudNativePG cluster" }}
+  {{- if $extHost }}
+  {{- $secretNs = $extNs }}
+  {{- $secretName = $extName }}
+  {{- $secretKey = $extPassKey }}
+  {{- $which = "config.ztwim.datastore.external" }}
+  {{- end }}
+  {{- $found := "" }}
+  {{- if and $secretName $secretNs }}
+  {{- $found = (dig "data" $secretKey "" ((lookup "v1" "Secret" $secretNs $secretName) | default dict)) }}
+  {{- end }}
+  {{- if not $found }}
+  - complianceType: musthave
+    # Metadata only and never constructible, so this reports the violation without creating
+    # anything. The name carries the diagnosis: which Secret is missing, and for which backend.
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ztwim-datastore-creds-missing-{{ $secretName | default "unnamed" }}
+        namespace: {{ $ns }}
+        annotations:
+          autoshift.io/waiting-for: 'Secret {{ $secretNs }}/{{ $secretName | default "<configSecretRef.name unset>" }} key {{ $secretKey }}, required by {{ $which }}'
+  {{- end }}
+  {{- end }}

@@ -1,0 +1,74 @@
+# Points this spoke's spire-server at the HUB as its upstream authority, so its CA is an
+# intermediate signed by the hub rather than a self-signed root.
+#
+# This is the edit the CRD cannot express. SpireServer.spec.upstreamAuthority accepts only
+# certManager and vault; the `spire` plugin needed for nesting is not a field, so the plugin block
+# is injected into the operator-generated server.conf and held in place by CREATE_ONLY_MODE.
+#
+# Read-modify-write, guarded for idempotency: the policy watches the ConfigMap it writes, so it
+# re-evaluates on its own write. Setting the key only when it differs makes that converge after one
+# write instead of flapping.
+#
+# The StatefulSet gains the upstream CSI volume, guarded on the CSIDriver existing so it is never
+# patched before upstream-csi.yaml has landed, because a volume referencing an absent CSI driver
+# leave the pod unschedulable.
+#
+# The hub endpoint is DERIVED from the hub's own spire-server-grpc Route, not configured; see
+# upstream-agent.yaml. config.ztwim.nested.hubEndpoint overrides it.
+#
+# AFTER THIS APPLIES, A ONE-TIME MANUAL STEP REMAINS: SPIRE caches its CA in the datastore, so an
+# already-running server keeps its self-signed root until that volume is cleared. See the README.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $cfgEndpoint := (index (index $cfg "nested" | default dict) "hubEndpoint" | default "") hub}}
+  {{hub- $route := (lookup "route.openshift.io/v1" "Route" "zero-trust-workload-identity-manager" "spire-server-grpc") | default dict hub}}
+  {{hub- $endpoint := ($cfgEndpoint | default (dig "spec" "host" "" $route)) hub}}
+  {{- $hubEndpoint := `{{hub $endpoint hub}}` }}
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $cm := (lookup "v1" "ConfigMap" $ns "spire-server") | default dict }}
+  {{- $raw := dig "data" "server.conf" "" $cm }}
+  {{- $csi := (lookup "storage.k8s.io/v1" "CSIDriver" "" "upstream.csi.spiffe.io") }}
+  {{- if and $raw $csi $hubEndpoint }}
+  {{- $conf := $raw | fromJSON }}
+  {{- $plugins := dig "plugins" dict $conf }}
+  {{- /* server_address/port ARE required and must name the HUB's gRPC endpoint -- they are NOT
+         ignored just because workload_api_socket is set. The socket is how the plugin obtains its
+         own identity; the address is who it then dials. Getting this wrong crashloops the spoke's
+         spire-server with exit 1 and no termination message. */}}
+  {{- $desired := list (dict "spire" (dict "plugin_data" (dict "server_address" $hubEndpoint "server_port" "443" "workload_api_socket" "/run/spire/upstream-agent/spire-agent.sock"))) }}
+  {{- $current := dig "UpstreamAuthority" (list) $plugins }}
+  {{- if ne (toString $current) (toString $desired) }}
+  {{- $_ := set $plugins "UpstreamAuthority" $desired }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: spire-server
+        namespace: {{ $ns }}
+      data:
+        server.conf: '{{ $conf | mustToJSON }}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: spire-server
+        namespace: {{ $ns }}
+      spec:
+        template:
+          spec:
+            volumes:
+              - name: upstream-agent-socket
+                csi:
+                  driver: upstream.csi.spiffe.io
+                  readOnly: true
+            containers:
+              - name: spire-server
+                volumeMounts:
+                  - name: upstream-agent-socket
+                    mountPath: /run/spire/upstream-agent
+                    readOnly: true
+  {{- end }}

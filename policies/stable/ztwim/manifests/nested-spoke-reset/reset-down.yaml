@@ -1,0 +1,52 @@
+# OPT-IN automation of the one manual step: clears the spoke's SPIRE datastore so it re-mints its
+# CA from the hub instead of keeping the self-signed root it created on first boot.
+#
+# WHY THIS CANNOT BE AVOIDED RATHER THAN REMEDIATED: on a fresh spoke the operator creates the
+# server ConfigMap and a RUNNING StatefulSet from the SpireServer CR together. The server reads its
+# config and self-signs within seconds, before any nested policy can interpose. The CRD has no
+# `spire` upstream-authority field, so the operator cannot generate a correct config in the first
+# place. Holding the server down first would be a race, not a guarantee.
+#
+# THIS DELETES A PERSISTENTVOLUMECLAIM. It is therefore gated on FOUR conditions, all of which must
+# hold, and it is off unless autoshift.io/ztwim-nested-auto-reset is 'true':
+#   1. the spoke's server.conf already carries the spire UpstreamAuthority (config is correct)
+#   2. the upstream CSI driver is Ready (the path to the hub actually exists)
+#   3. the spoke's trust bundle still differs from the hub's root (the chain has NOT formed)
+#   4. the StatefulSet is not already scaled down (so this is a no-op once resumed)
+# Once the chain forms, condition 3 is permanently false and this renders nothing forever.
+#
+# RESIDUAL RISK, stated plainly: if the chain can never form for some other reason, this will clear
+# the datastore repeatedly rather than converge. That is why it is opt-in. Leave it off and do the
+# documented manual step unless a fleet is large enough that the trade is worth it.
+object-templates-raw: |
+  {{hub- $hubCM := (lookup "v1" "ConfigMap" "zero-trust-workload-identity-manager" "spire-bundle") | default dict hub}}
+  {{hub- $hubBundle := (dig "data" "bundle.crt" "" $hubCM) hub}}
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $hub := `{{hub $hubBundle | b64enc hub}}` }}
+  {{- $spokeCM := (lookup "v1" "ConfigMap" $ns "spire-bundle") | default dict }}
+  {{- $spoke := (dig "data" "bundle.crt" "" $spokeCM) | b64enc }}
+  {{- $conf := (lookup "v1" "ConfigMap" $ns "spire-server") | default dict }}
+  {{- $raw := dig "data" "server.conf" "" $conf }}
+  {{- $hasUA := and $raw (contains "UpstreamAuthority" $raw) }}
+  {{- $csi := (lookup "apps/v1" "DaemonSet" $ns "spire-spiffe-csi-driver-upstream") | default dict }}
+  {{- $csiReady := gt (dig "status" "numberReady" 0 $csi) 0 }}
+  {{- $sts := (lookup "apps/v1" "StatefulSet" $ns "spire-server") | default dict }}
+  {{- $running := gt (dig "spec" "replicas" 0 $sts) 0 }}
+  {{- if and $hub $hasUA $csiReady $running (ne $hub $spoke) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: spire-server
+        namespace: {{ $ns }}
+      spec:
+        replicas: 0
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: spire-data-spire-server-0
+        namespace: {{ $ns }}
+  {{- end }}

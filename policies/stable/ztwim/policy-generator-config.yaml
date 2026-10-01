@@ -1,0 +1,329 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: ztwim
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in the placement files, never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# manifests[].path is a DIRECTORY: drop a new manifest into it and it is picked up automatically.
+# Only edit this file to change the policy graph itself (names, dependencies, per-policy remediation).
+# Keep the placement files OUT of manifests/ (a Placement inside a wildcarded dir would be wrapped
+# into the Policy as a managed object).
+placementBindingDefaults:
+  name: binding-policy-ztwim
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # Every manifest here is object-templates-raw, which must stay its own ConfigurationPolicy.
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - AC Access Control
+  controls:
+    - AC-3 Access Enforcement
+  # Placement authored by us (full fidelity); PG includes it and generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  # The operator itself. consolidateManifests: true here only, because this policy is the shared
+  # operator-install chart (a raw Namespace plus a first-class OperatorPolicy), not a raw template.
+  - name: policy-ztwim-operator-install
+    consolidateManifests: true
+    manifests:
+      - path: manifests/operator-install
+  # ZeroTrustWorkloadIdentityManager carries the trust domain and cluster name that every other
+  # operand controller reads, so it lands before them.
+  - name: policy-ztwim-instance
+    # On a nested SPOKE this manifest reads the HUB's ZeroTrustWorkloadIdentityManager CR to derive
+    # the shared trust domain. That CR is CLUSTER-SCOPED, and a hub template may not look up
+    # cluster-scoped resources at all without an elevated service account: it fails with
+    # "lookup of cluster-scoped resource ... is not allowed", which is a different error from an
+    # RBAC denial and easy to misread.
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-ztwim-operator-install
+    manifests:
+      - path: manifests/instance
+  # Opt-in shared datastore. Ordered BEFORE the operands: SpireServer's connectionString reads the
+  # password out of the Secret CNPG generates, so the database has to exist first or the server is
+  # configured with an empty password and fails to start.
+  - name: policy-ztwim-cnpg
+    placement:
+      placementPath: placement-ztwim-cnpg.yaml
+    dependencies:
+      - name: policy-ztwim-instance
+    manifests:
+      - path: manifests/cnpg
+  # The operands: SPIRE server, agent, CSI driver and OIDC discovery provider.
+  # Barrier: the operand policy waits here whenever postgres is configured and its credential Secret
+  # does not exist. Inform only, and Compliant on every cluster that did not ask for postgres, so it
+  # gates nothing else. Shares placement.yaml with policy-ztwim-config on purpose: an ACM dependency
+  # resolves against the depending cluster's own copy, so a differently-placed barrier would leave
+  # the operand Pending forever instead of gating it.
+  - name: policy-ztwim-datastore-creds
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-instance
+    manifests:
+      - path: test/datastore-creds.yaml
+  # Depends on the barrier as well as the instance, so the operands wait for a datastore password
+  # rather than being built against SQLite and rebuilt when it arrives.
+  - name: policy-ztwim-config
+    dependencies:
+      - name: policy-ztwim-instance
+      - name: policy-ztwim-datastore-creds
+    manifests:
+      - path: manifests/config
+  # Opt-in (autoshift.io/ztwim-federation-mesh): automates the one manual step in federation.
+  # Split in two because the halves run in different places. The views are published on the cluster
+  # running Red Hat Advanced Cluster Management, where every member is visible; the trust domains
+  # are created on each member, reading those views through hub templates.
+  # Published on each member first: the endpoint its peers fetch from. The views below read it, so
+  # it has to exist before they can report anything useful.
+  - name: policy-ztwim-federation-endpoint
+    placement:
+      placementPath: placement-ztwim-federation-mesh.yaml
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/federation-mesh/endpoint-route.yaml
+  # Publishes this cluster's own bundle in JWKS, which is the only form trustDomainBundle accepts.
+  # Member-placed, because the conversion is local: a CronJob reads the Operator's spire-bundle
+  # ConfigMap and republishes it, with no network access and no dependency on any other policy. Only
+  # https_spiffe needs it; set config.ztwim.federation.publishBundleJwks to 'false' to maintain the
+  # ConfigMap by hand instead.
+  - name: policy-ztwim-federation-bundle
+    placement:
+      placementPath: placement-ztwim-federation-mesh.yaml
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/federation-bundle
+  - name: policy-ztwim-federation-views
+    placement:
+      placementPath: placement-ztwim-federation-views.yaml
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/federation-mesh/bundle-views.yaml
+  - name: policy-ztwim-federation-mesh
+    placement:
+      placementPath: placement-ztwim-federation-mesh.yaml
+    # Lists ManagedClusters to find this cluster's peers, and ManagedCluster is CLUSTER-SCOPED. A
+    # hub template may not look up a cluster-scoped resource without an elevated service account;
+    # it fails with "lookup of cluster-scoped resource ... is not allowed", which is a different
+    # error from an RBAC denial and easy to misread.
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    # NOT dependent on policy-ztwim-federation-views, even though it reads what those views report.
+    # A dependency is evaluated per cluster against the SAME cluster's copy of the named policy, and
+    # the views policy is placed on the cluster running Red Hat Advanced Cluster Management only. On
+    # every other mesh member there is no copy to satisfy it, so the dependency never resolves and
+    # this policy stays Pending forever. The ordering is instead handled by the manifest itself,
+    # which renders nothing for a peer whose view has not reported yet and picks it up on a later
+    # evaluation; policy-ztwim-federation-mesh-effective is what turns that waiting state into a
+    # visible violation.
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/federation-mesh/mesh-trust-domains.yaml
+  # inform: catches a mesh member that reports success while trusting no peer. Both mesh policies
+  # are guard-wrapped, and an empty render reports Compliant, so the effects are asserted here.
+  - name: policy-ztwim-federation-mesh-effective
+    placement:
+      placementPath: placement-ztwim-federation-mesh.yaml
+    remediationAction: inform
+    # Same cluster-scoped ManagedCluster lookup as the enforcing policy above.
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-ztwim-federation-mesh
+    manifests:
+      - path: test/federation-mesh-effective.yaml
+    customMessage:
+      noncompliant: >
+        This cluster is in a federation mesh but is not federating as configured. The violating
+        object name says which half failed. ztwim-federation-not-in-server-config means the running
+        SPIRE server has no federation block, so either config.ztwim.federation.bundleEndpoint was
+        never set, or CREATE_ONLY_MODE stopped the Operator rewriting the generated configuration,
+        in which case the operands need recreating. ztwim-mesh-missing-<peer> means no
+        ClusterFederatedTrustDomain exists for that peer's trust domain, usually because its
+        ManagedClusterView has not reported a bundle, trust domain and federation endpoint yet. A
+        peer that shares this cluster's trust domain is not checked, because there is nothing to
+        federate. Note that both enforcing mesh policies report Compliant when they render nothing,
+        so their status is not evidence.
+  # Opt-in (autoshift.io/ztwim-federation): trust bundles from FOREIGN trust domains.
+  - name: policy-ztwim-federation
+    placement:
+      placementPath: placement-ztwim-federation.yaml
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/federation
+  # ---------------------------------------------------------------------------------------------
+  # Nested SPIRE (opt-in, autoshift.io/ztwim-nested-role: hub|spoke|both).
+  #
+  # CREATE_ONLY_MODE is set by policy-ztwim-operator-install, on the OperatorPolicy that owns the
+  # Subscription, so it is already in effect before anything below patches the generated
+  # server.conf. Depending on policy-ztwim-config is therefore enough to order these correctly.
+  # ---------------------------------------------------------------------------------------------
+  # Hub side: the gRPC endpoint spokes dial, a per-spoke kubeconfig assembled from ACM state, the
+  # k8s_psat patch that consumes it, and the registration entries that permit downstream signing.
+  - name: policy-ztwim-nested-hub
+    placement:
+      placementPath: placement-ztwim-nested-hub.yaml
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/nested-hub
+  # Spoke side: the hub trust bundle, the upstream agent and its CSI bridge, and the upstream
+  # authority patch. The trust-bundle manifest reads a ConfigMap in the operator namespace ON THE
+  # HUB, which is cross-namespace, so this policy needs the elevated hub-template service account.
+  - name: policy-ztwim-nested-spoke
+    placement:
+      placementPath: placement-ztwim-nested-spoke.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/nested-spoke
+  # OPT-IN (autoshift.io/ztwim-nested-auto-reset): automates the one manual step by clearing the
+  # spoke's SPIRE datastore so it re-mints its CA from the hub. Split in two so the clear is ORDERED
+  # before the resume rather than racing it. This is the only part of the policy that can delete a
+  # PersistentVolumeClaim, which is why it needs its own label and is off by default.
+  - name: policy-ztwim-nested-auto-reset
+    placement:
+      placementPath: placement-ztwim-nested-auto-reset.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-ztwim-nested-spoke
+    manifests:
+      - path: manifests/nested-spoke-reset
+  - name: policy-ztwim-nested-auto-resume
+    placement:
+      placementPath: placement-ztwim-nested-auto-reset.yaml
+    dependencies:
+      - name: policy-ztwim-nested-auto-reset
+    manifests:
+      - path: manifests/nested-spoke-resume
+  # inform: catches a nested pair that reports green while silently doing nothing. An unsatisfied
+  # guard renders no object templates, and an empty ConfigurationPolicy reports Compliant, so
+  # these assert the EFFECTS exist rather than trusting the enforcing policies' own status.
+  # Deliberately NOT depended on by the enforcing policies: they detect, they do not gate, so
+  # making them a dependency would deadlock (the effect cannot exist until the enforcer runs).
+  - name: policy-ztwim-nested-hub-effective
+    placement:
+      placementPath: placement-ztwim-nested-hub.yaml
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-nested-hub
+    manifests:
+      - path: test/nested-hub-effective.yaml
+    customMessage:
+      noncompliant: >
+        Nested SPIRE is enabled on this hub but its gRPC Route is absent, so the hub-side policies
+        rendered no objects. The usual cause is the cluster ingress domain not resolving. Check
+        policy-ztwim-nested-hub and note that an empty render reports Compliant, so its green
+        status is not evidence that it did anything.
+  - name: policy-ztwim-nested-spoke-effective
+    placement:
+      placementPath: placement-ztwim-nested-spoke.yaml
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-nested-spoke
+    manifests:
+      - path: test/nested-spoke-effective.yaml
+    customMessage:
+      noncompliant: >
+        Nested SPIRE is enabled on this spoke but the upstream agent or the hub trust bundle is
+        absent, so the spoke-side policies rendered no objects. Check that
+        config.ztwim.trustDomain is set to the SAME value as the hub, and that the elevated hub
+        template service account can get, list AND watch ConfigMaps in the operator namespace on
+        the hub. An empty render reports Compliant, so policy-ztwim-nested-spoke being green is
+        not evidence that it did anything.
+  # inform: proves the nested CA chain actually FORMED. The two checks above catch "rendered
+  # nothing"; this catches "rendered everything and still did not chain": a trust domain mismatch,
+  # an upstream authority patch that did not take, or a datastore PVC that was never cleared.
+  - name: policy-ztwim-nested-spoke-chained
+    placement:
+      placementPath: placement-ztwim-nested-spoke.yaml
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-ztwim-nested-spoke
+    manifests:
+      - path: test/nested-spoke-chained.yaml
+    customMessage:
+      noncompliant: >
+        This spoke is not chained to the hub: its SPIRE trust bundle differs from the hub's root, so
+        it is still serving a CA of its own. Check that config.ztwim.trustDomain is the SAME value
+        on hub and spoke, that the spire UpstreamAuthority block is present in the spoke's
+        spire-server ConfigMap, and that the one-time datastore PVC clear has been done on the
+        spoke (see the policy README) -- SPIRE keeps the root it minted on first boot until that
+        volume is removed.
+  # OPT-IN (autoshift.io/ztwim-operand-reconcile): forces the operator to reapply a changed operand
+  # CR under CREATE_ONLY_MODE, by deleting the stale workload so the create path runs. Off by
+  # default because on a nested hub it restarts the SPIRE server, and with it the fleet's CA.
+  - name: policy-ztwim-operand-reconcile
+    placement:
+      placementPath: placement-ztwim-operand-reconcile.yaml
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: manifests/operand-reconcile
+  # inform: catches an operator that upgraded while CREATE_ONLY_MODE held its operands at the
+  # previous release's images. Placed on every ztwim cluster, not just nested ones.
+  - name: policy-ztwim-operand-drift
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: test/operand-image-drift.yaml
+    customMessage:
+      noncompliant: >
+        The ZTWIM operator has upgraded but one or more SPIRE operands are still running the
+        previous release's images. This is CREATE_ONLY_MODE: the operator creates absent objects
+        but never updates existing ones, so the operand CRs report Ready while the workloads are
+        stale. The drifted workloads are named in the annotation on the violating object. To
+        repair, set autoshift.io/ztwim-operand-reconcile to 'true' so AutoShift deletes them and
+        the operator recreates them at the declared images, or delete them by hand. On a nested hub
+        this restarts the SPIRE server and therefore the trust domain's CA; see the policy README.
+  # inform: catches a datastore that was asked to be postgres and silently is not. A valid SQLite
+  # configuration reports Compliant, so the request has to be checked against the effect. Also
+  # reports a backend named through external or tlsSecretName that databaseType does not select.
+  - name: policy-ztwim-datastore-effective
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: test/datastore-effective.yaml
+    customMessage:
+      noncompliant: >
+        config.ztwim.datastore.databaseType asks for postgres but this cluster is not using it. The
+        violating object name says which half failed: ztwim-server-conf-still-<type> means the
+        RUNNING server config is still on that datastore -- either the CNPG password Secret
+        spire-db-app did not exist when the policy last evaluated, or CREATE_ONLY_MODE stopped the
+        operator regenerating server.conf, in which case delete the spire-server ConfigMap and
+        StatefulSet so it is rebuilt from the resource; ztwim-cnpg-cluster-missing means
+        the CNPG Cluster was never created, so check that autoshift.io/cloudnative-pg is 'true' and
+        that the CloudNativePG operator installed. Note that switching datastore is DESTRUCTIVE
+        whenever it takes effect: a different datastore is an empty one, so SPIRE mints a new CA and
+        the previous trust domain root is gone.
+  # inform: surfaces a SPIRE control plane that installed but never became ready.
+  - name: policy-ztwim-ready
+    remediationAction: inform
+    dependencies:
+      - name: policy-ztwim-config
+    manifests:
+      - path: test/spire-ready.yaml

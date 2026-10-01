@@ -1,0 +1,26 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-ztwim-cnpg
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Requires the CloudNativePG operator on the same cluster, exactly as the quay policy does.
+  # Whether a database is actually created is decided by config.ztwim.datastore.databaseType, not
+  # by this placement: the label says CNPG is AVAILABLE here, the config says SPIRE should use it.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/ztwim'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/cloudnative-pg'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
