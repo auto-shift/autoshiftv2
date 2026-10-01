@@ -5,11 +5,13 @@
 # before it is shipped; the rest is evaluated on the managed cluster. config.oadp lives in the policy
 # namespace on the hub, so the whole DataProtectionApplication is built there.
 #
-# CREDENTIALS. storage.credentialsFrom names a Secret ON THE HUB, which is copied to every selected
-# cluster. One Secret serves the fleet instead of one per cluster, which is the difference between
-# this being operable at scale and not. Credentials still never appear in values: an administrator
-# creates that Secret out of band. Set storage.configSecretRef instead to reference a Secret created
-# separately on each cluster.
+# CREDENTIALS ARE NOT CREATED HERE. Each mode has its own policy, and all of them converge on the one
+# Secret this DataProtectionApplication references:
+#   configSecretRef   an administrator creates it on the cluster; no policy
+#   credentialsFrom   policy-oadp-credentials-copy copies a ready-made file from the hub
+#   sourceSecretRef   policy-oadp-credentials-stage carries a key pair, -assemble builds the file
+# This policy depends on policy-oadp-credentials-test, which asserts that Secret exists, so the
+# DataProtectionApplication is never written against credentials that are not there.
 #
 # ONE DataProtectionApplication, in openshift-adp. OpenShift APIs for Data Protection permits exactly
 # one per installation namespace, and supports the OwnNamespace install mode only, so this is the
@@ -79,55 +81,11 @@ object-templates-raw: |
   {{hub- end hub}}
   {{hub- $credName = "cloud-credentials" hub}}
   {{hub- $credKey = "cloud" hub}}
-  # The key pair crosses with copySecretData, which carries the whole data map untouched and
-  # encrypted, then the Velero credentials file is assembled here on the managed cluster. Assembling
-  # it on the hub is not possible: an encrypted value only decrypts where it lands verbatim as a
-  # Secret data value, never spliced into the middle of a file.
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: oadp-s3-source
-        namespace: openshift-adp
-      type: Opaque
-      data: '{{hub copySecretData $srcSecretNs $srcSecretName hub}}'
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: cloud-credentials
-        namespace: openshift-adp
-      type: Opaque
-      stringData:
-        cloud: |
-          [{{hub $profile | default "default" hub}}]
-          aws_access_key_id={{ fromSecret "openshift-adp" "oadp-s3-source" "access_key_id" | base64dec }}
-          aws_secret_access_key={{ fromSecret "openshift-adp" "oadp-s3-source" "access_key_secret" | base64dec }}
-          #
-          [volumeSnapshot]
-          aws_access_key_id={{ fromSecret "openshift-adp" "oadp-s3-source" "access_key_id" | base64dec }}
-          aws_secret_access_key={{ fromSecret "openshift-adp" "oadp-s3-source" "access_key_secret" | base64dec }}
   {{hub- end hub}}
   #
   {{hub- if not (empty $credFrom) hub}}
-  {{hub- $srcNs := (index $credFrom "namespace" | default .PolicyMetadata.namespace) hub}}
-  {{hub- $srcName := (index $credFrom "name") hub}}
-  {{hub- if (empty $srcName) hub}}
-  {{hub- fail "oadp: config.oadp.storage.credentialsFrom.name is required when credentialsFrom is set" hub}}
-  {{hub- end hub}}
   {{hub- $credName = (index $credFrom "targetName" | default "cloud-credentials") hub}}
   {{hub- $credKey = (index $credFrom "key" | default "cloud") hub}}
-  - complianceType: musthave
-    objectDefinition:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: {{hub $credName hub}}
-        namespace: openshift-adp
-      type: Opaque
-      data: '{{hub copySecretData $srcNs $srcName hub}}'
   {{hub- end hub}}
   #
   # Checked here rather than with the other inputs: sourceSecretRef may supply the bucket.
