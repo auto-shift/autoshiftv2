@@ -3,7 +3,7 @@
 //
 // A policy that owns configuration reads a single top-level key from the
 // cluster's rendered-config ConfigMap, named after the policy directory: either
-// verbatim (acm-backup) or in lowerCamelCase (workloadPartitioning). New
+// verbatim (acm-failover) or in lowerCamelCase (workloadPartitioning). New
 // policies should prefer the verbatim form, so the config key and the gate label
 // are spelled identically. Keys that belong to the fleet rather than to one
 // policy, and keys that deliberately use a shorter name, are recorded as

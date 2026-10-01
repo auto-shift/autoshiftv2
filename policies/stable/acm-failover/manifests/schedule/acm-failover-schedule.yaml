@@ -4,25 +4,44 @@
 # Placement, not a template conditional, keeps this off the standby: two hubs scheduling into one
 # storage location put both BackupSchedules into BackupCollision and stop backups on both.
 #
-# Entirely hub-side. Every value comes from config.acm-backup.active, which lives in the policy
+# Entirely hub-side. Every value comes from config.acm-failover.active, which lives in the policy
 # namespace on the hub, so the object is built there and arrives resolved. Nothing here reads an
 # object on the target cluster.
 object-templates-raw: |
   # INDENTATION ANCHOR
   {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
-  {{hub- $bk := (index $rcmConfig "acm-backup" | default dict) hub}}
+  {{hub- $bk := (index $rcmConfig "acm-failover" | default dict) hub}}
+  # The downstream fork nests the same settings under config.acm.failover. They are read when
+  # config.acm-failover is absent, so its values files keep working unchanged; config.acm-failover
+  # wins where both exist.
+  {{hub- if (empty $bk) hub}}
+  {{hub- $fo := (dig "acm" "failover" (dict) $rcmConfig) hub}}
+  {{hub- if not (empty $fo) hub}}
+  {{hub- $bk = (dict
+        "storage" (dict
+          "type" "s3"
+          "sourceSecretRef" (dict "name" (index $fo "secretName" | default "") "namespace" (index $fo "secretNamespace" | default ""))
+          "region" (index $fo "region" | default "us-east-1")
+          "prefix" (index $fo "prefix" | default "velero")
+          "profile" "backupStorage")
+        "active" (dict
+          "veleroSchedule" (index $fo "schedule" | default "0 */2 * * *")
+          "veleroTtl" (index $fo "veleroTtl" | default "120h"))
+        "passive" (dict "scope" "hive-secrets")) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
   {{hub- $active := (index $bk "active" | default dict) hub}}
   {{hub- $schedule := (index $active "veleroSchedule" | default "0 */2 * * *") hub}}
   {{hub- if (empty $schedule) hub}}
-  {{hub- fail "acm-backup: config.acm-backup.active.veleroSchedule is required on an active hub. A BackupSchedule with no cron expression never produces a backup." hub}}
+  {{hub- fail "acm-failover: config.acm-failover.active.veleroSchedule is required on an active hub. A BackupSchedule with no cron expression never produces a backup." hub}}
   {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: cluster.open-cluster-management.io/v1beta1
       kind: BackupSchedule
       metadata:
-        name: acm-backup-schedule
+        name: acm-failover-schedule
         namespace: open-cluster-management-backup
       spec:
         # Both durations stay quoted. A cron expression beginning with an asterisk is a YAML alias
@@ -31,3 +50,6 @@ object-templates-raw: |
         veleroSchedule: '{{hub $schedule hub}}'
         veleroTtl: '{{hub index $active "veleroTtl" | default "720h" hub}}'
         useManagedServiceAccount: {{hub index $active "useManagedServiceAccount" | default "true" hub}}
+        # Pausing stops the Velero schedules without removing the BackupSchedule, which is how a
+        # collision is resolved on one side while the other keeps its history.
+        paused: {{hub index $active "paused" | default false hub}}

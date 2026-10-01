@@ -5,7 +5,7 @@ need different tools:
 
 * **Hub loss.** The hub cluster is gone. Managed clusters keep running, but you cannot see or
   govern them. Recovery means standing up a hub that knows about the same fleet. This is what the
-  `acm-backup` policy does, and it is the subject of this page.
+  `acm-failover` policy does, and it is the subject of this page.
 * **Workload loss.** An application, a virtual machine, or its data needs to come back. That is a
   storage problem, handled by the `vm-backup` policy for Red Hat OpenShift Virtualization virtual
   machines, by Red Hat OpenShift Data Foundation Regional or Metro disaster recovery for orchestrated
@@ -23,8 +23,8 @@ Velero backups.
 
 ![Hub disaster recovery](diagrams/autoshift-hub-dr.drawio.svg)
 
-AutoShift models this as a mode on the `autoshift.io/acm-backup` label, with the settings for each
-mode under the matching key in `config.acm-backup`:
+AutoShift models this as a mode on the `autoshift.io/acm-failover` label, with the settings for each
+mode under the matching key in `config.acm-failover`:
 
 | Label value | Role |
 |---|---|
@@ -37,7 +37,7 @@ restores from the same bucket the active hub writes.
 
 ### Choosing where the backups live
 
-`config.acm-backup.storage.type` selects the backend.
+`config.acm-failover.storage.type` selects the backend.
 
 Use `s3` for anything real. The bucket must outlive the hub it protects, so it has to sit outside
 the fleet: Amazon Simple Storage Service, or an S3-compatible store such as MinIO or Ceph RADOS
@@ -62,12 +62,12 @@ On the active hub's clusterset:
 hubClusterSets:
   hub:
     labels:
-      acm-backup: 'active'
+      acm-failover: 'active'
     config:
-      acm-backup:
+      acm-failover:
         storage:
           type: s3
-          bucket: acme-acm-backups
+          bucket: acme-hub-backups
           region: us-east-2
           configSecretRef:
             name: cloud-credentials
@@ -83,12 +83,12 @@ On the standby hub's clusterset, the same storage block with a different mode:
 hubClusterSets:
   dr-hub:
     labels:
-      acm-backup: 'passive'
+      acm-failover: 'passive'
     config:
-      acm-backup:
+      acm-failover:
         storage:
           type: s3
-          bucket: acme-acm-backups
+          bucket: acme-hub-backups
           region: us-east-2
           configSecretRef:
             name: cloud-credentials
@@ -123,7 +123,7 @@ describes a workload from one that describes the hub's own configuration.
 
 The root AutoShift Application is the second kind. It carries the hub's configuration in
 `spec.source.helm`, so a standby that restores it adopts the active hub's configuration. Its
-`acm-backup` mode flips to `active`, it starts a second `BackupSchedule` against the same storage
+`acm-failover` mode flips to `active`, it starts a second `BackupSchedule` against the same storage
 location, and both hubs collapse into `BackupCollision`.
 
 Everything AutoShift creates for itself already carries the exclusion label. The root Application is
@@ -139,7 +139,7 @@ metadata:
     velero.io/exclude-from-backup: "true"
 ```
 
-`policy-acm-backup-exclusions-test` reports a root Application that is missing it. A deployment
+`policy-acm-failover-exclusions-test` reports a root Application that is missing it. A deployment
 installed directly with Helm is unaffected: there is no root Application, and the Helm release Secret
 is not captured either.
 
@@ -158,8 +158,8 @@ The operator does not resume a collided schedule on its own, so recovery is deli
    the same time.
 
 ```bash
-oc delete backupschedule acm-backup-schedule -n open-cluster-management-backup
-oc delete restore acm-backup-restore-passive-sync -n open-cluster-management-backup
+oc delete backupschedule acm-failover-schedule -n open-cluster-management-backup
+oc delete restore acm-failover-restore-passive-sync -n open-cluster-management-backup
 ```
 
 ### Promotion is deliberate
@@ -171,7 +171,7 @@ never takes the fleet from a hub that is still healthy.
 Promoting a standby after losing the active hub:
 
 1. Confirm the failed hub is down and will not return with its schedule running.
-2. Set `acm-backup` to `false` on the failed hub's clusterset and to `active` on the standby's.
+2. Set `acm-failover` to `false` on the failed hub's clusterset and to `active` on the standby's.
 3. Let GitOps reconcile. The standby loses its sync `Restore` and gains a `BackupSchedule`.
 4. Activate the managed clusters by creating a `Restore` with
    `veleroManagedClustersBackupName: latest`, `veleroCredentialsBackupName: skip` and
@@ -196,8 +196,8 @@ oc get backupstoragelocation -n open-cluster-management-backup
 
 A healthy active hub shows four `schedule.velero.io` resources and a `BackupSchedule` in phase
 `Enabled`. A healthy standby shows a `Restore` in phase `Enabled`. The inform policies
-`policy-acm-backup-storage-test`, `policy-acm-backup-schedule-test` and
-`policy-acm-backup-restore-test` report the same conditions through the governance dashboard.
+`policy-acm-failover-storage-test`, `policy-acm-failover-schedule-test` and
+`policy-acm-failover-restore-test` report the same conditions through the governance dashboard.
 
 ## Virtual machine backup
 
@@ -258,6 +258,6 @@ has a worked example.
 
 ## Related pages
 
-* [Values reference](values-reference.md) for every `acm-backup` label and configuration key.
+* [Values reference](values-reference.md) for every `acm-failover` label and configuration key.
 * [Policy behavior](policy-behavior.md) for why an empty `ConfigurationPolicy` reports Compliant.
 * [Hub-of-hubs topology](hub-of-hubs.md) for fleets with more than one hub.

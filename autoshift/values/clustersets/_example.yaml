@@ -161,7 +161,7 @@ hubClusterSets:
       # =======================================================================
       # Virtual machine backup - policy: vm-backup
       # =======================================================================
-      # Protects the virtual machines running ON a managed cluster. Separate from acm-backup, which
+      # Protects the virtual machines running ON a managed cluster. Separate from acm-failover, which
       # protects HUB state so a lost hub can be rebuilt; neither covers the other.
       #
       # A VirtualMachine opts in by naming one of the schedules below:
@@ -169,7 +169,7 @@ hubClusterSets:
       # An unlabelled VirtualMachine is never backed up.
       vm-backup:
         storage:
-          # Same shape as config.acm-backup.storage, but its own bucket on purpose: virtual machine
+          # Same shape as config.acm-failover.storage, but its own bucket on purpose: virtual machine
           # backups are far larger than hub state and usually want their own retention. There is no
           # obc backend here, because a claim against this cluster's own storage would not survive
           # the cluster.
@@ -202,7 +202,7 @@ hubClusterSets:
             resourceGroup: ''
             storageAccount: ''
             subscriptionId: ''
-          # Escape hatches, as in acm-backup: provider and plugins override what type derives, and
+          # Escape hatches, as in acm-failover: provider and plugins override what type derives, and
           # config is merged last into the Velero configuration.
           provider: ''
           # config:
@@ -216,15 +216,15 @@ hubClusterSets:
             # namespaces: ['*']           # the label scopes a schedule, not its namespace list
 
       # =======================================================================
-      # Hub backup and restore - policy: acm-backup
+      # Hub backup and restore - policy: acm-failover
       # =======================================================================
-      # Red Hat Advanced Cluster Management hub disaster recovery. The acm-backup LABEL carries the
+      # Red Hat Advanced Cluster Management hub disaster recovery. The acm-failover LABEL carries the
       # mode, and its values are the keys of the mode blocks below:
-      #   active  -> config.acm-backup.active   (this hub writes the backups)
-      #   passive -> config.acm-backup.passive  (this hub is the standby)
-      # Both modes read config.acm-backup.storage, because the standby restores from the same
+      #   active  -> config.acm-failover.active   (this hub writes the backups)
+      #   passive -> config.acm-failover.passive  (this hub is the standby)
+      # Both modes read config.acm-failover.storage, because the standby restores from the same
       # bucket the active hub writes.
-      acm-backup:
+      acm-failover:
         storage:
           # Names the object store. The Velero provider and plugin follow from it.
           #   's3'    Amazon Simple Storage Service, or ANY S3-compatible appliance reached
@@ -235,7 +235,7 @@ hubClusterSets:
           #   'obc'   an ObjectBucketClaim against the local ODF NooBaa. Lab and sandbox only:
           #           a bucket on the hub cannot survive the hub.
           type: s3
-          bucket: acm-backup              # change this; an empty bucket fails the policy
+          bucket: acm-hub-backups           # change this; an empty bucket fails the policy
           prefix: ''
           region: us-east-2
           endpoint: ''                    # S3-compatible endpoint URL; blank for AWS S3.
@@ -245,7 +245,7 @@ hubClusterSets:
           # commented out) so the validation suite renders this branch: a CA bundle is multi-line
           # and an empty stub passes a branch that breaks on real input.
           caRef:
-            name: acm-backup-ca
+            name: acm-failover-ca
             namespace: open-cluster-management-backup
             key: ca-bundle.crt
           # Credentials are NEVER in values. Create the Secret out of band in
@@ -255,8 +255,24 @@ hubClusterSets:
           configSecretRef:
             name: cloud-credentials
             key: cloud
+          # Alternative to configSecretRef, and easier to operate: name a Secret on the hub holding
+          # a plain key pair and this policy builds the Velero credentials file from it. The same
+          # Secret may also carry bucketnames and endpoint, so the bucket and S3 URL come from one
+          # place rather than being restated here.
+          # sourceSecretRef:
+          #   name: acm-failover-s3
+          #   namespace: ''                 # defaults to the policy namespace
+          # Velero credentials profile name. Set it when the object store entry expects a named
+          # profile rather than [default].
+          profile: ''
           # type: obc only. The ODF NooBaa storage class the claim is made against.
           storageClassName: openshift-storage.noobaa.io
+          # Velero plugins beyond openshift and the storage provider. Virtual machines and hosted
+          # control planes on the hub need these to be backed up.
+          kubevirt: true
+          hypershift: true
+          # Node agent, for file system backup of hub-side volumes.
+          nodeAgent: true
           # type: azure only.
           azure:
             resourceGroup: ''
@@ -281,9 +297,15 @@ hubClusterSets:
           veleroSchedule: '0 */2 * * *'
           veleroTtl: 720h
           useManagedServiceAccount: true  # reconnect managed clusters automatically on restore
+          paused: false                   # stop the Velero schedules without deleting the BackupSchedule
         passive:
           restoreSyncInterval: 30m
           cleanupBeforeRestore: CleanupRestored   # 'None' | 'CleanupRestored' | 'CleanupAll'
+          # How much the standby keeps warm.
+          #   'full'         credentials and hub resources, mirroring the active hub
+          #   'hive-secrets' only Hive cluster secrets, on the view that importing clusters is the
+          #                  failover action itself and not something an idle standby prepares
+          scope: full
 
       # =======================================================================
       # File integrity - policy: file-integrity
@@ -1409,8 +1431,8 @@ hubClusterSets:
       acm-search-storage: 'false'
       acm-search-storage-class: ''           # unset -> the cluster's default StorageClass; set to pin a class
       acm-search-storage-size: '100Gi'
-      # Hub backup and restore (hub only) — settings in config.acm-backup above
-      acm-backup: 'false'                    # 'active' | 'passive' | 'false'
+      # Hub backup and restore (hub only) — settings in config.acm-failover above
+      acm-failover: 'false'                  # 'active' | 'passive' | 'false'
       # Virtual machine backup (managed clusters) — settings in config.vm-backup above.
       # Also needs virt: 'true'. The operator installed is OpenShift APIs for Data Protection.
       vm-backup: 'false'

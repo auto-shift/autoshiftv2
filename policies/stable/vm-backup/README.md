@@ -4,7 +4,7 @@ Backs up the Red Hat OpenShift Virtualization virtual machines running on a mana
 OpenShift APIs for Data Protection. Modelled on the `acm-dr-virt-*` policies in the Red Hat Advanced
 Cluster Management 2.17 Virtualization guide.
 
-This is **not** the same job as [`acm-backup`](../acm-backup/README.md). That protects hub state, so a
+This is **not** the same job as [`acm-failover`](../acm-failover/README.md). That protects hub state, so a
 lost hub can be rebuilt knowing its fleet. This protects workload data on a managed cluster. Neither
 covers the other, and most fleets need both.
 
@@ -82,7 +82,7 @@ oc create secret generic vm-backup-cloud-credentials -n policies-<release> \
 
 ## Storage
 
-`config.vm-backup.storage` takes the same shape as `config.acm-backup.storage` — `s3` (including any
+`config.vm-backup.storage` takes the same shape as `config.acm-failover.storage` — `s3` (including any
 S3-compatible appliance via `endpoint`), `azure`, `gcp`, a `caRef` trust bundle, and the
 `provider` / `plugins` / `config` escape hatches for an object store the policy does not know about.
 
@@ -94,7 +94,7 @@ which defeats the purpose.
 
 ## Restore is a runbook, not a policy
 
-Restoring is deliberately out of scope, for the same reason `acm-backup` does not automate promotion
+Restoring is deliberately out of scope, for the same reason `acm-failover` does not automate promotion
 and the ODF work does not own `DRPlacementControl`: it is per-virtual-machine, keyed by UID, and
 operational. A policy that restores on reconcile would be a policy that overwrites a running virtual
 machine.

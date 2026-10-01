@@ -192,9 +192,9 @@ created for each replica of the image service. Sized to hold the image catalog: 
 | `acm-addon-gpf-mem-request`  | string   | `256Mi`                  | governance-policy-framework memory request |
 | `acm-addon-gpf-cpu-request`  | string   | `100m`                   | governance-policy-framework CPU request |
 | `acm-addon-gpf-mem-limit`    | string   | `1Gi`                    | governance-policy-framework memory limit. The add-on delivers its own tuning, so an OOMKilled one has to be patched by hand |
-| `acm-backup`                | string    | `active`, `passive` or `false` | Hub disaster recovery mode. `active` writes the backups, `passive` keeps a standby hub syncing from the same object store. Settings live in `config.acm-backup`. See the [acm-backup policy](https://github.com/auto-shift/autoshiftv2/tree/main/policies/stable/acm-backup) |
+| `acm-failover`                | string    | `active`, `passive` or `false` | Hub disaster recovery mode. `active` writes the backups, `passive` keeps a standby hub syncing from the same object store. Settings live in `config.acm-failover`. See the [acm-failover policy](https://github.com/auto-shift/autoshiftv2/tree/main/policies/stable/acm-failover) |
 
-**Config block** (`config.acm-backup`):
+**Config block** (`config.acm-failover`):
 
 The label value is the mode, and the mode names are the keys of the mode-specific blocks below.
 

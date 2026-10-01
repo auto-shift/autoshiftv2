@@ -6,18 +6,19 @@ Protection and Velero, and writes the hub's managed clusters, applications, poli
 credentials to an object store on a cron schedule. A standby hub reads the same store continuously,
 so it is warm when the active hub is lost.
 
-This policy covers **hub** loss only. It does not replicate application data: see the `odf-dr`
-policy for workload failover and `volsync` for persistent volume replication.
+This policy covers **hub** loss only. It does not protect anything running on a managed cluster:
+see [`vm-backup`](../vm-backup/README.md) for virtual machines. Orchestrated application failover
+and persistent volume replication are not implemented yet.
 
 ## Mode
 
-The `autoshift.io/acm-backup` label carries the mode, and its values are the keys of the
-mode-specific blocks in `config.acm-backup`:
+The `autoshift.io/acm-failover` label carries the mode, and its values are the keys of the
+mode-specific blocks in `config.acm-failover`:
 
 | Label value | Role | Gets | Reads |
 |---|---|---|---|
-| `active` | Writes the backups | `BackupSchedule` | `config.acm-backup.active` |
-| `passive` | Standby, continuously syncing | `Restore` | `config.acm-backup.passive` |
+| `active` | Writes the backups | `BackupSchedule` | `config.acm-failover.active` |
+| `passive` | Standby, continuously syncing | `Restore` | `config.acm-failover.passive` |
 | `false` | No hub disaster recovery | nothing | — |
 
 Both modes get the object store and the `DataProtectionApplication`, because the standby restores
@@ -31,25 +32,25 @@ Compliant — which for a backup policy means a hub that appears healthy while b
 
 | Policy | Runs on | Description |
 |--------|---------|-------------|
-| `policy-acm-backup-storage` | Both modes | The `ObjectBucketClaim` (obc backend only) and the `DataProtectionApplication` that points Velero at the bucket |
-| `policy-acm-backup-credentials-test` | Both modes | Inform: the credentials Secret Velero opens exists. Existence only, never contents |
-| `policy-acm-backup-storage-test` | Both modes | Inform: the `DataProtectionApplication` is Reconciled and the `BackupStorageLocation` is Available |
-| `policy-acm-backup-schedule` | `active` | The `BackupSchedule` |
-| `policy-acm-backup-schedule-test` | `active` | Inform: the schedule phase is `Enabled` |
-| `policy-acm-backup-restore` | `passive` | The continuously syncing `Restore` |
-| `policy-acm-backup-restore-test` | `passive` | Inform: the restore phase is `Enabled` |
+| `policy-acm-failover-storage` | Both modes | The `ObjectBucketClaim` (obc backend only) and the `DataProtectionApplication` that points Velero at the bucket |
+| `policy-acm-failover-credentials-test` | Both modes | Inform: the credentials Secret Velero opens exists. Existence only, never contents |
+| `policy-acm-failover-storage-test` | Both modes | Inform: the `DataProtectionApplication` is Reconciled and the `BackupStorageLocation` is Available |
+| `policy-acm-failover-schedule` | `active` | The `BackupSchedule` |
+| `policy-acm-failover-schedule-test` | `active` | Inform: the schedule phase is `Enabled` |
+| `policy-acm-failover-restore` | `passive` | The continuously syncing `Restore` |
+| `policy-acm-failover-restore-test` | `passive` | Inform: the restore phase is `Enabled` |
 
 ## Placement
 
 | Placement | Criteria |
 |-----------|----------|
-| `placement-policy-acm-backup` | `cluster-type: 'hub'` AND `acm-backup` in (`active`, `passive`) |
-| `placement-policy-acm-backup-active` | `cluster-type: 'hub'` AND `acm-backup: 'active'` |
-| `placement-policy-acm-backup-passive` | `cluster-type: 'hub'` AND `acm-backup: 'passive'` |
+| `placement-policy-acm-failover` | `cluster-type: 'hub'` AND `acm-failover` in (`active`, `passive`) |
+| `placement-policy-acm-failover-active` | `cluster-type: 'hub'` AND `acm-failover: 'active'` |
+| `placement-policy-acm-failover-passive` | `cluster-type: 'hub'` AND `acm-failover: 'passive'` |
 
 ## Dependencies
 
-`policy-acm-backup-storage` depends on `policy-acm-mch-install`, because enabling the
+`policy-acm-failover-storage` depends on `policy-acm-mch-install`, because enabling the
 `cluster-backup` component on the `MultiClusterHub` is what creates the
 `open-cluster-management-backup` namespace and installs OpenShift APIs for Data Protection.
 Everything else chains off the storage readiness gate, so no schedule or restore is created
@@ -57,7 +58,7 @@ against a storage location that does not work.
 
 ## Storage backends
 
-`config.acm-backup.storage.type` picks the backend.
+`config.acm-failover.storage.type` picks the backend.
 
 ### `s3`
 
@@ -84,7 +85,7 @@ aws_access_key_id=<key>
 aws_secret_access_key=<secret>
 ```
 
-Point `config.acm-backup.storage.configSecretRef` at it. Set `endpoint` for an S3-compatible store
+Point `config.acm-failover.storage.configSecretRef` at it. Set `endpoint` for an S3-compatible store
 such as MinIO or Ceph RADOS Gateway; leave it blank for AWS S3. A private endpoint's trust bundle
 comes from a ConfigMap on the hub named by `caRef`.
 
@@ -136,7 +137,7 @@ failure this policy exists to cover. It is useful for exercising the workflow be
 exists.
 
 While the claim is still binding the policy emits the claim but no `DataProtectionApplication`,
-rather than one pointing at an empty bucket. `policy-acm-backup-storage-test` reports the
+rather than one pointing at an empty bucket. `policy-acm-failover-storage-test` reports the
 not-ready state.
 
 ## Nothing is allowed to fail quietly
@@ -151,7 +152,7 @@ policy set is built to avoid.
 | `storage.bucket` empty on any backend but `obc` | Template fails rather than configure Velero with no bucket |
 | `storage.azure.*` incomplete | Template fails, naming the missing field |
 | `caRef` set but the ConfigMap is absent or the key empty | Template fails; omitting `caCert` would leave Velero unable to verify the endpoint while the policy looked healthy |
-| The credentials Secret is absent | `policy-acm-backup-credentials-test` reports it by name |
+| The credentials Secret is absent | `policy-acm-failover-credentials-test` reports it by name |
 | `active.veleroSchedule` empty | Template fails; a schedule with no cron never produces a backup |
 | `passive.cleanupBeforeRestore` invalid | Template fails, listing the accepted values |
 | The `ObjectBucketClaim` has not bound | No `DataProtectionApplication` is written, and the claim itself keeps the policy non-empty so it cannot report Compliant having done nothing |
@@ -170,7 +171,7 @@ To promote a standby after losing the active hub:
 1. Confirm the failed hub is really down and will not come back with its schedule running. Two hubs
    writing to one storage location put both `BackupSchedule` resources into `BackupCollision` and
    stop backups on both.
-2. In values, set `acm-backup: 'false'` on the failed hub's clusterset and `acm-backup: 'active'`
+2. In values, set `acm-failover: 'false'` on the failed hub's clusterset and `acm-failover: 'active'`
    on the standby's.
 3. Let GitOps reconcile. The standby loses its sync `Restore` and gains a `BackupSchedule`.
 4. Activate the managed clusters. The policy does not do this for you: create a `Restore` with
@@ -194,7 +195,7 @@ Application state. Do not remove those labels, and add the same label to any new
 Enabling this policy adds `cluster-backup` to `spec.overrides.components` on the `MultiClusterHub`,
 alongside `siteconfig` from the cluster provisioning flow.
 
-`musthave` does not remove list entries, so setting `acm-backup` back to `false` leaves the
+`musthave` does not remove list entries, so setting `acm-failover` back to `false` leaves the
 component enabled and the policy still reports Compliant. Disable it by editing the
 `MultiClusterHub` directly.
 
