@@ -204,10 +204,13 @@ hubClusterSets:
           # RECOMMENDED. Names a Secret on the HUB, copied to every selected cluster, so one Secret
           # serves the fleet instead of one per cluster. Still created out of band; credentials
           # never appear in values.
-          credentialsFrom:
-            name: oadp-cloud-credentials
-            targetName: cloud-credentials
-            key: cloud
+          # credentialsFrom takes a ready-made Velero credentials file instead of a key pair and is
+          # copied across with copySecretData. Commented out only because it is mutually exclusive
+          # with sourceSecretRef below, which is declared so the suite renders that branch.
+          # credentialsFrom:
+          #   name: oadp-cloud-credentials
+          #   targetName: cloud-credentials
+          #   key: cloud
           # Alternative to credentialsFrom: a Secret created separately on each cluster.
           # configSecretRef:
           #   name: cloud-credentials
@@ -217,9 +220,9 @@ hubClusterSets:
           # selected cluster. The same Secret may also carry bucketnames and endpoint, so the bucket
           # and S3 URL come from one place rather than being restated here. Mutually exclusive with
           # credentialsFrom: both build the same Secret, so setting both fails the policy.
-          # sourceSecretRef:
-          #   name: oadp-s3
-          #   namespace: ''                 # defaults to the policy namespace
+          sourceSecretRef:
+            name: oadp-s3
+            namespace: ''                 # defaults to the policy namespace
           # Velero credentials profile name. Set it when the object store entry expects a named
           # profile rather than [default].
           profile: ''
