@@ -69,8 +69,9 @@ policies:
       - name: policy-storage-cluster-test
     manifests:
       - path: manifests/observability-noobaa
-  # 3-s3-test) thanos-s3-bucket must exist, with every connection key, before the
-  #    enforcing policy writes thanos-object-storage.
+  # 3-s3-test) The credentials Secret named by thanosStorage.source must exist, and
+  #    its access and secret key fields must be readable, before the enforcing
+  #    policy writes thanos-object-storage.
   - name: policy-acm-observability-ext-s3-test
     remediationAction: inform
     placement:
@@ -81,15 +82,17 @@ policies:
       - path: test/acm-observability-s3-secret.yaml
     customMessage:
       noncompliant: >-
-        Secret thanos-s3-bucket is missing in the namespace from autoshift.io/acm-observability-s3-namespace,
-        or it is missing BUCKET_NAME, BUCKET_HOST, BUCKET_PORT, AWS_ACCESS_KEY_ID, or AWS_SECRET_ACCESS_KEY.
-  # 3-s3) One Secret, thanos-object-storage, filled by lookup of thanos-s3-bucket.
+        The credentials Secret named by config.acm.observability.thanosStorage.source
+        is missing on this hub, or AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY cannot be read.
+        Bucket, endpoint, and TLS come from that config, not from the Secret.
+  # 3-s3) thanos-object-storage. Connection fields come from thanosStorage config.
+  #    The access key and secret key are read from the Secret that config names.
   - name: policy-acm-observability-external-s3
     placement:
       placementPath: placement-observability-external-s3.yaml
     dependencies:
       - name: policy-acm-observability
-      - name: policy-acm-observability-external-s3-test
+      - name: policy-acm-observability-ext-s3-test
     manifests:
       - path: manifests/observability-external-s3
   # 3b) Custom metrics allowlist. Gated on its own label rather than folded into

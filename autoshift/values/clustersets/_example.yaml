@@ -144,6 +144,17 @@ hubClusterSets:
               cpuArchitecture: x86_64              # x86_64, arm64, s390x or ppc64le
               url: 'https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.22/4.22.0/rhcos-4.22.0-x86_64-live.x86_64.iso'
         observability:
+          # external-s3 only. Bucket, endpoint, and TLS live here. The Secret named by
+          # source holds AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. Create that
+          # Secret on every hub that uses external-s3.
+          thanosStorage:
+            bucket: acm-fake-0001
+            endpoint: s3.example.com:443
+            insecure: false                 # true skips TLS verification
+            useClusterCA: false             # true trusts the hub cluster CA for the endpoint
+            source:
+              namespace: secrets-namespace
+              secretName: thanos-s3-credentials
           customMetrics:
             platform:
               # not in the default allowlist, so turning it on is observable
@@ -1278,10 +1289,10 @@ hubClusterSets:
       acm-availability-config: 'High'       # 'Basic' or 'High'
       acm-observability: 'true'
       # noobaa (default): ObjectBucketClaim, requires OpenShift Data Foundation.
-      # external-s3: fromSecret lookup of thanos-s3-bucket. Does not require OpenShift Data Foundation.
+      # external-s3: bucket, endpoint, and TLS from config.acm.observability.thanosStorage.
+      # The Secret named there holds only the access key and the secret key.
+      # Does not require OpenShift Data Foundation.
       acm-observability-storage: 'noobaa'
-      # Namespace of Secret thanos-s3-bucket. Required when acm-observability-storage is external-s3.
-      acm-observability-s3-namespace: 'secrets-namespace'
       # ACM Search v2 storage (PVC for the search-indexer PostgreSQL)
       acm-observability-custom-metrics: 'false'   # collect metrics beyond ACM's default allowlist; needs config.acm.observability.customMetrics
       acm-search-storage: 'false'

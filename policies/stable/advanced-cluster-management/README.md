@@ -46,26 +46,33 @@ ACM is a **bootstrap operator**: the root-level `advanced-cluster-management/` H
 | Value | What runs |
 |---|---|
 | `noobaa` (default, including when the label is unset) | `policy-acm-observability-noobaa` creates an `ObjectBucketClaim` and builds `thanos-object-storage` from the bucket the claim produces. It depends on `policy-storage-cluster-test`, so OpenShift Data Foundation has to be enabled. |
-| `external-s3` | Set `acm-observability-s3-namespace` to the namespace of Secret `thanos-s3-bucket`. `policy-acm-observability-external-s3` writes one Secret, `thanos-object-storage`, from that lookup. |
+| `external-s3` | `policy-acm-observability-external-s3` writes `thanos-object-storage` from `config.acm.observability.thanosStorage`. The Secret named there holds only the access key and the secret key. |
 
 ```yaml
 labels:
   acm-observability: 'true'
   acm-observability-storage: 'external-s3'
-  acm-observability-s3-namespace: 'secrets-namespace'
+config:
+  acm:
+    observability:
+      thanosStorage:
+        bucket: metrics-bucket
+        endpoint: s3.example.com:443
+        insecure: false
+        useClusterCA: false
+        source:
+          namespace: secrets-namespace
+          secretName: thanos-s3-credentials
 ```
 
 ```bash
-oc create secret generic thanos-s3-bucket \
+oc create secret generic thanos-s3-credentials \
   -n secrets-namespace \
-  --from-literal=BUCKET_NAME=<bucket> \
-  --from-literal=BUCKET_HOST=<s3-hostname> \
-  --from-literal=BUCKET_PORT=443 \
   --from-literal=AWS_ACCESS_KEY_ID=<access> \
   --from-literal=AWS_SECRET_ACCESS_KEY=<secret>
 ```
 
-Create that Secret on every hub that runs observability, including each intermediate hub. One Secret holds the bucket name, the endpoint, and the credentials. NooBaa splits those across a ConfigMap and a Secret because that is what its claim controller writes. External S3 does not.
+Create that Secret on every hub that runs observability, including each intermediate hub. The policy reads `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from it. Bucket, endpoint, and TLS come from `thanosStorage`. Set `useClusterCA: true` when the endpoint should be verified with the hub cluster CA. NooBaa still splits its bucket coordinates and credentials across the ConfigMap and Secret its claim controller writes.
 
 ## Version pinning
 
