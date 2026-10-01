@@ -8,6 +8,11 @@ Deploys an AutoShift ArgoCD Application on managed hub clusters (spoke hubs), en
 > Placement so the policy also lands on the self-managed hub, moving the safety check out of a
 > declarative predicate and into a template guard. Use the manual second Application for that
 > topology (see [Hub of hubs](../../../docs/hub-of-hubs.md)), pending Argo CD agent support.
+>
+> **`agent-managed` is excluded by the Placement.** In that mode the hub above owns this hub's
+> Application resources through the Argo CD agent principal, so writing one here too would give
+> the same object two writers. A managed hub set to `agent-managed` gets its AutoShift
+> Application from the hub above instead.
 
 ## Policies
 

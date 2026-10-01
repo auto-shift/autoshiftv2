@@ -1,20 +1,19 @@
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-gitops-dev
+  name: placement-policy-gitops-agent-spoke
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # No spec.clusterSets: selects across all ManagedClusterSetBindings in this
-  # namespace (bound by the top autoshift chart) filtered by the predicate.
-  # Team presence + mode are handled INSIDE the policy by ranging the
-  # gitops-dev-team-<team> labels; this predicate just gates on gitops-dev.
-  # Two predicates are ORed. The second reaches a cluster running infra standalone, whose only
-  # relevant label is gitops-infra.
+  # Which clusters run a team agent. The per-team gitops-dev-team-<team>: 'agent' labels decide
+  # WHICH teams; this one exists so placement can tell whether the cluster runs any at all, because
+  # a selector cannot match a label prefix.
+  # Two predicates are ORed. The first is the team agents; the second is infra, which carries its
+  # mode on gitops-infra rather than on a per-team label.
   predicates:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/gitops-dev'
+            - key: 'autoshift.io/gitops-agent-enrolled'
               operator: In
               values:
                 - 'true'
@@ -24,7 +23,9 @@ spec:
             - key: 'autoshift.io/gitops-infra'
               operator: In
               values:
-                - 'standalone'
+                - 'agent'
+                - 'agent-autonomous'
+                - 'agent-managed'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

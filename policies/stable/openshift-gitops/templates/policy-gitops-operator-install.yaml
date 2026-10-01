@@ -71,7 +71,18 @@ spec:
                   {{ "{{hub-" }} $gitops := (index $renderedConfig "gitops" | default dict) {{ "hub}}" }}
                   {{ "{{hub-" }} $defaultInstance := (index $gitops "defaultInstance" | default false) {{ "hub}}" }}
                   {{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default (printf "%v" (not $defaultInstance)) {{ "hub}}" }}
-              # Base ArgoCD namespace, plus openshift-gitops-<team> for each cluster-scoped dev team on the cluster.
+              # The namespaces whose Argo CD instance is CLUSTER SCOPED. Naming one here grants that instance
+              # broad rights, so the list stays narrow: the base Argo CD namespace; openshift-gitops-<team>
+              # only where a team opts in with gitops-dev-team-<team>-cluster-scoped; and each principal
+              # namespace, infra included, for a team whose agent is enabled and whose mode here is hub.
+              #
+              # Principals must be listed. Red Hat OpenShift GitOps reconciles sourceNamespaces only for a
+              # cluster-scoped instance, so a principal left out never claims its agent namespaces. It runs
+              # with controller.enabled false and reconciles nothing itself. A team's own instance stays least
+              # privileged and uses purpose-built ClusterRoles in the gitops-dev policy instead.
+              #
+              # Comments belong here, not inside the value: it is a folded scalar and hub templates have no
+              # comment syntax, so a # line there becomes part of the value and swallows the first namespace.
               - name: ARGOCD_CLUSTER_CONFIG_NAMESPACES
                 value: >-
                   {{ "{{hub-" }} $namespaces := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}") {{ "hub}}" }}
@@ -81,7 +92,40 @@ spec:
                   {{ "{{hub-" }} $namespaces = printf "%s,openshift-gitops-%s" $namespaces $team {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if eq (index .ManagedClusterLabels "autoshift.io/gitops-agent" | default "false") "true" {{ "hub}}" }}
+                  {{ "{{hub-" }} $agentCfg := (dig "gitops" "infra" "addon" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
+                  {{ "{{hub-" }} $namespaces = printf "%s,%s" $namespaces (index $agentCfg "namespace" | default "openshift-gitops-agent") {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} $mcLabels := .ManagedClusterLabels {{ "hub}}" }}
+                  {{ "{{hub-" }} $teamSpecs := (dig "gitops" "teams" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
+                  {{ "{{hub-" }} $teamSpecs = set $teamSpecs "infra" (dig "gitops" "infra" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
+                  {{ "{{hub-" }} range $team, $spec := $teamSpecs {{ "hub}}" }}
+                  {{ "{{hub-" }} $modeKey := ternary "autoshift.io/gitops-infra" (printf "autoshift.io/gitops-dev-team-%s" $team) (eq $team "infra") {{ "hub}}" }}
+                  {{ "{{hub-" }} $modeDflt := ternary "hub" "push" (eq (index $mcLabels "autoshift.io/cluster-type" | default "") "hub") {{ "hub}}" }}
+                  {{ "{{hub-" }} if and (dig "agent" "enabled" false $spec) (eq (index $mcLabels $modeKey | default (ternary $modeDflt "" (eq $team "infra"))) "hub") {{ "hub}}" }}
+                  {{ "{{hub-" }} $namespaces = printf "%s,%s" $namespaces (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
                   {{ "{{hub-" }} $namespaces {{ "hub}}" }}
+              # Argo CD agent principal settings. Both are read only by the principal component, so
+              # they are inert on a cluster that does not run one, and the keys are set everywhere
+              # for the same reason the two above are: this file varies env VALUES per cluster, not
+              # the set of keys.
+              #
+              # Red Hat documents ALLOW_GENERATE false as the way to stop the principal minting its
+              # own serving certificate. That matters here more than it does in the documented
+              # setup: the whole point of this design is that the certificate authority comes from
+              # cert-manager, and a principal that self-signs would quietly opt out of it.
+              - name: ARGOCD_PRINCIPAL_TLS_SERVER_ALLOW_GENERATE
+                value: 'false'
+              # Redis for the principal. The documented value assumes the principal runs inside the
+              # openshift-gitops instance; AutoShift gives it an instance of its own, so this has to
+              # name that instance's Redis service rather than the default one.
+              - name: ARGOCD_PRINCIPAL_REDIS_SERVER_ADDRESS
+                value: >-
+                  {{ "{{hub-" }} $agentCfg := (dig "gitops" "infra" "addon" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
+                  {{ "{{hub-" }} $agentNs := (index $agentCfg "namespace" | default "openshift-gitops-agent") {{ "hub}}" }}
+                  {{ "{{hub-" }} printf "argocd-agent-principal-redis.%s.svc.cluster.local:6379" $agentNs {{ "hub}}" }}
             sourceNamespace: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-source-namespace" | default "{{ .Values.gitops.sourceNamespace }}" {{ "hub}}" }}'
             channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/gitops-channel" | default "{{ .Values.gitops.channel }}" {{ "hub}}" }}'
             # Version resolution (config in the rendered-config ConfigMap): config.gitops.versions/.startingCSV

@@ -1,0 +1,82 @@
+# Signing CA for the Red Hat Advanced Cluster Management GitOps add-on (the Argo CD agent).
+#
+# WHY THIS EXISTS. The GitOpsCluster controller derives the whole agent PKI from ONE secret,
+# `argocd-agent-ca` in the hub Argo CD namespace: the principal serving certificate, the resource
+# proxy certificate, the trust bundle it propagates to every spoke, and each agent client
+# certificate signed through the add-on certificate signing request flow. Left alone the controller
+# generates a self-signed CA per hub, which is turnkey but gives a fleet of unrelated roots and
+# chains to nothing the customer already trusts.
+#
+# The controller ADOPTS an existing secret rather than forcing its own: it only writes when the
+# certificate is missing, unparseable, expired, or past 80% of its own lifetime. So issuing this
+# secret with cert-manager puts the agent mesh under a customer certificate authority with no fork
+# and no unsupported configuration.
+#
+# THE 80% RULE, AND IT IS LOAD-BEARING. Past 80% of the certificate lifetime the controller
+# overwrites this secret with a self-signed CA of its own and the customer chain is gone, silently.
+# `renewBefore` MUST therefore exceed `duration` / 5, so cert-manager always refreshes first and the
+# controller never considers the certificate stale. The defaults below are 8760h and 2160h, which is
+# 25% and leaves margin. Changing one without the other reintroduces the cliff. The companion inform
+# policy in test/ is the backstop.
+#
+# Rotation is safe by construction: the controller keeps the outgoing and incoming CA in its bundle
+# together, reissues any leaf whose parent has left the bundle, and updates the propagation
+# ManifestWork when the bundle changes, so spokes follow a CA swap without being stranded.
+#
+# WHICH ISSUER. config.gitops.agent.ca.issuer selects the signer. It defaults to the built-in
+# autoshift-ca ClusterIssuer, which makes the agent CA an intermediate under the same root that
+# already signs the API server, Ingress and component certificates. Point it at a customer issuer
+# instead (Vault, Venafi, a `ca` issuer over their root, step-ca) and the agent mesh chains to the
+# customer public key infrastructure. The signer must be able to issue a CA certificate, so public
+# ACME cannot serve here.
+#
+# A customer whose certificate authority cannot be reached by cert-manager at all should leave the
+# gitops-agent-ca label off and deliver the secret out of band instead, at which point nothing
+# renews it automatically and the inform policy in test/ becomes the only warning before the cliff.
+#
+# The private key has to live in this secret because the controller signs agent certificate signing
+# requests online. An offline or hardware-held root can only ever delegate an intermediate here.
+object-templates-raw: |
+  {{hub- $gitopsCfg := (dig "gitops" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) hub}}
+  {{hub- $agentCfg := (dig "infra" "addon" dict $gitopsCfg) hub}}
+  {{hub- $caCfg := (index $agentCfg "ca" | default dict) hub}}
+  {{hub- $issuer := (index $caCfg "issuer" | default dict) hub}}
+  {{hub- $key := (index $caCfg "privateKey" | default dict) hub}}
+  {{hub- $ns := (index $agentCfg "namespace" | default "openshift-gitops-agent") hub}}
+  # The principal namespace, declared here as well as in the agent policy. The two are placed by
+  # DIFFERENT labels (gitops-agent-ca and gitops-agent) and either may be enabled on its own, so
+  # neither can assume the other created this. Both declare the same object with musthave, which is
+  # idempotent, and each policy stays self-sufficient. Without this, enabling gitops-agent-ca alone
+  # emits a Certificate into a namespace nothing creates and it never issues.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $ns hub}}
+        labels:
+          openshift.io/cluster-monitoring: 'true'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: argocd-agent-ca
+        namespace: {{hub $ns hub}}
+      spec:
+        isCA: true
+        commonName: argocd-agent-ca
+        # The name is fixed by the GitOpsCluster controller and is not configurable. It must sit in
+        # the namespace named by the agent GitOpsCluster's argoServer.argoNamespace, which is the
+        # dedicated principal namespace rather than the main Argo CD one.
+        secretName: argocd-agent-ca
+        duration: {{hub (index $caCfg "duration" | default "8760h0m0s") hub}}
+        # MUST stay above duration / 5. See the 80% rule above.
+        renewBefore: {{hub (index $caCfg "renewBefore" | default "2160h0m0s") hub}}
+        privateKey:
+          algorithm: {{hub (index $key "algorithm" | default "RSA") hub}}
+          size: {{hub (index $key "size" | default 4096) hub}}
+        issuerRef:
+          name: {{hub (index $issuer "name" | default "autoshift-ca") hub}}
+          kind: {{hub (index $issuer "kind" | default "ClusterIssuer") hub}}
+          group: {{hub (index $issuer "group" | default "cert-manager.io") hub}}

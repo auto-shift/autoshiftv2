@@ -1,0 +1,22 @@
+# Inform-only: the agent signing certificate authority secret exists at all.
+#
+# Deliberately checks the SECRET rather than the cert-manager Certificate, because this is the only
+# assertion that holds in BOTH supported states. Where the authority is supplied out of band there is
+# no Certificate to report on, nothing renews it, and this is the sole automated signal that it has
+# gone missing or was never delivered.
+#
+# Inform, never enforce. Under enforce a musthave on an absent object CREATES it, which would
+# materialise an empty argocd-agent-ca and hand the add-on an unusable signer, exactly the failure
+# this is meant to report.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $gitopsCfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) hub}}
+  {{hub- $agentCfg := (dig "infra" "addon" dict $gitopsCfg) hub}}
+  {{hub- $ns := (index $agentCfg "namespace" | default "openshift-gitops-agent") hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: argocd-agent-ca
+        namespace: {{hub $ns hub}}

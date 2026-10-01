@@ -1,0 +1,202 @@
+object-templates-raw: |
+  # SPOKE half of a team's Argo CD agent: the namespace, the credentials copied down from the hub
+  # and the agent instance itself.
+  # The preamble below is MIRRORED in gitops-dev.yaml, agent-hub/ and agent-spoke/. It derives the
+  # per-team loop that all three depend on. Change it in one place and you must change it in all
+  # three, or the files silently disagree about which teams exist.
+  # fromConfigMap, NOT lookup. A missing rendered-config means this cluster's values are not ready
+  # yet, and every dig below would silently fall back to a default: an agent instance built in
+  # openshift-gitops-<team> when config names another namespace, which musthave then never removes.
+  # fromConfigMap errors instead, so the policy waits rather than creating the wrong objects.
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
+  {{hub- $clusterName := .ManagedClusterName hub}}
+  {{hub- $clusterSets := list hub}}
+  {{hub- $mcsList := (lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "") | default dict hub}}
+  {{hub- range $_, $mcs := ($mcsList.items | default list) hub}}
+  {{hub- $clusterSets = append $clusterSets $mcs.metadata.name hub}}
+  {{hub- end hub}}
+  # A team-to-mode map, built BEFORE the loop so infra is always present. Iterating labels directly
+  # would skip infra on any cluster without a gitops-infra label, which silently produced no
+  # principal at all: the label would have to be remembered or nothing appeared.
+  #
+  # infra is a team named infra whose mode comes from gitops-infra and whose config comes from
+  # config.gitops.infra. Absent that label it DERIVES: hub on a hub, push anywhere else, which is
+  # the documented default rather than a value someone has to set.
+  {{hub- $modes := dict hub}}
+  {{hub- range $label, $val := .ManagedClusterLabels hub}}
+  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) hub}}
+  {{hub- $modes = set $modes (replace "autoshift.io/gitops-dev-team-" "" $label) $val hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  # Read before the loop: range rebinds the dot, so .ManagedClusterLabels is unreachable inside it.
+  {{hub- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") hub}}
+  {{hub- $isHubCluster := eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub" hub}}
+  {{hub- $infraDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") hub}}
+  {{hub- $modes = set $modes "infra" (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraDefault) hub}}
+  {{hub- range $team, $mode := $modes hub}}
+  {{hub- $isInfra := eq $team "infra" hub}}
+  {{hub- if ne $mode "" hub}}
+  {{hub- $spec := ternary (dig "gitops" "infra" dict $cfg) (index $teamSpecs $team | default dict) $isInfra hub}}
+  # Where this team's Argo CD instance lives. Defaults to openshift-gitops-<team>; infra overrides
+  # it to the shared gitops namespace, which is what lets infra use this same machinery.
+  # Where this team's Argo CD instance lives on THIS cluster, defaulting to openshift-gitops-<team>.
+  # infra on a HUB is the exception: policy-gitops-systems-argocd places infra-gitops there, in the
+  # gitops namespace, so infra resolves to that and attaches rather than building a rival instance.
+  # That policy is placed on hub clustersets only, so on a spoke there is nothing to attach to and
+  # infra takes the openshift-gitops-<team> default like anyone else.
+  {{hub- $nsDefault := ternary $gitopsNs (printf "openshift-gitops-%s" $team) (and $isInfra $isHubCluster) hub}}
+  {{hub- $teamNs := (dig "namespace" $nsDefault $spec) hub}}
+  {{hub- $rbac := "g, system:cluster-admins, role:admin\n" hub}}
+  {{hub- range (dig "gitops_rbac_policies" list $spec) hub}}
+  {{hub- $rbac = printf "%s%s\n" $rbac . hub}}
+  {{hub- end hub}}
+  {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
+  {{hub- $agentOn := (dig "enabled" false $agentCfg) hub}}
+  {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) hub}}
+  {{hub- $caCfg := (dig "ca" dict $agentCfg) hub}}
+  {{hub- $keyCfg := (dig "privateKey" dict $caCfg) hub}}
+  {{hub- $leafDur := (dig "leafDuration" "720h0m0s" $agentCfg) hub}}
+  {{hub- $leafRenew := (dig "leafRenewBefore" "240h0m0s" $agentCfg) hub}}
+  {{hub- $pName := printf "%s-principal" $team hub}}
+  {{hub- $pSvc := printf "%s-agent-principal" $pName hub}}
+  {{hub- $pRoute := (lookup "route.openshift.io/v1" "Route" $agentNs $pSvc) | default dict hub}}
+  {{hub- $pHost := (dig "spec" "host" "" $pRoute) hub}}
+  {{hub- $route := (lookup "route.openshift.io/v1" "Route" $teamNs "argocd-dev-server") | default dict hub}}
+  {{hub- $host := (dig "spec" "host" "" $route) hub}}
+  # The label carries the MODE, not just the fact of an agent, because mode is a per-cluster
+  # setting: one team may legitimately run some of its clusters managed and others autonomous, and
+  # upstream supports exactly that. Taking it from config instead would make it team-wide and lose
+  # the distinction the mechanism allows.
+  #   agent             the team default from config.gitops.teams.<team>.agent.mode, autonomous
+  #   agent-autonomous  the spoke owns its Applications, mirrored to the hub
+  #   agent-managed     the hub owns them and the agent pulls them down
+  # The per-team label is the only gate. Any cluster whose label says agent runs that team's agent,
+  # including a managed hub, which is a managed cluster of the layer above. Do not add an $isHub
+  # test here: that variable is true for a managed hub as well as a self-managed one.
+  {{hub- if hasPrefix "agent" $mode hub}}
+  # The Argo CD instance the agent runs inside, and whether this chart builds it. A team always gets
+  # one of its own, named <team>-agent. infra on a HUB attaches to infra-gitops, which
+  # policy-gitops-systems-argocd owns and which carries infra's agent stanza, so nothing is built
+  # here. infra on a spoke has no such instance, so it gets one like a team does.
+  {{hub- $infraAttaches := and $isInfra $isHubCluster hub}}
+  {{hub- $instName := ternary "infra-gitops" (printf "%s-agent" $team) $infraAttaches hub}}
+  {{hub- $clientMode := (dig "mode" "autonomous" $agentCfg) hub}}
+  {{hub- if eq $mode "agent-managed" hub}}{{hub- $clientMode = "managed" hub}}{{hub- end hub}}
+  {{hub- if eq $mode "agent-autonomous" hub}}{{hub- $clientMode = "autonomous" hub}}{{hub- end hub}}
+  # Read with lookup rather than fromSecret, and gate the objects that need them. These secrets are
+  # produced by the HUB half of this same policy, so on a team's first pass they do not exist yet.
+  # fromSecret errors on a missing secret and that error fails the entire policy, deadlocking the
+  # very objects that would create them. lookup returns empty and the spoke half simply appears one
+  # pass later. The namespace below is emitted unconditionally so the spoke is never left bare.
+  {{hub- $caSecS := (lookup "v1" "Secret" $agentNs "gitops-agent-ca") | default dict hub}}
+  {{hub- $clSecS := (lookup "v1" "Secret" $agentNs (printf "%s-%s-client-tls" $clusterName $team)) | default dict hub}}
+  {{hub- $spokeCa := (dig "data" "tls.crt" "" $caSecS) hub}}
+  {{hub- $spokeCrt := (dig "data" "tls.crt" "" $clSecS) hub}}
+  {{hub- $spokeKey := (dig "data" "tls.key" "" $clSecS) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $teamNs hub}}
+        labels:
+          openshift.io/cluster-monitoring: 'true'
+  {{hub- if and (ne $spokeCa "") (ne $spokeCrt "") (ne $spokeKey "") hub}}
+  # Trust anchor only. The certificate authority PRIVATE key never leaves the hub; the agent needs
+  # nothing more than the public certificate to verify the principal it dials.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      type: Opaque
+      metadata:
+        name: gitops-agent-ca
+        namespace: {{hub $teamNs hub}}
+      data:
+        ca.crt: {{hub $spokeCa hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      type: kubernetes.io/tls
+      metadata:
+        name: gitops-agent-client-tls
+        namespace: {{hub $teamNs hub}}
+      data:
+        tls.crt: {{hub $spokeCrt hub}}
+        tls.key: {{hub $spokeKey hub}}
+  # LEAST PRIVILEGE, and the reason this is not done through ARGOCD_CLUSTER_CONFIG_NAMESPACES.
+  # The agent synchronises a CLUSTER-SCOPED Namespace informer at startup and exits with "unable to
+  # sync Namespace informer" without it, which presents as a connection failure because the agent
+  # dies before it ever dials the principal. Naming the namespace in that operator variable would
+  # fix it by turning the instance into a cluster-scoped Argo CD with broad rights over the whole
+  # cluster. It needs three verbs on one resource, so that is what it gets.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: {{hub printf "gitops-agent-%s-namespaces" $team hub}}
+      rules:
+        - apiGroups:
+            - ''
+          resources:
+            - namespaces
+          verbs:
+            - get
+            - list
+            - watch
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{hub printf "gitops-agent-%s-namespaces" $team hub}}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: {{hub printf "gitops-agent-%s-namespaces" $team hub}}
+      subjects:
+        - kind: ServiceAccount
+          # The operator names the agent's service account after the Argo CD instance:
+          # <instance>-agent-agent.
+          name: {{hub printf "%s-agent-agent" $instName hub}}
+          namespace: {{hub $teamNs hub}}
+  {{hub- if not $infraAttaches hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: {{hub $instName hub}}
+        namespace: {{hub $teamNs hub}}
+      spec:
+        server:
+          enabled: false
+        argoCDAgent:
+          agent:
+            enabled: true
+            allowedNamespaces:
+              {{hub- range (dig "agentNamespaces" (list "*") $agentCfg) hub}}
+              - '{{hub . hub}}'
+              {{hub- end hub}}
+            # WITHOUT creds the agent falls back to userpass authentication, waits on a
+            # argocd-agent-agent-userpass secret that nothing creates, and the pod never becomes
+            # ready. The operator turns this into ARGOCD_AGENT_CREDS on the agent deployment, and
+            #'mtls:any' is what makes it present the client certificate below. Verified against the
+            # add-on's own working agent, which sets exactly this.
+            creds: 'mtls:any'
+            client:
+              mode: {{hub $clientMode hub}}
+              principalServerAddress: {{hub $pHost hub}}
+              principalServerPort: '{{hub (dig "principalServerPort" "443" $agentCfg) hub}}'
+            tls:
+              insecure: false
+              rootCASecretName: gitops-agent-ca
+              secretName: gitops-agent-client-tls
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

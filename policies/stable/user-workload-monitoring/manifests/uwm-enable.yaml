@@ -1,6 +1,19 @@
 object-templates-raw: |
+  # config.yaml is ONE opaque string, so asserting it means asserting the whole document, and the
+  # asserted value is built from a lookup taken moments earlier. Other controllers write this same
+  # ConfigMap: ACM Observability's endpoint-monitoring-operator rewrites it every few seconds to
+  # maintain additionalAlertmanagerConfigs and nodeExporter. Asserting unconditionally loses that
+  # race repeatedly and the policy flaps between Compliant and NonCompliant while nothing is
+  # actually wrong.
+  #
+  # So assert only when the value is wrong. In the steady state this emits nothing and the race
+  # cannot be lost; when enableUserWorkload is absent or false it emits the read-modify-write and
+  # enforce corrects it. Drift is still caught, because the guard re-reads on every evaluation, and
+  # test/uwm-enable-ready.yaml independently asserts the end state by requiring the user workload
+  # StatefulSets to be ready.
   {{ $cm := (lookup "v1" "ConfigMap" "openshift-monitoring" "cluster-monitoring-config") | default dict }}
   {{ $existingConfig := (index ($cm.data | default dict) "config.yaml" | default "" | fromYaml) | default dict }}
+  {{- if ne (index $existingConfig "enableUserWorkload") true }}
   {{ $_ := set $existingConfig "enableUserWorkload" true }}
   - complianceType: musthave
     objectDefinition:
@@ -12,6 +25,7 @@ object-templates-raw: |
       data:
         config.yaml: |
           {{ $existingConfig | toYaml | autoindent }}
+  {{- end }}
   {{hub $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub $config := (index $cm "data" | default dict) hub}}
   {{hub $configYaml := (index $config "config" | default "" | fromYaml | default dict) hub}}
