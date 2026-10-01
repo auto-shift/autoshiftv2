@@ -1,0 +1,24 @@
+# thanos-object-storage for external-s3. One Secret. Every connection field is read from
+# thanos-s3-bucket in the namespace given by autoshift.io/acm-observability-s3-namespace.
+object-templates-raw: |
+  {{hub- $ns := index .ManagedClusterLabels "autoshift.io/acm-observability-s3-namespace" | default "" hub}}
+  {{hub- if empty $ns hub}}
+    {{hub- fail "advanced-cluster-management: external-s3 requires autoshift.io/acm-observability-s3-namespace, the namespace of Secret thanos-s3-bucket" hub}}
+  {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: thanos-object-storage
+        namespace: open-cluster-management-observability
+      type: Opaque
+      stringData:
+        thanos.yaml: |
+          type: s3
+          config:
+            bucket: '{{ fromSecret "{{hub $ns hub}}" "thanos-s3-bucket" "BUCKET_NAME" | base64dec }}'
+            endpoint: '{{ fromSecret "{{hub $ns hub}}" "thanos-s3-bucket" "BUCKET_HOST" | base64dec }}:{{ fromSecret "{{hub $ns hub}}" "thanos-s3-bucket" "BUCKET_PORT" | base64dec }}'
+            insecure: false
+            access_key: '{{ fromSecret "{{hub $ns hub}}" "thanos-s3-bucket" "AWS_ACCESS_KEY_ID" | base64dec }}'
+            secret_key: '{{ fromSecret "{{hub $ns hub}}" "thanos-s3-bucket" "AWS_SECRET_ACCESS_KEY" | base64dec }}'

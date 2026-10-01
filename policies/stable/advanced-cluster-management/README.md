@@ -39,6 +39,34 @@ ACM is a **bootstrap operator**: the root-level `advanced-cluster-management/` H
 `helm install`-ed during bootstrap phase 1 to stand up ACM before ArgoCD/PolicyGenerator exist. This
 `policies/` version then manages ACM day-2 through PolicyGenerator once the CMP is available.
 
+## Object storage
+
+`autoshift.io/acm-observability` enables the stack. `autoshift.io/acm-observability-storage` chooses where Thanos stores metrics. The two modes are separate policies, so a hub on external S3 is not held for Red Hat OpenShift Data Foundation.
+
+| Value | What runs |
+|---|---|
+| `noobaa` (default, including when the label is unset) | `policy-acm-observability-noobaa` creates an `ObjectBucketClaim` and builds `thanos-object-storage` from the bucket the claim produces. It depends on `policy-storage-cluster-test`, so OpenShift Data Foundation has to be enabled. |
+| `external-s3` | Set `acm-observability-s3-namespace` to the namespace of Secret `thanos-s3-bucket`. `policy-acm-observability-external-s3` writes one Secret, `thanos-object-storage`, from that lookup. |
+
+```yaml
+labels:
+  acm-observability: 'true'
+  acm-observability-storage: 'external-s3'
+  acm-observability-s3-namespace: 'secrets-namespace'
+```
+
+```bash
+oc create secret generic thanos-s3-bucket \
+  -n secrets-namespace \
+  --from-literal=BUCKET_NAME=<bucket> \
+  --from-literal=BUCKET_HOST=<s3-hostname> \
+  --from-literal=BUCKET_PORT=443 \
+  --from-literal=AWS_ACCESS_KEY_ID=<access> \
+  --from-literal=AWS_SECRET_ACCESS_KEY=<secret>
+```
+
+Create that Secret on every hub that runs observability, including each intermediate hub. One Secret holds the bucket name, the endpoint, and the credentials. NooBaa splits those across a ConfigMap and a Secret because that is what its claim controller writes. External S3 does not.
+
 ## Version pinning
 
 Standard: `config.acm.versions` (and optional `config.acm.startingCSV`) pins the permitted CSV(s), else

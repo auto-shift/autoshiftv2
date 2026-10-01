@@ -174,7 +174,9 @@ created for each replica of the image service. Sized to hold the image catalog: 
 | `acm-source`                | string    | `redhat-operators`        |       |
 | `acm-source-namespace`      | string    | `openshift-marketplace`   |       |
 | `acm-availability-config`   | string    | `Basic` or `High`         |       |
-| `acm-observability`         | bool      | `true` or `false`         | this will enable observability utilizing a noobaa bucket for acm. OpenShift Data Foundation will have to be enabled as well |
+| `acm-observability`         | bool      | `true` or `false`         | Enable Red Hat Advanced Cluster Management observability on a hub. Where metrics are stored is `acm-observability-storage` |
+| `acm-observability-storage` | string    | `noobaa`                  | `noobaa` creates a NooBaa bucket and requires Red Hat OpenShift Data Foundation. `external-s3` looks up Secret `thanos-s3-bucket` and does not require OpenShift Data Foundation |
+| `acm-observability-s3-namespace` | string | | Namespace of Secret `thanos-s3-bucket`. Required when `acm-observability-storage` is `external-s3` |
 | `acm-observability-custom-metrics` | bool | `false` | Collect metrics beyond the default allowlist. Requires `config.acm.observability.customMetrics` |
 | `acm-search-storage`        | bool      | `true` or `false`         | Enable persistent storage for Red Hat Advanced Cluster Management Search (recommended for production) |
 | `acm-search-storage-class`  | string    | `ocs-storagecluster-ceph-rbd` | Storage class for Search database |
@@ -192,6 +194,8 @@ created for each replica of the image service. Sized to hold the image catalog: 
 | `acm-addon-gpf-mem-request`  | string   | `256Mi`                  | governance-policy-framework memory request |
 | `acm-addon-gpf-cpu-request`  | string   | `100m`                   | governance-policy-framework CPU request |
 | `acm-addon-gpf-mem-limit`    | string   | `1Gi`                    | governance-policy-framework memory limit. The add-on delivers its own tuning, so an OOMKilled one has to be patched by hand |
+
+For `external-s3`, create Secret `thanos-s3-bucket` on the hub in the namespace you set with `acm-observability-s3-namespace`. The policy does not read bucket coordinates from values. It looks that Secret up with `fromSecret`. Required keys are `BUCKET_NAME`, `BUCKET_HOST`, `BUCKET_PORT`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`.
 
 **Config block** (`config.acm.provisioning`):
 
