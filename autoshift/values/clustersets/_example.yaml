@@ -657,13 +657,37 @@ hubClusterSets:
           name: quay-config-extra
           namespace: quay-enterprise            # default: quay-enterprise
           key: config.yaml                      # default: config.yaml
+      # Ansible Automation Platform. Requires the aap label.
+      aap:
+        # Pin operator versions, as for every operator below.
+        # versions:
+        #   - 'ansible-automation-platform-operator.vX.Y.Z'
+        # startingCSV: 'ansible-automation-platform-operator.vX.Y.Z'
+        # AnsibleAutomationPlatform spec. Any spec field is accepted. Merged over a base of
+        # controller on, Hub on, EDA and Lightspeed off, redis_mode standalone, and over what
+        # the aap-noobaa-s3-storage and aap-custom-cabundle modes add. Maps merge key by key
+        # and these values win; lists replace the default whole. Name only what you change.
+        instance:
+          eda:
+            disabled: false
+          database:
+            postgres_storage_class: ocs-storagecluster-ceph-rbd
+          # Hub content storage, when aap-noobaa-s3-storage is not 'true'. Pick one:
+          # File storage, which needs a ReadWriteMany storage class:
+          hub:
+            storage_type: file
+            file_storage_size: 10Gi
+            file_storage_storage_class: ocs-storagecluster-cephfs
+          # Your own S3 bucket. Create the Secret in ansible-automation-platform on the
+          # cluster, never in git, with s3-access-key-id, s3-secret-access-key and
+          # s3-bucket-name, plus s3-region or s3-endpoint. policy-aap-hub-s3-test reports
+          # when the Secret or a key is missing.
+          # hub:
+          #   storage_type: S3
+          #   object_storage_s3_secret: aap-s3
       # Every other operator supports the SAME block — uncomment and set real CSV(s) to pin.
       # Config key = the operator's <key>-version label base (shown). CSV name usually
       # <package>.vX.Y.Z — confirm with `oc get packagemanifest <name> -o jsonpath='{.status.channels}'`.
-      # aap:
-      #   versions:
-      #     - 'ansible-automation-platform-operator.vX.Y.Z'
-      #   startingCSV: 'ansible-automation-platform-operator.vX.Y.Z'
       # cert-manager:
       #   versions:
       #     - 'openshift-cert-manager-operator.vX.Y.Z'
@@ -1372,20 +1396,24 @@ hubClusterSets:
       aap-source: redhat-operators
       aap-source-namespace: openshift-marketplace
       aap-version: 'aap-operator.v2.7.0-0.1787240540'
-      aap-hub-disabled: 'false'              # 'true' omits Hub content storage
-      aap-storage-type: 's3'                 # 's3', 'pvc', or 'none' (default: none)
-      ### AAP Hub Content File Storage (select file OR s3, not both)
+      # Modes. Each also places a policy of its own. Instance settings live in config.aap.instance.
+      aap-noobaa-s3-storage: 'false'         # 'true' creates a NooBaa bucket and backs Hub with it
+      aap-custom-cabundle: 'false'           # 'true' injects the cluster CA bundle as user-ca-bundle
+      # DEPRECATED: use config.aap.instance. Still applied when set, and config wins over them.
+      #   aap-hub-disabled               -> hub.disabled
+      #   aap-eda-disabled               -> eda.disabled
+      #   aap-lightspeed-disabled        -> lightspeed.disabled
+      #   aap-file-storage: 'true'       -> hub.storage_type: file
+      #   aap-storage-type               -> hub.storage_type
+      #   aap-file_storage_size          -> hub.file_storage_size
+      #   aap-file_storage_storage_class -> hub.file_storage_storage_class
+      aap-hub-disabled: 'false'
+      aap-eda-disabled: 'false'
+      aap-lightspeed-disabled: 'true'
       aap-file-storage: 'false'
-      aap-file_storage_storage_class: 'ocs-storagecluster-cephfs'  # Requires RWX storage
-      aap-file_storage_size: 10G
-      ### AAP NooBaa S3 Storage - autocreates bucket in AAP namespace
-      aap-noobaa-s3-storage: 'false'
-      aap-external-s3-secret-name: ''        # Name of secret for external S3
-      aap-eda-disabled: 'false'              # 'true' omits Event-Driven Ansible
-      aap-lightspeed-disabled: 'true'        # 'true' omits Ansible Lightspeed
-      ### AAP Custom Cert Bundle Injection
-      aap-custom-cabundle: 'false'           # 'true' injects cluster CA Bundle into AAP
-      aap-cabundle-name: 'user-ca-bundle'    # Secret name for CA Bundle
+      aap-storage-type: 'file'
+      aap-file_storage_size: 10Gi
+      aap-file_storage_storage_class: 'ocs-storagecluster-cephfs'
 
       # =======================================================================
       # Master Node Kubelet Configuration (SNO / Compact clusters)
