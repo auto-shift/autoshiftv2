@@ -172,6 +172,7 @@ policy set is built to avoid.
 |---|---|
 | `storage.type` not one of the four | Template fails, naming the value it got |
 | `storage.bucket` empty on any backend but `obc` | Template fails rather than configure Velero with no bucket |
+| `storage.endpoint` set but `storage.region` empty | Template fails. OpenShift APIs for Data Protection requires a region whenever an S3 URL is configured, and without one it creates no `BackupStorageLocation` while this policy still reports Compliant. The `obc` backend is unaffected: it always sets a region |
 | `storage.azure.*` incomplete | Template fails, naming the missing field |
 | `caRef` set but the ConfigMap is absent or the key empty | Template fails; omitting `caCert` would leave Velero unable to verify the endpoint while the policy looked healthy |
 | The credentials Secret is absent | `policy-acm-failover-credentials-test` reports it by name |

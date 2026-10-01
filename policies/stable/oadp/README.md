@@ -174,6 +174,7 @@ locally, next to the credentials Velero opens.
 |---|---|
 | `storage.type` not `s3`, `azure` or `gcp` | Template fails, naming the value and pointing at `endpoint` for appliances |
 | `storage.bucket` empty | Template fails rather than configure Velero with no bucket |
+| `storage.endpoint` set but `storage.region` empty | Template fails. OpenShift APIs for Data Protection requires a region whenever an S3 URL is configured, and without one it creates no `BackupStorageLocation` while this policy still reports Compliant |
 | `storage.azure.*` incomplete | Template fails, naming the missing field |
 | `credentialsFrom` set without a name | Template fails |
 | `caRef` set but the ConfigMap is absent | Template fails; a missing trust bundle would leave Velero unable to verify the endpoint |

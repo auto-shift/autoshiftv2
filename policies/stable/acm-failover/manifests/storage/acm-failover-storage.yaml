@@ -257,6 +257,14 @@ object-templates-raw: |
   {{hub- range $k, $v := (index $store "config" | default dict) hub}}
   {{hub- $_ := set $cfg $k (printf "%v" $v) hub}}
   {{hub- end hub}}
+  # OADP refuses to reconcile an AWS-provider location that has an s3Url but no region: "region for
+  # AWS backupstoragelocation is required when s3Url is configured". It creates no
+  # BackupStorageLocation and the DataProtectionApplication sits at Reconciled=False, while this
+  # policy still reports Compliant because the object it wrote matches. Checked after the config
+  # merge so a region supplied through storage.config counts too.
+  {{hub- if and (index $cfg "s3Url") (not (index $cfg "region")) hub}}
+  {{hub- fail "acm-failover: storage.endpoint is set but storage.region is empty. OpenShift APIs for Data Protection requires a region whenever an S3 URL is configured, and without one it creates no BackupStorageLocation. Set config.acm-failover.storage.region; an S3-compatible appliance that has no real region still needs a placeholder, and its own documentation usually names one." hub}}
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: oadp.openshift.io/v1alpha1
