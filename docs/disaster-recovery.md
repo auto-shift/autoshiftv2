@@ -7,12 +7,15 @@ need different tools:
   govern them. Recovery means standing up a hub that knows about the same fleet. This is what the
   `acm-failover` policy does, and it is the subject of this page.
 * **Workload loss.** An application, a virtual machine, or its data needs to come back. That is a
-  storage problem, handled by the `vm-backup` policy for Red Hat OpenShift Virtualization virtual
-  machines, by Red Hat OpenShift Data Foundation Regional or Metro disaster recovery for orchestrated
-  failover, and by VolSync for individual persistent volumes.
+  storage problem, handled by the `oadp` policy for data protection on a managed cluster, the
+  `vm-backup` policy for Red Hat OpenShift Virtualization virtual machines, Red Hat OpenShift Data
+  Foundation Regional or Metro disaster recovery for orchestrated failover, and VolSync for
+  individual persistent volumes.
 
 Protecting the hub does not protect workload data, and protecting workload data does not help you
 rebuild a hub. Most fleets need both.
+
+![The disaster recovery stacks](diagrams/autoshift-dr-stacks.drawio.svg)
 
 ## Hub backup and restore
 
@@ -199,11 +202,66 @@ A healthy active hub shows four `schedule.velero.io` resources and a `BackupSche
 `policy-acm-failover-storage-test`, `policy-acm-failover-schedule-test` and
 `policy-acm-failover-restore-test` report the same conditions through the governance dashboard.
 
+## Data protection on a managed cluster
+
+The `oadp` policy installs OpenShift APIs for Data Protection on a managed cluster and configures it:
+the operator, one `DataProtectionApplication` and one `BackupStorageLocation`, in `openshift-adp`.
+
+It creates no backup and no schedule. Enabling it makes a cluster able to be backed up, and what to
+back up is a separate decision. That is useful on its own: an administrator protecting applications
+AutoShift does not manage gets Velero installed and pointed at an object store, then drives `Backup`
+and `Schedule` resources from wherever those applications are defined.
+
+Enable it with `autoshift.io/oadp: 'true'` and set the object store in `config.oadp.storage`.
+
+### Why one policy owns it
+
+OpenShift APIs for Data Protection supports the `OwnNamespace` install mode only, and permits exactly
+one `DataProtectionApplication` per installation namespace. A second one reports
+`only one DPA CR can exist per OADP installation namespace` and is never reconciled.
+
+A managed cluster therefore has one Velero installation, shared by everything that backs anything up
+there, and it needs an owner. Consumers such as `vm-backup` add schedules against it and depend on
+`policy-oadp-storage-test`, so a schedule is never created against a storage location Velero cannot
+reach.
+
+The namespace is fixed at `openshift-adp` rather than configurable. Because the install mode is
+`OwnNamespace`, a `DataProtectionApplication` in the wrong namespace is not watched by any operator:
+it reports nothing and creates no storage location.
+
+### Hubs are separate, and a hub can have both
+
+Hub backup uses a **different** installation: the one the `cluster-backup` MultiClusterHub component
+creates in `open-cluster-management-backup`, with its own `OperatorGroup` scoped to that namespace.
+`acm-failover` configures that one; `config.oadp` has no effect on it.
+
+Neither installation can reconcile anything belonging to the other, so they are not alternatives and
+they do not conflict. A self-managed hub that also runs virtual machines carries both, in both
+namespaces, which is supported.
+
+| Namespace | Installed by | Configured by | Protects |
+|---|---|---|---|
+| `open-cluster-management-backup` | `cluster-backup` MultiClusterHub component | `acm-failover` | Hub state: managed clusters, policies, applications, credentials |
+| `openshift-adp` | `policy-oadp-operator-install` | `config.oadp` | Whatever runs on this cluster |
+
+### One Secret for the fleet
+
+Set `config.oadp.storage.credentialsFrom` to a Secret on the hub and the policy copies it to every
+selected cluster. The alternative, `configSecretRef`, expects a Secret created separately on each
+cluster, which does not scale: every new cluster is another manual step, and a missing Secret is a
+backup that silently never succeeds.
+
+Credentials are still created out of band and never appear in values files.
+
 ## Virtual machine backup
 
 The `vm-backup` policy protects Red Hat OpenShift Virtualization virtual machines on managed
-clusters, using OpenShift APIs for Data Protection. It is a different job from hub backup and runs in
-a different place: on the managed clusters rather than the hub.
+clusters. It is a different job from hub backup and runs in a different place: on the managed clusters
+rather than the hub.
+
+It is the Velero schedules only. The operator and the object store come from the `oadp` policy
+described above, and enabling `autoshift.io/vm-backup` places that policy too, so there is no second
+label to set.
 
 ![Virtual machine backup](diagrams/autoshift-vm-backup.drawio.svg)
 
@@ -230,23 +288,15 @@ it.
 oc get volumesnapshotclass
 ```
 
-**Leave the Data Mover enabled.** `config.vm-backup.storage.dataMover` defaults to `true`. A bare CSI
+**Leave the node agent enabled.** `config.oadp.storage.nodeAgent` defaults to `true`. A bare CSI
 snapshot normally lives in the same storage system as the volume it came from, so it is lost with
-that storage. The Data Mover copies the contents into the object store, which is the difference
-between disaster recovery and a local convenience.
+that storage. The node agent is what moves the contents into the object store, which is the
+difference between disaster recovery and a local convenience. A schedule setting `snapshotMoveData`
+needs that agent running, so the switch and the schedules have to agree.
 
 File system backup and `VolumeSnapshotLocation` backups are not used. Those are backup *methods*
 rather than descriptions of storage, so the choice has nothing to do with whether a StorageClass is
 CSI-provisioned.
-
-### One Secret for the fleet
-
-Set `config.vm-backup.storage.credentialsFrom` to a Secret on the hub and the policy copies it to
-every selected cluster. The alternative, `configSecretRef`, expects a Secret created separately on
-each cluster, which does not scale: every new cluster is another manual step, and a missing Secret is
-a backup that silently never succeeds.
-
-Credentials are still created out of band and never appear in values files.
 
 ### Restoring is a runbook
 

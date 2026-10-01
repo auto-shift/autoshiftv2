@@ -5,16 +5,20 @@
 # So the fleet operator defines the schedules and retention, and a virtual machine owner chooses
 # which one applies by labelling the VirtualMachine. A VM with no such label is never backed up.
 #
-# snapshotMoveData follows storage.dataMover. With it the CSI snapshot's contents are copied into the
-# object store; without it the snapshot stays in the cluster's own storage system and is lost with
-# it. includedNamespaces defaults to every namespace, because the label is what scopes a schedule,
-# not its namespace list.
+# snapshotMoveData follows config.oadp.storage.nodeAgent, which enables the node agent on the shared
+# DataProtectionApplication: the two have to agree, because moving snapshot data is the node agent's
+# work. With it the CSI snapshot's contents are copied into the object store; without it the snapshot
+# stays in the cluster's own storage system and is lost with it. includedNamespaces defaults to every
+# namespace, because the label is what scopes a schedule, not its namespace list.
+#
+# The Schedules land in openshift-adp, next to the DataProtectionApplication the oadp policy owns,
+# and use that cluster's default backup storage location.
 object-templates-raw: |
   # INDENTATION ANCHOR
   {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $vb := (index $rcmConfig "vm-backup" | default dict) hub}}
-  {{hub- $dataMover := (dig "storage" "dataMover" true $vb) hub}}
+  {{hub- $nodeAgent := (dig "oadp" "storage" "nodeAgent" true $rcmConfig) hub}}
   {{hub- $schedules := (index $vb "schedules" | default list) hub}}
   {{hub- if eq (len $schedules) 0 hub}}
   {{hub- fail "vm-backup: config.vm-backup.schedules is empty, so no virtual machine would ever be backed up on a cluster that opted in. Define at least one entry with name and cron, then label each VirtualMachine cluster.open-cluster-management.io/backup-vm: <name>." hub}}
@@ -41,7 +45,7 @@ object-templates-raw: |
         schedule: '{{hub $cron hub}}'
         template:
           ttl: '{{hub index $s "ttl" | default "720h" hub}}'
-          snapshotMoveData: {{hub $dataMover hub}}
+          snapshotMoveData: {{hub $nodeAgent hub}}
           defaultVolumesToFsBackup: false
           includedNamespaces:
             {{hub- range $ns := (index $s "namespaces" | default (list "*")) hub}}

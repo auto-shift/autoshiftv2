@@ -140,6 +140,28 @@ While the claim is still binding the policy emits the claim but no `DataProtecti
 rather than one pointing at an empty bucket. `policy-acm-failover-storage-test` reports the
 not-ready state.
 
+## OpenShift APIs for Data Protection, and disconnected
+
+This policy does not install OADP. Enabling the `cluster-backup` component on the `MultiClusterHub`
+installs it, into `open-cluster-management-backup`, and creating a second Subscription for the same
+package would collide with it.
+
+Two consequences:
+
+**Disconnected deployments must still mirror it.** `generate-imageset-config.sh` discovers operators
+from `{operator}-subscription-name` labels, so a clusterset that enables `acm-failover` must also
+carry `acm-failover-subscription-name: redhat-oadp-operator`. Those labels create no Subscription;
+they exist so the mirror contains OADP. Without them a disconnected hub cannot install it.
+
+**OADP allows one DataProtectionApplication per installation namespace.** A second one reports
+`only one DPA CR can exist per OADP installation namespace` and does nothing. So this policy owns
+the `DataProtectionApplication` in `open-cluster-management-backup`, and nothing else may create one
+there. The `vm-backup` policy uses `openshift-adp` on managed clusters for that reason.
+
+A self-managed hub that also runs virtual machines is the case to watch: it would be selected by
+both policies and attempt two installs of the same operator. Enable `vm-backup` on managed clusters
+rather than on the hub until that is consolidated.
+
 ## Nothing is allowed to fail quietly
 
 Every input that the policy cannot do without stops it loudly rather than rendering something
