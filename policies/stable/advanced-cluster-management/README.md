@@ -41,7 +41,7 @@ ACM is a **bootstrap operator**: the root-level `advanced-cluster-management/` H
 
 ## Capabilities
 
-`policy-acm-observability` writes `spec.capabilities` on the `MultiClusterObservability` object from `config.acm.observability.capabilities`. Each toggle defaults to `"true"`. Set one to `"false"` to leave that capability off. `scrapeInterval`, `logLevel`, and `additionalRemoteWrites` live in the same config block and are read by the global-observability rollup.
+`policy-acm-observability` writes `spec.capabilities` on the `MultiClusterObservability` object from `config.acm.observability.capabilities`. Each toggle defaults to `"true"`. Set one to `"false"` to leave that capability off. `scrapeInterval`, `logLevel`, and `additionalRemoteWrites` live under `config.globalObservability` and are read by the global-observability rollup.
 
 ## Object storage
 

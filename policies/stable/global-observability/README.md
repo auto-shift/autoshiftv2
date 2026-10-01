@@ -40,9 +40,9 @@ All labels are prefixed with `autoshift.io/`.
 
 All other behavior is configured through the rendered-config ConfigMap (`config:` block in values files), not labels.
 
-## Configuration (`config.acm.observability.*` in rendered-config)
+## Configuration (`config.globalObservability.*` in rendered-config)
 
-These keys live on the ACM observability config, next to `thanosStorage`. `policy-acm-observability` applies `capabilities` to the `MultiClusterObservability` object. This chart reads `scrapeInterval`, `logLevel`, and `additionalRemoteWrites` when it patches the `PrometheusAgent` templates. Unset keys fall back to the defaults below.
+These keys live on the global observability config, next to `thanosStorage`. This chart reads `scrapeInterval`, `logLevel`, and `additionalRemoteWrites` when it patches the `PrometheusAgent` templates. Unset keys fall back to the defaults below.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -108,29 +108,28 @@ hubClusterSets:
       coo: 'true'
       global-observability: 'true'
     config:
-      acm:
-        observability:
-          scrapeInterval: '300s'
-          logLevel: 'warn'
-          capabilities:
-            platformAnalytics: 'true'
-            platformLogs: 'true'
-            platformMetrics: 'true'
-            userWorkloadLogs: 'true'
-            userWorkloadMetrics: 'true'
-            userWorkloadTraces: 'true'
-          # Optional: fan out to an external sink from every hub
-          additionalRemoteWrites:
-          - name: external-monitoring
-            onSelfManagedHub: true
-            url: https://external.example.com/api/v1/receive
-            remoteTimeout: 30s
-            caFile: /etc/prometheus/secrets/external-certs/ca.crt
-            certFile: /etc/prometheus/secrets/external-certs/tls.crt
-            keyFile: /etc/prometheus/secrets/external-certs/tls.key
-            secretRef:
-              name: external-certs
-              namespace: some-ns
+      globalObservability:
+        scrapeInterval: '300s'
+        logLevel: 'warn'
+        capabilities:
+          platformAnalytics: 'true'
+          platformLogs: 'true'
+          platformMetrics: 'true'
+          userWorkloadLogs: 'true'
+          userWorkloadMetrics: 'true'
+          userWorkloadTraces: 'true'
+        # Optional: fan out to an external sink from every hub
+        additionalRemoteWrites:
+        - name: external-monitoring
+          onSelfManagedHub: true
+          url: https://external.example.com/api/v1/receive
+          remoteTimeout: 30s
+          caFile: /etc/prometheus/secrets/external-certs/ca.crt
+          certFile: /etc/prometheus/secrets/external-certs/tls.crt
+          keyFile: /etc/prometheus/secrets/external-certs/tls.key
+          secretRef:
+            name: external-certs
+            namespace: some-ns
 ```
 
 ### Intermediate hub (managed by the global hub)
@@ -145,10 +144,9 @@ hubClusterSets:
       coo: 'true'
       global-observability: 'true'
     config:
-      acm:
-        observability:
-          capabilities:
-            userWorkloadTraces: 'false'
+      globalObservability:
+        capabilities:
+          userWorkloadTraces: 'false'
 ```
 
 Workload clusters need no labels — the patched `PrometheusAgent` template and its secret arrive via MCOA replication from their intermediate hub. The minimal enablement for the whole rollup is two labels per hub (`global-observability` + the correct `self-managed` value).

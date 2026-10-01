@@ -193,7 +193,7 @@ The injected `remoteWrite.tlsConfig` references the mount paths (`caFile`/`certF
 
 ## 8. Additional remote-writes
 
-Beyond the built-in rollup (hardcoded from `values.yaml → spokeAgent.globalHubRollup`, no config needed), `config.acm.observability.additionalRemoteWrites[]` lets a hub fan metrics out to extra targets. Each entry carries its own `url`, TLS file paths, optional `secretRef` (replicated from the global hub via hub-template `copySecretData`), and an `onSelfManagedHub` flag:
+Beyond the built-in rollup (hardcoded from `values.yaml → spokeAgent.globalHubRollup`, no config needed), `config.globalObservability.additionalRemoteWrites[]` lets a hub fan metrics out to extra targets. Each entry carries its own `url`, TLS file paths, optional `secretRef` (replicated from the global hub via hub-template `copySecretData`), and an `onSelfManagedHub` flag:
 
 | `onSelfManagedHub` | Global hub | Intermediate hubs | Use case |
 |--------------------|-----------|-------------------|----------|
