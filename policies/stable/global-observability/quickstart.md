@@ -26,14 +26,14 @@ Three policy layers are involved, all enabled by labels:
 
 Skip this step when `acm-observability-storage` is `noobaa` or unset. NooBaa creates the bucket.
 
-For `external-s3`, put the bucket, endpoint, and TLS in `config.acm.observability.thanosStorage` (step 2). The Secret holds `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Create it on the global hub **and** on every intermediate hub, in the namespace you name in `source.namespace`:
+For `external-s3`, put the bucket, endpoint, and TLS in `config.acm.observability.thanosStorage` (step 2). The Secret holds `access-key` and `secret-key`. Create it on the global hub **and** on every intermediate hub, in the namespace you name in `source.namespace`:
 
 ```bash
 oc create namespace acm-thanos --dry-run=client -o yaml | oc apply -f -   # if it doesn't exist on that hub
 oc create secret generic thanos-s3-credentials \
   -n acm-thanos \
-  --from-literal=AWS_ACCESS_KEY_ID=<S3_ACCESS_KEY> \
-  --from-literal=AWS_SECRET_ACCESS_KEY=<S3_SECRET_KEY>
+  --from-literal=access-key=<S3_ACCESS_KEY> \
+  --from-literal=secret-key=<S3_SECRET_KEY>
 ```
 
 Each hub runs its own MCO stack, so each needs its own bucket and credentials. The inform policy stays NonCompliant until both fields can be read from that Secret on that hub.
@@ -144,7 +144,7 @@ On the **global hub** — metrics from workload clusters of intermediate hubs ar
 
 | Symptom | Cause / fix |
 |---------|-------------|
-| `policy-acm-observability-ext-s3-test` stays NonCompliant | The credentials Secret from step 1 is missing or misnamed **on that hub**, or it lacks `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY`. It is read locally on each hub, not from the global hub. Bucket and endpoint come from `config.acm.observability.thanosStorage` on that hub's clusterset. OpenShift Data Foundation is not involved |
+| `policy-acm-observability-ext-s3-test` stays NonCompliant | The credentials Secret from step 1 is missing or misnamed **on that hub**, or it lacks `access-key` or `secret-key`. It is read locally on each hub, not from the global hub. Bucket and endpoint come from `config.acm.observability.thanosStorage` on that hub's clusterset. OpenShift Data Foundation is not involved |
 | `policy-acm-observability-noobaa` stays Pending | That hub is in noobaa mode and OpenShift Data Foundation is not Compliant yet. Switch the hub to `external-s3` if it should not wait on Data Foundation |
 | `*-prom-test` stays NonCompliant | MCOA hasn't created its `PrometheusAgent` templates yet — verify MCOA is running and capabilities were patched (`oc get mco observability -o yaml`). This is the gate working as intended. |
 | `*-prometheus` NonCompliant: "rollup secret … not found" | The chart's `spokeAgent.globalHubRollup.secretNamespace` (default `policies-autoshift`) doesn't match your policy namespace — override it if your AutoShift release is not named `autoshift` |

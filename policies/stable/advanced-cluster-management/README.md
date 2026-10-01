@@ -68,11 +68,11 @@ config:
 ```bash
 oc create secret generic thanos-s3-credentials \
   -n secrets-namespace \
-  --from-literal=AWS_ACCESS_KEY_ID=<access> \
-  --from-literal=AWS_SECRET_ACCESS_KEY=<secret>
+  --from-literal=access-key=<access> \
+  --from-literal=secret-key=<secret>
 ```
 
-Create that Secret on every hub that runs observability, including each intermediate hub. The policy reads `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from it. Bucket, endpoint, and TLS come from `thanosStorage`. Set `useClusterCA: true` when the endpoint should be verified with the hub cluster CA. NooBaa still splits its bucket coordinates and credentials across the ConfigMap and Secret its claim controller writes.
+Create that Secret on every hub that runs observability, including each intermediate hub. The policy reads `access-key` and `secret-key` from it. Bucket, endpoint, and TLS come from `thanosStorage`. Set `useClusterCA: true` when the endpoint should be verified with the hub cluster CA. NooBaa still splits its bucket coordinates and credentials across the ConfigMap and Secret its claim controller writes.
 
 ## Version pinning
 

@@ -1,7 +1,7 @@
 # thanos-object-storage for external-s3.
 # config.acm.observability.thanosStorage supplies the bucket, endpoint, and TLS.
 # The Secret named by thanosStorage.source, in that namespace, holds the access key
-# and the secret key at AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. It is read on
+# and the secret key at access-key and secret-key. It is read on
 # the hub the policy is placed on.
 object-templates-raw: |
   {{hub- $raw := fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" hub}}
@@ -19,9 +19,9 @@ object-templates-raw: |
   {{hub- if or (empty $bucket) (or (empty $endpoint) (or (empty $sourceNs) (empty $sourceSecret))) hub}}
   {{hub- fail "advanced-cluster-management: external-s3 requires config.acm.observability.thanosStorage bucket, endpoint, source.namespace, and source.secretName" hub}}
   {{hub- end hub}}
-  {{ $accessKey := fromSecret "{{hub $sourceNs hub}}" "{{hub $sourceSecret hub}}" "AWS_ACCESS_KEY_ID" | default "" | base64dec }}
-  {{ $secretKey := fromSecret "{{hub $sourceNs hub}}" "{{hub $sourceSecret hub}}" "AWS_SECRET_ACCESS_KEY" | default "" | base64dec }}
-  {{ if or (empty $accessKey) (empty $secretKey) }}{{ fail "advanced-cluster-management: AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY could not be read from Secret {{hub $sourceSecret hub}} in namespace {{hub $sourceNs hub}}" }}{{ end }}
+  {{ $accessKey := fromSecret "{{hub $sourceNs hub}}" "{{hub $sourceSecret hub}}" "access-key" | default "" | base64dec }}
+  {{ $secretKey := fromSecret "{{hub $sourceNs hub}}" "{{hub $sourceSecret hub}}" "secret-key" | default "" | base64dec }}
+  {{ if or (empty $accessKey) (empty $secretKey) }}{{ fail "advanced-cluster-management: access-key or secret-key could not be read from Secret {{hub $sourceSecret hub}} in namespace {{hub $sourceNs hub}}" }}{{ end }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1

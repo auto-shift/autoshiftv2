@@ -194,7 +194,7 @@ created for each replica of the image service. Sized to hold the image catalog: 
 | `acm-addon-gpf-cpu-request`  | string   | `100m`                   | governance-policy-framework CPU request |
 | `acm-addon-gpf-mem-limit`    | string   | `1Gi`                    | governance-policy-framework memory limit. The add-on delivers its own tuning, so an OOMKilled one has to be patched by hand |
 
-For `external-s3`, set `config.acm.observability.thanosStorage` on each hub clusterset. Create a Secret on that hub, in `source.namespace` and named `source.secretName`, with data keys `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The policy looks those keys up. They are not config.
+For `external-s3`, set `config.acm.observability.thanosStorage` on each hub clusterset. Create a Secret on that hub, in `source.namespace` and named `source.secretName`, with data keys `access-key` and `secret-key`. The policy looks those keys up. They are not config.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
