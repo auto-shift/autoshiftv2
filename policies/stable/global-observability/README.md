@@ -2,7 +2,7 @@
 
 Adds a three-tier metrics rollup — **global hub → intermediate hubs → workload clusters** — on top of ACM MultiCluster Observability (MCO). Patches MCOA-managed `PrometheusAgent` templates on intermediate hubs so every workload cluster remote-writes its metrics directly to the global hub's Observatorium over mTLS, in addition to its local hub.
 
-This chart owns only the global-rollup deltas. The base MCO lifecycle (namespace, pull secret, `thanos-object-storage`, the `MultiClusterObservability` CR with retention/storage settings) is owned by `policy-acm-observability` in the `advanced-cluster-management` chart.
+This chart owns only the global-rollup deltas. The base MCO lifecycle (namespace, pull secret, `thanos-object-storage`, the `MultiClusterObservability` CR, and its MCOA capabilities) is owned by `policy-acm-observability` in the `advanced-cluster-management` chart.
 
 See [architecture.md](architecture.md) for how the rollup works and why.
 
@@ -10,7 +10,6 @@ See [architecture.md](architecture.md) for how the rollup works and why.
 
 | Policy | Runs on | Description |
 |--------|---------|-------------|
-| `policy-global-observability-mcoa` | All global-obs hubs | `musthave`-patches the `capabilities` block (platform analytics/logs/metrics, user-workload logs/metrics/traces) onto the existing `MultiClusterObservability` CR |
 | `policy-global-observability-secrets` | Global hub only | Assembles the coalesced `global-observability-secrets` Secret (mTLS client cert + CA + Observatorium URL) in the policy namespace |
 | `policy-global-observability-prom-test` | Intermediate hubs | Inform-only gate: verifies the MCOA-created `PrometheusAgent` templates exist before patching |
 | `policy-global-observability-prometheus` | Intermediate hubs | Stages the rollup secret (and any additional remote-write secrets) into the observability namespace and patches the `PrometheusAgent` templates with `spec.secrets` + `spec.remoteWrite` entries |
@@ -19,7 +18,6 @@ See [architecture.md](architecture.md) for how the rollup works and why.
 
 | PolicySet | Policies | Placement criteria |
 |-----------|----------|--------------------|
-| `policyset-global-observability` | `*-mcoa` | `global-observability: 'true'` |
 | `policyset-global-observability-secrets` | `*-secrets` | `global-observability: 'true'` AND `self-managed: 'true'` |
 | `policyset-global-observability-prometheus` | `*-prom-test`, `*-prometheus` | `global-observability: 'true'` AND `self-managed: 'false'` |
 
@@ -27,10 +25,9 @@ See [architecture.md](architecture.md) for how the rollup works and why.
 
 | Policy | Depends on |
 |--------|-----------|
-| `policy-global-observability-mcoa` | `policy-acm-observability` |
-| `policy-global-observability-secrets` | `policy-global-observability-mcoa` |
-| `policy-global-observability-prom-test` | `policy-global-observability-mcoa` |
-| `policy-global-observability-prometheus` | `policy-global-observability-mcoa`, `policy-coo-operator-install`, `policy-global-observability-prom-test` |
+| `policy-global-observability-secrets` | `policy-acm-observability` |
+| `policy-global-observability-prom-test` | `policy-acm-observability` |
+| `policy-global-observability-prometheus` | `policy-acm-observability`, `policy-coo-operator-install`, `policy-global-observability-prom-test` |
 
 ## Labels
 
@@ -43,9 +40,9 @@ All labels are prefixed with `autoshift.io/`.
 
 All other behavior is configured through the rendered-config ConfigMap (`config:` block in values files), not labels.
 
-## Configuration (`config.globalObservability.*` in rendered-config)
+## Configuration (`config.acm.observability.*` in rendered-config)
 
-Read by hub templates from `<cluster>.rendered-config`, falling back to chart `values.yaml` defaults.
+These keys live on the ACM observability config, next to `thanosStorage`. `policy-acm-observability` applies `capabilities` to the `MultiClusterObservability` object. This chart reads `scrapeInterval`, `logLevel`, and `additionalRemoteWrites` when it patches the `PrometheusAgent` templates. Unset keys fall back to the defaults below.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -74,7 +71,7 @@ Optional extra remote-write targets added alongside the built-in global rollup. 
 
 Keep secret names short and alphanumeric-terminated: MCOA generates `secret-<name>` volume names truncated to 63 chars, and a cut landing on a non-alphanumeric character silently breaks the agent StatefulSet.
 
-## Chart Values (`globalObservability.*`)
+## Rollup defaults
 
 | Value | Default | Description |
 |-------|---------|-------------|
@@ -92,9 +89,8 @@ Keep secret names short and alphanumeric-terminated: MCOA generates `secret-<nam
 
 ## Prerequisites
 
-- `acm-observability: 'true'` on every participating hub — `policy-acm-observability` must be Compliant (base MCO CR + secrets)
+- `acm-observability: 'true'` on every participating hub — `policy-acm-observability` must be Compliant (base MCO CR, capabilities, and secrets)
 - `coo: 'true'` on every participating hub — Cluster Observability Operator runs the `PrometheusAgent`s
-- Do **not** set `acm.observability.enableMCOA: true` in rendered-config when using this chart's capability toggles — both policies `musthave`-patch `spec.capabilities`, and an additive patch cannot remove capabilities that `enableMCOA` already added. Leave it unset so this chart is the sole capabilities manager.
 - For `additionalRemoteWrites` with `secretRef`: the referenced secret must exist on the global hub in the given namespace
 
 ## Examples
@@ -112,18 +108,19 @@ hubClusterSets:
       coo: 'true'
       global-observability: 'true'
     config:
-      globalObservability:
-        scrapeInterval: '300s'
-        logLevel: 'warn'
-        capabilities:
-          platformAnalytics: 'true'
-          platformLogs: 'true'
-          platformMetrics: 'true'
-          userWorkloadLogs: 'true'
-          userWorkloadMetrics: 'true'
-          userWorkloadTraces: 'true'
-        # Optional: fan out to an external sink from every hub
-        additionalRemoteWrites:
+      acm:
+        observability:
+          scrapeInterval: '300s'
+          logLevel: 'warn'
+          capabilities:
+            platformAnalytics: 'true'
+            platformLogs: 'true'
+            platformMetrics: 'true'
+            userWorkloadLogs: 'true'
+            userWorkloadMetrics: 'true'
+            userWorkloadTraces: 'true'
+          # Optional: fan out to an external sink from every hub
+          additionalRemoteWrites:
           - name: external-monitoring
             onSelfManagedHub: true
             url: https://external.example.com/api/v1/receive
@@ -148,9 +145,10 @@ hubClusterSets:
       coo: 'true'
       global-observability: 'true'
     config:
-      globalObservability:
-        capabilities:
-          userWorkloadTraces: 'false'
+      acm:
+        observability:
+          capabilities:
+            userWorkloadTraces: 'false'
 ```
 
 Workload clusters need no labels — the patched `PrometheusAgent` template and its secret arrive via MCOA replication from their intermediate hub. The minimal enablement for the whole rollup is two labels per hub (`global-observability` + the correct `self-managed` value).

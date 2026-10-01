@@ -65,15 +65,10 @@ hubClusterSets:
             source:
               namespace: acm-thanos   # namespace of the credentials Secret on this hub
               secretName: thanos-s3-credentials
-      globalObservability:
-        # All capabilities default to "true" — override only to disable
-        # capabilities:
-        #   userWorkloadTraces: 'false'
-        # scrapeInterval: '300s'
-        # logLevel: 'warn'
+          # capabilities, scrapeInterval, and logLevel default to all-on, 300s, and warn.
+          # capabilities:
+          #   userWorkloadTraces: 'false'
 ```
-
-> **Important:** leave `acm.observability.enableMCOA` unset. This chart's `policy-global-observability-mcoa` owns the `capabilities` block; setting `enableMCOA: true` makes both policies patch it and disabling toggles stops working.
 
 ## Step 3 — Label and configure each intermediate hub
 
@@ -98,7 +93,6 @@ hubClusterSets:
             source:
               namespace: acm-thanos
               secretName: thanos-s3-credentials
-      globalObservability: {}
 ```
 
 Workload clusters need **no labels or config** — the patched `PrometheusAgent` and its mTLS secret arrive automatically via MCOA replication.
@@ -111,12 +105,11 @@ Commit and push; ArgoCD syncs the policies. Expected convergence order (on the g
 oc get policies -n policies-autoshift | grep -E 'acm-observability|coo|global-observability'
 ```
 
-1. `policy-acm-observability` → Compliant (MCO CR created, Thanos pods running)
+1. `policy-acm-observability` → Compliant (MCO CR created, capabilities applied, Thanos pods running)
 2. `policy-coo-operator-install` → Compliant on every hub
-3. `policy-global-observability-mcoa` → Compliant (capabilities patched; MCOA starts creating `PrometheusAgent` templates)
-4. `policy-global-observability-secrets` → Compliant (global hub only — rollup secret assembled)
-5. `policy-global-observability-prom-test` → Compliant per intermediate hub once MCOA has created its templates (this can lag a few minutes — it's the gate)
-6. `policy-global-observability-prometheus` → Compliant (templates patched)
+3. `policy-global-observability-secrets` → Compliant (global hub only — rollup secret assembled)
+4. `policy-global-observability-prom-test` → Compliant per intermediate hub once MCOA has created its templates (this can lag a few minutes — it's the gate)
+5. `policy-global-observability-prometheus` → Compliant (templates patched)
 
 ## Step 5 — Verify the rollup
 
@@ -149,4 +142,4 @@ On the **global hub** — metrics from workload clusters of intermediate hubs ar
 | `*-prom-test` stays NonCompliant | MCOA hasn't created its `PrometheusAgent` templates yet — verify MCOA is running and capabilities were patched (`oc get mco observability -o yaml`). This is the gate working as intended. |
 | `*-prometheus` NonCompliant: "rollup secret … not found" | The chart's `spokeAgent.globalHubRollup.secretNamespace` (default `policies-autoshift`) doesn't match your policy namespace — override it if your AutoShift release is not named `autoshift` |
 | Agent pod fails to roll out silently after adding `additionalRemoteWrites` | Secret-name truncation: MCOA volume names are `secret-<name>` cut at 63 chars; keep secret names short and alphanumeric-terminated |
-| Disabling a capability toggle has no effect | `acm.observability.enableMCOA` is set — unset it so this chart is the sole capabilities manager |
+| Disabling a capability toggle has no effect | `musthave` does not remove a capability already on the object. Set the toggle to `'false'` in `config.acm.observability.capabilities` and delete the stale block from the `MultiClusterObservability` object |

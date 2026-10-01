@@ -207,6 +207,8 @@ For `external-s3`, set `config.acm.observability.thanosStorage` on each hub clus
 
 `bucket`, `endpoint`, `source.namespace`, and `source.secretName` are required when `acm-observability-storage` is `external-s3`. A missing one fails the policy instead of writing an empty Secret.
 
+The same `config.acm.observability` block holds the MCOA capability toggles and the global rollup settings. `policy-acm-observability` applies `capabilities` (each defaults to `"true"`). The global-observability chart reads `scrapeInterval` (default `300s`), `logLevel` (default `warn`), and `additionalRemoteWrites`.
+
 **Config block** (`config.acm.provisioning`):
 
 | Field | Type | Default | Description |

@@ -39,6 +39,10 @@ ACM is a **bootstrap operator**: the root-level `advanced-cluster-management/` H
 `helm install`-ed during bootstrap phase 1 to stand up ACM before ArgoCD/PolicyGenerator exist. This
 `policies/` version then manages ACM day-2 through PolicyGenerator once the CMP is available.
 
+## Capabilities
+
+`policy-acm-observability` writes `spec.capabilities` on the `MultiClusterObservability` object from `config.acm.observability.capabilities`. Each toggle defaults to `"true"`. Set one to `"false"` to leave that capability off. `scrapeInterval`, `logLevel`, and `additionalRemoteWrites` live in the same config block and are read by the global-observability rollup.
+
 ## Object storage
 
 `autoshift.io/acm-observability` enables the stack. `autoshift.io/acm-observability-storage` chooses where Thanos stores metrics. The two modes are separate policies, so a hub on external S3 is not held for Red Hat OpenShift Data Foundation.
