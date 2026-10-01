@@ -1,0 +1,26 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-vm-backup
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Managed clusters running virtual machines, unlike acm-backup which is hub-only. Gated on virt as
+  # well: OpenShift APIs for Data Protection and a schedule selecting VirtualMachine resources are
+  # pointless on a cluster with no virtualization operator.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/vm-backup'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/virt'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

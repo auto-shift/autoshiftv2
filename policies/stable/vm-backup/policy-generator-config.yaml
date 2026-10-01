@@ -1,0 +1,108 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: vm-backup
+# Virtual machine backup on managed clusters, using OpenShift APIs for Data Protection.
+#
+# Distinct from acm-backup, which protects HUB state: managed clusters, policies, applications and
+# credentials, so a lost hub can be rebuilt. This protects the virtual machines running ON a managed
+# cluster. Neither covers the other, and most fleets need both.
+#
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`.
+#
+# Virtual machines opt in individually, by carrying the name of a schedule:
+#   cluster.open-cluster-management.io/backup-vm: <schedule name>
+# The fleet operator owns the schedules and retention through config.vm-backup.schedules; a virtual
+# machine owner chooses which applies. An unlabelled VirtualMachine is never backed up, which is why
+# policy-vm-backup-schedule-test only proves the schedules exist and run, not that any VM uses them.
+placementBindingDefaults:
+  name: binding-policy-vm-backup
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CP Contingency Planning
+  controls:
+    - CP-9 System Backup
+  placement:
+    placementPath: placement-vm-backup.yaml
+policies:
+  # 1) OpenShift APIs for Data Protection. Installed here because the cluster-backup MultiClusterHub
+  #    component installs it on the hub only, and this policy runs on managed clusters.
+  - name: policy-vm-backup-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 1-test) A VolumeSnapshotClass must exist. This is the prerequisite that disqualifies a cluster:
+  #    a CSI-provisioned StorageClass is not enough on its own.
+  - name: policy-vm-backup-snapshotclass-test
+    remediationAction: inform
+    manifests:
+      - path: test/vm-backup-snapshotclass-ready.yaml
+    customMessage:
+      noncompliant: >-
+        No VolumeSnapshotClass exists on this cluster, so CSI snapshots cannot be taken and virtual
+        machine backups will produce nothing usable. A CSI-provisioned StorageClass is not sufficient
+        on its own: the driver must support snapshots and a VolumeSnapshotClass must reference it.
+        Check what the storage provides: oc get volumesnapshotclass. For Red Hat OpenShift Data
+        Foundation the classes arrive with the StorageCluster; on a cloud platform they usually come
+        with the CSI driver operator.
+  # 2) Object store, credentials and the DataProtectionApplication.
+  - name: policy-vm-backup-storage
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-vm-backup-operator-install
+    manifests:
+      - path: manifests/storage/vm-backup-storage.yaml
+  # 2-test-a) Do the credentials exist here? Named directly, rather than leaving a missing Secret to
+  #    present as an unavailable storage location. No dependents, so it reports independently.
+  - name: policy-vm-backup-credentials-test
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-vm-backup-operator-install
+    manifests:
+      - path: test/vm-backup-credentials-ready.yaml
+    customMessage:
+      noncompliant: >-
+        Velero has no credentials for the object store on this cluster, so no virtual machine backup
+        can succeed. Set config.vm-backup.storage.credentialsFrom to a Secret on the hub and this
+        policy copies it to every selected cluster, which is the only approach that scales past a
+        handful of clusters. Otherwise create it here and name it in
+        config.vm-backup.storage.configSecretRef: oc create secret generic cloud-credentials -n
+        openshift-adp --from-file=cloud=./credentials-velero
+  # 2-test-b) Storage readiness.
+  - name: policy-vm-backup-storage-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-vm-backup-storage
+    manifests:
+      - path: test/vm-backup-storage-ready.yaml
+    customMessage:
+      noncompliant: >-
+        The backup storage location is not Available, so this cluster's virtual machines are not
+        protected. The real error is on the DataProtectionApplication rather than here: oc get
+        dataprotectionapplication vm-backup -n openshift-adp -o jsonpath='{.status.conditions}'
+        Usual causes: the bucket does not exist, the endpoint is unreachable from this cluster, a
+        private endpoint's trust bundle is missing so storage.caRef is needed, or the credentials do
+        not authorise that bucket.
+  # 3) The Velero Schedules, one per config.vm-backup.schedules entry.
+  - name: policy-vm-backup-schedule
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-vm-backup-storage-test
+    manifests:
+      - path: manifests/schedule/vm-backup-schedules.yaml

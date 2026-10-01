@@ -1,0 +1,152 @@
+# The object store virtual machine backups are written to, the credentials Velero opens, and the
+# OADP DataProtectionApplication on this managed cluster.
+#
+# WHERE EACH HALF RUNS. Hub templates resolve on the hub and are substituted into the policy text
+# before it is shipped; the rest is evaluated on the managed cluster. config.vm-backup lives in the
+# policy namespace on the hub, so the whole DataProtectionApplication is built there.
+#
+# CREDENTIALS. storage.credentialsFrom names a Secret ON THE HUB, which is copied to every selected
+# cluster. One Secret serves the fleet instead of one per cluster, which is the difference between
+# this being operable at scale and not. Credentials still never appear in values: an administrator
+# creates that Secret out of band. Set storage.configSecretRef instead to reference a Secret created
+# separately on each cluster.
+#
+# storage takes the same shape as config.acm-backup.storage, deliberately as its own instance rather
+# than a shared value: virtual machine backups are far larger than hub state and usually want their
+# own bucket, retention and credentials.
+#
+# BACKUP METHOD. CSI snapshots, optionally moved to the object store by the Data Mover. A bare CSI
+# snapshot normally lives in the same storage system as the volume and dies with it, so
+# storage.dataMover defaults to true: without it this is not disaster recovery. File system backup
+# is not used, which is a choice of method and unrelated to whether the StorageClass is
+# CSI-provisioned.
+object-templates-raw: |
+  # INDENTATION ANCHOR — every directive below sits at this indent. A shallower trim marker eats
+  # past the newline into the previous line and produces invalid YAML.
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $vb := (index $rcmConfig "vm-backup" | default dict) hub}}
+  {{hub- $store := (index $vb "storage" | default dict) hub}}
+  {{hub- $credRef := (index $store "configSecretRef" | default dict) hub}}
+  {{hub- $credFrom := (index $store "credentialsFrom" | default dict) hub}}
+  {{hub- $azure := (index $store "azure" | default dict) hub}}
+  {{hub- $caRef := (index $store "caRef" | default dict) hub}}
+  {{hub- $type := (index $store "type" | default "s3") hub}}
+  {{hub- $bucket := (index $store "bucket" | default "") hub}}
+  {{hub- $prefix := (index $store "prefix" | default "") hub}}
+  {{hub- $dataMover := (index $store "dataMover" | default true) hub}}
+  {{hub- $credName := (index $credRef "name" | default "cloud-credentials") hub}}
+  {{hub- $credKey := (index $credRef "key" | default "cloud") hub}}
+  {{hub- if not (has $type (list "s3" "azure" "gcp")) hub}}
+  {{hub- fail (printf "vm-backup: config.vm-backup.storage.type must be 's3', 'azure' or 'gcp', got %q. There is no obc backend here: a claim against this cluster's own storage would not survive it. For an S3-compatible appliance use 's3' with storage.endpoint." $type) hub}}
+  {{hub- end hub}}
+  {{hub- if (empty $bucket) hub}}
+  {{hub- fail "vm-backup: config.vm-backup.storage.bucket is required. Refusing to configure a DataProtectionApplication with no bucket, which would report Compliant while backing up nothing." hub}}
+  {{hub- end hub}}
+  {{hub- $provider := $type hub}}
+  {{hub- if eq $type "s3" hub}}
+  {{hub- $provider = "aws" hub}}
+  {{hub- end hub}}
+  {{hub- if (index $store "provider" | default "") hub}}
+  {{hub- $provider = (index $store "provider") hub}}
+  {{hub- end hub}}
+  {{hub- $plugins := (list "openshift" "csi" $provider) hub}}
+  {{hub- if gt (len (index $store "plugins" | default list)) 0 hub}}
+  {{hub- $plugins = (index $store "plugins") hub}}
+  {{hub- end hub}}
+  #
+  {{hub- if not (empty $credFrom) hub}}
+  {{hub- $srcNs := (index $credFrom "namespace" | default .PolicyMetadata.namespace) hub}}
+  {{hub- $srcName := (index $credFrom "name") hub}}
+  {{hub- if (empty $srcName) hub}}
+  {{hub- fail "vm-backup: config.vm-backup.storage.credentialsFrom.name is required when credentialsFrom is set" hub}}
+  {{hub- end hub}}
+  {{hub- $credName = (index $credFrom "targetName" | default "cloud-credentials") hub}}
+  {{hub- $credKey = (index $credFrom "key" | default "cloud") hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{hub $credName hub}}
+        namespace: openshift-adp
+      type: Opaque
+      data: '{{hub copySecretData $srcNs $srcName hub}}'
+  {{hub- end hub}}
+  #
+  {{hub- $cfg := dict hub}}
+  {{hub- if eq $type "s3" hub}}
+  {{hub- if (index $store "region" | default "") hub}}
+  {{hub- $_ := set $cfg "region" (index $store "region") hub}}
+  {{hub- end hub}}
+  {{hub- if (index $store "endpoint" | default "") hub}}
+  {{hub- $_ := set $cfg "s3Url" (index $store "endpoint") hub}}
+  {{hub- $_ := set $cfg "s3ForcePathStyle" "true" hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if eq $type "azure" hub}}
+  {{hub- range $k := (list "resourceGroup" "storageAccount" "subscriptionId") hub}}
+  {{hub- if not (index $azure $k) hub}}
+  {{hub- fail (printf "vm-backup: config.vm-backup.storage.azure.%s is required when storage.type is 'azure'" $k) hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $cfg $k (index $azure $k) hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $cfg "storageAccountKeyEnvVar" "AZURE_STORAGE_ACCOUNT_ACCESS_KEY" hub}}
+  {{hub- end hub}}
+  {{hub- range $k, $v := (index $store "config" | default dict) hub}}
+  {{hub- $_ := set $cfg $k (printf "%v" $v) hub}}
+  {{hub- end hub}}
+  {{hub- $caNs := (index $caRef "namespace" | default "openshift-adp") hub}}
+  {{hub- $caName := (index $caRef "name" | default "") hub}}
+  {{hub- $caKey := (index $caRef "key" | default "ca-bundle.crt") hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: oadp.openshift.io/v1alpha1
+      kind: DataProtectionApplication
+      metadata:
+        name: vm-backup
+        namespace: openshift-adp
+      spec:
+        # Virtual machine disks are resources and volumes, never images, so the image-backup registry
+        # stays off. It is also required: with backupImages unset, OADP 1.6 refuses to reconcile with
+        # "BackupLocation must have velero prefix when backupImages is not set to false" and no
+        # BackupStorageLocation is created.
+        backupImages: false
+        configuration:
+          velero:
+            defaultPlugins:
+              {{hub- range $p := $plugins hub}}
+              - {{hub $p hub}}
+              {{hub- end hub}}
+          nodeAgent:
+            # The Data Mover moves CSI snapshot contents into the object store. Required for the
+            # backup to outlive the cluster's storage system.
+            enable: {{hub $dataMover hub}}
+            uploaderType: kopia
+        backupLocations:
+          - name: default
+            velero:
+              provider: {{hub $provider hub}}
+              default: true
+              objectStorage:
+                bucket: {{hub $bucket hub}}
+                {{hub- if $prefix hub}}
+                prefix: {{hub $prefix hub}}
+                {{hub- end hub}}
+                {{hub- if $caName hub}}
+                {{- $caCM := (lookup "v1" "ConfigMap" "{{hub $caNs hub}}" "{{hub $caName hub}}") | default dict }}
+                {{- $ca := (index ($caCM.data | default dict) "{{hub $caKey hub}}" | default "") }}
+                {{- if not $ca }}
+                {{- fail "vm-backup: config.vm-backup.storage.caRef names ConfigMap {{hub $caNs hub}}/{{hub $caName hub}} key {{hub $caKey hub}}, but it is missing or empty ON THIS CLUSTER. The trust bundle is read locally, next to the credentials Velero opens." }}
+                {{- end }}
+                caCert: {{ $ca | base64enc }}
+                {{hub- end hub}}
+              {{hub- if $cfg hub}}
+              config:
+                {{hub- range $k, $v := $cfg hub}}
+                {{hub $k hub}}: '{{hub $v hub}}'
+                {{hub- end hub}}
+              {{hub- end hub}}
+              credential:
+                name: {{hub $credName hub}}
+                key: {{hub $credKey hub}}

@@ -159,6 +159,63 @@ hubClusterSets:
                 - sample_metrics
 
       # =======================================================================
+      # Virtual machine backup - policy: vm-backup
+      # =======================================================================
+      # Protects the virtual machines running ON a managed cluster. Separate from acm-backup, which
+      # protects HUB state so a lost hub can be rebuilt; neither covers the other.
+      #
+      # A VirtualMachine opts in by naming one of the schedules below:
+      #   cluster.open-cluster-management.io/backup-vm: daily
+      # An unlabelled VirtualMachine is never backed up.
+      vm-backup:
+        storage:
+          # Same shape as config.acm-backup.storage, but its own bucket on purpose: virtual machine
+          # backups are far larger than hub state and usually want their own retention. There is no
+          # obc backend here, because a claim against this cluster's own storage would not survive
+          # the cluster.
+          type: s3                        # 's3' (incl. any S3-compatible appliance) | 'azure' | 'gcp'
+          bucket: vm-backups
+          prefix: ''
+          region: us-east-2
+          endpoint: ''                    # S3-compatible endpoint; blank for AWS S3
+          # The Data Mover copies CSI snapshot contents into the object store. Leave it on: a bare
+          # CSI snapshot lives in the cluster's own storage system and is lost with it.
+          dataMover: true
+          # RECOMMENDED. Names a Secret on the HUB, copied to every selected cluster, so one Secret
+          # serves the fleet instead of one per cluster. Still created out of band; credentials
+          # never appear in values.
+          credentialsFrom:
+            name: vm-backup-cloud-credentials
+            targetName: cloud-credentials
+            key: cloud
+          # Alternative to credentialsFrom: a Secret created separately on each cluster.
+          # configSecretRef:
+          #   name: cloud-credentials
+          #   key: cloud
+          # Trust bundle for a private endpoint, read from a ConfigMap on the MANAGED cluster.
+          # caRef:
+          #   name: vm-backup-ca
+          #   namespace: openshift-adp
+          #   key: ca-bundle.crt
+          # type: azure only.
+          azure:
+            resourceGroup: ''
+            storageAccount: ''
+            subscriptionId: ''
+          # Escape hatches, as in acm-backup: provider and plugins override what type derives, and
+          # config is merged last into the Velero configuration.
+          provider: ''
+          # config:
+          #   checksumAlgorithm: ''
+        # One Velero Schedule per entry. name is what a VirtualMachine references in its
+        # cluster.open-cluster-management.io/backup-vm label.
+        schedules:
+          - name: daily
+            cron: '0 2 * * *'             # quote it: a leading asterisk is a YAML alias unquoted
+            ttl: 720h
+            # namespaces: ['*']           # the label scopes a schedule, not its namespace list
+
+      # =======================================================================
       # Hub backup and restore - policy: acm-backup
       # =======================================================================
       # Red Hat Advanced Cluster Management hub disaster recovery. The acm-backup LABEL carries the
@@ -1354,6 +1411,14 @@ hubClusterSets:
       acm-search-storage-size: '100Gi'
       # Hub backup and restore (hub only) — settings in config.acm-backup above
       acm-backup: 'false'                    # 'active' | 'passive' | 'false'
+      # Virtual machine backup (managed clusters) — settings in config.vm-backup above.
+      # Also needs virt: 'true'. The operator installed is OpenShift APIs for Data Protection.
+      vm-backup: 'false'
+      vm-backup-subscription-name: redhat-oadp-operator
+      vm-backup-channel: stable
+      vm-backup-source: redhat-operators
+      vm-backup-source-namespace: openshift-marketplace
+      vm-backup-version: ''                  # pin a CSV; blank tracks the channel
       # Cluster provisioning (hive-based cluster install flow)
       cluster-install: 'false'                     # hub only — enables the cluster-install policy set
       acm-enable-provisioning: 'false'            # hub only

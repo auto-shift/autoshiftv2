@@ -1,0 +1,55 @@
+# One Velero Schedule per entry in config.vm-backup.schedules.
+#
+# A schedule backs up the VirtualMachine resources that opt in by carrying its name:
+#   cluster.open-cluster-management.io/backup-vm: <schedule name>
+# So the fleet operator defines the schedules and retention, and a virtual machine owner chooses
+# which one applies by labelling the VirtualMachine. A VM with no such label is never backed up.
+#
+# snapshotMoveData follows storage.dataMover. With it the CSI snapshot's contents are copied into the
+# object store; without it the snapshot stays in the cluster's own storage system and is lost with
+# it. includedNamespaces defaults to every namespace, because the label is what scopes a schedule,
+# not its namespace list.
+object-templates-raw: |
+  # INDENTATION ANCHOR
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $vb := (index $rcmConfig "vm-backup" | default dict) hub}}
+  {{hub- $dataMover := (dig "storage" "dataMover" true $vb) hub}}
+  {{hub- $schedules := (index $vb "schedules" | default list) hub}}
+  {{hub- if eq (len $schedules) 0 hub}}
+  {{hub- fail "vm-backup: config.vm-backup.schedules is empty, so no virtual machine would ever be backed up on a cluster that opted in. Define at least one entry with name and cron, then label each VirtualMachine cluster.open-cluster-management.io/backup-vm: <name>." hub}}
+  {{hub- end hub}}
+  {{hub- range $s := $schedules hub}}
+  {{hub- $name := (index $s "name" | default "") hub}}
+  {{hub- if (empty $name) hub}}
+  {{hub- fail "vm-backup: every config.vm-backup.schedules entry needs a name. The name is what a VirtualMachine references in its cluster.open-cluster-management.io/backup-vm label." hub}}
+  {{hub- end hub}}
+  {{hub- $cron := (index $s "cron" | default "") hub}}
+  {{hub- if (empty $cron) hub}}
+  {{hub- fail (printf "vm-backup: config.vm-backup.schedules entry %q needs a cron expression. A Schedule without one never runs." $name) hub}}
+  {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: velero.io/v1
+      kind: Schedule
+      metadata:
+        name: vm-backup-{{hub $name hub}}
+        namespace: openshift-adp
+      spec:
+        # Quoted: a cron expression beginning with an asterisk is a YAML alias when unquoted, and the
+        # whole policy then fails to render.
+        schedule: '{{hub $cron hub}}'
+        template:
+          ttl: '{{hub index $s "ttl" | default "720h" hub}}'
+          snapshotMoveData: {{hub $dataMover hub}}
+          defaultVolumesToFsBackup: false
+          includedNamespaces:
+            {{hub- range $ns := (index $s "namespaces" | default (list "*")) hub}}
+            # Quoted for the same reason as the cron: a bare * is a YAML alias, and the default here
+            # is every namespace.
+            - '{{hub $ns hub}}'
+            {{hub- end hub}}
+          labelSelector:
+            matchLabels:
+              cluster.open-cluster-management.io/backup-vm: {{hub $name hub}}
+  {{hub- end hub}}

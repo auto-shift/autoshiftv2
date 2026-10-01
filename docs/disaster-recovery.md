@@ -6,12 +6,13 @@ need different tools:
 * **Hub loss.** The hub cluster is gone. Managed clusters keep running, but you cannot see or
   govern them. Recovery means standing up a hub that knows about the same fleet. This is what the
   `acm-backup` policy does, and it is the subject of this page.
-* **Workload loss.** An application and its data need to run somewhere else. That is a storage and
-  placement problem, handled by Red Hat OpenShift Data Foundation Regional or Metro disaster
-  recovery, and by VolSync for individual persistent volumes.
+* **Workload loss.** An application, a virtual machine, or its data needs to come back. That is a
+  storage problem, handled by the `vm-backup` policy for Red Hat OpenShift Virtualization virtual
+  machines, by Red Hat OpenShift Data Foundation Regional or Metro disaster recovery for orchestrated
+  failover, and by VolSync for individual persistent volumes.
 
-Protecting the hub does not protect application data, and replicating application data does not
-help you rebuild a hub. Most fleets need both.
+Protecting the hub does not protect workload data, and protecting workload data does not help you
+rebuild a hub. Most fleets need both.
 
 ## Hub backup and restore
 
@@ -19,6 +20,8 @@ The cluster backup and restore operator runs on the hub and depends on OpenShift
 Protection, which installs Velero and connects the hub to an object store. On a cron schedule it
 writes the hub's managed clusters, applications, policies and credentials to that store as four
 Velero backups.
+
+![Hub disaster recovery](diagrams/autoshift-hub-dr.drawio.svg)
 
 AutoShift models this as a mode on the `autoshift.io/acm-backup` label, with the settings for each
 mode under the matching key in `config.acm-backup`:
@@ -100,12 +103,64 @@ and the policy then fails to render.
 ### Only one hub may hold the schedule
 
 Two hubs writing to one storage location put both `BackupSchedule` resources into
-`BackupCollision`, and backups stop on both. AutoShift enforces this at the placement rather than
-inside a template, so a standby cannot receive a `BackupSchedule` at all.
+`BackupCollision`, and backups stop on **both**, including the healthy one. AutoShift enforces this
+at the placement rather than inside a template, so a standby cannot receive a `BackupSchedule` at
+all.
 
 The reason it is a placement and not a template condition matters: a template that renders nothing
 leaves an empty `ConfigurationPolicy`, and an empty `ConfigurationPolicy` reports Compliant. A
 backup policy that reports Compliant while backing up nothing is worse than no policy.
+
+### Argo CD Applications must be excluded from the backup
+
+This is the one configuration step that is easy to miss and expensive to get wrong.
+
+Red Hat Advanced Cluster Management backs up the whole `argoproj.io` API group, and excludes only two
+namespaces: the hub's own managed cluster namespace and `open-cluster-management-backup`. Living in
+`openshift-gitops` is therefore no protection. That behaviour is deliberate, because restoring a hub
+is meant to bring its Argo CD Applications back, and the product cannot tell an Application that
+describes a workload from one that describes the hub's own configuration.
+
+The root AutoShift Application is the second kind. It carries the hub's configuration in
+`spec.source.helm`, so a standby that restores it adopts the active hub's configuration. Its
+`acm-backup` mode flips to `active`, it starts a second `BackupSchedule` against the same storage
+location, and both hubs collapse into `BackupCollision`.
+
+Everything AutoShift creates for itself already carries the exclusion label. The root Application is
+created by an administrator, so it has to be set there:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: autoshift
+  namespace: openshift-gitops
+  labels:
+    velero.io/exclude-from-backup: "true"
+```
+
+`policy-acm-backup-exclusions-test` reports a root Application that is missing it. A deployment
+installed directly with Helm is unaffected: there is no root Application, and the Helm release Secret
+is not captured either.
+
+### Recovering from a collision
+
+The operator does not resume a collided schedule on its own, so recovery is deliberate:
+
+1. Decide which hub should own the storage location. Give the other one its own bucket, or its own
+   `storage.prefix`.
+2. Correct whatever caused the second writer. If a standby flipped to `active`, check the exclusion
+   label above and re-apply the standby's own Application.
+3. Delete the `BackupSchedule` on both hubs. The policy on the active hub recreates a fresh one,
+   which is what the operator requires.
+4. If the standby's `Restore` shows `FinishedWithErrors` complaining that a `BackupSchedule` is
+   active, delete the `Restore` as well; its policy recreates it. A hub cannot back up and restore at
+   the same time.
+
+```bash
+oc delete backupschedule acm-backup-schedule -n open-cluster-management-backup
+oc delete restore acm-backup-restore-passive-sync -n open-cluster-management-backup
+```
 
 ### Promotion is deliberate
 
@@ -143,6 +198,63 @@ A healthy active hub shows four `schedule.velero.io` resources and a `BackupSche
 `Enabled`. A healthy standby shows a `Restore` in phase `Enabled`. The inform policies
 `policy-acm-backup-storage-test`, `policy-acm-backup-schedule-test` and
 `policy-acm-backup-restore-test` report the same conditions through the governance dashboard.
+
+## Virtual machine backup
+
+The `vm-backup` policy protects Red Hat OpenShift Virtualization virtual machines on managed
+clusters, using OpenShift APIs for Data Protection. It is a different job from hub backup and runs in
+a different place: on the managed clusters rather than the hub.
+
+![Virtual machine backup](diagrams/autoshift-vm-backup.drawio.svg)
+
+Enable it with `autoshift.io/vm-backup: 'true'` alongside `autoshift.io/virt: 'true'`, and define
+schedules in `config.vm-backup.schedules`. A virtual machine opts in by naming one of them:
+
+```yaml
+metadata:
+  labels:
+    cluster.open-cluster-management.io/backup-vm: daily
+```
+
+An unlabelled virtual machine is never backed up. The fleet operator owns the schedules and
+retention; the virtual machine owner chooses which applies.
+
+### The two things that decide whether it works
+
+**A `VolumeSnapshotClass` must exist.** A CSI-provisioned StorageClass is not sufficient on its own:
+the driver must support snapshots and a `VolumeSnapshotClass` must reference it. Without one, backups
+appear to run and produce nothing usable, which is why `policy-vm-backup-snapshotclass-test` reports
+it.
+
+```bash
+oc get volumesnapshotclass
+```
+
+**Leave the Data Mover enabled.** `config.vm-backup.storage.dataMover` defaults to `true`. A bare CSI
+snapshot normally lives in the same storage system as the volume it came from, so it is lost with
+that storage. The Data Mover copies the contents into the object store, which is the difference
+between disaster recovery and a local convenience.
+
+File system backup and `VolumeSnapshotLocation` backups are not used. Those are backup *methods*
+rather than descriptions of storage, so the choice has nothing to do with whether a StorageClass is
+CSI-provisioned.
+
+### One Secret for the fleet
+
+Set `config.vm-backup.storage.credentialsFrom` to a Secret on the hub and the policy copies it to
+every selected cluster. The alternative, `configSecretRef`, expects a Secret created separately on
+each cluster, which does not scale: every new cluster is another manual step, and a missing Secret is
+a backup that silently never succeeds.
+
+Credentials are still created out of band and never appear in values files.
+
+### Restoring is a runbook
+
+Restore is deliberately not automated, for the same reason promotion is not: it is
+per-virtual-machine and operational, and a policy that restored on reconcile would overwrite a
+running virtual machine. Stop the virtual machine, then create a Velero `Restore` naming the backup.
+The [policy README](https://github.com/auto-shift/autoshiftv2/tree/main/policies/stable/vm-backup)
+has a worked example.
 
 ## Related pages
 
