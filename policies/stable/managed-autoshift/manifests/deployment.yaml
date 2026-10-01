@@ -33,6 +33,12 @@ object-templates-raw: |
       metadata:
         name: {{hub $appName hub}}
         namespace: {{hub $gitopsNamespace hub}}
+        labels:
+          # This Application carries a managed cluster's AutoShift configuration, and
+          # acm-resources-schedule backs up application.argoproj.io in every namespace except
+          # local-cluster and open-cluster-management-backup. Without this label a standby hub
+          # restores it and starts deploying AutoShift with the active hub's configuration.
+          velero.io/exclude-from-backup: 'true'
       spec:
         syncPolicy:
           automated:

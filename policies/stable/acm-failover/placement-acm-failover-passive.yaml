@@ -1,0 +1,26 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-acm-failover-passive
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # The continuous passive-sync Restore, and ONLY on a standby hub. This restores credentials and
+  # hub resources but deliberately skips managed-cluster activation, so the standby never tries to
+  # take the fleet from a healthy active hub.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/acm-failover'
+              operator: In
+              values:
+                - 'passive'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

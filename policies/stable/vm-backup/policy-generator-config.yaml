@@ -1,0 +1,73 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: vm-backup
+# Virtual machine backup on managed clusters.
+#
+# This policy is the schedules only. The operator, the DataProtectionApplication and the backup
+# storage location belong to the oadp policy, which every consumer on a managed cluster shares:
+# OpenShift APIs for Data Protection permits one DataProtectionApplication per installation namespace
+# and supports the OwnNamespace install mode only, so a second one here would never be reconciled.
+# Enabling autoshift.io/vm-backup places the oadp policy too, through a predicate in
+# placement-oadp.yaml, so no second label is needed.
+#
+# Distinct from acm-failover, which protects HUB state: managed clusters, policies, applications and
+# credentials, so a lost hub can be rebuilt. This protects the virtual machines running ON a managed
+# cluster. Neither covers the other, and most fleets need both.
+#
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`.
+#
+# Virtual machines opt in individually, by carrying the name of a schedule:
+#   cluster.open-cluster-management.io/backup-vm: <schedule name>
+# The fleet operator owns the schedules and retention through config.vm-backup.schedules; a virtual
+# machine owner chooses which applies. An unlabelled VirtualMachine is never backed up, which is why
+# there is no assertion that any virtual machine is protected.
+placementBindingDefaults:
+  name: binding-policy-vm-backup
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CP Contingency Planning
+  controls:
+    - CP-9 System Backup
+  placement:
+    placementPath: placement-vm-backup.yaml
+policies:
+  # 1) A VolumeSnapshotClass must exist. This is the prerequisite that disqualifies a cluster:
+  #    a CSI-provisioned StorageClass is not enough on its own.
+  - name: policy-vm-backup-snapshotclass-test
+    remediationAction: inform
+    manifests:
+      - path: test/vm-backup-snapshotclass-ready.yaml
+    customMessage:
+      noncompliant: >-
+        No VolumeSnapshotClass exists on this cluster, so CSI snapshots cannot be taken and virtual
+        machine backups will produce nothing usable. A CSI-provisioned StorageClass is not sufficient
+        on its own: the driver must support snapshots and a VolumeSnapshotClass must reference it.
+        Check what the storage provides: oc get volumesnapshotclass. For Red Hat OpenShift Data
+        Foundation the classes arrive with the StorageCluster; on a cloud platform they usually come
+        with the CSI driver operator.
+  # 2) The Velero Schedules, one per config.vm-backup.schedules entry. Depends on the shared storage
+  #    readiness check in the oadp policy, so a schedule is never created against a storage location
+  #    Velero cannot reach. Cross-directory dependency, but same namespace and same cluster, so it
+  #    resolves: placement-oadp.yaml selects every cluster this policy lands on.
+  - name: policy-vm-backup-schedule
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-oadp-storage-test
+        namespace: ${POLICY_NAMESPACE}
+    manifests:
+      - path: manifests/schedule/vm-backup-schedules.yaml
