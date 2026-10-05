@@ -1,17 +1,19 @@
+# Does the console plugin have a running pod?
+#
+# The deploy policy is satisfied by the Deployment object alone, which a failed image pull still
+# creates, and the enable policy stays quiet until pods are up. This asserts the Deployment's own
+# Available condition, so it reports NonCompliant for as long as no replica is ready and Compliant
+# once one is. Asserting the real status rather than emitting a stand-in object means there is always
+# something to report, and nothing to create: an enforce override cannot satisfy a status field.
 object-templates-raw: |
-  {{- /* Reports when the plugin has no running pods: the deploy policy is satisfied by the
-         Deployment object alone, which a failed image pull still creates, and the enable policy
-         stays quiet until pods are up. */}}
-  {{- $deploy := (lookup "apps/v1" "Deployment" "autoshift-console" "autoshift-console" | default dict) }}
-  {{- $available := (index ($deploy | default dict) "status" | default dict) }}
-  {{- /* Nothing creates this Deployment, and metadata alone is invalid, so an enforce override
-         cannot satisfy or create it. */ -}}
-  {{- if lt (index $available "availableReplicas" | default 0 | int) 1 }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: apps/v1
       kind: Deployment
       metadata:
-        name: autoshift-console-no-available-replicas
+        name: autoshift-console
         namespace: autoshift-console
-  {{- end }}
+      status:
+        conditions:
+          - type: Available
+            status: 'True'

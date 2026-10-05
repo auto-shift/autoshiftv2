@@ -137,6 +137,13 @@ func stripYAMLComments(s string) string {
 // policy empty in EVERY profile is the finding: as configured by the example values it can
 // never apply anything, so either its config is absent from _example.yaml (and it is
 // therefore untested) or it cannot render and needs fixing.
+// reportEmptyConfigurationPolicies fails for every ConfigurationPolicy that applies no objects
+// in any cluster profile, and logs the ones that are empty in some profiles but not all.
+//
+// Placement is deliberately not consulted. A policy gated at its placement should carry no
+// conditional repeating that gate, because the empty render such a conditional produces reports
+// Compliant wherever the gate is false. Excusing a policy because no example profile satisfies its
+// placement hides both that pattern and any missing testdata behind it.
 func reportEmptyConfigurationPolicies(
 	t *testing.T,
 	results []ChartResult,
@@ -207,8 +214,9 @@ func reportEmptyConfigurationPolicies(
 	       This ConfigurationPolicy applies no objects in any cluster profile, and a
 	       ConfigurationPolicy with nothing to apply reports Compliant. Either the config
 	       that drives it is missing from autoshift/values/clustersets/_example.yaml, in
-	       which case declare it so the branch is exercised, or the policy cannot render
-	       anything and needs fixing.`, s)
+	       which case declare it so the branch is exercised, or the policy repeats its own
+	       placement gate as a template conditional, or it cannot render anything and needs
+	       fixing.`, s)
 	}
 
 	return len(alwaysEmpty)

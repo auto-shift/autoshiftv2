@@ -263,9 +263,9 @@ func WriteTestValues(tmpDir, clusterName string, cfg *ExampleConfigs) (string, e
 	}
 
 	values := map[string]interface{}{
-		"policy_namespace":  "policies-autoshift",
-		"gitopsNamespace":   "openshift-gitops",
-		"clusterSetSuffix":  "",
+		"policy_namespace": "policies-autoshift",
+		"gitopsNamespace":  "openshift-gitops",
+		"clusterSetSuffix": "",
 		"autoshift": map[string]interface{}{
 			"dryRun": false,
 			"evaluationInterval": map[string]interface{}{

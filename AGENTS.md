@@ -60,18 +60,15 @@ make verify                     # make test + helm lint + prose lint + docs buil
 ```
 
 `make test` is the one command after changing `policies/`, `autoshift/values/` or `tools/`. It wraps
-`cd tools && go test -tags integration ./...` and matches the CI job by construction, so there is
-nothing to remember about which checks CI adds. The pre-commit hook runs the same suite, plus
-gitleaks and helm lint on changed charts. `make verify` adds every chart's helm lint, Vale over the
-prose and the documentation build; Vale and Zensical live in the devcontainer, and without them
-those two steps report skipped rather than failing.
+`cd tools && go test -tags integration ./...` and matches the CI job by construction. The pre-commit
+hook runs the same suite plus gitleaks and helm lint. `make verify` adds every chart's helm lint,
+Vale over the prose and the documentation build; Vale and Zensical live in the devcontainer, and
+without them those two steps report skipped rather than failing.
 
 - `helm template` release names must be 11 characters or fewer. The default `release-name` produces
   a 21-character policy namespace and trips the naming validator.
-- The top-level chart is covered: `TestAutoShiftChart_ValuesProfiles` renders it against every
-  clusterset profile and layers every `clusters/_example*.yaml` override onto `_example.yaml`, which
-  is the only thing that executes `autoshift/templates/_validate-*.tpl`. Rendering it by hand is for
-  inspecting output, not for coverage.
+- The top-level chart is covered by `TestAutoShiftChart_ValuesProfiles`, the only thing that runs
+  `autoshift/templates/_validate-*.tpl`. Rendering it by hand inspects output, it is not coverage.
 
 ## Non-negotiables
 
@@ -163,35 +160,31 @@ Hub templates do not support Go comments; `{{hub /* ... */ hub}}` is a parse err
 only in `object-templates-raw`, written as exactly `{{- /*` with one space.
 
 Full pitfalls and function guidance: [developer guide](docs/developer-guide.md#hub-template-pitfalls).
-Runtime behavior the validation suite cannot catch, including the `musthave` merge and create
-semantics and the version-dependent Sprig function set (2.15 and earlier lack `trimPrefix`,
-`trimSuffix`, `compact`, and `toString`; 2.16 and later have them):
-[docs/policy-behavior.md](docs/policy-behavior.md). Read that page before writing a policy that
-depends on overriding existing state.
+Runtime behavior the suite cannot catch, including `musthave` merge and create semantics and the
+version-dependent Sprig function set, is in [docs/policy-behavior.md](docs/policy-behavior.md). Read
+that page before writing a policy that depends on overriding existing state.
 
 ## Validation suite
 
 `make test` runs the end-to-end pipeline over every policy chart, the top-level chart against every
-values profile, a mutation sweep that introduces a deliberate defect per case and asserts the
-pipeline reports it, a check that no `ConfigurationPolicy` applies nothing in every profile (one with
-nothing to apply reports Compliant; exemptions in `.github/empty-policy-allowlist.yaml`), and the
-unit tests. Every policy chart is resolved against five
-cluster profiles, the primary hub plus one per
-`autoshift/values/clusters/_example-cluster-install-*.yaml` file. Dropping in a new variant file adds
-a profile with no test-code change.
+values profile, a mutation sweep that proves those checks report a deliberate defect rather than only
+passing on clean input, a check that no `ConfigurationPolicy` applies nothing in every profile (one
+with nothing to apply reports Compliant, and there is no allowlist for it), and the unit tests. Every
+policy chart resolves against five cluster profiles, the primary hub plus one per
+`autoshift/values/clusters/_example-cluster-install-*.yaml`; a new variant file adds a profile with no
+test-code change.
 
 **The suite renders only what the example values declare.** A branch gated on a config key that no
 `_example*.yaml` sets never renders, so it is never checked. Declare the key rather than leaving it
 commented out when you add a branch that reads a Secret, a ConfigMap or a trust bundle. Real bugs
 have hidden in commented-out branches while every gate passed.
 
-It validates rendering and resolution, not enforcement semantics, and it cannot model policy
-dependencies: every policy resolves regardless of `dependencies`, so a policy reading an object that
-another policy creates needs that object stubbed in `tools/testdata/`. It does not cover
-multi-cluster topology such as the hub-of-hubs `managedHub` target.
-`.github/label-lint-allowlist.yaml` exempts intentional label deviations. A chart calling
-`fromSecret` or `fromConfigMap` against a real hub resource needs a stub in `tools/testdata/`.
-Full breakdown: [developer guide](docs/developer-guide.md#what-the-suite-covers).
+It validates rendering and resolution, not enforcement semantics, and cannot model policy
+dependencies: every policy resolves regardless of `dependencies`, so a policy reading an object
+another policy creates needs that object stubbed in `tools/testdata/`, as does any `fromSecret` or
+`fromConfigMap` against a hub resource. It does not cover multi-cluster topology such as the
+hub-of-hubs `managedHub` target, and `.github/label-lint-allowlist.yaml` exempts intentional label
+deviations. Full breakdown: [developer guide](docs/developer-guide.md#what-the-suite-covers).
 
 ## Documentation
 

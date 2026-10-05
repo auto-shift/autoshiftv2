@@ -861,7 +861,7 @@ KUSTOMIZE_PLUGIN_HOME=$PWD/.tools/kustomize-plugin .tools/kustomize build \
 | `TestPipeline_EndToEnd` | Five stages, all hard failures: Helm and kustomize render, hub resolution, spoke resolution, resolved-YAML validation including `<no value>` leaks, and the label contract |
 | `TestAutoShiftChart_ValuesProfiles` | The top-level chart against every clusterset profile, with each `clusters/_example*.yaml` layered onto `_example.yaml`. The only thing that executes `autoshift/templates/_validate-*.tpl` |
 | `TestPipeline_MutationSweep` | Introduces one deliberate defect per case and asserts the pipeline reports it, which proves the checks above detect a problem rather than only passing on clean input |
-| `TestNoEmptyConfigurationPolicies` | Fails a `ConfigurationPolicy` that applies no objects in every cluster profile. One with nothing to apply reports Compliant, so it shows green while enforcing nothing. Exemptions live in `.github/empty-policy-allowlist.yaml` |
+| Empty-policy check, inside `TestPipeline_EndToEnd` | Fails a `ConfigurationPolicy` that applies no objects in every cluster profile. One with nothing to apply reports Compliant, so it shows green while enforcing nothing |
 | `TestObjectTemplatesRaw_ParsesAsYAML` | Parses each resolved `object-templates-raw` block. The surrounding Policy can be valid YAML while the block inside it is not |
 | Unit tests | Label contract buckets, declared-label extraction, config key conventions and collisions, synthetic ConfigMap generation, spoke resolution, strip-defaults, `object-templates-raw` YAML validity |
 
@@ -874,15 +874,24 @@ a profile with no test-code change.
 A `ConfigurationPolicy` with no objects to apply reports **Compliant**. That is the most dangerous
 failure mode here: a policy whose required input is missing enforces nothing and still shows green.
 
-`TestNoEmptyConfigurationPolicies` fails a policy that applies nothing **in every** cluster profile.
-Empty in *some* profiles is fine and needs no exemption, because a policy gated on the platform or on
-a hub-only feature is meant to render nothing where it does not apply.
+The check runs inside `TestPipeline_EndToEnd`, where the resolved output for every profile already
+exists, and fails a policy that applies nothing **in every** cluster profile. Empty in *some*
+profiles is reported but does not fail, because a policy gated on the platform or on a hub-only
+feature is meant to render nothing where it does not apply.
 
-A policy empty in every profile is either a coverage gap, where the config that drives it is not
-declared in `_example.yaml` so the branch never renders, or a real defect. The fix is usually to
-declare the config rather than to exempt the policy. Exemptions live in
-`.github/empty-policy-allowlist.yaml`, and the check also fails on a **stale** entry, so an exemption
-disappears as soon as the policy starts rendering.
+There is no allowlist, by design. A policy empty in every profile has one of three causes, and each
+has a fix:
+
+- The config that drives it is not declared in `_example.yaml`, so the branch never renders. Declare
+  it, and add any `tools/testdata/` stub the branch looks up.
+- The policy repeats its own placement gate as a template conditional. Wherever that conditional is
+  false the policy applies nothing and reports Compliant, so the conditional is worse than no gate at
+  all. Delete it and let the placement do the gating.
+- The policy genuinely cannot render anything, which is the defect the check exists to find.
+
+Placement is deliberately not consulted when deciding whether to fail. Excusing a policy because no
+example profile satisfies its placement is what lets the second cause above survive, and it also
+hides missing testdata behind it.
 
 ### What it does not cover
 

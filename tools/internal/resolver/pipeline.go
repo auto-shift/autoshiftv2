@@ -429,14 +429,25 @@ func RunPipeline(
 				if strings.HasSuffix(key, "-") {
 					continue
 				}
-				isPrefix := false
+				// A declared key was already classified by pass a. Otherwise this is a
+				// stem that some declared key extends. Numbered families
+				// (infra-nodes-zone-1, metallb-ippool-1) are built from such a stem by
+				// the template, so the stem itself is never declared and must not be
+				// reported. Any other extension means the key is simply wrong. Dropping
+				// every hyphen extension, which this used to do, swallowed
+				// imageregistry-pvc-storage against the declared
+				// imageregistry-pvc-storage-class.
+				if declaredKeys[key] {
+					continue
+				}
+				numberedFamily := false
 				for dk := range declaredKeys {
-					if strings.HasPrefix(dk, key+"-") {
-						isPrefix = true
+					if stripNumberedSuffix(dk) == key {
+						numberedFamily = true
 						break
 					}
 				}
-				if isPrefix {
+				if numberedFamily {
 					continue
 				}
 				consumed[key] = true

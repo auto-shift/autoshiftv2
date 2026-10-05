@@ -478,6 +478,10 @@ hubClusterSets:
           valuesFiles:
             - 'values/global.yaml'
             - 'values/clustersets/hub.yaml'
+          # Copy a repository credential to the managed hub's Argo CD, for a private repo.
+          useRepoSecret: true
+          repoSecretRef:
+            name: 'autoshift-repo-secret'    # created out of band in the policy namespace
           versionedClusterSets: 'false'
           # Arbitrary values merged into the generated Application, for anything the fields above
           # do not cover.
@@ -1220,6 +1224,22 @@ hubClusterSets:
       # Prereqs on every participating hub: acm-observability: 'true', coo: 'true'.
       # =======================================================================
       globalObservability:
+        # Extra remote-write targets for each spoke's Prometheus agent, beyond the built-in rollup
+        # to the global hub. secretRef names a Secret on the hub holding the client credentials,
+        # which is copied to each selected cluster. onSelfManagedHub includes the hub itself, which
+        # is off by default because the hub already writes to its own Thanos.
+        additionalRemoteWrites:
+          - name: 'corp-metrics'
+            url: 'https://metrics.example.com/api/v1/write'
+            remoteTimeout: '30s'
+            onSelfManagedHub: false
+            # The secret is mounted at /etc/prometheus/secrets/<secretRef.name>/
+            caFile: '/etc/prometheus/secrets/global-observability-remote-write/ca.crt'
+            certFile: '/etc/prometheus/secrets/global-observability-remote-write/tls.crt'
+            keyFile: '/etc/prometheus/secrets/global-observability-remote-write/tls.key'
+            secretRef:
+              name: 'global-observability-remote-write'
+              namespace: 'open-cluster-management-observability'
         # MCOA capability toggles patched onto the MultiClusterObservability CR
         capabilities:
           platformAnalytics: 'true'         # incident detection + right-sizing
@@ -1254,7 +1274,7 @@ hubClusterSets:
       # Deploy a nested AutoShift from this hub to each MANAGED hub it governs. Requires the
       # target hub clusterset to carry self-managed: 'false'. That label marks the hub this
       # deployment runs on, which already has its own AutoShift.
-      autoshift-enable-install: 'false'   # hub only — see policies/stable/managed-autoshift
+      autoshift-enable-install: 'true'    # hub only — see policies/stable/managed-autoshift
       # DERIVED — do not set: cluster-type ('hub' for hubClusterSets entries, 'spoke' for
       # managedClusterSets entries). Injected by the top-level chart, so a value set here is
       # overwritten. A self-managed hub is cluster-type 'hub' plus self-managed 'true'.

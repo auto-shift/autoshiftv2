@@ -20,7 +20,7 @@ var (
 )
 
 type keySite struct {
-	line     int
+	line      int
 	commented bool
 }
 
