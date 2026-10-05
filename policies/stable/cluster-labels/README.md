@@ -2,14 +2,14 @@
 
 The label engine of AutoShift: it propagates the labels declared in the values repo onto the
 `ManagedCluster` objects on each hub, where every other AutoShift policy reads them (placement
-selectors, hub-template `.ManagedClusterLabels` lookups). Policies are label-triggered plug-in
+selectors, hub-template `.ManagedClusterLabels` lookups). Policies are label-triggered plugin
 modules; this chart is the label writer that drives them.
 
 ## How it works
 
 1. **Values → ConfigMaps** (`config-maps.yaml`, Helm): each deployment materializes its own
    clusterset and per-cluster label declarations as ConfigMaps in its policy namespace —
-   `cluster-set.<name>` and `managed-cluster.<name>`, labelled `autoshift.io/cluster-labels`.
+   `cluster-set.<name>` and `managed-cluster.<name>`, labeled `autoshift.io/cluster-labels`.
    Label keys are prefixed with `autoshift.io/` (configurable via `autoshiftLabelPrefix`);
    blank values are stored as the tombstone `_`, which suppresses the label at render time.
 2. **ConfigMaps → ManagedCluster labels** (`policy-cluster-labels.yaml`, ACM runtime): a policy
@@ -44,7 +44,7 @@ combined with the existing `self-managed: 'true'` label; consumers match on both
 (`autoshift/templates/_validate-clustersets.tpl`).
 
 A per-cluster entry under `clusters` can still override `cluster-type`, since cluster labels
-outrank clusterset labels. Nothing needs that — don't.
+outrank clusterset labels. Nothing needs that — do not.
 
 ## Policies rendered
 

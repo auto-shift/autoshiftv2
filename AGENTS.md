@@ -54,20 +54,24 @@ manifest or give it a `# renovate:` annotation: a version inline in a `run:` ste
 ## Commands
 
 ```bash
-make install-policy-generator                  # one-time: kustomize + PolicyGenerator plugin into .tools/
-cd tools && go test -tags integration ./...    # canonical validation, ~10s, run from inside tools/
-helm template autoshift ./autoshift -f autoshift/values/global.yaml -f autoshift/values/clustersets/hub.yaml
-make lint                                      # helm lint every chart
-vale sync && vale --minAlertLevel=error README.md docs/   # sync is required: styles are not in the repo
-./scripts/build-docs.sh                        # build, prune, verify; strict on links and anchors
+make install-policy-generator   # one-time: kustomize + PolicyGenerator plugin into .tools/
+make test                       # the validation suite, exactly what CI runs (~30s)
+make verify                     # make test + helm lint + prose lint + docs build
 ```
 
-- Run the integration test after any change to `policies/`, `autoshift/values/`, or `tools/`. The
-  pre-commit hook runs it, along with gitleaks and helm lint.
+`make test` is the one command after changing `policies/`, `autoshift/values/` or `tools/`. It wraps
+`cd tools && go test -tags integration ./...` and matches the CI job by construction, so there is
+nothing to remember about which checks CI adds. The pre-commit hook runs the same suite, plus
+gitleaks and helm lint on changed charts. `make verify` adds every chart's helm lint, Vale over the
+prose and the documentation build; Vale and Zensical live in the devcontainer, and without them
+those two steps report skipped rather than failing.
+
 - `helm template` release names must be 11 characters or fewer. The default `release-name` produces
   a 21-character policy namespace and trips the naming validator.
-- The validation suite renders `policies/*` only. After changing `autoshift/values/` or the
-  ApplicationSet, also run `helm template ./autoshift` yourself. That is a real blind spot.
+- The top-level chart is covered: `TestAutoShiftChart_ValuesProfiles` renders it against every
+  clusterset profile and layers every `clusters/_example*.yaml` override onto `_example.yaml`, which
+  is the only thing that executes `autoshift/templates/_validate-*.tpl`. Rendering it by hand is for
+  inspecting output, not for coverage.
 
 ## Non-negotiables
 
@@ -78,7 +82,7 @@ vale sync && vale --minAlertLevel=error README.md docs/   # sync is required: st
 - **Every new `autoshift.io/<key>` must be declared** in `autoshift/values/clustersets/_example.yaml`
   or a `clusters/_example*.yaml`. The label contract check fails the build otherwise, and names the
   policy that consumed the undeclared label.
-- **Never hardcode policy counts** in documentation. Policies are added constantly. Write "policies",
+- **Never hard code policy counts** in documentation. Policies are added constantly. Write "policies",
   not a number.
 - **No credentials in values files.** Reference a Secret created out of band through
   `configSecretRef`. Stubs in `tools/testdata/` must use low-entropy fake values, because that
@@ -167,21 +171,33 @@ depends on overriding existing state.
 
 ## Validation suite
 
-`cd tools && go test -tags integration ./internal/resolver/...` runs five stages, all hard failures:
-Helm and kustomize render, hub resolution, spoke resolution, resolved-YAML validation including
-`<no value>` leaks, and the label contract. Every chart is resolved against five cluster profiles,
-the primary hub plus one per `autoshift/values/clusters/_example-cluster-install-*.yaml` file.
-Dropping in a new variant file adds a profile with no test-code change.
+`make test` runs the end-to-end pipeline over every policy chart, the top-level chart against every
+values profile, a mutation sweep that introduces a deliberate defect per case and asserts the
+pipeline reports it, a check that no `ConfigurationPolicy` applies nothing in every profile (one with
+nothing to apply reports Compliant; exemptions in `.github/empty-policy-allowlist.yaml`), and the
+unit tests. Every policy chart is resolved against five
+cluster profiles, the primary hub plus one per
+`autoshift/values/clusters/_example-cluster-install-*.yaml` file. Dropping in a new variant file adds
+a profile with no test-code change.
 
-It validates rendering and resolution, not enforcement semantics, and it does not cover multi-cluster
-topology such as the hub-of-hubs `managedHub` target. `.github/label-lint-allowlist.yaml` exempts
-intentional label deviations. A chart calling `fromSecret` or `fromConfigMap` against a real hub
-resource needs a stub in `tools/testdata/`.
+**The suite renders only what the example values declare.** A branch gated on a config key that no
+`_example*.yaml` sets never renders, so it is never checked. Declare the key rather than leaving it
+commented out when you add a branch that reads a Secret, a ConfigMap or a trust bundle. Real bugs
+have hidden in commented-out branches while every gate passed.
+
+It validates rendering and resolution, not enforcement semantics, and it cannot model policy
+dependencies: every policy resolves regardless of `dependencies`, so a policy reading an object that
+another policy creates needs that object stubbed in `tools/testdata/`. It does not cover
+multi-cluster topology such as the hub-of-hubs `managedHub` target.
+`.github/label-lint-allowlist.yaml` exempts intentional label deviations. A chart calling
+`fromSecret` or `fromConfigMap` against a real hub resource needs a stub in `tools/testdata/`.
+Full breakdown: [developer guide](docs/developer-guide.md#what-the-suite-covers).
 
 ## Documentation
 
-`README.md` and `docs/` are linted with Red Hat's Vale style and the build fails on error-level
-findings. Before committing documentation, read
+`README.md`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `docs/` and every `policies/*/*/*.md` are
+linted with Red Hat's Vale style, and the build fails on error-level findings. `make verify` runs the
+same scope as CI. Before committing documentation, read
 [docs/documentation-style.md](docs/documentation-style.md). The rules that catch people most often:
 full `Red Hat` product names, no em dashes, no contractions, and the banned-term list, which
 includes `IPI`, `hardcoded`, `vs`, and `a number of`.
@@ -194,7 +210,7 @@ Diagram authoring, including the house style and the color palette, is in
 
 ## Where to look next
 
-Beyond the pages linked earlier: [quickstart](docs/quickstart.md) to install,
+Beyond the pages linked earlier: [quick start](docs/quickstart.md) to install,
 [values reference](docs/values-reference.md) for every label,
 [hub-of-hubs](docs/hub-of-hubs.md) for stacked topology,
 [cluster install](docs/cluster-install.md) for provisioning,

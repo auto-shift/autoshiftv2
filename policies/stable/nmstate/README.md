@@ -4,7 +4,7 @@ This policy automates the deployment of the Kubernetes NMState Operator and mana
 
 ## Overview
 
-NMState provides a Kubernetes-native way to configure network interfaces on cluster nodes. This AutoShift policy allows you to:
+NMState provides a Kubernetes-native way to configure network interfaces on cluster nodes. Use this AutoShift policy to:
 
 1. Install the NMState operator
 2. Configure network interfaces (bonds, VLANs, ethernet) via structured config

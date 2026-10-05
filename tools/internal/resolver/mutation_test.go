@@ -1,4 +1,4 @@
-//go:build integration && mutation
+//go:build integration
 
 package resolver
 

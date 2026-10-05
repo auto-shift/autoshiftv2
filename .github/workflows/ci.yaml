@@ -176,15 +176,11 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
           govulncheck ./...
 
-      - name: Validate policies (render, hub/spoke resolution, config coverage, label contract)
+      - name: Validate policies (render, hub/spoke resolution, config coverage, label contract, detection)
         working-directory: tools
         run: go test -tags integration ./... -v -count=1
         env:
           LABEL_REPORT_OUTPUT: ${{ github.workspace }}/label-contract-report.md
-
-      - name: Validate CI detection mechanisms (mutation sweep)
-        working-directory: tools
-        run: go test -tags integration,mutation ./... -v -count=1 -run TestPipeline_MutationSweep
 
       - name: Upload label contract report
         if: always()
@@ -286,7 +282,7 @@ jobs:
       # Gates on error-level findings only. Which rules are set to error, and why the rest are
       # left reporting, is recorded in .vale.ini next to each rule.
       - name: Prose lint
-        run: vale --minAlertLevel=error README.md docs/
+        run: vale --minAlertLevel=error README.md AGENTS.md CLAUDE.md CONTRIBUTING.md docs/ policies/
 
       # Not a gate: prints the backlog so progress is visible on every run.
       - name: Report remaining style findings

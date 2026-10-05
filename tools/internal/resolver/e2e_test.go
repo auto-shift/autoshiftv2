@@ -404,6 +404,11 @@ func TestPipeline_EndToEnd(t *testing.T) {
 		}
 	}
 
+	// A ConfigurationPolicy with nothing to apply reports Compliant, so a policy that renders
+	// empty in every profile shows green while enforcing nothing. Checked here because this is
+	// where the resolved output for every profile already exists.
+	emptyCharts = reportEmptyConfigurationPolicies(t, results, extraCtxs)
+
 	t.Logf("\nACM resolution: %d clean, %d spoke errors, %d hub errors, %d errors across %d managed profiles, %d invalid-YAML, %d helm failures (%d charts × %d profiles)",
 		cleanCharts, warnCharts, hubErrCharts, managedErrCharts, len(extraCtxs), yamlErrCharts, helmFailures, len(results), len(extraCtxs)+1)
 

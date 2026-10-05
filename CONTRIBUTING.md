@@ -1,6 +1,6 @@
 # Contributing to AutoShift
 
-Thank you for your interest in contributing! AutoShift is an open-source IaC framework for managing OpenShift clusters at scale with RHACM and OpenShift GitOps.
+Thank you for your interest in contributing! AutoShift is an open source IaC framework for managing OpenShift clusters at scale with RHACM and OpenShift GitOps.
 
 ## Terms
 

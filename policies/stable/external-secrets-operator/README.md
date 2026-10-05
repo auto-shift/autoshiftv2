@@ -1,7 +1,7 @@
 # external-secrets-operator AutoShift Policy
 
 ## Overview
-This policy installs the external-secrets-operator operator using AutoShift patterns.
+This policy installs the external-secrets-operator operator by using AutoShift patterns.
 
 ## Status
 ✅ **Operator Installation**: Ready to deploy  

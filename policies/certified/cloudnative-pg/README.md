@@ -1,7 +1,7 @@
 # cloudnative-pg AutoShift Policy
 
 ## Overview
-This policy installs the cloudnative-pg operator using AutoShift patterns.
+This policy installs the cloudnative-pg operator by using AutoShift patterns.
 
 ## Status
 ✅ **Operator Installation**: Ready to deploy  
