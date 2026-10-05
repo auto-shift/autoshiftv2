@@ -233,15 +233,24 @@ workflow pins need the annotation.
 > version is how local output starts diverging from the cluster. Match the versions that the
 > deployed OpenShift GitOps ships:
 >
-> | OpenShift GitOps | Argo CD | Helm | Kustomize |
-> |---|---|---|---|
-> | 1.21 | 3.4.3 | 3.19.4 | 5.8.1 |
-> | 1.20 | 3.3.2 | 3.19.4 | 5.8.1 |
-> | 1.19 | 3.1.9 | 3.18.4 | 5.7.0 |
+> | OpenShift GitOps | Argo CD | Helm | Kustomize | OpenShift Container Platform |
+> |---|---|---|---|---|
+> | 1.22 | 3.5.3 | 4.2.4 | 5.8.1 | 4.18-4.22 |
+> | 1.21 | 3.4.3 | 3.19.4 | 5.8.1 | 4.14, 4.16-4.22 |
+> | 1.20 | 3.3.2 | 3.19.4 | 5.8.1 | 4.14, 4.16-4.21 |
+> | 1.19 | 3.1.9 | 3.18.4 | 5.7.0 | |
 >
-> `renovate.json` constrains both with `allowedVersions`, so Renovate proposes patches inside the
-> current line and cannot raise Helm to 4. When `gitops-channel` moves, check the compatibility
-> matrix in the OpenShift GitOps release notes, then update the pins and those ranges together.
+> Rows 1.20 through 1.22 come from the
+> [Red Hat OpenShift GitOps compatibility and support matrix](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.22/html/release_notes/gitops-release-notes),
+> which carries the three most recent releases. Hub and managed cluster support for Red Hat
+> Advanced Cluster Management is in the
+> [2.17 support matrix](https://access.redhat.com/articles/7142376), published per version.
+>
+> `renovate.json` constrains Helm and kustomize with `allowedVersions`, so Renovate proposes
+> patches inside the current line and cannot raise Helm to 4. Note that OpenShift GitOps 1.22
+> moves to Helm 4.2.4, so moving `gitops-channel` to 1.22 means widening that range across a major
+> version. When the channel moves, update the pins in `versions.yaml`, the Renovate ranges, and
+> this table together.
 
 Two versions are deliberately not pinned. `OCP_VERSION` is a release channel, so the OpenShift CLI
 follows the latest patch, and the minor needs a manual bump. The Vale rule package resolves to the
@@ -862,6 +871,8 @@ KUSTOMIZE_PLUGIN_HOME=$PWD/.tools/kustomize-plugin .tools/kustomize build \
 | `TestAutoShiftChart_ValuesProfiles` | The top-level chart against every clusterset profile, with each `clusters/_example*.yaml` layered onto `_example.yaml`. The only thing that executes `autoshift/templates/_validate-*.tpl` |
 | `TestPipeline_MutationSweep` | Introduces one deliberate defect per case and asserts the pipeline reports it, which proves the checks above detect a problem rather than only passing on clean input |
 | Empty-policy check, inside `TestPipeline_EndToEnd` | Fails a `ConfigurationPolicy` that applies no objects in every cluster profile. One with nothing to apply reports Compliant, so it shows green while enforcing nothing |
+| `TestPolicyNameLengths` | Fails a Policy name over 40 characters. With a 20-character policy namespace that reaches the 62-character limit on the replicated name, and the policy never arrives on the managed cluster. |
+| `TestVersionPins` | Fails a pinned version that disagrees with `versions.yaml`. Helm alone is pinned in four files, so this replaces a comment asking the next person to keep them identical |
 | `TestObjectTemplatesRaw_ParsesAsYAML` | Parses each resolved `object-templates-raw` block. The surrounding Policy can be valid YAML while the block inside it is not |
 | Unit tests | Label contract buckets, declared-label extraction, config key conventions and collisions, synthetic ConfigMap generation, spoke resolution, strip-defaults, `object-templates-raw` YAML validity |
 

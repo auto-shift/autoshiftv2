@@ -433,10 +433,10 @@ func RunPipeline(
 				// stem that some declared key extends. Numbered families
 				// (infra-nodes-zone-1, metallb-ippool-1) are built from such a stem by
 				// the template, so the stem itself is never declared and must not be
-				// reported. Any other extension means the key is simply wrong. Dropping
-				// every hyphen extension, which this used to do, swallowed
+				// reported. Any other extension means the key is simply wrong, so only a
+				// numbered family may silence a stem: a hyphen extension is not enough.
 				// imageregistry-pvc-storage against the declared
-				// imageregistry-pvc-storage-class.
+				// imageregistry-pvc-storage-class is the shape that hides otherwise.
 				if declaredKeys[key] {
 					continue
 				}

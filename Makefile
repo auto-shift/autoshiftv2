@@ -92,7 +92,7 @@ test: ## Run the policy validation suite (what CI runs: render, resolution, labe
 	@printf "$(GREEN)✓$(NC) Policies validated\n"
 
 .PHONY: verify
-verify: test lint ## Everything CI checks: the suite, helm lint, prose lint and the docs build
+verify: test lint ## The suite plus helm lint, prose lint and the docs build
 	@printf "$(BLUE)[INFO]$(NC) Prose lint...\n"
 	@if command -v vale >/dev/null 2>&1; then \
 		vale --minAlertLevel=error README.md AGENTS.md CLAUDE.md CONTRIBUTING.md docs/ policies/ || exit 1; \

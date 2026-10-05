@@ -224,10 +224,9 @@ func TestPipeline_MutationSweep(t *testing.T) {
 		},
 		{
 			// A label that other declared labels extend, which is the case the two above
-			// deliberately avoid. odf-source, odf-channel and the rest all start with
-			// "odf-", and pass b used to drop any such stem outright, so an undeclared or
-			// misspelled label of this shape was reported by nothing. Only a numbered
-			// family (odf-1) may silence its stem now.
+			// deliberately avoid: odf-source, odf-channel and the rest all start with
+			// "odf-". Only a numbered family (odf-1) may silence its stem, so an
+			// undeclared or misspelled label of this shape still has to be reported.
 			name: "remove odf declaration → contract Missing violation despite odf-* sub-labels",
 			mutateDeclared: func(declared map[string]*labels.Declared) {
 				delete(declared, "odf")

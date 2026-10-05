@@ -47,25 +47,32 @@ AutoShift is built on Open Cluster Management, a CNCF project. This project abid
 ## Development Workflow
 
 ```bash
+# One-time: stage kustomize and the PolicyGenerator plugin into .tools/
+make install-policy-generator
+
 # Create a feature branch
 git checkout -b feature/add-my-operator-policy
 
 # Generate a new policy using the scaffolding scripts
 ./scripts/generate-operator-policy.sh my-operator my-operator-pkg --channel stable --namespace my-operator
 
-# Validate rendering
-helm template policies/stable/my-operator/
+# Render every policy, resolve hub and spoke templates, check the label contract
+make test
 
-# Run the full policy validation suite
-cd tools && go test -tags integration ./... -v
+# The suite plus helm lint, prose lint and the documentation build
+make verify
 ```
+
+The scaffolding scripts produce a PolicyGenerator directory, which `kustomize` renders rather than
+Helm, so `make test` is how you validate it. Without `make install-policy-generator` those policies
+cannot render at all.
 
 For detailed guidance on creating policies, hub template conventions, and label requirements, see the [Developer Guide](docs/developer-guide.md).
 
 ## Pull Request Guidelines
 
 - One policy or feature per PR
-- All CI checks must pass (`secret-scan`, `lint-and-test`, `validate-policies`)
+- All CI checks must pass (`secret-scan`, `lint-and-test`, `validate-policies`, `release-dry-run`, `docs`)
 - New `autoshift.io/<key>` labels must be declared in `autoshift/values/clustersets/_example.yaml`
 - Include a README.md in new policy directories
 - Commits must include a DCO sign-off line
