@@ -1,0 +1,53 @@
+object-templates-raw: |
+  {{- /* Inform gate for a target listed under status.conditionalUpdates and absent from
+         availableUpdates. fail carries the Cluster Version Operator reason and message.
+         customMessage keeps only that text, so Governance shows it without the template. */ -}}
+  {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
+  {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
+  {{- $current := "" }}
+  {{- range $h := (index $status "history" | default list) }}
+  {{-   if and (eq $current "") (eq (index $h "state") "Completed") }}{{- $current = (index $h "version") }}{{- end }}
+  {{- end }}
+  {{- $found := false }}
+  {{- range $u := (index $status "availableUpdates" | default list) }}
+  {{-   if and (eq (index $u "version") $target) (ne (index $u "image" | default "") "") }}{{- $found = true }}{{- end }}
+  {{- end }}
+  {{- $done := false }}
+  {{- if regexMatch "^[0-9]+[.][0-9]+[.][0-9]+" $target }}
+  {{-   $done = and (ne $current "") (semverCompare (printf ">= %s" $target) $current) }}
+  {{- end }}
+  {{- $conditional := false }}
+  {{- $reason := "" }}
+  {{- $riskMessage := "" }}
+  {{- $riskURL := "" }}
+  {{- if and (ne $target "") (not $done) (not $found) }}
+  {{-   range $u := (index $status "conditionalUpdates" | default list) }}
+  {{-     $rel := (index $u "release" | default dict) }}
+  {{-     if and (not $conditional) (eq (printf "%v" (index $rel "version" | default "") | trim) $target) }}
+  {{-       $conditional = true }}
+  {{-       range $c := (index $u "conditions" | default list) }}
+  {{-         if eq (index $c "type") "Recommended" }}
+  {{-           $st := printf "%v" (index $c "status") | trim }}
+  {{-           if or (eq $st "False") (eq $st "false") }}
+  {{-             $reason = (index $c "reason" | default "NotRecommended") }}
+  {{-             $riskMessage = (index $c "message" | default "" | trim) }}
+  {{-           end }}
+  {{-         end }}
+  {{-       end }}
+  {{-       if eq $reason "" }}{{- $reason = "ConditionalUpdate" }}{{- end }}
+  {{-       range $r := (index $u "risks" | default list) }}
+  {{-         if or (eq $riskURL "") (eq (index $r "name" | default "") $reason) }}
+  {{-           $riskURL = (index $r "url" | default "") }}
+  {{-           if eq $riskMessage "" }}{{- $riskMessage = (index $r "message" | default "" | trim) }}{{- end }}
+  {{-         end }}
+  {{-       end }}
+  {{-     end }}
+  {{-   end }}
+  {{- end }}
+  {{- if $conditional }}
+  {{-   $detail := $riskMessage }}
+  {{-   if and (ne $riskURL "") (not (contains $riskURL $riskMessage)) }}
+  {{-     $detail = printf "%s %s" $riskMessage $riskURL }}
+  {{-   end }}
+  {{-   fail (printf "%s is a conditional update (Recommended False). %s: %s" $target $reason $detail) }}
+  {{- end }}

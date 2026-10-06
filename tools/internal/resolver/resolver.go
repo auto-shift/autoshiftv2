@@ -180,6 +180,10 @@ type HubContext struct {
 	ManagedClusterName   string
 	ManagedClusterLabels map[string]string
 	PolicyMetadata       map[string]interface{}
+	// DefaultMessage is empty here. ConfigurationPolicy customMessage templates
+	// read it on the cluster; the test context must have the field so those
+	// templates resolve instead of failing the spoke pass.
+	DefaultMessage string
 }
 
 // ResolvePolicyResult holds the outcome of resolving one multi-document YAML.
