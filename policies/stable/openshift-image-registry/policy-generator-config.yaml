@@ -54,8 +54,11 @@ policies:
     remediationAction: inform
     manifests:
       - path: test/image-registry-storage-ready.yaml
+  # Waits on the storage-agnostic readiness barrier, not on a storage-type-specific policy: the
+  # pvc policy is only placed on pvc clusters, so depending on it leaves this Pending forever on an
+  # s3 cluster. A dependency resolves against the same cluster's copy of the policy.
   - name: policy-enable-image-registry
     dependencies:
-      - name: policy-image-registry-storage
+      - name: policy-image-registry-storage-test
     manifests:
       - path: manifests/enable-image-registry.yaml

@@ -146,6 +146,7 @@ func stripYAMLComments(s string) string {
 // placement hides both that pattern and any missing testdata behind it.
 func reportEmptyConfigurationPolicies(
 	t *testing.T,
+	policiesDir string,
 	results []ChartResult,
 	extraCtxs []NamedContext,
 ) int {
@@ -186,12 +187,20 @@ func reportEmptyConfigurationPolicies(
 		}
 	}
 
+	manifestOf := map[string]string{}
 	var alwaysEmpty, conditional []string
 	for k, profiles := range emptyIn {
 		id := k.chart + " " + k.policy
+		if m := pgManifests(policiesDir, k.chart)[k.policy]; m != "" {
+			manifestOf[id] = m
+		}
 		if len(profiles) < len(seenIn[k]) {
+			label := id
+			if m := manifestOf[id]; m != "" {
+				label = fmt.Sprintf("%s (from %s)", id, m)
+			}
 			conditional = append(conditional,
-				fmt.Sprintf("%s (empty in %d of %d profiles)", id, len(profiles), len(seenIn[k])))
+				fmt.Sprintf("%s (empty in %d of %d profiles)", label, len(profiles), len(seenIn[k])))
 			continue
 		}
 		var reason string
@@ -199,7 +208,11 @@ func reportEmptyConfigurationPolicies(
 			reason = r
 			break
 		}
-		alwaysEmpty = append(alwaysEmpty, fmt.Sprintf("%s: %s", id, reason))
+		if m := manifestOf[id]; m != "" {
+			alwaysEmpty = append(alwaysEmpty, fmt.Sprintf("%s (from %s): %s", id, m, reason))
+		} else {
+			alwaysEmpty = append(alwaysEmpty, fmt.Sprintf("%s: %s", id, reason))
+		}
 	}
 	sort.Strings(alwaysEmpty)
 	sort.Strings(conditional)

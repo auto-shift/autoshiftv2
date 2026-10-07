@@ -186,6 +186,35 @@ func isDir(p string) bool {
 }
 
 // copyDirSubst copies src to dst, applying repl to the contents of every file.
+// condenseTemplateErrors keeps a template error readable. go-template-utils embeds the entire
+// policy JSON in its error text, which buries the one clause a developer needs behind several
+// thousand characters. The leading context and the trailing error are what matter.
+func condenseTemplateErrors(msgs []string) []string {
+	out := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, condenseTemplateError(m))
+	}
+	return out
+}
+
+func condenseTemplateError(msg string) string {
+	start := strings.Index(msg, `{"apiVersion"`)
+	if start < 0 {
+		return msg
+	}
+	end := strings.LastIndex(msg, "}: ")
+	if end < start {
+		return msg
+	}
+	condensed := msg[:start] + "<policy JSON omitted>" + msg[end+1:]
+	// tmpl:NN counts lines in the RESOLVED template, not in the manifest on disk. Saying so
+	// stops the reader going to that line of the source file and finding something unrelated.
+	if strings.Contains(condensed, "template: tmpl:") {
+		condensed += " (tmpl:N is a line in the resolved template, not in the source manifest)"
+	}
+	return condensed
+}
+
 // findComponentsRoot walks up from dir to the nearest ancestor containing a
 // components/ directory (the repo-level home for shared Helm charts). Returns ""
 // if none is found before the filesystem root.
@@ -310,7 +339,7 @@ func RunPipeline(
 		if len(hubResult.Errors) == 0 {
 			resolveOK = true
 		} else {
-			resolveWarns = hubResult.Errors
+			resolveWarns = condenseTemplateErrors(hubResult.Errors)
 		}
 
 		// Strip string defaults first so any config key the template consumes but
@@ -320,7 +349,7 @@ func RunPipeline(
 		if spokeR != nil && strings.Contains(spokeInput, "{{") {
 			spokeResult := spokeR.ResolveSpokeTemplates(spokeInput, c)
 			if len(spokeResult.Errors) > 0 {
-				spokeWarns = spokeResult.Errors
+				spokeWarns = condenseTemplateErrors(spokeResult.Errors)
 			}
 			if spokeResult.Resolved != "" {
 				spokeInput = spokeResult.Resolved
