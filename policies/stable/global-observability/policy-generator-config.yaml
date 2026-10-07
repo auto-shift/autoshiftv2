@@ -51,6 +51,21 @@ policies:
       - path: manifests/rollup-secret.yaml
     dependencies:
       - name: policy-global-observability-mcoa
+  # 2b) Prerequisite gate, placed on global-observability alone (placement-prereq.yaml) so a
+  #     cluster with global-observability but not acm-observability reports one actionable
+  #     violation instead of silently receiving no policies.
+  - name: policy-global-observability-prereq
+    remediationAction: inform
+    placement:
+      placementPath: placement-prereq.yaml
+    manifests:
+      - path: test/acm-observability-prereq.yaml
+    customMessage:
+      noncompliant: >-
+        Set autoshift.io/acm-observability to 'true' on this cluster, or set
+        autoshift.io/global-observability to 'false'. global-observability patches MCOA, which is a
+        capability of MultiClusterObservability, so it does nothing without it. No
+        MultiClusterObservability named 'observability' was found.
   # 3) Readiness gate: wait for MCOA to create its own PrometheusAgent templates before patching
   #    them. MCOA only replicates templates it created itself, so a policy-created one is ignored.
   - name: policy-global-observability-prom-test
