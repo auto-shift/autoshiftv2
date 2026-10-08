@@ -85,6 +85,14 @@ oc wait --for=condition=Complete multiclusterhub multiclusterhub \
     -n open-cluster-management --timeout=900s 2>/dev/null || \
     warn "MultiClusterHub readiness check timed out - check status manually with: oc get mch -n open-cluster-management"
 
+# The GitOps chart stages the PolicyGenerator binary from this deployment's image, read by a Helm
+# lookup at install time. It belongs to the MultiClusterHub console component, so it lands partway
+# through the reconcile. Installing GitOps before it exists leaves the repo-server init container
+# with an empty image and nothing renders, so this is fatal rather than a warning.
+log "Waiting for the ACM CLI downloads deployment (source of the PolicyGenerator binary)..."
+oc rollout status deploy/acm-cli-downloads -n open-cluster-management --timeout=900s || \
+    error "acm-cli-downloads is not available in open-cluster-management. GitOps cannot stage the PolicyGenerator binary without it. Check MultiClusterHub, and that its console component is enabled."
+
 log "Installing OpenShift GitOps..."
 helm upgrade --install openshift-gitops ${OCI_BOOTSTRAP_REPO}/openshift-gitops \
     --version ${VERSION} \
@@ -406,7 +414,7 @@ AutoShift provides a complete Infrastructure-as-Code solution for OpenShift usin
 Use the provided scripts for a streamlined installation:
 
 ```bash
-# Step 1: Install bootstrap operators (GitOps + ACM)
+# Step 1: Install bootstrap operators (ACM, then GitOps)
 ./install-bootstrap.sh
 
 # Step 2: Install AutoShift (deploys policies)
@@ -432,27 +440,10 @@ helm registry login quay.io -u YOUR_USERNAME -p YOUR_TOKEN
 
 #### Step 2: Install Bootstrap Charts
 
-**Install OpenShift GitOps:**
-
-```bash
-helm upgrade --install openshift-gitops \
-GUIDE_EOF
-
-cat >> "$ARTIFACTS_DIR/INSTALL.md" << GUIDE_VERSION
-  oci://${REGISTRY}/${REGISTRY_NAMESPACE}/bootstrap/openshift-gitops \\
-  --version ${VERSION} \\
-GUIDE_VERSION
-
-cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
-  --create-namespace \
-  --wait \
-  --timeout 10m
-
-# Verify installation
-oc get pods -n openshift-gitops
-oc wait --for=condition=ready pod -l app.kubernetes.io/name=openshift-gitops-server \
-  -n openshift-gitops --timeout=300s
-```
+Install Advanced Cluster Management first. In source mode the GitOps repo-server stages the
+PolicyGenerator binary from the `acm-cli-downloads` image, read at install time, so that deployment
+must already exist. OCI mode deploys prerendered Helm charts and does not need the plugin, but the
+order is the same in both so there is only one sequence to remember.
 
 **Install Advanced Cluster Management:**
 
@@ -474,6 +465,31 @@ cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
 oc get multiclusterhub -n open-cluster-management
 oc wait --for=condition=Complete multiclusterhub multiclusterhub \
   -n open-cluster-management --timeout=900s
+
+# Required before installing GitOps in source mode
+oc rollout status deploy/acm-cli-downloads -n open-cluster-management --timeout=15m
+```
+
+**Install OpenShift GitOps:**
+
+```bash
+helm upgrade --install openshift-gitops \
+GUIDE_EOF
+
+cat >> "$ARTIFACTS_DIR/INSTALL.md" << GUIDE_VERSION
+  oci://${REGISTRY}/${REGISTRY_NAMESPACE}/bootstrap/openshift-gitops \\
+  --version ${VERSION} \\
+GUIDE_VERSION
+
+cat >> "$ARTIFACTS_DIR/INSTALL.md" << 'GUIDE_EOF'
+  --create-namespace \
+  --wait \
+  --timeout 10m
+
+# Verify installation
+oc get pods -n openshift-gitops
+oc wait --for=condition=ready pod -l app.kubernetes.io/name=openshift-gitops-server \
+  -n openshift-gitops --timeout=300s
 ```
 
 > **CRD-wait image:** the charts resolve it from the cluster's own `openshift/cli` ImageStream at
