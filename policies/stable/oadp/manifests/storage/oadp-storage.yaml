@@ -1,0 +1,180 @@
+# The object store backups are written to, the credentials Velero opens, and the
+# DataProtectionApplication on this cluster.
+#
+# WHERE EACH HALF RUNS. Hub templates resolve on the hub and are substituted into the policy text
+# before it is shipped; the rest is evaluated on the managed cluster. config.oadp lives in the policy
+# namespace on the hub, so the whole DataProtectionApplication is built there.
+#
+# CREDENTIALS ARE NOT CREATED HERE. Each mode has its own policy, and all of them converge on the one
+# Secret this DataProtectionApplication references:
+#   configSecretRef   an administrator creates it on the cluster; no policy
+#   credentialsFrom   policy-oadp-credentials-copy copies a ready-made file from the hub
+#   sourceSecretRef   policy-oadp-credentials-stage carries a key pair, -assemble builds the file
+# This policy depends on policy-oadp-credentials-test, which asserts that Secret exists, so the
+# DataProtectionApplication is never written against credentials that are not there.
+#
+# ONE DataProtectionApplication, in openshift-adp. OpenShift APIs for Data Protection permits exactly
+# one per installation namespace, and supports the OwnNamespace install mode only, so this is the
+# single place a cluster's Velero configuration can live. Every consumer, virtual machine backup
+# included, adds Schedules against it rather than a DataProtectionApplication of its own. Red Hat
+# Advanced Cluster Management hub backup is the one exception: its cluster-backup component brings
+# its own copy in open-cluster-management-backup, and acm-failover configures that one.
+object-templates-raw: |
+  # INDENTATION ANCHOR — every directive below sits at this indent. A shallower trim marker eats
+  # past the newline into the previous line and produces invalid YAML.
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $oadp := (index $rcmConfig "oadp" | default dict) hub}}
+  {{hub- $store := (index $oadp "storage" | default dict) hub}}
+  {{hub- $credRef := (index $store "configSecretRef" | default dict) hub}}
+  {{hub- $credFrom := (index $store "credentialsFrom" | default dict) hub}}
+  {{hub- $azure := (index $store "azure" | default dict) hub}}
+  {{hub- $caRef := (index $store "caRef" | default dict) hub}}
+  {{hub- $type := (index $store "type" | default "s3") hub}}
+  {{hub- $bucket := (index $store "bucket" | default "") hub}}
+  {{hub- $prefix := (index $store "prefix" | default "") hub}}
+  {{hub- $nodeAgent := (index $store "nodeAgent" | default true) hub}}
+  {{hub- $credName := (index $credRef "name" | default "cloud-credentials") hub}}
+  {{hub- $credKey := (index $credRef "key" | default "cloud") hub}}
+  {{hub- $srcRef := (index $store "sourceSecretRef" | default dict) hub}}
+  {{hub- $srcSecretName := (index $srcRef "name" | default "") hub}}
+  {{hub- $srcSecretNs := (index $srcRef "namespace" | default .PolicyMetadata.namespace) hub}}
+  {{hub- $profile := (index $store "profile" | default "") hub}}
+  {{hub- if not (has $type (list "s3" "azure" "gcp")) hub}}
+  {{hub- fail (printf "oadp: config.oadp.storage.type must be 's3', 'azure' or 'gcp', got %q. There is no obc backend here: a claim against this cluster's own storage would not survive it. For an S3-compatible appliance use 's3' with storage.endpoint." $type) hub}}
+  {{hub- end hub}}
+  # credentialsFrom copies a ready-made Velero credentials file; sourceSecretRef builds one from a
+  # key pair. Both write the same Secret, and two object-templates for one object do not conflict
+  # visibly: the first wins, the second is dead code and the policy still reports Compliant. Refuse
+  # rather than pick one.
+  {{hub- if and (not (empty $credFrom)) $srcSecretName hub}}
+  {{hub- fail "oadp: config.oadp.storage.credentialsFrom and storage.sourceSecretRef both set, and both build the Secret Velero opens. Keep one. credentialsFrom copies a credentials file you already have; sourceSecretRef builds one from access_key_id and access_key_secret." hub}}
+  {{hub- end hub}}
+  {{hub- $provider := $type hub}}
+  {{hub- if eq $type "s3" hub}}
+  {{hub- $provider = "aws" hub}}
+  {{hub- end hub}}
+  {{hub- if (index $store "provider" | default "") hub}}
+  {{hub- $provider = (index $store "provider") hub}}
+  {{hub- end hub}}
+  {{hub- $plugins := (list "openshift" "csi" $provider) hub}}
+  {{hub- if gt (len (index $store "plugins" | default list)) 0 hub}}
+  {{hub- $plugins = (index $store "plugins") hub}}
+  {{hub- end hub}}
+  #
+  {{hub- $cfg := dict hub}}
+  {{hub- if $srcSecretName hub}}
+  {{hub- $src := (lookup "v1" "Secret" $srcSecretNs $srcSecretName) | default dict hub}}
+  {{hub- if not (index $src "data") hub}}
+  {{hub- fail (printf "oadp: config.oadp.storage.sourceSecretRef names Secret %s/%s, which does not exist ON THE HUB. It supplies access_key_id and access_key_secret, and optionally bucketnames and endpoint." $srcSecretNs $srcSecretName) hub}}
+  {{hub- end hub}}
+  {{hub- $srcData := (index $src "data") hub}}
+  # A bucket name and an endpoint URL are not credentials, so they are read off the looked-up object.
+  # fromSecret is not used for them: on the hub its output is encrypted, so piping it through
+  # base64dec writes base64dec's error text in as the value.
+  {{hub- if (index $srcData "bucketnames") hub}}
+  {{hub- $bucket = (index $srcData "bucketnames" | base64dec) hub}}
+  {{hub- end hub}}
+  {{hub- if (index $srcData "endpoint") hub}}
+  {{hub- $_ := set $cfg "s3Url" (index $srcData "endpoint" | base64dec) hub}}
+  {{hub- $_ := set $cfg "s3ForcePathStyle" "true" hub}}
+  {{hub- end hub}}
+  {{hub- $credName = "cloud-credentials" hub}}
+  {{hub- $credKey = "cloud" hub}}
+  {{hub- end hub}}
+  #
+  {{hub- if not (empty $credFrom) hub}}
+  {{hub- $credName = (index $credFrom "targetName" | default "cloud-credentials") hub}}
+  {{hub- $credKey = (index $credFrom "key" | default "cloud") hub}}
+  {{hub- end hub}}
+  #
+  # Checked here rather than with the other inputs: sourceSecretRef may supply the bucket.
+  {{hub- if (empty $bucket) hub}}
+  {{hub- fail "oadp: no bucket. Set config.oadp.storage.bucket, or supply a bucketnames key in the Secret named by storage.sourceSecretRef. Refusing to configure a DataProtectionApplication with no bucket, which would report Compliant while backing up nothing." hub}}
+  {{hub- end hub}}
+  {{hub- if $profile hub}}
+  {{hub- $_ := set $cfg "profile" $profile hub}}
+  {{hub- end hub}}
+  {{hub- if eq $type "s3" hub}}
+  {{hub- if (index $store "region" | default "") hub}}
+  {{hub- $_ := set $cfg "region" (index $store "region") hub}}
+  {{hub- end hub}}
+  {{hub- if (index $store "endpoint" | default "") hub}}
+  {{hub- $_ := set $cfg "s3Url" (index $store "endpoint") hub}}
+  {{hub- $_ := set $cfg "s3ForcePathStyle" "true" hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- if eq $type "azure" hub}}
+  {{hub- range $k := (list "resourceGroup" "storageAccount" "subscriptionId") hub}}
+  {{hub- if not (index $azure $k) hub}}
+  {{hub- fail (printf "oadp: config.oadp.storage.azure.%s is required when storage.type is 'azure'" $k) hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $cfg $k (index $azure $k) hub}}
+  {{hub- end hub}}
+  {{hub- $_ := set $cfg "storageAccountKeyEnvVar" "AZURE_STORAGE_ACCOUNT_ACCESS_KEY" hub}}
+  {{hub- end hub}}
+  {{hub- range $k, $v := (index $store "config" | default dict) hub}}
+  {{hub- $_ := set $cfg $k (printf "%v" $v) hub}}
+  {{hub- end hub}}
+  # OADP refuses to reconcile an AWS-provider location that has an s3Url but no region: "region for
+  # AWS backupstoragelocation is required when s3Url is configured". It creates no
+  # BackupStorageLocation and the DataProtectionApplication sits at Reconciled=False, while this
+  # policy still reports Compliant because the object it wrote matches. Checked after the config
+  # merge so a region supplied through storage.config counts too.
+  {{hub- if and (index $cfg "s3Url") (not (index $cfg "region")) hub}}
+  {{hub- fail "oadp: storage.endpoint is set but storage.region is empty. OpenShift APIs for Data Protection requires a region whenever an S3 URL is configured, and without one it creates no BackupStorageLocation. Set config.oadp.storage.region; an S3-compatible appliance that has no real region still needs a placeholder, and its own documentation usually names one." hub}}
+  {{hub- end hub}}
+  {{hub- $caNs := (index $caRef "namespace" | default "openshift-adp") hub}}
+  {{hub- $caName := (index $caRef "name" | default "") hub}}
+  {{hub- $caKey := (index $caRef "key" | default "ca-bundle.crt") hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: oadp.openshift.io/v1alpha1
+      kind: DataProtectionApplication
+      metadata:
+        name: oadp
+        namespace: openshift-adp
+      spec:
+        # The image-backup registry stays off. It is also required: with backupImages unset, OADP 1.6
+        # refuses to reconcile with "BackupLocation must have velero prefix when backupImages is not
+        # set to false" and no BackupStorageLocation is created.
+        backupImages: false
+        configuration:
+          velero:
+            defaultPlugins:
+              {{hub- range $p := $plugins hub}}
+              - {{hub $p hub}}
+              {{hub- end hub}}
+          nodeAgent:
+            # Required for a snapshot-based backup to outlive the cluster's own storage system:
+            # the node agent is what moves CSI snapshot contents into the object store, and what
+            # file system backup runs through.
+            enable: {{hub $nodeAgent hub}}
+            uploaderType: kopia
+        backupLocations:
+          - name: default
+            velero:
+              provider: {{hub $provider hub}}
+              default: true
+              objectStorage:
+                bucket: {{hub $bucket hub}}
+                {{hub- if $prefix hub}}
+                prefix: {{hub $prefix hub}}
+                {{hub- end hub}}
+                {{hub- if $caName hub}}
+                {{- $caCM := (lookup "v1" "ConfigMap" "{{hub $caNs hub}}" "{{hub $caName hub}}") | default dict }}
+                {{- $ca := (index ($caCM.data | default dict) "{{hub $caKey hub}}" | default "") }}
+                {{- if not $ca }}
+                {{- fail "oadp: config.oadp.storage.caRef names ConfigMap {{hub $caNs hub}}/{{hub $caName hub}} key {{hub $caKey hub}}, but it is missing or empty ON THIS CLUSTER. The trust bundle is read locally, next to the credentials Velero opens." }}
+                {{- end }}
+                caCert: {{ $ca | base64enc }}
+                {{hub- end hub}}
+              {{hub- if $cfg hub}}
+              config:
+                {{hub- range $k, $v := $cfg hub}}
+                {{hub $k hub}}: '{{hub $v hub}}'
+                {{hub- end hub}}
+              {{hub- end hub}}
+              credential:
+                name: {{hub $credName hub}}
+                key: {{hub $credKey hub}}

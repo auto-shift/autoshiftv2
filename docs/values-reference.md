@@ -192,6 +192,82 @@ created for each replica of the image service. Sized to hold the image catalog: 
 | `acm-addon-gpf-mem-request`  | string   | `256Mi`                  | governance-policy-framework memory request |
 | `acm-addon-gpf-cpu-request`  | string   | `100m`                   | governance-policy-framework CPU request |
 | `acm-addon-gpf-mem-limit`    | string   | `1Gi`                    | governance-policy-framework memory limit. The add-on delivers its own tuning, so an OOMKilled one has to be patched by hand |
+| `acm-failover`                | string    | `active`, `passive` or `false` | Hub disaster recovery mode. `active` writes the backups, `passive` keeps a standby hub syncing from the same object store. Settings live in `config.acm-failover`. See the [acm-failover policy](https://github.com/auto-shift/autoshiftv2/tree/main/policies/stable/acm-failover) |
+
+**Config block** (`config.acm-failover`):
+
+The label value is the mode, and the mode names are the keys of the mode-specific blocks below.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `storage.type` | string | `s3` | Names the object store; the Velero provider and plugin follow from it. `s3` covers Amazon Simple Storage Service and any S3-compatible appliance reached through `endpoint` (NetApp StorageGRID, Pure Storage FlashBlade, Dell ECS, MinIO, Ceph RADOS Gateway). `azure` and `gcp` use their own providers. `obc` is an `ObjectBucketClaim` against the local ODF NooBaa and is lab-only: backup storage has to outlive the hub it protects |
+| `storage.bucket` | string | | Bucket name. Required when `storage.type` is `s3`; the policy fails rather than configure Velero with no bucket |
+| `storage.prefix` | string | | Optional key prefix inside the bucket |
+| `storage.region` | string | | Bucket region |
+| `storage.endpoint` | string | | Endpoint URL for an S3-compatible store. Leave blank for AWS S3. Setting it also turns on path-style addressing, which on-premises appliances need because virtual-host style requires wildcard DNS |
+| `storage.azure` | map | | `azure` only: `resourceGroup`, `storageAccount` and `subscriptionId`. All three are required and the policy fails loudly without them |
+| `storage.provider` | string | | Overrides the Velero provider derived from `type` |
+| `storage.plugins` | list | | Overrides the derived `defaultPlugins` list |
+| `storage.config` | map | | Free-form keys merged last into the Velero configuration, so they win over everything derived. This is the escape hatch for an object store the policy does not know about. Several S3-compatible appliances reject Velero's newer checksum headers and need `checksumAlgorithm` set to an empty string |
+| `storage.caRef` | map | | Optional trust bundle for a private endpoint, as `name`, `namespace` and `key` of a ConfigMap on the hub |
+| `storage.configSecretRef` | map | `cloud-credentials` / `cloud` | Name and key of the Velero credentials Secret, which an administrator creates out of band in `open-cluster-management-backup`. Credentials are never in values files |
+| `storage.sourceSecretRef` | map | | Alternative to `configSecretRef`, and easier to operate: names a Secret on the hub holding a plain key pair, from which the policy builds the Velero credentials file. That Secret may also carry `bucketnames` and `endpoint`, so the bucket and the S3 URL come from one place rather than being restated here |
+| `storage.profile` | string | | Velero credentials profile name. Set it when the object store entry expects a named profile rather than `[default]` |
+| `storage.nodeAgent` | bool | `true` | Runs the Velero node agent. Named for the field it sets, `configuration.nodeAgent.enable`, as in `config.oadp.storage.nodeAgent` |
+| `storage.storageClassName` | string | `openshift-storage.noobaa.io` | The `obc` backend only: the storage class the claim is made against |
+| `active.veleroSchedule` | string | `0 */2 * * *` | Backup cron. Quote it: a value starting with an asterisk is a YAML alias when unquoted |
+| `active.veleroTtl` | string | `720h` | How long each backup is kept |
+| `active.useManagedServiceAccount` | bool | `true` | Reconnect managed clusters automatically during a restore |
+| `passive.restoreSyncInterval` | string | `30m` | How often the standby checks for a new backup |
+| `passive.cleanupBeforeRestore` | string | `CleanupRestored` | `None`, `CleanupRestored` or `CleanupAll`. `CleanupAll` additionally needs the `cluster.open-cluster-management.io/restore-cleanup-all-confirmed` annotation |
+
+### Data protection and virtual machine backup
+
+| Label | Type | Default | Description |
+|-------|------|---------|-------------|
+| `oadp` | bool | `false` | OpenShift APIs for Data Protection on a managed cluster: the operator, one `DataProtectionApplication` and one `BackupStorageLocation` in `openshift-adp`, and nothing that takes a backup. Set it to protect applications AutoShift does not manage, driving Velero `Schedule` resources from elsewhere. See the [oadp policy](https://github.com/auto-shift/autoshiftv2/tree/main/policies/stable/oadp) |
+| `oadp-subscription-name` | string | `redhat-oadp-operator` | Operator package |
+| `oadp-channel` | string | `stable` | Subscription channel |
+| `oadp-source` | string | `redhat-operators` | Catalog source. Gains the `mirror-catalog-suffix` when `disconnected-mirror` is `true` |
+| `oadp-source-namespace` | string | `openshift-marketplace` | Catalog source namespace |
+| `oadp-version` | string | | Pin a cluster service version; blank tracks the channel |
+| `vm-backup` | bool | `false` | Velero `Schedule` resources for Red Hat OpenShift Virtualization virtual machines. Needs `virt: 'true'` as well. The operator and the object store come from `oadp`, which this label places automatically, so there is no second label to set. Schedules live in `config.vm-backup`. See the [vm-backup policy](https://github.com/auto-shift/autoshiftv2/tree/main/policies/stable/vm-backup) |
+
+**Config block** (`config.oadp`):
+
+OpenShift APIs for Data Protection permits one `DataProtectionApplication` per installation namespace
+and supports the `OwnNamespace` install mode only, so a managed cluster has one Velero installation
+that every consumer shares. This block configures it. Hub backup is separate and uses
+`config.acm-failover`: the `cluster-backup` MultiClusterHub component brings its own copy of the
+operator in `open-cluster-management-backup`, which nothing here affects.
+
+`storage` takes the same shape as `config.acm-failover.storage`, with two differences: there is no
+`obc` backend, because a claim against the cluster's own storage would not survive that cluster, and
+`credentialsFrom` is available.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `storage.type` | string | `s3` | `s3` (including any S3-compatible appliance reached through `endpoint`), `azure` or `gcp` |
+| `storage.bucket` | string | | Bucket name. Required; the policy fails rather than configure Velero with no bucket |
+| `storage.prefix` | string | | Optional key prefix inside the bucket |
+| `storage.region` | string | | Bucket region |
+| `storage.endpoint` | string | | Endpoint URL for an S3-compatible store. Leave blank for AWS S3. Setting it also turns on path-style addressing |
+| `storage.nodeAgent` | bool | `true` | Runs the Velero node agent, which moves CSI snapshot contents into the object store and carries file system backup. Leave it on: a bare CSI snapshot lives in the cluster's own storage system and is lost with it. A `Schedule` setting `snapshotMoveData` needs this agent running. Named for the field it sets, `configuration.nodeAgent.enable`, as in `config.acm-failover.storage.nodeAgent` |
+| `storage.credentialsFrom` | map | | Recommended. Names a Secret on the **hub** as `name`, `namespace`, `key` and `targetName`, which the policy copies to every selected cluster, so one Secret serves the fleet. Still created out of band |
+| `storage.configSecretRef` | map | `cloud-credentials` / `cloud` | Alternative to `credentialsFrom`: a Secret created separately on each cluster, in `openshift-adp` |
+| `storage.sourceSecretRef` | map | | Alternative to `credentialsFrom`, and easier to operate: names a Secret on the **hub** holding a plain key pair, from which the policy builds the Velero credentials file on every selected cluster. That Secret may also carry `bucketnames` and `endpoint`. Mutually exclusive with `credentialsFrom`: both build the same Secret, so setting both fails the policy rather than letting one silently win |
+| `storage.profile` | string | | Velero credentials profile name. Set it when the object store entry expects a named profile rather than `[default]` |
+| `storage.caRef` | map | | Optional trust bundle for a private endpoint, as `name`, `namespace` and `key` of a ConfigMap on the **managed** cluster |
+| `storage.azure` | map | | `azure` only: `resourceGroup`, `storageAccount` and `subscriptionId`. All three are required |
+| `storage.provider` | string | | Overrides the Velero provider derived from `type` |
+| `storage.plugins` | list | | Overrides the derived `defaultPlugins` list |
+| `storage.config` | map | | Free-form keys merged last into the Velero configuration, so they win over everything derived |
+
+**Config block** (`config.vm-backup`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `schedules` | list | | One Velero `Schedule` per entry, as `name`, `cron`, `ttl` and an optional `namespaces` list. `name` is what a `VirtualMachine` references in its `cluster.open-cluster-management.io/backup-vm` label; an unlabelled virtual machine is never backed up. The policy fails when the list is empty, or when an entry has no `name` or no `cron` |
 
 **Config block** (`config.acm.provisioning`):
 
