@@ -4,6 +4,9 @@ package resolver
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -125,6 +128,38 @@ func stripYAMLComments(s string) string {
 	return strings.Join(keep, "\n")
 }
 
+// failCall matches `fail` in an action's command position, which is how a gate reports a
+// violation: the template errors, and the ConfigurationPolicy carries that message. Anchored on
+// the action opener rather than searching the action body, because the word also turns up in
+// prose: the first draft matched "fail carries the Cluster Version Operator reason" inside a
+// template comment, so removing the real call changed nothing.
+var failCall = regexp.MustCompile(`\{\{-?\s*fail[\s(]`)
+
+// templateComment matches a Go template comment, which may wrap lines and may trim on either side.
+var templateComment = regexp.MustCompile(`(?s)\{\{-?\s*/\*.*?\*/\s*-?\}\}`)
+
+// assertionOnlyGate reports whether a manifest can never apply an object. Such a manifest
+// declares no objectDefinition at all and signals through `fail`, so rendering nothing is its
+// SUCCESS state, not a defect: there is no object it failed to produce. Those are the only
+// empty renders that are safe, because the alternative reading of an empty policy, "something
+// should have been applied and was not", cannot apply to a manifest that never applies anything.
+//
+// A consolidated entry covers several manifests and cannot be attributed, so it does not qualify.
+func assertionOnlyGate(policiesDir, chart, manifest string) bool {
+	if manifest == "" || strings.Contains(manifest, ", ") {
+		return false
+	}
+	body, err := os.ReadFile(filepath.Join(policiesDir, chart, manifest))
+	if err != nil {
+		return false
+	}
+	src := templateComment.ReplaceAllString(string(body), "")
+	if strings.Contains(src, "objectDefinition") {
+		return false
+	}
+	return failCall.MatchString(src)
+}
+
 // reportEmptyConfigurationPolicies checks every resolved document already produced by the
 // pipeline and returns the number of policies that apply nothing in EVERY profile.
 //
@@ -188,7 +223,7 @@ func reportEmptyConfigurationPolicies(
 	}
 
 	manifestOf := map[string]string{}
-	var alwaysEmpty, conditional []string
+	var alwaysEmpty, conditional, assertionOnly []string
 	for k, profiles := range emptyIn {
 		id := k.chart + " " + k.policy
 		if m := pgManifests(policiesDir, k.chart)[k.policy]; m != "" {
@@ -201,6 +236,10 @@ func reportEmptyConfigurationPolicies(
 			}
 			conditional = append(conditional,
 				fmt.Sprintf("%s (empty in %d of %d profiles)", label, len(profiles), len(seenIn[k])))
+			continue
+		}
+		if m := manifestOf[id]; assertionOnlyGate(policiesDir, k.chart, m) {
+			assertionOnly = append(assertionOnly, fmt.Sprintf("%s (from %s)", id, m))
 			continue
 		}
 		var reason string
@@ -216,11 +255,16 @@ func reportEmptyConfigurationPolicies(
 	}
 	sort.Strings(alwaysEmpty)
 	sort.Strings(conditional)
+	sort.Strings(assertionOnly)
 
 	for _, s := range conditional {
 		t.Logf("conditional  %s — renders in at least one profile, so this is expected", s)
 	}
-	t.Logf("empty policies: %d conditional (expected), %d failing", len(conditional), len(alwaysEmpty))
+	for _, s := range assertionOnly {
+		t.Logf("assertion-only  %s — signals through fail and applies no objects by design, so an empty render is the passing case", s)
+	}
+	t.Logf("empty policies: %d conditional, %d assertion-only, %d failing",
+		len(conditional), len(assertionOnly), len(alwaysEmpty))
 
 	for _, s := range alwaysEmpty {
 		t.Errorf(`FAIL  %s
