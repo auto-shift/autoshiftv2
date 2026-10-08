@@ -835,14 +835,14 @@ Without the subscription-name label, scripts cannot:
 # Correct - scripts will detect this operator
 gitops: 'true'
 gitops-subscription-name: openshift-gitops-operator
-gitops-channel: gitops-1.21
+gitops-channel: gitops-1.22
 gitops-source: redhat-operators
 gitops-source-namespace: openshift-marketplace
 
 # Incorrect - scripts will NOT detect this operator (subscription-name missing)
 gitops: 'true'
 # gitops-subscription-name: openshift-gitops-operator  # Commented out!
-gitops-channel: gitops-1.21
+gitops-channel: gitops-1.22
 ```
 
 ## 🧪 Testing and Validation

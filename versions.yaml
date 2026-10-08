@@ -18,7 +18,7 @@
 inputs:
   openshift: '4.22'
   acm: '2.17'
-  gitops: '1.21'
+  gitops: '1.22'
 
 pins:
   - name: openshift-badge
@@ -54,7 +54,7 @@ pins:
         pattern: '\| Red Hat Advanced Cluster Management \| ([0-9.]+) \|'
 
   - name: gitops-channel
-    value: gitops-1.21
+    value: gitops-1.22
     derivedFrom: gitops
     locations:
       - file: autoshift/values/clustersets/_example.yaml
@@ -63,14 +63,14 @@ pins:
         pattern: '^  channel: (\S+)'
 
   - name: gitops-version
-    value: openshift-gitops-operator.v1.21.4
+    value: openshift-gitops-operator.v1.22.1
     derivedFrom: gitops
     locations:
       - file: autoshift/values/clustersets/_example.yaml
         pattern: "gitops-version: '(\\S+)'"
 
   - name: gitops-badge
-    value: '1.21'
+    value: '1.22'
     derivedFrom: gitops
     locations:
       - file: README.md
@@ -78,30 +78,34 @@ pins:
       - file: README.md
         pattern: '\| Red Hat OpenShift GitOps \| ([0-9.]+) \|'
 
-  # Red Hat OpenShift GitOps 1.21 includes Argo CD 3.4.3, Helm 3.19.4 and kustomize 5.8.1.
+  # Red Hat OpenShift GitOps 1.22 includes Argo CD 3.5.3, Helm 4.2.4 and kustomize 5.8.1.
   # Rendering locally with a different Helm or kustomize than the repository server uses is how
-  # local output starts to diverge from the cluster.
+  # local output starts to diverge from the cluster. Helm 4 is a major bump: it removed the `-c`
+  # shorthand for `helm version --client`, which is what breaks the PolicyGenerator that Red Hat
+  # Advanced Cluster Management left behind in its subscription image.
   - name: argocd
-    value: 3.4.3
+    value: 3.5.3
     derivedFrom: gitops
     locations:
       - file: README.md
         pattern: '\| Argo CD ([0-9.]+), Helm'
 
-  # Red Hat Advanced Cluster Management 2.17 is released with multicluster engine 2.12.
+  # Red Hat Advanced Cluster Management 2.17 is released with multicluster engine 2.17: the two
+  # version lines were realigned at 2.17, where earlier releases paired 2.16 with 2.11 and so on.
+  # Read from a 2.17.3 hub, whose multicluster-engine subscription is on channel stable-2.17.
   - name: multicluster-engine
-    value: '2.12'
+    value: '2.17'
     derivedFrom: acm
     locations:
       - file: README.md
         pattern: '\| multicluster engine ([0-9.]+) \|'
 
   - name: helm
-    value: v3.19.4
+    value: v4.2.4
     derivedFrom: gitops
     locations:
       - file: .github/workflows/ci.yaml
-        pattern: '^          version: (v3\.\S+)'
+        pattern: '^          version: (v\S+)'
       - file: .gitlab-ci.yml
         pattern: 'HELM_VERSION: "(\S+)"'
       - file: .devcontainer/Containerfile

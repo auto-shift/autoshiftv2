@@ -162,12 +162,16 @@ spec:
             {{ "{{" }} $argoRepoDep := (lookup "apps/v1" "Deployment" "{{ .Values.gitops.argoNamespace }}" "{{ .Values.gitops.argoName }}-repo-server") {{ "}}" }}
             {{ "{{" }} $argoImageLive := "" {{ "}}" }}
             {{ "{{" }} if $argoRepoDep {{ "}}" }}{{ "{{" }} $argoImageLive = (index $argoRepoDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
-            {{/* Same for the ACM subscription image (ships the PolicyGenerator binary): spoke-side lookup of
-                 the running multicluster-operators-hub-subscription so it matches the hub's ACM version.
-                 No value fallback — the lookup is the source of truth. */}}
-            {{ "{{" }} $acmSubDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "multicluster-operators-hub-subscription") {{ "}}" }}
-            {{ "{{" }} $acmImageLive := "" {{ "}}" }}
-            {{ "{{" }} if $acmSubDep {{ "}}" }}{{ "{{" }} $acmImageLive = (index $acmSubDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
+            {{/* Same for the PolicyGenerator binary, which comes from the ACM CLI downloads image.
+                 Red Hat Advanced Cluster Management moved the binary to that image in 2.15; the copy left
+                 behind in multicluster-operators-subscription is frozen at the release it moved, so on 2.17
+                 it is still a release-2.15 build. Its embedded kustomize probes Helm with
+                 `helm version -c --short`, and Helm 4 (Red Hat OpenShift GitOps 1.22) removed that
+                 shorthand, so every nested Helm render fails. No value fallback: the lookup is the source
+                 of truth, and an empty image fails the ArgoCD CR loudly. */}}
+            {{ "{{" }} $acmCliDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "acm-cli-downloads") {{ "}}" }}
+            {{ "{{" }} $pgImage := "" {{ "}}" }}
+            {{ "{{" }} if $acmCliDep {{ "}}" }}{{ "{{" }} $pgImage = (index $acmCliDep.spec.template.spec.containers 0).image {{ "}}" }}{{ "{{" }} end {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: argoproj.io/v1beta1
@@ -264,25 +268,31 @@ spec:
                       - name: KUSTOMIZE_PLUGIN_HOME
                         value: /etc/kustomize/plugin
                     initContainers:
-                      # Binary path inside the ACM image varies by version; search known locations.
+                      # Stages the PolicyGenerator binary out of the ACM CLI downloads image.
                       - name: policy-generator-install
-                        image: {{ "{{" }} $acmImageLive {{ "}}" }}
+                        image: {{ "{{" }} $pgImage {{ "}}" }}
                         command: [/bin/sh, -c]
                         args:
                           - |
                             set -e
-                            for src in \
-                              /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator/PolicyGenerator \
-                              /policy-generator/PolicyGenerator \
-                              /policy-generator/PolicyGenerator-rhel8 \
-                              /policy-generator/PolicyGenerator-not-fips-compliant; do
-                              if [ -f "$src" ]; then
-                                cp "$src" /policy-generator-tmp/PolicyGenerator
+                            # /acm-cli holds one tarball per architecture, plus a Red Hat Enterprise Linux 9
+                            # build for x86_64, which is preferred there because it is the FIPS-capable one.
+                            case "$(uname -m)" in
+                              x86_64)  tarballs="PolicyGenerator-rhel9.tar.gz linux-amd64-PolicyGenerator.tar.gz" ;;
+                              aarch64) tarballs="linux-arm64-PolicyGenerator.tar.gz" ;;
+                              ppc64le) tarballs="linux-ppc64le-PolicyGenerator.tar.gz" ;;
+                              s390x)   tarballs="linux-s390x-PolicyGenerator.tar.gz" ;;
+                              *)       tarballs="" ;;
+                            esac
+                            for tarball in $tarballs; do
+                              if [ -f "/acm-cli/$tarball" ]; then
+                                tar -xzf "/acm-cli/$tarball" -C /policy-generator-tmp
                                 chmod +x /policy-generator-tmp/PolicyGenerator
                                 exit 0
                               fi
                             done
-                            echo "PolicyGenerator binary not found in ACM image" >&2
+                            echo "no PolicyGenerator tarball for $(uname -m) in /acm-cli, which holds:" >&2
+                            ls /acm-cli >&2
                             exit 1
                         volumeMounts:
                           - name: policy-generator
