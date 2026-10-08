@@ -44,11 +44,14 @@ gitops:
     # mode (renders PolicyGenerator dirs live); disabled for OCI-only deployments (prerendered Helm).
     # The ApplicationSet forwards the effective value from the deployment's policyGenerator flag.
     enabled: true
-    # Image the PolicyGenerator binary is staged from. Left empty, the chart reads it from the
-    # acm-cli-downloads deployment on the cluster, which is where Red Hat Advanced Cluster
-    # Management has shipped the binary since 2.15. Because that is a Helm lookup resolved once at
-    # install time, the deployment must already exist. Set this only to pin a mirrored image.
-    cliImage: ''
+    # The Red Hat Advanced Cluster Management CLI image, which is what ships the PolicyGenerator
+    # binary. Not to be confused with the bootstrap chart's root `image`, which is the OpenShift CLI
+    # image used by the CRD-wait Job. Left empty, the bootstrap chart and this policy both read this
+    # from the acm-cli-downloads deployment, where Red Hat Advanced Cluster Management has shipped
+    # the binary since 2.15. Set it to pin a mirrored image, or to keep PolicyGenerator working
+    # where the MultiClusterHub console component is disabled, since acm-cli-downloads belongs to
+    # that component. An explicit value wins over the lookup.
+    acmCliImage: ''
     # Excluded from the repository tarball the repo-server streams to a CMP sidecar. This setting is
     # repo-server WIDE, so it hits every plugin-rendered Application on this Argo CD, not just
     # AutoShift's. Only .git is listed because no repository serves manifests out of it; do not add
@@ -111,13 +114,13 @@ gitops:
     # Scaling: raise processors for environments with many Applications. AutoShift generates an
     # Application per policy directory, so even a minimal hub carries dozens.
     #
-    # These sit at the Argo CD defaults, and must stay in step with
-    # policies/stable/openshift-gitops/values.yaml, which takes over once AutoShift manages this
-    # Argo CD. Concurrency multiplies peak memory, because each in-flight comparison holds that
-    # Application's rendered and live state at once. A hub with 58 Applications and 299 Policies was
-    # OOMKilled repeatedly at 50/25 against the previous 4Gi ceiling: it held for an hour at rest and
-    # died the moment every Application was synced at once. Raise these only together with
-    # limits.memory below, and re-measure.
+    # These sit at the Argo CD defaults. An earlier 50/25 was measured at 141s for a full refresh
+    # against 225s at 20/10 on a 51-Application hub, which looked like a free win, but concurrency
+    # multiplies peak memory: each in-flight comparison holds that Application's rendered and live
+    # state at once. A hub running 58 Applications and 299 Policies then hit OOMKilled repeatedly at
+    # the previous 4Gi ceiling, crash looping every few minutes and leaving objects half applied.
+    # Faster refreshes are worth nothing from a controller that cannot finish one. Raise these only
+    # together with limits.memory below, and re-measure.
     statusProcessors: 20 # concurrent status reconciliations (Argo CD default: 20)
     operationProcessors: 10 # concurrent sync operations (Argo CD default: 10)
     # GOMEMLIMIT is DERIVED as this percentage of limits.memory below, so the two cannot drift.
@@ -131,8 +134,10 @@ gitops:
     # THE CLUSTER CACHE IS THE LARGE HALF. The controller builds a full cache per REGISTERED
     # cluster, and caches every API kind in each unless resourceExclusions says otherwise, so the
     # footprint tracks what is installed on the cluster rather than how many Applications exist.
-    # An older 843Mi peak recorded here predates both that exclusion list and the Red Hat Advanced
-    # Cluster Management cluster-proxy registration, and is not a safe number to size against.
+    # A hub used to register itself a second time through the Red Hat Advanced Cluster Management
+    # cluster-proxy addon and pay for two complete caches of itself; the GitOpsCluster placement now
+    # excludes local-cluster. An older 843Mi peak recorded here dates from before that and is not a
+    # safe number to size against.
     #
     # Requests are sized for steady state and limits for a full hard-refresh storm, deliberately NOT
     # equal so the pod stays Burstable rather than reserving the ceiling.
