@@ -64,7 +64,7 @@ spec:
       {{- end }}
     {{- end }}
     {{- /* Declared at repo scope so they're visible in the initContainers/sidecar blocks below. */}}
-    {{- $pgImage := ($pg).cliImage }}
+    {{- $pgImage := "" }}
     {{- $argoImage := ($pg).sidecarImage }}
     {{- /* Reuse the ACM CLI + repo-server images already cached on the cluster; fall back to values.
            Red Hat Advanced Cluster Management ships the PolicyGenerator binary in the image behind
@@ -75,6 +75,8 @@ spec:
            a bootstrap than the subscription deployment did: install this chart after it exists. */}}
     {{- $acmCliDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "acm-cli-downloads") }}
     {{- if $acmCliDep }}{{- $pgImage = (index $acmCliDep.spec.template.spec.containers 0).image }}{{- end }}
+    {{- /* An explicit acmCliImage wins: it is the escape hatch where acm-cli-downloads is absent. */}}
+    {{- with ($pg).acmCliImage }}{{- $pgImage = . }}{{- end }}
     {{- $argoDep := (lookup "apps/v1" "Deployment" .Values.gitops.argoNamespace (printf "%s-repo-server" .Values.gitops.argoName)) }}
     {{- if $argoDep }}{{- $argoImage = (index $argoDep.spec.template.spec.containers 0).image }}{{- end }}
     {{- if or $pgEnabled $caBundle }}
