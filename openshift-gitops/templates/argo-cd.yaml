@@ -64,12 +64,17 @@ spec:
       {{- end }}
     {{- end }}
     {{- /* Declared at repo scope so they're visible in the initContainers/sidecar blocks below. */}}
-    {{- $acmImage := ($pg).subscriptionImage }}
+    {{- $pgImage := ($pg).cliImage }}
     {{- $argoImage := ($pg).sidecarImage }}
-    {{- /* Reuse the ACM + repo-server images already cached on the cluster; fall back to values.
-           The subscription image (which ships PolicyGenerator) runs as multicluster-operators-hub-subscription. */}}
-    {{- $acmDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "multicluster-operators-hub-subscription") }}
-    {{- if $acmDep }}{{- $acmImage = (index $acmDep.spec.template.spec.containers 0).image }}{{- end }}
+    {{- /* Reuse the ACM CLI + repo-server images already cached on the cluster; fall back to values.
+           Red Hat Advanced Cluster Management ships the PolicyGenerator binary in the image behind
+           acm-cli-downloads, and has since 2.15. The copy still present in the subscription image is
+           frozen at release-2.15, whose embedded kustomize probes `helm version -c --short`; Helm 4
+           removed that shorthand, so it cannot render against Red Hat OpenShift GitOps 1.22.
+           acm-cli-downloads belongs to the MultiClusterHub console component, so it appears later in
+           a bootstrap than the subscription deployment did: install this chart after it exists. */}}
+    {{- $acmCliDep := (lookup "apps/v1" "Deployment" "open-cluster-management" "acm-cli-downloads") }}
+    {{- if $acmCliDep }}{{- $pgImage = (index $acmCliDep.spec.template.spec.containers 0).image }}{{- end }}
     {{- $argoDep := (lookup "apps/v1" "Deployment" .Values.gitops.argoNamespace (printf "%s-repo-server" .Values.gitops.argoName)) }}
     {{- if $argoDep }}{{- $argoImage = (index $argoDep.spec.template.spec.containers 0).image }}{{- end }}
     {{- if or $pgEnabled $caBundle }}
@@ -108,28 +113,35 @@ spec:
       - name: KUSTOMIZE_PLUGIN_HOME
         value: /etc/kustomize/plugin
     initContainers:
-      # Copy the PolicyGenerator binary out of the ACM subscription image into the shared volume
-      # the CMP sidecar reads. The binary's path inside the image varies by ACM version, so search
-      # the known locations. The output volume is mounted at /policy-generator-tmp to avoid shadowing
-      # any source path.
+      # Stage the PolicyGenerator binary out of the ACM CLI downloads image into the shared volume
+      # the CMP sidecar reads. The output volume is mounted at /policy-generator-tmp to avoid
+      # shadowing any source path. Kept identical to the init container that
+      # policies/stable/openshift-gitops reconciles onto this same ArgoCD custom resource, so the
+      # day-2 policy is not a change in behaviour.
       - name: policy-generator-install
-        image: {{ $acmImage }}
+        image: {{ $pgImage }}
         command: [/bin/sh, -c]
         args:
           - |
             set -e
-            for src in \
-              /etc/kustomize/plugin/policy.open-cluster-management.io/v1/policygenerator/PolicyGenerator \
-              /policy-generator/PolicyGenerator \
-              /policy-generator/PolicyGenerator-rhel8 \
-              /policy-generator/PolicyGenerator-not-fips-compliant; do
-              if [ -f "$src" ]; then
-                cp "$src" /policy-generator-tmp/PolicyGenerator
+            # /acm-cli holds one tarball per architecture, plus a Red Hat Enterprise Linux 9
+            # build for x86_64, which is preferred there because it is the FIPS-capable one.
+            case "$(uname -m)" in
+              x86_64)  tarballs="PolicyGenerator-rhel9.tar.gz linux-amd64-PolicyGenerator.tar.gz" ;;
+              aarch64) tarballs="linux-arm64-PolicyGenerator.tar.gz" ;;
+              ppc64le) tarballs="linux-ppc64le-PolicyGenerator.tar.gz" ;;
+              s390x)   tarballs="linux-s390x-PolicyGenerator.tar.gz" ;;
+              *)       tarballs="" ;;
+            esac
+            for tarball in $tarballs; do
+              if [ -f "/acm-cli/$tarball" ]; then
+                tar -xzf "/acm-cli/$tarball" -C /policy-generator-tmp
                 chmod +x /policy-generator-tmp/PolicyGenerator
                 exit 0
               fi
             done
-            echo "PolicyGenerator binary not found in ACM image" >&2
+            echo "no PolicyGenerator tarball for $(uname -m) in /acm-cli, which holds:" >&2
+            ls /acm-cli >&2
             exit 1
         volumeMounts:
           - name: policy-generator
