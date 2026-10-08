@@ -3,7 +3,7 @@ module github.com/auto-shift/autoshiftv2/tools
 go 1.25.13
 
 require (
-	github.com/stolostron/go-template-utils/v7 v7.3.0
+	github.com/stolostron/go-template-utils/v7 v7.2.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/apimachinery v0.35.8
 	k8s.io/client-go v0.35.8

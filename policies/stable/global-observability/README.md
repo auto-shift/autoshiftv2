@@ -88,7 +88,7 @@ Keep secret names short and alphanumeric-terminated: MCOA generates `secret-<nam
 | `spokeAgent.globalHubRollup.remoteTimeout` | `30s` | Rollup remote-write timeout |
 | `spokeAgent.globalHubRollup.caFile` / `certFile` / `keyFile` | `/etc/prometheus/secrets/global-observability-secrets/{ca.crt,tls.crt,tls.key}` | Mount paths for the rollup mTLS files |
 
-> **Caveat — `secretNamespace` must match the policy namespace.** The secrets policy writes into `policy_namespace` (computed by the ApplicationSet as `policies-<release-name>`, default `policies-autoshift`), but the rollup reads from the hardcoded `secretNamespace` default. If the AutoShift Application is released under any other name, override `spokeAgent.globalHubRollup.secretNamespace` to match or the rollup secret copy silently fails.
+> **Caveat — `secretNamespace` must match the policy namespace.** The secrets policy writes into `policy_namespace` (computed by the ApplicationSet as `policies-<release-name>`, default `policies-autoshift`), but the rollup reads from the hard-coded `secretNamespace` default. If the AutoShift Application is released under any other name, override `spokeAgent.globalHubRollup.secretNamespace` to match or the rollup secret copy silently fails.
 
 ## Prerequisites
 

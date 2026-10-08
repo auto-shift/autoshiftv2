@@ -1,4 +1,4 @@
-//go:build integration && mutation
+//go:build integration
 
 package resolver
 
@@ -206,8 +206,8 @@ func TestPipeline_MutationSweep(t *testing.T) {
 			expectResolutionError: true,
 		},
 		{
-			// compliance-auto-remediate is a leaf label (no sub-labels) so Pass b
-			// can detect it without being silenced by the prefix check.
+			// A leaf label: nothing in the examples extends it, so pass b reaches it
+			// by the simplest route.
 			name: "remove compliance-auto-remediate declaration → contract Missing violation",
 			mutateDeclared: func(declared map[string]*labels.Declared) {
 				delete(declared, "compliance-auto-remediate")
@@ -215,13 +215,23 @@ func TestPipeline_MutationSweep(t *testing.T) {
 			expectMissingLabel: "compliance-auto-remediate",
 		},
 		{
-			// workload-partitioning has no sub-labels (no workload-partitioning-* in example)
-			// so Pass b detects it without being silenced by the prefix check.
+			// Also a leaf label (no workload-partitioning-* in the examples).
 			name: "remove workload-partitioning declaration → contract Missing violation",
 			mutateDeclared: func(declared map[string]*labels.Declared) {
 				delete(declared, "workload-partitioning")
 			},
 			expectMissingLabel: "workload-partitioning",
+		},
+		{
+			// A label that other declared labels extend, which is the case the two above
+			// deliberately avoid: odf-source, odf-channel and the rest all start with
+			// "odf-". Only a numbered family (odf-1) may silence its stem, so an
+			// undeclared or misspelled label of this shape still has to be reported.
+			name: "remove odf declaration → contract Missing violation despite odf-* sub-labels",
+			mutateDeclared: func(declared map[string]*labels.Declared) {
+				delete(declared, "odf")
+			},
+			expectMissingLabel: "odf",
 		},
 	}
 

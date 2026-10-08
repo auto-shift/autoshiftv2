@@ -2,7 +2,7 @@
 
 This policy installs and configures Red Hat Advanced Cluster Management. Like every other policy it is
 rendered by **PolicyGenerator** (`kustomization.yaml` → `policy-generator-config.yaml`), generating the
-policies for operator install, MultiClusterHub, observability, search-storage, addon-tuning, and
+policies for operator install, MultiClusterHub, observability, search-storage, add-on tuning, and
 provisioning.
 
 The operator install uses the **shared `components/operator-install` chart** (like quay/odf/etc.) —

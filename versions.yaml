@@ -1,0 +1,160 @@
+# Single source of truth for every version AutoShift pins.
+#
+# `inputs` are what you install on a cluster. Everything in `pins` follows from them.
+#
+# Most of these are COMPATIBILITY pins, not currency pins: they must match what the deployed
+# Red Hat OpenShift GitOps or Red Hat Advanced Cluster Management actually runs, because those
+# are what render and resolve the resources that reach a cluster. A newer upstream release is
+# not a reason to bump one. Move a pin when the channel it derives from moves.
+#
+# Each pin lists every file that must agree, and TestVersionPins asserts they do, so a value
+# that appears in four places cannot drift in one of them. Change the value here and the test
+# names each file still holding the old one.
+#
+# Versions deliberately NOT pinned here: the OpenShift CLI follows a release channel, the Vale
+# rule package resolves on every `vale sync`, and `openshiftVersion` in the per-cluster examples
+# is sample data rather than a contract.
+
+inputs:
+  openshift: '4.22'
+  acm: '2.17'
+  gitops: '1.21'
+
+pins:
+  - name: openshift-badge
+    value: '4.22'
+    derivedFrom: openshift
+    locations:
+      - file: README.md
+        pattern: 'badge/OpenShift-([0-9.]+)-red'
+
+  - name: acm-channel
+    value: release-2.17
+    derivedFrom: acm
+    locations:
+      - file: autoshift/values/clustersets/_example.yaml
+        pattern: 'acm-channel: (\S+)'
+      - file: advanced-cluster-management/values.yaml
+        pattern: '^  channel: (\S+)'
+
+  - name: acm-version
+    value: advanced-cluster-management.v2.17.1
+    derivedFrom: acm
+    locations:
+      - file: autoshift/values/clustersets/_example.yaml
+        pattern: "acm-version: '(\\S+)'"
+
+  - name: acm-badge
+    value: '2.17'
+    derivedFrom: acm
+    locations:
+      - file: README.md
+        pattern: 'badge/Advanced_Cluster_Management-([0-9.]+)-blue'
+      - file: README.md
+        pattern: '\| Red Hat Advanced Cluster Management \| ([0-9.]+) \|'
+
+  - name: gitops-channel
+    value: gitops-1.21
+    derivedFrom: gitops
+    locations:
+      - file: autoshift/values/clustersets/_example.yaml
+        pattern: 'gitops-channel: (\S+)'
+      - file: openshift-gitops/values.yaml
+        pattern: '^  channel: (\S+)'
+
+  - name: gitops-version
+    value: openshift-gitops-operator.v1.21.4
+    derivedFrom: gitops
+    locations:
+      - file: autoshift/values/clustersets/_example.yaml
+        pattern: "gitops-version: '(\\S+)'"
+
+  - name: gitops-badge
+    value: '1.21'
+    derivedFrom: gitops
+    locations:
+      - file: README.md
+        pattern: 'badge/OpenShift_GitOps-([0-9.]+)-green'
+      - file: README.md
+        pattern: '\| Red Hat OpenShift GitOps \| ([0-9.]+) \|'
+
+  # Red Hat OpenShift GitOps 1.21 includes Argo CD 3.4.3, Helm 3.19.4 and kustomize 5.8.1.
+  # Rendering locally with a different Helm or kustomize than the repository server uses is how
+  # local output starts to diverge from the cluster.
+  - name: argocd
+    value: 3.4.3
+    derivedFrom: gitops
+    locations:
+      - file: README.md
+        pattern: '\| Argo CD ([0-9.]+), Helm'
+
+  # Red Hat Advanced Cluster Management 2.17 is released with multicluster engine 2.12.
+  - name: multicluster-engine
+    value: '2.12'
+    derivedFrom: acm
+    locations:
+      - file: README.md
+        pattern: '\| multicluster engine ([0-9.]+) \|'
+
+  - name: helm
+    value: v3.19.4
+    derivedFrom: gitops
+    locations:
+      - file: .github/workflows/ci.yaml
+        pattern: '^          version: (v3\.\S+)'
+      - file: .gitlab-ci.yml
+        pattern: 'HELM_VERSION: "(\S+)"'
+      - file: .devcontainer/Containerfile
+        pattern: 'ARG HELM_VERSION=(\S+)'
+      - file: README.md
+        pattern: '\| Helm \| (\S+) \|'
+      - file: README.md
+        pattern: 'Argo CD [0-9.]+, Helm ([0-9.]+), Kustomize'
+
+  - name: kustomize
+    value: v5.8.1
+    derivedFrom: gitops
+    locations:
+      - file: Makefile
+        pattern: 'KUSTOMIZE_VERSION \?= (\S+)'
+      - file: README.md
+        pattern: '\| Kustomize \| (\S+) \|'
+      - file: README.md
+        pattern: 'Helm [0-9.]+, Kustomize ([0-9.]+) \|'
+
+  # Pinned so rendered output cannot change without a change in this repository. Not tied to a
+  # channel: v1.19.0 is simply the current release.
+  - name: policy-generator
+    value: v1.19.0
+    derivedFrom: none
+    locations:
+      - file: Makefile
+        pattern: 'POLICY_GENERATOR_VERSION \?= (\S+)'
+      - file: README.md
+        pattern: '\| PolicyGenerator plugin \| (\S+) \|'
+
+  # The hub and spoke template resolver, so this is the pin that most needs to match the fleet:
+  # resolving locally with a newer resolver than the cluster runs accepts templates the cluster
+  # rejects, and the suite reports success. Red Hat Advanced Cluster Management 2.17 vendors
+  # v7.2.0 in both config-policy-controller and governance-policy-propagator, so this matches it
+  # exactly. Dependabot proposes v7.3.0; it is ignored in .github/dependabot.yml because a newer
+  # release is not a reason to diverge from the fleet.
+  - name: go-template-utils
+    value: v7.2.0
+    derivedFrom: acm
+    locations:
+      - file: tools/go.mod
+        pattern: 'github.com/stolostron/go-template-utils/v7 (\S+)'
+      - file: README.md
+        pattern: '\| go-template-utils \| (\S+) \|'
+
+  # Floor set by go-template-utils, which requires go 1.25.0. Every workflow reads this through
+  # `go-version-file: tools/go.mod`, so the directive is the only place it is set.
+  - name: go
+    value: '1.25.13'
+    derivedFrom: go-template-utils
+    locations:
+      - file: tools/go.mod
+        pattern: '^go (\S+)'
+      - file: README.md
+        pattern: '\| Go \| (\S+) \|'
