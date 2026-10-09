@@ -1,0 +1,21 @@
+object-templates-raw: |
+  {{hub- $node_list := list hub}}
+  {{hub- range $label, $labelvalue := .ManagedClusterLabels hub}}
+    {{hub- if $label | hasPrefix "autoshift.io/unschedulable-control-plane-node" hub}}
+      {{hub- $node_list = append $node_list $labelvalue hub}}
+    {{hub- end hub}}
+  {{hub- end hub}}
+
+  {{- range (list
+    {{hub range $node_list hub}} {{hub . | quote hub}} {{hub end hub}}) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: {{ . }}
+      spec:
+        taints:
+          - key: autoshift.io/unschedulable-control-plane
+            effect: NoSchedule
+  {{- end }}
