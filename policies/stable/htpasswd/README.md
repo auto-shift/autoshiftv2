@@ -7,9 +7,12 @@ AutoShift's ACM **PolicyGenerator** pattern. The directory is a Kustomize source
 it with the hand-authored `placement.yaml`.
 
 Unlike most policies here this installs no operator. It reads `config.htpasswd` from the cluster's
-`rendered-config` ConfigMap and, for each provider, creates the backing `Secret` in
-`openshift-config` and adds the provider to the OAuth CR. Usernames listed under `clusterAdmins`
-also get a `cluster-admin` ClusterRoleBinding.
+`rendered-config` ConfigMap and adds each provider to the OAuth CR, referencing an htpasswd
+`Secret` that already exists in `openshift-config`. Usernames listed under `clusterAdmins` also get
+a `cluster-admin` ClusterRoleBinding.
+
+AutoShift does **not** create the htpasswd Secrets. They are provisioned out of band — via External
+Secrets Operator (ESO) or manually — so no credential material lives in the values files.
 
 ## Layout
 ```
@@ -19,7 +22,7 @@ htpasswd/
   placement.yaml                # Placement predicate (autoshift.io/htpasswd) + tolerations
   manifests/
     htpasswd/
-      htpasswd.yaml             # object-templates-raw: Secrets + OAuth patch + ClusterRoleBindings
+      htpasswd.yaml             # object-templates-raw: OAuth patch + ClusterRoleBindings
                                 #   from config.htpasswd
 ```
 
@@ -52,6 +55,24 @@ hubClusterSets:
       htpasswd: 'true'
 ```
 
+## Provision the Secrets
+Each provider needs an htpasswd `Secret` in `openshift-config` on the spoke cluster. Create it
+before enabling the policy — AutoShift references it by name and never writes credential material.
+
+```bash
+# Generate the htpasswd file
+htpasswd -cBb users.htpasswd admin '<password>'
+htpasswd -Bb  users.htpasswd developer '<password>'
+
+# Create the Secret on the spoke cluster
+oc -n openshift-config create secret generic cluster-admins-htpass \
+  --from-file=htpasswd=users.htpasswd
+```
+
+For fleet use, provision these through **External Secrets Operator** instead — an `ExternalSecret`
+pointing at your secret store (Vault, AWS Secrets Manager, etc.) with the `htpasswd` key. Rotating
+the password then means updating the store, not the cluster.
+
 ## Configuration
 The provider list is data, not labels, so it lives under `config.htpasswd` and reaches the spoke
 through the `rendered-config` ConfigMap.
@@ -62,17 +83,11 @@ hubClusterSets:
     config:
       htpasswd:
         providers:
-          - name: 'Cluster Admins'            # display name on the login page
-            secretName: 'cluster-admins-htpass'  # Secret created in openshift-config
-            htpasswd: |                       # raw htpasswd content, one user:hash per line
-              admin:$2y$05$...
-        clusterAdmins:                        # granted cluster-admin ClusterRoleBinding
+          - name: 'Cluster Admins'               # display name on the login page
+            secretName: 'cluster-admins-htpass'  # existing Secret in openshift-config
+        clusterAdmins:                           # granted cluster-admin ClusterRoleBinding
           - admin
 ```
-
-Generate hashes with `htpasswd -nbB <user> <password>`. Because the hashes are written into a values
-file, keep them in a cluster-level override or an external values repository rather than a
-git-tracked clusterset file shared more widely than the credentials themselves.
 
 ## Verify
 ```bash
