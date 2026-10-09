@@ -145,6 +145,9 @@ func pgManifests(policiesDir, chart string) map[string]string {
 			ConsolidateManifests *bool  `yaml:"consolidateManifests"`
 			Manifests            []struct {
 				Path string `yaml:"path"`
+				// A manifest may override the generated policy name. When it does, that name
+				// is what reaches the cluster, so the index-derived name never appears.
+				Name string `yaml:"name"`
 			} `yaml:"manifests"`
 		} `yaml:"policies"`
 	}
@@ -176,6 +179,9 @@ func pgManifests(policiesDir, chart string) map[string]string {
 			name := p.Name
 			if i > 0 {
 				name = fmt.Sprintf("%s%d", p.Name, i+1)
+			}
+			if m.Name != "" {
+				name = m.Name
 			}
 			out[name] = m.Path
 		}
