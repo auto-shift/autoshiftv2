@@ -48,7 +48,8 @@ policies:
   - name: policy-acm-mch-install
     manifests:
       - path: manifests/mch-install
-  # 3) ACM Observability (MCO + object bucket). Needs the SA for fromSecret/fromConfigMap.
+  # 3) ACM Observability shared objects: namespace, pull secret, MultiClusterObservability.
+  #    Object storage is a separate policy so external-s3 is not blocked on OpenShift Data Foundation.
   - name: policy-acm-observability
     placement:
       placementPath: placement-observability.yaml
@@ -56,9 +57,44 @@ policies:
       serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-acm-mch-install
-      - name: policy-storage-cluster-test
     manifests:
       - path: manifests/observability
+  # 3-noobaa) NooBaa ObjectBucketClaim plus the Thanos secret derived from it.
+  #    Only this policy depends on OpenShift Data Foundation.
+  - name: policy-acm-observability-noobaa
+    placement:
+      placementPath: placement-observability-noobaa.yaml
+    dependencies:
+      - name: policy-acm-observability
+      - name: policy-storage-cluster-test
+    manifests:
+      - path: manifests/observability-noobaa
+  # 3-s3-test) The credentials Secret named by thanosStorage.source must exist, and
+  #    its access and secret key fields must be readable, before the enforcing
+  #    policy writes thanos-object-storage.
+  - name: policy-acm-observability-ext-s3-test
+    remediationAction: inform
+    placement:
+      placementPath: placement-observability-external-s3.yaml
+    dependencies:
+      - name: policy-acm-observability
+    manifests:
+      - path: test/acm-observability-s3-secret.yaml
+    customMessage:
+      noncompliant: >-
+        The credentials Secret named by config.acm.observability.thanosStorage.source
+        is missing on this hub, or access-key or secret-key cannot be read.
+        Bucket, endpoint, and TLS come from that config, not from the Secret.
+  # 3-s3) thanos-object-storage. Connection fields come from thanosStorage config.
+  #    The access key and secret key are read from the Secret that config names.
+  - name: policy-acm-observability-external-s3
+    placement:
+      placementPath: placement-observability-external-s3.yaml
+    dependencies:
+      - name: policy-acm-observability
+      - name: policy-acm-observability-ext-s3-test
+    manifests:
+      - path: manifests/observability-external-s3
   # 3b) Custom metrics allowlist. Gated on its own label rather than folded into
   #     policy-acm-observability: without a gate the ConfigurationPolicy would report
   #     Compliant having verified nothing whenever no custom metrics are configured.
