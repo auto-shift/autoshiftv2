@@ -254,6 +254,24 @@ hubClusterSets:
             exclude: []
 
       # =======================================================================
+      # HTPasswd Identity Provider - policy: htpasswd
+      # =======================================================================
+      # One HTPasswd identity provider per providers[] entry. The policy creates each
+      # backing Secret in openshift-config and adds the provider to the OAuth CR with
+      # musthave, so providers managed outside AutoShift are left in place.
+      # Generate hashes with: htpasswd -nbB <user> <password>
+      # The hashes land in this values file, so keep real ones in a cluster-level
+      # override or an external values repo rather than a widely-shared clusterset file.
+      htpasswd:
+        providers:
+          - name: 'Cluster Admins'              # display name shown on the login page
+            secretName: 'cluster-admins-htpass' # Secret created in openshift-config
+            htpasswd: |                         # raw htpasswd content, one user:hash per line
+              admin:$2y$05$EXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEE
+        clusterAdmins:                          # granted a cluster-admin ClusterRoleBinding
+          - admin
+
+      # =======================================================================
       # Logging - policy: logging
       # =======================================================================
       # One ClusterLogForwarder per entry, created in namespace (default openshift-logging).
