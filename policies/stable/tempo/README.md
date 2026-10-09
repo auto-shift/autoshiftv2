@@ -1,7 +1,7 @@
 # tempo AutoShift Policy
 
 ## Overview
-This policy installs the tempo-product operator using AutoShift patterns.
+This policy installs the tempo-product operator by using AutoShift patterns.
 
 ## Status
 ✅ **Operator Installation**: Ready to deploy  

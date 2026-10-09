@@ -818,22 +818,85 @@ no interactive administrator until you either configure OpenID Connect and list 
 
 ### Ansible automation platform
 
+Labels install the operator and select modes. Instance settings live in `config.aap.instance`.
+
 | Variable                         | Type      | Default Value              | Notes |
 |----------------------------------|-----------|----------------------------|-------|
 | `aap`                            | bool      | `true` or `false`          |  |
-| `aap-channel`                    | string    | `stable-2.5`             |  |
+| `aap-channel`                    | string    | `stable-2.6`               |  |
 | `aap-install-plan-approval`      | string    | `Automatic`                |  |
 | `aap-source`                     | string    | `redhat-operators`         |  |
-| `aap-hub-disabled`               | bool      | `true` or `false`          | 'false' will include Hub content storage in your deployment, 'true' will omit.       |
-| `aap-file-storage`               | bool      | `true` or `false`          | 'false' will use file storage for Hub content storage in your deployment, 'true' will omit. |
-| `aap-file_storage_storage_class` | string    | `ocs-storagecluster-cephfs`| you will set the storage class for your file storage, defaults to OpenShift Data Foundation. you must have a `ReadWriteMany` capable storage class if using anything else. |
-| `aap-file_storage_size`          | bool      | `10G`                      | set the pvc claim size for your file storage.  |
-| `aap-s3-storage`                 | bool      | `true` or `false`          | 'false' will use OpenShift Data Foundation `NooBa` for Hub content storage in your deployment, 'true' will omit. |
-| `aap-eda-disabled`               | bool      | `true` or `false`          | 'false' will include Event-Driven Ansible in your deployment, 'true' will omit. |
-| `aap-lightspeed-disabled`        | bool      | `true` or `false`          | 'false' will include Red Hat Ansible Lightspeed in your deployment, 'true' will omit. |
-| `aap-version`                    | bool      | `aap-operator.v2.6.0-0.1762261205`          | Specific CSV version for controlled upgrades  |
-| `aap-custom-cabundle`            | bool      | `true` or `false`          | 'true' will inject cluster CA Bundle into AAP CRD |
-| `aap-cabundle-name`              | string    | `user-ca-bundle`           |  name of the secret to be created for CA Bundle injection |
+| `aap-version`                    | string    | (optional)                 | Specific CSV version for controlled upgrades |
+| `aap-noobaa-s3-storage`          | bool      | `false`                    | 'true' creates an OpenShift Data Foundation NooBaa bucket and backs Hub content with it. |
+| `aap-custom-cabundle`            | bool      | `false`                    | 'true' injects the cluster CA bundle into the instance through the `user-ca-bundle` Secret. |
+
+**Config block** (`config.aap`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `versions` | list | | Permitted operator CSV versions |
+| `startingCSV` | string | | Initial install pin. An empty value lets Operator Lifecycle Manager choose |
+| `instance` | map | | `AnsibleAutomationPlatform` spec fields. Any field of the spec is accepted |
+
+Fields in `instance` use the custom resource's own names, which are snake_case, such as
+`file_storage_size`, rather than the lowerCamelCase of AutoShift's own keys. List them with
+`oc explain ansibleautomationplatform.spec --recursive`. A misspelled top-level field is rejected:
+`policy-aap-instance` reports NonCompliant with `unknown field` and applies nothing. A misspelled
+field inside a component block such as `hub`, `controller`, or `eda` is accepted and stored, but the
+operator ignores it and every policy stays Compliant.
+
+`policy-aap-ready-test` reports NonCompliant until the instance reconciles successfully, which covers
+every enabled component. Check it after changing `instance`, because `policy-aap-instance` confirms
+only that the spec was applied. Disabling a component that is already deployed does not remove its
+custom resource, so a leftover failing `AutomationHub`, for example, keeps the check NonCompliant
+until you delete it.
+
+The instance spec starts from a base of the controller and Hub enabled, Event-Driven Ansible and
+Red Hat Ansible Lightspeed disabled, and `redis_mode: standalone`. The mode labels add their fields,
+and `instance` is merged last. The merge is key by key and a value in `instance` wins, including
+`false`, `0`, and an empty string. A list replaces the default list whole. A field an earlier layer
+adds cannot be removed from `instance`, only changed.
+
+Hub content needs storage. Set `aap-noobaa-s3-storage`, or set it in `instance.hub`:
+
+```yaml
+config:
+  aap:
+    instance:
+      eda:
+        disabled: false
+      hub:
+        storage_type: file
+        file_storage_size: 10Gi
+        file_storage_storage_class: ocs-storagecluster-cephfs  # must support ReadWriteMany
+```
+
+To use your own S3 bucket, create a Secret in `ansible-automation-platform` on the cluster with
+`s3-access-key-id`, `s3-secret-access-key`, and `s3-bucket-name`, plus `s3-region` or `s3-endpoint`,
+then name it in the configuration. Credentials never go in a values file. `policy-aap-hub-s3-test`
+reports when the Secret or one of its keys is missing.
+
+```yaml
+config:
+  aap:
+    instance:
+      hub:
+        storage_type: S3
+        object_storage_s3_secret: aap-s3
+```
+
+**Deprecated labels.** These are still applied when set, and `config.aap.instance` wins over them.
+Move each to the field shown.
+
+| Label | Replacement in `config.aap.instance` |
+|-------|--------------------------------------|
+| `aap-hub-disabled` | `hub.disabled` |
+| `aap-eda-disabled` | `eda.disabled` |
+| `aap-lightspeed-disabled` | `lightspeed.disabled` |
+| `aap-file-storage: 'true'` | `hub.storage_type: file` |
+| `aap-storage-type` | `hub.storage_type` |
+| `aap-file_storage_size` | `hub.file_storage_size` |
+| `aap-file_storage_storage_class` | `hub.file_storage_storage_class` |
 
 ### OpenShift data foundation
 

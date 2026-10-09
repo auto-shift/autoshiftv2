@@ -1,4 +1,4 @@
-# Global Observability — Quickstart
+# Global Observability — Quick start
 
 Gets the three-tier metrics rollup (global hub → intermediate hubs → workload clusters) running from a working AutoShift deployment. See [architecture.md](architecture.md) for how it works and [README.md](README.md) for the full label/values reference.
 

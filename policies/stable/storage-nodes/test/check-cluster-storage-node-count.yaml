@@ -1,5 +1,23 @@
+# Does the cluster have the storage nodes Red Hat OpenShift Data Foundation needs?
+#
+# Two assertions. The first always renders, so the policy can never report Compliant having checked
+# nothing: it requires at least one Ready node carrying the Data Foundation storage label. The second
+# compares the count against autoshift.io/storage-nodes, which musthave cannot express directly — a
+# count is not a property of one object — so it emits a node that cannot exist when the count is
+# wrong, which is the only way to signal a numeric mismatch.
 object-templates-raw: |
   {{- if (eq {{hub index .ManagedClusterLabels "autoshift.io/storage-nodes-provider" | quote hub}} "baremetal") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        labels:
+          cluster.ocs.openshift.io/openshift-storage: ''
+      status:
+        conditions:
+          - type: Ready
+            status: 'True'
     {{- $storage_nodes := (lookup "v1" "Node" "" "" "cluster.ocs.openshift.io/openshift-storage").items }}
     {{- if not (eq (len $storage_nodes) ( {{hub- index .ManagedClusterLabels "autoshift.io/storage-nodes" hub}} | toInt)) }}
   - complianceType: musthave

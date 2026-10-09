@@ -1,8 +1,8 @@
 object-templates-raw: |
-  {{- /* Inform-only existence check: autoshift.io/openshift-version must appear in
-         ClusterVersion.status.availableUpdates with a release image. The enforce policy
-         reads that same image; without this gate it would set upstream and look Compliant
-         while never starting the upgrade. Already-at-target is Compliant (no upgrade). */ -}}
+  {{- /* Inform gate. autoshift.io/openshift-version must appear in
+         ClusterVersion.status.availableUpdates with a release image. Already-at-target
+         is Compliant. A Recommended False conditional update is reported by
+         openshift-upgrade-allowed-conditional, so this gate stays Compliant in that case. */ -}}
   {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
   {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
   {{- $current := "" }}
@@ -17,10 +17,20 @@ object-templates-raw: |
   {{- if regexMatch "^[0-9]+[.][0-9]+[.][0-9]+" $target }}
   {{-   $done = and (ne $current "") (semverCompare (printf ">= %s" $target) $current) }}
   {{- end }}
+  {{- $conditional := false }}
+  {{- if and (ne $target "") (not $done) (not $found) }}
+  {{-   range $u := (index $status "conditionalUpdates" | default list) }}
+  {{-     $rel := (index $u "release" | default dict) }}
+  {{-     if and (not $conditional) (eq (printf "%v" (index $rel "version" | default "") | trim) $target) }}
+  {{-       $conditional = true }}
+  {{-     end }}
+  {{-   end }}
+  {{- end }}
   {{- /* Validity is decided in Go (reliable). When invalid, force NonCompliant with a mustnothave on
          the ClusterVersion (which always exists) — a scalar existence check, not status-list matching.
-         customMessage is the operator-visible error. */ -}}
-  {{- if or (eq $target "") (and (not $done) (not $found)) }}
+         A version listed under status.conditionalUpdates is a different ConfigurationPolicy,
+         so this message is only the plain miss. */ -}}
+  {{- if or (eq $target "") (and (not $done) (not $found) (not $conditional)) }}
   - complianceType: mustnothave
     objectDefinition:
       apiVersion: config.openshift.io/v1

@@ -39,22 +39,30 @@ policies:
     manifests:
       - path: manifests/channel.yaml
 
-  # 2. Version-exists check (inform) — ClusterVersion.status.availableUpdates must list
-  #    openshift-version with a release image (the same lookup the enforce policy uses).
-  #    Depends on the channel so availableUpdates has recomputed before this runs.
+  # 2. Version-exists check. The plain-miss gate asks the admin to validate cluster
+  #    operators. The conditional gate fails with the Cluster Version Operator reason and
+  #    message; customMessage drops the template text so Governance shows that sentence.
+  #    consolidateManifests is false so the two gates can carry different messages.
   - name: policy-openshift-upgrade-allowed
+    consolidateManifests: false
     remediationAction: inform
     dependencies:
       - name: policy-openshift-upgrade-channel
     manifests:
       - path: test/openshift-upgrade-allowed.yaml
-    customMessage:
-      noncompliant: >
-        openshift-version '{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" hub}}'
-        is missing or is not in ClusterVersion status.availableUpdates with a release image on
-        channel '{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-channel" | default "stable-4.22" hub}}'.
-        policy-openshift-upgrade will not start until this is Compliant. Check the
-        autoshift.io/openshift-version label, the channel, and the cluster's available updates.
+        name: openshift-upgrade-allowed
+        remediationAction: inform
+        customMessage:
+          noncompliant: >
+            openshift-version '{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" hub}}'
+            is not in ClusterVersion status.availableUpdates with a release image on channel
+            '{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-channel" | default "stable-4.22" hub}}'.
+            Validate cluster operators are healthy. policy-openshift-upgrade will not start until this is Compliant.
+      - path: test/openshift-upgrade-allowed-conditional.yaml
+        name: openshift-upgrade-allowed-conditional
+        remediationAction: inform
+        customMessage:
+          noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
 
   # 3. The upgrade (enforce) — sets upstream + desiredUpdate (unless already Progressing). Blocked
   #    until the target exists in availableUpdates (dependency on the allowed check).
