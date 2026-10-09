@@ -254,6 +254,46 @@ hubClusterSets:
             exclude: []
 
       # =======================================================================
+      # HTPasswd Identity Provider - policy: htpasswd
+      # =======================================================================
+      # One HTPasswd identity provider per providers[] entry. The OAuth CR is patched
+      # with musthave, so identity providers managed outside AutoShift are left in place.
+      #
+      # SECRETS: the htpasswd file for each provider is a Secret in openshift-config.
+      # These MUST be pre-created on each spoke cluster — either manually or via
+      # External Secrets Operator (ESO) — NEVER inline in this file. This policy only
+      # references them by name.
+      #
+      # Generate the hashes:
+      #   htpasswd -cBb users.htpasswd admin '<password>'
+      #   htpasswd -Bb  users.htpasswd developer '<password>'
+      #
+      # Create via CLI:
+      #   oc -n openshift-config create secret generic cluster-admins-htpass \
+      #     --from-file=htpasswd=users.htpasswd
+      #
+      # Or as a YAML manifest (apply to each spoke cluster):
+      #   ---
+      #   apiVersion: v1
+      #   kind: Secret
+      #   metadata:
+      #     name: cluster-admins-htpass
+      #     namespace: openshift-config
+      #   type: Opaque
+      #   stringData:
+      #     htpasswd: |
+      #       admin:$2y$05$<bcrypt hash>
+      #
+      # Or via External Secrets Operator (ESO) — create an ExternalSecret referencing
+      # your secret store (Vault, AWS Secrets Manager, etc.) with the htpasswd key.
+      htpasswd:
+        providers:
+          - name: 'Cluster Admins'              # display name shown on the login page
+            secretName: 'cluster-admins-htpass' # existing Secret in openshift-config
+        clusterAdmins:                          # granted a cluster-admin ClusterRoleBinding
+          - admin
+
+      # =======================================================================
       # Logging - policy: logging
       # =======================================================================
       # One ClusterLogForwarder per entry, created in namespace (default openshift-logging).
@@ -1921,6 +1961,13 @@ hubClusterSets:
       # Remove Kubeadmin
       # =======================================================================
       remove-kubeadmin: 'false'              # Remove kubeadmin secret (disables OAuth-based kubeadmin login)
+
+      # =======================================================================
+      # HTPasswd Identity Provider
+      # =======================================================================
+      htpasswd: 'false'                      # Enable htpasswd identity provider
+      # --- Config values go in config.htpasswd (see config section above) ---
+      # providers[], clusterAdmins[]
 
       # =======================================================================
       # Disconnected Mirror Settings
