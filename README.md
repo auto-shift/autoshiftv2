@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/auto-shift/autoshiftv2/blob/main/LICENSE)
 ![OpenShift Version](https://img.shields.io/badge/OpenShift-4.22-red?logo=redhatopenshift&logoColor=white)
 ![Red Hat Advanced Cluster Management Version](https://img.shields.io/badge/Advanced_Cluster_Management-2.17-blue?logo=redhat&logoColor=white)
-![Red Hat OpenShift GitOps Version](https://img.shields.io/badge/OpenShift_GitOps-1.21-green?logo=argo&logoColor=white)
+![Red Hat OpenShift GitOps Version](https://img.shields.io/badge/OpenShift_GitOps-1.22-green?logo=argo&logoColor=white)
 
 AutoShiftv2 is an opinionated [Infrastructure-as-Code (IaC)](https://martinfowler.com/bliki/InfrastructureAsCode.html)
 framework for managing OpenShift at scale with
@@ -35,16 +35,16 @@ clusters is one label; adding it to a single cluster is the same label on that c
 ## Versions
 
 AutoShift targets one combination, laid out the way Red Hat publishes it. OpenShift 4.22 sits
-inside the range Red Hat OpenShift GitOps 1.21 supports.
+inside the range Red Hat OpenShift GitOps 1.22 supports.
 
 | Product | Version | Components | Supported OpenShift Container Platform |
 |---|---|---|---|
-| Red Hat OpenShift GitOps | 1.21 | Argo CD 3.4.3, Helm 3.19.4, Kustomize 5.8.1 | 4.14, 4.16-4.22 |
-| Red Hat Advanced Cluster Management | 2.17 | multicluster engine 2.12 | See the support matrix |
+| Red Hat OpenShift GitOps | 1.22 | Argo CD 3.5.3, Helm 4.2.4, Kustomize 5.8.1 | 4.18-4.22 |
+| Red Hat Advanced Cluster Management | 2.17 | multicluster engine 2.17 | See the support matrix |
 
 Red Hat publishes both, and they are the source for the rows above:
 
-- [Red Hat OpenShift GitOps compatibility and support matrix](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.21/html/release_notes/gitops-release-notes)
+- [Red Hat OpenShift GitOps compatibility and support matrix](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.22/html/release_notes/gitops-release-notes)
 - [Red Hat Advanced Cluster Management 2.17 support matrix](https://access.redhat.com/articles/7142376)
 
 AutoShift pins its own tooling to match what those products run, because the Red Hat OpenShift
@@ -54,8 +54,8 @@ is how local output starts to diverge from the cluster.
 
 | Tool | Version | Derived from |
 |---|---|---|
-| Helm | 3.19.4 | Red Hat OpenShift GitOps 1.21 |
-| Kustomize | 5.8.1 | Red Hat OpenShift GitOps 1.21 |
+| Helm | 4.2.4 | Red Hat OpenShift GitOps 1.22 |
+| Kustomize | 5.8.1 | Red Hat OpenShift GitOps 1.22 |
 | go-template-utils | 7.2.0 | Red Hat Advanced Cluster Management 2.17 |
 | PolicyGenerator plugin | 1.19.0 | Pinned so rendered output cannot change without a change here |
 | Go | 1.26.9 | Floor set by go-template-utils, read from `tools/go.mod` |

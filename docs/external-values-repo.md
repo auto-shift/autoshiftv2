@@ -100,7 +100,7 @@ which is where every Application the chart generates reads policies from, so a f
 value at itself and the policies follow. In a multi-source Application these resolve to the source
 that declares them, not to the values repository.
 
-Requires ArgoCD 2.8+ (OpenShift GitOps 1.9+). AutoShift targets `gitops-1.21`, so this is
+Requires ArgoCD 2.8+ (OpenShift GitOps 1.9+). AutoShift targets `gitops-1.22`, so this is
 comfortably available.
 
 ### OCI mode
