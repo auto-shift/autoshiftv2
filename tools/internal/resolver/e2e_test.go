@@ -110,6 +110,13 @@ func TestPipeline_EndToEnd(t *testing.T) {
 		lbls["autoshift.io/worker-nodes-provider"] = provider
 		lbls["autoshift.io/infra-nodes-provider"] = provider
 		lbls["autoshift.io/storage-nodes-provider"] = provider
+		// 4.22.9 exists only under ClusterVersion.status.conditionalUpdates in
+		// testdata. Pinning one profile to it exercises
+		// openshift-upgrade-allowed-conditional, which otherwise applies nothing
+		// in every profile and reports Compliant.
+		if provider == "aws" {
+			lbls["autoshift.io/openshift-version"] = "4.22.9"
+		}
 		return HubContext{
 			ManagedClusterName:   clusterName,
 			ManagedClusterLabels: lbls,
@@ -206,8 +213,8 @@ func TestPipeline_EndToEnd(t *testing.T) {
 			hubErrCharts++
 			continue
 		}
-		if len(res.SpokeWarns) > 0 {
-			for _, w := range res.SpokeWarns {
+		if spoke := spokeWarnsToReport(res.SpokeWarns); len(spoke) > 0 {
+			for _, w := range spoke {
 				t.Errorf("FAIL  %s: spoke resolution error: %s\n\t       %s", res.Policy, w, resolutionHint(w))
 			}
 			warnCharts++
@@ -234,8 +241,8 @@ func TestPipeline_EndToEnd(t *testing.T) {
 					t.Errorf("FAIL  %s [%s]: hub resolution error: %s\n\t       %s", res.Policy, ec.Name, w, resolutionHint(w))
 				}
 				managedErrCharts++
-			} else if len(cr.SpokeWarns) > 0 {
-				for _, w := range cr.SpokeWarns {
+			} else if spoke := spokeWarnsToReport(cr.SpokeWarns); len(spoke) > 0 {
+				for _, w := range spoke {
 					t.Errorf("FAIL  %s [%s]: spoke resolution error: %s\n\t       %s", res.Policy, ec.Name, w, resolutionHint(w))
 				}
 				managedErrCharts++
@@ -457,6 +464,21 @@ func TestPipeline_EndToEnd(t *testing.T) {
 
 	t.Logf("label contract: %d OK, %d missing, %d orphaned",
 		len(report.OK), len(report.Missing), len(report.Orphaned))
+}
+
+// spokeWarnsToReport drops the openshift-upgrade conditional-update fail().
+// That inform gate uses fail() to put the Cluster Version Operator reason in
+// the Governance message; the suite still exercises the branch (one managed
+// profile targets 4.22.9, which testdata lists only under conditionalUpdates).
+func spokeWarnsToReport(warns []string) []string {
+	var out []string
+	for _, w := range warns {
+		if strings.Contains(w, "is a conditional update (Recommended False)") {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
 }
 
 // TestAutoshiftChart_ClusterInstallExamples renders the top-level autoshift/
