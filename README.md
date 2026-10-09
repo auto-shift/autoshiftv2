@@ -58,7 +58,7 @@ is how local output starts to diverge from the cluster.
 | Kustomize | 5.8.1 | Red Hat OpenShift GitOps 1.21 |
 | go-template-utils | 7.2.0 | Red Hat Advanced Cluster Management 2.17 |
 | PolicyGenerator plugin | 1.19.0 | Pinned so rendered output cannot change without a change here |
-| Go | 1.25.13 | Floor set by go-template-utils, read from `tools/go.mod` |
+| Go | 1.26.9 | Floor set by go-template-utils, read from `tools/go.mod` |
 
 These are compatibility pins, not currency pins: move one when the channel it derives from moves,
 not when upstream releases. Every value lives in `versions.yaml`, which lists each file that must
