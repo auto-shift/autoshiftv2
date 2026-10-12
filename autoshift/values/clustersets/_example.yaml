@@ -650,7 +650,7 @@ hubClusterSets:
             dnsNames: []                     # default: the registry route host
         # Free-form config.yaml keys, merged LAST so they win over everything above. This is
         # where OIDC (*_LOGIN_CONFIG, multi-issuer as of 3.18), DISTRIBUTED_STORAGE_CONFIG for
-        # unmanaged objectstorage, and DB_URI for quay-db-mode: external belong.
+        # unmanaged objectstorage belong. DB_URI is a credential, so it goes in configSecretRef below.
         # NOTE: do not set SSL_PROTOCOLS/SSL_CIPHERS unless you mean to override — with
         # unmanaged TLS, 3.18 inherits the cluster TLS security profile only when NEITHER is set.
         # NEVER put credentials here — this file lives in git. Non-sensitive keys only.
@@ -661,10 +661,15 @@ hubClusterSets:
         # Sensitive config.yaml keys come from a Secret an administrator creates ON THE CLUSTER,
         # so they never enter git. Merged into the config bundle LAST, so it wins over `config`
         # above. This is where object-storage credentials (DISTRIBUTED_STORAGE_CONFIG), DB_URI for
-        # quay-db-mode: external, and OIDC client secrets belong.
+        # quay-db-mode: external, and OIDC client secrets belong. For quay-db-mode: external the
+        # same Secret also carries clair-config.yaml (Clair's connection strings) and, for a database
+        # behind a private CA, extra_ca_cert_<name>.pem. Those keys are copied into the bundle as-is.
         #
         #   oc create secret generic quay-config-extra -n quay-enterprise \
         #     --from-file=config.yaml=./quay-secrets.yaml
+        #
+        # adding, for quay-db-mode: external, --from-file=clair-config.yaml=./clair-config.yaml and,
+        # for a private CA, --from-file=extra_ca_cert_db-ca.pem=./db-ca.pem
         #
         # where quay-secrets.yaml is a config.yaml FRAGMENT, e.g.:
         #   DISTRIBUTED_STORAGE_CONFIG:
@@ -1681,9 +1686,9 @@ hubClusterSets:
       quay-source-namespace: openshift-marketplace
       # Registry database backing. bundled = the Quay Operator's own PostgreSQL Deployment
       # (the shipped default, fine for PoC); managed = CNPG HA clusters provisioned by AutoShift
-      # (requires cloudnative-pg: 'true'); external = bring your own, set DB_URI + the Clair
-      # connstrings in config.quay.config. Quay and Clair each get their OWN database — Red Hat
-      # does not support sharing one between them.
+      # (requires cloudnative-pg: 'true'); external = bring your own, with DB_URI and clair-config.yaml
+      # in the config.quay.configSecretRef Secret (never in values). Quay and Clair each get their
+      # OWN database — Red Hat does not support sharing one between them.
       quay-db-mode: 'bundled'                   # bundled | managed | external
       quay-db-instances: '2'                    # CNPG replicas for the Quay database
       quay-clair-db-instances: '2'              # CNPG replicas for the Clair database

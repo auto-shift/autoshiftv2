@@ -11,7 +11,8 @@
 #
 # Credentials never come from git. config.quay.config is for non-sensitive keys; anything secret
 # (object-storage keys, DB_URI for db-mode external, OIDC client secrets) goes in a Secret an
-# administrator creates on the cluster and names via config.quay.configSecretRef.
+# administrator creates on the cluster and names via config.quay.configSecretRef. That Secret can
+# also carry clair-config.yaml and extra_ca_cert_* files, which are copied into the bundle as-is.
 #
 # Boolean defaults use hasKey, not `| default`: Sprig treats false as empty, so `false | default true`
 # would silently flip an explicit opt-out back on.
@@ -59,14 +60,26 @@ object-templates-raw: |
        secrets) come from a Secret an administrator creates on the cluster — never from git. Merged
        last so it wins over config.quay.config, which is for non-sensitive keys only. */}}
   {{- $fromSecret := dict }}
+  {{- $sec := dict }}
   {{- if $secretName }}
-  {{- $sec := (index ((lookup "v1" "Secret" $secretNs $secretName) | default dict) "data" | default dict) }}
+  {{- $sec = (index ((lookup "v1" "Secret" $secretNs $secretName) | default dict) "data" | default dict) }}
   {{- $rawCfg := (index $sec $secretKey | default "") }}
   {{- if $rawCfg }}
   {{- $fromSecret = ($rawCfg | base64dec | fromYaml) | default dict }}
   {{- end }}
   {{- end }}
   {{- $base = merge $fromSecret $base }}
+  {{/* The same Secret may also carry whole bundle files: clair-config.yaml (required with an
+       unmanaged clairpostgres, which db-mode external sets) and extra_ca_cert_* PEM files (the
+       Operator mounts these into the Quay and Clair pods, for a database served by a private CA).
+       Only those keys are copied. Every other key stays out of the bundle, so a stray ssl.cert
+       cannot silently take over TLS from config.quay.tls. */}}
+  {{- $bundleFiles := dict }}
+  {{- range $k, $v := $sec }}
+  {{- if or (eq $k "clair-config.yaml") (hasPrefix "extra_ca_cert_" $k) }}
+  {{- $_ := set $bundleFiles $k ($v | base64dec) }}
+  {{- end }}
+  {{- end }}
   {{- $dbMode := "{{hub $dbModeHub hub}}" }}
   {{- $tlsSecretName := "{{hub index $tlsCfg "secretName" | default "" hub}}" }}
   {{- $issuerName := "{{hub index $issuerRef "name" | default "" hub}}" }}
@@ -87,6 +100,12 @@ object-templates-raw: |
   {{- $cnpgReady := and (ne $dbMode "bundled") (not (empty $quayUri)) (not (empty $clairHost)) }}
   {{- $external := eq $dbMode "external" }}
   {{- $dbUnmanaged := or $external $cnpgReady }}
+  {{/* Set into the dict rather than appended as text: in db-mode external the admin Secret can
+       also supply DB_URI, and two DB_URI lines would be a duplicate YAML key. */}}
+  {{- if $cnpgReady }}
+  {{- $_ := set $base "DB_URI" $quayUri }}
+  {{- end }}
+  {{- $clairFromSecret := hasKey $bundleFiles "clair-config.yaml" }}
   {{/* Gate-closed: in managed mode with the CNPG app Secrets not yet present, emit nothing rather
        than write a bundle with an empty DB_URI. policy-cnpg-quay-test orders this normally; this
        only covers the Secret being deleted out from under a running registry. */}}
@@ -111,10 +130,11 @@ object-templates-raw: |
       stringData:
         config.yaml: |
           {{ $base | toYaml | autoindent }}
-          {{- if $cnpgReady }}
-          DB_URI: {{ $quayUri }}
-          {{- end }}
-        {{- if $cnpgReady }}
+        {{- range $k, $v := $bundleFiles }}
+        {{ $k }}: |
+          {{ $v | autoindent }}
+        {{- end }}
+        {{- if and $cnpgReady (not $clairFromSecret) }}
         clair-config.yaml: |
           indexer:
             connstring: {{ $clairConn }}

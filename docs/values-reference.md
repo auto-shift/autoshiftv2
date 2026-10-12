@@ -683,7 +683,7 @@ and optionally provisions its databases through CloudNativePG.
 |------|----------|
 | `bundled` | The Quay Operator runs its own PostgreSQL deployments. The shipped default, and appropriate for proof of concept clusters |
 | `managed` | AutoShift provisions two CloudNativePG clusters, `quay-db` and `clair-db`. Requires `cloudnative-pg: 'true'` on the same cluster |
-| `external` | You supply `DB_URI` and the Clair connection strings yourself. See `configSecretRef` in the following section |
+| `external` | You run both databases. Supply `DB_URI` and a `clair-config.yaml` in the `configSecretRef` Secret. See [External PostgreSQL](../policies/stable/quay/README.md#external-postgresql) |
 
 > [!NOTE]
 > Red Hat Quay and Clair must not share a database, so `managed` mode creates two separate
@@ -707,7 +707,7 @@ and optionally provisions its databases through CloudNativePG.
 | `tls.certificate.issuerRef` | map | | Optional. Creates a cert-manager `Certificate` from this issuer |
 | `tls.certificate.dnsNames` | list | | Optional. Defaults to the registry route host |
 | `config` | map | | Extra `config.yaml` keys, merged after the preceding fields. Non-sensitive values only |
-| `configSecretRef` | map | | `{name, namespace, key}` of a Secret holding sensitive `config.yaml` keys |
+| `configSecretRef` | map | | `{name, namespace, key}` of a Secret holding sensitive `config.yaml` keys. Its `clair-config.yaml` and `extra_ca_cert_*` keys, when present, are copied into the config bundle as files |
 | `dbBackupSchedule` | string | `0 4 * * *` | Cron schedule for database backups |
 | `dbBackupRetention` | string | `30d` | Backup retention period |
 

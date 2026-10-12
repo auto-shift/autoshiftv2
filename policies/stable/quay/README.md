@@ -31,7 +31,9 @@ secret, plus the operators Quay depends on.
 |---|---|---|
 | `bundled` (default) | The Quay Operator | Nothing |
 | `managed` | CloudNativePG, as `quay-db` and `clair-db` | `cloudnative-pg: 'true'`, and unlocks `quay-db-backups` |
-| `external` | You | `DB_URI`, supplied in the Secret in step 3 |
+| `external` | You | `DB_URI` and `clair-config.yaml`, supplied in the Secret in step 3. See [External PostgreSQL](#external-postgresql) |
+
+For a production registry, see [High availability](#high-availability) before you choose.
 
 ### 2. Decide where images are stored
 
@@ -133,6 +135,95 @@ component created, so it is the one to watch.
 
 No user exists yet. Creating the first one is an API-only operation in Red Hat Quay, so it happens
 either through OIDC or through a one-time API call. Both paths are in [No Jobs](#no-jobs).
+
+## High availability
+
+The shipped defaults are not highly available. The registry pods scale, but the databases and
+Redis each run as a single pod.
+
+| Component | Default | For high availability |
+|---|---|---|
+| `quay`, `clair`, `mirror` | Scaled by the horizontal pod autoscaler the Quay Operator manages | Keep the autoscaler. To pin replica counts instead, set `overrides.<kind>.replicas` and `components.horizontalpodautoscaler: false` together |
+| `postgres`, `clairpostgres` | One PostgreSQL pod each | `quay-db-mode: managed` for two CloudNativePG clusters, or `quay-db-mode: external` for databases you run |
+| `redis` | One pod | Set `components.redis: false` and supply `BUILDLOGS_REDIS` and `USER_EVENTS_REDIS` for a highly available Redis you run |
+| `objectstorage` | An `ObjectBucketClaim` | Full OpenShift Data Foundation, or your own S3-compatible bucket with `components.objectstorage: false` |
+
+To spread the registry pods across zones, pass `affinity` through `overrides.quay`,
+`overrides.clair`, and `overrides.mirror`.
+
+## External PostgreSQL
+
+Use `quay-db-mode: external` when the databases run outside the cluster, for example on a
+managed cloud database service. AutoShift marks the `postgres` and `clairpostgres` components
+unmanaged, and you supply both connections. Red Hat Quay and Clair each need their own database,
+and neither supports PgBouncer, so connect directly.
+
+Both connections go in the Secret from step 3, because they hold credentials:
+
+| Key | Contents |
+|---|---|
+| `config.yaml` | A fragment with `DB_URI` for the Red Hat Quay database, plus any other sensitive keys |
+| `clair-config.yaml` | The whole Clair configuration, with a `connstring` for the Clair database on `indexer`, `matcher` and `notifier`. Required, because the Quay Operator does not start Clair against an unmanaged database without it |
+| `extra_ca_cert_<name>.pem` | Optional. The certificate authority of a database served by a private CA. The Operator mounts it in the Clair pods at `/run/certs/<name>.pem` |
+
+AutoShift merges `config.yaml` into the config bundle and copies the other two keys into it
+unchanged. It copies no other key from the Secret.
+
+```bash
+cat > /tmp/quay-secrets.yaml <<'EOF'
+DB_URI: postgresql://quay:<password>@quay-db.example.com:5432/quay?sslmode=require
+EOF
+
+cat > /tmp/clair-config.yaml <<'EOF'
+indexer:
+  connstring: host=clair-db.example.com port=5432 dbname=clair user=clair password=<password> sslmode=verify-ca sslrootcert=/run/certs/db-ca.pem
+  migrations: true
+matcher:
+  connstring: host=clair-db.example.com port=5432 dbname=clair user=clair password=<password> sslmode=verify-ca sslrootcert=/run/certs/db-ca.pem
+  migrations: true
+notifier:
+  connstring: host=clair-db.example.com port=5432 dbname=clair user=clair password=<password> sslmode=verify-ca sslrootcert=/run/certs/db-ca.pem
+  migrations: true
+metrics:
+  name: prometheus
+EOF
+
+oc create secret generic quay-config-extra -n quay-enterprise \
+  --from-file=config.yaml=/tmp/quay-secrets.yaml \
+  --from-file=clair-config.yaml=/tmp/clair-config.yaml \
+  --from-file=extra_ca_cert_db-ca.pem=./db-ca.pem
+rm -f /tmp/quay-secrets.yaml /tmp/clair-config.yaml
+```
+
+Then set the mode and point at the Secret:
+
+```yaml
+labels:
+  quay: 'true'
+  quay-db-mode: 'external'
+config:
+  quay:
+    configSecretRef:
+      name: quay-config-extra
+```
+
+If either key is missing, the config bundle is still written and the Quay Operator reports what is
+missing on the `QuayRegistry`, which keeps `policy-quay-test` NonCompliant. Check it with:
+
+```bash
+oc get quayregistry registry -n quay-enterprise -o jsonpath='{.status.conditions}'
+```
+
+The policy reads the Secret each time it evaluates, so a rotated password reaches the config bundle
+on the next evaluation. A `clair-config.yaml` in the Secret also takes
+precedence in `managed` mode, over the configuration AutoShift generates from CloudNativePG.
+
+To verify the Red Hat Quay database certificate as well, rather than only encrypting the
+connection, see [Certificate-based authentication between Red Hat Quay and SQL](https://docs.redhat.com/en/documentation/red_hat_quay/3/html/securing_red_hat_quay/cert-based-auth-quay-sql).
+The Clair connection strings follow [Unmanaged Clair configuration](https://docs.redhat.com/en/documentation/red_hat_quay/3.16/html/vulnerability_reporting_with_clair_on_red_hat_quay/unmanaged-clair-configuration).
+
+$1, set `components.clair: false` and leave
+`clair-config.yaml` out.
 
 ## Policies
 

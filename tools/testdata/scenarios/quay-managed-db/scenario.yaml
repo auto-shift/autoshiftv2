@@ -1,0 +1,42 @@
+description: >-
+  Red Hat Quay with quay-db-mode managed: AutoShift provisions the quay-db and clair-db
+  CloudNativePG clusters and writes their connections into the config bundle from the application
+  Secrets CloudNativePG generates, stubbed in tools/testdata/quay-secrets.yaml.
+
+policies:
+  - stable/quay
+
+expect:
+  - policy: policy-cnpg-quay
+    kind: Cluster
+    namespace: quay-enterprise
+    name: quay-db
+    fields:
+      - path: spec.instances
+        equals: 3
+  - policy: policy-cnpg-quay
+    kind: Cluster
+    namespace: quay-enterprise
+    name: clair-db
+    fields:
+      - path: spec.instances
+        equals: 3
+
+  - policy: policy-quay-deploy-cnpg
+    kind: Secret
+    namespace: quay-enterprise
+    name: quay-registry-config-bundle
+    fields:
+      - path: stringData["config.yaml"]
+        contains: 'DB_URI: postgresql://quay:testtest@quay-db-rw:5432/quay'
+      - path: stringData["clair-config.yaml"]
+        contains: host=clair-db-rw
+
+  - policy: policy-quay-deploy-cnpg
+    kind: QuayRegistry
+    name: registry
+    fields:
+      - path: spec.components[kind=postgres].managed
+        equals: false
+      - path: spec.components[kind=clairpostgres].managed
+        equals: false

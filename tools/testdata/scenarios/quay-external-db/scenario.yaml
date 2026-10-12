@@ -1,0 +1,44 @@
+description: >-
+  Red Hat Quay with quay-db-mode external: both databases run outside the cluster and the
+  administrator supplies DB_URI and clair-config.yaml through configSecretRef. Guards the bundle
+  carrying clair-config.yaml, which the Quay Operator requires with an unmanaged clairpostgres.
+  Without it Clair is blocked while every enforcing policy reports Compliant.
+
+policies:
+  - stable/quay
+
+# An external registry has no CloudNativePG application Secrets. Left in place, they would let the
+# managed-mode path write DB_URI and the Clair config itself and hide a broken external path.
+drop:
+  - {kind: Secret, namespace: quay-enterprise, name: quay-db-app}
+  - {kind: Secret, namespace: quay-enterprise, name: clair-db-app}
+
+expect:
+  - policy: policy-quay-deploy
+    kind: Secret
+    namespace: quay-enterprise
+    name: quay-registry-config-bundle
+    fields:
+      - path: stringData["config.yaml"]
+        contains: 'DB_URI: postgresql://quay:testtest@external-quay-pg:5432/quay'
+      - path: stringData["clair-config.yaml"]
+        contains: host=external-clair-pg
+      - path: stringData["clair-config.yaml"]
+        notContains: clair-db-rw
+      - path: stringData["extra_ca_cert_db-ca.pem"]
+        contains: '-----BEGIN CERTIFICATE-----'
+      - path: stringData["ssl.cert"]
+        absent: true
+
+  # Selectors must match exactly one entry, so these also fail on a duplicated component, which the
+  # Quay Operator resolves by taking the last.
+  - policy: policy-quay-deploy
+    kind: QuayRegistry
+    name: registry
+    fields:
+      - path: spec.components[kind=postgres].managed
+        equals: false
+      - path: spec.components[kind=clairpostgres].managed
+        equals: false
+      - path: spec.components[kind=clair].managed
+        equals: true

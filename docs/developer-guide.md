@@ -874,11 +874,25 @@ KUSTOMIZE_PLUGIN_HOME=$PWD/.tools/kustomize-plugin .tools/kustomize build \
 | `TestPolicyNameLengths` | Fails a Policy name over 40 characters. With a 20-character policy namespace that reaches the 62-character limit on the replicated name, and the policy never arrives on the managed cluster. |
 | `TestVersionPins` | Fails a pinned version that disagrees with `versions.yaml`. Helm alone is pinned in four files, so this replaces a comment asking the next person to keep them identical |
 | `TestObjectTemplatesRaw_ParsesAsYAML` | Parses each resolved `object-templates-raw` block. The surrounding Policy can be valid YAML while the block inside it is not |
+| `TestScenarios` | Each directory under `tools/testdata/scenarios/` as a deployment of its own: a values file layered on `_example.yaml`, rendered through the top-level chart, every policy resolved against it, and the scenario's expectations checked on the objects it would apply. See [Scenarios](#scenarios) |
 | Unit tests | Label contract buckets, declared-label extraction, config key conventions and collisions, synthetic ConfigMap generation, spoke resolution, strip-defaults, `object-templates-raw` YAML validity |
 
 Every policy chart is resolved against five cluster profiles: the primary hub plus one per
 `autoshift/values/clusters/_example-cluster-install-*.yaml` file. Dropping in a new variant file adds
 a profile with no test-code change.
+
+### Scenarios
+
+The example values give every label one value, so each policy is tested in one configuration. A
+label such as `quay-db-mode` has three, and before scenarios two of them never rendered.
+
+A scenario is a directory under `tools/testdata/scenarios/` holding a `values.yaml` in the same shape
+as a file under `autoshift/values/`, a `scenario.yaml` stating what that deployment must render, and
+optional `stubs/` for the cluster objects its policies look up. Adding one needs no Go. The format,
+with a worked example, is in [the scenarios README](../tools/testdata/scenarios/README.md).
+
+Add a scenario when a policy branches on a label or config value the example does not select, and
+write expectations for what the branch exists to produce, not only that it resolves.
 
 ### Empty policies
 
