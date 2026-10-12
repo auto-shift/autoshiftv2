@@ -1,0 +1,30 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-acm-observability-noobaa
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # NooBaa is the default. NotIn matches when acm-observability-storage is absent, so a hub
+  # that only sets acm-observability keeps the ObjectBucketClaim and the OpenShift Data
+  # Foundation dependency. external-s3 hubs are excluded: they have no NooBaa StorageClass.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/acm-observability'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/acm-observability-storage'
+              operator: NotIn
+              values:
+                - 'external-s3'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

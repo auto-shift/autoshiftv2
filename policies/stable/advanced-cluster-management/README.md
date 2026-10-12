@@ -39,6 +39,45 @@ ACM is a **bootstrap operator**: the root-level `advanced-cluster-management/` H
 `helm install`-ed during bootstrap phase 1 to stand up ACM before ArgoCD/PolicyGenerator exist. This
 `policies/` version then manages ACM day-2 through PolicyGenerator once the CMP is available.
 
+## Capabilities
+
+`policy-acm-observability` writes `spec.capabilities` on the `MultiClusterObservability` object from `config.acm.observability.capabilities`. Each toggle defaults to `"true"`. Set one to `"false"` to leave that capability off. `scrapeInterval`, `logLevel`, and `additionalRemoteWrites` live under `config.globalObservability` and are read by the global-observability rollup.
+
+## Object storage
+
+`autoshift.io/acm-observability` enables the stack. `autoshift.io/acm-observability-storage` chooses where Thanos stores metrics. The two modes are separate policies, so a hub on external S3 is not held for Red Hat OpenShift Data Foundation.
+
+| Value | What runs |
+|---|---|
+| `noobaa` (default, including when the label is unset) | `policy-acm-observability-noobaa` creates an `ObjectBucketClaim` and builds `thanos-object-storage` from the bucket the claim produces. It depends on `policy-storage-cluster-test`, so OpenShift Data Foundation has to be enabled. |
+| `external-s3` | `policy-acm-observability-external-s3` writes `thanos-object-storage` from `config.acm.observability.thanosStorage`. The Secret named there holds only the access key and the secret key. |
+
+```yaml
+labels:
+  acm-observability: 'true'
+  acm-observability-storage: 'external-s3'
+config:
+  acm:
+    observability:
+      thanosStorage:
+        bucket: metrics-bucket
+        endpoint: s3.example.com:443
+        insecure: false
+        useClusterCA: false
+        source:
+          namespace: secrets-namespace
+          secretName: thanos-s3-credentials
+```
+
+```bash
+oc create secret generic thanos-s3-credentials \
+  -n secrets-namespace \
+  --from-literal=access-key=<access> \
+  --from-literal=secret-key=<secret>
+```
+
+Create that Secret on every hub that runs observability, including each intermediate hub. The policy reads `access-key` and `secret-key` from it. Bucket, endpoint, and TLS come from `thanosStorage`. Set `useClusterCA: true` when the endpoint should be verified with the hub cluster CA. NooBaa still splits its bucket coordinates and credentials across the ConfigMap and Secret its claim controller writes.
+
 ## Version pinning
 
 Standard: `config.acm.versions` (and optional `config.acm.startingCSV`) pins the permitted CSV(s), else

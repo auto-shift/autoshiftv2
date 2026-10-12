@@ -144,6 +144,28 @@ hubClusterSets:
               cpuArchitecture: x86_64              # x86_64, arm64, s390x or ppc64le
               url: 'https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.22/4.22.0/rhcos-4.22.0-x86_64-live.x86_64.iso'
         observability:
+          # external-s3 only. Bucket, endpoint, and TLS live here. The Secret named by
+          # source holds access-key and secret-key. Create that
+          # Secret on every hub that uses external-s3.
+          thanosStorage:
+            bucket: acm-fake-0001
+            endpoint: s3.example.com:443
+            insecure: false                 # true skips TLS verification
+            useClusterCA: false             # true trusts the hub cluster CA for the endpoint
+            source:
+              namespace: secrets-namespace
+              secretName: thanos-s3-credentials
+          # MCOA capabilities on the MultiClusterObservability object
+          # (policy-acm-observability). Each defaults to "true" when unset.
+          # musthave does not remove a capability already on the object: set a
+          # toggle to 'false' and delete the stale block from the live CR.
+          capabilities:
+            platformAnalytics: 'true'         # incident detection + right-sizing
+            platformLogs: 'true'
+            platformMetrics: 'true'
+            userWorkloadLogs: 'true'
+            userWorkloadMetrics: 'true'
+            userWorkloadTraces: 'true'
           customMetrics:
             platform:
               # not in the default allowlist, so turning it on is observable
@@ -1215,56 +1237,36 @@ hubClusterSets:
         # production. Pinning one tag across a fleet spanning minors deploys the wrong bundle to
         # all but one of them.
         image: ''
-      # Global Observability (three-tier metrics rollup: global hub -> intermediate
-      # hubs -> workload clusters). Enable with the global-observability label below;
-      # placement is driven by that label + self-managed ('true' = global hub,
-      # 'false' = intermediate hub). Base MCO config (retention, storage, thanos)
-      # stays under acm.observability / policy-acm-observability. Do NOT set
-      # acm.observability.enableMCOA when using these capability toggles.
+      # Global Observability rollup settings (PrometheusAgent scrape/log level and
+      # optional extra remote-writes). Enable with the global-observability label
+      # below; placement also uses self-managed ('true' = global hub secrets,
+      # 'false' = intermediate hub agent patching).
       # Prereqs on every participating hub: acm-observability: 'true', coo: 'true'.
+      # See policies/stable/global-observability/README.md and quickstart.md.
       # =======================================================================
       globalObservability:
-        # Extra remote-write targets for each spoke's Prometheus agent, beyond the built-in rollup
-        # to the global hub. secretRef names a Secret on the hub holding the client credentials,
-        # which is copied to each selected cluster. onSelfManagedHub includes the hub itself, which
-        # is off by default because the hub already writes to its own Thanos.
+        scrapeInterval: '300s'              # PrometheusAgent scrape interval
+        logLevel: 'warn'                    # PrometheusAgent log level
+        # Optional targets beyond the built-in rollup to the global hub.
+        # Keep secret names short and alphanumeric-terminated: MCOA truncates
+        # secret-<name> volume names to 63 chars; a cut on a non-alphanumeric
+        # character silently breaks the agent StatefulSet.
+        # secretRef names a Secret on the hub; the policy copies it into the
+        # observability namespace and mounts it at
+        # /etc/prometheus/secrets/<secretRef.name>/.
+        # onSelfManagedHub false (default): intermediate hubs only.
+        # onSelfManagedHub true: every hub that carries this config.
         additionalRemoteWrites:
           - name: 'corp-metrics'
             url: 'https://metrics.example.com/api/v1/write'
             remoteTimeout: '30s'
             onSelfManagedHub: false
-            # The secret is mounted at /etc/prometheus/secrets/<secretRef.name>/
             caFile: '/etc/prometheus/secrets/global-observability-remote-write/ca.crt'
             certFile: '/etc/prometheus/secrets/global-observability-remote-write/tls.crt'
             keyFile: '/etc/prometheus/secrets/global-observability-remote-write/tls.key'
             secretRef:
               name: 'global-observability-remote-write'
               namespace: 'open-cluster-management-observability'
-        # MCOA capability toggles patched onto the MultiClusterObservability CR
-        capabilities:
-          platformAnalytics: 'true'         # incident detection + right-sizing
-          platformLogs: 'true'
-          platformMetrics: 'true'
-          userWorkloadLogs: 'true'
-          userWorkloadMetrics: 'true'
-          userWorkloadTraces: 'true'
-        scrapeInterval: '300s'              # PrometheusAgent scrape interval
-        logLevel: 'warn'                    # PrometheusAgent log level
-        # Optional extra remote-write targets alongside the built-in global rollup.
-        # Keep secret names short and alphanumeric-terminated: MCOA truncates
-        # secret-<name> volume names to 63 chars; a cut on a non-alphanumeric
-        # character silently breaks the agent StatefulSet.
-        # additionalRemoteWrites:
-        #   - name: external-monitoring
-        #     url: https://external.example.com/api/v1/receive
-        #     remoteTimeout: 30s                # optional (default 30s)
-        #     onSelfManagedHub: true            # true: every hub; false: intermediate hubs only (default)
-        #     caFile: /etc/prometheus/secrets/external-certs/ca.crt
-        #     certFile: /etc/prometheus/secrets/external-certs/tls.crt
-        #     keyFile: /etc/prometheus/secrets/external-certs/tls.key
-        #     secretRef:                        # hub secret replicated + mounted into the agent
-        #       name: external-certs
-        #       namespace: some-ns
     labels:
       # =======================================================================
       # Core Configuration
@@ -1320,7 +1322,12 @@ hubClusterSets:
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'High'       # 'Basic' or 'High'
-      acm-observability: 'true'              # Requires ODF for noobaa bucket
+      acm-observability: 'true'
+      # noobaa (default): ObjectBucketClaim, requires OpenShift Data Foundation.
+      # external-s3: bucket, endpoint, and TLS from config.acm.observability.thanosStorage.
+      # The Secret named there holds only the access key and the secret key.
+      # Does not require OpenShift Data Foundation.
+      acm-observability-storage: 'noobaa'
       # ACM Search v2 storage (PVC for the search-indexer PostgreSQL)
       acm-observability-custom-metrics: 'false'   # collect metrics beyond ACM's default allowlist; needs config.acm.observability.customMetrics
       acm-search-storage: 'false'
@@ -1747,10 +1754,12 @@ hubClusterSets:
       coo-source-namespace: openshift-marketplace
 
       # =======================================================================
-      # Global Observability (hub only — settings in config.globalObservability above)
-      # Enables MCOA capability patching + metrics rollup to the global hub.
-      # Placement discriminator is the self-managed label: 'true' = global hub
-      # (secrets policy), 'false' = intermediate hub (PrometheusAgent patching).
+      # Global Observability (hub only)
+      # Enables the three-tier metrics rollup (global hub -> intermediate hubs
+      # -> workload clusters). Config:
+      #   config.globalObservability.{scrapeInterval,logLevel,additionalRemoteWrites}
+      # Placement: self-managed 'true' = global hub (secrets policy);
+      #            self-managed 'false' = intermediate hub (PrometheusAgent patch).
       # Requires acm-observability: 'true' and coo: 'true' on the same hub.
       # =======================================================================
       global-observability: 'false'
