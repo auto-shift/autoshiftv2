@@ -1,0 +1,39 @@
+# SpiffeCSIDriver: exposes the agent's Workload API socket to pods as an ephemeral CSI volume, so a
+# workload reads its SVID from a mounted socket instead of holding a credential.
+#
+# agentSocketPath must match the SpireAgent socketPath (both default to /run/spire/agent-sockets).
+#
+# SCHEDULING. This is a DaemonSet, and it is the reason the tolerations matter: a workload can be
+# scheduled onto ANY node that admits workloads, and if this pod is not on that node the workload
+# silently cannot obtain an SVID: there is no error, the socket is simply absent. AutoShift's own
+# infra-nodes and storage-nodes policies taint most nodes, so anything less than TOLERATE ALL leaves
+# SPIRE covering a fraction of the cluster. That is the same posture the CNI and CSI DaemonSets take,
+# because node-level identity infrastructure has to be wherever workloads are.
+#
+# Setting config.ztwim.csiDriver.tolerations: [] explicitly clears the default, because hasKey
+# distinguishes an explicit empty list from an unset key. A non-empty list replaces it outright.
+#
+# Requests only, no limits; see the note in spire-server.yaml.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $csi := (index $cfg "csiDriver" | default dict) hub}}
+  {{hub- $csiRes := (index $csi "resources" | default (dict "requests" (dict "cpu" "20m" "memory" "64Mi"))) hub}}
+  {{hub- $csiTol := (ternary (index $csi "tolerations") (list (dict "operator" "Exists")) (hasKey $csi "tolerations")) hub}}
+  {{hub- $csiSel := (index $csi "nodeSelector" | default dict) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.openshift.io/v1alpha1
+      kind: SpiffeCSIDriver
+      metadata:
+        name: cluster
+      spec:
+        pluginName: {{hub (index $csi "pluginName" | default "csi.spiffe.io") hub}}
+        agentSocketPath: {{hub (index $csi "agentSocketPath" | default "/run/spire/agent-sockets") hub}}
+        resources: {{hub $csiRes | toRawJson | toLiteral hub}}
+        {{hub- if $csiTol hub}}
+        tolerations: {{hub $csiTol | toRawJson | toLiteral hub}}
+        {{hub- end hub}}
+        {{hub- if $csiSel hub}}
+        nodeSelector: {{hub $csiSel | toRawJson | toLiteral hub}}
+        {{hub- end hub}}
