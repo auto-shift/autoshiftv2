@@ -33,6 +33,16 @@ data:
         {{- $_ := set $prefixedClusterSetLabels (printf "%s%s" $labelPrefix $label) ($value | trim) -}}
       {{- end -}}
     {{- end -}}
+    {{- /* Stamped on every clusterset so the label, not a per-policy fallback, is the source of
+           truth for the gitops namespace. Helm policies default it to the rendered
+           .Values.gitopsNamespace; PolicyGenerator policies cannot read values and can only
+           hardcode a literal, so only a stamped label keeps the two in agreement when
+           gitopsNamespace is not openshift-gitops. A per-cluster label still overrides this, and an
+           explicit empty value still deletes, because both set the key. */ -}}
+    {{- $gitopsNsKey := printf "%sgitops-namespace" $labelPrefix -}}
+    {{- if not (hasKey $prefixedClusterSetLabels $gitopsNsKey) -}}
+      {{- $_ := set $prefixedClusterSetLabels $gitopsNsKey ($.Values.gitopsNamespace | default "openshift-gitops") -}}
+    {{- end -}}
     {{- $_ := set $data "labels" $prefixedClusterSetLabels -}}
 apiVersion: v1
 kind: ConfigMap

@@ -1,0 +1,68 @@
+object-templates-raw: |
+  # SPOKE teardown, for a team whose gitops-dev-team-<team> label on this cluster reads
+  # 'uninstall'. Removal is opt-in by that value alone: a label that merely disappears removes
+  # nothing, so a values mistake cannot revoke a team's agent.
+  #
+  # Rendering nothing is the normal result, since most clusters have no team being torn down.
+  # customMessage.compliant in policy-generator-config.yaml states that.
+  # Read before the loop: range rebinds the dot, so .ManagedClusterLabels is unreachable inside it.
+  {{hub- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") hub}}
+  {{hub- $isHubCluster := eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub" hub}}
+  {{hub- range $label, $val := .ManagedClusterLabels hub}}
+  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
+  {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") hub}}
+  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
+  # lookup here, NOT fromConfigMap, unlike the policies that CREATE these objects. Teardown has to
+  # work when the config is already gone: removing a team from config is a normal way to retire it,
+  # and failing without config would leave the objects behind forever. The namespace falls back to
+  # the default, which is what it was if config never named another.
+  {{hub- $spec := (index (dig "gitops" "teams" dict (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml | default dict)) $team | default dict) hub}}
+  # Where this team's Argo CD instance lives on THIS cluster, defaulting to openshift-gitops-<team>.
+  # infra on a HUB is the exception: policy-gitops-systems-argocd places infra-gitops there, in the
+  # gitops namespace, so infra resolves to that and attaches rather than building a rival instance.
+  # That policy is placed on hub clustersets only, so on a spoke there is nothing to attach to and
+  # infra takes the openshift-gitops-<team> default like anyone else.
+  {{hub- $nsDefault := ternary $gitopsNs (printf "openshift-gitops-%s" $team) (and $isInfra $isHubCluster) hub}}
+  {{hub- $teamNs := (dig "namespace" $nsDefault $spec) hub}}
+  # The agent instance. Removing this stops the process dialling the principal, so it goes first.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: {{hub printf "%s-agent" $team hub}}
+        namespace: {{hub $teamNs hub}}
+  # The credentials it authenticated with. Worth removing even though the hub half revokes the
+  # certificate too, because a private key left on a spoke is a private key left on a spoke.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gitops-agent-client-tls
+        namespace: {{hub $teamNs hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gitops-agent-ca
+        namespace: {{hub $teamNs hub}}
+  # The cluster-scoped namespace reader the agent needs for its Namespace informer.
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{hub printf "gitops-agent-%s-namespaces" $team hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: {{hub printf "gitops-agent-%s-namespaces" $team hub}}
+  # openshift-gitops-<team> is deliberately NOT removed. In hub and standalone modes that namespace
+  # holds the team's own Argo CD, and even in agent mode it can hold whatever the team deployed into
+  # it. Deleting a namespace deletes everything inside it, which is far beyond taking an agent out.
+  {{hub- end hub}}
+  {{hub- end hub}}
