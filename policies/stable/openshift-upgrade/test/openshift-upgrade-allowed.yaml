@@ -1,9 +1,14 @@
 object-templates-raw: |
   {{- /* Inform gate. autoshift.io/openshift-version must appear in
          ClusterVersion.status.availableUpdates with a release image. Already-at-target
-         is Compliant. A Recommended False conditional update is reported by
-         openshift-upgrade-allowed-conditional, so this gate stays Compliant in that case. */ -}}
+         is Compliant. A release CVO has accepted (status.desired.version, or a Partial
+         history entry) has left availableUpdates and is Compliant here too; completion
+         stays on policy-openshift-upgrade-status. A Recommended False conditional update
+         is reported by openshift-upgrade-allowed-conditional, so this gate stays
+         Compliant in that case unless openshift-allow-condition is true. Then
+         the release image on that entry is treated as found. */ -}}
   {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
+  {{- $allowConditional := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-allow-conditional" | default "false" hub}}" }}
   {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
   {{- $current := "" }}
   {{- range $h := (index $status "history" | default list) }}
@@ -18,19 +23,31 @@ object-templates-raw: |
   {{-   $done = and (ne $current "") (semverCompare (printf ">= %s" $target) $current) }}
   {{- end }}
   {{- $conditional := false }}
+  {{- $conditionalImage := "" }}
   {{- if and (ne $target "") (not $done) (not $found) }}
   {{-   range $u := (index $status "conditionalUpdates" | default list) }}
   {{-     $rel := (index $u "release" | default dict) }}
   {{-     if and (not $conditional) (eq (printf "%v" (index $rel "version" | default "") | trim) $target) }}
   {{-       $conditional = true }}
+  {{-       $conditionalImage = (index $rel "image" | default "") }}
   {{-     end }}
   {{-   end }}
   {{- end }}
+  {{- if and (eq $allowConditional "true") (ne $conditionalImage "") }}{{- $found = true }}{{- end }}
+  {{- $deferConditional := and $conditional (ne $allowConditional "true") }}
+  {{- /* CVO drops the release from availableUpdates once it is the desired update. */ -}}
+  {{- $updating := false }}
+  {{- $desired := (printf "%v" (index (index $status "desired" | default dict) "version" | default "") | trim) }}
+  {{- if and (ne $target "") (eq $desired $target) }}{{- $updating = true }}{{- end }}
+  {{- range $h := (index $status "history" | default list) }}
+  {{-   if and (not $updating) (eq (index $h "state") "Partial") (eq (printf "%v" (index $h "version" | default "") | trim) $target) }}{{- $updating = true }}{{- end }}
+  {{- end }}
   {{- /* Validity is decided in Go (reliable). When invalid, force NonCompliant with a mustnothave on
          the ClusterVersion (which always exists) — a scalar existence check, not status-list matching.
-         A version listed under status.conditionalUpdates is a different ConfigurationPolicy,
-         so this message is only the plain miss. */ -}}
-  {{- if or (eq $target "") (and (not $done) (not $found) (not $conditional)) }}
+         A version listed under status.conditionalUpdates is a different ConfigurationPolicy
+         unless openshift-allow-condition is true, so this message is only the plain miss.
+         An accepted or Partial update is not a miss. */ -}}
+  {{- if or (eq $target "") (and (not $done) (not $found) (not $deferConditional) (not $updating)) }}
   - complianceType: mustnothave
     objectDefinition:
       apiVersion: config.openshift.io/v1

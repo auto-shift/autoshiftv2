@@ -22,11 +22,11 @@ the target, drive the upgrade, report completion:
 | # | Policy | Mode | Role |
 |---|---|---|---|
 | 1 | `policy-openshift-upgrade-channel` | enforce | Sets the `ClusterVersion` channel first, so `availableUpdates` recomputes for the desired channel. Without this, a y-stream target could deadlock the following check. |
-| 2 | `policy-openshift-upgrade-allowed` | inform | Looks up `ClusterVersion.status.availableUpdates` and is Compliant only when `openshift-version` is already running, or is listed there with a release image. **Policy 3 depends on it**, so a mistyped or unpublished version, or a version with no release image, surfaces here and the upgrade never starts. A plain miss names the target version and channel and says to validate that the cluster operators are healthy. A target listed under `status.conditionalUpdates` is NonCompliant, and the message is the Cluster Version Operator reason and risk text. |
-| 3 | `policy-openshift-upgrade` | enforce | Sets `upstream` and `desiredUpdate.version` plus `desiredUpdate.image`; the Cluster Version Operator (CVO) does the upgrade. |
+| 2 | `policy-openshift-upgrade-allowed` | inform | Looks up `ClusterVersion.status.availableUpdates` and is Compliant when `openshift-version` is already running, is listed there with a release image, or is already the accepted update (`status.desired.version`, or a `Partial` history entry). The Cluster Version Operator removes that release from `availableUpdates` once the upgrade starts, and completion stays on `policy-openshift-upgrade-status`. **Policy 3 depends on it**, so a mistyped or unpublished version, or a version with no release image, surfaces here and the upgrade never starts. A plain miss names the target version and channel and says to validate that the cluster operators are healthy. A target listed under `status.conditionalUpdates` is NonCompliant, and the message is the Cluster Version Operator reason and risk text, unless `autoshift.io/openshift-allow-conditional` is `'true'`. |
+| 3 | `policy-openshift-upgrade` | enforce | Sets `upstream` and `desiredUpdate.version` plus `desiredUpdate.image`; the Cluster Version Operator (CVO) does the upgrade. The image is read from `status.availableUpdates`. When `openshift-allow-condition` is `'true'` and the target is only under `status.conditionalUpdates`, the image is copied from that entry. |
 | 4 | `policy-openshift-upgrade-status` | inform | The completion gate — Compliant only once the cluster has actually reached the target. **This is the one to watch for wave rollouts.** |
 
-`Recommended: False` means the Cluster Version Operator evaluated the risk on this cluster and it matched. That violation's message is the reason and the risk text. A release that leaves `status.conditionalUpdates` clears the violation.
+`Recommended: False` means the Cluster Version Operator evaluated the risk on this cluster and it matched. That violation's message is the reason and the risk text. A release that leaves `status.conditionalUpdates` clears the violation. Set `autoshift.io/openshift-allow-conditional: 'true'` on the clusterset (or one cluster) to accept that risk: the allowed check becomes Compliant and the enforce policy copies the release image from `status.conditionalUpdates` into `spec.desiredUpdate`. Leave the label at `'false'` unless that override is intended.
 
 Two guards keep this safe:
 
@@ -35,7 +35,7 @@ Two guards keep this safe:
   skips while the cluster is already `Progressing`, so it never fights an in-flight upgrade.
 - **Dependency gate** (`policy-openshift-upgrade` → `policy-openshift-upgrade-allowed` → channel) — a missing, mistyped, or unpublished
   `openshift-version`, or a listed version with no release image, is `NonCompliant` on `policy-openshift-upgrade-allowed`.
-  A plain miss names the target version and channel and says to validate that the cluster operators are healthy. A conditional update's message is the Cluster Version Operator reason and risk text.
+  A plain miss names the target version and channel and says to validate that the cluster operators are healthy. A release already accepted as `status.desired.version`, or present as a `Partial` history entry, is Compliant on this gate. A conditional update's message is the Cluster Version Operator reason and risk text, unless `openshift-allow-condition` is `'true'`.
   The enforce policy stays Pending until that check is Compliant.
 
 > **How completion is detected.** `policy-openshift-upgrade-status` does *not* assert `status.history` as a policy field. Red Hat Advanced Cluster Management
@@ -54,6 +54,7 @@ Two guards keep this safe:
 | `autoshift.io/openshift-version` | target version — shared with operator-channel tooling (upgrades only if `> current`) | `'4.22.8'` |
 | `autoshift.io/openshift-upgrade-channel` | `ClusterVersion` channel (default `stable-4.22`) | `'stable-4.22'` |
 | `autoshift.io/openshift-upgrade-upstream` | OpenShift Update Service graph (local URL when disconnected) | `https://api.openshift.com/...` |
+| `autoshift.io/openshift-allow-conditional` | apply a Recommended False update from `status.conditionalUpdates` | `'false'` |
 
 ## Validation is free
 

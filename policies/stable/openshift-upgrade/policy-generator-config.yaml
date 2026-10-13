@@ -62,10 +62,11 @@ policies:
         name: openshift-upgrade-allowed-conditional
         remediationAction: inform
         customMessage:
-          noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
+          noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}. If you are confident the upgrade is safe, set the AutoShift label openshift-allow-conditional: true to allow policy-openshift-upgrade to proceed.'
 
   # 3. The upgrade (enforce) — sets upstream + desiredUpdate (unless already Progressing). Blocked
-  #    until the target exists in availableUpdates (dependency on the allowed check).
+  #    until the allowed check is Compliant. The image comes from availableUpdates, or from
+  #    conditionalUpdates when openshift-allow-conditional is true.
   - name: policy-openshift-upgrade
     dependencies:
       - name: policy-openshift-upgrade-allowed
