@@ -1,0 +1,70 @@
+{{- $policyNamespace := $.Values.policy_namespace }}
+{{- $policyName := "policy-siteconfig-reinstall" }}
+{{- $placementName := (printf "placement-%s" $policyName) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $policyNamespace }}
+  annotations:
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+spec:
+  disabled: false
+{{- if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{- end }}
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: "policy-cluster-install-reinstall"
+        spec:
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          remediationAction: enforce
+          severity: high
+          object-templates-raw: |
+          
+            {{ "{{hub-" }} $siteConfig := index (index (fromConfigMap "{{ $policyNamespace }}" (print .ManagedClusterName ".rendered-config") "config" | default "{}") | fromYaml).acm "siteConfig" | default dict {{ "hub}}" }}
+            - complianceType: musthave
+              objectDefinition:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                  name: siteconfig-operator-configuration
+                  namespace: open-cluster-management 
+              data:
+              {{ "{{hub-" }} if eq ($siteConfig).enableReinstall true {{ "hub}}" }}
+                  allowReinstalls: true
+              {{ "{{hub-" }} else {{ "hub}}" }}
+                  allowReinstalls: false
+              {{ "{{hub-" }} end {{ "hub}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-acm-provisioning
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-acm-provisioning
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-acm-provisioning
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-acm-provisioning
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
