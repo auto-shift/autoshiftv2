@@ -86,6 +86,16 @@ policies:
       placementPath: placement-cnpg.yaml
     manifests:
       - path: manifests/quay-deploy
+  # 3-input) db-mode external input check (inform). No dependency, so a missing Secret or key is
+  #    reported at once rather than only after the registry fails to become ready.
+  - name: policy-quay-external-db
+    remediationAction: inform
+    placement:
+      placementPath: placement-external-db.yaml
+    manifests:
+      - path: test/quay-external-db.yaml
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
   # 3-test) QuayRegistry readiness (status observation → inform, its own Policy in test/).
   - name: policy-quay-test
     remediationAction: inform

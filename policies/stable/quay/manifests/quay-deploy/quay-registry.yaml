@@ -69,18 +69,21 @@ object-templates-raw: |
   {{- end }}
   {{- end }}
   {{- $base = merge $fromSecret $base }}
+  {{- $dbMode := "{{hub $dbModeHub hub}}" }}
+  {{- $external := eq $dbMode "external" }}
   {{/* The same Secret may also carry whole bundle files: clair-config.yaml (required with an
        unmanaged clairpostgres, which db-mode external sets) and extra_ca_cert_* PEM files (the
        Operator mounts these into the Quay and Clair pods, for a database served by a private CA).
        Only those keys are copied. Every other key stays out of the bundle, so a stray ssl.cert
-       cannot silently take over TLS from config.quay.tls. */}}
+       cannot silently take over TLS from config.quay.tls. clair-config.yaml is copied only in
+       db-mode external: in managed mode a leftover one would keep Clair on the old database while
+       DB_URI moves Quay to CNPG. */}}
   {{- $bundleFiles := dict }}
   {{- range $k, $v := $sec }}
-  {{- if or (eq $k "clair-config.yaml") (hasPrefix "extra_ca_cert_" $k) }}
+  {{- if or (and $external (eq $k "clair-config.yaml")) (hasPrefix "extra_ca_cert_" $k) }}
   {{- $_ := set $bundleFiles $k ($v | base64dec) }}
   {{- end }}
   {{- end }}
-  {{- $dbMode := "{{hub $dbModeHub hub}}" }}
   {{- $tlsSecretName := "{{hub index $tlsCfg "secretName" | default "" hub}}" }}
   {{- $issuerName := "{{hub index $issuerRef "name" | default "" hub}}" }}
   {{- $issuerKind := "{{hub index $issuerRef "kind" | default "ClusterIssuer" hub}}" }}
@@ -98,7 +101,6 @@ object-templates-raw: |
   {{- $clairPass := (index $clairDb "password" | default "" | base64dec) }}
   {{- $clairConn := printf "host=%s port=%s dbname=%s user=%s password=%s sslmode=require" $clairHost $clairPort $clairName $clairUser $clairPass }}
   {{- $cnpgReady := and (ne $dbMode "bundled") (not (empty $quayUri)) (not (empty $clairHost)) }}
-  {{- $external := eq $dbMode "external" }}
   {{- $dbUnmanaged := or $external $cnpgReady }}
   {{/* Set into the dict rather than appended as text: in db-mode external the admin Secret can
        also supply DB_URI, and two DB_URI lines would be a duplicate YAML key. */}}

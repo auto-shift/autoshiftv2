@@ -1,0 +1,25 @@
+# The Secret left behind by a registry that moved from quay-db-mode external to managed. Replaces
+# the shared stub of the same name in tools/testdata/quay-secrets.yaml for this scenario only.
+#
+# Values are deliberately low-entropy placeholders: tools/testdata/ is not allowlisted in
+# .gitleaks.toml.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: quay-config-extra
+  namespace: quay-enterprise
+type: Opaque
+stringData:
+  config.yaml: |
+    DB_URI: postgresql://quay:testtest@external-quay-pg:5432/quay?sslmode=require
+  # Must not reach the bundle in managed mode, where Clair belongs on clair-db.
+  clair-config.yaml: |
+    indexer:
+      connstring: host=external-clair-pg port=5432 dbname=clair user=clair password=testtest
+      migrations: true
+    matcher:
+      connstring: host=external-clair-pg port=5432 dbname=clair user=clair password=testtest
+      migrations: true
+    notifier:
+      connstring: host=external-clair-pg port=5432 dbname=clair user=clair password=testtest
+      migrations: true

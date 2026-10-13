@@ -178,7 +178,7 @@ created for each replica of the image service. Sized to hold the image catalog: 
 | `acm-observability-storage` | string    | `noobaa`                  | `noobaa` creates a NooBaa bucket and requires Red Hat OpenShift Data Foundation. `external-s3` reads `config.acm.observability.thanosStorage` and does not require OpenShift Data Foundation |
 | `acm-observability-custom-metrics` | bool | `false` | Collect metrics beyond the default allowlist. Requires `config.acm.observability.customMetrics` |
 | `acm-search-storage`        | bool      | `true` or `false`         | Enable persistent storage for Red Hat Advanced Cluster Management Search (recommended for production) |
-| `acm-search-storage-class`  | string    | `ocs-storagecluster-ceph-rbd` | Storage class for Search database |
+| `acm-search-storage-class`  | string    | cluster default           | Storage class for Search database. Unset uses the cluster's default StorageClass; with no default, Search falls back to `emptyDir` |
 | `acm-search-storage-size`   | string    | `100Gi`                   | Storage size for Search database. Sizing: Small (<50 clusters): 20Gi, Medium (50-200): 50Gi, Large (200-500): 100Gi, Very Large (500+): 200Gi+ |
 | `acm-addon-tuning`          | bool      | `true` or `false`         | Enable add-on tuning for governance controllers. Recommended for 50+ managed clusters. See the sizing guidelines that follow. |
 | `acm-addon-cpc-eval-concurrency` | string | `5`                  | config-policy-controller concurrent policy evaluations (default: 2) |

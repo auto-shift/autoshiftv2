@@ -145,7 +145,7 @@ Redis each run as a single pod.
 |---|---|---|
 | `quay`, `clair`, `mirror` | Scaled by the horizontal pod autoscaler the Quay Operator manages | Keep the autoscaler. To pin replica counts instead, set `overrides.<kind>.replicas` and `components.horizontalpodautoscaler: false` together |
 | `postgres`, `clairpostgres` | One PostgreSQL pod each | `quay-db-mode: managed` for two CloudNativePG clusters, or `quay-db-mode: external` for databases you run |
-| `redis` | One pod | Set `components.redis: false` and supply `BUILDLOGS_REDIS` and `USER_EVENTS_REDIS` for a highly available Redis you run |
+| `redis` | One pod | Set `components.redis: false` and supply `BUILDLOGS_REDIS` and `USER_EVENTS_REDIS` for a highly available Redis you run, dedicated to Red Hat Quay and not shared with Clair |
 | `objectstorage` | An `ObjectBucketClaim` | Full OpenShift Data Foundation, or your own S3-compatible bucket with `components.objectstorage: false` |
 
 To spread the registry pods across zones, pass `affinity` through `overrides.quay`,
@@ -157,6 +157,15 @@ Use `quay-db-mode: external` when the databases run outside the cluster, for exa
 managed cloud database service. AutoShift marks the `postgres` and `clairpostgres` components
 unmanaged, and you supply both connections. Red Hat Quay and Clair each need their own database,
 and neither supports PgBouncer, so connect directly.
+
+Prepare both databases before you set the mode:
+
+- Enable the `pg_trgm` extension on the Red Hat Quay database with `CREATE EXTENSION IF NOT EXISTS pg_trgm;`.
+  The schema migration fails without it. `managed` mode creates it for you.
+- Do not share either database with other workloads. Red Hat Quay and Clair open many connections
+  and can exhaust the PostgreSQL connection limit.
+- Back up both databases yourself, and size their storage. The Quay Operator does neither for an
+  external database, and `quay-db-backups` covers only `managed` mode.
 
 Both connections go in the Secret from step 3, because they hold credentials:
 
@@ -207,22 +216,28 @@ config:
       name: quay-config-extra
 ```
 
-If either key is missing, the config bundle is still written and the Quay Operator reports what is
-missing on the `QuayRegistry`, which keeps `policy-quay-test` NonCompliant. Check it with:
+If the reference, the Secret, `DB_URI` or, with Clair enabled, `clair-config.yaml` is missing,
+`policy-quay-external-db` reports NonCompliant and names what is missing. The config bundle is still
+written, and the Quay Operator reports the failure on the `QuayRegistry`, which keeps
+`policy-quay-test` NonCompliant. Check it with:
 
 ```bash
 oc get quayregistry registry -n quay-enterprise -o jsonpath='{.status.conditions}'
 ```
 
 The policy reads the Secret each time it evaluates, so a rotated password reaches the config bundle
-on the next evaluation. A `clair-config.yaml` in the Secret also takes
-precedence in `managed` mode, over the configuration AutoShift generates from CloudNativePG.
+on the next evaluation. The Secret's `DB_URI` and `clair-config.yaml` apply only in `external` mode.
+In `managed` mode AutoShift writes both connections from CloudNativePG, so a Secret left over from an
+external setup does not keep either component on the old database.
+
+AutoShift adds keys to the config bundle but never removes them. After you delete an
+`extra_ca_cert_*` key from the Secret, also remove it from `quay-registry-config-bundle`.
 
 To verify the Red Hat Quay database certificate as well, rather than only encrypting the
 connection, see [Certificate-based authentication between Red Hat Quay and SQL](https://docs.redhat.com/en/documentation/red_hat_quay/3/html/securing_red_hat_quay/cert-based-auth-quay-sql).
-The Clair connection strings follow [Unmanaged Clair configuration](https://docs.redhat.com/en/documentation/red_hat_quay/3.16/html/vulnerability_reporting_with_clair_on_red_hat_quay/unmanaged-clair-configuration).
+The Clair connection strings follow [Unmanaged Clair configuration](https://docs.redhat.com/en/documentation/red_hat_quay/3/html/vulnerability_reporting_with_clair_on_red_hat_quay/unmanaged-clair-configuration).
 
-$1, set `components.clair: false` and leave
+To skip vulnerability scanning instead, set `components.clair: false` and leave
 `clair-config.yaml` out.
 
 ## Policies
@@ -235,6 +250,7 @@ $1, set `components.clair: false` and leave
 | `policy-quay-deploy` | `quay` + `quay-db-mode` not `managed` | Config bundle, certificate, `QuayRegistry` |
 | `policy-quay-deploy-cnpg` | `quay` + `quay-db-mode: managed` | Same manifests, additionally gated on database readiness |
 | `policy-quay-test` | `quay` | Registry readiness gate (inform) |
+| `policy-quay-external-db` | `quay` + `quay-db-mode: external` | Reports a missing `configSecretRef`, Secret, `DB_URI` or `clair-config.yaml` (inform) |
 | `policy-quay-tls-issuer` | `quay` | Reports when cert-manager TLS was requested but is not in effect (inform) |
 | `policy-quay-configure` | `quay` | Console link and registry host ConfigMap |
 | `policy-cnpg-quay-backup` | `quay` + `quay-db-mode: managed` + `quay-db-backups` + `odf` | Scheduled backups to a NooBaa bucket |

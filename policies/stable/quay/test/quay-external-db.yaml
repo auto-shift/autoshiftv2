@@ -1,0 +1,49 @@
+# Reports when quay-db-mode: external is missing the input it cannot run without.
+#
+# In external mode the registry has no database until DB_URI and clair-config.yaml arrive through
+# config.quay.configSecretRef, and policy-quay-deploy still writes the bundle and reports Compliant
+# without them. This checks where both halves are visible: the hub reads the reference from
+# rendered-config, with clusterset and cluster config already merged, and the managed cluster reads
+# the Secret. A missing Secret is reported by asserting it; missing contents by fail, whose message
+# customMessage keeps. Inform only.
+object-templates-raw: |
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $quayCfg := (index $rcmConfig "quay" | default dict) hub}}
+  {{hub- $components := (index $quayCfg "components" | default dict) hub}}
+  {{hub- $secretRef := (index $quayCfg "configSecretRef" | default dict) hub}}
+  {{hub- $clair := true hub}}
+  {{hub- if hasKey $components "clair" hub}}{{hub- $clair = index $components "clair" hub}}{{hub- end hub}}
+  {{hub- $dbMode := (index .ManagedClusterLabels "autoshift.io/quay-db-mode" | default "bundled") hub}}
+  {{- $secretName := "{{hub index $secretRef "name" | default "" hub}}" }}
+  {{- $secretNs := "{{hub index $secretRef "namespace" | default "quay-enterprise" hub}}" }}
+  {{- $secretKey := "{{hub index $secretRef "key" | default "config.yaml" hub}}" }}
+  {{- $clairManaged := eq "{{hub $clair hub}}" "true" }}
+  {{- $external := eq "{{hub $dbMode hub}}" "external" }}
+  {{- if and $external (not $secretName) }}
+  {{-   fail "quay-db-mode is external but config.quay.configSecretRef.name is not set. Set it to the Secret that holds DB_URI and clair-config.yaml" }}
+  {{- end }}
+  {{- if $secretName }}
+  {{- /* An absent Secret is not an error here: the musthave below reports it by name. */}}
+  {{- $data := (index ((lookup "v1" "Secret" $secretNs $secretName) | default dict) "data" | default dict) }}
+  {{- if and $external $data }}
+  {{-   $missing := list }}
+  {{-   $cfg := (index $data $secretKey | default "" | base64dec | fromYaml | default dict) }}
+  {{-   if not (index $cfg "DB_URI") }}
+  {{-     $missing = append $missing (printf "DB_URI under key %s" $secretKey) }}
+  {{-   end }}
+  {{-   if and $clairManaged (not (hasKey $data "clair-config.yaml")) }}
+  {{-     $missing = append $missing "key clair-config.yaml" }}
+  {{-   end }}
+  {{-   if $missing }}
+  {{-     fail (printf "quay-db-mode is external but Secret %s/%s has no %s" $secretNs $secretName (join " and no " $missing)) }}
+  {{-   end }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{ $secretName }}
+        namespace: {{ $secretNs }}
+  {{- end }}
