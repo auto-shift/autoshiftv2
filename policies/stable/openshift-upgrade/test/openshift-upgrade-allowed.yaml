@@ -5,10 +5,10 @@ object-templates-raw: |
          history entry) has left availableUpdates and is Compliant here too; completion
          stays on policy-openshift-upgrade-status. A Recommended False conditional update
          is reported by openshift-upgrade-allowed-conditional, so this gate stays
-         Compliant in that case unless openshift-allow-condition is true. Then
+         Compliant in that case unless openshift-upgrade-allow-conditional is true. Then
          the release image on that entry is treated as found. */ -}}
   {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
-  {{- $allowConditional := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-allow-conditional" | default "false" hub}}" }}
+  {{- $allowConditional := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-allow-conditional" | default "false" hub}}" }}
   {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
   {{- $current := "" }}
   {{- range $h := (index $status "history" | default list) }}
@@ -45,7 +45,7 @@ object-templates-raw: |
   {{- /* Validity is decided in Go (reliable). When invalid, force NonCompliant with a mustnothave on
          the ClusterVersion (which always exists) — a scalar existence check, not status-list matching.
          A version listed under status.conditionalUpdates is a different ConfigurationPolicy
-         unless openshift-allow-condition is true, so this message is only the plain miss.
+         unless openshift-upgrade-allow-conditional is true, so this message is only the plain miss.
          An accepted or Partial update is not a miss. */ -}}
   {{- if or (eq $target "") (and (not $done) (not $found) (not $deferConditional) (not $updating)) }}
   - complianceType: mustnothave

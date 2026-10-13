@@ -1,7 +1,7 @@
 object-templates-raw: |
   {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
   {{- $upstream := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-upstream" | default "https://api.openshift.com/api/upgrades_info/v1/graph" hub}}" }}
-  {{- $allowConditional := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-allow-conditional" | default "false" hub}}" }}
+  {{- $allowConditional := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-allow-conditional" | default "false" hub}}" }}
   {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
   {{- $current := "" }}
   {{- range $h := (index $status "history" | default list) }}
@@ -13,7 +13,7 @@ object-templates-raw: |
   {{- end }}
   {{- /* Image is never authored in git. Read it from availableUpdates so musthave overwrites a
          stale desiredUpdate.image. Version-only leaves the old digest and CVO refuses to start.
-         When openshift-allow-condition is true, a Recommended False target is taken from
+         When openshift-upgrade-allow-conditional is true, a Recommended False target is taken from
          conditionalUpdates instead. */ -}}
   {{- $image := "" }}
   {{- range $u := (index $status "availableUpdates" | default list) }}
