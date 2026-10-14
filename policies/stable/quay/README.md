@@ -145,14 +145,14 @@ either through OIDC or through a one-time API call. Both paths are in [No Jobs](
 
 ## High availability
 
-The shipped defaults are not highly available. The registry pods scale, but the databases and
-Redis each run as a single pod.
+The shipped defaults are not highly available. The registry pods scale, but the databases each run
+as a single pod.
 
 | Component | Default | For high availability |
 |---|---|---|
 | `quay`, `clair`, `mirror` | Scaled by the horizontal pod autoscaler the Quay Operator manages | Keep the autoscaler. To pin replica counts instead, set `overrides.<kind>.replicas` and `components.horizontalpodautoscaler: false` together |
 | `postgres`, `clairpostgres` | One PostgreSQL pod each | `quay-db-mode: managed` for two CloudNativePG clusters, or `quay-db-mode: external` for databases you run |
-| `redis` | One pod | Set `components.redis: false` and supply `BUILDLOGS_REDIS` and `USER_EVENTS_REDIS` for a highly available Redis you run, dedicated to Red Hat Quay and not shared with Clair |
+| `redis` | One pod | Keep it. Red Hat Quay keeps only ephemeral data in Redis, so it does not need high availability. While it is down, build logs, builders, garbage collection and user events are unavailable, and the registry API keeps serving |
 | `objectstorage` | An `ObjectBucketClaim` | Full OpenShift Data Foundation, or your own S3-compatible bucket with `components.objectstorage: false` |
 
 To spread the registry pods across zones, pass `affinity` through `overrides.quay`,
