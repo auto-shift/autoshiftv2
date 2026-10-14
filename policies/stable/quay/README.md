@@ -35,6 +35,13 @@ secret, plus the operators Quay depends on.
 
 For a production registry, see [High availability](#high-availability) before you choose.
 
+Choose the mode before the registry first deploys. Changing it later moves no data and creates no
+schema: the Quay Operator creates the schema with its upgrade Job, which runs at first deployment
+and on a version change, not when the database changes. A registry switched to an empty database
+crash-loops on a missing table, and its repositories and users stay in the old database. To change
+modes on a running registry, scale Red Hat Quay down, dump the old database, restore it into the
+new one, then change the label.
+
 ### 2. Decide where images are stored
 
 The Quay Operator manages object storage by default. Managed storage needs the `ObjectBucketClaim`

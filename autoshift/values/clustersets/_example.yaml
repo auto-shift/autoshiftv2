@@ -354,7 +354,8 @@ hubClusterSets:
           errorTemplateSecret: 'error-template'
           logoutRedirect: 'https://example.com/logged-out'
           tokenMaxAgeSeconds: 86400
-        # routes-rate-limit. annotations defaults to 10 concurrent TCP, 10 http/s, 10 tcp/s.
+        # routes-rate-limit. annotations defaults to 100 concurrent connections, 100 new connections per
+        # 3s and 1000 HTTP requests per 10s, each per source IP. The rule checks only rate-limit-connections.
         # The rule scores every Route outside kube-* and openshift-*, so allNamespaces is the only
         # setting that passes it; the default excludeRegex matches the rule's own exclusion.
         routeRateLimits:
@@ -363,9 +364,9 @@ hubClusterSets:
           namespaces: []
           annotations:
             haproxy.router.openshift.io/rate-limit-connections: 'true'
-            haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: '10'
-            haproxy.router.openshift.io/rate-limit-connections.rate-http: '10'
-            haproxy.router.openshift.io/rate-limit-connections.rate-tcp: '10'
+            haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: '100'
+            haproxy.router.openshift.io/rate-limit-connections.rate-http: '1000'
+            haproxy.router.openshift.io/rate-limit-connections.rate-tcp: '100'
           # NIST route-ip-whitelist. Requests from outside these ranges are dropped, so an
           # incomplete list silently blocks legitimate traffic. Empty leaves routes open.
           ipWhitelist: []

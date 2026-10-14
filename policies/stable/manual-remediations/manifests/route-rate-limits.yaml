@@ -8,6 +8,13 @@
 # Widening excludeRegex leaves the rule failing. Rate limits do apply to operator consoles caught by
 # allNamespaces, which is the trade the control asks for.
 #
+# The rule checks only that rate-limit-connections is "true"; the limits are ours to choose. HAProxy
+# counts them per source IP and per router pod: concurrent-tcp open connections, rate-tcp new
+# connections per 3s, rate-http requests per 10s. Over-limit connections are dropped without an
+# HTTP error. The defaults stop a single-source flood but leave room for a browser page load, a
+# parallel image pull, and a few clients behind one NAT address. Behind a load balancer without
+# PROXY protocol every client shares one address, so raise them there.
+#
 # Routes belong to whatever created them, so the annotations are merged onto the live objects.
 object-templates-raw: |
   {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
@@ -17,9 +24,9 @@ object-templates-raw: |
   ` | fromYaml }}
   {{- $annotations := (dig "annotations" (dict
        "haproxy.router.openshift.io/rate-limit-connections" "true"
-       "haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp" "10"
-       "haproxy.router.openshift.io/rate-limit-connections.rate-http" "10"
-       "haproxy.router.openshift.io/rate-limit-connections.rate-tcp" "10") $rl) }}
+       "haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp" "100"
+       "haproxy.router.openshift.io/rate-limit-connections.rate-http" "1000"
+       "haproxy.router.openshift.io/rate-limit-connections.rate-tcp" "100") $rl) }}
   {{- $allow := (dig "ipWhitelist" (list) $rl) }}
   {{- if $allow }}
   {{- $annotations = merge (dict "haproxy.router.openshift.io/ip_whitelist" (join " " $allow)) $annotations }}
