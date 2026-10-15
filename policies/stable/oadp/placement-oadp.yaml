@@ -1,0 +1,43 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-oadp
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Predicates are ORed, so OpenShift APIs for Data Protection lands on a cluster that asks for it
+  # directly AND on one that enables a consumer of it. A consumer therefore does not have to carry a
+  # second label, and its dependency on policy-oadp-storage-test resolves: an ACM dependency is
+  # evaluated against the same cluster's copy of the named policy, so a consumer placed where this is
+  # absent would stay Pending forever.
+  #
+  # Add a predicate here when adding a consumer.
+  predicates:
+    # Directly requested: the operator, a DataProtectionApplication and a backup storage location,
+    # with no schedules. Backups are then driven by Velero Backup or Schedule resources from
+    # elsewhere, which is the right shape for protecting applications AutoShift does not own.
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/oadp'
+              operator: In
+              values:
+                - 'true'
+    # Virtual machine backup, which adds Schedules against this cluster's storage location. Gated on
+    # virt as well, matching placement-vm-backup.yaml: a schedule selecting VirtualMachine resources
+    # is pointless without the virtualization operator.
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/vm-backup'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/virt'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

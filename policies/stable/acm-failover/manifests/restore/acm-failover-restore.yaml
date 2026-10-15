@@ -1,0 +1,73 @@
+# Continuous passive sync, on a STANDBY hub only.
+#
+# veleroManagedClustersBackupName: skip is the whole point of this resource. The standby keeps
+# pulling credentials and hub resources so it stays warm, but it never restores the
+# managed-cluster activation data, so it never tries to take the fleet from a healthy active hub.
+#
+# Promotion to active is a deliberate human act and is NOT automated here: an operator sets
+# acm-failover to 'active' on the standby and 'false' on the failed hub. See the policy README.
+#
+# passive.scope picks how much the standby keeps warm:
+#   full         credentials and hub resources, so the standby mirrors the active hub's state
+#   hive-secrets only the Hive cluster secrets, on the view that importing clusters is the failover
+#                action itself and not something an idle standby should prepare
+# Managed cluster activation data is skipped in both, so a standby never takes a healthy hub's fleet.
+#
+# Entirely hub-side, like the schedule: every value comes from config.acm-failover.passive.
+object-templates-raw: |
+  # INDENTATION ANCHOR
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $bk := (index $rcmConfig "acm-failover" | default dict) hub}}
+  # The downstream fork nests the same settings under config.acm.failover. They are read when
+  # config.acm-failover is absent, so its values files keep working unchanged; config.acm-failover
+  # wins where both exist.
+  {{hub- if (empty $bk) hub}}
+  {{hub- $fo := (dig "acm" "failover" (dict) $rcmConfig) hub}}
+  {{hub- if not (empty $fo) hub}}
+  {{hub- $bk = (dict
+        "storage" (dict
+          "type" "s3"
+          "sourceSecretRef" (dict "name" (index $fo "secretName" | default "") "namespace" (index $fo "secretNamespace" | default ""))
+          "region" (index $fo "region" | default "us-east-1")
+          "prefix" (index $fo "prefix" | default "velero")
+          "profile" "backupStorage")
+        "active" (dict
+          "veleroSchedule" (index $fo "schedule" | default "0 */2 * * *")
+          "veleroTtl" (index $fo "veleroTtl" | default "120h"))
+        "passive" (dict "scope" "hive-secrets")) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- $passive := (index $bk "passive" | default dict) hub}}
+  {{hub- $cleanup := (index $passive "cleanupBeforeRestore" | default "CleanupRestored") hub}}
+  {{hub- $scope := (index $passive "scope" | default "full") hub}}
+  {{hub- if not (has $scope (list "full" "hive-secrets")) hub}}
+  {{hub- fail (printf "acm-failover: config.acm-failover.passive.scope must be 'full' or 'hive-secrets', got %q" $scope) hub}}
+  {{hub- end hub}}
+  {{hub- if not (has $cleanup (list "None" "CleanupRestored" "CleanupAll")) hub}}
+  {{hub- fail (printf "acm-failover: config.acm-failover.passive.cleanupBeforeRestore must be 'None', 'CleanupRestored' or 'CleanupAll', got %q" $cleanup) hub}}
+  {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cluster.open-cluster-management.io/v1beta1
+      kind: Restore
+      metadata:
+        name: acm-failover-restore-passive-sync
+        namespace: open-cluster-management-backup
+      spec:
+        syncRestoreWithNewBackups: true
+        restoreSyncInterval: '{{hub index $passive "restoreSyncInterval" | default "30m" hub}}'
+        cleanupBeforeRestore: {{hub $cleanup hub}}
+        veleroManagedClustersBackupName: skip
+        veleroCredentialsBackupName: latest
+        veleroResourcesBackupName: latest
+        {{hub- if eq $scope "hive-secrets" hub}}
+        # Narrow scope: sync only the Hive cluster secrets, so the standby has credentials in place
+        # without reproducing the active hub's resources while it sits idle.
+        includedResources:
+          - secrets
+        orLabelSelectors:
+          - matchExpressions:
+              - key: hive.openshift.io/secret-type
+                operator: Exists
+        {{hub- end hub}}

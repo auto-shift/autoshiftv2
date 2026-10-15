@@ -1,0 +1,149 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: oadp
+# OpenShift APIs for Data Protection: the operator, one DataProtectionApplication and one backup
+# storage location on a managed cluster.
+#
+# This policy is the cluster's Velero installation and nothing more. It creates no Backup and no
+# Schedule, so enabling it on its own protects nothing yet: it makes a cluster ready to be backed up.
+# That is deliberate. What to back up is a separate decision from being able to back anything up, and
+# an administrator protecting applications AutoShift does not manage needs the second without the
+# first.
+#
+# WHY THIS IS ITS OWN POLICY. OpenShift APIs for Data Protection supports the OwnNamespace install
+# mode only, and permits exactly one DataProtectionApplication per installation namespace. A second
+# one reports "only one DPA CR can exist per OADP installation namespace" and is never reconciled. So
+# every consumer on a managed cluster has to share this installation rather than bring its own, and
+# that shared thing needs an owner.
+#
+# Consumers depend on policy-oadp-storage-test and add their own Velero Schedules:
+#   vm-backup — virtual machine backup
+# A consumer must also be ORed into placement-oadp.yaml. An ACM dependency resolves against the same
+# cluster's copy of the named policy, so a consumer placed where this policy is absent stays Pending
+# forever rather than reporting an error.
+#
+# NOT a hub. Red Hat Advanced Cluster Management hub backup is configured by acm-failover, against
+# the separate copy of the operator that the cluster-backup MultiClusterHub component installs into
+# open-cluster-management-backup. Because the install mode is OwnNamespace, that copy cannot
+# reconcile anything here and this one cannot reconcile anything there. A self-managed hub running
+# virtual machines therefore carries both installations, in both namespaces, which is supported: each
+# has its own OperatorGroup scoped to its own namespace.
+#
+# Layout convention:
+#   manifests/ — desired state to APPLY; respects dry-run via remediationAction: ${REMEDIATION}
+#   test/      — assertions to OBSERVE (readiness/status); ALWAYS remediationAction: inform
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`.
+placementBindingDefaults:
+  name: binding-policy-oadp
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CP Contingency Planning
+  controls:
+    - CP-9 System Backup
+  placement:
+    placementPath: placement-oadp.yaml
+policies:
+  # 1) The operator, into openshift-adp.
+  - name: policy-oadp-operator-install
+    manifests:
+      - path: manifests/operator-install
+  # 2) CREDENTIALS, one policy per mode, all converging on the Secret the DataProtectionApplication
+  #    references. Only the mode in use emits anything.
+  #
+  #    configSecretRef — nothing to apply; an administrator creates the Secret. 2-test-c catches it.
+  #    credentialsFrom — 2a copies a ready-made credentials file from the hub.
+  #    sourceSecretRef — 2b carries the key pair, 2c assembles the file from it on this cluster.
+  #
+  #    sourceSecretRef needs two policies, not two object-templates. Template resolution is
+  #    all-or-nothing for a ConfigurationPolicy, so reading the staged Secret in the policy that
+  #    creates it fails and that failure prevents the creation. 2b-test sits between them.
+  - name: policy-oadp-credentials-copy
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-oadp-operator-install
+    manifests:
+      - path: manifests/credentials-copy
+  - name: policy-oadp-credentials-stage
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-oadp-operator-install
+    manifests:
+      - path: manifests/credentials-stage
+  # 2b-test) Did the staged key pair arrive? This is what lets the assembling policy use fromSecret
+  #    against it safely. Renders nothing outside sourceSecretRef mode.
+  - name: policy-oadp-credentials-stage-test
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-oadp-credentials-stage
+    manifests:
+      - path: test/oadp-credentials-stage-ready.yaml
+    customMessage:
+      noncompliant: >-
+        The key pair named by config.oadp.storage.sourceSecretRef has not reached this cluster, so the
+        Velero credentials file cannot be assembled. The copy is made by
+        policy-oadp-credentials-stage: check that the Secret exists on the hub in the policy namespace
+        and holds access_key_id and access_key_secret.
+  - name: policy-oadp-credentials-assemble
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-oadp-credentials-stage-test
+    manifests:
+      - path: manifests/credentials-assemble
+  # 3) The DataProtectionApplication. Depends on the generic credentials check, so it is never
+  #    written against credentials that are not there.
+  - name: policy-oadp-storage
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-oadp-credentials-test
+    manifests:
+      - path: manifests/storage/oadp-storage.yaml
+  # 2-test-c) THE GENERIC CHECK. Every mode converges on one Secret and this asserts it, so a mode
+  #    that silently produced nothing is caught here rather than presenting as unavailable storage.
+  - name: policy-oadp-credentials-test
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-oadp-operator-install
+    manifests:
+      - path: test/oadp-credentials-ready.yaml
+    customMessage:
+      noncompliant: >-
+        Velero has no credentials for the object store on this cluster, so no backup can succeed. Set
+        config.oadp.storage.credentialsFrom to a Secret on the hub and this policy copies it to every
+        selected cluster, which is the only approach that scales past a handful of clusters.
+        Otherwise create it here and name it in config.oadp.storage.configSecretRef: oc create secret
+        generic cloud-credentials -n openshift-adp --from-file=cloud=./credentials-velero
+  # 2-test-b) Storage readiness. This is what consumers depend on, so a Schedule is never created
+  #    against a storage location Velero cannot reach.
+  - name: policy-oadp-storage-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-oadp-storage
+    manifests:
+      - path: test/oadp-storage-ready.yaml
+    customMessage:
+      noncompliant: >-
+        The backup storage location is not Available, so nothing on this cluster is protected. The
+        real error is on the DataProtectionApplication rather than here: oc get
+        dataprotectionapplication oadp -n openshift-adp -o jsonpath='{.status.conditions}'
+        Usual causes: the bucket does not exist, the endpoint is unreachable from this cluster, a
+        private endpoint's trust bundle is missing so storage.caRef is needed, or the credentials do
+        not authorise that bucket.
