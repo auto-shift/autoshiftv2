@@ -2,6 +2,24 @@ object-templates-raw: |
   {{hub $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) hub}}
   {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) hub}}
   {{hub- $wp := (index $config "workloadPartitioning" | default dict) hub}}
+  {{hub- $pp := (index $wp "performanceProfile" | default dict) hub}}
+  {{hub- if (gt (len (keys $pp)) 0) hub}}
+  {{hub- $ppName := (index $pp "name" | default "workload-partitioning") hub}}
+  {{hub- $ppAnnotations := (index $pp "annotations" | default dict) hub}}
+  {{hub- $ppSpec := (index $pp "spec" | default dict) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: performance.openshift.io/v2
+      kind: PerformanceProfile
+      metadata:
+        name: {{hub $ppName hub}}
+  {{hub- if (gt (len (keys $ppAnnotations)) 0) hub}}
+        annotations:
+          {{hub $ppAnnotations | toYaml | autoindent hub}}
+  {{hub- end hub}}
+      spec:
+        {{hub $ppSpec | toYaml | autoindent hub}}
+  {{hub- else hub}}
   {{hub- $reservedCpus := (index $wp "reservedCpus" | default "") hub}}
   {{hub- $isolatedCpus := (index $wp "isolatedCpus" | default "") hub}}
   {{hub- if and (not (empty $reservedCpus)) (not (empty $isolatedCpus)) hub}}
@@ -10,6 +28,7 @@ object-templates-raw: |
   {{hub- $hugepages := (index $wp "hugepages" | default dict) hub}}
   {{hub- $realTimeKernel := (index $wp "realTimeKernel" | default "false") hub}}
   {{hub- $disableIrqBalancing := (index $wp "globallyDisableIrqLoadBalancing" | default "false") hub}}
+  {{hub- $mcpSelector := (index $wp "machineConfigPoolSelector" | default dict) hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: performance.openshift.io/v2
@@ -28,11 +47,10 @@ object-templates-raw: |
           node-role.kubernetes.io/master: ''
   {{hub- end hub}}
         machineConfigPoolSelector:
-          matchLabels:
-  {{hub- if (gt (len (keys $nodeSelector)) 0) hub}}
-            {{hub $nodeSelector | toYaml | autoindent hub}}
+  {{hub- if (gt (len (keys $mcpSelector)) 0) hub}}
+          {{hub $mcpSelector | toYaml | autoindent hub}}
   {{hub- else hub}}
-            pools.operator.machineconfiguration.openshift.io/master: ''
+          pools.operator.machineconfiguration.openshift.io/master: ''
   {{hub- end hub}}
   {{hub- if not (empty $numaTopology) hub}}
         numa:
@@ -57,6 +75,7 @@ object-templates-raw: |
               count: {{hub index $page "count" hub}}
   {{hub- if (index $page "node" | default "") hub}}
               node: {{hub index $page "node" hub}}
+  {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
   {{hub- end hub}}
