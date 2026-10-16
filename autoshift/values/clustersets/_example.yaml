@@ -102,12 +102,381 @@ hubClusterSets:
               cpu: '100m'
               memory: '256Mi'
         alertmanager:
-          enabled: true
+          # The one key here that is a switch: the user workload Alertmanager is not deployed
+          # unless this is true. Everything below it is ignored while it is false.
+          enabled: false
           storage: '10Gi'
           resources:
             requests:
               cpu: '100m'
               memory: '256Mi'
+      # =======================================================================
+      # Red Hat Advanced Cluster Management
+      # =======================================================================
+      # versions and startingCSV pin the operator, overriding the acm-version label.
+      #
+      # provisioning configures the Assisted Installer image catalog. Left unset, Red Hat
+      # Advanced Cluster Management offers its whole default catalog: every supported version for
+      # x86_64, arm64, s390x and ppc64le, which is why 100Gi of image storage is the recommended
+      # default. Pin the architectures and versions you provision to run a smaller volume. A
+      # disconnected deployment can still set disconnected.osImages below, which is deprecated
+      # and read only when this list is absent.
+      #
+      # observability.customMetrics collects metrics beyond the fixed default set, enabled by the
+      # acm-observability-custom-metrics label. Two delivery mechanisms are rendered from this one
+      # block and which is live depends on the collector the hub runs, so if a metric never
+      # arrives check the collector before suspecting this config. Cardinality cost, recording
+      # rules, virtual machine metrics and storage sizing: docs/observability-metrics.md
+      # =======================================================================
+      acm:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'advanced-cluster-management.vX.Y.Z'
+        # startingCSV: 'advanced-cluster-management.vX.Y.Z'
+        provisioning:
+          storageClass: ''                       # unset -> the cluster default StorageClass
+          databaseSize: 10Gi                     # Min 10GiB recommended
+          filesystemStorageSize: 100Gi           # Min 100GiB recommended
+          imageStorageSize: 100Gi                # Red Hat recommended default; less if osImages is pinned
+          osImages:
+            - openshiftVersion: '4.22'             # Major.Minor
+              version: '4.22.0'                    # Red Hat Enterprise Linux CoreOS version string
+              cpuArchitecture: x86_64              # x86_64, arm64, s390x or ppc64le
+              url: 'https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.22/4.22.0/rhcos-4.22.0-x86_64-live.x86_64.iso'
+        observability:
+          # external-s3 only. Bucket, endpoint, and TLS live here. The Secret named by
+          # source holds access-key and secret-key. Create that
+          # Secret on every hub that uses external-s3.
+          thanosStorage:
+            bucket: acm-fake-0001
+            endpoint: s3.example.com:443
+            insecure: false                 # true skips TLS verification
+            useClusterCA: false             # true trusts the hub cluster CA for the endpoint
+            source:
+              namespace: secrets-namespace
+              secretName: thanos-s3-credentials
+          # MCOA capabilities on the MultiClusterObservability object
+          # (policy-acm-observability). Each defaults to "true" when unset.
+          # musthave does not remove a capability already on the object: set a
+          # toggle to 'false' and delete the stale block from the live CR.
+          capabilities:
+            platformAnalytics: 'true'         # incident detection + right-sizing
+            platformLogs: 'true'
+            platformMetrics: 'true'
+            userWorkloadLogs: 'true'
+            userWorkloadMetrics: 'true'
+            userWorkloadTraces: 'true'
+          customMetrics:
+            platform:
+              # not in the default allowlist, so turning it on is observable
+              names:
+                - node_vmstat_pgfault
+              # aggregates on the managed cluster before remote-write; the record: name is
+              # added to the ScrapeConfig selectors automatically
+              recording_rules:
+                - record: apiserver_request_duration_seconds:histogram_quantile_90
+                  expr: 'histogram_quantile(0.90, sum(rate(apiserver_request_duration_seconds_bucket{job="apiserver",verb!="WATCH"}[5m])) by (verb,le))'
+            userWorkload:
+              names:
+                - sample_metrics
+
+      # =======================================================================
+      # File integrity - policy: file-integrity
+      # =======================================================================
+      # NIST file-integrity-exists. AIDE runs in a privileged daemon set on each selected node.
+      # file-integrity-notification-enabled is satisfied by the operator itself, which ships the
+      # NodeHasIntegrityFailure alert.
+      #
+      # ONE instance covering every node. Schedulable control plane nodes carry both the master and
+      # worker role labels, so per-role instances would scan those nodes twice. Split only if your
+      # layout needs it, and keep the selectors disjoint.
+      fileIntegrity:
+        # config defaults to the AutoShift ConfigMap, which is the operator's own generated AIDE
+        # default plus an exclusion for the machine config daemon log directory. Without that
+        # exclusion every node reports NodeHasIntegrityFailure after a daemon restart, for log
+        # files nobody edited. Set config.name and config.namespace to use a ConfigMap of your own.
+        instances:
+          - name: 'autoshift'
+            nodeSelector:
+              kubernetes.io/os: 'linux'
+            tolerations:
+              - operator: 'Exists'
+            config:
+              gracePeriod: 20
+              maxBackups: 5
+            debug: false
+
+      # =======================================================================
+      # Compliance Operator
+      # =======================================================================
+      # One ScanSettingBinding per entry in scans. Profiles are PINNED to a version: the
+      # unversioned name (ocp4-stig) tracks whatever DISA publishes next, so a new release would
+      # silently change what is scanned and remediated. Bumping the pin is the deliberate choice.
+      #
+      # autoApply defaults to false, so adding a scan gives findings and no cluster changes. With it
+      # true, every remediation the scan produced is applied EXCEPT those in exclude. Several
+      # generate MachineConfigs and will roll nodes, so turn it on per scan, per cluster.
+      #
+      # exclude is a reject list, not an allow list. The previous allow list carried 206 names to
+      # express four decisions and had to be re-enumerated on every profile bump. Excluding a
+      # remediation sets apply: false, so removing one after the fact actually reverts it.
+      #
+      # Full workflow, and the findings that need manual policies: docs/compliance.md
+      # =======================================================================
+      compliance:
+        # Pin the operator CSV. Same shape as the other operator version blocks.
+        # versions:
+        #   - 'compliance-operator.vX.Y.Z'
+        # startingCSV: 'compliance-operator.vX.Y.Z'
+        # Findings a person has reviewed and accepted. policy-stig-manual-review reports every
+        # MANUAL result, every FAIL with no remediation, and any INCONSISTENT result that failed on
+        # a node, and stays NonCompliant until each one is listed here or fixed.
+        #
+        # The reason is the audit record. Write what was actually checked and what was found.
+        # Accept a finding only when nothing can be done about it; one with a real fix belongs
+        # fixed, not accepted. Names carry the profile version, so a bump reopens every acceptance.
+        manualReview:
+          accepted:
+            - name: 'ocp4-stig-v2r3-fips-mode-enabled-on-all-nodes'
+              reason: 'FIPS is an install-config flag and cannot be enabled after install. Accepted until the cluster is rebuilt.'
+            - name: 'ocp4-stig-v2r3-container-security-operator-exists'
+              reason: 'The Container Security Operator is deprecated. Red Hat Advanced Cluster Security provides the equivalent scanning and console integration.'
+        scans:
+          - name: stig-v2r3
+            profiles:
+              - ocp4-stig-v2r3
+              - ocp4-stig-node-v2r3
+              - rhcos4-stig-v2r3
+            scanSetting: default
+            autoApply: false
+            # These four change the DEFAULT PROJECT TEMPLATE, so every project created through
+            # `oc new-project` is born with a default-deny NetworkPolicy and a ResourceQuota.
+            # Excluded because default-deny blocks traffic from the kube-apiserver as well as from
+            # other namespaces: it has been observed to break the cluster-manager namespaces and
+            # Red Hat Advanced Cluster Security, whose admission webhook the API server calls into.
+            # Namespaces created directly by an operator bundle are not affected, but the ones ACM
+            # creates per managed cluster are the ones that bite. Verify on a test cluster before
+            # removing any of these.
+            exclude:
+              - ocp4-stig-v2r3-project-config-and-template-network-policy
+              - ocp4-stig-v2r3-project-config-and-template-network-policy-1
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
+          # A second scan runs alongside the first, with its own autoApply and exclude. Any profile
+          # the Compliance Operator ships works the same way; these are the NIST 800-53 moderate
+          # baseline pinned to revision 4. List what is available with:
+          #   oc get profile.compliance -n openshift-compliance
+          - name: nist-moderate-rev4
+            profiles:
+              - ocp4-moderate-rev-4
+              - ocp4-moderate-node-rev-4
+              - rhcos4-moderate-rev-4
+            scanSetting: default
+            autoApply: false
+            exclude: []
+
+      # =======================================================================
+      # Logging - policy: logging
+      # =======================================================================
+      # One ClusterLogForwarder per entry, created in namespace (default openshift-logging).
+      # spec is ClusterLogForwarder schema passed through verbatim, so inputs, filters, tuning and
+      # any output type a later release adds work with no change to the policy. AutoShift creates
+      # the collector ServiceAccount and binds it to collectorRoles; spec.serviceAccount.name
+      # defaults to <name>-collector.
+      #
+      # Forwarding audit logs satisfies the STIG rules audit-log-forwarding-enabled and
+      # audit-log-forwarding-uses-tls. This needs only the logging operator, not the Loki stack.
+      logging:
+        # Pin the operator CSV. Same shape as the other operator version blocks.
+        # versions:
+        #   - 'cluster-logging.vX.Y.Z'
+        # startingCSV: 'cluster-logging.vX.Y.Z'
+        forwarders:
+          - name: 'audit'
+            namespace: 'openshift-logging'
+            collectorRoles:
+              - 'collect-audit-logs'
+            spec:
+              outputs:
+                - name: 'audit-remote'
+                  type: 'syslog'
+                  syslog:
+                    url: 'tls://syslog.example.com:6514'
+                    rfc: 'RFC5424'
+              pipelines:
+                - name: 'audit-to-remote'
+                  inputRefs:
+                    - 'audit'
+                  outputRefs:
+                    - 'audit-remote'
+
+      # =======================================================================
+      # Manual remediations - policy: manual-remediations
+      # =======================================================================
+      # STIG findings the Compliance Operator ships no automatic remediation for, because each one
+      # needs a site decision it cannot make: which registries are permitted, what the banner says,
+      # where audit logs go. Enable the set with the autoshift.io/manual-remediations label; each
+      # entry below renders nothing until you set it, so the label alone changes nothing.
+      #
+      # Findings that cannot be remediated at all are reported by policy-stig-manual-review.
+      manualRemediations:
+        # ocp-allowed-registries, ocp-allowed-registries-for-import
+        imageRegistries:
+          allowed:
+            - quay.io
+            - registry.redhat.io
+            - image-registry.openshift-image-registry.svc:5000
+          allowedForImport:
+            - domainName: quay.io
+              insecure: false
+            - domainName: registry.redhat.io
+              insecure: false
+        # Samples Operator pulls from registry.redhat.io; remove it when the list above blocks that.
+        # classification-banner
+        classificationBanner:
+          text: 'UNCLASSIFIED'
+          location: 'BannerTopBottom'
+          color: '#ffffff'
+          backgroundColor: '#008000'
+        # openshift-motd-exists. The rule accepts either DoD consent banner; this is the short form.
+        motd: |
+          You are accessing a U.S. Government (USG) Information System (IS) that is provided for
+          USG-authorized use only. By using this IS (which includes any device attached to this
+          IS), you consent to the following conditions: the USG routinely intercepts and monitors
+          communications on this IS; at any time, the USG may inspect and seize data stored on this
+          IS; communications using, or data stored on, this IS are not private and are subject to
+          routine monitoring, interception, and search.
+        # oauth-login-template-set, oauth-provider-selection-set, oauth-logout-url-set.
+        # The template Secrets hold HTML and are created out of band in openshift-config.
+        oauth:
+          loginTemplateSecret: 'login-template'
+          providerSelectionTemplateSecret: 'providerselect-template'
+          errorTemplateSecret: 'error-template'
+          logoutRedirect: 'https://example.com/logged-out'
+          tokenMaxAgeSeconds: 86400
+        # routes-rate-limit. annotations defaults to 10 concurrent TCP, 10 http/s, 10 tcp/s.
+        # The rule scores every Route outside kube-* and openshift-*, so allNamespaces is the only
+        # setting that passes it; the default excludeRegex matches the rule's own exclusion.
+        routeRateLimits:
+          allNamespaces: true
+          excludeRegex: '^kube-.*|^openshift-.*'
+          namespaces: []
+          annotations:
+            haproxy.router.openshift.io/rate-limit-connections: 'true'
+            haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: '10'
+            haproxy.router.openshift.io/rate-limit-connections.rate-http: '10'
+            haproxy.router.openshift.io/rate-limit-connections.rate-tcp: '10'
+          # NIST route-ip-whitelist. Requests from outside these ranges are dropped, so an
+          # incomplete list silently blocks legitimate traffic. Empty leaves routes open.
+          ipWhitelist: []
+        # project-config-and-template-network-policy, project-config-and-template-resource-quota.
+        # Owns the default project template so new projects get network policies and a quota. Use
+        # this INSTEAD of the operator's own remediations, which are in compliance.scans[].exclude
+        # because they ship only the restrictive half and break admission webhooks and operator
+        # pods. quota values become mandatory for every pod in a new project; limitRange supplies
+        # the defaults that keeps pods without their own requests admissible.
+        projectTemplate:
+          name: 'project-request'
+          networkPolicies: false
+          quota:
+            requests.cpu: '4'
+            requests.memory: '8Gi'
+            limits.cpu: '8'
+            limits.memory: '16Gi'
+          limitRange:
+            default:
+              cpu: '500m'
+              memory: '512Mi'
+            defaultRequest:
+              cpu: '100m'
+              memory: '256Mi'
+          extraObjects: []
+        # NIST kubelet-eviction-thresholds-set-hard-*. Reclaims node disk on a threshold instead
+        # of at the point of failure. Changing a KubeletConfig rolls the pools listed.
+        kubeletEviction:
+          # Empty discovers every MachineConfigPool at evaluation time. A KubeletConfig selects a
+          # pool by its own label, so naming only master and worker would skip infra, storage or
+          # any custom pool. List pools explicitly only to deliberately exclude one.
+          pools: []
+          # Applied to every pool. The defaults are the values the profile checks for.
+          evictionHard:
+            imagefs.available: '15%'
+            imagefs.inodesFree: '5%'
+            memory.available: '100Mi'
+            nodefs.available: '10%'
+            nodefs.inodesFree: '5%'
+          # Per pool, merged over evictionHard by key, so a pool only restates what differs. Keyed
+          # by MachineConfigPool name, so any pool works: storage, or an accelerator pool added
+          # later, not just the node roles AutoShift ships policies for.
+          overrides:
+            infra:
+              memory.available: '500Mi'
+            storage:
+              nodefs.available: '15%'
+              imagefs.available: '20%'
+        # NIST auditd-data-*. Writes /etc/audit/auditd.conf and ROLLS EVERY NODE in pools.
+        # disk_error_action and disk_full_action of single drop a node to single-user mode rather
+        # than let auditing stop; that is the control's intent and it is disruptive. space_left_action
+        # of email needs a working local mailer or the warning goes nowhere.
+        auditdConfig:
+          pools:
+            - 'master'
+            - 'worker'
+          settings:
+            flush: 'data'
+            freq: 50
+            max_log_file: 6
+            num_logs: 5
+            name_format: 'hostname'
+            max_log_file_action: 'rotate'
+            space_left: 100
+            space_left_action: 'email'
+            action_mail_acct: 'root'
+            admin_space_left_action: 'single'
+            disk_full_action: 'single'
+            disk_error_action: 'single'
+        # NIST sshd-limit-user-access. ROLLS EVERY NODE in pools. On Red Hat CoreOS only root and
+        # core have a shell and only core has keys, so this changes nothing today; it stops an
+        # account added later from reaching a node. Naming an account that does not exist locks
+        # everyone out of SSH. AllowUsers is preferred: core's core-group membership is primary,
+        # so `getent group core` lists no members.
+        sshdAccess:
+          pools:
+            - 'master'
+            - 'worker'
+          AllowUsers:
+            - 'core'
+          AllowGroups: []
+          DenyUsers: []
+          DenyGroups: []
+        # NIST audit-rules-unsuccessful-file-modification-*-rule-order. Writes the 36 rules those
+        # checks expect, in the order they require, to one file so augenrules keeps the sequence.
+        # ROLLS EVERY NODE in pools.
+        auditRuleOrder:
+          pools:
+            - 'master'
+            - 'worker'
+        # NIST cluster-wide-proxy-set. Only set this where egress really goes through a proxy;
+        # on a cluster with direct egress, accept the rule instead. Merged into the live Proxy CR,
+        # so installer-set fields such as trustedCA are preserved.
+        clusterProxy:
+          httpProxy: 'http://proxy.example.com:3128'
+          httpsProxy: 'http://proxy.example.com:3128'
+          noProxy: '.cluster.local,.svc,10.0.0.0/16'
+        # reject-unsigned-images-by-default. ROLLS EVERY NODE in pools. Leave enabled false unless
+        # every image the cluster pulls is signed and its signature store is reachable.
+        rejectUnsignedImages:
+          pools:
+            - 'master'
+            - 'worker'
+          policy:
+            default:
+              - type: 'reject'
+            transports:
+              containers-storage:
+                '':
+                  - type: 'insecureAcceptAnything'
+
       # =======================================================================
       # Managed AutoShift — nested deployments onto the hubs this hub governs
       # =======================================================================
@@ -131,6 +500,10 @@ hubClusterSets:
           valuesFiles:
             - 'values/global.yaml'
             - 'values/clustersets/hub.yaml'
+          # Copy a repository credential to the managed hub's Argo CD, for a private repo.
+          useRepoSecret: true
+          repoSecretRef:
+            name: 'autoshift-repo-secret'    # created out of band in the policy namespace
           versionedClusterSets: 'false'
           # Arbitrary values merged into the generated Application, for anything the fields above
           # do not cover.
@@ -145,6 +518,17 @@ hubClusterSets:
           # repoSecretRef:
           #   name: 'autoshift-repo-secret'
           #   namespace: 'policies-autoshift'
+      # =======================================================================
+      # Images for AutoShift's own helper Jobs (read via rendered-config ConfigMap)
+      # =======================================================================
+      # Leave blank. Each Job resolves its image at runtime from the cluster's own
+      # openshift/cli ImageStream, which is a digest against the release payload and so
+      # follows the cluster's ImageDigestMirrorSet in a disconnected deployment. The
+      # in-cluster registry is only the last resort, and it does not exist on bare metal
+      # or wherever the registry Operator is Removed.
+      # Set a value only to pin a specific mirrored image.
+      images:
+        cli: ''                                # oc/kubectl image for AutoShift Jobs
       # =======================================================================
       # Disconnected Mirror (read via rendered-config ConfigMap)
       # =======================================================================
@@ -185,12 +569,20 @@ hubClusterSets:
       # GitLab (values with / or spaces that can't be labels)
       # =======================================================================
       gitlab:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'gitlab-operator-kubernetes.vX.Y.Z'
+        # startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
         dbBackupSchedule: '0 2 * * *'
         dbBackupRetention: '30d'
       # =======================================================================
       # JFrog Artifactory
       # =======================================================================
       jfrog:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'openshiftartifactoryha-operator.vX.Y.Z'
+        # startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
         dbBackupSchedule: '0 3 * * *'
         dbBackupRetention: '30d'
       # =======================================================================
@@ -291,21 +683,37 @@ hubClusterSets:
           name: quay-config-extra
           namespace: quay-enterprise            # default: quay-enterprise
           key: config.yaml                      # default: config.yaml
+      # Ansible Automation Platform. Requires the aap label.
+      aap:
+        # Pin operator versions, as for every operator below.
+        # versions:
+        #   - 'ansible-automation-platform-operator.vX.Y.Z'
+        # startingCSV: 'ansible-automation-platform-operator.vX.Y.Z'
+        # AnsibleAutomationPlatform spec. Any spec field is accepted. Merged over a base of
+        # controller on, Hub on, EDA and Lightspeed off, redis_mode standalone, and over what
+        # the aap-noobaa-s3-storage and aap-custom-cabundle modes add. Maps merge key by key
+        # and these values win; lists replace the default whole. Name only what you change.
+        instance:
+          eda:
+            disabled: false
+          database:
+            postgres_storage_class: ocs-storagecluster-ceph-rbd
+          # Hub content storage, when aap-noobaa-s3-storage is not 'true'. Pick one:
+          # File storage, which needs a ReadWriteMany storage class:
+          hub:
+            storage_type: file
+            file_storage_size: 10Gi
+            file_storage_storage_class: ocs-storagecluster-cephfs
+          # Your own S3 bucket. Create the Secret in ansible-automation-platform on the
+          # cluster, never in git, with s3-access-key-id, s3-secret-access-key and
+          # s3-bucket-name, plus s3-region or s3-endpoint. policy-aap-hub-s3-test reports
+          # when the Secret or a key is missing.
+          # hub:
+          #   storage_type: S3
+          #   object_storage_s3_secret: aap-s3
       # Every other operator supports the SAME block — uncomment and set real CSV(s) to pin.
       # Config key = the operator's <key>-version label base (shown). CSV name usually
       # <package>.vX.Y.Z — confirm with `oc get packagemanifest <name> -o jsonpath='{.status.channels}'`.
-      # aap:
-      #   versions:
-      #     - 'ansible-automation-platform-operator.vX.Y.Z'
-      #   startingCSV: 'ansible-automation-platform-operator.vX.Y.Z'
-      # acm:
-      #   versions:
-      #     - 'advanced-cluster-management.vX.Y.Z'
-      #   startingCSV: 'advanced-cluster-management.vX.Y.Z'
-      # acs:
-      #   versions:
-      #     - 'rhacs-operator.vX.Y.Z'
-      #   startingCSV: 'rhacs-operator.vX.Y.Z'
       # cert-manager:
       #   versions:
       #     - 'openshift-cert-manager-operator.vX.Y.Z'
@@ -314,10 +722,6 @@ hubClusterSets:
       #   versions:
       #     - 'cloudnative-pg.vX.Y.Z'
       #   startingCSV: 'cloudnative-pg.vX.Y.Z'
-      # compliance:
-      #   versions:
-      #     - 'compliance-operator.vX.Y.Z'
-      #   startingCSV: 'compliance-operator.vX.Y.Z'
       # coo:
       #   versions:
       #     - 'cluster-observability-operator.vX.Y.Z'
@@ -334,22 +738,10 @@ hubClusterSets:
       #   versions:
       #     - 'openshift-external-secrets-operator.vX.Y.Z'
       #   startingCSV: 'openshift-external-secrets-operator.vX.Y.Z'
-      # gitlab:
-      #   versions:
-      #     - 'gitlab-operator-kubernetes.vX.Y.Z'
-      #   startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
       # gitlab-runner:
       #   versions:
       #     - 'gitlab-runner-operator.vX.Y.Z'
       #   startingCSV: 'gitlab-runner-operator.vX.Y.Z'
-      # gitops:
-      #   versions:
-      #     - 'openshift-gitops-operator.vX.Y.Z'
-      #   startingCSV: 'openshift-gitops-operator.vX.Y.Z'
-      # jfrog:
-      #   versions:
-      #     - 'openshiftartifactoryha-operator.vX.Y.Z'
-      #   startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
       # kiali:
       #   versions:
       #     - 'kiali-ossm.vX.Y.Z'
@@ -358,10 +750,6 @@ hubClusterSets:
       #   versions:
       #     - 'local-storage-operator.vX.Y.Z'
       #   startingCSV: 'local-storage-operator.vX.Y.Z'
-      # logging:
-      #   versions:
-      #     - 'cluster-logging.vX.Y.Z'
-      #   startingCSV: 'cluster-logging.vX.Y.Z'
       # loki:
       #   versions:
       #     - 'loki-operator.vX.Y.Z'
@@ -394,6 +782,27 @@ hubClusterSets:
       #   versions:
       #     - 'odf-operator.vX.Y.Z'
       #   startingCSV: 'odf-operator.vX.Y.Z'
+      #   # Config-driven StorageCluster — when set, replaces the entire label-driven
+      #   # StorageCluster spec. When absent, the existing label-driven default applies.
+      #   storageCluster:
+      #     enableCephTools: true
+      #     resourceProfile: Lean
+      #     monDataDirHostPath: /var/lib/rook
+      #     multiCloudGateway:
+      #       reconcileStrategy: ignore
+      #     storageDeviceSets:
+      #       - name: nvme-set
+      #         deviceClass: nvme
+      #         count: 1
+      #         replica: 3
+      #         dataPVCTemplate:
+      #           spec:
+      #             storageClassName: local-nvme
+      #             accessModes: [ReadWriteOnce]
+      #             volumeMode: Block
+      #             resources:
+      #               requests:
+      #                 storage: 1
       # opentelemetry:
       #   versions:
       #     - 'opentelemetry-product.vX.Y.Z'
@@ -414,14 +823,35 @@ hubClusterSets:
       #   versions:
       #     - 'tempo-product.vX.Y.Z'
       #   startingCSV: 'tempo-product.vX.Y.Z'
-      # trident:
-      #   versions:
-      #     - 'trident-operator.vX.Y.Z'
-      #   startingCSV: 'trident-operator.vX.Y.Z'
       # virt:
       #   versions:
       #     - 'kubevirt-hyperconverged.vX.Y.Z'
       #   startingCSV: 'kubevirt-hyperconverged.vX.Y.Z'
+      # =======================================================================
+      # Local Storage (config-driven)
+      # Named volume sets under localVolumeSets.<id>; each field has a sensible
+      # default so you only need to set what you want to override:
+      #   storageClassName  → nvme-storageclass
+      #   volumeMode        → Block
+      #   deviceInclusionSpec → {deviceTypes: [disk], minSize: 200G}
+      #   nodeSelector      → cluster.ocs.openshift.io/openshift-storage: Exists
+      #   tolerations       → node.ocs.openshift.io/storage: NoSchedule
+      # When absent, a single default nvme-localvolumeset is created.
+      # =======================================================================
+      # localStorage:
+      #   localVolumeDiscovery:
+      #     nodeSelector:
+      #       nodeSelectorTerms:
+      #         - matchExpressions:
+      #             - key: cluster.ocs.openshift.io/openshift-storage
+      #               operator: Exists
+      #   localVolumeSets:
+      #     nvme:
+      #       storageClassName: local-nvme
+      #       volumeMode: Block
+      #       deviceInclusionSpec:
+      #         deviceTypes: [disk]
+      #         deviceMechanicalProperties: [NonRotational]
       # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
       # =======================================================================
@@ -489,6 +919,10 @@ hubClusterSets:
           search:
             - 'example.com'
       trident:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'trident-operator.vX.Y.Z'
+        # startingCSV: 'trident-operator.vX.Y.Z'
         storage:
           - backendName: "trident-backend-name"
             secretName: "openshift-secret"
@@ -508,6 +942,10 @@ hubClusterSets:
       # label. All fields are optional; omitted values fall back to defaults.
       # =======================================================================
       gitops:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'openshift-gitops-operator.vX.Y.Z'
+        # startingCSV: 'openshift-gitops-operator.vX.Y.Z'
         # Does THIS hub render policies via the policy-generator CMP? Overrides the fleet-wide
         # policyGenerator in global.yaml for this hub's Argo CD. GIT/source hubs MUST set true (it
         # installs the CMP sidecar in the infra ArgoCD repo-server, without which PolicyGenerator
@@ -523,31 +961,128 @@ hubClusterSets:
         # infra-gitops instance). Drives gitops-disable-default-argocd (disable = not defaultInstance).
         # defaultInstance: false
         #
-        # Infra (main) ArgoCD instance config — same knobs as teams.<team> below, plus infra-only fields
-        # (server.autoscale, controller.statusProcessors/operationProcessors, repo.cluster_ca_bundle).
-        # The openshift-gitops policy reads these from this cluster's rendered-config at enforcement time
-        # (like the teams instances), so one policy serves per-cluster values; omit any field to keep default.
+        # Infra (main) ArgoCD instance config: the same knobs as teams.<team> below, plus the
+        # infra-only fields server.autoscale, controller.statusProcessors,
+        # controller.operationProcessors, repo.replicas and repo.cluster_ca_bundle. The
+        # openshift-gitops policy reads these from this cluster's rendered-config at enforcement
+        # time, so one policy serves per-cluster values.
+        #
+        # Every field is optional. Omit one and it falls back to the chart default in
+        # policies/stable/openshift-gitops/values.yaml, the same file the bootstrap chart reads, so
+        # bootstrap and day 2 agree. The block below is those defaults, so uncommenting it as is
+        # changes nothing.
+        #
+        # rbac_policies is the COMPLETE Argo CD RBAC policy and replaces the chart default rather
+        # than appending to it, so carry the cluster-admin lines over unless you mean to drop them.
+        # A `g` line takes a user or a group, but with OpenShift login the user identity is an
+        # opaque Dex sub rather than a username, so name OpenShift Groups here.
+        # repo.replicas defaults to 1; raise it for availability or a much larger policy set.
+        # Controller memory is 8Gi limit / 1Gi request. The limit covers a full hard-refresh storm
+        # rather than steady state: a hub with 58 Applications and 299 Policies sat comfortably for
+        # an hour and was OOMKilled the moment every Application synced at once.
+        # controller.statusProcessors is the main lever on how fast the fleet converges, and also on
+        # peak memory, since each in-flight comparison holds an Application's rendered and live state
+        # at once. It sits at the Argo CD default of 20; raise it and raise controller.limits.memory
+        # with it. The controller also builds a FULL CLUSTER CACHE per registered cluster, which is
+        # the larger half of its footprint and is charged before any Application is compared.
+        # controller.goMemLimitPercent sets a soft ceiling for the Go runtime, which does not read
+        # the container limit and would otherwise be killed before it collected. It is DERIVED from
+        # controller.limits.memory, so the two cannot drift. Argo CD recommends 80-90%. Only Gi and
+        # Mi limits are parsed; for any other form set controller.goMemLimit explicitly, which
+        # overrides the derivation. When neither yields a value the variable is omitted, not guessed.
+        # controller.respectRBAC stops the controller watching kinds it cannot list.
+        # resourceExclusions REPLACES the built-in list of kinds kept out of the cluster cache, so
+        # carry the defaults over unless you mean to drop them. A kind listed there cannot be
+        # deployed by this instance at all, so keep it to generated, never-authored resources.
+        # The gitops-cluster-ca-bundle label overrides repo.cluster_ca_bundle. policyGenerator sizes the CMP sidecar that performs the render,
+        # so raise it when manifest generation times out, and its tarExclusions trim the repository
+        # tarball streamed to that sidecar. tarExclusions is repo-server WIDE, so keep it to .git;
+        # per-Application scoping comes from useManifestGeneratePaths. All apply only where the
+        # plugin is on.
+        #
+        # Full table: docs/values-reference.md, "OpenShift GitOps".
         # infra:
         #   rbac_policies:
+        #     - 'g, system:cluster-admins, role:admin'
+        #     - 'g, cluster-admins, role:admin'
         #     - 'g, my-admins, role:admin'
-        #   disableAdmin: 'true'
+        #   disableAdmin: false
         #   server:
-        #     limits: { cpu: '500m', memory: '256Mi' }
-        #     requests: { cpu: '125m', memory: '128Mi' }
-        #     autoscale: { enabled: false, maxReplicas: 3 }
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '125m'
+        #       memory: '128Mi'
+        #     autoscale:
+        #       enabled: true
+        #       maxReplicas: 5
+        #       targetCPUUtilizationPercentage: 50
         #   repo:
-        #     limits: { cpu: '1000m', memory: '1024Mi' }
-        #     requests: { cpu: '250m', memory: '256Mi' }
+        #     replicas: 1
         #     cluster_ca_bundle: false
+        #     limits:
+        #       cpu: '2000m'
+        #       memory: '2048Mi'
+        #     requests:
+        #       cpu: '500m'
+        #       memory: '512Mi'
+        #   resourceExclusions: |
+        #     - apiGroups:
+        #         - ''
+        #       kinds:
+        #         - Event
         #   controller:
-        #     limits: { cpu: '2000m', memory: '2048Mi' }
-        #     requests: { cpu: '250m', memory: '1024Mi' }
-        #     statusProcessors: '20'
-        #     operationProcessors: '10'
-        #   ha: { enabled: 'false' }
-        #   redis: {}
-        #   dex: {}
-        #   applicationSet: {}
+        #     statusProcessors: 20
+        #     operationProcessors: 10
+        #     goMemLimitPercent: 85
+        #     goMemLimit: ''
+        #     respectRBAC: 'normal'
+        #     limits:
+        #       cpu: '2000m'
+        #       memory: '8Gi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '1Gi'
+        #   ha:
+        #     enabled: false
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '128Mi'
+        #   redis:
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '128Mi'
+        #   dex:
+        #     limits:
+        #       cpu: '500m'
+        #       memory: '256Mi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '128Mi'
+        #   applicationSet:
+        #     limits:
+        #       cpu: '2'
+        #       memory: '1Gi'
+        #     requests:
+        #       cpu: '250m'
+        #       memory: '512Mi'
+        #   policyGenerator:
+        #     limits:
+        #       cpu: '2000m'
+        #       memory: '2048Mi'
+        #     requests:
+        #       cpu: '500m'
+        #       memory: '512Mi'
+        #     tarExclusions:
+        #       - '.git/*'
+        #     useManifestGeneratePaths: true
         teams:
           dev:
             gitops_rbac_policies:
@@ -612,22 +1147,78 @@ hubClusterSets:
       # Advanced Cluster Security (Day-2 settings; enable the stack with the acs label)
       # =======================================================================
       acs:
+        # Pin to specific CSV(s). Omit to track the channel.
+        # versions:
+        #   - 'rhacs-operator.vX.Y.Z'
+        # startingCSV: 'rhacs-operator.vX.Y.Z'
         egressConnectivity: Online          # Online | Offline (disconnected)
         scannerV4: Enabled                  # Enabled | Disabled | Default (SecuredCluster maps Enabled -> AutoSense)
+        scanner: AutoSense                  # SecuredCluster Scanner v2: AutoSense | Disabled
         monitoring: true                    # OpenShift monitoring integration
-        networkPolicies: Enabled            # Enabled | Disabled (network policy generation); omit to leave default
-        vmScanning: false                   # ROX_VIRTUAL_MACHINES (Tech Preview)
-        defaultPolicies: false              # deploy the baseline SecurityPolicy CRs
+        exposeMetrics: ''                   # Enabled | Disabled — Prometheus endpoint on Central/Scanner/ScannerV4
+        networkPolicies: ''                 # Enabled | Disabled; blank omits the field and leaves the Operator default
+        # Technology Preview. 4.11 still has no CRD field, so this sets the ROX_VIRTUAL_MACHINES
+        # environment variable. It only enables the platform side: scanning also needs a VM agent
+        # installed inside each guest, which is in-guest software AutoShift does not manage.
+        vmScanning: false
+        configAsCode: ''                    # Enabled | Disabled — Central Config-as-Code component
+        telemetry: false                    # Central telemetry reporting
+        notifierSecretsEncryption: false    # encrypt notifier secrets at rest
+        registryOverride: ''                # override the image registry, for disconnected mirrors
+        # Scheduling applied once at the CR level, which the operator propagates to every
+        # Deployment-based component. The Collector DaemonSet is not affected.
+        # Set EITHER pinToNodes OR the explicit pair: pinToNodes already sets nodeSelector and
+        # tolerations for you, and the operator rejects the combination.
+        pinToNodes: ''                      # None | InfraRole — shorthand for infra nodes
+        nodeSelector: {}                    # custom placement; ignored when pinToNodes is set
+        tolerations: []                     # custom taints; ignored when pinToNodes is set
+        auditLogs: Auto                     # Auto | Enabled | Disabled — OpenShift audit log collection
+        fileActivityMonitoring: Disabled    # Enabled | Disabled — per-node File Activity Monitoring
+        additionalCAs: []                   # extra trusted root CAs: [{name: my-ca.pem, content: <PEM>}]
+        db:
+          size: ''                          # Central DB PVC size, e.g. 100Gi (blank = operator default)
+          storageClassName: ''              # blank = cluster default storage class
+          # Defaults to central-db, which is the Operator's own claim name, and the policy always
+          # writes the field rather than leaving it unset. Only change this to adopt an existing
+          # claim of a different name: the Operator manages exactly one PVC for central-db, so
+          # naming a second one leaves Central Irreconcilable while still reporting Available, and
+          # the only visible symptom is a failing readiness gate.
+          claimName: 'central-db'
         collector:
           collection: CORE_BPF              # CORE_BPF (recommended); EBPF is deprecated
+        processBaselines:
+          autoLock: Disabled                # Enabled | Disabled — lock baselines when observation ends
+        processIndicators:
+          persistence: Enabled              # Enabled | Disabled
+          excludeOpenshiftNs: Disabled      # Enabled drops indicators from openshift namespaces
+          excludeNamespaceRegex: ''         # additional namespaces to exclude
         admissionControl:
-          enabled: true                     # listen on create/update (monitor admissions)
-          contactImageScanners: ScanIfMissing  # ScanIfMissing | DoNotScanInline (inline scan at admission)
+          # listenOnCreates/listenOnUpdates/listenOnEvents and contactImageScanners are deprecated
+          # in the 4.11 CRD; enforcement replaces them.
+          enabled: false                    # true -> enforcement: Enabled; default is false
+          bypass: BreakGlassAnnotation      # BreakGlassAnnotation | Disabled
+          replicas: 3                       # admission control pod replicas
           failurePolicy: Ignore             # Ignore (fail-open, safe) | Fail (fail-closed, strict)
+        # The provider itself is the acs-auth-provider label; these tune it.
         auth:
-          provider: openshift               # '' disables the declarative auth config
           minimumRole: None                 # minimum role for authenticated users
           adminGroup: cluster-admins        # group mapped to the Admin role
+        # Where Central lives. Whether this cluster runs one is the acs-central LABEL,
+        # because it decides which policies are placed; this is only its address.
+        central:
+          endpoint: ''                      # blank = discover Central's route on this hub
+        # How secured clusters authenticate to Central for the first time.
+        # Mode itself is the acs-registration LABEL, because it selects which policies are
+        # placed. These are the settings for whichever mode is selected.
+        # One registration secret is minted per secured cluster, so a leaked token registers
+        # exactly one cluster and revoking it affects only that cluster.
+        registration:
+          validFor: 168h                    # only has to cover mint -> registration
+          maxClusters: 1                    # registrations one token may perform; 0 = no limit
+          # Blank builds registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel9 at the tag
+          # matching the installed operator version. That is a TAG on registry.redhat.io, not a
+          # mirrored digest, so a disconnected deployment has to set this explicitly.
+          roxctlImage: ''
       # =======================================================================
       # AutoShift Console Plugin (hub only; ENABLE flag is the autoshift-console label).
       # Read-only OpenShift console plugin that surfaces AutoShift clustersets, the resolution
@@ -646,6 +1237,36 @@ hubClusterSets:
         # production. Pinning one tag across a fleet spanning minors deploys the wrong bundle to
         # all but one of them.
         image: ''
+      # Global Observability rollup settings (PrometheusAgent scrape/log level and
+      # optional extra remote-writes). Enable with the global-observability label
+      # below; placement also uses self-managed ('true' = global hub secrets,
+      # 'false' = intermediate hub agent patching).
+      # Prereqs on every participating hub: acm-observability: 'true', coo: 'true'.
+      # See policies/stable/global-observability/README.md and quickstart.md.
+      # =======================================================================
+      globalObservability:
+        scrapeInterval: '300s'              # PrometheusAgent scrape interval
+        logLevel: 'warn'                    # PrometheusAgent log level
+        # Optional targets beyond the built-in rollup to the global hub.
+        # Keep secret names short and alphanumeric-terminated: MCOA truncates
+        # secret-<name> volume names to 63 chars; a cut on a non-alphanumeric
+        # character silently breaks the agent StatefulSet.
+        # secretRef names a Secret on the hub; the policy copies it into the
+        # observability namespace and mounts it at
+        # /etc/prometheus/secrets/<secretRef.name>/.
+        # onSelfManagedHub false (default): intermediate hubs only.
+        # onSelfManagedHub true: every hub that carries this config.
+        additionalRemoteWrites:
+          - name: 'corp-metrics'
+            url: 'https://metrics.example.com/api/v1/write'
+            remoteTimeout: '30s'
+            onSelfManagedHub: false
+            caFile: '/etc/prometheus/secrets/global-observability-remote-write/ca.crt'
+            certFile: '/etc/prometheus/secrets/global-observability-remote-write/tls.crt'
+            keyFile: '/etc/prometheus/secrets/global-observability-remote-write/tls.key'
+            secretRef:
+              name: 'global-observability-remote-write'
+              namespace: 'open-cluster-management-observability'
     labels:
       # =======================================================================
       # Core Configuration
@@ -655,7 +1276,7 @@ hubClusterSets:
       # Deploy a nested AutoShift from this hub to each MANAGED hub it governs. Requires the
       # target hub clusterset to carry self-managed: 'false'. That label marks the hub this
       # deployment runs on, which already has its own AutoShift.
-      autoshift-enable-install: 'false'   # hub only — see policies/stable/managed-autoshift
+      autoshift-enable-install: 'true'    # hub only — see policies/stable/managed-autoshift
       # DERIVED — do not set: cluster-type ('hub' for hubClusterSets entries, 'spoke' for
       # managedClusterSets entries). Injected by the top-level chart, so a value set here is
       # overwritten. A self-managed hub is cluster-type 'hub' plus self-managed 'true'.
@@ -679,11 +1300,12 @@ hubClusterSets:
       gitops-subscription-name: openshift-gitops-operator
       gitops-disable-default-argocd: 'true'
       gitops-channel: gitops-1.21
-      gitops-version: 'openshift-gitops-operator.v1.21.3'
+      gitops-version: 'openshift-gitops-operator.v1.21.4'
       gitops-source: redhat-operators
       gitops-source-namespace: openshift-marketplace
       gitops-namespace: 'openshift-gitops'          # Override ArgoCD namespace per-cluster
       gitops-cluster-ca-bundle: 'true'              # Inject cluster trusted CA bundle into ArgoCD repo server
+      gitops-console-plugin: 'false'                  # GitOps console plugin (tech preview) — adds ArgoCD to OCP console
 
       # =======================================================================
       # AutoShift Console Plugin (hub only — reads hub-side AutoShift ConfigMaps)
@@ -695,23 +1317,31 @@ hubClusterSets:
       # Advanced Cluster Management (hub only — not installed on managed clusters)
       # =======================================================================
       acm-subscription-name: advanced-cluster-management
-      acm-version: 'advanced-cluster-management.v2.17.0'
+      acm-version: 'advanced-cluster-management.v2.17.1'
       acm-channel: release-2.17
       acm-source: redhat-operators
       acm-source-namespace: openshift-marketplace
       acm-availability-config: 'High'       # 'Basic' or 'High'
-      acm-observability: 'true'              # Requires ODF for noobaa bucket
+      acm-observability: 'true'
+      # noobaa (default): ObjectBucketClaim, requires OpenShift Data Foundation.
+      # external-s3: bucket, endpoint, and TLS from config.acm.observability.thanosStorage.
+      # The Secret named there holds only the access key and the secret key.
+      # Does not require OpenShift Data Foundation.
+      acm-observability-storage: 'noobaa'
       # ACM Search v2 storage (PVC for the search-indexer PostgreSQL)
+      acm-observability-custom-metrics: 'false'   # collect metrics beyond ACM's default allowlist; needs config.acm.observability.customMetrics
       acm-search-storage: 'false'
       acm-search-storage-class: ''           # unset -> the cluster's default StorageClass; set to pin a class
       acm-search-storage-size: '100Gi'
       # Cluster provisioning (hive-based cluster install flow)
       cluster-install: 'false'                     # hub only — enables the cluster-install policy set
       acm-enable-provisioning: 'false'            # hub only
-      acm-provisioning-storage-class: ''             # StorageClass name
-      acm-provisioning-database-size: 10Gi           # Min 10GiB recommended
-      acm-provisioning-filesystem-storage-size: 100Gi # Min 100GiB recommended
-      acm-provisioning-image-storage-size: 50Gi      # 2GiB per OSImage entry
+      # DEPRECATED: superseded by config.acm.provisioning.*, which wins when set.
+      # Still honoured so existing deployments keep working; move to config and remove these.
+      acm-provisioning-storage-class: ''             # -> config.acm.provisioning.storageClass
+      acm-provisioning-database-size: 10Gi           # -> config.acm.provisioning.databaseSize
+      acm-provisioning-filesystem-storage-size: 100Gi # -> config.acm.provisioning.filesystemStorageSize
+      acm-provisioning-image-storage-size: 100Gi     # -> config.acm.provisioning.imageStorageSize
       # ACM Addon Tuning (for scale)
       acm-addon-tuning: 'true'
       # config-policy-controller tuning (annotations on ManagedClusterAddOn)
@@ -726,10 +1356,12 @@ hubClusterSets:
       acm-addon-gpf-eval-concurrency: '5'    # Concurrent policy evaluations (default: 2)
       acm-addon-gpf-client-qps: '75'         # K8s API client QPS (default: 30)
       acm-addon-gpf-client-burst: '100'      # K8s API client burst (default: 45)
-      # governance-policy-framework resource limits (via AddOnDeploymentConfig)
-      acm-addon-gpf-mem-request: '128Mi'
+      # governance-policy-framework resource limits (via AddOnDeploymentConfig).
+      # Keep at 1Gi or above: the addon OOMKills around 100 ConfigurationPolicies, and it
+      # delivers its own tuning, so it cannot raise the limit once it does.
+      acm-addon-gpf-mem-request: '256Mi'
       acm-addon-gpf-cpu-request: '100m'
-      acm-addon-gpf-mem-limit: '512Mi'
+      acm-addon-gpf-mem-limit: '1Gi'
 
       # =======================================================================
       # Tempo
@@ -769,7 +1401,7 @@ hubClusterSets:
       # =======================================================================
       metallb: 'false'
       metallb-subscription-name: metallb-operator
-      metallb-version: 'metallb-operator.v4.22.0-202608170914'
+      metallb-version: 'metallb-operator.v4.22.0-202608251608'
       metallb-source: redhat-operators
       metallb-source-namespace: openshift-marketplace
       metallb-channel: stable
@@ -791,20 +1423,24 @@ hubClusterSets:
       aap-source: redhat-operators
       aap-source-namespace: openshift-marketplace
       aap-version: 'aap-operator.v2.7.0-0.1787240540'
-      aap-hub-disabled: 'false'              # 'true' omits Hub content storage
-      aap-storage-type: 's3'                 # 's3', 'pvc', or 'none' (default: none)
-      ### AAP Hub Content File Storage (select file OR s3, not both)
+      # Modes. Each also places a policy of its own. Instance settings live in config.aap.instance.
+      aap-noobaa-s3-storage: 'false'         # 'true' creates a NooBaa bucket and backs Hub with it
+      aap-custom-cabundle: 'false'           # 'true' injects the cluster CA bundle as user-ca-bundle
+      # DEPRECATED: use config.aap.instance. Still applied when set, and config wins over them.
+      #   aap-hub-disabled               -> hub.disabled
+      #   aap-eda-disabled               -> eda.disabled
+      #   aap-lightspeed-disabled        -> lightspeed.disabled
+      #   aap-file-storage: 'true'       -> hub.storage_type: file
+      #   aap-storage-type               -> hub.storage_type
+      #   aap-file_storage_size          -> hub.file_storage_size
+      #   aap-file_storage_storage_class -> hub.file_storage_storage_class
+      aap-hub-disabled: 'false'
+      aap-eda-disabled: 'false'
+      aap-lightspeed-disabled: 'true'
       aap-file-storage: 'false'
-      aap-file_storage_storage_class: 'ocs-storagecluster-cephfs'  # Requires RWX storage
-      aap-file_storage_size: 10G
-      ### AAP NooBaa S3 Storage - autocreates bucket in AAP namespace
-      aap-noobaa-s3-storage: 'false'
-      aap-external-s3-secret-name: ''        # Name of secret for external S3
-      aap-eda-disabled: 'false'              # 'true' omits Event-Driven Ansible
-      aap-lightspeed-disabled: 'true'        # 'true' omits Ansible Lightspeed
-      ### AAP Custom Cert Bundle Injection
-      aap-custom-cabundle: 'false'           # 'true' injects cluster CA Bundle into AAP
-      aap-cabundle-name: 'user-ca-bundle'    # Secret name for CA Bundle
+      aap-storage-type: 'file'
+      aap-file_storage_size: 10Gi
+      aap-file_storage_storage_class: 'ocs-storagecluster-cephfs'
 
       # =======================================================================
       # Unschedulable Control Plane (Compact clusters)
@@ -828,7 +1464,6 @@ hubClusterSets:
       master-system-reserved-cpu: '500m'     # CPU reserved for OS/system processes
       master-kube-reserved-memory: '1536Mi'  # Memory reserved for kubelet/CRI-O
       master-kube-reserved-cpu: '500m'       # CPU reserved for kubelet/CRI-O
-      master-eviction-memory: '500Mi'        # Hard eviction threshold for memory.available
 
       # =======================================================================
       # Workload Partitioning (CPU isolation via PerformanceProfile)
@@ -847,6 +1482,20 @@ hubClusterSets:
       # Manual Remediations
       # =======================================================================
       manual-remediations: 'false'
+      manual-remediations-image-registries: 'false'
+      manual-remediations-remove-samples-operator: 'false'
+      manual-remediations-classification-banner: 'false'
+      manual-remediations-motd: 'false'
+      manual-remediations-oauth-customization: 'false'
+      manual-remediations-route-rate-limits: 'false'
+      manual-remediations-kubelet-eviction: 'false'
+      manual-remediations-auditd-config: 'false'
+      manual-remediations-sshd-access: 'false'
+      manual-remediations-audit-rule-order: 'false'
+      manual-remediations-cluster-proxy: 'false'
+      manual-remediations-quota-guard: 'false'
+      manual-remediations-project-template: 'false'
+      manual-remediations-reject-unsigned-images: 'false'
 
       # =======================================================================
       # Infrastructure Nodes
@@ -868,7 +1517,6 @@ hubClusterSets:
       infra-system-reserved-cpu: '500m'      # CPU reserved for OS/system processes
       infra-kube-reserved-memory: '1Gi'      # Memory reserved for kubelet/CRI-O
       infra-kube-reserved-cpu: '500m'        # CPU reserved for kubelet/CRI-O
-      infra-eviction-memory: '500Mi'         # Hard eviction threshold for memory.available
 
       # =======================================================================
       # Worker Nodes
@@ -887,7 +1535,6 @@ hubClusterSets:
       worker-system-reserved-cpu: '250m'     # CPU reserved for OS/system processes
       worker-kube-reserved-memory: '512Mi'   # Memory reserved for kubelet/CRI-O
       worker-kube-reserved-cpu: '250m'       # CPU reserved for kubelet/CRI-O
-      worker-eviction-memory: '500Mi'        # Hard eviction threshold for memory.available
 
       # =======================================================================
       # Storage Nodes
@@ -922,7 +1569,7 @@ hubClusterSets:
       # =======================================================================
       local-storage: 'false'
       local-storage-subscription-name: local-storage-operator
-      local-storage-version: 'local-storage-operator.v4.22.0-202608170914'
+      local-storage-version: 'local-storage-operator.v4.22.0-202608251608'
       local-storage-channel: stable
       local-storage-source: redhat-operators
       local-storage-source-namespace: openshift-marketplace
@@ -971,12 +1618,23 @@ hubClusterSets:
       nmstate-channel: stable
       nmstate-source: redhat-operators
       nmstate-source-namespace: openshift-marketplace
-      nmstate-version: 'kubernetes-nmstate-operator.4.22.0-202608191601'
+      nmstate-version: 'kubernetes-nmstate-operator.4.22.0-202608260901'
       #
       # =======================================================================
       # Advanced Cluster Security
       # =======================================================================
       acs: 'false'                           # enable toggle (placement gate)
+      # crs (default, also when unset) | manual | initBundle (legacy). Selects which
+      # registration policies are placed on the cluster.
+      # Whether this cluster runs Central. 'false' means SecuredCluster only, registering
+      # with an external Central named by config.acs.central.endpoint.
+      acs-central: 'true'
+      # Names the identity provider for Central. 'openshift' configures OpenShift auth, which
+      # grants Admin to config.acs.auth.adminGroup. Omit the label to configure no auth.
+      acs-auth-provider: 'openshift'
+      # Deploy the baseline SecurityPolicy resources. Hub only, opt-in.
+      acs-default-policies: 'false'
+      acs-registration: 'crs'
       acs-subscription-name: rhacs-operator
       acs-version: 'rhacs-operator.v4.11.3'
       acs-channel: stable
@@ -990,7 +1648,7 @@ hubClusterSets:
       # =======================================================================
       dev-spaces: 'false'
       dev-spaces-subscription-name: devspaces
-      dev-spaces-version: 'devspacesoperator.v3.29.1'
+      dev-spaces-version: 'devspacesoperator.v3.30.0'
       dev-spaces-channel: stable
       dev-spaces-source: redhat-operators
       dev-spaces-source-namespace: openshift-marketplace
@@ -1000,7 +1658,7 @@ hubClusterSets:
       # =======================================================================
       dev-hub: 'false'
       dev-hub-subscription-name: rhdh
-      dev-hub-version: 'rhdh-operator.v1.10.3'
+      dev-hub-version: 'rhdh-operator.v1.10.4'
       dev-hub-channel: fast-1.10
       dev-hub-source: redhat-operators
       dev-hub-source-namespace: openshift-marketplace
@@ -1067,8 +1725,6 @@ hubClusterSets:
       vault-seal-kms-key-ring: ''             # gcpckms key_ring
       vault-seal-kms-tenant-id: ''            # azurekeyvault tenant_id
       vault-seal-kms-vault-name: ''           # azurekeyvault vault_name
-      # Image for the init/transit-provider Jobs. Override for disconnected/baremetal (no internal registry).
-      vault-job-image: 'image-registry.openshift-image-registry.svc:5000/openshift/cli:latest'
 
       # =======================================================================
       # Developer OpenShift GitOps (team ArgoCD instances)
@@ -1111,6 +1767,17 @@ hubClusterSets:
       coo-source-namespace: openshift-marketplace
 
       # =======================================================================
+      # Global Observability (hub only)
+      # Enables the three-tier metrics rollup (global hub -> intermediate hubs
+      # -> workload clusters). Config:
+      #   config.globalObservability.{scrapeInterval,logLevel,additionalRemoteWrites}
+      # Placement: self-managed 'true' = global hub (secrets policy);
+      #            self-managed 'false' = intermediate hub (PrometheusAgent patch).
+      # Requires acm-observability: 'true' and coo: 'true' on the same hub.
+      # =======================================================================
+      global-observability: 'false'
+
+      # =======================================================================
       # User Workload Monitoring (settings in config section above)
       # =======================================================================
       uwm: 'false'                              # Enable UWM (placement label only)
@@ -1126,6 +1793,22 @@ hubClusterSets:
       compliance-source: redhat-operators
       compliance-source-namespace: openshift-marketplace
       compliance-channel: stable
+
+      # =======================================================================
+      # File Integrity Operator
+      # =======================================================================
+      # Node file integrity monitoring with AIDE. Satisfies the NIST rules
+      # file-integrity-exists and file-integrity-notification-enabled.
+      file-integrity: 'false'
+      file-integrity-subscription-name: file-integrity-operator
+      file-integrity-version: 'file-integrity-operator.v1.4.1'
+      file-integrity-channel: stable
+      file-integrity-source: redhat-operators
+      file-integrity-source-namespace: openshift-marketplace
+
+      # =======================================================================
+      # Container Security Operator
+      # =======================================================================
 
       # =======================================================================
       # OpenShift Virtualization
@@ -1155,7 +1838,7 @@ hubClusterSets:
       node-feature-discovery-channel: stable
       node-feature-discovery-source: redhat-operators
       node-feature-discovery-source-namespace: openshift-marketplace
-      node-feature-discovery-version: 'nfd.4.22.0-202608191301'
+      node-feature-discovery-version: 'nfd.4.22.0-202608251608'
 
       # =======================================================================
       # SR-IOV Network Operator
@@ -1255,6 +1938,11 @@ hubClusterSets:
       artifactory-db-backups: 'true'            # Enable CNPG backups (requires cloudnative-pg + odf)
       # --- Config values go in config.jfrog (see config section above) ---
       # dbBackupSchedule, dbBackupRetention
+
+      # =======================================================================
+      # Remove Kubeadmin
+      # =======================================================================
+      remove-kubeadmin: 'false'              # Remove kubeadmin secret (disables OAuth-based kubeadmin login)
 
       # =======================================================================
       # Disconnected Mirror Settings

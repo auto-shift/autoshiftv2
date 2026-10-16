@@ -1,19 +1,26 @@
 apiVersion: cluster.open-cluster-management.io/v1beta1
 kind: Placement
 metadata:
-  name: placement-policy-manual-remediations
+  name: placement-init-bundle-managed
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # No spec.clusterSets: the Placement selects across all ManagedClusterSetBindings in this
-  # namespace (the top autoshift chart binds every clusterset here) filtered by the predicate.
+  # LEGACY init bundle certificate sync. Opt-in only.
   predicates:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
-            - key: 'autoshift.io/manual-remediations'
+            - key: 'autoshift.io/acs'
               operator: In
               values:
                 - 'true'
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'spoke'
+            - key: 'autoshift.io/acs-registration'
+              operator: In
+              values:
+                - 'initBundle'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

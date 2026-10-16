@@ -58,10 +58,16 @@ spec:
               env:
               # disableDefaultArgoCD default = not config.gitops.defaultInstance (from rendered-config);
               # the gitops-disable-default-argocd label still overrides.
+              #
+              # fromConfigMap, NOT lookup: lookup returns an empty map for a ConfigMap that is missing
+              # rather than failing, and an empty map here resolves to DISABLE_DEFAULT_ARGOCD_INSTANCE
+              # true, which removes the default instance from any cluster that asked for one. The
+              # ConfigMap is written for every cluster in a known cluster set even when nothing is
+              # configured, so its absence only ever means the rendered configuration has not landed
+              # yet. Failing the template waits; defaulting acts on a guess.
               - name: DISABLE_DEFAULT_ARGOCD_INSTANCE
                 value: >-
-                  {{ "{{hub-" }} $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict {{ "hub}}" }}
-                  {{ "{{hub-" }} $renderedConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) {{ "hub}}" }}
+                  {{ "{{hub-" }} $renderedConfig := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) {{ "hub}}" }}
                   {{ "{{hub-" }} $gitops := (index $renderedConfig "gitops" | default dict) {{ "hub}}" }}
                   {{ "{{hub-" }} $defaultInstance := (index $gitops "defaultInstance" | default false) {{ "hub}}" }}
                   {{ "{{hub-" }} index .ManagedClusterLabels "autoshift.io/gitops-disable-default-argocd" | default (printf "%v" (not $defaultInstance)) {{ "hub}}" }}
@@ -81,7 +87,7 @@ spec:
             # Version resolution (config in the rendered-config ConfigMap): config.gitops.versions/.startingCSV
             # when set, else the gitops-version label. $vers computed here, reused by versions below.
             startingCSV: >-
-              {{ "{{hub-" }} $cfg := (index (index (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) "data" | default dict) "config" | default "" | fromYaml | default dict) "gitops" | default dict) {{ "hub}}" }}
+              {{ "{{hub-" }} $cfg := (index (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) "gitops" | default dict) {{ "hub}}" }}
               {{ "{{hub-" }} $cfgVers := (dig "versions" (list) $cfg) {{ "hub}}" }}
               {{ "{{hub-" }} $isCfg := (not (empty $cfgVers)) {{ "hub}}" }}
               {{ "{{hub-" }} $labelVer := (index .ManagedClusterLabels "autoshift.io/gitops-version" | default "") {{ "hub}}" }}

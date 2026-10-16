@@ -1,7 +1,16 @@
-apiVersion: compliance.openshift.io/v1alpha1
-kind: ComplianceSuite
-metadata:
-  name: stig
-  namespace: openshift-compliance
-status:
-  phase: DONE
+# Inform only: each configured scan's ComplianceSuite has finished. Names come from
+# config.compliance.scans, so this follows a profile version bump instead of pinning one suite.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- range $scan := (dig "compliance" "scans" (list) $cfg) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: compliance.openshift.io/v1alpha1
+      kind: ComplianceSuite
+      metadata:
+        name: {{hub $scan.name hub}}
+        namespace: openshift-compliance
+      status:
+        phase: DONE
+  {{hub- end hub}}

@@ -5,6 +5,7 @@ This guide shows how to deploy multiple versions of AutoShift side-by-side for g
 ## Overview
 
 Deploy two AutoShift releases simultaneously using the `versionedClusterSets` feature:
+
 - `as-0-0-1` with `versionedClusterSets: true` automatically creates `hub-0-0-1` clusterset
 - `as-0-0-2` with `versionedClusterSets: true` automatically creates `hub-0-0-2` clusterset
 
@@ -15,12 +16,14 @@ Migrate clusters by moving them from one clusterset to another.
 When `versionedClusterSets: true`, the version/branch is automatically appended to all ClusterSet names:
 
 **OCI Mode** (uses `autoshiftOciVersion`):
+
 | Values Definition | `autoshiftOciVersion` | Resulting ClusterSet |
 |-------------------|---------------------|----------------------|
 | `hubClusterSets.hub` | `0.0.1` | `hub-0-0-1` |
 | `managedClusterSets.managed` | `0.0.2` | `managed-0-0-2` |
 
 **Git Mode** (uses `autoshiftGitBranchTag`):
+
 | Values Definition | `autoshiftGitBranchTag` | Resulting ClusterSet |
 |-------------------|----------------------|----------------------|
 | `hubClusterSets.hub` | `main` | `hub-main` |

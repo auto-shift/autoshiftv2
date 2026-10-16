@@ -1,8 +1,24 @@
-# ACM Search persistent storage (search-postgres PVC). object-templates-raw so storageClassName can be
-# CONDITIONALLY omitted: set autoshift.io/acm-search-storage-class to pin a class; leave it unset to omit
-# the field entirely, which makes the PVC use the cluster's DEFAULT StorageClass (empty string would mean
-# "no provisioning", so it must be omitted, not blanked). size defaults to 100Gi.
+# ACM Search persistent storage.
+#
+# storageClassName is REQUIRED to get a PersistentVolumeClaim. Red Hat Advanced Cluster Management
+# stores the search PostgreSQL data in an emptyDir until a storage class is named, and setting only
+# size leaves it there: the Search CR looks configured, this policy reports Compliant, and the data
+# is still lost on restart. The cluster raises SearchPVCNotPresent and SearchPVCNotPresentCritical
+# when that happens.
+#
+# So when autoshift.io/acm-search-storage-class is not set, the cluster's default StorageClass is
+# looked up and used. The lookup is spoke side because that is where the StorageClasses live. If the
+# cluster has no default class either, the field is omitted and the two alerts above are the signal.
 object-templates-raw: |
+  {{hub- $size := (index .ManagedClusterLabels "autoshift.io/acm-search-storage-size" | default "100Gi") hub}}
+  {{- $class := "{{hub index .ManagedClusterLabels "autoshift.io/acm-search-storage-class" | default "" hub}}" }}
+  {{- if not $class }}
+  {{- range $sc := (dig "items" (list) ((lookup "storage.k8s.io/v1" "StorageClass" "" "") | default dict)) }}
+  {{- if eq (dig "metadata" "annotations" "storageclass.kubernetes.io/is-default-class" "" $sc) "true" }}
+  {{- $class = $sc.metadata.name }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: search.open-cluster-management.io/v1alpha1
@@ -12,7 +28,7 @@ object-templates-raw: |
         namespace: open-cluster-management
       spec:
         dbStorage:
-          {{hub- if (index .ManagedClusterLabels "autoshift.io/acm-search-storage-class") hub}}
-          storageClassName: '{{hub index .ManagedClusterLabels "autoshift.io/acm-search-storage-class" hub}}'
-          {{hub- end hub}}
-          size: '{{hub index .ManagedClusterLabels "autoshift.io/acm-search-storage-size" | default "100Gi" hub}}'
+          {{- if $class }}
+          storageClassName: '{{ $class }}'
+          {{- end }}
+          size: '{{hub $size hub}}'

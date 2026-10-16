@@ -1,0 +1,57 @@
+# NIST kubelet-eviction-thresholds-set-hard-imagefs-available and -nodefs-available.
+#
+# Hard eviction thresholds make the kubelet reclaim disk before a node fills, so container and image
+# garbage collection happens on a threshold rather than at the point of failure. Defaults are the
+# values the profile checks for; raising them evicts sooner.
+#
+# evictionHard applies to every pool. overrides is keyed by pool name and merged over it per key, so
+# a pool whose disks or workload differ (storage, or a future accelerator pool) can move one
+# threshold without restating the rest. Any pool name works: nothing here is a fixed list of roles.
+#
+# This is the only policy that sets evictionHard. The <role>-nodes policies deliberately leave it
+# alone, because the field replaces the kubelet default set rather than merging into it, so two
+# writers on one pool produce two MachineConfigs and name ordering picks the winner.
+#
+# pools defaults to every MachineConfigPool on the cluster, discovered at evaluation time, because a
+# KubeletConfig selects the pool by its own label: naming only master and worker would silently skip
+# infra, storage or any other custom pool and leave those nodes unhardened. MachineConfig based
+# remediations do not have this problem, since the infra pool's machineConfigSelector already
+# matches the worker role.
+#
+# Changing a KubeletConfig rolls the nodes in the pools it selects.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $ke := (dig "manualRemediations" "kubeletEviction" dict $cfg) hub}}
+  {{hub- $hard := (dig "evictionHard" (dict "imagefs.available" "15%" "imagefs.inodesFree" "5%" "memory.available" "100Mi" "nodefs.available" "10%" "nodefs.inodesFree" "5%") $ke) hub}}
+  {{- $spoke := `
+  pools:
+    {{hub (dig "pools" (list) $ke) | toYaml | autoindent hub}}
+  hard:
+    {{hub $hard | toYaml | autoindent hub}}
+  overrides:
+    {{hub (dig "overrides" dict $ke) | toYaml | autoindent hub}}
+  ` | fromYaml }}
+  {{- $names := (dig "pools" (list) $spoke) }}
+  {{- $hard := (dig "hard" dict $spoke) }}
+  {{- $overrides := (dig "overrides" dict $spoke) }}
+  {{- if not $names }}
+  {{- range $mcp := (dig "items" (list) ((lookup "machineconfiguration.openshift.io/v1" "MachineConfigPool" "" "") | default dict)) }}
+  {{- $names = append $names $mcp.metadata.name }}
+  {{- end }}
+  {{- end }}
+  {{- range $pool := $names }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: machineconfiguration.openshift.io/v1
+      kind: KubeletConfig
+      metadata:
+        name: autoshift-eviction-{{ $pool }}
+      spec:
+        machineConfigPoolSelector:
+          matchLabels:
+            pools.operator.machineconfiguration.openshift.io/{{ $pool }}: ''
+        kubeletConfig:
+          evictionHard:
+            {{ (mergeOverwrite (dict) $hard (dig $pool dict $overrides)) | toYaml | autoindent }}
+  {{- end }}

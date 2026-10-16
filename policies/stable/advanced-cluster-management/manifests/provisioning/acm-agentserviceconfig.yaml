@@ -4,6 +4,23 @@ object-templates-raw: |
   {{hub- $rcData := (index $rcm "data" | default dict) hub}}
   {{hub- $rcConfig := (index $rcData "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $disconnected := (index $rcConfig "disconnected" | default dict) hub}}
+  {{hub- $prov := (dig "acm" "provisioning" (dict) $rcConfig) hub}}
+  {{hub- $provSC := (dig "storageClass" "" $prov) hub}}
+  {{hub- if (empty $provSC) hub}}
+  {{hub- $provSC = (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" | default "") hub}}
+  {{hub- end hub}}
+  {{hub- $provDB := (dig "databaseSize" "" $prov) hub}}
+  {{hub- if (empty $provDB) hub}}
+  {{hub- $provDB = (index .ManagedClusterLabels "autoshift.io/acm-provisioning-database-size" | default "10Gi") hub}}
+  {{hub- end hub}}
+  {{hub- $provFS := (dig "filesystemStorageSize" "" $prov) hub}}
+  {{hub- if (empty $provFS) hub}}
+  {{hub- $provFS = (index .ManagedClusterLabels "autoshift.io/acm-provisioning-filesystem-storage-size" | default "100Gi") hub}}
+  {{hub- end hub}}
+  {{hub- $provIMG := (dig "imageStorageSize" "" $prov) hub}}
+  {{hub- if (empty $provIMG) hub}}
+  {{hub- $provIMG = (index .ManagedClusterLabels "autoshift.io/acm-provisioning-image-storage-size" | default "100Gi") hub}}
+  {{hub- end hub}}
   {{hub- $mirror := (index $disconnected "mirrorRegistry" | default dict) hub}}
   {{hub- $mirrorHost := (index $mirror "host" | default "") hub}}
   {{hub- $mirrorPath := (index $mirror "path" | default "") hub}}
@@ -61,33 +78,36 @@ object-templates-raw: |
           name: mirror-registry-config
         {{hub- end hub}}
         databaseStorage:
-          {{hub- if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") hub}}
-          storageClassName: {{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" hub}}
+          {{hub- if $provSC hub}}
+          storageClassName: {{hub $provSC hub}}
           {{hub- end hub}}
           accessModes:
           - ReadWriteOnce
           resources:
             requests:
-              storage: {{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-database-size" | default "10Gi" hub}}
+              storage: {{hub $provDB hub}}
         filesystemStorage:
-          {{hub- if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") hub}}
-          storageClassName: {{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" hub}}
+          {{hub- if $provSC hub}}
+          storageClassName: {{hub $provSC hub}}
           {{hub- end hub}}
           accessModes:
           - ReadWriteOnce
           resources:
             requests:
-              storage: {{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-filesystem-storage-size" | default "100Gi" hub}}
+              storage: {{hub $provFS hub}}
         imageStorage:
-          {{hub- if (index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class") hub}}
-          storageClassName: {{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-storage-class" hub}}
+          {{hub- if $provSC hub}}
+          storageClassName: {{hub $provSC hub}}
           {{hub- end hub}}
           accessModes:
           - ReadWriteOnce
           resources:
             requests:
-              storage: {{hub index .ManagedClusterLabels "autoshift.io/acm-provisioning-image-storage-size" | default "50Gi" hub}}
-        {{hub- $osImages := (index $disconnected "osImages" | default list) hub}}
+              storage: {{hub $provIMG hub}}
+        {{hub- $osImages := (dig "acm" "provisioning" "osImages" (list) $rcConfig) hub}}
+        {{hub- if (eq (len $osImages) 0) hub}}
+        {{hub- $osImages = (dig "osImages" (list) $disconnected) hub}}
+        {{hub- end hub}}
         {{hub- if (gt (len $osImages) 0) hub}}
         osImages:
         {{hub- range $_, $img := $osImages hub}}

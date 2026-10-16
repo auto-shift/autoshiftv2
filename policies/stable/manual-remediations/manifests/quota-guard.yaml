@@ -1,0 +1,35 @@
+# Inform only: finds ResourceQuotas that will reject pods.
+#
+# A quota naming requests.* or limits.* makes those fields mandatory for every pod in its namespace.
+# Without a LimitRange to supply defaults, any pod that declares no resources is refused with
+# "failed quota: must specify limits.cpu". Running pods are not evicted, so the namespace looks
+# healthy until a reboot or an upgrade restarts something and it cannot come back.
+#
+# The check is the hazard itself rather than a list of namespaces: a compute quota with no
+# LimitRange beside it. That catches a hand-applied quota and the Compliance Operator's own
+# project-config-and-template remediation as readily as one of ours.
+#
+# Two kinds are ignored. Quotas limiting only object counts impose no requirement on pods. So do
+# zero quotas, where every compute value is "0": OpenShift uses those to lock a namespace shut, as
+# in openshift-host-network, and a LimitRange would not change anything.
+object-templates-raw: |
+  {{- range $q := (dig "items" (list) ((lookup "v1" "ResourceQuota" "" "") | default dict)) }}
+  {{- $ns := (dig "metadata" "namespace" "" $q) }}
+  {{- $compute := false }}
+  {{- range $k, $v := (dig "spec" "hard" dict $q) }}
+  {{- if and (or (hasPrefix "requests." $k) (hasPrefix "limits." $k)) (ne (printf "%v" $v) "0") }}
+  {{- $compute = true }}
+  {{- end }}
+  {{- end }}
+  {{- if $compute }}
+  {{- if not (dig "items" (list) ((lookup "v1" "LimitRange" $ns "") | default dict)) }}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: v1
+      kind: ResourceQuota
+      metadata:
+        name: {{ (dig "metadata" "name" "" $q) }}
+        namespace: {{ $ns }}
+  {{- end }}
+  {{- end }}
+  {{- end }}

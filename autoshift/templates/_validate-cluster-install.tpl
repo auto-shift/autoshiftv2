@@ -3,6 +3,31 @@ Validate disconnected config block.
 Called with dict "path" (string prefix for errors) "config" (the disconnected dict).
 Returns newline-separated error strings (empty string = no errors).
 */}}
+{{/*
+Validate an osImages list. Called with dict "path" (full field prefix for errors) "images" (list).
+Shared so config.acm.provisioning.osImages and the deprecated disconnected.osImages agree.
+*/}}
+{{- define "autoshift.validate-os-images" -}}
+  {{- $path := .path -}}
+  {{- $validOsImageKeys := list "openshiftVersion" "version" "cpuArchitecture" "url" "rootFSUrl" -}}
+  {{- range $idx, $img := (.images | default list) -}}
+    {{- range $key, $_ := $img -}}
+      {{- if not (has $key $validOsImageKeys) }}
+{{ printf "%s[%d].%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validOsImageKeys) }}
+      {{- end -}}
+    {{- end -}}
+    {{- if not (index $img "openshiftVersion") }}
+{{ printf "%s[%d].openshiftVersion is required" $path $idx }}
+    {{- end -}}
+    {{- if not (index $img "version") }}
+{{ printf "%s[%d].version is required (RHCOS version string)" $path $idx }}
+    {{- end -}}
+    {{- if not (index $img "url") }}
+{{ printf "%s[%d].url is required (path to RHCOS live ISO)" $path $idx }}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
 {{- define "autoshift.validate-disconnected" -}}
   {{- $path := .path -}}
   {{- $disconnected := .config -}}
@@ -11,7 +36,6 @@ Returns newline-separated error strings (empty string = no errors).
   {{- $validMirrorEntryKeys := list "source" "mirror" -}}
   {{- $validCaRefKeys := list "name" "key" "namespace" -}}
   {{- $validCatalogKeys := list "source" "imagePath" "tag" "publisher" "displayName" "updateInterval" -}}
-  {{- $validOsImageKeys := list "openshiftVersion" "version" "cpuArchitecture" "url" "rootFSUrl" -}}
   {{- range $key, $_ := $disconnected -}}
     {{- if not (has $key $validDisconnectedKeys) }}
 {{ printf "%s: disconnected.%s is not a recognized field (valid: %s)" $path $key (join ", " $validDisconnectedKeys) }}
@@ -90,22 +114,7 @@ Returns newline-separated error strings (empty string = no errors).
 {{ printf "%s: disconnected.catalogs[%d].tag is required" $path $idx }}
     {{- end -}}
   {{- end -}}
-  {{- range $idx, $img := ($disconnected.osImages | default list) -}}
-    {{- range $key, $_ := $img -}}
-      {{- if not (has $key $validOsImageKeys) }}
-{{ printf "%s: disconnected.osImages[%d].%s is not a recognized field (valid: %s)" $path $idx $key (join ", " $validOsImageKeys) }}
-      {{- end -}}
-    {{- end -}}
-    {{- if not (index $img "openshiftVersion") }}
-{{ printf "%s: disconnected.osImages[%d].openshiftVersion is required" $path $idx }}
-    {{- end -}}
-    {{- if not (index $img "version") }}
-{{ printf "%s: disconnected.osImages[%d].version is required (RHCOS version string)" $path $idx }}
-    {{- end -}}
-    {{- if not (index $img "url") }}
-{{ printf "%s: disconnected.osImages[%d].url is required (path to RHCOS live ISO)" $path $idx }}
-    {{- end -}}
-  {{- end -}}
+  {{- include "autoshift.validate-os-images" (dict "path" (printf "%s: disconnected.osImages" $path) "images" ($disconnected.osImages | default list)) -}}
 {{- end -}}
 
 {{/*
@@ -166,13 +175,13 @@ Collects all errors and reports them together.
 {{- define "autoshift.validate-cluster-install" -}}
 
 {{/* ===== Valid key lists — add new fields here ===== */}}
-{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" }}
+{{- $validCiKeys := list "createCluster" "platform" "baseDomain" "openshiftVersion" "cpuArch" "clusterImageSet" "openshiftChannel" "controlPlaneAgents" "workerAgents" "apiVip" "ingressVip" "mastersSchedulable" "cpuPartitioning" "fips" "installAttemptsLimit" "pullSecretRef" "bmcCredentialRef" "bmcEndpoint" "secretSourceNamespace" "sshPublicKey" "sshPublicKeyRef" "ntpSources" "klusterletAddons" "diskPartitions" }}
 {{- $validHostKeys := list "role" "bmcIP" "bmcPrefix" "bmcEndpoint" "bmcCredentialRef" "bootMACAddress" "primaryMac" "rootDeviceHints" "interfaces" "networking" }}
 {{- $validNetworkingKeys := list "clusterNetwork" "machineNetwork" "serviceNetwork" "interfaces" "routes" "dns" "ovsBridges" "ovnMappings" "nodeSelector" }}
 {{- $validInterfaceKeys := list "type" "name" "state" "mode" "mtu" "mac" "miimon" "ports" "ipv4" "ipv6" "id" "base" }}
 {{- $validRouteKeys := list "destination" "gateway" "interface" "metric" "tableId" }}
 {{- $validSshRefKeys := list "name" "key" "namespace" }}
-{{- $validAwsKeys := list "region" "credentialRef" "sshPrivateKeyRef" "sshPublicKey" "sshKeyRef" "fips" "networkType" "controlPlane" "workers" }}
+{{- $validAwsKeys := list "region" "credentialRef" "sshPrivateKeyRef" "sshPublicKey" "sshKeyRef" "fips" "networkType" "zones" "controlPlane" "workers" }}
 {{- $validAwsCpKeys := list "instanceType" "rootVolume" }}
 {{- $validAwsWorkerKeys := list "replicas" "instanceType" "rootVolume" }}
 {{- $validAwsVolumeKeys := list "iops" "size" "type" }}
@@ -218,6 +227,77 @@ Collects all errors and reports them together.
       {{- end }}
     {{- end }}
 
+    {{/* The installation documentation describes adding one partition, at /var or a subdirectory
+         of it. Ignition itself allows arbitrary partitioning. The NIST moderate profile needs five
+         partitions to pass every partition-for-var-log rule, so allowMultiple opens that up.
+         A mountPath outside /var is not described anywhere and stays an error. */}}
+    {{- $dpParts := (dig "config" "clusterInstall" "diskPartitions" "partitions" (list) $cluster) }}
+    {{- $dpAck := (dig "config" "clusterInstall" "diskPartitions" "allowMultiple" false $cluster) }}
+    {{- if and (gt (len $dpParts) 1) (not $dpAck) }}
+      {{- $errors = append $errors (printf "%s: clusterInstall.diskPartitions.partitions has %d entries, the installation documentation describes adding a single partition at /var or a subdirectory of it. The NIST moderate profile needs five to pass every partition-for-var-log rule; set clusterInstall.diskPartitions.allowMultiple: true to create more than one" $path (len $dpParts)) }}
+    {{- end }}
+    {{- range $idx, $part := $dpParts }}
+      {{- $mp := (dig "mountPath" "" $part) }}
+      {{- if and $mp (not (or (eq $mp "/var") (hasPrefix "/var/" $mp))) }}
+        {{- $errors = append $errors (printf "%s: clusterInstall.diskPartitions.partitions[%d].mountPath is %s; the installation documentation covers /var or a subdirectory of /var" $path $idx $mp) }}
+      {{- end }}
+    {{- end }}
+
+    {{/* startMiB caps the root filesystem, which grows only up to the first partition. Container
+         images live in /var/lib/containers and stay on root unless /var is a partition of its own,
+         so a low startMiB starves root and kubelet reports DiskPressure before the install
+         finishes: cluster operators never get pods and the install times out. */}}
+    {{- if $dpParts }}
+      {{- $hasVar := false }}
+      {{- $minStart := 0 }}
+      {{- range $part := $dpParts }}
+        {{- if eq (dig "mountPath" "" $part) "/var" }}
+          {{- $hasVar = true }}
+        {{- end }}
+        {{- $s := (dig "startMiB" 0 $part) | int }}
+        {{- if and (gt $s 0) (or (eq $minStart 0) (lt $s $minStart)) }}
+          {{- $minStart = $s }}
+        {{- end }}
+      {{- end }}
+      {{- if and (not $hasVar) (gt $minStart 0) (lt $minStart 51200) }}
+        {{- $errors = append $errors (printf "%s: clusterInstall.diskPartitions has no partition mounting /var and its lowest startMiB is %dMiB, which caps the root filesystem at about that size. Container images stay on root without a separate /var, so the node fills up and kubelet reports DiskPressure before the install completes. Add a /var partition with sizeMiB 0 as the last entry, or raise startMiB above 51200" $path $minStart) }}
+      {{- end }}
+    {{- end }}
+
+    {{/* diskPartitions.device must be the disk the install actually lands on. rootDeviceHints is
+         per host and chooses that disk; the partition MachineConfig is per role and carries one
+         device path, so a disagreement silently partitions the wrong disk. Only deviceName can be
+         compared here: size and hardware hints are resolved by Ironic at provision time.
+
+         An absent device is the more dangerous case, because nothing downstream defaults it. The
+         manifests emit the field unconditionally, so the template resolver writes the literal
+         <no value> into the Ignition config and the node fails its first boot rather than failing
+         here. */}}
+    {{- $dp := (dig "config" "clusterInstall" "diskPartitions" dict $cluster) }}
+    {{- $dpDevice := (dig "device" "" $dp) }}
+    {{- if and $dpParts (not $dpDevice) }}
+      {{- $errors = append $errors (printf "%s: clusterInstall.diskPartitions.partitions is set but clusterInstall.diskPartitions.device is empty; the partition MachineConfig carries a single device path and an empty one reaches Ignition as <no value>, failing the node on first boot. Set it to the install disk, preferring a /dev/disk/by-id/ path because device names move between boots" $path) }}
+    {{- end }}
+    {{- if $dpDevice }}
+      {{- range $hostname, $host := $hosts }}
+        {{- $hint := (dig "rootDeviceHints" "deviceName" "" $host) }}
+        {{- if and $hint (ne $hint $dpDevice) }}
+          {{- $errors = append $errors (printf "%s host %s: rootDeviceHints.deviceName is %s but clusterInstall.diskPartitions.device is %s; the partition would be created on a different disk from the one the OS installs to" $path $hostname $hint $dpDevice) }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+    {{/* Validate acm.provisioning.osImages, the canonical path */}}
+    {{- $acmOsImages := (dig "config" "acm" "provisioning" "osImages" (list) $cluster) }}
+    {{- if $acmOsImages }}
+      {{- $acmErrStr := (include "autoshift.validate-os-images" (dict "path" (printf "%s: acm.provisioning.osImages" $path) "images" $acmOsImages)) | trim }}
+      {{- if $acmErrStr }}
+        {{- range splitList "\n" $acmErrStr }}
+          {{- $errors = append $errors . }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
     {{/* Validate disconnected config via shared template */}}
     {{- $disconnected := (dig "config" "disconnected" dict $cluster) }}
     {{- if not (empty $disconnected) }}
@@ -259,6 +339,17 @@ Collects all errors and reports them together.
       {{- end }}
       {{- if not $aws.sshPrivateKeyRef }}
         {{- $errors = append $errors (printf "%s: aws.sshPrivateKeyRef is required" $path) }}
+      {{- end }}
+      {{- if hasKey $aws "zones" }}
+        {{- if not (kindIs "slice" $aws.zones) }}
+          {{- $errors = append $errors (printf "%s: aws.zones must be a list" $path) }}
+        {{- else }}
+          {{- range $z := $aws.zones }}
+            {{- if not (hasPrefix (printf "%v" $aws.region) (printf "%v" $z)) }}
+              {{- $errors = append $errors (printf "%s: aws.zones entry '%v' is not in region '%v'" $path $z $aws.region) }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
       {{- end }}
       {{- range $key, $_ := $aws }}
         {{- if not (has $key $validAwsKeys) }}
@@ -752,6 +843,17 @@ Collects all errors and reports them together.
   {{- $csConfig := ($cs.config | default dict) }}
   {{- if not (empty $csConfig) }}
     {{- $errors := list }}
+
+    {{/* Validate acm.provisioning.osImages, the canonical path */}}
+    {{- $csAcmOsImages := (dig "acm" "provisioning" "osImages" (list) $csConfig) }}
+    {{- if $csAcmOsImages }}
+      {{- $csAcmErrStr := (include "autoshift.validate-os-images" (dict "path" (printf "%s: acm.provisioning.osImages" $csPath) "images" $csAcmOsImages)) | trim }}
+      {{- if $csAcmErrStr }}
+        {{- range splitList "\n" $csAcmErrStr }}
+          {{- $errors = append $errors . }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
 
     {{/* Validate disconnected config via shared template */}}
     {{- $csDisconnected := ($csConfig.disconnected | default dict) }}

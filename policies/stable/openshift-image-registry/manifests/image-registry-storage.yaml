@@ -1,5 +1,6 @@
+# placement-storage-pvc.yaml restricts this to pvc-backed clusters, so no storage-type
+# conditional belongs here.
 object-templates-raw: |
-  {{hub- if eq (index .ManagedClusterLabels "autoshift.io/imageregistry-storage-type" | default "") "pvc" hub}}
   - complianceType: musthave
     objectDefinition:
       kind: PersistentVolumeClaim
@@ -12,7 +13,6 @@ object-templates-raw: |
           - {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-access-mode" hub}}
         resources:
           requests:
-            storage: {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage" | default "100Gi" hub}}
+            storage: {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-size" | default "100Gi" hub}}
         volumeMode: {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-volume-mode" | default "Filesystem" hub}}
         storageClassName: {{hub index .ManagedClusterLabels "autoshift.io/imageregistry-pvc-storage-class" hub}}
-  {{hub- end hub}}

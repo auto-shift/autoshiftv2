@@ -1,0 +1,18 @@
+# STIG openshift-motd-exists. The rule requires a ConfigMap named motd in the openshift namespace
+# with a message key; the DoD consent banner text is set in config, not shipped here.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $motd := (dig "manualRemediations" "motd" "" $cfg) hub}}
+  {{hub- if $motd hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: motd
+        namespace: openshift
+      data:
+        message: |
+          {{hub $motd | autoindent hub}}
+  {{hub- end hub}}

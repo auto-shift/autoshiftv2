@@ -233,15 +233,24 @@ workflow pins need the annotation.
 > version is how local output starts diverging from the cluster. Match the versions that the
 > deployed OpenShift GitOps ships:
 >
-> | OpenShift GitOps | Argo CD | Helm | Kustomize |
-> |---|---|---|---|
-> | 1.21 | 3.4.3 | 3.19.4 | 5.8.1 |
-> | 1.20 | 3.3.2 | 3.19.4 | 5.8.1 |
-> | 1.19 | 3.1.9 | 3.18.4 | 5.7.0 |
+> | OpenShift GitOps | Argo CD | Helm | Kustomize | OpenShift Container Platform |
+> |---|---|---|---|---|
+> | 1.22 | 3.5.3 | 4.2.4 | 5.8.1 | 4.18-4.22 |
+> | 1.21 | 3.4.3 | 3.19.4 | 5.8.1 | 4.14, 4.16-4.22 |
+> | 1.20 | 3.3.2 | 3.19.4 | 5.8.1 | 4.14, 4.16-4.21 |
+> | 1.19 | 3.1.9 | 3.18.4 | 5.7.0 | |
 >
-> `renovate.json` constrains both with `allowedVersions`, so Renovate proposes patches inside the
-> current line and cannot raise Helm to 4. When `gitops-channel` moves, check the compatibility
-> matrix in the OpenShift GitOps release notes, then update the pins and those ranges together.
+> Rows 1.20 through 1.22 come from the
+> [Red Hat OpenShift GitOps compatibility and support matrix](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.22/html/release_notes/gitops-release-notes),
+> which carries the three most recent releases. Hub and managed cluster support for Red Hat
+> Advanced Cluster Management is in the
+> [2.17 support matrix](https://access.redhat.com/articles/7142376), published per version.
+>
+> `renovate.json` constrains Helm and kustomize with `allowedVersions`, so Renovate proposes
+> patches inside the current line and cannot raise Helm to 4. Note that OpenShift GitOps 1.22
+> moves to Helm 4.2.4, so moving `gitops-channel` to 1.22 means widening that range across a major
+> version. When the channel moves, update the pins in `versions.yaml`, the Renovate ranges, and
+> this table together.
 
 Two versions are deliberately not pinned. `OCP_VERSION` is a release channel, so the OpenShift CLI
 follows the latest patch, and the minor needs a manual bump. The Vale rule package resolves to the
@@ -484,6 +493,31 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 - `# YAML comment` — survives into output. Can merge with subsequent template lines.
 - **Hub templates do NOT support comments.** `{{hub /* comment */ hub}}` is invalid and will cause a parse error. Only use Go-style comments (`{{/* */}}`) outside of `{{hub ... hub}}` delimiters.
 
+#### Blank lines inside `object-templates-raw`
+
+A blank line in a shell script nested inside `object-templates-raw` is squeezed from both sides, and
+each of the two obvious fixes breaks a different layer.
+
+- A **truly empty** line is the case the block scalar rule warns about. Kubernetes can re-serialize
+  the enclosing `|` as `>` and merge the surrounding lines.
+- A **whitespace-only** line makes the outer `object-templates-raw` block impossible to represent as
+  a literal scalar, so the YAML emitter falls back to a double-quoted flow scalar. Every quote in the
+  block is then escaped, and hub resolution fails on the first template action with
+  `unexpected "\" in operand`. That is a parse error, so the whole policy stays raw and never
+  deploys, the same silent failure mode as calling a function the hub does not have.
+
+Use a comment line instead. It carries content, so neither rule applies:
+
+```yaml
+                  - |
+                    set -eo pipefail
+                    NS=vault
+                    #
+                    echo "waiting for vault-0..."
+```
+
+`grep -rn '^[[:space:]]\+$' policies/` finds any that have crept back in.
+
 #### Other gotchas
 
 **`fromYaml`, `fromJson`, `toYaml`, `toJson` work in hub templates.** This enables reading structured data from ConfigMaps directly:
@@ -492,6 +526,14 @@ name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subs
 {{ "{{hub-" }} $cm := (lookup "v1" "ConfigMap" $ns $name) {{ "hub}}" }}
 {{ "{{hub-" }} $config := (index ($cm.data | default dict) "config" | default "" | fromYaml) {{ "hub}}" }}
 ```
+
+**Read nested config with `dig`; hoist with `index` only when the intermediate is reused.** `dig` walks a path and returns its default when any level is missing, so a one-shot read is a single line:
+
+```yaml
+{{hub- $osImages := (dig "acm" "provisioning" "osImages" (list) $config) hub}}
+```
+
+Hoist a local with `index ... | default` when the same intermediate is read repeatedly, the way `$disconnected` and `$mirror` are in `acm-agentserviceconfig.yaml`. A hoist that is read once is ceremony. `dig` is available on every supported version, so it carries none of the allowlist risk described below. One difference is worth knowing: `dig` fails when an intermediate exists but is not a map, where `index | default` degrades quietly.
 
 **The available Sprig functions depend on the Red Hat Advanced Cluster Management version.** Version 2.15 and earlier expose an explicit allowlist that omits `trimPrefix`, `trimSuffix`, `compact`, and `toString`. Version 2.16 and later expose the whole Sprig function map and deny only `env` and `expandenv`, so all four work.
 
@@ -719,7 +761,7 @@ config:
     catalogs:                                     # name = {source}-{mirror-catalog-suffix label}
       - source: redhat-operators
         imagePath: redhat/redhat-operator-index
-        tag: v4.20
+        tag: v4.22
         publisher: Red Hat
 ```
 
@@ -808,15 +850,71 @@ gitops-channel: gitops-1.21
 ### Local Validation
 
 ```bash
-# Validate a single PolicyGenerator policy (render it the way the CMP/CI does)
+make test     # the whole validation suite, exactly what CI runs
+make verify   # make test plus helm lint, prose lint and the docs build
+```
+
+`make test` matches the CI job by construction, so there is nothing to remember about extra checks
+CI might add. To render one policy the way the config management plugin does:
+
+```bash
 KUSTOMIZE_PLUGIN_HOME=$PWD/.tools/kustomize-plugin .tools/kustomize build \
   --enable-alpha-plugins --enable-helm --load-restrictor LoadRestrictionsNone \
   policies/stable/my-component/
-
-# Validate ALL policies (PolicyGenerator directories + Helm holdouts), with hub/spoke resolution
-# And the label contract — the same suite CI runs:
-cd tools && go test -tags integration -count=1 ./internal/resolver/... && cd ..
 ```
+
+### What the suite covers
+
+| Test | What it covers |
+|---|---|
+| `TestPipeline_EndToEnd` | Five stages, all hard failures: Helm and kustomize render, hub resolution, spoke resolution, resolved-YAML validation including `<no value>` leaks, and the label contract |
+| `TestAutoShiftChart_ValuesProfiles` | The top-level chart against every clusterset profile, with each `clusters/_example*.yaml` layered onto `_example.yaml`. The only thing that executes `autoshift/templates/_validate-*.tpl` |
+| `TestPipeline_MutationSweep` | Introduces one deliberate defect per case and asserts the pipeline reports it, which proves the checks above detect a problem rather than only passing on clean input |
+| Empty-policy check, inside `TestPipeline_EndToEnd` | Fails a `ConfigurationPolicy` that applies no objects in every cluster profile. One with nothing to apply reports Compliant, so it shows green while enforcing nothing |
+| `TestPolicyNameLengths` | Fails a Policy name over 40 characters. With a 20-character policy namespace that reaches the 62-character limit on the replicated name, and the policy never arrives on the managed cluster. |
+| `TestVersionPins` | Fails a pinned version that disagrees with `versions.yaml`. Helm alone is pinned in four files, so this replaces a comment asking the next person to keep them identical |
+| `TestObjectTemplatesRaw_ParsesAsYAML` | Parses each resolved `object-templates-raw` block. The surrounding Policy can be valid YAML while the block inside it is not |
+| Unit tests | Label contract buckets, declared-label extraction, config key conventions and collisions, synthetic ConfigMap generation, spoke resolution, strip-defaults, `object-templates-raw` YAML validity |
+
+Every policy chart is resolved against five cluster profiles: the primary hub plus one per
+`autoshift/values/clusters/_example-cluster-install-*.yaml` file. Dropping in a new variant file adds
+a profile with no test-code change.
+
+### Empty policies
+
+A `ConfigurationPolicy` with no objects to apply reports **Compliant**. That is the most dangerous
+failure mode here: a policy whose required input is missing enforces nothing and still shows green.
+
+The check runs inside `TestPipeline_EndToEnd`, where the resolved output for every profile already
+exists, and fails a policy that applies nothing **in every** cluster profile. Empty in *some*
+profiles is reported but does not fail, because a policy gated on the platform or on a hub-only
+feature is meant to render nothing where it does not apply.
+
+There is no allowlist, by design. A policy empty in every profile has one of three causes, and each
+has a fix:
+
+- The config that drives it is not declared in `_example.yaml`, so the branch never renders. Declare
+  it, and add any `tools/testdata/` stub the branch looks up.
+- The policy repeats its own placement gate as a template conditional. Wherever that conditional is
+  false the policy applies nothing and reports Compliant, so the conditional is worse than no gate at
+  all. Delete it and let the placement do the gating.
+- The policy genuinely cannot render anything, which is the defect the check exists to find.
+
+Placement is deliberately not consulted when deciding whether to fail. Excusing a policy because no
+example profile satisfies its placement is what lets the second cause above survive, and it also
+hides missing testdata behind it.
+
+### What it does not cover
+
+**It renders only what the example values declare.** A branch gated on a config key that no
+`_example*.yaml` sets never renders, so it is never checked. When you add a branch that reads a
+Secret, a ConfigMap or a trust bundle, declare the key rather than leaving it commented out and the
+suite exercises it. Several real bugs have hidden in commented-out branches while every gate passed.
+
+It validates rendering and resolution, not enforcement semantics, and it does not cover multi-cluster
+topology such as the hub-of-hubs `managedHub` target. It also cannot model policy dependencies: it
+resolves every policy regardless of `dependencies`, so a policy that reads an object another policy
+creates needs that object stubbed in `tools/testdata/`.
 
 ### Compliance Validation
 

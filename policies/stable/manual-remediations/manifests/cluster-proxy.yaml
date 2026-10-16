@@ -1,0 +1,23 @@
+# NIST cluster-wide-proxy-set. Only relevant where egress goes through a proxy; on a cluster with
+# direct egress this rule cannot be satisfied and belongs in manualReview.accepted instead.
+#
+# Read-modify-write against the live Proxy CR: the installer sets trustedCA and readinessEndpoints
+# there, and replacing the spec would drop them.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $px := (dig "manualRemediations" "clusterProxy" dict $cfg) hub}}
+  {{hub- if (dig "httpsProxy" "" $px) hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: config.openshift.io/v1
+      kind: Proxy
+      metadata:
+        name: cluster
+      spec:
+        {{- $want := `
+        {{hub (omit $px "enabled") | toYaml | autoindent hub}}
+        ` | fromYaml }}
+        {{- $live := (dig "spec" dict ((lookup "config.openshift.io/v1" "Proxy" "" "cluster") | default dict)) }}
+        {{ mergeOverwrite $live $want | toYaml | autoindent }}
+  {{hub- end hub}}

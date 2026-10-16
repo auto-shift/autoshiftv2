@@ -205,17 +205,12 @@ disconnected:
   catalogs:                                 # CatalogSource name = {source}-{mirror-catalog-suffix label}
     - source: redhat-operators
       imagePath: redhat/redhat-operator-index
-      tag: v4.20
+      tag: v4.22
       publisher: Red Hat
     - source: certified-operators
       imagePath: redhat/certified-operator-index
-      tag: v4.20
+      tag: v4.22
       publisher: Red Hat
-  osImages:                                 # RHCOS images for hub AgentServiceConfig (disconnected only)
-    - openshiftVersion: '4.20'              # Major.Minor
-      version: '420.86.202301311551-0'      # RHCOS version string
-      cpuArchitecture: x86_64
-      url: 'https://mirror.example.com/rhcos/rhcos-live.x86_64.iso'
 ```
 
 When `disconnected.mirrorRegistry` is configured:
@@ -232,13 +227,25 @@ When `disconnected.mirrorRegistry` is configured:
   - **Registry CA trust**: creates a ConfigMap in `openshift-config` with the CA and patches `image.config.openshift.io/cluster` so the managed cluster trusts the mirror registry postinstall
 - **Red Hat Advanced Cluster Management provisioning policy** reads the hub's disconnected config for:
   - `mirrorRegistryRef` on `AgentServiceConfig` — so the Assisted Installer trusts the mirror
-  - `osImages` — custom live ISO URL for disconnected boot
+  - `osImages` — read from `config.acm.provisioning.osImages`, or from this block when that is absent
 
-**`osImages`** — For disconnected environments, the Assisted Installer cannot download Red Hat Enterprise Linux CoreOS (RHCOS) images from `mirror.openshift.com`. Download them and host on a local HTTP server:
+**`osImages`** — For disconnected environments, the Assisted Installer cannot download Red Hat Enterprise Linux CoreOS (RHCOS) images from `mirror.openshift.com`. Download them, host them where the hub can reach them, and list them under
+`config.acm.provisioning.osImages` on the hub clusterset:
+
+```yaml
+config:
+  acm:
+    provisioning:
+      osImages:
+        - openshiftVersion: '4.22'              # Major.Minor
+          version: '4.22.0'                     # RHCOS version string
+          cpuArchitecture: x86_64
+          url: 'https://mirror.example.com/rhcos/rhcos-live.x86_64.iso'
+```
 
 ```bash
 # Download the RHCOS live ISO for your OCP version
-curl -O https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.20/latest/rhcos-live.x86_64.iso
+curl -O https://mirror.openshift.com/pub/openshift-v4/x86_64/dependencies/rhcos/4.22/latest/rhcos-live.x86_64.iso
 
 # Host on a local HTTP server or Artifactory accessible from the hub
 cp rhcos-live.x86_64.iso /var/www/html/rhcos/
@@ -247,6 +254,9 @@ cp rhcos-live.x86_64.iso /var/www/html/rhcos/
 > **Note:** With `full-iso` (automatically set for disconnected), the rootfs is embedded in the ISO. You do not need to mirror the rootfs separately.
 
 The RHCOS version string (for the `version` field) can be found in the ISO filename or through `openshift-install coreos print-stream-json`.
+
+The earlier `disconnected.osImages` location is deprecated. It is still read when the canonical
+list is absent, and both are schema checked at template time.
 
 **Labels still required** for operator catalog source switching (`OperatorPolicy` can only read labels):
 
@@ -265,7 +275,7 @@ clusterInstall:
   createCluster: 'true'              # Required - triggers provisioning
   platform: baremetal                 # 'baremetal' (default), 'aws', or 'vmware'
   baseDomain: example.com
-  openshiftVersion: '4.20.29'
+  openshiftVersion: '4.22.8'
   cpuArch: x86_64                    # default: x86_64
   openshiftChannel: stable           # ClusterImageSet channel label (default: stable)
   clusterImageSet: ''                # optional, overrides openshiftVersion+cpuArch
@@ -273,7 +283,7 @@ clusterInstall:
   workerAgents: 0                    # default: (len hosts) - controlPlaneAgents
   apiVip: '10.0.0.1'                # required for multi-node
   ingressVip: '10.0.0.2'            # required for multi-node
-  mastersSchedulable: false          # default: false
+  mastersSchedulable: false          # default: false, bare metal multi-node only
   cpuPartitioning: 'None'            # 'None' (default) or 'AllNodes' — install-time only, see docs/workload-partitioning.md
   pullSecretRef: 'default-pull-secret'
   bmcCredentialRef: 'default-bmc-cred'
@@ -461,7 +471,7 @@ clusters:
         createCluster: 'true'
         platform: baremetal              # or 'aws' / 'vmware'
         baseDomain: example.com
-        openshiftVersion: '4.20.29'
+        openshiftVersion: '4.22.8'
         controlPlaneAgents: 3            # 1 = SNO
         apiVip: '10.0.0.2'              # required for multi-node
         ingressVip: '10.0.0.3'          # required for multi-node
@@ -506,7 +516,7 @@ clusters:
         createCluster: 'true'
         platform: vmware
         baseDomain: example.com
-        openshiftVersion: '4.20.16'
+        openshiftVersion: '4.22.8'
         pullSecretRef: { name: vsphere-creds, key: pullSecret, namespace: cluster-install-secrets }
         secretSourceNamespace: cluster-install-secrets
       vsphere:
@@ -638,7 +648,7 @@ clusters:
       clusterInstall:
         createCluster: 'true'
         baseDomain: example.com
-        openshiftVersion: '4.20.29'
+        openshiftVersion: '4.22.8'
         # inherits secretSourceNamespace, bmcCredentialRef, etc. from clusterset
 ```
 
@@ -728,12 +738,19 @@ Set `controlPlane.replicas: 1` and `workers.replicas: 0` under the platform bloc
 ```
 
 The single node runs the control plane and all workloads, so size the control plane
-accordingly — `m5.2xlarge` is the practical minimum on AWS.
+to match: `m5.2xlarge` is the practical minimum on AWS.
 
-SNO also provisions into a single availability zone, so it needs one NAT gateway and
-one Elastic IP rather than one per zone. That matters on sandbox AWS accounts, where
-the Elastic IP quota is commonly 5 and a multi-zone install fails partway through
-network creation with `AddressLimitExceeded`.
+On AWS, a single node does not mean a single availability zone. Unless you set `aws.zones`,
+the installation program creates a public subnet, a NAT gateway, and an Elastic IP
+in every zone in the region, whatever the replica count. That matters on sandbox AWS
+accounts, where the Elastic IP quota is commonly 5 and the install fails partway through
+network creation with `AddressLimitExceeded`. Pin SNO to one zone to use one Elastic IP:
+
+```yaml
+      aws:
+        zones:
+          - 'us-east-2a'
+```
 
 `workers.replicas: 0` produces a worker MachinePool with 0 replicas. That is expected
 and harmless: no MachineSets scale up.
@@ -771,7 +788,7 @@ clusters:
       clusterInstall:
         createCluster: 'true'
         baseDomain: example.com
-        openshiftVersion: '4.20.29'
+        openshiftVersion: '4.22.8'
         controlPlaneAgents: 1
         sshPublicKey: 'ssh-rsa ...'
 ```
@@ -881,6 +898,7 @@ For a complete working example, see `autoshift/values/clusters/_example-cluster-
 | `sshKeyRef` | No | - | Secret ref (`name`, `key`, `namespace`) for SSH public key |
 | `fips` | No | `false` | Enable Federal Information Processing Standards (FIPS) mode (requires RSA or ECDSA SSH keys, not ed25519) |
 | `networkType` | No | `OVNKubernetes` | SDN type |
+| `zones` | No | every zone in the region | Availability zones for the control plane, workers, and the worker `MachinePool`. Each zone gets its own NAT gateway and Elastic IP |
 | `controlPlane.instanceType` | No | `m5.xlarge` | Control plane EC2 instance type |
 | `controlPlane.rootVolume` | No | `{iops: 4000, size: 100, type: gp3}` | Control plane root volume config |
 | `workers.replicas` | No | `3` | Number of worker nodes |
@@ -902,11 +920,11 @@ pullSecretRef:
 
 #### AWS credentials
 
-The AWS account needs sufficient IAM permissions to create virtual private clouds, EC2 instances, Elastic Load Balancers, Route53 records, S3 buckets, and IAM roles. See the [OpenShift AWS IAM requirements](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_aws/installing-aws-account) for the full list of required permissions.
+The AWS account needs sufficient IAM permissions to create virtual private clouds, EC2 instances, Elastic Load Balancers, Route53 records, S3 buckets, and IAM roles. See the [OpenShift AWS IAM requirements](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/installing_on_aws/installing-aws-account) for the full list of required permissions.
 
 You can use either:
 - **Long-lived credentials**: IAM user with access key and secret key
-- **STS (temporary credentials)**: See [Installing with STS](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installing_on_aws/installing-aws-customizations#installing-aws-with-short-term-creds_installing-aws-customizations)
+- **STS (temporary credentials)**: See [Installing with STS](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/installing_on_aws/installing-aws-customizations#installing-aws-with-short-term-creds_installing-aws-customizations)
 
 #### Generate SSH keys
 

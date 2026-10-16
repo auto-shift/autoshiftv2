@@ -31,7 +31,7 @@ jobs:
         uses: azure/setup-helm@v5
         with:
           # Dependabot bumps the action (azure/setup-helm@v5) but never a `with:` input, so this
-          # pin is Renovate's. Keep it identical to the Containerfile and GitLab CI pins.
+          # pin is Renovate's. versions.yaml holds the value and TestVersionPins enforces it.
           # renovate: datasource=github-releases depName=helm/helm
           version: v3.19.4
 
@@ -132,37 +132,11 @@ jobs:
       - name: Install kustomize + PolicyGenerator plugin
         run: make install-policy-generator
 
-      - name: Validate policy name lengths
-        run: |
-          echo "=== Validating policy name lengths (max 40 chars) ==="
-          FAILED=0
-          check() {  # $1=name $2=file
-            local len=${#1}
-            if [ "$len" -gt 40 ]; then
-              echo "::error file=$2::Policy name '$1' is $len chars (max 40). Combined with a 20-char namespace this exceeds ACM's 62-char limit."
-              FAILED=1
-            fi
-          }
-          # PolicyGenerator policies: `- name:` entries directly under `policies:` (2-space indent)
-          # in each policy-generator-config.yaml.
-          while IFS= read -r file; do
-            while IFS= read -r name; do
-              check "$name" "$file"
-            done < <(grep -oP '^  - name: \K.*' "$file" 2>/dev/null || true)
-          done < <(find policies -name "policy-generator-config.yaml")
-          # Helm holdouts still author the name via `$policyName := "..."`.
-          while IFS= read -r file; do
-            while IFS= read -r name; do
-              check "$name" "$file"
-            done < <(grep -oP '(?<=\$policyName := ")[^"]+' "$file" 2>/dev/null || true)
-          done < <(find policies -name "*.yaml")
-          [ "$FAILED" -eq 0 ] && echo "All policy names within limit" || exit 1
-
       - name: Set up Helm
         uses: azure/setup-helm@v5
         with:
           # Dependabot bumps the action (azure/setup-helm@v5) but never a `with:` input, so this
-          # pin is Renovate's. Keep it identical to the Containerfile and GitLab CI pins.
+          # pin is Renovate's. versions.yaml holds the value and TestVersionPins enforces it.
           # renovate: datasource=github-releases depName=helm/helm
           version: v3.19.4
 
@@ -176,15 +150,11 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
           govulncheck ./...
 
-      - name: Validate policies (render, hub/spoke resolution, config coverage, label contract)
+      - name: Validate policies (render, hub/spoke resolution, config coverage, label contract, policy name lengths, detection)
         working-directory: tools
         run: go test -tags integration ./... -v -count=1
         env:
           LABEL_REPORT_OUTPUT: ${{ github.workspace }}/label-contract-report.md
-
-      - name: Validate CI detection mechanisms (mutation sweep)
-        working-directory: tools
-        run: go test -tags integration,mutation ./... -v -count=1 -run TestPipeline_MutationSweep
 
       - name: Upload label contract report
         if: always()
@@ -193,6 +163,54 @@ jobs:
           name: label-contract-report
           path: label-contract-report.md
           if-no-files-found: warn
+
+  # The release only runs on a tag, so before this job nothing exercised it until the tag was
+  # already pushed: v0.1.0 failed at install-policy-generator because the release container had no
+  # Go, which no PR could have caught. This runs the real release, in the real container, with the
+  # registry push skipped, so the release environment is a PR gate like anything else.
+  release-dry-run:
+    name: Release pipeline (dry run)
+    runs-on: ubuntu-latest
+    container:
+      image: registry.access.redhat.com/ubi9/ubi:latest
+    steps:
+      - name: Install git
+        run: dnf -y install git
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # The same script release.yaml installs with, so this cannot pass on a container the release
+      # fails in.
+      - name: Install release toolchain
+        run: ./scripts/install-release-toolchain.sh
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: tools/go.mod
+          cache: true
+          cache-dependency-path: tools/go.sum
+
+      # Everything a real release does except push: sync values, stamp versions, generate the
+      # policy list, install kustomize and PolicyGenerator, package the charts, render every
+      # PolicyGenerator directory into a Helm chart, and build the artifacts.
+      - name: Run the release with the push skipped
+        run: make release DRY_RUN=true VERSION=0.0.0-ci
+
+      # A step that silently produces nothing still exits 0, so assert the output rather than
+      # trusting the exit status: every policy in policy-list.txt must have a packaged chart.
+      - name: Verify the release output
+        run: |
+          set -euo pipefail
+          test -f .helm-charts/autoshift-0.0.0-ci.tgz
+          expected=$(grep -c . autoshift/files/policy-list.txt)
+          for policy in $(cat autoshift/files/policy-list.txt); do
+            test -f ".helm-charts/policies/${policy}-0.0.0-ci.tgz" \
+              || { echo "missing packaged chart: ${policy}"; exit 1; }
+          done
+          echo "verified ${expected} policy charts, the main chart and the bootstrap charts"
+          ls .helm-charts/bootstrap/*.tgz >/dev/null
 
   docs:
     name: Documentation (build and prose lint)
@@ -238,7 +256,7 @@ jobs:
       # Gates on error-level findings only. Which rules are set to error, and why the rest are
       # left reporting, is recorded in .vale.ini next to each rule.
       - name: Prose lint
-        run: vale --minAlertLevel=error README.md docs/
+        run: vale --minAlertLevel=error README.md AGENTS.md CLAUDE.md CONTRIBUTING.md docs/ policies/
 
       # Not a gate: prints the backlog so progress is visible on every run.
       - name: Report remaining style findings

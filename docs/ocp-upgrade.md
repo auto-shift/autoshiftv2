@@ -15,26 +15,30 @@ clustersets in waves, verifying compliance between waves.
 
 ## The `openshift-upgrade` policies
 
-`policies/stable/openshift-upgrade/` renders **four** policies, all sharing one placement gated on
+`policies/stable/openshift-upgrade/` renders these policies, all sharing one placement gated on
 `autoshift.io/openshift-upgrade: 'true'`. They run as a staged sequence — set the channel, validate
 the target, drive the upgrade, report completion:
 
 | # | Policy | Mode | Role |
 |---|---|---|---|
 | 1 | `policy-openshift-upgrade-channel` | enforce | Sets the `ClusterVersion` channel first, so `availableUpdates` recomputes for the desired channel. Without this, a y-stream target could deadlock the following check. |
-| 2 | `policy-openshift-upgrade-allowed` | inform | Asserts the target is a valid, available update. **Policy 3 depends on it**, so an unreachable version blocks the upgrade instead of half-applying it. |
-| 3 | `policy-openshift-upgrade` | enforce | Sets `upstream` and `desiredUpdate.version`; the Cluster Version Operator (CVO) does the upgrade. |
+| 2 | `policy-openshift-upgrade-allowed` | inform | Looks up `ClusterVersion.status.availableUpdates` and is Compliant only when `openshift-version` is already running, or is listed there with a release image. **Policy 3 depends on it**, so a mistyped or unpublished version, or a version with no release image, surfaces here and the upgrade never starts. A plain miss names the target version and channel and says to validate that the cluster operators are healthy. A target listed under `status.conditionalUpdates` is NonCompliant, and the message is the Cluster Version Operator reason and risk text. |
+| 3 | `policy-openshift-upgrade` | enforce | Sets `upstream` and `desiredUpdate.version` plus `desiredUpdate.image`; the Cluster Version Operator (CVO) does the upgrade. |
 | 4 | `policy-openshift-upgrade-status` | inform | The completion gate — Compliant only once the cluster has actually reached the target. **This is the one to watch for wave rollouts.** |
+
+`Recommended: False` means the Cluster Version Operator evaluated the risk on this cluster and it matched. That violation's message is the reason and the risk text. A release that leaves `status.conditionalUpdates` clears the violation.
 
 Two guards keep this safe:
 
-- **Semver guard** (policy 3) — asserts `desiredUpdate` only when `target > current`, so clusters
+- **Semver guard** (`policy-openshift-upgrade`) — asserts `desiredUpdate` only when `target > current`, so clusters
   already at or above the target are a Compliant no-op and downgrades are never attempted. It also
   skips while the cluster is already `Progressing`, so it never fights an in-flight upgrade.
-- **Dependency gate** (policy 3 → policy 2) — a typing error'd or unavailable `openshift-version` surfaces as
-  a clear `NonCompliant` message on policy 2 and policy 3 simply never fires.
+- **Dependency gate** (`policy-openshift-upgrade` → `policy-openshift-upgrade-allowed` → channel) — a missing, mistyped, or unpublished
+  `openshift-version`, or a listed version with no release image, is `NonCompliant` on `policy-openshift-upgrade-allowed`.
+  A plain miss names the target version and channel and says to validate that the cluster operators are healthy. A conditional update's message is the Cluster Version Operator reason and risk text.
+  The enforce policy stays Pending until that check is Compliant.
 
-> **How completion is detected.** Policy 4 does *not* assert `status.history` as a policy field. Red Hat Advanced Cluster Management
+> **How completion is detected.** `policy-openshift-upgrade-status` does *not* assert `status.history` as a policy field. Red Hat Advanced Cluster Management
 > does not reliably match status **lists** (`conditions`, `history`), so the policy computes the latest
 > `Completed` history entry in Go template logic and, until the target is reached, forces `NonCompliant`
 > with a `mustnothave` on the `ClusterVersion` — an object that always exists, making it a reliable
@@ -72,8 +76,8 @@ oc get policy -n policies-autoshift -l '!policy.open-cluster-management.io/root-
 ```
 
 ArgoCD surfaces it too: OpenShift GitOps ships a health check for `Policy`, so the
-`autoshift-openshift-upgrade` **Application is Healthy only when all four policies are Compliant** —
-which, because policy 4 is included, means the upgrade has finished. that is your "this wave is done,
+`autoshift-openshift-upgrade` **Application is Healthy only when every policy in the set is Compliant** —
+which, because `policy-openshift-upgrade-status` is included, means the upgrade has finished. that is your "this wave is done,
 proceed" gate. Expect the Application to sit Degraded for the duration of an upgrade; that is the
 gate working, not a fault.
 
@@ -85,7 +89,7 @@ The model is **blue/green clustersets** + **wave migration**:
    Its `openshift-version` targets the new OpenShift Container Platform version. The clusterset starts empty (or with a
    canary).
 2. **Move a canary cluster** into the new clusterset. The channel policy sets the channel, the allowed
-   check validates the target, the upgrade policy sets `desiredUpdate` → the CVO upgrades it.
+   check validates the target version and release image, the upgrade policy sets `desiredUpdate` → the CVO upgrades it.
 3. **Verify** the canary through `policy-openshift-upgrade-status` / ArgoCD health.
 4. **Move the next wave**, verify, repeat until the fleet is migrated.
 

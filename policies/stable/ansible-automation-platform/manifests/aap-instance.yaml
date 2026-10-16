@@ -1,4 +1,67 @@
+# AnsibleAutomationPlatform instance. The spec is built from YAML fragments, each parsed with
+# fromYaml and merged in order, so later fragments win:
+#   1. base: controller only; Hub, EDA and Lightspeed follow the operator's usual defaults
+#   2. DEPRECATED spec labels, applied only when set. Remove with the labels.
+#   3. modes: aap-noobaa-s3-storage and aap-custom-cabundle, which also place their own policies
+#   4. config.aap.instance from the cluster's rendered-config
+# Maps merge key by key and config wins, including false, 0 and "". Lists are replaced whole.
+# Config can change a key an earlier fragment set but cannot remove it.
+# fromConfigMap fails the policy when rendered-config is missing, rather than rendering the base
+# alone and letting mustonlyhave strip a running instance's config.
 object-templates-raw: |
+  {{hub- $labels := .ManagedClusterLabels hub}}
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $noobaa := (eq (index $labels "autoshift.io/aap-noobaa-s3-storage" | default "false") "true") hub}}
+  {{hub- $spec := (`
+  controller:
+    disabled: false
+  hub:
+    disabled: false
+  eda:
+    disabled: true
+  lightspeed:
+    disabled: true
+  redis_mode: standalone` | fromYaml) hub}}
+  {{hub- if (index $labels "autoshift.io/aap-hub-disabled") hub}}
+  {{hub- $spec = (mergeOverwrite $spec (printf `
+  hub:
+    disabled: %s`
+    (index $labels "autoshift.io/aap-hub-disabled") | fromYaml)) hub}}
+  {{hub- end hub}}
+  {{hub- if (index $labels "autoshift.io/aap-eda-disabled") hub}}
+  {{hub- $spec = (mergeOverwrite $spec (printf `
+  eda:
+    disabled: %s`
+    (index $labels "autoshift.io/aap-eda-disabled") | fromYaml)) hub}}
+  {{hub- end hub}}
+  {{hub- if (index $labels "autoshift.io/aap-lightspeed-disabled") hub}}
+  {{hub- $spec = (mergeOverwrite $spec (printf `
+  lightspeed:
+    disabled: %s`
+    (index $labels "autoshift.io/aap-lightspeed-disabled") | fromYaml)) hub}}
+  {{hub- end hub}}
+  {{hub- if (and (not $noobaa) (eq (index $labels "autoshift.io/aap-file-storage" | default "false") "true")) hub}}
+  {{hub- $spec = (mergeOverwrite $spec (printf `
+  hub:
+    storage_type: %s
+    file_storage_size: %s
+    file_storage_storage_class: %s`
+    (index $labels "autoshift.io/aap-storage-type" | default "file")
+    (index $labels "autoshift.io/aap-file_storage_size" | default "10Gi")
+    (index $labels "autoshift.io/aap-file_storage_storage_class" | default "ocs-storagecluster-cephfs") | fromYaml)) hub}}
+  {{hub- end hub}}
+  {{hub- if $noobaa hub}}
+  {{hub- $spec = (mergeOverwrite $spec (`
+  hub:
+    storage_type: S3
+    object_storage_s3_secret: s3-aap-odf
+  bundle_cacert_secret: user-ca-bundle` | fromYaml)) hub}}
+  {{hub- end hub}}
+  {{hub- if (eq (index $labels "autoshift.io/aap-custom-cabundle" | default "false") "true") hub}}
+  {{hub- $spec = (mergeOverwrite $spec (`
+  bundle_cacert_secret: user-ca-bundle` | fromYaml)) hub}}
+  {{hub- end hub}}
+  {{hub- $spec = (mergeOverwrite $spec (dig "aap" "instance" (dict) $cfg)) hub}}
   - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: aap.ansible.com/v1alpha1
@@ -7,23 +70,4 @@ object-templates-raw: |
         name: "aap"
         namespace: "ansible-automation-platform"
       spec:
-        controller:
-          disabled: false
-        hub:
-          disabled: {{hub index .ManagedClusterLabels "autoshift.io/aap-hub-disabled" | default "false" hub}}
-          {{hub- if eq (index .ManagedClusterLabels "autoshift.io/aap-file-storage" | default "false") "true" hub}}
-          storage_type: {{hub index .ManagedClusterLabels "autoshift.io/aap-storage-type" | default "file" hub}}
-          file_storage_size: 10Gi
-          file_storage_storage_class: {{hub index .ManagedClusterLabels "autoshift.io/aap-file_storage_storage_class" | default "ocs-storagecluster-cephfs" hub}}
-          {{hub- else if eq (index .ManagedClusterLabels "autoshift.io/aap-noobaa-s3-storage" | default "false") "true" hub}}
-          storage_type: S3
-          object_storage_s3_secret: s3-aap-odf
-          {{hub- end hub}}
-        eda:
-          disabled: {{hub index .ManagedClusterLabels "autoshift.io/aap-eda-disabled" | default "true" hub}}
-        lightspeed:
-          disabled: {{hub index .ManagedClusterLabels "autoshift.io/aap-lightspeed-disabled" | default "true" hub}}
-        redis_mode: standalone
-        {{hub- if or (eq (index .ManagedClusterLabels "autoshift.io/aap-noobaa-s3-storage" | default "false") "true") (eq (index .ManagedClusterLabels "autoshift.io/aap-custom-cabundle" | default "false") "true") hub}}
-        bundle_cacert_secret: user-ca-bundle
-        {{hub- end hub}}
+        {{hub $spec | toYaml | autoindent hub}}

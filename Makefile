@@ -85,6 +85,28 @@ install-policy-generator: ## Install kustomize + ACM PolicyGenerator plugin (rep
 	@printf "    export KUSTOMIZE_BIN=$(TOOLS_DIR)/kustomize\n"
 	@printf "    export KUSTOMIZE_PLUGIN_HOME=$(KUSTOMIZE_PLUGIN_HOME)\n"
 
+.PHONY: test
+test: ## Run the policy validation suite (what CI runs: render, resolution, label contract, detection)
+	@printf "$(BLUE)[INFO]$(NC) Validating policies...\n"
+	@cd tools && go test -tags integration ./... -count=1
+	@printf "$(GREEN)✓$(NC) Policies validated\n"
+
+.PHONY: verify
+verify: test lint ## The suite plus helm lint, prose lint and the docs build
+	@printf "$(BLUE)[INFO]$(NC) Prose lint...\n"
+	@if command -v vale >/dev/null 2>&1; then \
+		vale --minAlertLevel=error README.md AGENTS.md CLAUDE.md CONTRIBUTING.md docs/ policies/ || exit 1; \
+	else \
+		printf "$(YELLOW)[WARN]$(NC) vale not installed, skipping prose lint (devcontainer has it; else: brew install vale && vale sync)\n"; \
+	fi
+	@printf "$(BLUE)[INFO]$(NC) Documentation build...\n"
+	@if command -v zensical >/dev/null 2>&1; then \
+		./scripts/build-docs.sh >/dev/null && printf "$(GREEN)✓$(NC) Docs built\n" || exit 1; \
+	else \
+		printf "$(YELLOW)[WARN]$(NC) zensical not installed, skipping docs build (devcontainer has it; else: pip install -r docs/requirements.txt)\n"; \
+	fi
+	@printf "$(GREEN)✓$(NC) All checks passed\n"
+
 .PHONY: lint
 lint: ## Lint all Helm charts
 	@printf "$(BLUE)[INFO]$(NC) Linting Helm charts...\n"

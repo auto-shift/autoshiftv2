@@ -1,7 +1,7 @@
 # gitlab-runner AutoShift Policy
 
 ## Overview
-This policy installs the gitlab-runner-operator operator using AutoShift patterns.
+This policy installs the gitlab-runner-operator operator by using AutoShift patterns.
 
 ## Status
 ✅ **Operator Installation**: Ready to deploy  

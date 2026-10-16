@@ -1,0 +1,19 @@
+# STIG classification-banner. A ConsoleNotification renders the banner; the text and colours are a
+# site classification decision, so there is no automatic remediation.
+object-templates-raw: |
+  {{hub- $cm := ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict) hub}}
+  {{hub- $cfg := ((dig "data" "config" "" $cm) | fromYaml | default dict) hub}}
+  {{hub- $banner := (dig "manualRemediations" "classificationBanner" dict $cfg) hub}}
+  {{hub- if (dig "text" "" $banner) hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: console.openshift.io/v1
+      kind: ConsoleNotification
+      metadata:
+        name: classification-banner
+      spec:
+        text: {{hub (dig "text" "" $banner) | quote hub}}
+        location: {{hub (dig "location" "BannerTopBottom" $banner) hub}}
+        color: {{hub (dig "color" "#ffffff" $banner) | quote hub}}
+        backgroundColor: {{hub (dig "backgroundColor" "#0000ff" $banner) | quote hub}}
+  {{hub- end hub}}

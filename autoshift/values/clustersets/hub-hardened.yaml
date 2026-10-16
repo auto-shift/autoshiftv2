@@ -1,0 +1,144 @@
+# Hardened hub profile: everything in hub.yaml, plus the compliance posture applied rather than
+# only reported.
+#
+# Layer this ON TOP of hub.yaml, it is not standalone. Add it to the AutoShift Argo CD
+# Application's valueFiles, after hub.yaml so it wins:
+#
+#   spec:
+#     source:
+#       helm:
+#         valueFiles:
+#           - values/global.yaml
+#           - values/clustersets/hub.yaml
+#           - values/clustersets/hub-hardened.yaml
+#
+# What this costs, before you enable it:
+#   - autoApply on both benchmarks applies several hundred remediations. Many are MachineConfigs,
+#     so EVERY NODE REBOOTS, in more than one round: applying rolls the nodes, the next scan finds
+#     more, and those roll them again.
+#   - auditdConfig sets disk_error_action and disk_full_action to single, which drops a node to
+#     single-user mode rather than let auditing stop. That is the control's intent.
+#   - sshdAccess restricts SSH to the named accounts. Naming one that does not exist locks everyone
+#     out of the nodes.
+#   - rejectUnsignedImages stops any unsigned image being pulled. Leave it off until image signing
+#     is actually in place, or the cluster stops pulling on the next restart.
+#
+# NOT covered here: disk partitioning. The partition-for-var-log rules are day 1, so they only apply
+# when cluster-install provisions a cluster, and this profile describes a hub that already exists.
+# Set config.clusterInstall.diskPartitions on the cluster being provisioned, or on the
+# managedClusterSets entry it belongs to when the hardware is identical across the fleet, since
+# device must match the real install disk. Without it, five NIST rules and one STIG rule keep
+# failing and belong in compliance.manualReview.
+#
+# Lists REPLACE rather than merge, so the scans block below is the whole scans list, not an addition
+# to the one in hub.yaml.
+hubClusterSets:
+  hub:
+    labels:
+      # Every manual remediation member. imageRegistries and oauth are deliberately absent: the
+      # first blocks pulls from any registry not listed, and the second needs Secrets holding login
+      # HTML that must exist in openshift-config first. Add them once those are prepared.
+      manual-remediations: 'true'
+      manual-remediations-classification-banner: 'true'
+      manual-remediations-motd: 'true'
+      manual-remediations-remove-samples-operator: 'true'
+      manual-remediations-route-rate-limits: 'true'
+      manual-remediations-quota-guard: 'true'
+      manual-remediations-project-template: 'true'
+      manual-remediations-kubelet-eviction: 'true'
+      manual-remediations-auditd-config: 'true'
+      manual-remediations-audit-rule-order: 'true'
+      # File integrity monitoring, for file-integrity-exists.
+      file-integrity: 'true'
+      file-integrity-subscription-name: file-integrity-operator
+      file-integrity-version: 'file-integrity-operator.v1.4.1'
+      file-integrity-channel: stable
+      file-integrity-source: redhat-operators
+      file-integrity-source-namespace: openshift-marketplace
+    config:
+      compliance:
+        scans:
+          - name: stig-v2r3
+            profiles:
+              - ocp4-stig-v2r3
+              - ocp4-stig-node-v2r3
+              - rhcos4-stig-v2r3
+            scanSetting: default
+            autoApply: true
+            exclude:
+              - ocp4-stig-v2r3-project-config-and-template-network-policy
+              - ocp4-stig-v2r3-project-config-and-template-network-policy-1
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota
+              - ocp4-stig-v2r3-project-config-and-template-resource-quota-1
+          - name: nist-moderate-rev4
+            profiles:
+              - ocp4-moderate-rev-4
+              - ocp4-moderate-node-rev-4
+              - rhcos4-moderate-rev-4
+            scanSetting: default
+            autoApply: true
+            exclude: []
+        # Findings that cannot be fixed on a running cluster. Replace the reasons with what was
+        # actually reviewed on your cluster; these are the defensible starting points.
+        manualReview:
+          accepted:
+            - name: 'ocp4-stig-v2r3-fips-mode-enabled-on-all-nodes'
+              reason: 'FIPS is an install-config flag and cannot be enabled after install.'
+            - name: 'ocp4-moderate-rev-4-fips-mode-enabled-on-all-nodes'
+              reason: 'FIPS is an install-config flag and cannot be enabled after install.'
+            - name: 'rhcos4-moderate-rev-4-master-enable-fips-mode'
+              reason: 'FIPS is an install-config flag and cannot be enabled after install.'
+            - name: 'rhcos4-moderate-rev-4-worker-enable-fips-mode'
+              reason: 'FIPS is an install-config flag and cannot be enabled after install.'
+            - name: 'ocp4-stig-v2r3-container-security-operator-exists'
+              reason: 'The Container Security Operator is deprecated. Red Hat Advanced Cluster Security provides the equivalent scanning and console integration.'
+      logging:
+        # Audit log forwarding, for audit-log-forwarding-enabled and -uses-tls. Point this at a real
+        # collector; the rules check that audit logs leave the cluster over TLS.
+        forwarders:
+          - name: 'audit'
+            collectorRoles:
+              - 'collect-audit-logs'
+            spec:
+              outputs:
+                - name: 'audit-remote'
+                  type: 'syslog'
+                  syslog:
+                    url: 'tls://syslog.example.com:6514'
+                    rfc: 'RFC5424'
+              pipelines:
+                - name: 'audit-to-remote'
+                  inputRefs:
+                    - 'audit'
+                  outputRefs:
+                    - 'audit-remote'
+      fileIntegrity:
+        # One instance covering every node. Schedulable control plane nodes carry both the master
+        # and worker role labels, so per-role instances would scan those nodes twice.
+        instances:
+          - name: 'autoshift'
+            nodeSelector:
+              kubernetes.io/os: 'linux'
+            tolerations:
+              - operator: 'Exists'
+            config:
+              gracePeriod: 20
+              maxBackups: 5
+            debug: false
+      manualRemediations:
+        kubeletEviction:
+          pools: []
+        auditdConfig:
+          pools:
+            - 'master'
+            - 'worker'
+          settings:
+            flush: 'data'
+            disk_full_action: 'single'
+            disk_error_action: 'single'
+            space_left_action: 'email'
+            action_mail_acct: 'root'
+        auditRuleOrder:
+          pools:
+            - 'master'
+            - 'worker'

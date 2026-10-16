@@ -178,8 +178,8 @@ func TestExtractExampleConfigs_MissingClustersDir_Partial(t *testing.T) {
 
 func TestGenerateSyntheticConfigMaps_Names(t *testing.T) {
 	cfg := &ExampleConfigs{
-		BareLabels: map[string]string{"cert-manager": "true"},
-		HubConfig:  map[string]interface{}{"registry": "registry.example.com"},
+		BareLabels:           map[string]string{"cert-manager": "true"},
+		HubConfig:            map[string]interface{}{"registry": "registry.example.com"},
 		ClusterInstallConfig: map[string]interface{}{"baseDomain": "example.com"},
 	}
 
@@ -189,13 +189,13 @@ func TestGenerateSyntheticConfigMaps_Names(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"cluster-set-config.hub":             false,
-		"cluster-set-config.managed":         false,
+		"cluster-set-config.hub":              false,
+		"cluster-set-config.managed":          false,
 		"managed-cluster-config.lint-cluster": false,
 		"lint-cluster.rendered-config":        false,
 	}
 	for _, cm := range cms {
-		name, _, _ := unstructured.NestedString(cm.Object,"metadata", "name")
+		name, _, _ := unstructured.NestedString(cm.Object, "metadata", "name")
 		if _, ok := want[name]; ok {
 			want[name] = true
 		} else {
@@ -218,9 +218,9 @@ func TestGenerateSyntheticConfigMaps_Namespace(t *testing.T) {
 		t.Fatalf("GenerateSyntheticConfigMaps: %v", err)
 	}
 	for _, cm := range cms {
-		ns, _, _ := unstructured.NestedString(cm.Object,"metadata", "namespace")
+		ns, _, _ := unstructured.NestedString(cm.Object, "metadata", "namespace")
 		if ns != "policies-autoshift" {
-			name, _, _ := unstructured.NestedString(cm.Object,"metadata", "name")
+			name, _, _ := unstructured.NestedString(cm.Object, "metadata", "name")
 			t.Errorf("CM %s has namespace %q, want policies-autoshift", name, ns)
 		}
 	}
@@ -238,9 +238,9 @@ func TestGenerateSyntheticConfigMaps_RenderedConfigContainsHubAndCluster(t *test
 
 	var renderedConfig string
 	for _, cm := range cms {
-		name, _, _ := unstructured.NestedString(cm.Object,"metadata", "name")
+		name, _, _ := unstructured.NestedString(cm.Object, "metadata", "name")
 		if name == "lint-cluster.rendered-config" {
-			renderedConfig, _, _ = unstructured.NestedString(cm.Object,"data", "config")
+			renderedConfig, _, _ = unstructured.NestedString(cm.Object, "data", "config")
 			break
 		}
 	}
