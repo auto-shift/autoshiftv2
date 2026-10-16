@@ -36,7 +36,7 @@ Nothing below is vendored. A fresh clone can run none of the gates until these a
 | Tool | Needed for | Get it |
 |---|---|---|
 | `helm`, `git`, `yq` | rendering, release tooling | `make validate` checks these three |
-| `go` | the validation suite | version comes from `tools/go.mod` |
+| `go` | the validation suite | version from `tools/go.mod`; needs `GOTOOLCHAIN=auto` to fetch it |
 | kustomize + PolicyGenerator | rendering any PolicyGenerator policy | `make install-policy-generator`, stages both into `.tools/` |
 | `gitleaks` | the pre-commit secret scan | the hook warns and continues when absent |
 | `vale`, `zensical` | the prose and docs build gates | in the devcontainer; run `vale sync` first, the rules are not in the repo |
