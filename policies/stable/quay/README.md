@@ -155,8 +155,20 @@ as a single pod.
 | `redis` | One pod | Keep it. Red Hat Quay keeps only ephemeral data in Redis, so it does not need high availability. While it is down, build logs, builders, garbage collection and user events are unavailable, and the registry API keeps serving |
 | `objectstorage` | An `ObjectBucketClaim` | Full OpenShift Data Foundation, or your own S3-compatible bucket with `components.objectstorage: false` |
 
-To spread the registry pods across zones, pass `affinity` through `overrides.quay`,
-`overrides.clair`, and `overrides.mirror`.
+The Quay Operator spreads the `quay`, `clair`, and `mirror` pods across nodes but not across zones,
+so every replica of a component can land in one zone. Set `config.quay.zoneSpread: true` to prefer
+separate zones as well:
+
+```yaml
+config:
+  quay:
+    zoneSpread: true
+```
+
+The preference is soft: a single-zone cluster still schedules every pod, and the autoscaler can add
+more pods than there are zones. An explicit `overrides.<kind>.affinity` replaces it for that
+component, and replaces the Quay Operator's node spreading too, so include a hostname term in your
+own.
 
 ## External PostgreSQL
 

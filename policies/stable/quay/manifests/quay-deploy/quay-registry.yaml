@@ -22,6 +22,11 @@ object-templates-raw: |
   {{hub- $quayCfg := (index $rcmConfig "quay" | default dict) hub}}
   {{hub- $components := (index $quayCfg "components" | default dict) hub}}
   {{hub- $overrides := (index $quayCfg "overrides" | default dict) hub}}
+  {{- /* zoneSpread adds a preferred zone anti-affinity to quay, clair and mirror. The Operator
+       replaces its whole affinity with an override, so the generated one repeats its hostname term.
+       Preferred only: a required term per zone caps each component at one pod per zone and leaves
+       autoscaled pods Pending. An explicit overrides.<kind>.affinity wins. */}}
+  {{hub- $zoneSpread := (index $quayCfg "zoneSpread" | default false) hub}}
   {{hub- $bootstrap := (index $quayCfg "bootstrap" | default dict) hub}}
   {{hub- $tlsCfg := (index $quayCfg "tls" | default dict) hub}}
   {{hub- $certCfg := (index $tlsCfg "certificate" | default dict) hub}}
@@ -205,6 +210,13 @@ object-templates-raw: |
         {{hub- $managed = true hub}}
         {{hub- end hub}}
         {{hub- $ov := (index $overrides $kind | default dict) hub}}
+        {{hub- $podLabel := (index (dict "quay" "quay-app" "clair" "clair-app" "mirror" "quay-mirror") $kind | default "") hub}}
+        {{hub- if and $zoneSpread $podLabel (not (hasKey $ov "affinity")) hub}}
+        {{hub- $sel := dict "matchExpressions" (list (dict "key" "quay-component" "operator" "In" "values" (list $podLabel))) hub}}
+        {{hub- $zone := dict "weight" 100 "podAffinityTerm" (dict "labelSelector" $sel "topologyKey" "topology.kubernetes.io/zone") hub}}
+        {{hub- $host := dict "weight" 100 "podAffinityTerm" (dict "labelSelector" $sel "topologyKey" "kubernetes.io/hostname") hub}}
+        {{hub- $ov = merge (dict "affinity" (dict "podAntiAffinity" (dict "preferredDuringSchedulingIgnoredDuringExecution" (list $zone $host)))) $ov hub}}
+        {{hub- end hub}}
         {{hub- if or (eq $kind "postgres") (eq $kind "clairpostgres") hub}}
           - kind: {{hub $kind hub}}
             managed: {{ ternary "false" "true" $dbUnmanaged }}

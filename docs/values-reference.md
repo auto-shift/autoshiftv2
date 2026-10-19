@@ -699,6 +699,7 @@ and optionally provisions its databases through CloudNativePG.
 | `superUsers` | list | `[quayadmin]` | Registry superusers. With OpenID Connect these are the OpenID Connect user names |
 | `components.<kind>` | bool | `true` | Per component `managed` flag. Omit a component to leave it managed by the operator |
 | `overrides.<kind>` | map | | Passed through to `spec.components[].overrides`. Accepts `affinity`, `annotations`, `env`, `labels`, `replicas`, `resources`, `securityContext`, `storageClassName`, `tls`, and `volumeSize`. See the warning that follows about `replicas` |
+| `zoneSpread` | bool | `false` | Prefers separate zones, as well as separate nodes, for the `quay`, `clair`, and `mirror` pods. An explicit `overrides.<kind>.affinity` replaces it for that component |
 | `bootstrap.userInitialize` | bool | `false` | `FEATURE_USER_INITIALIZE`. Enables the unauthenticated first user endpoint |
 | `bootstrap.xhrOnly` | bool | `true` | `BROWSER_API_CALLS_XHR_ONLY`. Restricts the registry API to browser calls |
 | `bootstrap.userCreation` | bool | `false` | `FEATURE_USER_CREATION`. When false, only superusers create users |

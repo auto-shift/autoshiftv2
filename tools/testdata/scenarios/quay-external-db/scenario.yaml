@@ -43,6 +43,32 @@ expect:
       - path: spec.components[kind=clair].managed
         equals: true
 
+  # zoneSpread: the Operator replaces its whole affinity with an override, so the generated one must
+  # carry the zone term and repeat the hostname term, and must not drop the component's other
+  # overrides. An explicit affinity (clair here) wins, and redis is never given one.
+  - policy: policy-quay-deploy
+    kind: QuayRegistry
+    name: registry
+    fields:
+      - path: spec.components[kind=quay].overrides.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.topologyKey
+        equals: topology.kubernetes.io/zone
+      - path: spec.components[kind=quay].overrides.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[1].podAffinityTerm.topologyKey
+        equals: kubernetes.io/hostname
+      - path: spec.components[kind=quay].overrides.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.labelSelector.matchExpressions[0].values[0]
+        equals: quay-app
+      - path: spec.components[kind=quay].overrides.replicas
+        equals: 3
+      - path: spec.components[kind=mirror].overrides.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.labelSelector.matchExpressions[0].values[0]
+        equals: quay-mirror
+      - path: spec.components[kind=clair].overrides.affinity.podAntiAffinity
+        absent: true
+      - path: spec.components[kind=clair].overrides.affinity.nodeAffinity
+        present: true
+      - path: spec.components[kind=clair].overrides.volumeSize
+        equals: 50Gi
+      - path: spec.components[kind=redis].overrides.affinity
+        absent: true
+
   # The input check asserts the Secret and passes, because it holds DB_URI and clair-config.yaml.
   - policy: policy-quay-external-db
     kind: Secret
