@@ -44,10 +44,10 @@ stakes are highest:
 > object's metadata — and the cluster that adopted is the one with history,
 > which is the one with state worth protecting.
 
-So a migration that brings existing resources under policy management does not
-clear whatever delete semantics, ownership or finalizers they already had. If
-those matter, check them explicitly after adoption rather than assuming the
-policy normalised them.
+A migration that brings existing resources under policy management therefore
+does not clear whatever delete semantics, ownership or finalizers they already
+had. If those matter, check them explicitly after adoption rather than
+assuming the policy normalised them.
 
 **`musthave` combined with `enforce` creates objects that are absent.** A template guarded with a
 condition such as `(or (empty $lookup) ...)` does not skip the object when the lookup returns
