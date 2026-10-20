@@ -170,6 +170,91 @@ more pods than there are zones. An explicit `overrides.<kind>.affinity` replaces
 component, and replaces the Quay Operator's node spreading too, so include a hostname term in your
 own.
 
+## Production settings
+
+Keys in its `config.yaml` set how Red Hat Quay behaves. Put the non-sensitive ones in
+`config.quay.config`; anything holding a credential goes in the Secret from step 3. The Quay
+Operator reads the config bundle on every reconcile, so a change reaches the registry within about a
+minute and restarts the Red Hat Quay pods one at a time.
+
+The following clusterset or cluster values are a starting point for a production registry. Every
+value is a choice, not a default: read the linked Red Hat documentation before you copy one.
+
+```yaml
+config:
+  quay:
+    zoneSpread: true
+    overrides:
+      clair:
+        resources:
+          requests:
+            cpu: '2'
+            memory: 4Gi
+          limits:
+            cpu: '4'
+            memory: 16Gi
+    config:
+      # Time machine: how long a deleted or expired tag stays restorable before garbage collection
+      # reclaims it. DEFAULT_TAG_EXPIRATION must be one of TAG_EXPIRATION_OPTIONS.
+      DEFAULT_TAG_EXPIRATION: 2w
+      TAG_EXPIRATION_OPTIONS:
+        - 1d
+        - 1w
+        - 2w
+        - 4w
+      # Storage quotas: report usage per organization, and reject pushes once a namespace reaches
+      # the system-wide default (1 TiB here).
+      FEATURE_QUOTA_MANAGEMENT: true
+      FEATURE_QUOTA_NOTIFICATIONS: true
+      DEFAULT_SYSTEM_REJECT_QUOTA_BYTES: 1099511627776
+      # Registry-wide auto-pruning: delete tags older than 90 days in every organization.
+      FEATURE_AUTO_PRUNE: true
+      DEFAULT_NAMESPACE_AUTOPRUNE_POLICY:
+        method: creation_date
+        value: 90d
+      # Move action logs older than 30 days out of the database into object storage.
+      # local_us is the storage location of the Operator-managed bucket; name your own location
+      # instead when components.objectstorage is false.
+      FEATURE_ACTION_LOG_ROTATION: true
+      ACTION_LOG_ROTATION_THRESHOLD: 30d
+      ACTION_LOG_ARCHIVE_LOCATION: local_us
+      ACTION_LOG_ARCHIVE_PATH: archives/actionlogs
+```
+
+| Setting | Why | Red Hat documentation |
+|---|---|---|
+| `zoneSpread` | Keeps one zone outage from taking every replica of a component | [High availability](#high-availability) |
+| Clair `resources` | Clair uses about 3 GiB at steady state and more during a vulnerability database update, more than the 2 GiB request the Quay Operator sets. The autoscaler scales on 90% of the request, so the default keeps adding Clair pods. On a busy cluster the extra pods stay Pending, and the registry reports unavailable. A `resources` override replaces requests and limits together, so state both | [Horizontal Pod Autoscaling](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/deploying_the_red_hat_quay_operator_on_openshift_container_platform/advanced-configuration) |
+| `DEFAULT_TAG_EXPIRATION`, `TAG_EXPIRATION_OPTIONS` | Garbage collection is on by default and needs no setting. These control how long deleted tags stay restorable, which is also how long Red Hat Quay keeps their storage | [Garbage collection](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/garbage-collection) |
+| `FEATURE_QUOTA_MANAGEMENT`, `DEFAULT_SYSTEM_REJECT_QUOTA_BYTES`, `FEATURE_QUOTA_NOTIFICATIONS` | Limits registry growth. The system-wide default rejects pushes, so set it to more than your largest organization needs | [Quota management and enforcement](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/red-hat-quay-quota-management-and-enforcement) |
+| `FEATURE_AUTO_PRUNE`, `DEFAULT_NAMESPACE_AUTOPRUNE_POLICY` | Deletes old tags in every organization, including new ones. The registry-wide worker runs every 24 hours. Pruned tags enter the time machine first | [Auto-pruning](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/red-hat-quay-namespace-auto-pruning-overview), [registry-wide policy](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/creating-registry-wide-auto-pruning-policy) |
+| `FEATURE_ACTION_LOG_ROTATION` and `ACTION_LOG_*` | Keeps the audit log from growing the database without limit | [Action log storage fields](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-fields-actionlog) |
+
+Auto-pruning and a reject quota both delete or refuse content. Turn them on deliberately, and tell
+the teams that push to the registry first. The full list of keys is in
+[Component and feature configuration fields](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-fields-optional-intro).
+
+### Clair settings
+
+The Quay Operator always writes Clair's full configuration itself and layers a `clair-config.yaml`
+from the config bundle over it. To change a Clair setting in any database mode, put a
+`clair-config.yaml` key in the Secret from step 3 holding only the settings you change. In `managed`
+mode AutoShift merges it with the CloudNativePG connection, and the connection wins.
+
+On a disconnected cluster, Clair cannot reach the vulnerability databases it updates from, and its
+updaters retry without end. Turn them off and load the data with `clairctl` instead:
+
+```yaml
+indexer:
+  airgap: true
+matcher:
+  disable_updaters: true
+```
+
+Then export the vulnerability data from a connected Clair instance and import it, as described in
+[Clair in disconnected environments](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/vulnerability_reporting_with_clair_on_red_hat_quay/clair-disconnected-environments).
+Repeat the import regularly, or vulnerability reports go stale.
+
 ## External PostgreSQL
 
 Use `quay-db-mode: external` when the databases run outside the cluster, for example on a
@@ -245,9 +330,10 @@ oc get quayregistry registry -n quay-enterprise -o jsonpath='{.status.conditions
 ```
 
 The policy reads the Secret each time it evaluates, so a rotated password reaches the config bundle
-on the next evaluation. The Secret's `DB_URI` and `clair-config.yaml` apply only in `external` mode.
-In `managed` mode AutoShift writes both connections from CloudNativePG, so a Secret left over from an
-external setup does not keep either component on the old database.
+on the next evaluation. In `managed` mode AutoShift writes both connections from CloudNativePG, and
+they win over the Secret: a `DB_URI` or Clair `connstring` left over from an external setup does not
+keep either component on the old database. The rest of the Secret's `clair-config.yaml` still
+applies, as described in [Clair settings](#clair-settings).
 
 AutoShift adds keys to the config bundle but never removes them. After you delete an
 `extra_ca_cert_*` key from the Secret, also remove it from `quay-registry-config-bundle`.
@@ -421,3 +507,5 @@ account, before upgrading a registry whose only administrator was created by the
 - [Required configuration fields](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-fields-required-intro), including object storage and database fields
 - [Automation configuration options](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-preconfigure-automation-intro), for `SUPER_USERS`, `FEATURE_USER_INITIALIZE` and `BROWSER_API_CALLS_XHR_ONLY`
 - [Configuring OIDC for Red Hat Quay](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/configuring-oidc-authentication)
+- [Manage Red Hat Quay](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/index), for garbage collection, quotas, auto-pruning and other Day 2 tasks
+- [Vulnerability reporting with Clair on Red Hat Quay](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/vulnerability_reporting_with_clair_on_red_hat_quay/index)

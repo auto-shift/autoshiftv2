@@ -76,16 +76,18 @@ object-templates-raw: |
   {{- $base = merge $fromSecret $base }}
   {{- $dbMode := "{{hub $dbModeHub hub}}" }}
   {{- $external := eq $dbMode "external" }}
-  {{/* The same Secret may also carry whole bundle files: clair-config.yaml (required with an
-       unmanaged clairpostgres, which db-mode external sets) and extra_ca_cert_* PEM files (the
-       Operator mounts these into the Quay and Clair pods, for a database served by a private CA).
-       Only those keys are copied. Every other key stays out of the bundle, so a stray ssl.cert
-       cannot silently take over TLS from config.quay.tls. clair-config.yaml is copied only in
-       db-mode external: in managed mode a leftover one would keep Clair on the old database while
-       DB_URI moves Quay to CNPG. */}}
+  {{/* The same Secret may also carry whole bundle files: clair-config.yaml and extra_ca_cert_* PEM
+       files (the Operator mounts these into the Quay and Clair pods, for a database served by a
+       private CA). Only those keys are copied. Every other key stays out of the bundle, so a stray
+       ssl.cert cannot silently take over TLS from config.quay.tls.
+       The Operator always writes Clair's full config itself and layers clair-config.yaml over it as
+       a drop-in, so this file is an overlay: Clair's connection in db-mode external, and settings
+       such as matcher.disable_updaters for a disconnected cluster in any mode. In managed mode it
+       is merged below with the CNPG connection winning, so a leftover external connection cannot
+       keep Clair on the old database while DB_URI moves Quay to CNPG. */}}
   {{- $bundleFiles := dict }}
   {{- range $k, $v := $sec }}
-  {{- if or (and $external (eq $k "clair-config.yaml")) (hasPrefix "extra_ca_cert_" $k) }}
+  {{- if or (eq $k "clair-config.yaml") (hasPrefix "extra_ca_cert_" $k) }}
   {{- $_ := set $bundleFiles $k ($v | base64dec) }}
   {{- end }}
   {{- end }}
@@ -105,14 +107,22 @@ object-templates-raw: |
   {{- $clairUser := (index $clairDb "username" | default "" | base64dec) }}
   {{- $clairPass := (index $clairDb "password" | default "" | base64dec) }}
   {{- $clairConn := printf "host=%s port=%s dbname=%s user=%s password=%s sslmode=require" $clairHost $clairPort $clairName $clairUser $clairPass }}
-  {{- $cnpgReady := and (ne $dbMode "bundled") (not (empty $quayUri)) (not (empty $clairHost)) }}
+  {{/* managed only: in external mode, CNPG app Secrets left from an earlier managed deployment
+       must not move Quay back onto CNPG. */}}
+  {{- $cnpgReady := and (eq $dbMode "managed") (not (empty $quayUri)) (not (empty $clairHost)) }}
   {{- $dbUnmanaged := or $external $cnpgReady }}
   {{/* Set into the dict rather than appended as text: in db-mode external the admin Secret can
        also supply DB_URI, and two DB_URI lines would be a duplicate YAML key. */}}
   {{- if $cnpgReady }}
   {{- $_ := set $base "DB_URI" $quayUri }}
   {{- end }}
-  {{- $clairFromSecret := hasKey $bundleFiles "clair-config.yaml" }}
+  {{/* Managed mode: defaults, then the admin's overlay, then the CNPG connection, which wins. */}}
+  {{- if $cnpgReady }}
+  {{- $clairOverlay := (index $bundleFiles "clair-config.yaml" | default "" | fromYaml) | default dict }}
+  {{- $clairDefaults := dict "indexer" (dict "layer_scan_concurrency" 6 "migrations" true) "matcher" (dict "migrations" true) "notifier" (dict "migrations" true) "metrics" (dict "name" "prometheus") }}
+  {{- $clairCnpg := dict "indexer" (dict "connstring" $clairConn) "matcher" (dict "connstring" $clairConn) "notifier" (dict "connstring" $clairConn) }}
+  {{- $_ := set $bundleFiles "clair-config.yaml" (mergeOverwrite $clairDefaults $clairOverlay $clairCnpg | toYaml) }}
+  {{- end }}
   {{/* Gate-closed: in managed mode with the CNPG app Secrets not yet present, emit nothing rather
        than write a bundle with an empty DB_URI. policy-cnpg-quay-test orders this normally; this
        only covers the Secret being deleted out from under a running registry. */}}
@@ -140,21 +150,6 @@ object-templates-raw: |
         {{- range $k, $v := $bundleFiles }}
         {{ $k }}: |
           {{ $v | autoindent }}
-        {{- end }}
-        {{- if and $cnpgReady (not $clairFromSecret) }}
-        clair-config.yaml: |
-          indexer:
-            connstring: {{ $clairConn }}
-            layer_scan_concurrency: 6
-            migrations: true
-          matcher:
-            connstring: {{ $clairConn }}
-            migrations: true
-          notifier:
-            connstring: {{ $clairConn }}
-            migrations: true
-          metrics:
-            name: prometheus
         {{- end }}
   {{- if and $issuerName $issuerFound }}
   - complianceType: musthave
