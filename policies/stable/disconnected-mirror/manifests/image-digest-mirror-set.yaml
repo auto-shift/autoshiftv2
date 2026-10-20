@@ -14,7 +14,21 @@ object-templates-raw: |
   {{hub $useIDMS := (index $disconnected "useIDMS" | default true) hub}}
   {{hub if (gt (len $mirrors) 0) hub}}
   {{hub if $useIDMS hub}}
-  - complianceType: musthave
+  # mustonlyhave, not musthave. The mirror list below is built by ranging over
+  # config.disconnected.mirrorRegistry.mirrors, so its entries change whenever
+  # that config changes. musthave MERGES into a list and never replaces it, so
+  # editing a mirror's source or host, or removing a decommissioned mirror,
+  # leaves the old entry in the live object alongside the new one - and the
+  # policy reports Compliant throughout, because everything it was told to
+  # ensure is present.
+  #
+  # On a disconnected cluster that means pulls keep being redirected at a
+  # registry that may no longer exist, while git shows the mirror removed.
+  # pruneObjectBehavior: None means nothing ever cleans it up.
+  #
+  # docs/policy-behavior.md states the rule: "When the desired state has to
+  # override an existing list entry, use mustonlyhave."
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: config.openshift.io/v1
       kind: ImageDigestMirrorSet
@@ -35,7 +49,7 @@ object-templates-raw: |
               - '{{hub $mirrorLoc hub}}'
         {{hub end hub}}
   {{hub else hub}}
-  - complianceType: musthave
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: operator.openshift.io/v1alpha1
       kind: ImageContentSourcePolicy
@@ -59,7 +73,7 @@ object-templates-raw: |
   {{hub end hub}}
   {{hub- $tagMirrors := (index $mirror "tagMirrors" | default list) hub}}
   {{hub if and $useIDMS (gt (len $tagMirrors) 0) hub}}
-  - complianceType: musthave
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: config.openshift.io/v1
       kind: ImageTagMirrorSet
