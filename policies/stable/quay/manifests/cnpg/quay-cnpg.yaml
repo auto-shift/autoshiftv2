@@ -39,6 +39,11 @@ spec:
     limits:
       cpu: '2'
       memory: 4Gi
+  # Quay and Clair keep pooled connections open, so a smart shutdown never finishes early and the
+  # 180s default refuses new connections that long on every primary restart or node drain, before
+  # failover starts. Measured live: 2.7 minutes of failed pushes, and Quay's liveness probe, which
+  # checks the database, then restarted every Quay pod at once.
+  smartShutdownTimeout: 15
   affinity:
     enablePodAntiAffinity: true
     topologyKey: kubernetes.io/hostname
@@ -72,6 +77,11 @@ spec:
     limits:
       cpu: '2'
       memory: 4Gi
+  # Quay and Clair keep pooled connections open, so a smart shutdown never finishes early and the
+  # 180s default refuses new connections that long on every primary restart or node drain, before
+  # failover starts. Measured live: 2.7 minutes of failed pushes, and Quay's liveness probe, which
+  # checks the database, then restarted every Quay pod at once.
+  smartShutdownTimeout: 15
   affinity:
     enablePodAntiAffinity: true
     topologyKey: kubernetes.io/hostname

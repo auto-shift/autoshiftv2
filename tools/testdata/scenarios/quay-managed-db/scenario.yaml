@@ -53,3 +53,20 @@ expect:
     kind: Namespace
     name: quay-enterprise
     count: 1
+
+  # A short smart shutdown: Quay and Clair never close their pooled connections, so the 180s default
+  # refuses new connections for that long before failover starts.
+  - policy: policy-cnpg-quay
+    kind: Cluster
+    name: quay-db
+    count: 1
+    fields:
+      - path: spec.smartShutdownTimeout
+        equals: 15
+  - policy: policy-cnpg-quay
+    kind: Cluster
+    name: clair-db
+    count: 1
+    fields:
+      - path: spec.smartShutdownTimeout
+        equals: 15
