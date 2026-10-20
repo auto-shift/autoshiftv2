@@ -148,7 +148,7 @@ documentation checks cannot run.
 |------|---------|------------|-------------|
 | Git | 2.x or later | Everything | Pre-installed on most systems |
 | Helm | 3.x | Rendering charts, `make lint` | [Install Helm](https://helm.sh/docs/intro/install/) |
-| Go | As declared in `tools/go.mod` | The validation suite, and installing kustomize | [Install Go](https://go.dev/doc/install) |
+| Go | As declared in `tools/go.mod` | The validation suite, and installing kustomize | [Install Go](https://go.dev/doc/install), and see the note below on `GOTOOLCHAIN` |
 | kustomize and PolicyGenerator | kustomize v5.8.1 | Rendering any PolicyGenerator policy | `make install-policy-generator` |
 | yq | Latest | Release tooling | `brew install yq` |
 | gitleaks | 8.24.3 | The pre-commit secret scan | [Releases](https://github.com/gitleaks/gitleaks/releases) |
@@ -162,6 +162,26 @@ and cluster access are needed to deploy one.
 
 `make validate` checks for Helm, yq, and Git only, so a passing result does not mean the validation
 suite can run. Confirm Go separately.
+
+#### Go and `GOTOOLCHAIN`
+
+`tools/go.mod` pins an exact Go version, and an installed Go older than that one refuses to build
+the suite rather than upgrading itself:
+
+```text
+go: go.mod requires go >= 1.26.9 (running go 1.26.8; GOTOOLCHAIN=local)
+```
+
+The message names the cause: `GOTOOLCHAIN=local` forbids Go from fetching another toolchain. Some
+distributions and corporate images set it. Go's default is `auto`, which downloads exactly the
+version `tools/go.mod` pins and leaves the system installation alone:
+
+```bash
+export GOTOOLCHAIN=auto
+```
+
+Set it in your shell profile, or run `go env -w GOTOOLCHAIN=auto` once. This affects
+`make install-policy-generator` as well, since that target shells out to `go install`.
 
 #### kustomize and the PolicyGenerator plugin
 
