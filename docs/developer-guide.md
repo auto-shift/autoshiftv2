@@ -32,8 +32,8 @@ Your operator is now being deployed across your clusters. Check the ArgoCD dashb
 - [Contributing](#contributing)
 - [Troubleshooting](#troubleshooting)
 - [Additional Resources](#additional-resources)
-
-## 🏗️ Architecture overview
+<a id="architecture-overview"></a>
+## 🏗️ Architecture overvie
 
 AutoShiftv2 orchestrates OpenShift infrastructure through a sophisticated GitOps and policy-driven architecture:
 
@@ -137,6 +137,7 @@ flowchart TD
 - **Placement matching**: Selects target clusters by using label expressions and cluster sets
 - **Dynamic behavior**: Same policy template produces different resources per cluster based on labels or config
 
+<a id="developer-setup"></a>
 ## 🛠️ Developer setup
 
 ### Prerequisites
@@ -148,7 +149,7 @@ documentation checks cannot run.
 |------|---------|------------|-------------|
 | Git | 2.x or later | Everything | Pre-installed on most systems |
 | Helm | 3.x | Rendering charts, `make lint` | [Install Helm](https://helm.sh/docs/intro/install/) |
-| Go | As declared in `tools/go.mod` | The validation suite, and installing kustomize | [Install Go](https://go.dev/doc/install) |
+| Go | As declared in `tools/go.mod` | The validation suite, and installing kustomize | [Install Go](https://go.dev/doc/install), and see the note below on `GOTOOLCHAIN` |
 | kustomize and PolicyGenerator | kustomize v5.8.1 | Rendering any PolicyGenerator policy | `make install-policy-generator` |
 | yq | Latest | Release tooling | `brew install yq` |
 | gitleaks | 8.24.3 | The pre-commit secret scan | [Releases](https://github.com/gitleaks/gitleaks/releases) |
@@ -162,6 +163,26 @@ and cluster access are needed to deploy one.
 
 `make validate` checks for Helm, yq, and Git only, so a passing result does not mean the validation
 suite can run. Confirm Go separately.
+
+#### Go and `GOTOOLCHAIN`
+
+`tools/go.mod` pins an exact Go version, and an installed Go older than that one refuses to build
+the suite rather than upgrading itself:
+
+```text
+go: go.mod requires go >= 1.26.9 (running go 1.26.8; GOTOOLCHAIN=local)
+```
+
+The message names the cause: `GOTOOLCHAIN=local` forbids Go from fetching another toolchain. Some
+distributions and corporate images set it. Go's default is `auto`, which downloads exactly the
+version `tools/go.mod` pins and leaves the system installation alone:
+
+```bash
+export GOTOOLCHAIN=auto
+```
+
+Set it in your shell profile, or run `go env -w GOTOOLCHAIN=auto` once. This affects
+`make install-policy-generator` as well, since that target shells out to `go install`.
 
 #### kustomize and the PolicyGenerator plugin
 
@@ -303,6 +324,7 @@ make install-policy-generator          # one-time: stages kustomize + PG plugin 
 cd tools && go test -tags integration -count=1 ./internal/resolver/... && cd ..
 ```
 
+<a id="creating-your-first-policy"></a>
 ## 💡 Creating your first policy
 
 ### Step 1: research your operator
@@ -411,6 +433,7 @@ git push
 oc get applications.argoproj.io -n openshift-gitops | grep my-component
 ```
 
+<a id="policy-development-guide"></a>
 ## 📚 Policy development guide
 
 ### Policy development workflow
@@ -444,7 +467,7 @@ channel: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-c
 # Using subscription name from labels
 name: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/my-component-subscription-name" | default "my-component-operator" {{ "hub}}" }}'
 ```
-
+<a id="hub-template-pitfalls"></a>
 ### Hub template pitfalls
 
 #### Trim markers (`{{-` / `{{hub-`) — the indentation rule
@@ -690,6 +713,7 @@ Placement decides which clusters get a policy. Dependencies decide the order in 
 on a given cluster. Neither is a global sequencer: policies are distributed in parallel, and a
 dependency only holds back the policy that declares it.
 
+<a id="common-development-tasks"></a>
 ## 🔧 Common Development Tasks
 
 ### Updating an Existing Policy
@@ -845,6 +869,7 @@ gitops: 'true'
 gitops-channel: gitops-1.21
 ```
 
+<a id="testing-and-validation"></a>
 ## 🧪 Testing and Validation
 
 ### Local Validation
@@ -927,6 +952,7 @@ oc get policies -A \
 oc get policyreports -A
 ```
 
+<a id="contributing"></a>
 ## 🤝 Contributing
 
 ### Contribution Workflow
@@ -995,6 +1021,7 @@ oc get policyreports -A
 - [ ] No hard-coded values (use templates)
 - [ ] Add Labels to AutoShift Values files
 
+<a id="troubleshooting"></a>
 ## 🔍 Troubleshooting
 
 ### Common Issues and Solutions
@@ -1111,11 +1138,12 @@ oc describe operatorpolicy install-operator-acs -n $CLUSTER_NAME
 oc describe configurationpolicy managed-cluster-security-ns -n $CLUSTER_NAME
 ```
 
+<a id="additional-resources"></a>
 ## 📖 Additional Resources
 
 ### Documentation
 - `scripts/README.md`
-- [OpenShift GitOps Documentation](https://docs.openshift.com/container-platform/latest/cicd/gitops/understanding-openshift-gitops.html)
+- [OpenShift GitOps Documentation](https://docs.redhat.com/en/documentation/red_hat_openshift_gitops/1.22/html/understanding_openshift_gitops/index)
 - [Red Hat Advanced Cluster Management Policy Framework](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes/)
 
 ### Training

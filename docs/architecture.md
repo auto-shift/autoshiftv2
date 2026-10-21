@@ -26,7 +26,7 @@ page. See
 Its governance policy framework is what distributes AutoShift's policies. A policy propagator on
 the hub creates a replicated policy in each managed cluster namespace, and a configuration policy
 controller on the managed cluster enforces it and reports compliance back. Reading
-[Governance policy framework architecture](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/2.17/html/governance/governance-architecture)
+[Governance policy framework architecture](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_management_for_kubernetes/2.17/html/governance/governance#governance-architecture)
 is worthwhile before treating any AutoShift policy behavior as unexpected, because most of what
 looks like AutoShift is this framework.
 
@@ -107,7 +107,7 @@ A disconnected site never reaches the internet, so a release is assembled on a c
 mirrored, and carried across the boundary as files. Everything on the low side then resolves against
 the internal registry, and the policies behave identically once the images and charts are present.
 The mirroring workflow is documented in
-[Releases and OCI](releases.md#disconnected-air-gapped-environments).
+[Releases and OCI](releases.md#disconnected--air-gapped-environments).
 
 [![AutoShift disconnected delivery](diagrams/autoshift-oci-disconnected.drawio.svg)](diagrams/autoshift-oci-disconnected.drawio.svg)
 
