@@ -1,0 +1,69 @@
+name: Markdown links
+
+# Checks every link in every Markdown file, external URLs included. The docs build in ci.yaml
+# already fails on a broken internal link or anchor inside docs/, but nothing else checks external
+# URLs, or the Markdown outside docs/ such as README.md and the policy READMEs. External links rot
+# without any commit, so this also runs weekly.
+#
+# Report only: the job passes and lists broken links in the run summary and as annotations. An
+# external site that is briefly unreachable from a runner would otherwise turn the check red.
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays, off the hour to avoid the top-of-hour scheduler rush.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: markdown-links-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Third-party action from a single maintainer, so it is pinned to a commit rather than a
+      # movable tag. Dependabot updates the SHA and the version comment together.
+      - name: Check links
+        id: links
+        continue-on-error: true
+        uses: harryvasanth/markdown-link-checker@683350205768a8c6cb2e6e61be0453906ce999d8 # v1.4
+        with:
+          timeout: '20'
+          retry-count: '3'
+          # Hosts this check cannot judge. example.com, localhost and 127.0.0.1 are placeholders or
+          # exist only on a workstation. The Red Hat documentation hosts answer 403 to every scripted
+          # request, including for pages that do not exist, so they would be reported broken on every
+          # run whether or not the page is there.
+          ignore-urls: 'example.com,localhost,127.0.0.1,docs.redhat.com,access.redhat.com,docs.openshift.com'
+
+      - name: Summarize broken links
+        if: always()
+        env:
+          BROKEN: ${{ steps.links.outputs.json }}
+          OUTCOME: ${{ steps.links.outcome }}
+        run: |
+          if [ -z "$BROKEN" ] || [ "$BROKEN" = "[]" ]; then
+            if [ "$OUTCOME" = "success" ]; then
+              echo "No broken links." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "The link check did not finish. See the Check links step log." >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+          {
+            echo "### $(jq length <<<"$BROKEN") broken links"
+            echo
+            echo "| File | Line | Status | Link |"
+            echo "|---|---|---|---|"
+            jq -r '.[] | "| \(.file) | \(.line_num) | \(.status) | \(.link) |"' <<<"$BROKEN"
+          } >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.[] | "::warning file=\(.file),line=\(.line_num)::Broken link (\(.status)): \(.link)"' <<<"$BROKEN"
