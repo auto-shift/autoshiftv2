@@ -52,6 +52,10 @@ policies:
       - name: policy-gitlab-operator-install
     manifests:
       - path: manifests/instance
+    # The instance template fails with a readable reason (an unsupported bundled mode, or the inputs
+    # it is still waiting for). Keep only that reason, not the template-error wrapper.
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
   # 2-test) GitLab CR readiness (status observation → inform, its own Policy in test/).
   - name: policy-gitlab-instance-test
     remediationAction: inform

@@ -575,6 +575,13 @@ hubClusterSets:
         # startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
         dbBackupSchedule: '0 2 * * *'
         dbBackupRetention: '30d'
+        # GitLab application backups (gitlab-backup from the toolbox): repositories, uploads,
+        # artifacts and a database dump, written to the GitLab bucket. The database backups above
+        # alone cannot restore GitLab.
+        backupSchedule: '0 3 * * *'
+        backupMaximum: 7                 # backups kept in the bucket; older ones are deleted
+        backupScratchSize: '50Gi'        # ephemeral volume a backup is built in; size it to the repositories
+        zoneSpread: true                 # prefer separate zones (not just nodes) for GitLab pods and its database
       # =======================================================================
       # JFrog Artifactory
       # =======================================================================
@@ -1874,10 +1881,10 @@ hubClusterSets:
       gitlab-version: 'gitlab-operator-kubernetes.v3.3.1'
       gitlab-source: certified-operators
       gitlab-source-namespace: openshift-marketplace
-      # Service modes: managed (default), external, or bundled
-      gitlab-db-mode: 'managed'                 # managed: CNPG HA, external: BYO, bundled: built-in
-      gitlab-redis-mode: 'managed'              # managed: Redis Sentinel, external: BYO, bundled: Bitnami
-      gitlab-object-storage-mode: 'managed'     # managed: NooBaa, external: BYO S3, bundled: MinIO
+      # Service modes: managed (default) or external. GitLab 19 removed the bundled backends.
+      gitlab-db-mode: 'managed'                 # managed: CNPG HA, external: BYO
+      gitlab-redis-mode: 'managed'              # managed: Redis Sentinel, external: BYO
+      gitlab-object-storage-mode: 'managed'     # managed: NooBaa, external: BYO S3
       # External mode labels (only when mode is 'external'):
       gitlab-db-host: 'my-postgres.example.com'
       gitlab-redis-host: 'my-redis.example.com'
@@ -1887,7 +1894,6 @@ hubClusterSets:
       gitlab-praefect-replicas: '3'             # Praefect proxy replicas (default: 3)
       gitlab-gitaly-replicas: '3'               # Gitaly replicas per virtual storage (default: 3)
       gitlab-gitaly-storage-class: 'ocs-storagecluster-cephfs'  # StorageClass for Gitaly PVC (omit for cluster default; use RWX for multi-node)
-      gitlab-redis-storage-class: 'ocs-storagecluster-cephfs'   # StorageClass for bundled Redis PVC (omit for cluster default)
       gitlab-db-instances: '2'                  # PostgreSQL replicas (default: 2)
       gitlab-db-pooler-instances: '2'           # PgBouncer replicas (default: 2)
       gitlab-db-backups: 'true'                 # Enable CNPG backups (requires managed db + odf)
@@ -1897,6 +1903,9 @@ hubClusterSets:
       gitlab-sidekiq-max-replicas: '4'          # Sidekiq HPA max (default: 4)
       gitlab-shell-min-replicas: '2'            # gitlab-shell HPA min (default: 2)
       gitlab-shell-max-replicas: '4'            # gitlab-shell HPA max (default: 4)
+      # SSH access. The OpenShift router carries only HTTP and TLS, so GitLab Shell needs its own way in.
+      gitlab-ssh-mode: 'internal'               # internal (cluster only, default) | loadbalancer | disabled
+      gitlab-ssh-host: 'ssh.gitlab.example.com' # loadbalancer: DNS name for clone URLs (omit to use the LB's own address)
       # --- Config values go in config.gitlab (see config section above) ---
       # dbBackupSchedule, dbBackupRetention
 

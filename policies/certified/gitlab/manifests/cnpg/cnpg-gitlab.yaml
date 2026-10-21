@@ -24,9 +24,14 @@ spec:
     limits:
       cpu: '2'
       memory: 4Gi
+  # PgBouncer keeps its server connections open, so a smart shutdown never finishes early and the
+  # 180s default delays failover that long on every primary restart or node drain, then drops the
+  # connections anyway. Measured live: failover 3.5 minutes after the delete.
+  smartShutdownTimeout: 15
   affinity:
     enablePodAntiAffinity: true
-    topologyKey: kubernetes.io/hostname
+    # config.gitlab.zoneSpread puts the instances in separate zones instead of on separate nodes.
+    topologyKey: '{{hub ternary "topology.kubernetes.io/zone" "kubernetes.io/hostname" (eq (printf "%v" (dig "gitlab" "zoneSpread" false ((index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml) | default dict))) "true") hub}}'
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor

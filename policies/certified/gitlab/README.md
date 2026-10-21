@@ -2,6 +2,10 @@
 
 Deploys GitLab on OpenShift with configurable backends for PostgreSQL, Redis, and object storage.
 
+The policy installs the chart version that the installed GitLab Operator supports, so GitLab stays
+current with the operator channel. The chart's major version is 9 behind GitLab's: chart 10.5.0 is
+GitLab 19.5.0. See [GitLab version mappings](https://docs.gitlab.com/charts/installation/version_mappings/).
+
 ## Prerequisites
 
 ### Required Operators
@@ -67,17 +71,22 @@ Each backend defaults to `managed`. Override per-cluster via labels.
 
 | Label | Values | Default | Description |
 |-------|--------|---------|-------------|
-| `gitlab-db-mode` | managed / external / bundled | managed | PostgreSQL backend |
-| `gitlab-redis-mode` | managed / external / bundled | managed | Redis backend |
-| `gitlab-object-storage-mode` | managed / external / bundled | managed | Object storage backend |
+| `gitlab-db-mode` | managed / external | managed | PostgreSQL backend |
+| `gitlab-redis-mode` | managed / external | managed | Redis backend |
+| `gitlab-object-storage-mode` | managed / external | managed | Object storage backend |
 
 | Mode | Behavior |
 |------|----------|
 | **managed** | AutoShift deploys CNPG/Redis Sentinel/NooBaa (requires their operators) |
 | **external** | User provides connection secrets (see above) |
-| **bundled** | GitLab's built-in components (not recommended for production) |
 
-If `managed` is set but the required operator is not enabled, GitLab falls back to bundled automatically.
+GitLab 19 (chart 10) removed the bundled PostgreSQL, Redis and MinIO, so `bundled` is no longer a
+mode: `policy-gitlab-instance` reports `NonCompliant` and names the label to change.
+
+`policy-gitlab-instance` creates GitLab only when its inputs exist. Until then it reports
+`NonCompliant` and names each missing Secret or ConfigMap and the policy that creates it. In managed
+mode the usual causes are `cloudnative-pg` or `odf` not set to `'true'`, or a NooBaa backing store
+that is not Ready.
 
 ## Policy Chain
 
@@ -121,7 +130,6 @@ gitlab-source-namespace: openshift-marketplace
 
 # Storage classes (optional — omit to use cluster default)
 # gitlab-gitaly-storage-class: 'ocs-storagecluster-cephfs'  # StorageClass for Gitaly PVC; use RWX class to avoid Multi-Attach errors on multi-node clusters
-# gitlab-redis-storage-class: 'ocs-storagecluster-cephfs'   # StorageClass for bundled Redis PVC (only when gitlab-redis-mode: bundled)
 
 # Database sizing
 # gitlab-db-instances: '2'              # PostgreSQL replicas (default: 2)
@@ -137,6 +145,10 @@ gitlab-source-namespace: openshift-marketplace
 
 # Database backups (requires managed db mode + odf)
 # gitlab-db-backups: 'true'
+
+# SSH access (see SSH access)
+# gitlab-ssh-mode: 'internal'           # internal (default) | loadbalancer | disabled
+# gitlab-ssh-host: 'ssh.gitlab.example.com'  # loadbalancer only: DNS name for clone URLs
 ```
 
 ### Config (in clusterset values under `config.gitlab`)
@@ -150,6 +162,69 @@ hubClusterSets:
       gitlab:
         dbBackupSchedule: '0 2 * * *'              # Cron schedule for CNPG base backups
         dbBackupRetention: '30d'                   # Backup retention period
+        backupSchedule: '0 3 * * *'                # Application backup (see Application backups)
+        backupMaximum: 7                           # Application backups kept in the bucket
+        backupScratchSize: '50Gi'                  # Ephemeral volume a backup is built in
+        zoneSpread: true                           # Spread GitLab pods and its database across zones
+```
+
+`zoneSpread` switches every GitLab component and the database cluster from preferring separate
+nodes to preferring separate zones. The preference is soft, so a single-zone cluster still
+schedules. Changing it rolls the database instances, one switchover.
+
+## Application backups
+
+The CloudNativePG backups cover only the database. GitLab also needs its repositories, uploads,
+artifacts and Git Large File Storage (LFS) objects, which only the
+[GitLab backup](https://docs.gitlab.com/charts/backup-restore/backup/) captures. AutoShift runs it
+as the toolbox's scheduled backup, on `backupSchedule`, into the GitLab bucket, keeping the newest
+`backupMaximum` backups.
+
+The backup job reads its storage credentials from the `gitlab-backup-s3cfg` Secret, an `s3cmd`
+configuration. In managed object storage mode `policy-gitlab-object-storage` writes it. With
+external object storage, create it yourself under the key `config`. Without it there are no
+application backups, and `policy-gitlab-instance-prereqs` reports the Secret as missing.
+
+To run a backup now:
+
+```bash
+oc create job manual-backup --from=cronjob/gitlab-toolbox-backup -n gitlab-system
+```
+
+You cannot restore a backup without the `gitlab-rails-secret` Secret, which is not in the backup.
+Export it and keep it with your backups:
+
+```bash
+oc get secret gitlab-rails-secret -n gitlab-system -o yaml > gitlab-rails-secret.yaml
+```
+
+## SSH access
+
+The OpenShift router carries only HTTP and TLS, so Git over SSH needs its own way into GitLab Shell.
+`gitlab-ssh-mode` chooses it:
+
+| Mode | Behavior |
+|---|---|
+| `internal` (default) | GitLab Shell is reachable inside the cluster only. Clone over HTTPS from outside |
+| `loadbalancer` | GitLab Shell gets a `LoadBalancer` Service. Clone URLs use `gitlab-ssh-host`, or the address of the load balancer until you give it a DNS name. Needs a cloud load balancer, or MetalLB on bare metal |
+| `disabled` | No GitLab Shell. Git over HTTPS only |
+
+On a cluster with Federal Information Processing Standards (FIPS) mode enabled, the OpenSSH client
+refuses Ed25519 keys. Use Elliptic Curve Digital Signature Algorithm (ECDSA) or RSA keys.
+
+## Redis password
+
+In managed Redis mode the policy seeds a random password the first time, in the
+`gitlab-redis-password` Secret. Earlier releases seeded `gitlabRedis<cluster_name>`, which anyone
+who knows the cluster name can derive. To rotate to a random one, delete the Secret, let the
+policy write a new one, then restart everything that reads it:
+
+```bash
+oc delete secret gitlab-redis-password -n gitlab-system
+# wait until the Secret exists again, then:
+oc rollout restart statefulset/gitlab-redis statefulset/gitlab-redis-sentinel -n gitlab-system
+oc rollout restart deployment/gitlab-webservice-default deployment/gitlab-sidekiq-all-in-1-v2 \
+  deployment/gitlab-kas deployment/gitlab-gitlab-exporter deployment/gitlab-toolbox -n gitlab-system
 ```
 
 ## Managed Mode Details
