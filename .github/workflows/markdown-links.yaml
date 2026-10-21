@@ -38,12 +38,16 @@ jobs:
         uses: harryvasanth/markdown-link-checker@683350205768a8c6cb2e6e61be0453906ce999d8 # v1.4
         with:
           timeout: '20'
-          retry-count: '3'
+        # Inputs with a hyphen, such as ignore-urls and retry-count, are silently ignored: Actions
+        # passes them as INPUT_IGNORE-URLS, but the action reads INPUT_IGNORE_URLS. Setting the
+        # variables the action reads directly works, because a step's env reaches the container.
+        env:
+          INPUT_RETRY_COUNT: '3'
           # Hosts this check cannot judge. example.com, localhost and 127.0.0.1 are placeholders or
           # exist only on a workstation. The Red Hat documentation hosts answer 403 to every scripted
-          # request, including for pages that do not exist, so they would be reported broken on every
-          # run whether or not the page is there.
-          ignore-urls: 'example.com,localhost,127.0.0.1,docs.redhat.com,access.redhat.com,docs.openshift.com'
+          # request, including for pages that do not exist and from GitHub runners, so they would be
+          # reported broken on every run whether or not the page is there.
+          INPUT_IGNORE_URLS: 'example.com,localhost,127.0.0.1,docs.redhat.com,access.redhat.com,docs.openshift.com'
 
       - name: Summarize broken links
         if: always()
