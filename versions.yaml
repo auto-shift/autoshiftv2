@@ -152,11 +152,14 @@ pins:
       - file: README.md
         pattern: '\| go-template-utils \| (\S+) \|'
 
-  # Floor set by go-template-utils, which requires go 1.25.0. The pin is the patched stdlib
-  # govulncheck requires (1.25 is out of support). Every workflow reads this through
-  # `go-version-file: tools/go.mod`, so the directive is the only place it is set.
+  # A CURRENCY pin, unlike most here: Go only builds the validation suite and installs tools, and
+  # nothing built with it runs on a cluster. CI gates on govulncheck against this exact release,
+  # so a Go security release turns CI red until the pin moves. Renovate proposes every release
+  # (renovate.json, "Go toolchain") across all three locations in one PR. The floor is
+  # go-template-utils, which requires go 1.25.0. Every workflow reads this through
+  # `go-version-file: tools/go.mod`, so the directive is the only place CI takes it from.
   - name: go
-    value: '1.26.9'
+    value: '1.27.3'
     derivedFrom: go-template-utils
     locations:
       - file: tools/go.mod
