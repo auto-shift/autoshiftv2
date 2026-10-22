@@ -107,7 +107,7 @@ A disconnected site never reaches the internet, so a release is assembled on a c
 mirrored, and carried across the boundary as files. Everything on the low side then resolves against
 the internal registry, and the policies behave identically once the images and charts are present.
 The mirroring workflow is documented in
-[Releases and OCI](releases.md#disconnected--air-gapped-environments).
+[Releases and OCI](releases.md#disconnected-and-air-gapped-environments).
 
 [![AutoShift disconnected delivery](diagrams/autoshift-oci-disconnected.drawio.svg)](diagrams/autoshift-oci-disconnected.drawio.svg)
 

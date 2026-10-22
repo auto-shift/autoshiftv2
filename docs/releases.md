@@ -355,7 +355,7 @@ When enabled, AutoShift:
 > [!NOTE]
 > Your custom CA must already be added to the cluster's truststore through the [cluster-wide proxy](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking/configuring-a-custom-pki) for the injection to include it.
 
-## Disconnected / air-gapped environments
+## Disconnected and air-gapped environments
 
 For disconnected environments, mirror the released artifacts to an internal registry.
 
