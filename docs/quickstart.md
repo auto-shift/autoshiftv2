@@ -52,11 +52,19 @@ If your clone of AutoShiftv2 requires credentials or you want to add credentials
 
 > [!IMPORTANT]
 > Install Red Hat Advanced Cluster Management **before** OpenShift GitOps. The GitOps bootstrap chart wires the PolicyGenerator plugin into
-> Argo CD's repo-server by using an init-container image it reads from Red Hat Advanced Cluster Management's `multicluster-operators-hub-subscription`
+> Argo CD's repo-server by using an init-container image it reads from Red Hat Advanced Cluster Management's `acm-cli-downloads`
 > deployment at install time. If GitOps is installed first that image is empty and the Argo CD instance fails to
 > reconcile (`Deployment "<argo>-repo-server" is invalid: spec.template.spec.initContainers[1].image: Required value`),
-> so no policies ever render or sync. You do **not** need to wait for `MultiClusterHub` to reach `Running` — only for
-> Red Hat Advanced Cluster Management's operator to be installed (the `multicluster-operators-hub-subscription` deployment to exist).
+> so no policies ever render or sync. Wait for that deployment to be available before moving on:
+>
+> ```console
+> oc rollout status deploy/acm-cli-downloads -n open-cluster-management --timeout=15m
+> ```
+>
+> `acm-cli-downloads` is where Red Hat Advanced Cluster Management has shipped the PolicyGenerator binary since 2.15.
+> It belongs to the `MultiClusterHub` console component, so it appears partway through the `MultiClusterHub` reconcile
+> rather than alongside the operator. Earlier releases of AutoShift read the binary from
+> `multicluster-operators-hub-subscription`, which came up sooner; if you are following older notes, that is the change.
 
 > [!NOTE]
 > Both bootstrap charts run a short-lived Job that waits for CRDs. The charts resolve its CLI image
@@ -98,14 +106,16 @@ open-cluster-management   multiclusterhub   Running      6m28s   2.13.2         
 
 > [!NOTE]
 > `MultiClusterHub` takes roughly 10 min to reach `Running`. You can proceed to the GitOps step as soon as the
-> `multicluster-operators-hub-subscription` deployment exists (`oc get deploy multicluster-operators-hub-subscription -n open-cluster-management`),
-> and you can install AutoShift while Red Hat Advanced Cluster Management finishes — but you will not be able to verify AutoShift or select a
+> `acm-cli-downloads` deployment is available, which is earlier than `Running`, and you can install AutoShift while
+> Red Hat Advanced Cluster Management finishes. You will not be able to verify AutoShift or select a
 > `clusterset` until `MultiClusterHub` is `Running`.
 
 ### Step 3: install OpenShift GitOps
 
 > [!NOTE]
-> Run this **after** the preceding Red Hat Advanced Cluster Management step — the GitOps repo-server needs Red Hat Advanced Cluster Management's subscription image (see the ordering note there).
+> Run this **after** the preceding Red Hat Advanced Cluster Management step. The GitOps repo-server stages the
+> PolicyGenerator binary from the `acm-cli-downloads` image, so that deployment must already exist (see the ordering
+> note there).
 
 Using helm, install OpenShift GitOps:
 
