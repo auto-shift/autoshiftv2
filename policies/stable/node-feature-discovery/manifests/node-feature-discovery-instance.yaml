@@ -75,5 +75,18 @@ spec:
             - "03"
             - "0302"
             - "12"
+          # "vendor", not "class". The NVIDIA GPU operator gates every one of
+          # its operands on feature.node.kubernetes.io/pci-10de.present, where
+          # 10de is NVIDIA's PCI vendor ID. Labelling by class instead yields
+          # pci-0300.present and pci-0302.present, so that label never appears,
+          # the operator concludes there are no GPU nodes, and it runs with no
+          # daemonsets at all — no driver, no device plugin, and no
+          # nvidia.com/gpu capacity on a node that is otherwise healthy.
+          #
+          # Do NOT add "device" alongside it. Per
+          # https://access.redhat.com/solutions/7128119 that switches the label
+          # to pci-10de-<deviceid>.present, which terminates an existing driver
+          # rollout and zeroes nvidia.com/gpu. Use a NodeFeatureRule if device
+          # IDs are genuinely needed.
           deviceLabelFields:
-            - "class"
+            - "vendor"
