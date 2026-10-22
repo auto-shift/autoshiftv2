@@ -1,0 +1,21 @@
+# thanos-object-storage for the noobaa mode. The ObjectBucketClaim controller writes
+# ConfigMap and Secret acm-observability. This Secret copies the bucket coordinates
+# and the credentials from those objects.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: thanos-object-storage
+  namespace: open-cluster-management-observability
+type: Opaque
+stringData:
+  thanos.yaml: |
+    type: s3
+    config:
+      bucket: {{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_NAME" }}
+      endpoint: '{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_HOST" }}:{{ fromConfigMap "open-cluster-management-observability" "acm-observability" "BUCKET_PORT" }}'
+      insecure: false
+      access_key: {{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_ACCESS_KEY_ID" | base64dec }}
+      secret_key: {{ fromSecret "open-cluster-management-observability" "acm-observability" "AWS_SECRET_ACCESS_KEY" | base64dec }}
+      http_config:
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt

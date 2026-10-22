@@ -1,6 +1,6 @@
 # Global Observability — Architecture
 
-How AutoShift achieves a three-tier metrics rollup — **global hub → intermediate (regional) hubs → workload clusters** — using only ACM Policy, the MultiCluster Observability Addon (MCOA), and the `PrometheusAgent` template-replication mechanism, with no native hub-of-hubs observability feature in the product.
+How AutoShift achieves a three-tier metrics rollup — **global hub → intermediate (regional) hubs → workload clusters** — using only ACM Policy, the MultiCluster Observability Add-on (MCOA), and the `PrometheusAgent` template-replication mechanism, with no native hub-of-hubs observability feature in the product.
 
 For labels, values, and configuration reference, see [README.md](README.md).
 
@@ -28,7 +28,7 @@ MCOA manages the lifecycle of `PrometheusAgent` (`monitoring.rhobs/v1alpha1`) re
 
 1. **Template on the hub.** MCOA creates `PrometheusAgent` resources in the hub's `open-cluster-management-observability` namespace — templates defining the scrape config and `remoteWrite` targets for that hub's managed clusters. Names are deterministic: `mcoa-default-platform-metrics-collector-global`, `mcoa-default-user-workload-metrics-collector-global`.
 2. **Replication to managed clusters.** MCOA copies each template down to every managed cluster's `open-cluster-management-addon` namespace, where it actually runs.
-3. **Secret replication along with it.** Any secret named in the template's `spec.secrets` is automatically copied by MCOA from the hub's observability namespace to the managed cluster's addon namespace and mounted at `/etc/prometheus/secrets/<secret-name>/`.
+3. **Secret replication along with it.** Any secret named in the template's `spec.secrets` is automatically copied by MCOA from the hub's observability namespace to the managed cluster's add-on namespace and mounted at `/etc/prometheus/secrets/<secret-name>/`.
 
 **Therefore:** patch an intermediate hub's `PrometheusAgent` template to add (a) a `remoteWrite` entry pointing at the **global hub's** Observatorium and (b) the mTLS client-cert secret to authenticate to it, and MCOA carries both down to every workload cluster of that hub. Each workload cluster's agent then dual-writes:
 
@@ -53,7 +53,7 @@ graph LR
     agent == "remoteWrite (injected) mTLS" ==> GHobs["GLOBAL hub Observatorium"]
 ```
 
-We don't build a forwarding pipeline; we ride MCOA's existing template+secret replication to push a second remote-write target all the way down to the leaf clusters.
+We do not build a forwarding pipeline; we ride MCOA's existing template+secret replication to push a second remote-write target all the way down to the leaf clusters.
 
 ## 3. Topology and roles
 
@@ -113,28 +113,25 @@ Steps:
 
 ## 5. Policy chain
 
-This chart owns the global-hub-specific deltas on top of MCO. The base MCO lifecycle is owned by `policy-acm-observability` (advanced-cluster-management chart); this chart only patches on top.
+This chart owns the global-hub-specific deltas on top of MCO. The base MCO lifecycle, including the `capabilities` block, is owned by `policy-acm-observability` (advanced-cluster-management chart). Capability toggles come from `config.acm.observability.capabilities` and default to all `"true"`. This chart only adds the rollup secret and the `PrometheusAgent` patch.
 
 | Policy | Placement (PolicySet) | Depends on | What it does |
 |--------|-----------------------|------------|--------------|
-| `policy-global-observability-mcoa` | `policyset-global-observability` — all global-obs hubs | `policy-acm-observability` | `musthave`-patches the `capabilities` block onto the existing `MultiClusterObservability` CR. Toggles from rendered-config, defaulting to all `"true"`. Conditional all the way down — if every toggle is `false`, no `capabilities` block is emitted. |
-| `policy-global-observability-secrets` | `policyset-global-observability-secrets` — global hub only | `policy-global-observability-mcoa` | Assembles the coalesced rollup secret in the policy namespace — the source of truth that intermediate-hub hub-templates read via `copySecretData` |
-| `policy-global-observability-prom-test` | `policyset-global-observability-prometheus` — intermediate hubs | `policy-global-observability-mcoa` | Inform-only gate: asserts the MCOA-created `PrometheusAgent` templates exist. Never creates or modifies them. |
-| `policy-global-observability-prometheus` | `policyset-global-observability-prometheus` — intermediate hubs | `policy-global-observability-mcoa`, `policy-coo-operator-install`, `policy-global-observability-prom-test` | The core patcher: stages the rollup secret + any additional remote-write secrets into the obs namespace, then `musthave`-patches the `PrometheusAgent` templates with `spec.secrets` + `spec.remoteWrite` |
+| `policy-global-observability-secrets` | `policyset-global-observability-secrets` — global hub only | `policy-acm-observability` | Assembles the coalesced rollup secret in the policy namespace — the source of truth that intermediate-hub hub-templates read via `copySecretData` |
+| `policy-global-observability-prom-test` | `policyset-global-observability-prometheus` — intermediate hubs | `policy-acm-observability` | Inform-only gate: asserts the MCOA-created `PrometheusAgent` templates exist. Never creates or modifies them. |
+| `policy-global-observability-prometheus` | `policyset-global-observability-prometheus` — intermediate hubs | `policy-acm-observability`, `policy-coo-operator-install`, `policy-global-observability-prom-test` | The core patcher: stages the rollup secret + any additional remote-write secrets into the obs namespace, then `musthave`-patches the `PrometheusAgent` templates with `spec.secrets` + `spec.remoteWrite` |
 
 ```mermaid
 graph LR
-    acm["policy-acm-observability<br/>(base MCO CR — external chart)"]:::ext
-    mcoa["policy-global-observability-mcoa<br/>(capabilities patch)"]
+    acm["policy-acm-observability<br/>(base MCO CR and capabilities)"]:::ext
     sec["policy-global-observability-secrets<br/>(global hub only)"]
     exists["policy-global-observability-prom-test<br/>(inform gate)"]
     coo["policy-coo-operator-install<br/>(external)"]:::ext
     prom["policy-global-observability-prometheus<br/>(patch PrometheusAgent)"]
 
-    acm --> mcoa
-    mcoa --> sec
-    mcoa --> exists
-    mcoa --> prom
+    acm --> sec
+    acm --> exists
+    acm --> prom
     coo --> prom
     exists --> prom
     classDef ext fill:#f5f5f5,stroke:#666,stroke-dasharray:5 5
@@ -142,7 +139,7 @@ graph LR
 
 ## 6. Why the exists-gate is necessary (subtle MCOA constraint)
 
-**MCOA's addon-manager only replicates `PrometheusAgent` templates that MCOA itself created.** If ACM creates a `PrometheusAgent` in the hub observability namespace via policy, MCOA does not adopt it — it will not replicate that resource or its `spec.secrets`. The patch is inert.
+**MCOA's add-on manager only replicates `PrometheusAgent` templates that MCOA itself created.** If ACM creates a `PrometheusAgent` in the hub observability namespace via policy, MCOA does not adopt it — it will not replicate that resource or its `spec.secrets`. The patch is inert.
 
 Consequences:
 
@@ -196,19 +193,18 @@ The injected `remoteWrite.tlsConfig` references the mount paths (`caFile`/`certF
 
 ## 8. Additional remote-writes
 
-Beyond the built-in rollup (hardcoded from `values.yaml → spokeAgent.globalHubRollup`, no config needed), `config.globalObservability.additionalRemoteWrites[]` lets a hub fan metrics out to extra targets. Each entry carries its own `url`, TLS file paths, optional `secretRef` (replicated from the global hub via hub-template `copySecretData`), and an `onSelfManagedHub` flag:
+Beyond the built-in rollup (hard-coded from `values.yaml → spokeAgent.globalHubRollup`, no config needed), `config.globalObservability.additionalRemoteWrites[]` lets a hub fan metrics out to extra targets. Each entry carries its own `url`, TLS file paths, optional `secretRef` (replicated from the global hub via hub-template `copySecretData`), and an `onSelfManagedHub` flag:
 
 | `onSelfManagedHub` | Global hub | Intermediate hubs | Use case |
 |--------------------|-----------|-------------------|----------|
 | `false` (default) | skipped | emitted | targets only intermediate hubs should write to |
 | `true` | emitted | emitted | external targets every hub should write to |
 
-Emit condition in the template: `if not (and (eq $isSelfManaged "true") (not $onSelfManagedHub))` — emit unless we're on the global hub and the entry isn't flagged for it. (Note the `*-prometheus` PolicySet only places on intermediate hubs, so `onSelfManagedHub: true` entries take effect on the global hub only if placement is widened.)
+Emit condition in the template: `if not (and (eq $isSelfManaged "true") (not $onSelfManagedHub))` — emit unless we are on the global hub and the entry is not flagged for it. (Note the `*-prometheus` PolicySet only places on intermediate hubs, so `onSelfManagedHub: true` entries take effect on the global hub only if placement is widened.)
 
 ## 9. Caveats
 
 - **`secretNamespace` coupling.** `policy-global-observability-secrets` writes the coalesced secret into `.Values.policy_namespace`, computed by the ApplicationSet as `policies-<release-name>` (default `policies-autoshift`). The rollup's `copySecretData` reads from `spokeAgent.globalHubRollup.secretNamespace`, whose chart default is the literal `policies-autoshift`. These match only for the default release name — a differently-named AutoShift Application silently breaks the rollup secret copy unless `secretNamespace` is overridden.
-- **Capability double-management.** `policy-acm-observability` also writes `spec.capabilities` on the same MCO CR when its `acm.observability.enableMCOA` flag is truthy. Both policies are additive `musthave` patches, so a `false` toggle here cannot remove a capability `enableMCOA` added. Leave `enableMCOA` unset/false so this chart is the sole capabilities manager.
 - **Secret-name truncation.** MCOA translates each `spec.secrets` entry into a `secret-<name>` volume/mount name truncated to 63 chars (RFC 1123). If the cut lands on a non-alphanumeric character, the generated StatefulSet is invalid and the agent silently fails to roll out. Keep secret names short and alphanumeric-terminated.
 
 ## 10. Open questions (for ACM/MCO review)
@@ -216,7 +212,7 @@ Emit condition in the template: `if not (and (eq $isSelfManaged "true") (not $on
 1. **Is patching MCOA's templates a supported extension point?** We rely on MCOA tolerating a `musthave` merge that adds `remoteWrite`/`secrets`. Could a reconcile loop revert the patch, fighting the `enforce` ConfigurationPolicy?
 2. **Is there a first-class hub-of-hubs rollup?** If MCO/MCOA gains a native multi-target feature, this chart is obsolete.
 3. **mTLS identity at scale.** Every workload cluster presents the same global-hub-issued client cert. Is per-cluster identity preferred? Any `cluster` label collision concerns in received series?
-4. **Direct leaf → global write vs. hub aggregation.** Every leaf writes straight to the global hub, bypassing intermediate Thanos. Right call at hundreds of clusters per hub?
+4. **Direct leaf → global write compared to hub aggregation.** Every leaf writes straight to the global hub, bypassing intermediate Thanos. Right call at hundreds of clusters per hub?
 5. **The exists-gate pattern.** Is there a cleaner readiness signal (condition/status field) than asserting object existence via an inform policy?
 
 ## Appendix: namespaces & resource names
@@ -225,7 +221,7 @@ Emit condition in the template: `if not (and (eq $isSelfManaged "true") (not $on
 |-------|-------|
 | Policy namespace | `policies-<release-name>` (`.Values.policy_namespace`, computed by the ApplicationSet; default release `autoshift` → `policies-autoshift`) |
 | MCO observability namespace | `open-cluster-management-observability` |
-| MCOA addon namespace (on managed clusters) | `open-cluster-management-addon` |
+| MCOA add-on namespace (on managed clusters) | `open-cluster-management-addon` |
 | Coalesced rollup secret | `global-observability-secrets` |
 | Patched `PrometheusAgent` templates | `mcoa-default-platform-metrics-collector-global`, `mcoa-default-user-workload-metrics-collector-global` |
 | Rollup remote-write entry name | `acm-global-observability` |

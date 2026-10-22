@@ -31,8 +31,12 @@ policyDefaults:
     placementPath: placement.yaml
 policies:
   # PVC storage backing. Shares the default placement; the manifest is hub-gated on storage-type.
+  # Placement-gated on the pvc storage type. Sharing the chart placement put it on every
+  # image-registry cluster, where on an s3 one it applied nothing and still reported Compliant.
   - name: policy-image-registry-storage
     consolidateManifests: false
+    placement:
+      placementPath: placement-storage-pvc.yaml
     manifests:
       - path: manifests/image-registry-storage.yaml
   # s3 storage backing, split out because it must wait for ODF. An ObjectBucketClaim created before
@@ -50,8 +54,11 @@ policies:
     remediationAction: inform
     manifests:
       - path: test/image-registry-storage-ready.yaml
+  # Waits on the storage-agnostic readiness barrier, not on a storage-type-specific policy: the
+  # pvc policy is only placed on pvc clusters, so depending on it leaves this Pending forever on an
+  # s3 cluster. A dependency resolves against the same cluster's copy of the policy.
   - name: policy-enable-image-registry
     dependencies:
-      - name: policy-image-registry-storage
+      - name: policy-image-registry-storage-test
     manifests:
       - path: manifests/enable-image-registry.yaml

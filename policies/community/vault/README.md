@@ -14,7 +14,7 @@ HA cluster:
 - **cert-manager** operator + a **ClusterIssuer** (default `autoshift-ca`; override with
   `autoshift.io/vault-tls-issuer`). The policy depends on `policy-cert-manager-operator-install`.
   The `autoshift-ca` issuer is provisioned per-cluster by **`policy-cert-manager-ca`** (each cluster its
-  own CA; keys never leave the cluster). For **two-tier transit**, the spoke can't use its own CA to trust
+  own CA; keys never leave the cluster). For **two-tier transit**, the spoke cannot use its own CA to trust
   the hub, so the transit sync distributes the hub CA's **public** cert (`vault-transit-ca`) to spokes and
   the transit seal validates the hub Vault Route cert against it.
 
@@ -32,7 +32,7 @@ secure, and delete).
 | `awskms` / `gcpckms` / `azurekeyvault` | independent | auto (cloud KMS + workload identity) | none |
 | `transit` | two-tier | auto (via the hub Vault) | yes (opt-in) |
 
-**Independent vs two-tier is a blast-radius choice.** Cloud-KMS and Shamir clusters have their own root
+**Independent versus two-tier is a blast-radius choice.** Cloud-KMS and Shamir clusters have their own root
 of trust and no hub dependency. `transit` clusters auto-unseal against a central hub Vault — convenient
 and centrally recoverable, but a compromised/unavailable hub affects them. Pick per cluster.
 
@@ -45,9 +45,9 @@ and centrally recoverable, but a compromised/unavailable hub affects them. Pick 
   config's `{{hub}}` template resolves on the hub and `lookup`s the hub Vault Route host there, so spokes
   need no address config and never drift from the hub's actual Route. (`vault-transit-address` remains an
   optional override for an external LB / custom DNS / a non-local hub.) The in-cluster Service is never
-  used — it's unreachable cross-cluster. `policy-vault-transit-token` copies the provider's token onto
+  used — it is unreachable cross-cluster. `policy-vault-transit-token` copies the provider's token onto
   each spoke, along with the hub CA's **public** cert (`vault-transit-ca`). The Route is passthrough, so the
-  spoke's transit seal validates the hub Vault cert against the distributed hub CA (hence the Route hostname
+  spoke's transit seal validates the hub Vault cert against the distributed hub CA (therefore the Route hostname
   must be in the hub cert SANs, handled above). CAs are per-cluster — only the hub's public cert crosses.
 - Recovery keys for spokes are stored in the hub Vault's recovery KV — self-contained, no cloud dependency.
 
