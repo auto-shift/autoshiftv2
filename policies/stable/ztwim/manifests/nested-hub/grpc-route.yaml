@@ -1,0 +1,34 @@
+# Exposes the hub's spire-server gRPC endpoint so each spoke's upstream agent can reach it.
+#
+# The upstream agent runs ON the spoke and dials the hub to attest (k8s_psat) and to fetch the
+# signed intermediate CA. Without an ingress route there is no path from spoke to hub SPIRE.
+#
+# passthrough termination is required, not reencrypt: SPIRE does its own mTLS end to end and the
+# agent validates the server's SPIFFE ID against the trust bundle. Terminating TLS at the router
+# would break that validation.
+#
+# The hostname is published into the rendered config as config.ztwim.nested.hubEndpoint for the
+# spoke side to consume; it is NOT derived on the spoke, because the spoke cannot see the hub's
+# ingress domain.
+object-templates-raw: |
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $appsDomain := dig "spec" "domain" "" ((lookup "config.openshift.io/v1" "Ingress" "" "cluster") | default dict) }}
+  {{- if $appsDomain }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: route.openshift.io/v1
+      kind: Route
+      metadata:
+        name: spire-server-grpc
+        namespace: {{ $ns }}
+      spec:
+        host: spire-server-grpc.{{ $appsDomain }}
+        to:
+          kind: Service
+          name: spire-server
+        port:
+          targetPort: grpc
+        tls:
+          termination: passthrough
+          insecureEdgeTerminationPolicy: None
+  {{- end }}

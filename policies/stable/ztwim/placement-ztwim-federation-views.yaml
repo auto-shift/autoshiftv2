@@ -1,0 +1,26 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-ztwim-federation-views
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # The cluster running Red Hat Advanced Cluster Management, and only that cluster: the views this
+  # policy creates read each mesh member's bundle through ManagedClusterView, which exists only
+  # there. Members do not carry a copy, which is why nothing in the mesh may depend on this policy.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/ztwim'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

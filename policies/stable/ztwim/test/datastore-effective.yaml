@@ -1,0 +1,81 @@
+# inform: catches a datastore that was ASKED to be postgres and quietly is not.
+#
+# A ConfigurationPolicy that wrote a valid SQLite configuration reports Compliant, so
+# config.ztwim.datastore can say postgres, the server can be running on SQLite, and every enforcing
+# policy still reads green. policy-ztwim-datastore-creds keeps that from happening through a missing
+# password, but it cannot see the cases below.
+#
+# manifests/cnpg has the same shape from the other side: its object templates are wrapped in a guard
+# on databaseType, and an unsatisfied guard renders NO objects, which is also Compliant.
+#
+# The CNPG cluster is only asserted when AutoShift is the one running the database. A datastore
+# pointed at an external postgres through config.ztwim.datastore.external has no CNPG cluster by
+# design, and the server.conf check above still covers it.
+#
+# This asserts the EFFECT instead, and deliberately reads the generated server.conf rather than the
+# SpireServer resource. Under CREATE_ONLY_MODE the resource can say postgres while the operator has
+# not regenerated the config, leaving the process on SQLite; only the config reflects what the
+# server is actually running.
+#
+# It ALSO catches the reverse mistake, which is the quieter one. Configuring datastore.external or
+# datastore.tlsSecretName while leaving databaseType at sqlite3 wires up a backend nothing selects:
+# spire-server.yaml gates the external path on databaseType being postgres, manifests/cnpg is
+# suppressed because external is set, and this check's own postgres branch never runs. Every policy
+# involved renders no objects and reports Compliant, which is ACM saying "nothing to do" and reading
+# as "working". So a configured backend with the wrong databaseType is reported here directly.
+#
+# Compliant on every cluster that never asked for postgres, so it is safe to place everywhere.
+#
+# Spoke templates read the live state; the hub template does nothing but lift the requested type out
+# of rendered-config, which is the one value that genuinely lives on the hub.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index (index (index $cm "data" | default dict) "config" | default "" | fromYaml | default dict) "ztwim" | default dict) hub}}
+  {{hub- $ds := (index $cfg "datastore" | default dict) hub}}
+  {{hub- $cfgType := (index $ds "databaseType" | default "sqlite3") hub}}
+  {{hub- $cfgExtHost := (index (index $ds "external" | default dict) "host" | default "") hub}}
+  {{hub- $cfgTlsSecret := (index $ds "tlsSecretName" | default "") hub}}
+  {{- $ns := "zero-trust-workload-identity-manager" }}
+  {{- $want := `{{hub $cfgType hub}}` }}
+  {{- $extHost := `{{hub $cfgExtHost hub}}` }}
+  {{- $tlsSecret := `{{hub $cfgTlsSecret hub}}` }}
+  {{- if and (or $extHost $tlsSecret) (ne $want "postgres") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ztwim-datastore-backend-set-but-type-is-{{ $want }}
+        namespace: {{ $ns }}
+  {{- end }}
+  {{- if eq $want "postgres" }}
+  {{- $conf := (lookup "v1" "ConfigMap" $ns "spire-server") | default dict }}
+  {{- $raw := dig "data" "server.conf" "" $conf }}
+  {{- $actual := "" }}
+  {{- if $raw }}
+  {{- $sql := index (dig "plugins" "DataStore" (list) ($raw | fromJSON)) 0 | default dict }}
+  {{- $actual = dig "sql" "plugin_data" "database_type" "" $sql }}
+  {{- end }}
+  {{- $db := dict }}
+  {{- if not $extHost }}
+  {{- $db = (lookup "postgresql.cnpg.io/v1" "Cluster" $ns "spire-db") | default dict }}
+  {{- end }}
+  {{- if and $raw (ne $actual "postgres") }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ztwim-server-conf-still-{{ $actual | default "unset" }}
+        namespace: {{ $ns }}
+  {{- end }}
+  {{- if and (not $extHost) (not $db) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ztwim-cnpg-cluster-missing
+        namespace: {{ $ns }}
+  {{- end }}
+  {{- end }}

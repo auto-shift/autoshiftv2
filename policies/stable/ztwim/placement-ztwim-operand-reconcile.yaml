@@ -1,0 +1,27 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-ztwim-operand-reconcile
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Opt-in. Selects clusters where AutoShift may DELETE a running SPIRE operand to force the
+  # operator to reapply a changed CR under CREATE_ONLY_MODE. Deliberately NOT scoped to
+  # ztwim-nested-role: create-only can be turned on by any route, and the drift it causes is the
+  # same either way.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/ztwim'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/ztwim-operand-reconcile'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
