@@ -25,7 +25,7 @@ ApplicationSet with List Generator
     |
 Reads policy-list.txt (generated at release time; every policy is a Helm chart)
     |
-Deploys each policy from the OCI registry (Helm chart or PolicyGenerator artifact)
+Deploys each policy from the OCI registry (every policy is a Helm chart)
 ```
 
 The OCI chart includes a `files/policy-list.txt` that is **automatically generated during the release process** by discovering all policies in the `policies/` directory. No manual maintenance is required.
@@ -138,13 +138,20 @@ make validate
 
 ### 2. Create release
 
+> [!WARNING]
+> `REGISTRY` defaults to `quay.io` and `REGISTRY_NAMESPACE` to `autoshift`. Always set both when
+> you publish your own charts, or the release targets the upstream namespace.
+
+`VERSION` must be `X.Y.Z` or `X.Y.Z-<suffix>`, where the suffix is letters and digits only. A dotted
+suffix such as `-rc.1` fails `make validate-version`, so write release candidates as `-rc1`.
+
 **For Testing (Release Candidate):**
 ```bash
 # Uses default registry: quay.io/autoshift
-make release VERSION=X.Y.Z-rc.1
+make release VERSION=X.Y.Z-rc1
 
 # Or override with custom registry
-make release VERSION=X.Y.Z-rc.1 REGISTRY=ghcr.io REGISTRY_NAMESPACE=myorg/autoshift
+make release VERSION=X.Y.Z-rc1 REGISTRY=ghcr.io REGISTRY_NAMESPACE=myorg/autoshift
 ```
 
 **For Production:**
@@ -161,16 +168,40 @@ make release VERSION=X.Y.Z REGISTRY=ghcr.io REGISTRY_NAMESPACE=myorg/autoshift
 make release VERSION=X.Y.Z DRY_RUN=true
 ```
 
+A dry run skips only the push. It still rewrites tracked files in your working tree: every
+`Chart.yaml` version, and `openshift-gitops/values.yaml` through `sync-values`. Review or discard
+those changes afterward with `git diff` and `git restore`.
+
+**Log in before pushing.** `make release` pushes with whatever `helm registry login` you already
+have. Use an account that can write to the registry namespace, and pass the token on standard
+input:
+
+```bash
+helm registry login <registry> -u <write-account> --password-stdin < token-file
+```
+
+For Red Hat Quay, the write account is a robot account, and the repositories must exist before the
+first push. See [Pushing to this registry](../policies/stable/quay/README.md#pushing-to-this-registry).
+
 ### 3. What happens during release
 
 The `make release` command:
 
 1. **Validates** - Checks tools and version format
-2. **Updates versions** - Sets all charts to the same version
-3. **Generates policy list** - Creates `policy-list.txt` with discovered policies
-4. **Packages charts** - Creates `.tgz` files for all charts (includes policy-list.txt)
-5. **Pushes to OCI** - Uploads charts to registry and tags as `latest`
-6. **Generates artifacts** - Creates bootstrap installation scripts (`install-bootstrap.sh`, `install-autoshift.sh`)
+2. **Cleans** - Removes `.helm-charts/`, `release-artifacts/` and `autoshift/files/`
+3. **Syncs bootstrap values** - Copies the `openshift-gitops` policy chart values into the bootstrap chart (`sync-values`)
+4. **Updates versions** - Sets all charts to the same version
+5. **Generates policy list** - Creates `policy-list.txt` with every policy except `cluster-labels` and `cluster-config-maps`, which the main chart deploys as their own Applications
+6. **Installs the PolicyGenerator toolchain** - Runs `install-policy-generator` into `.tools/`
+7. **Packages charts** - Creates `.tgz` files for the bootstrap charts, the Helm policy charts, and the main chart
+8. **Renders PolicyGenerator policies** - Converts every PolicyGenerator policy into a plain Helm chart (`render-policy-charts`)
+9. **Pushes to OCI** - Uploads every chart under its version. No `latest` tag is created
+10. **Generates artifacts** - Creates `install-bootstrap.sh`, `install-autoshift.sh`, `INSTALL.md` and `charts.txt` in `release-artifacts/`
+11. **Generates mirror artifacts** - Creates `release-artifacts/imageset-config.yaml` unless you pass `INCLUDE_MIRROR=false`. It merges every clusterset profile in `autoshift/values/clustersets/`, so for a mirror of your own deployment run `make generate-imageset` with your values files instead
+
+If `kustomize` or the PolicyGenerator plugin fails to install, check `KUSTOMIZE_PLUGIN_HOME`. An
+inherited value overrides the repository-local default; pass
+`KUSTOMIZE_PLUGIN_HOME=$PWD/.tools/kustomize-plugin` to `make` to restore it.
 
 ### 4. Tag and release
 
@@ -188,48 +219,110 @@ git push origin vX.Y.Z
 ## Makefile targets
 
 ```bash
-make help                  # Show available targets
-make discover              # List all discoverable charts
-make validate              # Check required tools
-make validate-version      # Validate VERSION format
-make clean                 # Remove build artifacts
-make update-versions       # Update all chart versions
-make generate-policy-list  # Generate policy-list.txt for OCI mode
-make package-charts        # Package all Helm charts
-make push-charts           # Push charts to OCI registry
-make generate-artifacts    # Generate bootstrap installation scripts
-make release               # Full release process
-make package-only          # Package without version updates
+make help                      # Show available targets
+make discover                  # List the bootstrap charts and the Helm policy charts
+make validate                  # Check required tools
+make install-policy-generator  # Install kustomize and the PolicyGenerator plugin into .tools/
+make lint                      # Lint all Helm charts
+make test                      # Run the policy validation suite
+make verify                    # Run the suite, helm lint, prose lint and the docs build
+make validate-version          # Validate VERSION format
+make clean                     # Remove build artifacts
+make sync-values               # Sync bootstrap chart values from the openshift-gitops policy chart
+make update-versions           # Update all chart versions
+make generate-policy-list      # Generate policy-list.txt for OCI mode
+make package-charts            # Package the bootstrap, Helm policy and main charts
+make render-policy-charts      # Render PolicyGenerator policies into Helm charts
+make push-charts               # Push charts to OCI registry
+make generate-artifacts        # Generate bootstrap installation scripts
+make release                   # Full release process
+make release-no-mirror         # Full release without mirror artifacts
+make package-only              # Package without version updates
+make generate-imageset         # Generate an ImageSetConfiguration for disconnected mirroring
 ```
+
+`make discover` lists only charts that already exist as Helm charts. The PolicyGenerator policies
+are rendered into charts during the release, so a release ships many more charts than
+`discover` reports.
 
 ## Private registry authentication
 
-If publishing to or deploying from a private OCI registry, configure credentials for ArgoCD:
+When the charts are in a private OCI registry, Argo CD needs credentials to pull them. Argo CD
+reads registry credentials from Secrets in its own namespace. Service account image pull secrets
+do not apply: they are for container images, and Argo CD pulls Helm charts inside the repo server
+process.
+
+If the registry certificate is signed by a private certificate authority, set up
+[Custom CA certificate](#custom-ca-certificate) first. Without it the pull fails with
+`x509: certificate signed by unknown authority` before any credentials are sent.
+
+### Two kinds of OCI source
+
+An OCI deployment uses two kinds of Argo CD source, and Argo CD matches credentials to each by URL:
+
+| Application | Source | Credential URL that matches |
+|---|---|---|
+| Policy Applications, generated by the ApplicationSet | Native OCI: `repoURL: oci://<registry>/<namespace>/policies/<policy>`, `path: .` | `oci://<registry>/<namespace>` |
+| Main `autoshift` Application in native OCI form (recommended) | `repoURL: oci://<registry>/<namespace>/autoshift`, `path: .` | `oci://<registry>/<namespace>` |
+| Main `autoshift` Application as written by `install-autoshift.sh` | Helm: `repoURL: <registry>/<namespace>`, `chart: autoshift` | `<registry>/<namespace>`, without `oci://` |
+
+The Argo CD [private repositories](https://argo-cd.readthedocs.io/en/stable/user-guide/private-repositories/)
+guide says to leave `oci://` out of the URL. That applies only to the Helm form. The policy
+Applications always use the native form, so their credential must start with `oci://`.
+
+Use a credential template, `argocd.argoproj.io/secret-type: repo-creds`, rather than a `repository`
+Secret. A template matches every repository URL that starts with its `url`, so one template covers
+the main chart and every policy chart. A `repository` Secret matches a single URL exactly.
+
+Use an account that can only read the charts, such as a Red Hat Quay robot account with read
+permission. Keep the account that publishes releases out of the cluster.
+
+### Recommended: one credential
+
+Create the template:
 
 ```bash
-# Create secret for OCI registry authentication
-oc create secret docker-registry autoshift-oci-creds \
-  --docker-server=quay.io \
-  --docker-username=YOUR_USERNAME \
-  --docker-password=YOUR_TOKEN \
-  -n openshift-gitops
-
-# Link to ArgoCD repo server (pulls Helm charts)
-oc patch serviceaccount argocd-repo-server \
-  -n openshift-gitops \
-  --type='json' \
-  -p='[{"op":"add","path":"/imagePullSecrets/-","value":{"name":"autoshift-oci-creds"}}]'
-
-# Link to ApplicationSet controller (generates Applications)
-oc patch serviceaccount argocd-applicationset-controller \
-  -n openshift-gitops \
-  --type='json' \
-  -p='[{"op":"add","path":"/imagePullSecrets/-","value":{"name":"autoshift-oci-creds"}}]'
-
-# Restart ArgoCD components to pick up credentials
-oc rollout restart deployment/argocd-repo-server -n openshift-gitops
-oc rollout restart deployment/argocd-applicationset-controller -n openshift-gitops
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: autoshift-oci-creds
+  namespace: openshift-gitops
+  labels:
+    argocd.argoproj.io/secret-type: repo-creds
+stringData:
+  type: helm
+  url: oci://registry.example.com/autoshift
+  enableOCI: "true"
+  username: <read-account>
+EOF
+oc set data secret/autoshift-oci-creds -n openshift-gitops --from-file=password=<token-file>
 ```
+
+Then create the main Application in native OCI form, as in the
+[quick start](quickstart.md#step-5-deploy-autoshift-from-oci): `repoURL` is
+`oci://<registry>/<namespace>/autoshift`, `path` is `.`, and there is no `chart` field. The
+`helm` values, value files and parameters work the same in both forms.
+
+### With the install script
+
+`install-autoshift.sh` writes the main Application in the Helm form, so it needs a second template
+whose URL has no scheme. Create `autoshift-oci-creds` as shown earlier, then add the second one:
+
+```bash
+oc create secret generic autoshift-helm-creds -n openshift-gitops \
+  --from-literal=type=helm \
+  --from-literal=url=registry.example.com/autoshift \
+  --from-literal=enableOCI=true \
+  --from-literal=username='<read-account>' \
+  --from-file=password=<token-file>
+oc label secret autoshift-helm-creds -n openshift-gitops argocd.argoproj.io/secret-type=repo-creds
+```
+
+`autoshift-oci-creds` serves the policy Applications and `autoshift-helm-creds` serves the main
+Application.
+
+Credentials take effect on the next refresh. No restart is needed.
 
 ## Custom CA certificate
 
@@ -262,7 +355,7 @@ When enabled, AutoShift:
 > [!NOTE]
 > Your custom CA must already be added to the cluster's truststore through the [cluster-wide proxy](https://docs.redhat.com/en/documentation/openshift_container_platform/latest/html/networking/configuring-a-custom-pki) for the injection to include it.
 
-## Disconnected / air-gapped environments
+## Disconnected and air-gapped environments
 
 For disconnected environments, mirror the released artifacts to an internal registry.
 
@@ -270,8 +363,9 @@ For disconnected environments, mirror the released artifacts to an internal regi
 
 > **One artifact type.** Every AutoShift policy ships as a **Helm chart** under `oci://<registry>/policies/<name>`
 > — the hand-authored holdout charts and the PolicyGenerator policies (rendered to stock Helm charts in CI by
-> `make render-policy-charts`). All are listed in `policy-list.txt`; `helm pull` works on every one. The
-> policy-generator `ConfigManagementPlugin` is never used for OCI.
+> `make render-policy-charts`). `helm pull` works on every one. `policy-list.txt` lists all of them except
+> `cluster-labels` and `cluster-config-maps`, which the main chart deploys as their own Applications; mirror
+> those two as well. The policy-generator `ConfigManagementPlugin` is never used for OCI.
 
 **Recommended — the `ImageSet` generator.** It discovers every AutoShift artifact (main chart, bootstrap charts,
 all policy charts, plus the operator images each enabled policy needs) and emits an
@@ -299,8 +393,8 @@ for ref in autoshift bootstrap/openshift-gitops bootstrap/advanced-cluster-manag
   oras cp ${SRC}/${ref}:${VERSION} ${DST}/${ref}:${VERSION}
 done
 
-# All policy charts (from policy-list.txt)
-for policy in $(cat policy-list.txt); do
+# All policy charts: policy-list.txt, plus the two charts the main chart deploys directly
+for policy in $(cat policy-list.txt) cluster-labels cluster-config-maps; do
   oras cp ${SRC}/policies/${policy}:${VERSION} ${DST}/policies/${policy}:${VERSION}
 done
 ```
@@ -345,17 +439,33 @@ excludePolicies:
 
 ### ArgoCD cannot pull charts from OCI registry
 
+The Application condition names the cause:
+
+| Message | Cause |
+|---|---|
+| `x509: certificate signed by unknown authority` | The repo server does not trust the registry certificate. See [Custom CA certificate](#custom-ca-certificate) |
+| `401 Unauthorized` on the main Application | No credential matches its `repoURL`. In the Helm form the credential URL has no `oci://` |
+| `cannot get digest for revision ... 401` on the policy Applications | No credential matches `oci://<registry>/<namespace>` |
+
 ```bash
-# Check if secret exists
-oc get secret autoshift-oci-creds -n openshift-gitops
+# Read the condition
+oc get application.argoproj.io autoshift -n openshift-gitops \
+  -o jsonpath='{.status.conditions[*].message}{"\n"}'
 
-# Verify secret is linked to service accounts
-oc get sa argocd-repo-server -n openshift-gitops -o yaml | grep -A2 imagePullSecrets
-oc get sa argocd-applicationset-controller -n openshift-gitops -o yaml | grep -A2 imagePullSecrets
+# List the credential templates and their URLs
+oc get secret -n openshift-gitops -l argocd.argoproj.io/secret-type=repo-creds -o json | \
+  jq -r '.items[] | "\(.metadata.name) \(.data.url | @base64d)"'
 
-# Test credentials manually
-helm registry login quay.io -u USERNAME -p TOKEN
-helm pull oci://quay.io/autoshift/autoshift
+# Test the read account outside Argo CD
+helm registry login registry.example.com -u <read-account> --password-stdin < token-file
+helm pull oci://registry.example.com/autoshift/autoshift --version X.Y.Z
+```
+
+After fixing a credential, refresh the Application:
+
+```bash
+oc annotate application.argoproj.io autoshift -n openshift-gitops \
+  argocd.argoproj.io/refresh=hard --overwrite
 ```
 
 ### ApplicationSet not creating policy applications
@@ -368,17 +478,18 @@ oc get applicationset -n openshift-gitops -o yaml
 oc logs -n openshift-gitops deployment/argocd-applicationset-controller --tail=100
 
 # Verify OCI mode is enabled
-oc get application.argoproj.io autoshift -n openshift-gitops -o yaml | grep autoshiftOciRegistry
+oc get application.argoproj.io autoshift -n openshift-gitops -o yaml | grep autoshiftOciRepo
 ```
 
 ### Policy not found in registry
 
-```bash
-# PolicyGenerator policies (most policies) are OCI artifacts, not Helm charts — inspect with oras:
-oras manifest fetch quay.io/autoshift/policies/advanced-cluster-security:latest
+Every policy is published as a Helm chart, including the PolicyGenerator policies, which the
+release renders into charts. Charts are tagged only with the release version; there is no `latest`
+tag.
 
-# Helm policies (cluster-labels, cluster-config-maps, openshift-gitops, policy-foundation) pull with helm:
-helm pull oci://quay.io/autoshift/policies/openshift-gitops
+```bash
+helm pull oci://quay.io/autoshift/policies/advanced-cluster-security --version X.Y.Z
+helm pull oci://quay.io/autoshift/policies/openshift-gitops --version X.Y.Z
 
 # Verify all Applications are on the same version
 oc get applications.argoproj.io -n openshift-gitops -o custom-columns=NAME:.metadata.name,REVISION:.spec.source.targetRevision | grep autoshift
