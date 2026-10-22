@@ -4,12 +4,21 @@ metadata:
   name: placement-policy-global-observability
   namespace: ${POLICY_NAMESPACE}
 spec:
-  # Every participating hub, global and intermediate alike: the MCOA capability patch applies to both.
+  # Default placement for this chart: every hub with global-observability enabled.
+  # Each policy sets its own placement. Capabilities are not applied here; they are
+  # part of policy-acm-observability.
   predicates:
     - requiredClusterSelector:
         labelSelector:
           matchExpressions:
             - key: 'autoshift.io/global-observability'
+              operator: In
+              values:
+                - 'true'
+            # MCOA is a capability of MultiClusterObservability. Without this predicate these
+            # policies land on a cluster where policy-acm-observability is never placed, and a
+            # dependency on it can never be satisfied: Pending forever rather than off.
+            - key: 'autoshift.io/acm-observability'
               operator: In
               values:
                 - 'true'
