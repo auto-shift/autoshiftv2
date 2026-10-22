@@ -211,21 +211,18 @@ Every call needs a superuser OAuth token. The `access_token` returned when you c
 user works until it expires, about 150 minutes after it was issued. For anything later, create a
 long-lived token in the web console:
 
-1. Log in as a superuser and open the organization.
-2. Select **Applications**, then **Create New Application**, and name it, for example `automation`.
-3. Open the application, select **Generate Token**, and grant the permissions to administer the
-   organization, administer repositories, create repositories, and act as a superuser.
-4. Store the token in a Secret. It is shown only once.
+1. Log in as a superuser and create or open the organization, for exacmple **autoshift**.
+2. Select Robot Accounts, then Create Robot Account, for example release. The resulting account name is autoshift+release..
+3. Grant it Write on the repositories it publishes, or Admin on the organization if it must create repositories on first push..
+4. Open the robot account and select Credentials. The panel offers a Docker login command and a downloadable Kubernetes Secret.
 
-A request with an expired or missing token fails with `403` and
-`CSRF token was invalid or missing`, because Red Hat Quay then treats it as a browser call.
-
-Red Hat Quay never creates organizations on push, so this runs once before the first release.
+Red Hat Quay never creates organizations on push. If you prefer to use the API to create an organization and setup the robot account then below are the various API calls you can make to do the above configuration via the API.
 
 ```bash
 HOST=$(oc get route registry-quay -n quay-enterprise -o jsonpath='{.spec.host}')
 API="https://${HOST}/api/v1"
 ORG=autoshift
+QUAY_TOKEN=$(curl -sf "${API}/organization/${ORG}/robots/release" -H "$AUTH" | jq -r .token)
 AUTH="Authorization: Bearer ${QUAY_TOKEN}"   # superuser OAuth token
 JSON='Content-Type: application/json'
 
@@ -269,48 +266,12 @@ Read a robot token back at any time:
 curl -sf "${API}/organization/${ORG}/robots/release" -H "$AUTH" | jq -r .token
 ```
 
-### Log in before a release
-
-Log in with the write account before running `make release`, so the push uses it:
+### Log in to Quay with Podman and Helm
 
 ```bash
-curl -sf "${API}/organization/${ORG}/robots/release" -H "$AUTH" | jq -r .token |
-  helm registry login "$HOST" -u "${ORG}+release" --password-stdin
+podman login "$HOST" -u 'autoshift+release' -p "$QUAY_TOKEN"
+helm registry login "$HOST" -u 'autoshift+release' -p "$QUAY_TOKEN"
 ```
-
-`--password-stdin` keeps the token out of the shell history and the process list. The same token
-works with `podman login`.
-
-### Create the repositories before the first release
-
-`helm push` cannot create a repository in Red Hat Quay. Before it uploads, Helm checks whether the
-chart already exists, and for a repository that does not exist yet Red Hat Quay answers
-`401 Unauthorized` instead of `404`. The push stops there with:
-
-```
-failed to perform "Exists" on destination: HEAD ".../manifests/sha256:...": response status code 401: Unauthorized
-```
-
-Create every chart repository once, before the first `make release`. A dry run builds the charts, so
-it gives the full list:
-
-```bash
-VERSION=X.Y.Z
-make release VERSION="$VERSION" REGISTRY="$HOST" REGISTRY_NAMESPACE="$ORG" DRY_RUN=true
-
-{ for f in .helm-charts/bootstrap/*-"$VERSION".tgz; do echo "bootstrap/$(basename "$f" -"$VERSION".tgz)"; done
-  echo autoshift
-  for f in .helm-charts/policies/*-"$VERSION".tgz; do echo "policies/$(basename "$f" -"$VERSION".tgz)"; done
-} | while read -r repo; do
-  curl -s -o /dev/null -w "%{http_code} ${repo}\n" -X POST "${API}/repository" -H "$AUTH" -H "$JSON" \
-    --data "{\"namespace\":\"${ORG}\",\"repository\":\"${repo}\",\"visibility\":\"private\",\"description\":\"\",\"repo_kind\":\"image\"}"
-done
-```
-
-`201` means created, `400` means the repository already exists, and `403` means the token has
-expired. The organization default
-permissions apply to these repositories as well, so `autoshift+release` can write and
-`autoshift+argocd` can read. Later releases need this step only when a new policy adds a chart.
 
 ### Let Argo CD pull the charts
 
