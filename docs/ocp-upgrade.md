@@ -28,7 +28,7 @@ flowchart LR
 |------|--------|------|--------------|
 | 1 | `policy-openshift-upgrade-channel` | enforce | Sets `ClusterVersion.spec.channel` so `status.availableUpdates` recomputes for the desired channel. Without this, a y-stream target can deadlock the next check. |
 | 2 | `policy-openshift-upgrade-allowed` | inform | Confirms the target is safe to apply. Compliant when the target is already running, appears in `status.availableUpdates` with a release image, or is already accepted (`status.desired.version` or a `Partial` history entry). NonCompliant on a plain miss (wrong or unpublished version). A `Recommended: False` entry under `status.conditionalUpdates` is handled by a sibling check; see [Conditional updates](#conditional-updates-recommended-false). **Step 3 depends on this policy.** |
-| 3 | `policy-openshift-upgrade` | enforce | Writes `spec.upstream` from `config.openshiftUpgrades.upgradeGraphUrl` and, when not already `Progressing`, `spec.desiredUpdate.version` plus `spec.desiredUpdate.image`. The image is copied from `status.availableUpdates` (or from `status.conditionalUpdates` when conditional upgrades are allowed). The CVO then upgrades the cluster. |
+| 3 | `policy-openshift-upgrade` | enforce | Writes `spec.upstream` from `config.openshiftUpgrade.upgradeGraphUrl` and, when not already `Progressing`, `spec.desiredUpdate.version` plus `spec.desiredUpdate.image`. The image is copied from `status.availableUpdates` (or from `status.conditionalUpdates` when conditional upgrades are allowed). The CVO then upgrades the cluster. |
 | 4 | `policy-openshift-upgrade-status` | inform | Compliant only after the latest `Completed` history entry is at or above the target. **This is the wave-done gate.** Do not use step 3 for that: it goes Compliant as soon as `desiredUpdate` is written, long before the CVO finishes. |
 
 Guards built into the enforce policy:
@@ -72,19 +72,19 @@ hubClusterSets:
 ## Config
 
 The OpenShift Update Service graph URL is config, not a label. The enforce policy reads
-`config.openshiftUpgrades.upgradeGraphUrl` from the cluster's rendered-config ConfigMap and writes it
+`config.openshiftUpgrade.upgradeGraphUrl` from the cluster's rendered-config ConfigMap and writes it
 to `ClusterVersion.spec.upstream`. See [config-and-labels.md](config-and-labels.md). You do not need
 to set this key if the cluster can reach the public graph.
 
 | Key | Purpose | Default |
 |-----|---------|---------|
-| `config.openshiftUpgrades.upgradeGraphUrl` | OpenShift Update Service graph. Point this at a local service when the cluster is disconnected. | `https://api.openshift.com/api/upgrades_info/v1/graph` |
+| `config.openshiftUpgrade.upgradeGraphUrl` | OpenShift Update Service graph. Point this at a local service when the cluster is disconnected. | `https://api.openshift.com/api/upgrades_info/v1/graph` |
 
 ```yaml
 hubClusterSets:
   managed-upgrade:
     config:
-      openshiftUpgrades:
+      openshiftUpgrade:
         upgradeGraphUrl: 'https://api.openshift.com/api/upgrades_info/v1/graph'
 ```
 
