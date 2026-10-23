@@ -63,11 +63,12 @@ policies:
   #
   #    configSecretRef — nothing to apply; an administrator creates the Secret. 2-test-c catches it.
   #    credentialsFrom — 2a copies a ready-made credentials file from the hub.
-  #    sourceSecretRef — 2b carries the key pair, 2c assembles the file from it on this cluster.
+  #    sourceSecretRef — 2a carries the key pair, 2b assembles the file from it on this cluster.
   #
-  #    sourceSecretRef needs two policies, not two object-templates. Template resolution is
-  #    all-or-nothing for a ConfigurationPolicy, so reading the staged Secret in the policy that
-  #    creates it fails and that failure prevents the creation. 2b-test sits between them.
+  #    Both copies share 2a, so the mode the example values declare exercises it. sourceSecretRef
+  #    needs a second policy, not a second object-template. Template resolution is all-or-nothing
+  #    for a ConfigurationPolicy, so reading the staged Secret in the policy that creates it fails
+  #    and that failure prevents the creation. 2a-test sits between them.
   - name: policy-oadp-credentials-copy
     hubTemplateOptions:
       serviceAccountName: autoshift-policy-service-account
@@ -75,28 +76,21 @@ policies:
       - name: policy-oadp-operator-install
     manifests:
       - path: manifests/credentials-copy
-  - name: policy-oadp-credentials-stage
-    hubTemplateOptions:
-      serviceAccountName: autoshift-policy-service-account
-    dependencies:
-      - name: policy-oadp-operator-install
-    manifests:
-      - path: manifests/credentials-stage
-  # 2b-test) Did the staged key pair arrive? This is what lets the assembling policy use fromSecret
+  # 2a-test) Did the staged key pair arrive? This is what lets the assembling policy use fromSecret
   #    against it safely. Renders nothing outside sourceSecretRef mode.
   - name: policy-oadp-credentials-stage-test
     remediationAction: inform
     hubTemplateOptions:
       serviceAccountName: autoshift-policy-service-account
     dependencies:
-      - name: policy-oadp-credentials-stage
+      - name: policy-oadp-credentials-copy
     manifests:
       - path: test/oadp-credentials-stage-ready.yaml
     customMessage:
       noncompliant: >-
         The key pair named by config.oadp.storage.sourceSecretRef has not reached this cluster, so the
         Velero credentials file cannot be assembled. The copy is made by
-        policy-oadp-credentials-stage: check that the Secret exists on the hub in the policy namespace
+        policy-oadp-credentials-copy: check that the Secret exists on the hub in the policy namespace
         and holds access_key_id and access_key_secret.
   - name: policy-oadp-credentials-assemble
     hubTemplateOptions:

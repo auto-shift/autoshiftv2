@@ -27,7 +27,7 @@ MultiNamespace=false
 AllNamespaces=false
 ```
 
-So every consumer on a managed cluster shares one installation rather than bringing its own, and that
+Every consumer on a managed cluster therefore shares one installation rather than bringing its own, and that
 shared thing needs an owner. This policy is that owner.
 
 The namespace is fixed at `openshift-adp`, not configurable. Four files would have to agree on it, and
@@ -77,6 +77,9 @@ is supported and expected, not a misconfiguration.
 | Policy | Description |
 |--------|-------------|
 | `policy-oadp-operator-install` | OpenShift APIs for Data Protection in `openshift-adp` |
+| `policy-oadp-credentials-copy` | Copies the hub Secret named by `credentialsFrom` or `sourceSecretRef` to this cluster |
+| `policy-oadp-credentials-stage-test` | Inform: the `sourceSecretRef` key pair arrived. Renders nothing in other modes |
+| `policy-oadp-credentials-assemble` | Builds the Velero credentials file from the staged key pair |
 | `policy-oadp-storage` | Credentials, and the `DataProtectionApplication` |
 | `policy-oadp-credentials-test` | Inform: the credentials Secret exists here. Existence only, never contents |
 | `policy-oadp-storage-test` | Inform: the `DataProtectionApplication` is Reconciled and the `BackupStorageLocation` Available |
