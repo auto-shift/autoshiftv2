@@ -904,9 +904,9 @@ Move each to the field shown.
 |-----------------------------------|-------------------|---------------------------|-------|
 | `odf`                             | bool              |                           | If not set OpenShift Data Foundation will not be managed. if Storage Nodes are enable will deploy OpenShift Data Foundation on local storage/ storage nodes |
 | `odf-multi-cloud-gateway`         | string            |                           | values `standalone` or `standard`. Install OpenShift Data Foundation with only noobaa object gateway or full odf |
-| `odf-noobaa-pvpool`                | bool              |                           | if not set noobaa will be deployed with default settings. Recommended do not set for cloud providers. Use pv pool for storage |
-| `odf-noobaa-store-size`            | string            |                           | example `500Gi`. if pvpool set. Size of noobaa backing store |
-| `odf-noobaa-store-num-volumes`     | string            |                           | example `1`. if pvpool set. number of volumes |
+| `odf-noobaa-pvpool`                | bool              |                           | `true` manages the default NooBaa backing store when that store is a PV pool. Its agent sizing comes from `config.odf.noobaaBackingStore.resources` |
+| `odf-noobaa-store-size`            | string            |                           | Example `500Gi`. Requires `odf-noobaa-pvpool`. Size of each volume added to the pool. NooBaa creates the first volume at 50Gi and never resizes an existing volume, so grow capacity with `odf-noobaa-store-num-volumes` |
+| `odf-noobaa-store-num-volumes`     | string            |                           | Example `2`. Requires `odf-noobaa-pvpool`. Number of volumes in the pool. A pool cannot shrink, so lowering it leaves the policy `NonCompliant` |
 | `odf-ocs-storage-class-name`      | string            |                           | if not using local-storage, storage class to use for ocs |
 | `odf-ocs-storage-size`            | string            |                           | storage size per nvme |
 | `odf-ocs-storage-count`           | string            |                           | number of replica sets of nvme drives, note total amount will count * replicas |
@@ -920,6 +920,15 @@ Move each to the field shown.
 | `odf-source`                      | string            | `redhat-operators`        |       |
 | `odf-source-namespace`            | string            | `openshift-marketplace`   |       |
 | `odf-default-storageclass`        | string            | `ocs-storagecluster-ceph-rbd` | Sets specified storage class as default and all others as non-default |
+
+**Config block** (`config.odf`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `versions` | list | | Permitted operator CSV versions |
+| `startingCSV` | string | | Initial install pin. An empty value lets Operator Lifecycle Manager choose |
+| `storageCluster` | map | | Full `StorageCluster` spec. When set, it replaces the spec built from the `odf-ocs-*` labels |
+| `noobaaBackingStore.resources` | map | requests `500m` CPU and `500Mi` memory, limits `1000m` CPU and `4000Mi` memory | CPU and memory for the default NooBaa PV-pool agent. Requires `odf-noobaa-pvpool`. Replaces the default as a whole, so set every field. The kernel kills the agent at the NooBaa default of `400Mi` |
 
 ### OpenShift internal registry
 | Variable                          | Type              | Default Value             | Notes |

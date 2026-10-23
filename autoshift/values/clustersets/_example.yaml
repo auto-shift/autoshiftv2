@@ -778,31 +778,41 @@ hubClusterSets:
       #   versions:
       #     - 'node-maintenance-operator.vX.Y.Z'
       #   startingCSV: 'node-maintenance-operator.vX.Y.Z'
-      # odf:
-      #   versions:
-      #     - 'odf-operator.vX.Y.Z'
-      #   startingCSV: 'odf-operator.vX.Y.Z'
-      #   # Config-driven StorageCluster — when set, replaces the entire label-driven
-      #   # StorageCluster spec. When absent, the existing label-driven default applies.
-      #   storageCluster:
-      #     enableCephTools: true
-      #     resourceProfile: Lean
-      #     monDataDirHostPath: /var/lib/rook
-      #     multiCloudGateway:
-      #       reconcileStrategy: ignore
-      #     storageDeviceSets:
-      #       - name: nvme-set
-      #         deviceClass: nvme
-      #         count: 1
-      #         replica: 3
-      #         dataPVCTemplate:
-      #           spec:
-      #             storageClassName: local-nvme
-      #             accessModes: [ReadWriteOnce]
-      #             volumeMode: Block
-      #             resources:
-      #               requests:
-      #                 storage: 1
+      odf:
+        # versions:
+        #   - 'odf-operator.vX.Y.Z'
+        # startingCSV: 'odf-operator.vX.Y.Z'
+        # # Config-driven StorageCluster — when set, replaces the entire label-driven
+        # # StorageCluster spec. When absent, the existing label-driven default applies.
+        # storageCluster:
+        #   enableCephTools: true
+        #   resourceProfile: Lean
+        #   monDataDirHostPath: /var/lib/rook
+        #   multiCloudGateway:
+        #     reconcileStrategy: ignore
+        #   storageDeviceSets:
+        #     - name: nvme-set
+        #       deviceClass: nvme
+        #       count: 1
+        #       replica: 3
+        #       dataPVCTemplate:
+        #         spec:
+        #           storageClassName: local-nvme
+        #           accessModes: [ReadWriteOnce]
+        #           volumeMode: Block
+        #           resources:
+        #             requests:
+        #               storage: 1
+        # NooBaa PV-pool agent sizing, applied when odf-noobaa-pvpool is 'true'. Replaces the
+        # defaults shown wholesale, so set every field. The 400Mi NooBaa default is OOMKilled.
+        noobaaBackingStore:
+          resources:
+            requests:
+              cpu: 500m
+              memory: 500Mi
+            limits:
+              cpu: 1000m
+              memory: 4000Mi
       # opentelemetry:
       #   versions:
       #     - 'opentelemetry-product.vX.Y.Z'
@@ -1568,9 +1578,9 @@ hubClusterSets:
       odf-subscription-name: odf-operator
       odf-version: 'odf-operator.v4.22.2-rhodf'
       odf-multi-cloud-gateway: standalone    # 'standalone' (noobaa only) or 'standard' (full ODF)
-      odf-noobaa-pvpool: ''                  # Use PV pool for noobaa backing store
-      odf-noobaa-store-size: ''              # e.g., '500Gi' - size of noobaa backing store
-      odf-noobaa-store-num-volumes: ''       # e.g., '1' - number of volumes
+      odf-noobaa-pvpool: ''                  # 'true' manages the default NooBaa PV-pool backing store; agent sizing is config.odf.noobaaBackingStore
+      odf-noobaa-store-size: ''              # e.g. '500Gi': size of volumes ADDED later; NooBaa creates the first at 50Gi and never resizes one
+      odf-noobaa-store-num-volumes: ''       # e.g. '2': grow capacity here; a pool cannot shrink
       odf-ocs-storage-class-name: 'gp3-csi'  # StorageClass for OCS (if not local-storage)
       odf-ocs-storage-size: ''               # Storage size per device (e.g., '2Ti')
       odf-ocs-storage-count: ''              # Number of replica sets of drives
