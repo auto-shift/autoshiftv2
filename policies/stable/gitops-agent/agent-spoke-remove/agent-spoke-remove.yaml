@@ -8,15 +8,16 @@ object-templates-raw: |
   # Read before the loop: range rebinds the dot, so .ManagedClusterLabels is unreachable inside it.
   {{hub- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") hub}}
   {{hub- $isHubCluster := eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub" hub}}
-  {{hub- range $label, $val := .ManagedClusterLabels hub}}
-  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
-  {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") hub}}
-  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
   # lookup here, NOT fromConfigMap, unlike the policies that CREATE these objects. Teardown has to
   # work when the config is already gone: removing a team from config is a normal way to retire it,
   # and failing without config would leave the objects behind forever. The namespace falls back to
   # the default, which is what it was if config never named another.
-  {{hub- $spec := (index (dig "gitops" "teams" dict (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml | default dict)) $team | default dict) hub}}
+  {{hub- $teamSpecs := (dig "gitops" "teams" dict (index ((lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)).data | default dict) "config" | default "" | fromYaml | default dict)) hub}}
+  {{hub- range $label, $val := .ManagedClusterLabels hub}}
+  {{hub- $isInfra := eq $label "autoshift.io/gitops-infra" hub}}
+  {{hub- if and (or $isInfra (and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)))) (eq $val "uninstall") hub}}
+  {{hub- $team := ternary "infra" (replace "autoshift.io/gitops-dev-team-" "" $label) $isInfra hub}}
+  {{hub- $spec := (index $teamSpecs $team | default dict) hub}}
   # Where this team's Argo CD instance lives on THIS cluster, defaulting to openshift-gitops-<team>.
   # infra on a HUB is the exception: policy-gitops-systems-argocd places infra-gitops there, in the
   # gitops namespace, so infra resolves to that and attaches rather than building a rival instance.
