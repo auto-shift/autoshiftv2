@@ -1,0 +1,47 @@
+# AutoShift's own Argo CD resources must be excluded from hub backups.
+#
+# The acm-resources-schedule Velero Schedule includes application.argoproj.io and
+# applicationset.argoproj.io, and excludes only the local-cluster and open-cluster-management-backup
+# namespaces. Living in openshift-gitops is therefore no protection. That is deliberate: restoring a
+# hub is meant to bring its Argo CD Applications back, and ACM cannot tell an Application that
+# describes a workload from one that describes the hub's own configuration.
+#
+# AutoShift's root Application is the second kind. It carries this hub's configuration in
+# spec.source.helm, so a standby hub that restores it adopts the active hub's configuration: labels
+# flip, placements change, and two hubs writing to one storage location put both BackupSchedules
+# into BackupCollision, stopping backups on both. A restored hub must rebuild AutoShift from Git.
+#
+# Only the root Application is asserted. Everything AutoShift creates carries both
+# app: <release>-policies and the exclusion label already, so asserting those could never fail and
+# would not be a check. The root Application is the one created by hand, with neither label.
+#
+# It exists only when AutoShift is deployed as an Argo CD Application. Under a direct Helm install
+# there is none, and the Helm release Secret holding the values is not backed up either, because the
+# credentials schedule selects only Secrets carrying hive.openshift.io/secret-type,
+# cluster.open-cluster-management.io/type or cluster.open-cluster-management.io/backup. A Helm
+# deployment has nothing to protect here, so this policy asserts nothing and is Compliant.
+#
+# Scoped to AutoShift's own resources. A user's workload Applications SHOULD be backed up, so
+# asserting across the whole namespace would raise false violations against them.
+#
+# Names are derived, not hardcoded: Argo CD uses the Application name as the Helm release name, and
+# the policy namespace is policies-<release>.
+#
+# Reported, not enforced. This policy does not own these resources, and writing a label onto a
+# resource someone else declared would fight them.
+object-templates-raw: |
+  # INDENTATION ANCHOR
+  {{hub- $release := (.PolicyMetadata.namespace | trimPrefix "policies-") hub}}
+  {{hub- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") hub}}
+  {{- $root := (lookup "argoproj.io/v1alpha1" "Application" "{{hub $gitopsNs hub}}" "{{hub $release hub}}") | default dict }}
+  {{- if $root }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: {{hub $release hub}}
+        namespace: {{hub $gitopsNs hub}}
+        labels:
+          velero.io/exclude-from-backup: 'true'
+  {{- end }}
