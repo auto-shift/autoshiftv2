@@ -78,6 +78,17 @@ policies:
       placementPath: placement-odf-noobaa-pvpool.yaml
     manifests:
       - path: manifests/noobaa-backing-store.yaml
+  # 6-test) Default NooBaa backing store is the kind NooBaa intended (no silent fallback to a PV pool
+  #   on a cloud; odf-noobaa-pvpool set exactly when it is a PV pool) and is Ready. Every ODF cluster.
+  - name: policy-noobaa-backing-store-test
+    remediationAction: inform
+    dependencies:
+      - name: policy-storage-cluster-test
+    manifests:
+      - path: test/noobaa-backing-store.yaml
+    # The template fails with the mismatch and its fix. Keep only that reason, not the wrapper.
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
   # 7) Suppress the NooBaa PDB-at-limit alert.
   - name: policy-noobaa-pdb-alert
     dependencies:
