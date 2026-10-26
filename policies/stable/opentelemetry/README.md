@@ -123,7 +123,7 @@ oc get instrumentation -A
 
 ## Resources
 
-- [Red Hat OpenTelemetry Documentation](https://docs.openshift.com/container-platform/latest/observability/otel/otel-installing.html)
+- [Red Hat OpenTelemetry Documentation](https://docs.redhat.com/en/documentation/red_hat_build_of_opentelemetry/3.11/html/installing_red_hat_build_of_opentelemetry/install-otel)
 - [OpenTelemetry Project](https://opentelemetry.io/)
 - [Operator SDK](https://github.com/open-telemetry/opentelemetry-operator)
 

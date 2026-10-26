@@ -186,40 +186,121 @@ curl -X POST "https://${HOST}/api/v1/user/initialize" \
 Store the returned `access_token` somewhere safe, then set both flags back to their defaults. The
 endpoint refuses to run once any user exists, so it cannot be replayed.
 
+The `access_token` expires about 150 minutes after it is issued, as recorded in the Red Hat request
+for enhancement [RFE-6177](https://issues.redhat.com/browse/RFE-6177). Use it for the setup that follows right
+away, or create a long-lived token as described in
+[Create the organization and robot accounts](#create-the-organization-and-robot-accounts).
+
 ## Pushing to this registry
 
-Use a robot account rather than a human account for automation.
+Use robot accounts rather than human accounts for automation, and give each job its own account:
 
-1. Log in to the registry route as a superuser.
-2. Create or open an organization, for example `autoshift`.
-3. Select **Robot Accounts**, then **Create Robot Account**, for example `release`. The resulting
-   account name is `autoshift+release`.
-4. Grant it **Write** on the repositories it publishes, or **Admin** on the organization if it must
-   create repositories on first push.
-5. Open the robot account and select **Credentials**. The panel offers a Docker login command and a
-   downloadable Kubernetes Secret.
+| Robot account | Used by | Access |
+|---|---|---|
+| `autoshift+release` | `make release`, to push the AutoShift charts | Writes to every repository in the organization |
+| `autoshift+argocd` | Argo CD, to pull the AutoShift charts | Reads every repository in the organization, and nothing else |
+
+Repository permissions in Red Hat Quay are set per repository, and new charts add repositories over
+time. The write account therefore gets its access at the organization level, through a team with
+the `creator` role, and both accounts get organization default permissions, which Red Hat Quay
+applies to every repository created later.
+
+### Create the organization and robot accounts
+
+Every call needs a superuser OAuth token. The `access_token` returned when you created the first
+user works until it expires, about 150 minutes after it was issued. For anything later, create a
+long-lived token in the web console:
+
+1. Log in as a superuser and create or open the organization, for exacmple **autoshift**.
+2. Select Robot Accounts, then Create Robot Account, for example release. The resulting account name is autoshift+release..
+3. Grant it Write on the repositories it publishes, or Admin on the organization if it must create repositories on first push..
+4. Open the robot account and select Credentials. The panel offers a Docker login command and a downloadable Kubernetes Secret.
+
+Red Hat Quay never creates organizations on push. If you prefer to use the API to create an organization and setup the robot account then below are the various API calls you can make to do the above configuration via the API.
 
 ```bash
 HOST=$(oc get route registry-quay -n quay-enterprise -o jsonpath='{.spec.host}')
-podman login "$HOST" -u 'autoshift+release' -p '<robot-token>'
-helm registry login "$HOST" -u 'autoshift+release' -p '<robot-token>'
+API="https://${HOST}/api/v1"
+ORG=autoshift
+QUAY_TOKEN=$(curl -sf "${API}/organization/${ORG}/robots/release" -H "$AUTH" | jq -r .token)
+AUTH="Authorization: Bearer ${QUAY_TOKEN}"   # superuser OAuth token
+JSON='Content-Type: application/json'
+
+# Organization
+curl -sf -X POST "${API}/organization/" -H "$AUTH" -H "$JSON" \
+  --data "{\"name\":\"${ORG}\",\"email\":\"${ORG}@example.com\"}"
+
+# Robot accounts
+curl -sf -X PUT "${API}/organization/${ORG}/robots/release" -H "$AUTH" -H "$JSON" \
+  --data '{"description":"make release: pushes AutoShift charts"}'
+curl -sf -X PUT "${API}/organization/${ORG}/robots/argocd" -H "$AUTH" -H "$JSON" \
+  --data '{"description":"Argo CD: pulls AutoShift charts (read only)"}'
+
+# Write account: organization-level team that may create repositories
+curl -sf -X PUT "${API}/organization/${ORG}/team/releasers" -H "$AUTH" -H "$JSON" \
+  --data '{"role":"creator","description":"Creates repositories on push"}'
+curl -sf -X PUT "${API}/organization/${ORG}/team/releasers/members/${ORG}+release" -H "$AUTH"
+
+# Default permissions for every repository created from now on
+curl -sf -X POST "${API}/organization/${ORG}/prototypes" -H "$AUTH" -H "$JSON" \
+  --data "{\"role\":\"write\",\"delegate\":{\"kind\":\"user\",\"name\":\"${ORG}+release\"}}"
+curl -sf -X POST "${API}/organization/${ORG}/prototypes" -H "$AUTH" -H "$JSON" \
+  --data "{\"role\":\"read\",\"delegate\":{\"kind\":\"user\",\"name\":\"${ORG}+argocd\"}}"
 ```
 
-Red Hat Quay creates repositories on first push when the account has permission to do so, but it
-does not create organizations. Create the organization before the first push.
+A repository pushed by `autoshift+release` is private, the release account becomes its
+administrator, and `autoshift+argocd` gets read on it. The `write` default permission covers
+repositories that someone else creates first.
 
-For Argo CD to pull Helm charts from this registry, create a repository Secret rather than a pull
-secret:
+Default permissions apply only to repositories created after them. For a repository that already
+exists, grant the account directly:
 
 ```bash
-oc create secret generic quay-charts -n openshift-gitops \
-  --from-literal=type=helm \
-  --from-literal=url="$HOST" \
-  --from-literal=enableOCI=true \
-  --from-literal=username='autoshift+release' \
-  --from-literal=password='<robot-token>'
-oc label secret quay-charts -n openshift-gitops argocd.argoproj.io/secret-type=repository
+curl -sf -X PUT "${API}/repository/${ORG}/<repository>/permissions/user/${ORG}+argocd" \
+  -H "$AUTH" -H "$JSON" --data '{"role":"read"}'
 ```
+
+Read a robot token back at any time:
+
+```bash
+curl -sf "${API}/organization/${ORG}/robots/release" -H "$AUTH" | jq -r .token
+```
+
+### Log in to Quay with Podman and Helm
+
+```bash
+podman login "$HOST" -u 'autoshift+release' -p "$QUAY_TOKEN"
+helm registry login "$HOST" -u 'autoshift+release' -p "$QUAY_TOKEN"
+```
+
+### Let Argo CD pull the charts
+
+Argo CD reads registry credentials from a `repo-creds` Secret whose URL starts with `oci://`. Use
+the read account:
+
+```bash
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: autoshift-oci-creds
+  namespace: openshift-gitops
+  labels:
+    argocd.argoproj.io/secret-type: repo-creds
+stringData:
+  type: helm
+  url: oci://${HOST}/${ORG}
+  enableOCI: "true"
+  username: ${ORG}+argocd
+EOF
+oc set data secret/autoshift-oci-creds -n openshift-gitops \
+  --from-file=password=<(curl -sf "${API}/organization/${ORG}/robots/argocd" -H "$AUTH" | jq -j .token)
+```
+
+The registry route usually carries the cluster wildcard certificate. If that certificate comes from
+a private certificate authority, Argo CD also needs it. Both steps, and the second credential that
+`install-autoshift.sh` needs, are in
+[Private registry authentication](../../../docs/releases.md#private-registry-authentication).
 
 ## Trusting the registry across the cluster
 
@@ -240,7 +321,7 @@ HOST=$(oc get route registry-quay -n quay-enterprise -o jsonpath='{.spec.host}')
 oc get secret/pull-secret -n openshift-config \
   --template='{{index .data ".dockerconfigjson" | base64decode}}' > /tmp/pull-secret.json
 oc registry login --registry="$HOST" \
-  --auth-basic='autoshift+release:<robot-token>' --to=/tmp/pull-secret.json
+  --auth-basic='autoshift+argocd:<robot-token>' --to=/tmp/pull-secret.json
 oc set data secret/pull-secret -n openshift-config \
   --from-file=.dockerconfigjson=/tmp/pull-secret.json
 rm -f /tmp/pull-secret.json

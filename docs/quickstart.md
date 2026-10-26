@@ -325,6 +325,14 @@ oc get mch -A -w
 ./install-autoshift.sh hub
 ```
 
+> [!IMPORTANT]
+> If the charts are in a private registry, create the Argo CD credentials before running
+> `install-autoshift.sh`. The script writes the main Application in the Helm form, so it needs both
+> credential templates described in
+> [Private registry authentication](releases.md#with-the-install-script). If the registry uses a
+> private certificate authority, set up [Custom CA certificate](releases.md#custom-ca-certificate)
+> first.
+
 ### Option b: manual OCI installation
 
 If you prefer to run the commands directly without the scripts:
@@ -387,9 +395,27 @@ oc get pods -n openshift-gitops
 oc get argocd -A
 ```
 
-#### Step 4: deploy AutoShift from OCI
+#### Step 4: give Argo CD access to a private registry
 
-Create the ArgoCD Application pointing to the OCI registry. The key difference from source mode is `autoshiftOciRepo`, which both selects OCI mode and says where the policy charts are published. Change it if you release your own charts. `autoshiftOciVersion` is required, because a mutable `latest` tag is unreliable with Argo CD OCI, and is injected from the Application's own `targetRevision`:
+Skip this step for the public `quay.io/autoshift` charts.
+
+For a private registry, the policy Applications and the main Application all pull from it, so Argo
+CD needs:
+
+1. **Trust**, when the registry certificate is signed by a private certificate authority. Set the
+   `gitops-cluster-ca-bundle` label as described in
+   [Custom CA certificate](releases.md#custom-ca-certificate), and wait for the repo server to
+   restart.
+2. **Credentials**: one `repo-creds` Secret whose URL starts with `oci://`, as described in
+   [Private registry authentication](releases.md#recommended-one-credential). Use a read-only
+   account.
+
+#### Step 5: deploy AutoShift from OCI
+
+Create the ArgoCD Application pointing to the OCI registry. The key difference from source mode is `autoshiftOciRepo`, which both selects OCI mode and says where the policy charts are published. Change it if you release your own charts. `autoshiftOciVersion` is required, because no `latest` tag is published, and is injected from the Application's own `targetRevision`.
+
+The Application uses the native OCI source form, `repoURL: oci://...` with `path: .`, the same form
+as the policy Applications it generates. A private registry then needs only one credential:
 
 ```console
 export OCI_REGISTRY="quay.io/autoshift"
@@ -403,8 +429,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: ${OCI_REGISTRY}
-    chart: autoshift
+    repoURL: oci://${OCI_REGISTRY}/autoshift
+    path: .
     targetRevision: "${VERSION}"
     helm:
       valueFiles:
@@ -453,7 +479,7 @@ valueFiles:
   - values/clustersets/hub2.yaml
 ```
 
-#### Step 5: assign clusters to ClusterSets
+#### Step 6: assign clusters to ClusterSets
 
 ```console
 # Replace 'hub' with the name of your clusterset
@@ -466,7 +492,7 @@ For managed clusters, assign them to their clusterset the same way:
 oc label managedcluster <cluster-name> cluster.open-cluster-management.io/clusterset=managed --overwrite
 ```
 
-#### Step 6: verify
+#### Step 7: verify
 
 ```bash
 # Check ArgoCD Application
