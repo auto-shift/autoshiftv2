@@ -1,0 +1,70 @@
+# ==============================================================================
+# Disconnected-flow test for a CONNECTED hub
+# ==============================================================================
+# Exercises the disconnected path (mirrored CatalogSources, default catalogs off,
+# operator source switch, IDMS, ITMS, registry CA) without a mirror registry: the
+# "mirror" is registry.redhat.io itself, which a connected hub can already pull from
+# with its existing global pull secret.
+#
+# Layer it on the hub profile:
+#   valueFiles:
+#     - values/global.yaml
+#     - values/clustersets/hub.yaml
+#     - values/clusters/local-cluster-disconnected-test.yaml
+#
+# The catalog tag must match the hub's OpenShift minor version.
+# ==============================================================================
+
+clusters:
+  local-cluster:
+    labels:
+      disconnected-mirror: 'true'            # places disconnected-mirror and switches every operator source
+      mirror-catalog-suffix: 'mirror'        # redhat-operators -> redhat-operators-mirror
+    config:
+      disconnected:
+        mirrorRegistry:
+          host: 'registry.redhat.io'
+          # Amazon Root CA 1, the public root that registry.redhat.io chains to. The hub already
+          # trusts it; it is here because ca or caRef is required once mirrors are defined, and so
+          # the registry CA policy renders and is exercised.
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            MIIDQTCCAimgAwIBAgITBmyfz5m/jAo54vB4ikPmljZbyjANBgkqhkiG9w0BAQsF
+            ADA5MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6
+            b24gUm9vdCBDQSAxMB4XDTE1MDUyNjAwMDAwMFoXDTM4MDExNzAwMDAwMFowOTEL
+            MAkGA1UEBhMCVVMxDzANBgNVBAoTBkFtYXpvbjEZMBcGA1UEAxMQQW1hem9uIFJv
+            b3QgQ0EgMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALJ4gHHKeNXj
+            ca9HgFB0fW7Y14h29Jlo91ghYPl0hAEvrAIthtOgQ3pOsqTQNroBvo3bSMgHFzZM
+            9O6II8c+6zf1tRn4SWiw3te5djgdYZ6k/oI2peVKVuRF4fn9tBb6dNqcmzU5L/qw
+            IFAGbHrQgLKm+a/sRxmPUDgH3KKHOVj4utWp+UhnMJbulHheb4mjUcAwhmahRWa6
+            VOujw5H5SNz/0egwLX0tdHA114gk957EWW67c4cX8jJGKLhD+rcdqsq08p8kDi1L
+            93FcXmn/6pUCyziKrlA4b9v7LWIbxcceVOF34GfID5yHI9Y/QCB/IIDEgEw+OyQm
+            jgSubJrIqg0CAwEAAaNCMEAwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC
+            AYYwHQYDVR0OBBYEFIQYzIU07LwMlJQuCFmcx7IQTgoIMA0GCSqGSIb3DQEBCwUA
+            A4IBAQCY8jdaQZChGsV2USggNiMOruYou6r4lK5IpDB/G/wkjUu0yKGX9rbxenDI
+            U5PMCCjjmCXPI6T53iHTfIUJrU6adTrCC2qJeHZERxhlbI1Bjjt/msv0tadQ1wUs
+            N+gDS63pYaACbvXy8MWy7Vu33PqUXHeeE6V/Uq2V8viTO96LXFvKWlJbYK8U90vv
+            o/ufQJVtMVT8QtPHRh8jrdkPSHCa2XV4cdFyQzR1bldZwgJcJmApzyMZFo6IQ6XU
+            5MsI+yMRQ+hDKXJioaldXgjUkK642M4UwtBV8ob2xJNDd2ZhwLnoQdeXeGADbkpy
+            rqXRfboQnoZsG4q5WTP468SQvvG5
+            -----END CERTIFICATE-----
+          # The sources are a name that does not resolve, so a pull through it succeeds only if
+          # the mirror set redirects it. A registry.redhat.io -> registry.redhat.io entry would
+          # pull fine with or without the IDMS and prove nothing. mirror is a path on host.
+          mirrors:                             # IDMS, digest pulls
+            - source: 'mirror-test.autoshift.invalid/ubi9'
+              mirror: 'ubi9'
+          tagMirrors:                          # ITMS, tag pulls
+            - source: 'mirror-test.autoshift.invalid/ubi9'
+              mirror: 'ubi9'
+        catalogs:
+          - source: redhat-operators
+            imagePath: redhat/redhat-operator-index
+            tag: v4.22
+            publisher: Red Hat
+          - source: certified-operators
+            imagePath: redhat/certified-operator-index
+            tag: v4.22
+            publisher: Red Hat
+        useIDMS: true
+        disableDefaultCatalogs: true

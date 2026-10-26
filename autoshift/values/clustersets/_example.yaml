@@ -536,24 +536,26 @@ hubClusterSets:
         mirrorRegistry:
           host: 'registry.example.com:5000'    # host:port — there is no separate port key
           path: 'openshift'
-          # ca (inline bundle) or caRef (hub ConfigMap) is required once mirrors/tagMirrors or
-          # catalogs are defined; the mirrored registry is not in the cluster's default trust.
+          # ca (inline bundle) or caRef (hub ConfigMap): only when the mirror's certificate is not
+          # publicly trusted. Omit both for a mirror with a public certificate.
           caRef:
             name: 'cluster-ca-bundle'
             key: 'ca-bundle.crt'
             namespace: 'cluster-install-secrets'
+          # mirror is a path on host, which every consumer prefixes; omit it to use host[/path].
           mirrors:
             - source: 'registry.redhat.io'
-              mirror: 'registry.example.com:5000/rhel'
+              mirror: 'rhel'
             - source: 'quay.io'
-              mirror: 'registry.example.com:5000/quay'
+              mirror: 'quay'
           # tagMirrors -> ImageTagMirrorSet, for images pulled by TAG (not digest). The Vault chart
           # images (docker.io/hashicorp/vault:1.17.2, vault-k8s:1.4.2) are tag-referenced, so mirror
           # them here. `oc mirror` copies them via the imageset (vault key in known-additional-images.json).
           tagMirrors:
             - source: 'docker.io/hashicorp'
-              mirror: 'registry.example.com:5000/hashicorp'
+              mirror: 'hashicorp'
         # imagePath and tag, not a single image string — the host comes from mirrorRegistry above.
+        # Required whenever disconnected-mirror is 'true': operators subscribe to <source>-<suffix>.
         catalogs:
           - source: redhat-operators
             imagePath: redhat/redhat-operator-index

@@ -129,14 +129,27 @@ guidance below as the target rather than a description of the current codebase.
   returns nil, and `| default dict` then turns that into silence.
 - **A missing key is still silent.** `fromConfigMap` reads the key with the found flag discarded, so
   a ConfigMap that exists without the key returns an empty string. Check a required key explicitly
-  rather than assuming the read failed loudly.
+  with `fail`, rather than assuming the read failed loudly:
+
+  ```yaml
+  {{hub $ca := (fromConfigMap $ns $name $key) hub}}
+  {{hub if not $ca hub}}
+  {{hub fail (printf "caRef: ConfigMap %s/%s has no key %s" $ns $name $key) hub}}
+  {{hub end hub}}
+  ```
+
+- **`fail` is available from Red Hat Advanced Cluster Management 2.14, but its message comes last.**
+  The policy reports `template-error; failed to resolve the template`, then the whole
+  `ConfigurationPolicy` as JSON, then your text. The compliance message is cut at 4096 bytes, so in a
+  template much larger than about 4 KB your text is lost and only the template error shows. The
+  policy is still NonCompliant. Keep the text short and specific. On 2.13 and earlier the call
+  fails as an undefined function, which is still loud but does not carry your text.
 - **Failures do not cascade.** Each policy resolves on its own, so one failing to resolve is a fact
   about that policy. When the rendered config is genuinely missing, every policy reporting it is the
   accurate signal, not noise.
 - **Prefer failing at render time where the chart can see the problem.** The Helm chart holds both
   the labels and the configuration, so a member label set without its required configuration key can
-  fail `helm template` and never reach a cluster. Runtime has no `fail` function: neither Sprig's
-  function set nor the resolver's own helpers provide one.
+  fail `helm template` and never reach a cluster, with a readable message and no truncation.
 - **An empty result is not always an error.** An inform policy that reports findings, such as
   `policy-quota-guard`, is legitimately empty when there is nothing to report. The rule is to fail
   on missing input, not on empty output.

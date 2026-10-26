@@ -818,7 +818,7 @@ AutoShift validates cluster-install configuration at Helm render time through `_
 - **Host counts**: Number of hosts must match `controlPlaneAgents` + `workerAgents`
 - **Role counts**: Number of hosts with `role: master` must match `controlPlaneAgents`
 - **SNO**: Exactly 1 host when `controlPlaneAgents: 1`
-- **Disconnected**: `host` required when `mirrors` defined, `ca` or `caRef` required when `mirrors` defined, `host` required when `catalogs` defined
+- **Disconnected**: `host` required when `mirrors` or `catalogs` are defined, `catalogs` required when `disconnected-mirror` is `'true'`, and `ca` or `caRef` optional, needed only for a mirror whose certificate is not publicly trusted
 - **Catalog entries**: `source`, `imagePath`, `tag` required for each catalog
 - **operating system images**: `openshiftVersion`, `version`, `url` required for each `osImage` entry
 - **`rootDeviceHints`**: Only valid hint keys accepted
