@@ -141,9 +141,20 @@ guidance below as the target rather than a description of the current codebase.
 - **`fail` is available from Red Hat Advanced Cluster Management 2.14, but its message comes last.**
   The policy reports `template-error; failed to resolve the template`, then the whole
   `ConfigurationPolicy` as JSON, then your text. The compliance message is cut at 4096 bytes, so in a
-  template much larger than about 4 KB your text is lost and only the template error shows. The
-  policy is still NonCompliant. Keep the text short and specific. On 2.13 and earlier the call
-  fails as an undefined function, which is still loud but does not carry your text.
+  template much larger than about 4 KB your text would be lost. On 2.13 and earlier the call fails as
+  an undefined function, which is still loud but does not carry your text.
+- **Strip the dump with `customMessage` when the `fail` runs on the managed cluster.** This pattern
+  leaves only your text, and it applies before the 4096-byte cut, so it works on a template of any
+  size. A message that does not contain a `fail` passes through unchanged:
+
+  ```yaml
+  customMessage:
+    noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
+  ```
+
+  It has no effect on a `fail` inside a hub template, whose error is reported before the
+  `ConfigurationPolicy` evaluates. Keep hub-side checks in a small template so the text survives, or
+  move the check to the managed cluster.
 - **Failures do not cascade.** Each policy resolves on its own, so one failing to resolve is a fact
   about that policy. When the rendered config is genuinely missing, every policy reporting it is the
   accurate signal, not noise.
