@@ -135,7 +135,7 @@ A component named `<component>` in `policies/` takes these names:
 |---|---|
 | Enable label | `autoshift.io/<component>` |
 | Operator labels | `autoshift.io/<component>-channel`, `-subscription-name`, `-source`, `-source-namespace`, `-version` |
-| Config key | `<component>` in lowerCamelCase, so `workload-partitioning` becomes `workloadPartitioning` |
+| Config key | `<component>` as written, or in lowerCamelCase, so `workload-partitioning` or `workloadPartitioning`. Use one, not both |
 
 A component may instead read a shared config key when the setting genuinely belongs to the fleet
 rather than to that component. Those keys are listed in `.github/config-key-conventions.yaml`, and
@@ -155,8 +155,9 @@ It renders every chart, resolves hub and spoke templates, and checks two contrac
 - **Label contract**: every `autoshift.io/*` label a policy consumes is declared in an example values
   file. A label that is consumed but not declared fails. A label that is declared but unused warns.
 - **Config key conventions**: every config key declared in an example values file resolves to a policy
-  directory in lowerCamelCase, or is recorded as a shared key or an alias. A key that resolves to
-  nothing is configuration users can set that no policy reads.
+  directory, by its name as written or in lowerCamelCase, or is recorded as a shared key or an
+  alias. A key that resolves to nothing is configuration users can set that no policy reads.
+  Declaring both forms for one directory fails, because the policy reads only one of them.
 
 Known and intentional deviations are recorded in `.github/label-lint-allowlist.yaml` and
 `.github/config-key-conventions.yaml`.
