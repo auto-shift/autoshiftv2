@@ -1,8 +1,12 @@
 object-templates-raw: |
   {{- /* Inform gate for a target listed under status.conditionalUpdates and absent from
          availableUpdates. fail carries the Cluster Version Operator reason and message.
-         customMessage keeps only that text, so Governance shows it without the template. */ -}}
+         customMessage keeps only that text, so Governance shows it without the template.
+         Once CVO has accepted the release, this gate stays quiet; completion is the
+         status policy. openshift-upgrade-allow-conditional true skips the fail so the enforce
+         policy can copy the image from status.conditionalUpdates. */ -}}
   {{- $target := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-version" | default "" hub}}" }}
+  {{- $allowConditional := "{{hub index .ManagedClusterLabels "autoshift.io/openshift-upgrade-allow-conditional" | default "false" hub}}" }}
   {{- $status := (index (lookup "config.openshift.io/v1" "ClusterVersion" "" "version" | default dict) "status" | default dict) }}
   {{- $current := "" }}
   {{- range $h := (index $status "history" | default list) }}
@@ -44,7 +48,13 @@ object-templates-raw: |
   {{-     end }}
   {{-   end }}
   {{- end }}
-  {{- if $conditional }}
+  {{- $updating := false }}
+  {{- $desired := (printf "%v" (index (index $status "desired" | default dict) "version" | default "") | trim) }}
+  {{- if and (ne $target "") (eq $desired $target) }}{{- $updating = true }}{{- end }}
+  {{- range $h := (index $status "history" | default list) }}
+  {{-   if and (not $updating) (eq (index $h "state") "Partial") (eq (printf "%v" (index $h "version" | default "") | trim) $target) }}{{- $updating = true }}{{- end }}
+  {{- end }}
+  {{- if and $conditional (not $updating) (ne $allowConditional "true") }}
   {{-   $detail := $riskMessage }}
   {{-   if and (ne $riskURL "") (not (contains $riskURL $riskMessage)) }}
   {{-     $detail = printf "%s %s" $riskMessage $riskURL }}
