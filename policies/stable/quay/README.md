@@ -170,6 +170,38 @@ more pods than there are zones. An explicit `overrides.<kind>.affinity` replaces
 component, and replaces the Quay Operator's node spreading too, so include a hostname term in your
 own.
 
+### Infra nodes
+
+Red Hat Quay is an infrastructure workload, so it can run on infra nodes, which need no additional
+OpenShift subscription. Set `config.quay.infraNodes: true` alongside the `infra-nodes` label:
+
+```yaml
+config:
+  quay:
+    infraNodes: true
+```
+
+AutoShift then annotates the `quay-enterprise` namespace with an `openshift.io/node-selector` for
+`node-role.kubernetes.io/infra` and default tolerations for the infra taints, the method described in
+[Deploying Red Hat Quay on infrastructure nodes](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/deploying_the_red_hat_quay_operator_on_openshift_container_platform/operator-deploy-infrastructure).
+Every pod in the namespace follows it, including the CloudNativePG databases in `managed` mode.
+
+- The annotations are written only while `infra-nodes` is set to a count other than `'0'` and at least
+  one infra node is Ready, so pods are never pinned to nodes that do not exist.
+- Pods move when they are next recreated. To move them at once, roll the deployments in
+  `quay-enterprise`.
+- Provision enough infra nodes, across zones, for the registry to stay available when one is drained.
+- The Quay Operator itself stays where it is installed, in all namespaces mode, so the `monitoring`
+  component keeps working. Red Hat's procedure installs the Operator into a single namespace on the
+  infra nodes, which disables monitoring; AutoShift does not.
+
+Turning `infraNodes` off does not move the pods back, because a policy cannot remove metadata from an
+object. Remove the annotations by hand, then roll the deployments:
+
+```bash
+oc annotate namespace quay-enterprise openshift.io/node-selector- scheduler.alpha.kubernetes.io/defaultTolerations-
+```
+
 ## Production settings
 
 Keys in its `config.yaml` set how Red Hat Quay behaves. Put the non-sensitive ones in
@@ -219,6 +251,14 @@ config:
       ACTION_LOG_ROTATION_THRESHOLD: 30d
       ACTION_LOG_ARCHIVE_LOCATION: local_us
       ACTION_LOG_ARCHIVE_PATH: archives/actionlogs
+      # Must be longer than a rolling restart of the registry pods, or quota totals are recalculated
+      # mid-rollout. 1800 is the Red Hat default.
+      QUOTA_TOTAL_DELAY_SECONDS: 1800
+      # Session cookies only over TLS, and links generated with https.
+      SESSION_COOKIE_SECURE: true
+      PREFERRED_URL_SCHEME: https
+      # App-specific (CLI) tokens otherwise never expire.
+      APP_SPECIFIC_TOKEN_EXPIRATION: 90d
 ```
 
 | Setting | Why | Red Hat documentation |
@@ -228,7 +268,10 @@ config:
 | `DEFAULT_TAG_EXPIRATION`, `TAG_EXPIRATION_OPTIONS` | Garbage collection is on by default and needs no setting. These control how long deleted tags stay restorable, which is also how long Red Hat Quay keeps their storage | [Garbage collection](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/garbage-collection) |
 | `FEATURE_QUOTA_MANAGEMENT`, `DEFAULT_SYSTEM_REJECT_QUOTA_BYTES`, `FEATURE_QUOTA_NOTIFICATIONS` | Limits registry growth. The system-wide default rejects pushes, so set it to more than your largest organization needs | [Quota management and enforcement](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/red-hat-quay-quota-management-and-enforcement) |
 | `FEATURE_AUTO_PRUNE`, `DEFAULT_NAMESPACE_AUTOPRUNE_POLICY` | Deletes old tags in every organization, including new ones. The registry-wide worker runs every 24 hours. Pruned tags enter the time machine first | [Auto-pruning](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/red-hat-quay-namespace-auto-pruning-overview), [registry-wide policy](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/creating-registry-wide-auto-pruning-policy) |
-| `FEATURE_ACTION_LOG_ROTATION` and `ACTION_LOG_*` | Keeps the audit log from growing the database without limit | [Action log storage fields](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-fields-actionlog) |
+| `FEATURE_ACTION_LOG_ROTATION` and `ACTION_LOG_*` | Keeps the audit log from growing the database without limit. For a registry with many logged operations, Red Hat recommends Elasticsearch or Splunk through `LOGS_MODEL`, whose credentials go in the Secret | [Action log storage fields](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-fields-actionlog) |
+| `QUOTA_TOTAL_DELAY_SECONDS` | Red Hat says it must be longer than a rolling deployment takes | [Quota management and enforcement](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/red-hat-quay-quota-management-and-enforcement) |
+| `SESSION_COOKIE_SECURE`, `PREFERRED_URL_SCHEME` | Red Hat recommends `SESSION_COOKIE_SECURE: true` for every installation that uses TLS, and `https` in most cases | [Component and feature configuration fields](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-fields-optional-intro) |
+| `APP_SPECIFIC_TOKEN_EXPIRATION` | Without it, tokens that users create for the command line never expire | [Component and feature configuration fields](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/configure_red_hat_quay/config-fields-optional-intro) |
 
 Auto-pruning and a reject quota both delete or refuse content. Turn them on deliberately, and tell
 the teams that push to the registry first. The full list of keys is in
@@ -237,19 +280,40 @@ the teams that push to the registry first. The full list of keys is in
 ### Clair settings
 
 The Quay Operator always writes Clair's full configuration itself and layers a `clair-config.yaml`
-from the config bundle over it. To change a Clair setting in any database mode, put a
-`clair-config.yaml` key in the Secret from step 3 holding only the settings you change. In `managed`
-mode AutoShift merges it with the CloudNativePG connection, and the connection wins.
+from the config bundle over it. AutoShift builds that overlay from two places, in this order:
+
+1. `config.quay.clair` in your values file, for settings that are not secret.
+2. A `clair-config.yaml` key in the Secret from step 3, for connection strings and anything else
+   that holds a credential. It wins over `config.quay.clair`.
+
+In `managed` mode the CloudNativePG connection is merged last and wins over both. Connection strings,
+`auth.psk.key`, notifier broker credentials and tracing passwords are credentials, so they never go
+in `config.quay.clair`.
 
 On a disconnected cluster, Clair cannot reach the vulnerability databases it updates from, and its
 updaters retry without end. Turn them off and load the data with `clairctl` instead:
 
 ```yaml
-indexer:
-  airgap: true
-matcher:
-  disable_updaters: true
+config:
+  quay:
+    clair:
+      indexer:
+        airgap: true
+      matcher:
+        disable_updaters: true
 ```
+
+Other settings you might change:
+
+| Setting | Default | Notes |
+|---|---|---|
+| `matcher.period` | `6h` | How often updaters fetch new vulnerability data |
+| `matcher.update_retention` | `2` | Vulnerability database versions kept. 2 is the minimum that still lets updates be compared for notifications. Raise it only if the Clair database has room |
+| `updaters.sets` | the default set | For RHEL content, Red Hat recommends at least `rhel`, `rhcc`, `clair.cvss` and `osv`. Setting a list runs only those updaters |
+| `indexer.layer_scan_concurrency` | `5` | Layers scanned in parallel per index request |
+
+Large images can fill Clair's 20 GiB scratch volume and fail the Clair pods. Raise it with
+`overrides.clair.volumeSize`, as in the `_example.yaml` clusterset file.
 
 Then export the vulnerability data from a connected Clair instance and import it, as described in
 [Clair in disconnected environments](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/vulnerability_reporting_with_clair_on_red_hat_quay/clair-disconnected-environments).
@@ -345,6 +409,128 @@ The Clair connection strings follow [Unmanaged Clair configuration](https://docs
 To skip vulnerability scanning instead, set `components.clair: false` and leave
 `clair-config.yaml` out.
 
+## Day 2 operations
+
+What the registry owner has to understand and decide after the registry is running. Every setting
+here is a `config.yaml` key in `config.quay.config` unless it says otherwise.
+
+### Garbage collection
+
+Garbage collection is on by default and needs no configuration. It runs continuously in the
+registry pods, and Red Hat Quay has no command to start a run by hand.
+
+| Setting | Default | What it decides |
+|---|---|---|
+| `DEFAULT_TAG_EXPIRATION` | `2w` | The time machine: how long a deleted or expired tag stays restorable. Its storage is reclaimed only after this window |
+| `TAG_EXPIRATION_OPTIONS` | | The windows users can choose. Must include `DEFAULT_TAG_EXPIRATION` |
+| `FEATURE_CHANGE_TAG_EXPIRATION` | `true` | Whether users and organizations can change the window |
+| `PERMANENTLY_DELETE_TAGS` | `false` | Whether users can delete a tag from the time machine early |
+| `GARBAGE_COLLECTION_FREQUENCY` | `30` | Seconds between garbage collection worker runs |
+| `FEATURE_GARBAGE_COLLECTION`, `FEATURE_NAMESPACE_GARBAGE_COLLECTION`, `FEATURE_REPOSITORY_GARBAGE_COLLECTION` | `true` | Leave them on. With garbage collection off, deleted tags, repositories, namespaces and their layers are never removed |
+
+What garbage collection does not reclaim:
+
+- Anything still inside the time machine window.
+- A blob that another manifest still references.
+- Blobs from a push that is still within its temporary tag grace period. These go on the next run
+  that an expired tag in the same repository triggers.
+
+Red Hat Quay does not report how much space a run frees, and quota usage drops only after garbage
+collection removes a manifest, so quota totals lag deletions. Watch the `quay_gc_iterations_total`
+and `quay_gc_storage_blobs_deleted_total` metrics, and the
+[alerts](#alerts), to see that it is working. Garbage collection takes its lock in Redis, so it
+pauses while Redis is down. See [Red Hat Quay garbage collection](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/manage_red_hat_quay/garbage-collection).
+
+To reclaim space on purpose, shorten the window, delete or auto-prune tags, and let garbage
+collection run. Auto-pruning, quotas and log rotation are in [Production settings](#production-settings).
+
+### Settings that quietly stop something
+
+| Setting | Effect |
+|---|---|
+| `DISABLE_PUSHES: true` | Also stops garbage collection, so tags deleted in the meantime keep their storage until pushes are re-enabled |
+| `ROBOTS_DISALLOW: true` | Breaks repository mirroring, which needs robot accounts |
+| `FEATURE_RESTRICTED_USERS: true` without `RESTRICTED_USERS_WHITELIST` | Users who are not on a team cannot do basic tasks |
+| `SSL_PROTOCOLS` or `SSL_CIPHERS` alone | With the `tls` component unmanaged, setting only one turns off the cluster TLS profile inheritance for both. Set both or neither |
+| `DATABASE_SECRET_KEY` changed | Encrypted fields in the database, such as mirror credentials, can no longer be read. Never change it on a running registry |
+
+Organization mirroring, new in 3.18, does not replicate deletions: the mirror keeps every tag it ever
+copied, and grows until a quota or auto-pruning limits it. Repository mirroring does remove tags
+that no longer match.
+
+### Alerts
+
+The Quay Operator's `monitoring` component exposes the registry metrics but alerts only on pods that
+restart often. AutoShift adds a `PrometheusRule`, `autoshift-quay` in `quay-enterprise`, for the
+Day 2 failures that otherwise go unnoticed:
+
+| Alert | Fires when | Threshold key | Default |
+|---|---|---|---|
+| `QuayGarbageCollectionStalled` | A namespace or repository garbage collection queue has held items for the threshold | `garbageCollectionStalledFor` | `6h` |
+| `QuayRepositoryMirrorFailing` | Repository mirror syncs have kept failing for the threshold | `mirrorFailingFor` | `2h` |
+| `QuaySecurityScanBacklog` | Images have waited the threshold for a vulnerability scan | `scanBacklogFor` | `24h` |
+
+Each threshold is a Prometheus duration under `config.quay.alerts`, and `severity` sets the label on
+all three:
+
+```yaml
+config:
+  quay:
+    alerts:
+      severity: critical
+      garbageCollectionStalledFor: 12h
+      scanBacklogFor: 2d
+```
+
+The defaults are starting points rather than Red Hat values. The rules render only while the
+`monitoring` component is managed. Set `alerts.enabled: false` to remove them.
+
+### Upgrades
+
+- Each Quay Operator version deploys exactly one Red Hat Quay version, so the `quay-channel` label and
+  `config.quay.versions` decide the registry version. Nothing on the `QuayRegistry` pins it.
+- Red Hat Quay 3.18 upgrades directly from 3.15, 3.16 or 3.17. From anything older, upgrade one minor
+  version at a time.
+- You cannot roll back to an earlier minor version, because upgrades migrate the database schema.
+  Back up before changing the channel.
+- An upgrade runs the `quay-app-upgrade` and database upgrade pods first, for about 10 minutes, before
+  the registry pods roll.
+- With the `tls` component unmanaged, 3.18 inherits the cluster TLS security profile unless both
+  `SSL_PROTOCOLS` and `SSL_CIPHERS` are set. Set both before upgrading if clients need the earlier
+  protocols.
+
+See [Upgrade Red Hat Quay](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/upgrade_red_hat_quay/operator-upgrade).
+
+### Backup and restore
+
+Restoring a registry needs four things. AutoShift backs up only the second, and only in `managed`
+mode.
+
+| What | Why it matters | Backed up by |
+|---|---|---|
+| `registry-quay-registry-managed-secret-keys` Secret | Holds `SECRET_KEY` and `DATABASE_SECRET_KEY`. Without them, a restored database cannot be decrypted | You |
+| The Red Hat Quay database | Repositories, tags, users, permissions | `quay-db-backups: 'true'` in `managed` mode, otherwise you |
+| Object storage | The image layers themselves | You |
+| The config bundle and your values | The rest of the configuration | Git for values; you for the Secret from step 3 |
+
+The Clair database does not need a backup. It can be recreated, at the cost of rescanning every image.
+
+Export the keys Secret once after the first deployment, and again after any change to it, and store
+it where you keep other credentials, outside the cluster:
+
+```bash
+oc get secret registry-quay-registry-managed-secret-keys -n quay-enterprise -o yaml \
+  | grep -v -E '^\s+(creationTimestamp|resourceVersion|uid):' > quay-managed-secret-keys.yaml
+```
+
+Red Hat's procedure scales the `quay`, `clair` and `mirror` components to 0, with the autoscaler
+unmanaged, before it dumps the database and copies the bucket, even when both are external services.
+That gives a consistent copy. Read-only mode avoids the downtime but needs a manual key-pair
+procedure. Both are in [Backing up and restoring Red Hat Quay on OpenShift](https://docs.redhat.com/en/documentation/red_hat_quay/3.18/html/red_hat_quay_operator_features/backing-up-and-restoring-intro).
+
+To restore onto a new cluster, apply the keys Secret to `quay-enterprise` before the registry first
+deploys, restore the database and bucket, then let `policy-quay-deploy` create the `QuayRegistry`.
+
 ## Policies
 
 | Policy | Placement | Purpose |
@@ -357,7 +543,7 @@ To skip vulnerability scanning instead, set `components.clair: false` and leave
 | `policy-quay-test` | `quay` | Registry readiness gate (inform) |
 | `policy-quay-external-db` | `quay` + `quay-db-mode: external` | Reports a missing `configSecretRef`, Secret, `DB_URI` or `clair-config.yaml` (inform) |
 | `policy-quay-tls-issuer` | `quay` | Reports when cert-manager TLS was requested but is not in effect (inform) |
-| `policy-quay-configure` | `quay` | Console link and registry host ConfigMap |
+| `policy-quay-configure` | `quay` | Console link, registry host ConfigMap, and the [alerts](#alerts) |
 | `policy-cnpg-quay-backup` | `quay` + `quay-db-mode: managed` + `quay-db-backups` + `odf` | Scheduled backups to a NooBaa bucket |
 
 `policy-quay-deploy` and `policy-quay-deploy-cnpg` render the same manifests under mutually

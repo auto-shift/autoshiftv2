@@ -7,8 +7,7 @@
 # the Secret. A missing Secret is reported by asserting it; missing contents by fail, whose message
 # customMessage keeps. Inform only.
 object-templates-raw: |
-  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $rcmConfig := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $quayCfg := (index $rcmConfig "quay" | default dict) hub}}
   {{hub- $components := (index $quayCfg "components" | default dict) hub}}
   {{hub- $secretRef := (index $quayCfg "configSecretRef" | default dict) hub}}

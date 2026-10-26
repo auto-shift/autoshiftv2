@@ -17,8 +17,7 @@
 # Boolean defaults use hasKey, not `| default`: Sprig treats false as empty, so `false | default true`
 # would silently flip an explicit opt-out back on.
 object-templates-raw: |
-  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $rcmConfig := (index ($rcm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $rcmConfig := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $quayCfg := (index $rcmConfig "quay" | default dict) hub}}
   {{hub- $components := (index $quayCfg "components" | default dict) hub}}
   {{hub- $overrides := (index $quayCfg "overrides" | default dict) hub}}
@@ -34,6 +33,7 @@ object-templates-raw: |
   {{hub- $superUsers := (index $quayCfg "superUsers" | default (list "quayadmin")) hub}}
   {{hub- $extra := (index $quayCfg "config" | default dict) hub}}
   {{hub- $secretRef := (index $quayCfg "configSecretRef" | default dict) hub}}
+  {{hub- $clairValues := (index $quayCfg "clair" | default dict) hub}}
   {{hub- $dbModeHub := (index .ManagedClusterLabels "autoshift.io/quay-db-mode" | default "bundled") hub}}
   {{hub- $userInit := false hub}}
   {{hub- if hasKey $bootstrap "userInitialize" hub}}{{hub- $userInit = index $bootstrap "userInitialize" hub}}{{hub- end hub}}
@@ -116,12 +116,17 @@ object-templates-raw: |
   {{- if $cnpgReady }}
   {{- $_ := set $base "DB_URI" $quayUri }}
   {{- end }}
-  {{/* Managed mode: defaults, then the admin's overlay, then the CNPG connection, which wins. */}}
-  {{- if $cnpgReady }}
+  {{/* Clair overlay, lowest first: managed-mode defaults, config.quay.clair from values (non-secret
+       settings such as indexer.airgap), the Secret's clair-config.yaml (connection strings and other
+       credentials), then in managed mode the CNPG connection, which wins. */}}
+  {{- $clairFromValues := (`{{hub $clairValues | toRawJson hub}}` | fromJson) }}
   {{- $clairOverlay := (index $bundleFiles "clair-config.yaml" | default "" | fromYaml) | default dict }}
+  {{- if $cnpgReady }}
   {{- $clairDefaults := dict "indexer" (dict "layer_scan_concurrency" 6 "migrations" true) "matcher" (dict "migrations" true) "notifier" (dict "migrations" true) "metrics" (dict "name" "prometheus") }}
   {{- $clairCnpg := dict "indexer" (dict "connstring" $clairConn) "matcher" (dict "connstring" $clairConn) "notifier" (dict "connstring" $clairConn) }}
-  {{- $_ := set $bundleFiles "clair-config.yaml" (mergeOverwrite $clairDefaults $clairOverlay $clairCnpg | toYaml) }}
+  {{- $_ := set $bundleFiles "clair-config.yaml" (mergeOverwrite $clairDefaults $clairFromValues $clairOverlay $clairCnpg | toYaml) }}
+  {{- else if $clairFromValues }}
+  {{- $_ := set $bundleFiles "clair-config.yaml" (mergeOverwrite (dict) $clairFromValues $clairOverlay | toYaml) }}
   {{- end }}
   {{/* Gate-closed: in managed mode with the CNPG app Secrets not yet present, emit nothing rather
        than write a bundle with an empty DB_URI. policy-cnpg-quay-test orders this normally; this

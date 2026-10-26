@@ -596,8 +596,8 @@ hubClusterSets:
       # =======================================================================
       quay:
         versions:                              # allowed CSV versions (compliance constraint)
-          - 'quay-operator.v3.18.0'
-        startingCSV: 'quay-operator.v3.18.0'   # explicit initial install pin (optional; '' = let OLM pick)
+          - 'quay-operator.v3.18.2'
+        startingCSV: 'quay-operator.v3.18.2'   # explicit initial install pin (optional; '' = let OLM pick)
         # --- Registry production settings (everything below is optional) ----------------
         # Superusers. With OIDC these are the OIDC usernames and they get admin on FIRST LOGIN
         # with no bootstrap step — that is the supported zero-Job admin path. Changing this
@@ -627,6 +627,29 @@ hubClusterSets:
         # single-zone cluster still schedules). Off by default. An explicit
         # overrides.<kind>.affinity replaces it for that component.
         zoneSpread: true
+        # Run every pod in quay-enterprise, the registry and its databases, on infra nodes. Takes
+        # effect only while infra-nodes is set to a count other than '0' and an infra node is Ready.
+        # Turning it off does not move pods back: remove the namespace annotations by hand.
+        infraNodes: true
+        # Alerts for garbage collection that never drains, failing repository mirrors, and images
+        # left unscanned. On by default; needs the monitoring component managed. Thresholds are
+        # Prometheus durations: how long the condition must hold before the alert fires.
+        alerts:
+          enabled: true
+          severity: warning
+          garbageCollectionStalledFor: 6h    # a garbage collection queue that never drains
+          mirrorFailingFor: 2h               # repository mirror syncs that keep failing
+          scanBacklogFor: 24h                # images still waiting for a vulnerability scan
+        # Non-sensitive Clair settings, layered over the Operator's Clair configuration. Connection
+        # strings and keys never go here: they belong in clair-config.yaml in configSecretRef, which
+        # wins over this block. A disconnected cluster sets indexer.airgap and matcher.disable_updaters
+        # and imports vulnerability data with clairctl (see the quay README).
+        clair:
+          # indexer:
+          #   airgap: true                   # disconnected: no internet fetches from the indexer
+          matcher:
+            update_retention: 2              # vulnerability database versions kept; 2 is the minimum
+            # disable_updaters: true         # disconnected: load the data with clairctl instead
         # Per-component overrides, passed straight through to spec.components[].overrides.
         # Valid keys: affinity, annotations, env, labels, replicas, resources, securityContext,
         # storageClassName, tls, volumeSize.
@@ -1686,7 +1709,7 @@ hubClusterSets:
       # =======================================================================
       quay: 'false'
       quay-subscription-name: quay-operator
-      quay-version: 'quay-operator.v3.18.0'
+      quay-version: 'quay-operator.v3.18.2'
       quay-channel: stable-3.18
       quay-source: redhat-operators
       quay-source-namespace: openshift-marketplace
