@@ -33,7 +33,7 @@ Your operator is now being deployed across your clusters. Check the ArgoCD dashb
 - [Troubleshooting](#troubleshooting)
 - [Additional Resources](#additional-resources)
 <a id="architecture-overview"></a>
-## 🏗️ Architecture overvie
+## 🏗️ Architecture overview
 
 AutoShiftv2 orchestrates OpenShift infrastructure through a sophisticated GitOps and policy-driven architecture:
 
