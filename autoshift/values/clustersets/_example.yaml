@@ -631,15 +631,15 @@ hubClusterSets:
         # effect only while infra-nodes is set to a count other than '0' and an infra node is Ready.
         # Turning it off does not move pods back: remove the namespace annotations by hand.
         infraNodes: true
-        # Alerts for garbage collection that never drains, failing repository mirrors, and images
-        # left unscanned. On by default; needs the monitoring component managed. Thresholds are
+        # Alerts for garbage collection that never drains, repositories that never finish mirroring,
+        # and pushed images that are not scanned. On by default; needs the monitoring component managed. Thresholds are
         # Prometheus durations: how long the condition must hold before the alert fires.
         alerts:
           enabled: true
           severity: warning
           garbageCollectionStalledFor: 6h    # a garbage collection queue that never drains
-          mirrorFailingFor: 2h               # repository mirror syncs that keep failing
-          scanBacklogFor: 24h                # images still waiting for a vulnerability scan
+          mirrorUnsyncedFor: 2h              # repositories configured for mirroring that have not synced
+          scanStalledFor: 1h                 # images pushed in this window but none scanned
         # Non-sensitive Clair settings, layered over the Operator's Clair configuration. Connection
         # strings and keys never go here: they belong in clair-config.yaml in configSecretRef, which
         # wins over this block. A disconnected cluster sets indexer.airgap and matcher.disable_updaters
@@ -1722,6 +1722,7 @@ hubClusterSets:
       quay-db-instances: '2'                    # CNPG replicas for the Quay database
       quay-clair-db-instances: '2'              # CNPG replicas for the Clair database
       quay-db-backups: 'false'                  # CNPG scheduled backups (needs db-mode managed + odf)
+      quay-dashboard: 'false'                   # Perses health dashboard in the console (needs coo)
 
       # =======================================================================
       # HashiCorp Vault (community: third-party Helm chart integrated via PolicyGenerator)

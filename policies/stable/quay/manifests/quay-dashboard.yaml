@@ -1,0 +1,378 @@
+# Red Hat Quay health dashboard, served by the Cluster Observability Operator's Perses under
+# Observe > Dashboards (Perses), project quay-enterprise. The monitoring UIPlugin turns Perses on;
+# musthave adds perses.enabled to an existing plugin without touching its other settings.
+# Request and per-worker series are reported once per mirror pod, keyed by host, so queries
+# dedupe with max by (host) before summing. Perses series name formats are escaped from ACM templating.
+apiVersion: observability.openshift.io/v1alpha1
+kind: UIPlugin
+metadata:
+  name: monitoring
+spec:
+  type: Monitoring
+  monitoring:
+    perses:
+      enabled: true
+---
+apiVersion: perses.dev/v1alpha2
+kind: PersesDatasource
+metadata:
+  name: quay-thanos
+  namespace: quay-enterprise
+spec:
+  client:
+    tls:
+      enable: true
+      caCert:
+        type: file
+        certPath: /ca/service-ca.crt
+  config:
+    default: true
+    display:
+      name: Cluster metrics
+    plugin:
+      kind: PrometheusDatasource
+      spec:
+        proxy:
+          kind: HTTPProxy
+          spec:
+            url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+            secret: quay-thanos-secret
+---
+apiVersion: perses.dev/v1alpha2
+kind: PersesDashboard
+metadata:
+  name: quay-health
+  namespace: quay-enterprise
+spec:
+  config:
+    display:
+      name: Red Hat Quay health
+    duration: 6h
+    refreshInterval: 30s
+    panels:
+      appReady:
+        kind: Panel
+        spec:
+          display:
+            name: Registry pods available
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: sum(kube_deployment_status_replicas_available{namespace="quay-enterprise",deployment="registry-quay-app"})
+      clairReady:
+        kind: Panel
+        spec:
+          display:
+            name: Clair pods available
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: sum(kube_deployment_status_replicas_available{namespace="quay-enterprise",deployment="registry-clair-app"})
+      alertsFiring:
+        kind: Panel
+        spec:
+          display:
+            name: Quay alerts firing
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: count(ALERTS{namespace="quay-enterprise",alertstate="firing"}) or vector(0)
+      orgs:
+        kind: Panel
+        spec:
+          display:
+            name: Organizations
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: max(quay_org_rows{namespace="quay-enterprise"})
+      repos:
+        kind: Panel
+        spec:
+          display:
+            name: Repositories
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: max(quay_repository_rows{namespace="quay-enterprise"})
+      requestRate:
+        kind: Panel
+        spec:
+          display:
+            name: Requests per second by status
+          plugin:
+            kind: TimeSeriesChart
+            spec: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: sum by (status) (max by (host, route, method, status) (rate(quay_request_duration_seconds_count{namespace="quay-enterprise"}[5m])))
+                    seriesNameFormat: '{{ "{{" }}status{{ "}}" }}'
+      latency:
+        kind: Panel
+        spec:
+          display:
+            name: Request latency p95 (seconds)
+          plugin:
+            kind: TimeSeriesChart
+            spec: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: histogram_quantile(0.95, sum by (le) (max by (host, route, method, status, le) (rate(quay_request_duration_seconds_bucket{namespace="quay-enterprise"}[5m]))))
+                    seriesNameFormat: p95
+      pushBytes:
+        kind: Panel
+        spec:
+          display:
+            name: Push throughput (bytes per second)
+          plugin:
+            kind: TimeSeriesChart
+            spec: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: sum(max by (host) (rate(quay_registry_image_pushed_bytes_total{namespace="quay-enterprise"}[5m])))
+                    seriesNameFormat: pushed
+      gcQueues:
+        kind: Panel
+        spec:
+          display:
+            name: Garbage collection queue items
+          plugin:
+            kind: TimeSeriesChart
+            spec: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: max by (queue_name) (quay_queue_items_available{namespace="quay-enterprise",queue_name=~"namespacegc|repositorygc"})
+                    seriesNameFormat: '{{ "{{" }}queue_name{{ "}}" }}'
+      gcWork:
+        kind: Panel
+        spec:
+          display:
+            name: Garbage collection work per minute
+          plugin:
+            kind: TimeSeriesChart
+            spec: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: sum(max by (host) (rate(quay_gc_iterations_total{namespace="quay-enterprise"}[5m]))) * 60
+                    seriesNameFormat: iterations
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: sum(max by (host) (rate(quay_gc_storage_blobs_deleted_total{namespace="quay-enterprise"}[5m]))) * 60
+                    seriesNameFormat: blobs deleted
+      scanRate:
+        kind: Panel
+        spec:
+          display:
+            name: Security scans per minute
+          plugin:
+            kind: TimeSeriesChart
+            spec: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: sum(max by (host) (rate(quay_secscan_v2_scan_duration_seconds_count{namespace="quay-enterprise"}[5m]))) * 60
+                    seriesNameFormat: scans
+      scanLatency:
+        kind: Panel
+        spec:
+          display:
+            name: Scan time p95 (seconds)
+          plugin:
+            kind: TimeSeriesChart
+            spec: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: histogram_quantile(0.95, sum by (le) (max by (host, le) (rate(quay_secscan_v2_scan_duration_seconds_bucket{namespace="quay-enterprise"}[15m]))))
+                    seriesNameFormat: single scan
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: histogram_quantile(0.95, sum by (le) (max by (host, le) (rate(quay_secscan_result_duration_seconds_bucket{namespace="quay-enterprise"}[15m]))))
+                    seriesNameFormat: push to result
+      scanQueue:
+        kind: Panel
+        spec:
+          display:
+            name: Security scan queue items
+          plugin:
+            kind: TimeSeriesChart
+            spec: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: max(quay_queue_items_available{namespace="quay-enterprise",queue_name="secscanv4"})
+                    seriesNameFormat: secscanv4
+      mirrorBacklog:
+        kind: Panel
+        spec:
+          display:
+            name: Repositories waiting to mirror
+          plugin:
+            kind: TimeSeriesChart
+            spec: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: max(quay_repository_rows_unmirrored{namespace="quay-enterprise"})
+                    seriesNameFormat: repository mirrors
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: max(quay_org_mirror_repositories_unmirrored{namespace="quay-enterprise"})
+                    seriesNameFormat: organization mirrors
+      mirrorWorkers:
+        kind: Panel
+        spec:
+          display:
+            name: Mirror workers active
+          plugin:
+            kind: StatChart
+            spec:
+              calculation: last-number
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: sum(max by (host) (quay_repository_mirror_workers_active{namespace="quay-enterprise"}))
+      dbPool:
+        kind: Panel
+        spec:
+          display:
+            name: Database connections
+          plugin:
+            kind: TimeSeriesChart
+            spec: {}
+          queries:
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: sum(max by (host, pid) (quay_db_pooled_connections_in_use{namespace="quay-enterprise"}))
+                    seriesNameFormat: in use
+            - kind: TimeSeriesQuery
+              spec:
+                plugin:
+                  kind: PrometheusTimeSeriesQuery
+                  spec:
+                    query: sum(max by (host, pid) (quay_db_pooled_connections_available{namespace="quay-enterprise"}))
+                    seriesNameFormat: available
+    layouts:
+      - kind: Grid
+        spec:
+          display:
+            title: Health
+          items:
+            - {x: 0, "y": 0, width: 5, height: 4, content: {$ref: '#/spec/panels/appReady'}}
+            - {x: 5, "y": 0, width: 5, height: 4, content: {$ref: '#/spec/panels/clairReady'}}
+            - {x: 10, "y": 0, width: 4, height: 4, content: {$ref: '#/spec/panels/alertsFiring'}}
+            - {x: 14, "y": 0, width: 5, height: 4, content: {$ref: '#/spec/panels/orgs'}}
+            - {x: 19, "y": 0, width: 5, height: 4, content: {$ref: '#/spec/panels/repos'}}
+      - kind: Grid
+        spec:
+          display:
+            title: Traffic
+          items:
+            - {x: 0, "y": 0, width: 8, height: 7, content: {$ref: '#/spec/panels/requestRate'}}
+            - {x: 8, "y": 0, width: 8, height: 7, content: {$ref: '#/spec/panels/latency'}}
+            - {x: 16, "y": 0, width: 8, height: 7, content: {$ref: '#/spec/panels/pushBytes'}}
+      - kind: Grid
+        spec:
+          display:
+            title: Garbage collection
+          items:
+            - {x: 0, "y": 0, width: 12, height: 7, content: {$ref: '#/spec/panels/gcQueues'}}
+            - {x: 12, "y": 0, width: 12, height: 7, content: {$ref: '#/spec/panels/gcWork'}}
+      - kind: Grid
+        spec:
+          display:
+            title: Security scanning
+          items:
+            - {x: 0, "y": 0, width: 8, height: 7, content: {$ref: '#/spec/panels/scanRate'}}
+            - {x: 8, "y": 0, width: 8, height: 7, content: {$ref: '#/spec/panels/scanLatency'}}
+            - {x: 16, "y": 0, width: 8, height: 7, content: {$ref: '#/spec/panels/scanQueue'}}
+      - kind: Grid
+        spec:
+          display:
+            title: Mirroring and database
+          items:
+            - {x: 0, "y": 0, width: 10, height: 7, content: {$ref: '#/spec/panels/mirrorBacklog'}}
+            - {x: 10, "y": 0, width: 4, height: 7, content: {$ref: '#/spec/panels/mirrorWorkers'}}
+            - {x: 14, "y": 0, width: 10, height: 7, content: {$ref: '#/spec/panels/dbPool'}}

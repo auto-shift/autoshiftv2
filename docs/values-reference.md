@@ -676,6 +676,7 @@ and optionally provisions its databases through CloudNativePG.
 | `quay-db-instances`               | int               | `2`                       | CloudNativePG replicas for the Quay database |
 | `quay-clair-db-instances`         | int               | `2`                       | CloudNativePG replicas for the Clair database |
 | `quay-db-backups`                 | bool              | `false`                   | Scheduled database backups. Requires `quay-db-mode: managed` and `odf` |
+| `quay-dashboard`                  | bool              | `false`                   | Red Hat Quay health dashboard under **Observe** > **Dashboards (Perses)**. Requires `coo`. See [Dashboard](../policies/stable/quay/README.md#dashboard) |
 
 **Database modes** (`quay-db-mode`):
 
@@ -701,11 +702,11 @@ and optionally provisions its databases through CloudNativePG.
 | `overrides.<kind>` | map | | Passed through to `spec.components[].overrides`. Accepts `affinity`, `annotations`, `env`, `labels`, `replicas`, `resources`, `securityContext`, `storageClassName`, `tls`, and `volumeSize`. See the warning that follows about `replicas` |
 | `zoneSpread` | bool | `false` | Prefers separate zones, as well as separate nodes, for the `quay`, `clair`, and `mirror` pods. An explicit `overrides.<kind>.affinity` replaces it for that component |
 | `infraNodes` | bool | `false` | Runs every pod in `quay-enterprise` on infra nodes through namespace annotations. Applies only while `infra-nodes` is set to a count other than `'0'` and an infra node is Ready. Turning it off leaves the annotations in place. See [Infra nodes](../policies/stable/quay/README.md#infra-nodes) |
-| `alerts.enabled` | bool | `true` | Alerts for garbage collection that does not drain, failing repository mirrors, and images waiting for a scan. Needs the `monitoring` component managed. See [Alerts](../policies/stable/quay/README.md#alerts) |
+| `alerts.enabled` | bool | `true` | Alerts for garbage collection that does not drain, repositories that do not finish mirroring, and pushed images that are not scanned. Needs the `monitoring` component managed. See [Alerts](../policies/stable/quay/README.md#alerts) |
 | `alerts.severity` | string | `warning` | `severity` label on every alert |
 | `alerts.garbageCollectionStalledFor` | duration | `6h` | How long a garbage collection queue must hold items before `QuayGarbageCollectionStalled` fires |
-| `alerts.mirrorFailingFor` | duration | `2h` | How long mirror syncs must keep failing before `QuayRepositoryMirrorFailing` fires |
-| `alerts.scanBacklogFor` | duration | `24h` | How long images must wait for a scan before `QuaySecurityScanBacklog` fires |
+| `alerts.mirrorUnsyncedFor` | duration | `2h` | How long repositories configured for mirroring can stay unsynced before `QuayMirrorNotSynced` fires |
+| `alerts.scanStalledFor` | duration | `1h` | The window for `QuaySecurityScanStalled`: it fires when images were pushed in this window and none were scanned |
 | `clair` | map | | Non-sensitive Clair settings layered over the Clair configuration, such as `indexer.airgap` and `matcher.disable_updaters`. The Secret's `clair-config.yaml` wins over it. See [Clair settings](../policies/stable/quay/README.md#clair-settings) |
 | `bootstrap.userInitialize` | bool | `false` | `FEATURE_USER_INITIALIZE`. Enables the unauthenticated first user endpoint |
 | `bootstrap.xhrOnly` | bool | `true` | `BROWSER_API_CALLS_XHR_ONLY`. Restricts the registry API to browser calls |

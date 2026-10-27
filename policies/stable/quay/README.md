@@ -20,6 +20,7 @@ secret, plus the operators Quay depends on.
 | CloudNativePG | `quay-db-mode: managed` | `cloudnative-pg: 'true'` |
 | cert-manager and an issuer | Only if you set `config.quay.tls` | `cert-manager: 'true'`. The policy emits the `Certificate` only when the named issuer already exists. `policy-quay-tls-issuer` reports if it does not |
 | ODF | `quay-db-backups: 'true'` | Backups go to a NooBaa bucket through an ObjectBucketClaim |
+| Cluster Observability Operator | `quay-dashboard: 'true'` | `coo: 'true'`, which serves the Perses dashboard |
 
 ## Getting started
 
@@ -467,8 +468,8 @@ Day 2 failures that otherwise go unnoticed:
 | Alert | Fires when | Threshold key | Default |
 |---|---|---|---|
 | `QuayGarbageCollectionStalled` | A namespace or repository garbage collection queue has held items for the threshold | `garbageCollectionStalledFor` | `6h` |
-| `QuayRepositoryMirrorFailing` | Repository mirror syncs have kept failing for the threshold | `mirrorFailingFor` | `2h` |
-| `QuaySecurityScanBacklog` | Images have waited the threshold for a vulnerability scan | `scanBacklogFor` | `24h` |
+| `QuayMirrorNotSynced` | Repositories configured for repository or organization mirroring have stayed unsynced for the threshold | `mirrorUnsyncedFor` | `2h` |
+| `QuaySecurityScanStalled` | Images were pushed within the threshold and none were scanned. An idle registry does not fire it | `scanStalledFor` | `1h` |
 
 Each threshold is a Prometheus duration under `config.quay.alerts`, and `severity` sets the label on
 all three:
@@ -479,11 +480,30 @@ config:
     alerts:
       severity: critical
       garbageCollectionStalledFor: 12h
-      scanBacklogFor: 2d
+      scanStalledFor: 4h
 ```
 
 The defaults are starting points rather than Red Hat values. The rules render only while the
 `monitoring` component is managed. Set `alerts.enabled: false` to remove them.
+
+### Dashboard
+
+Set `quay-dashboard: 'true'`, with `coo: 'true'` on the same cluster, to add a Red Hat Quay health
+dashboard to the console under **Observe** > **Dashboards (Perses)**, project `quay-enterprise`. The
+policy enables Perses in the Cluster Observability Operator's `monitoring` console plugin and adds
+the dashboard with a datasource that reads cluster metrics:
+
+| Row | Shows |
+|---|---|
+| Health | Registry and Clair pods available, Quay alerts firing, organization and repository counts |
+| Traffic | Requests per second by status, p95 request latency, push throughput |
+| Garbage collection | Queued namespace and repository garbage collection, iterations and blobs deleted per minute |
+| Security scanning | Scans per minute, p95 scan time and push-to-result time, scan queue |
+| Mirroring and database | Repositories waiting to mirror, active mirror workers, database pool connections |
+
+Every panel except the pod counts reads the metrics of the `monitoring` component, so those panels
+are empty while it is unmanaged. The scan latency panels stay empty until an image has been scanned.
+Setting the label back to `'false'` stops managing the dashboard but leaves it in place.
 
 ### Upgrades
 
@@ -544,6 +564,7 @@ deploys, restore the database and bucket, then let `policy-quay-deploy` create t
 | `policy-quay-external-db` | `quay` + `quay-db-mode: external` | Reports a missing `configSecretRef`, Secret, `DB_URI` or `clair-config.yaml` (inform) |
 | `policy-quay-tls-issuer` | `quay` | Reports when cert-manager TLS was requested but is not in effect (inform) |
 | `policy-quay-configure` | `quay` | Console link, registry host ConfigMap, and the [alerts](#alerts) |
+| `policy-quay-dashboard` | `quay` + `quay-dashboard` + `coo` | The Perses [dashboard](#dashboard) and the `monitoring` console plugin that serves it |
 | `policy-cnpg-quay-backup` | `quay` + `quay-db-mode: managed` + `quay-db-backups` + `odf` | Scheduled backups to a NooBaa bucket |
 
 `policy-quay-deploy` and `policy-quay-deploy-cnpg` render the same manifests under mutually
