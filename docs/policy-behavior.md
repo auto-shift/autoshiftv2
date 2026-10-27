@@ -26,6 +26,29 @@ object list leaves both the old entry and the new one in place, and the policy s
 Compliant. This silently defeats configuration changes that look correct in git. When the desired
 state has to override an existing list entry, use `mustonlyhave`.
 
+**`mustonlyhave` does not reach metadata, so adopting an object inherits it.**
+"Must match exactly" applies to the fields the template gives. Where a policy
+names an object that already exists, it reconciles that object's spec and
+leaves metadata it was not told about alone — including `finalizers`.
+
+Measured on a live cluster: a hand-created ArgoCD `Application` carrying
+`resources-finalizer.argocd.argoproj.io` kept that finalizer after an
+enforcing `mustonlyhave` policy adopted it. The spec matched the template; the
+finalizer survived.
+
+This inverts an intuition worth naming, because it matters most where the
+stakes are highest:
+
+> "The object the policy manages is safer than the hand-made one" holds only
+> where the policy **creates** it. On adoption you inherit the existing
+> object's metadata — and the cluster that adopted is the one with history,
+> which is the one with state worth protecting.
+
+A migration that brings existing resources under policy management therefore
+does not clear whatever delete semantics, ownership or finalizers they already
+had. If those matter, check them explicitly after adoption rather than
+assuming the policy normalised them.
+
 **`musthave` combined with `enforce` creates objects that are absent.** A template guarded with a
 condition such as `(or (empty $lookup) ...)` does not skip the object when the lookup returns
 nothing. It creates an empty or partly populated resource instead. Guard the object out of the
