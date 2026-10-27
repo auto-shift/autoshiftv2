@@ -54,10 +54,11 @@ object-templates-raw: |
                     quay-mirror pods can reach the upstream registry.
               # Fires only when images were pushed and none were scanned, so an idle registry stays quiet.
               # Request series are reported once per mirror pod, keyed by host, so dedupe before summing.
+              # A scan is a Clair Index request; quay_secscan_v2_scan_duration_seconds stays at 0 on 3.18.2.
               - alert: QuaySecurityScanStalled
                 expr: >-
                   sum(max by (host) (increase(quay_registry_image_pushed_bytes_total{namespace="quay-enterprise"}[{{hub $scanFor hub}}]))) > 0
-                  and on() sum(max by (host) (increase(quay_secscan_v2_scan_duration_seconds_count{namespace="quay-enterprise"}[{{hub $scanFor hub}}]))) == 0
+                  and on() (sum(max by (host) (increase(quay_secscan_request_duration_seconds_count{namespace="quay-enterprise", action="Index"}[{{hub $scanFor hub}}]))) or vector(0)) == 0
                 for: 15m
                 labels:
                   severity: '{{hub $severity hub}}'

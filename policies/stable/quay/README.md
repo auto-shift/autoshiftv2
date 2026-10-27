@@ -498,7 +498,7 @@ the dashboard with a datasource that reads cluster metrics:
 | Health | Registry and Clair pods available, Quay alerts firing, organization and repository counts |
 | Traffic | Requests per second by status, p95 request latency, push throughput |
 | Garbage collection | Queued namespace and repository garbage collection, iterations and blobs deleted per minute |
-| Security scanning | Scans per minute, p95 scan time and push-to-result time, scan queue |
+| Security scanning | Clair index and vulnerability-report requests per minute and their p95 time, scan queue |
 | Mirroring and database | Repositories waiting to mirror, active mirror workers, database pool connections |
 
 Every panel except the pod counts reads the metrics of the `monitoring` component, so those panels

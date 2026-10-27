@@ -221,23 +221,25 @@ spec:
         kind: Panel
         spec:
           display:
-            name: Security scans per minute
+            name: Clair requests per minute
           plugin:
             kind: TimeSeriesChart
             spec: {}
           queries:
+            # quay_secscan_v2_scan_duration_seconds stays at 0 on 3.18.2; the security worker's Clair
+            # calls are what move: Index submits a manifest, GetVulnerabilityReport fetches its result.
             - kind: TimeSeriesQuery
               spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: sum(max by (host) (rate(quay_secscan_v2_scan_duration_seconds_count{namespace="quay-enterprise"}[5m]))) * 60
-                    seriesNameFormat: scans
+                    query: sum by (action) (max by (host, action) (rate(quay_secscan_request_duration_seconds_count{namespace="quay-enterprise",action=~"Index|GetVulnerabilityReport"}[15m]))) * 60
+                    seriesNameFormat: '{{ "{{" }}action{{ "}}" }}'
       scanLatency:
         kind: Panel
         spec:
           display:
-            name: Scan time p95 (seconds)
+            name: Clair request time p95 (seconds)
           plugin:
             kind: TimeSeriesChart
             spec: {}
@@ -247,15 +249,8 @@ spec:
                 plugin:
                   kind: PrometheusTimeSeriesQuery
                   spec:
-                    query: histogram_quantile(0.95, sum by (le) (max by (host, le) (rate(quay_secscan_v2_scan_duration_seconds_bucket{namespace="quay-enterprise"}[15m]))))
-                    seriesNameFormat: single scan
-            - kind: TimeSeriesQuery
-              spec:
-                plugin:
-                  kind: PrometheusTimeSeriesQuery
-                  spec:
-                    query: histogram_quantile(0.95, sum by (le) (max by (host, le) (rate(quay_secscan_result_duration_seconds_bucket{namespace="quay-enterprise"}[15m]))))
-                    seriesNameFormat: push to result
+                    query: histogram_quantile(0.95, sum by (le, action) (max by (host, action, le) (rate(quay_secscan_request_duration_seconds_bucket{namespace="quay-enterprise",action=~"Index|GetVulnerabilityReport"}[15m]))))
+                    seriesNameFormat: '{{ "{{" }}action{{ "}}" }}'
       scanQueue:
         kind: Panel
         spec:
