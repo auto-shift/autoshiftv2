@@ -310,7 +310,8 @@ Other settings you might change:
 |---|---|---|
 | `matcher.period` | `6h` | How often updaters fetch new vulnerability data |
 | `matcher.update_retention` | `2` | Vulnerability database versions kept. 2 is the minimum that still lets updates be compared for notifications. Raise it only if the Clair database has room |
-| `updaters.sets` | the default set | For RHEL content, Red Hat recommends at least `rhel`, `rhcc`, `clair.cvss` and `osv`. Setting a list runs only those updaters |
+| `updaters.sets` | the default set | For RHEL content use `rhel-vex`, `clair.cvss` and `osv`. The 3.18 documentation still lists `rhel` and `rhcc`, which Clair in 3.18 no longer has: VEX replaced both, and unknown set names are ignored without an error. Setting a list runs only those updaters, which also gives the large `rhel-vex` load room to finish |
+| `updaters.config.rhel-vex.compressed_file_timeout` | Clair's built-in limit | Time allowed to download and read Red Hat's compressed VEX archive. The first load is large, and when it runs out of time Clair logs `rhel-vex: context deadline exceeded`, stores nothing, and reports no vulnerabilities for Red Hat images. `30m` leaves room. Not in the Red Hat documentation |
 | `indexer.layer_scan_concurrency` | `5` | Layers scanned in parallel per index request |
 
 Large images can fill Clair's 20 GiB scratch volume and fail the Clair pods. Raise it with
