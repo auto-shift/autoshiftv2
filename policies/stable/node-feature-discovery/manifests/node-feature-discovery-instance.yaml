@@ -11,14 +11,15 @@
 # also lists as a relatedImage, so oc-mirror copies it and an ImageDigestMirrorSet redirects it. A tag
 # bypasses digest mirroring and fails on a disconnected cluster.
 #
-# mustonlyhave on each NodeFeatureRule: musthave merges lists, so an edited rule would keep the old
-# matchFeatures beside the new ones.
+# mustonlyhave on both kinds: musthave merges lists, so a removed extraLabelNs entry or an edited
+# rule's old matchFeatures would stay on the cluster while the policy reports Compliant. The Operator
+# writes nothing back into the NodeFeatureDiscovery spec, so mustonlyhave does not fight it.
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $nfd := (index $cfg "nodeFeatureDiscovery" | default dict) hub}}
   {{hub- $defaultWorker := (dict "core" (dict "sleepInterval" "60s") "sources" (dict "pci" (dict "deviceClassWhitelist" (list "0200" "03" "12") "deviceLabelFields" (list "vendor")))) hub}}
   {{hub- $worker := (index $nfd "workerConfig" | default $defaultWorker) hub}}
-  - complianceType: musthave
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: nfd.openshift.io/v1
       kind: NodeFeatureDiscovery

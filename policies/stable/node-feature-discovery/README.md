@@ -99,7 +99,8 @@ config:
   or a node loses the vendor labels the GPU Operators depend on.
 - A rule label with no prefix lands in `feature.node.kubernetes.io/`. Any other prefix must be in
   `extraLabelNs`, or `nfd-master` drops the label.
-- Each rule is applied with `mustonlyhave`, so an edited rule replaces the old one. Removing an
+- The instance and each rule are applied with `mustonlyhave`, so an edited rule replaces the old
+  one and a removed `extraLabelNs` entry leaves the cluster. Removing an
   entry from `nodeFeatureRules` does not delete the NodeFeatureRule from the cluster; delete it
   with `oc delete nodefeaturerule <name> -n openshift-nfd`.
 - `nodeFeatureRules[].name` and `rules` are required. The policy fails and names the entry when
