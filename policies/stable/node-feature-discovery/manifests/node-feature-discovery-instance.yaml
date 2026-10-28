@@ -1,79 +1,52 @@
-apiVersion: nfd.openshift.io/v1
-kind: NodeFeatureDiscovery
-metadata:
-  name: nfd-instance
-  namespace: openshift-nfd
-spec:
-  enableTaints: false
-  instance: ''
-  operand:
-    image: registry.redhat.io/openshift4/ose-node-feature-discovery-rhel9:v4.22
-    imagePullPolicy: Always
-    servicePort: 0
-  prunerOnDelete: false
-  topologyUpdater: false
-  workerConfig:
-    configData: |
-      core:
-      #  labelWhiteList:
-      #  noPublish: false
-        sleepInterval: 60s
-      #  sources: [all]
-      #  klog:
-      #    addDirHeader: false
-      #    alsologtostderr: false
-      #    logBacktraceAt:
-      #    logtostderr: true
-      #    skipHeaders: false
-      #    stderrthreshold: 2
-      #    v: 0
-      #    vmodule:
-      ##   NOTE: the following options are not dynamically run-time configurable
-      ##         and require a nfd-worker restart to take effect after being changed
-      #    logDir:
-      #    logFile:
-      #    logFileMaxSize: 1800
-      #    skipLogHeaders: false
-      sources:
-        cpu:
-          cpuid:
-      #     NOTE: whitelist has priority over blacklist
-            attributeBlacklist:
-              - "BMI1"
-              - "BMI2"
-              - "CLMUL"
-              - "CMOV"
-              - "CX16"
-              - "ERMS"
-              - "F16C"
-              - "HTT"
-              - "LZCNT"
-              - "MMX"
-              - "MMXEXT"
-              - "NX"
-              - "POPCNT"
-              - "RDRAND"
-              - "RDSEED"
-              - "RDTSCP"
-              - "SGX"
-              - "SSE"
-              - "SSE2"
-              - "SSE3"
-              - "SSE4.1"
-              - "SSE4.2"
-              - "SSSE3"
-            attributeWhitelist:
-        kernel:
-          kconfigFile: "/path/to/kconfig"
-          configOpts:
-            - "NO_HZ"
-            - "X86"
-            - "DMI"
-        pci:
-          deviceClassWhitelist:
-            - "0200"
-            - "03"
-            - "0302"
-            - "12"
-          deviceLabelFields:
-            - "class"
+# NodeFeatureDiscovery and NodeFeatureRules from config.nodeFeatureDiscovery in the rendered-config
+# ConfigMap. A missing ConfigMap fails the policy; a missing nodeFeatureDiscovery block applies the
+# Red Hat defaults below.
+#
+# Default worker config is the 4.22 Operator's own example CR: PCI network (0200), display (03) and
+# processing accelerator (12) classes, labelled by vendor. The vendor label
+# (feature.node.kubernetes.io/pci-10de.present) is what the NVIDIA GPU Operator selects GPU nodes on,
+# for OpenShift AI and for OpenShift Virtualization GPU passthrough alike.
+#
+# No operand.image: the Operator uses NODE_FEATURE_DISCOVERY_IMAGE from its CSV, a digest the bundle
+# also lists as a relatedImage, so oc-mirror copies it and an ImageDigestMirrorSet redirects it. A tag
+# bypasses digest mirroring and fails on a disconnected cluster.
+#
+# mustonlyhave on each NodeFeatureRule: musthave merges lists, so an edited rule would keep the old
+# matchFeatures beside the new ones.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $nfd := (index $cfg "nodeFeatureDiscovery" | default dict) hub}}
+  {{hub- $defaultWorker := (dict "core" (dict "sleepInterval" "60s") "sources" (dict "pci" (dict "deviceClassWhitelist" (list "0200" "03" "12") "deviceLabelFields" (list "vendor")))) hub}}
+  {{hub- $worker := (index $nfd "workerConfig" | default $defaultWorker) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: nfd.openshift.io/v1
+      kind: NodeFeatureDiscovery
+      metadata:
+        name: nfd-instance
+        namespace: openshift-nfd
+      spec:
+        instance: ''
+        enableTaints: '{{hub printf "%v" (index $nfd "enableTaints" | default false) | toBool hub}}'
+        topologyUpdater: '{{hub printf "%v" (index $nfd "topologyUpdater" | default false) | toBool hub}}'
+        prunerOnDelete: false
+        extraLabelNs: {{hub (index $nfd "extraLabelNs" | default list) | toRawJson hub}}
+        operand:
+          imagePullPolicy: IfNotPresent
+          servicePort: 12000
+        workerConfig:
+          configData: |
+            {{hub $worker | toYaml | autoindent hub}}
+  {{hub- range $rule := (index $nfd "nodeFeatureRules" | default list) hub}}
+  {{hub- if not (index $rule "name") hub}}{{hub fail "config.nodeFeatureDiscovery.nodeFeatureRules[]: name is required" hub}}{{hub- end hub}}
+  {{hub- if not (index $rule "rules") hub}}{{hub fail (printf "config.nodeFeatureDiscovery.nodeFeatureRules[%s]: rules is required" (index $rule "name")) hub}}{{hub- end hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: nfd.k8s-sigs.io/v1alpha1
+      kind: NodeFeatureRule
+      metadata:
+        name: '{{hub index $rule "name" hub}}'
+        namespace: openshift-nfd
+      spec:
+        rules: {{hub (index $rule "rules") | toRawJson hub}}
+  {{hub- end hub}}

@@ -207,6 +207,47 @@ hubClusterSets:
             debug: false
 
       # =======================================================================
+      # Node Feature Discovery
+      # =======================================================================
+      # Optional. Without this block the policy applies the Red Hat 4.22 default shown in
+      # workerConfig below, which is what the NVIDIA GPU Operator needs for OpenShift AI and for
+      # OpenShift Virtualization GPU passthrough: PCI devices labelled by vendor, so a node with an
+      # NVIDIA card gets feature.node.kubernetes.io/pci-10de.present=true.
+      #
+      # workerConfig is nfd-worker.conf and replaces the default outright, so copy the default
+      # and extend it. nodeFeatureRules add custom labels, for example for AMD or Intel Gaudi
+      # accelerators. A label name without a prefix lands in feature.node.kubernetes.io/; any
+      # other prefix must be listed in extraLabelNs or nfd-master drops it.
+      nodeFeatureDiscovery:
+        workerConfig:
+          core:
+            sleepInterval: '60s'
+          sources:
+            pci:
+              deviceClassWhitelist:
+                - '0200'
+                - '03'
+                - '12'
+              deviceLabelFields:
+                - 'vendor'
+        nodeFeatureRules:
+          - name: 'nvidia-gpu'
+            rules:
+              - name: 'nvidia gpu present'
+                labels:
+                  nvidia-gpu: 'true'
+                matchFeatures:
+                  - feature: 'pci.device'
+                    matchExpressions:
+                      vendor:
+                        op: 'In'
+                        value:
+                          - '10de'
+        topologyUpdater: false
+        enableTaints: false
+        extraLabelNs: []
+
+      # =======================================================================
       # Compliance Operator
       # =======================================================================
       # One ScanSettingBinding per entry in scans. Profiles are PINNED to a version: the
@@ -1970,7 +2011,9 @@ hubClusterSets:
       external-secrets-operator-version: 'openshift-external-secrets-operator.v1.2.0'
       external-secrets-operator-source: redhat-operators
       external-secrets-operator-source-namespace: openshift-marketplace
-      # Opentelemetry
+
+      # =======================================================================
+      # OpenTelemetry
       # =======================================================================
       opentelemetry: 'false'
       opentelemetry-subscription-name: opentelemetry-product
@@ -1979,10 +2022,11 @@ hubClusterSets:
       opentelemetry-source: redhat-operators
       opentelemetry-source-namespace: openshift-marketplace
 
+      # =======================================================================
       # NetApp Trident
       # =======================================================================
       trident: 'true'
-      trident-name: trident-operator
+      trident-subscription-name: trident-operator
       trident-install-plan-approval: Automatic
       trident-source: certified-operators
       trident-source-namespace: openshift-marketplace

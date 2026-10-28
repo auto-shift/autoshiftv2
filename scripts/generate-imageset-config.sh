@@ -162,13 +162,9 @@ resolve_all_dependencies() {
     fi
 }
 
-# Get default channel for an operator from the catalog cache
-get_default_channel() {
-    local operator="$1"
-    local catalog_version="$2"
-    local default_channel=""
-
-    # Find the catalog cache directory for this version
+# Cached redhat-operator-index config directory for a catalog version (empty if not cached)
+get_catalog_cache_configs() {
+    local catalog_version="$1"
     local cache_key=""
     local catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${catalog_version}"
 
@@ -180,9 +176,75 @@ get_default_channel() {
         cache_key=$(echo "$catalog_image" | cksum | cut -d' ' -f1)
     fi
 
-    local pkg_dir="$CATALOG_CACHE_DIR/$cache_key/configs/$operator"
+    local configs_dir="$CATALOG_CACHE_DIR/$cache_key/configs"
+    [[ -d "$configs_dir" ]] && echo "$configs_dir"
+    return 0
+}
 
-    if [[ ! -d "$pkg_dir" ]]; then
+# Channel names an operator has in the cached catalog, one per line. FBC packages are laid out as
+# catalog.json, catalog.yaml, or split files, so read every non-bundle file.
+get_catalog_channels() {
+    local pkg_dir="$1"
+    find "$pkg_dir" -type f -name '*.json' -not -path '*/bundles*' -exec cat {} + 2>/dev/null \
+        | jq -r 'select(.schema == "olm.channel") | .name' 2>/dev/null
+    find "$pkg_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -not -path '*/bundles*' -exec cat {} + 2>/dev/null \
+        | awk '/^---/ { if (s == "olm.channel" && n != "") print n; s = ""; n = ""; next }
+               /^schema:/ { s = $2 } /^name:/ { n = $2 }
+               END { if (s == "olm.channel" && n != "") print n }' | tr -d "\"'"
+}
+
+# Fail when a requested channel is not in the catalog. oc-mirror 4.22 drops an unknown channel
+# without a warning, so the values file keeps a channel no mirrored Subscription can resolve.
+# Skipped when the catalog is not cached.
+validate_catalog_channels() {
+    local packages="$1"
+    local catalog_version="$2"
+    local configs_dir
+    configs_dir=$(get_catalog_cache_configs "$catalog_version")
+
+    if [[ -z "$configs_dir" ]]; then
+        log_warning "redhat-operator-index v${catalog_version} is not cached; channels not checked against the catalog"
+        return 0
+    fi
+
+    local invalid=0 package_info name channels channel available
+    for package_info in $packages; do
+        [[ -z "$package_info" ]] && continue
+        IFS='|' read -r name channels <<< "$package_info"
+        if [[ ! -d "$configs_dir/$name" ]]; then
+            log_error "Package $name is not in redhat-operator-index v${catalog_version}"
+            invalid=1
+            continue
+        fi
+        available=$(get_catalog_channels "$configs_dir/$name" | sort -u)
+        IFS=',' read -ra channels_array <<< "$channels"
+        for channel in "${channels_array[@]}"; do
+            channel=$(echo "$channel" | xargs)
+            [[ -z "$channel" ]] && continue
+            if ! grep -qxF "$channel" <<< "$available"; then
+                log_error "Channel $channel of $name is not in redhat-operator-index v${catalog_version}. Available: $(echo $available)"
+                invalid=1
+            fi
+        done
+    done
+
+    if [[ $invalid -ne 0 ]]; then
+        log_error "Fix the <operator>-channel labels in the values files, then run again"
+        return 1
+    fi
+}
+
+# Get default channel for an operator from the catalog cache
+get_default_channel() {
+    local operator="$1"
+    local catalog_version="$2"
+    local default_channel=""
+
+    local configs_dir
+    configs_dir=$(get_catalog_cache_configs "$catalog_version")
+    local pkg_dir="$configs_dir/$operator"
+
+    if [[ -z "$configs_dir" || ! -d "$pkg_dir" ]]; then
         echo ""
         return
     fi
@@ -1049,6 +1111,7 @@ EOF
             # Generate redhat-operators catalog if we have operators
             if [[ -n "$redhat_operators" ]]; then
                 local catalog_ver=$(get_catalog_version)
+                validate_catalog_channels "$redhat_operators" "$catalog_ver" || { rm -f "$output_file"; exit 1; }
                 echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v${catalog_ver}" >> "$output_file"
                 echo "    packages:" >> "$output_file"
 
@@ -1267,8 +1330,9 @@ show_usage_instructions() {
     echo -e "   ${YELLOW}oc-mirror -c $output_file docker://your-registry.example.com/mirror --v2${NC}"
     echo ""
     echo "4. Apply mirrored content to disconnected cluster:"
-    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/catalogSource-*.yaml${NC}"
-    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/imageContentSourcePolicy.yaml${NC}"
+    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/cs-*.yaml${NC}"
+    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/idms-oc-mirror.yaml${NC}"
+    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/itms-oc-mirror.yaml${NC}"
     echo ""
     echo "5. Deploy AutoShift with mirrored content:"
     if [[ ${#VALUES_FILES_ARRAY[@]} -eq 1 ]]; then

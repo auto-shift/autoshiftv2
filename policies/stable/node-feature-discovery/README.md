@@ -1,260 +1,129 @@
-# node-feature-discovery AutoShift Policy
+# Node Feature Discovery
 
-## Overview
-This policy installs the nfd operator by using AutoShift patterns.
+Installs the Node Feature Discovery (NFD) Operator and creates the `NodeFeatureDiscovery` instance
+that labels each node with its hardware: PCI devices, CPU features, kernel and operating system.
+GPU Operators and other workloads select nodes by these labels.
 
-## Status
-✅ **Operator Installation**: Ready to deploy  
-🔧 **Configuration**: Requires operator-specific setup (see below)
+## Policies
 
-## Quick Deploy
+| Policy | What it does |
+|---|---|
+| `policy-nfd-operator-install` | `openshift-nfd` namespace and the `nfd` Operator subscription |
+| `policy-nfd-instance-deploy` | The `nfd-instance` NodeFeatureDiscovery and any NodeFeatureRules from configuration. Waits for the Operator |
 
-### Test Locally
-```bash
-# A PolicyGenerator directory, not a Helm chart: rendering it needs the ${...}
-# placeholders substituted first. The validation suite does that, resolves hub and
-# spoke templates, and is what CI runs.
-cd tools && go test -tags integration ./internal/resolver/...
-```
-
-### Enable on Clusters
-Edit AutoShift values files to add the operator labels:
+## Enabling
 
 ```yaml
-# In autoshift/values/clustersets/hub.yaml (or other clusterset files)
 hubClusterSets:
   hub:
     labels:
       node-feature-discovery: 'true'
-      node-feature-discovery-subscription-name: 'nfd'
-      node-feature-discovery-channel: 'stable'
-      node-feature-discovery-source: 'redhat-operators'
-      node-feature-discovery-source-namespace: 'openshift-marketplace'
-      # node-feature-discovery-version: 'nfd.v1.x.x'  # Optional: pin to specific CSV version
-
-managedClusterSets:
-  managed:
-    labels:
-      node-feature-discovery: 'true'
-      node-feature-discovery-subscription-name: 'nfd'
-      node-feature-discovery-channel: 'stable'
-      node-feature-discovery-source: 'redhat-operators'
-      node-feature-discovery-source-namespace: 'openshift-marketplace'
-      # node-feature-discovery-version: 'nfd.v1.x.x'  # Optional: pin to specific CSV version
-
-# For specific clusters (optional override)
-clusters:
-  my-cluster:
-    labels:
-      node-feature-discovery: 'true'
-      node-feature-discovery-channel: 'fast'  # Override channel for this cluster
+      node-feature-discovery-subscription-name: nfd
+      node-feature-discovery-channel: stable
+      node-feature-discovery-source: redhat-operators
+      node-feature-discovery-source-namespace: openshift-marketplace
+      # node-feature-discovery-version: 'nfd.4.22.0-202610140833'   # optional CSV pin
 ```
 
-Labels are defined in values files only — never directly on managed clusters. The cluster-labels policy handles propagating these labels from the values files to managed clusters.
+Set labels in values files only. The `cluster-labels` policy stamps them onto each cluster.
 
-### AutoShift Policy Discovery
-New policies are automatically discovered by the ApplicationSet. In Git mode, the ApplicationSet uses a `policies/*` wildcard to pick up all subdirectories. No manual registration is required — simply adding your policy folder under `policies/` is sufficient.
+## Default configuration
 
-## Configuration
+With no `config.nodeFeatureDiscovery` block the instance uses the default from the 4.22 Operator's
+own example:
 
-### Namespace Scope
-This operator is configured as:
-- **Cluster-scoped**: Manages resources across all namespaces (default)
-- **Namespace-scoped**: Limited to specific target namespaces (if `targetNamespaces` enabled in values.yaml)
-
-To change scope, edit `values.yaml` and uncomment/configure the `targetNamespaces` field.
-
-### Version Control
-This policy supports AutoShift's operator version control system:
-
-- **Automatic Upgrades**: By default, the operator follows automatic upgrade paths within its channel
-- **Version Pinning**: Add `node-feature-discovery-version` label to pin to a specific CSV version
-- **Manual Control**: Pinned versions require manual updates to upgrade
-
-To pin to a specific version, set the version label in your clusterset or per-cluster values file:
 ```yaml
-node-feature-discovery-version: 'nfd.v1.x.x'
+core:
+  sleepInterval: 60s
+sources:
+  pci:
+    deviceClassWhitelist:
+      - "0200"    # network controllers
+      - "03"      # display controllers, including GPUs
+      - "12"      # processing accelerators
+    deviceLabelFields:
+      - vendor
 ```
 
-Find available CSV versions:
-```bash
-# List available versions for this operator
-oc get packagemanifests nfd -o jsonpath='{.status.channels[*].currentCSV}'
+Labeling PCI devices by vendor gives a node with an NVIDIA card
+`feature.node.kubernetes.io/pci-10de.present=true`. The NVIDIA GPU Operator selects GPU nodes by
+that label, so the default works for Red Hat OpenShift AI and for OpenShift Virtualization GPU
+passthrough without further configuration.
+
+OpenShift Virtualization does not need NFD for CPU models; it labels nodes with its own node
+labeller. NFD matters for virtualization only when GPUs or other PCI devices are passed to virtual
+machines.
+
+The instance does not set `operand.image`. The Operator then runs the image named in its own CSV,
+which is pinned by digest and listed among the bundle's related images, so `oc-mirror` copies it and
+an `ImageDigestMirrorSet` redirects it on a disconnected cluster. A tagged image would bypass digest
+mirroring.
+
+## Custom configuration
+
+Set `config.nodeFeatureDiscovery` in a clusterset or cluster values file. Every key is optional.
+
+```yaml
+config:
+  nodeFeatureDiscovery:
+    workerConfig:            # nfd-worker.conf; replaces the default outright
+      core:
+        sleepInterval: '60s'
+      sources:
+        pci:
+          deviceClassWhitelist:
+            - '0200'
+            - '03'
+            - '12'
+          deviceLabelFields:
+            - 'vendor'
+    nodeFeatureRules:        # one NodeFeatureRule per entry, in openshift-nfd
+      - name: 'nvidia-gpu'
+        rules:
+          - name: 'nvidia gpu present'
+            labels:
+              nvidia-gpu: 'true'
+            matchFeatures:
+              - feature: 'pci.device'
+                matchExpressions:
+                  vendor:
+                    op: 'In'
+                    value:
+                      - '10de'
+    topologyUpdater: false   # NFD topology updater; the NUMA Resources Operator is the supported path
+    enableTaints: false      # lets NodeFeatureRules set taints
+    extraLabelNs: []         # label prefixes allowed beyond feature.node.kubernetes.io
 ```
 
-## Next Steps: Configuration
+- `workerConfig` replaces the default rather than merging with it. Copy the default and extend it,
+  or a node loses the vendor labels the GPU Operators depend on.
+- A rule label with no prefix lands in `feature.node.kubernetes.io/`. Any other prefix must be in
+  `extraLabelNs`, or `nfd-master` drops the label.
+- Each rule is applied with `mustonlyhave`, so an edited rule replaces the old one. Removing an
+  entry from `nodeFeatureRules` does not delete the NodeFeatureRule from the cluster; delete it
+  with `oc delete nodefeaturerule <name> -n openshift-nfd`.
+- `nodeFeatureRules[].name` and `rules` are required. The policy fails and names the entry when
+  either is missing.
+- The policy also fails when the cluster's rendered-config ConfigMap is missing, rather than
+  applying defaults to a cluster whose configuration never arrived.
 
-### 1. Explore Installed CRDs
-After operator installation, check what Custom Resources are available:
+### Accelerators other than NVIDIA
+
+AMD Instinct and Intel Gaudi accelerators need NFD installed, and their Operators expect labels
+that the default does not produce. Add the rule each vendor's Operator documents under
+`nodeFeatureRules`.
+
+## Verifying
+
 ```bash
-# Wait for operator to install
+oc get nodefeaturediscovery nfd-instance -n openshift-nfd
 oc get pods -n openshift-nfd
-
-# Check available CRDs
-oc get crds | grep node-feature-discovery
-
-# Explore CRD specifications
-oc explain <CustomResourceName>
+oc get nodes -L feature.node.kubernetes.io/pci-10de.present
+oc get nodefeaturerule -n openshift-nfd
 ```
 
-### 2. Create Configuration Policies
-Add operator-specific configuration policies to `templates/` directory.
+## References
 
-#### Common Patterns:
-- `policy-node-feature-discovery-config.yaml` - Main configuration
-- `policy-node-feature-discovery-<feature>.yaml` - Feature-specific configs
-
-#### Template Structure:
-```yaml
-{{- $policyName := "policy-node-feature-discovery-config" }}
-{{- $placementName := "placement-policy-node-feature-discovery-config" }}
-
-apiVersion: policy.open-cluster-management.io/v1
-kind: Policy
-metadata:
-  name: {{ $policyName }}
-  namespace: {{ .Values.policy_namespace }}
-  annotations:
-    policy.open-cluster-management.io/standards: NIST SP 800-53
-    policy.open-cluster-management.io/categories: CM Configuration Management
-    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
-spec:
-  disabled: false
-  dependencies:
-    - name: policy-node-feature-discovery-operator-install
-      namespace: {{ .Values.policy_namespace }}
-      apiVersion: policy.open-cluster-management.io/v1
-      compliance: Compliant
-      kind: Policy
-  policy-templates:
-    - objectDefinition:
-        apiVersion: policy.open-cluster-management.io/v1
-        kind: ConfigurationPolicy
-        metadata:
-          name: node-feature-discovery-config
-        spec:
-          remediationAction: enforce
-          severity: high
-          object-templates:
-            - complianceType: musthave
-              objectDefinition:
-                apiVersion: # Your operator's API version
-                kind: # Your operator's Custom Resource
-                metadata:
-                  name: node-feature-discovery-config
-                  namespace: {{ .Values.nodeFeatureDiscovery.namespace }}
-                spec:
-                  # Your operator-specific configuration
-                  # Use dynamic labels when needed:
-                  # setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-setting" | default "default-value" {{ "hub}}" }}'
-          pruneObjectBehavior: None
----
-# Use same placement as operator install or create specific targeting
-apiVersion: cluster.open-cluster-management.io/v1beta1
-kind: Placement
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-spec:
-  clusterSets:
-  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  {{- range $clusterSet, $value := $.Values.managedClusterSets }}
-    - {{ $clusterSet }}
-  {{- end }}
-  predicates:
-    - requiredClusterSelector:
-        labelSelector:
-          matchExpressions:
-            - key: 'autoshift.io/node-feature-discovery'
-              operator: In
-              values:
-              - 'true'
-  tolerations:
-    - key: cluster.open-cluster-management.io/unreachable
-      operator: Exists
-    - key: cluster.open-cluster-management.io/unavailable
-      operator: Exists
----
-apiVersion: policy.open-cluster-management.io/v1
-kind: PlacementBinding
-metadata:
-  name: {{ $placementName }}
-  namespace: {{ .Values.policy_namespace }}
-placementRef:
-  name: {{ $placementName }}
-  apiGroup: cluster.open-cluster-management.io
-  kind: Placement
-subjects:
-  - name: {{ $policyName }}
-    apiGroup: policy.open-cluster-management.io
-    kind: Policy
-```
-
-### 3. Reference Examples
-**Study similar complexity policies:**
-- **Simple**: `policies/stable/openshift-gitops/` - Basic operator + ArgoCD config
-- **Medium**: `policies/stable/advanced-cluster-security/` - Multiple related policies
-- **Complex**: `policies/stable/metallb/` - Multiple configuration types (L2, BGP, etc.)
-- **Advanced**: `policies/stable/openshift-data-foundation/` - Storage cluster configuration
-
-### 4. AutoShift Labels
-Add configuration labels to `values.yaml` and use in templates:
-
-```yaml
-# Add to values.yaml AutoShift Labels Documentation:
-# node-feature-discovery-setting<string>: Configuration option (default: 'value')
-# node-feature-discovery-feature-enabled<bool>: Enable optional feature (default: 'false')
-# node-feature-discovery-provider<string>: Provider-specific config (default: 'generic')
-
-# Use in templates:
-setting: '{{ "{{hub" }} index .ManagedClusterLabels "autoshift.io/node-feature-discovery-setting" | default "default-value" {{ "hub}}" }}'
-```
-
-## Common Patterns
-
-### CSV Status Checking (Optional)
-For operators that need installation verification:
-```yaml
-- objectDefinition:
-    apiVersion: policy.open-cluster-management.io/v1
-    kind: ConfigurationPolicy
-    metadata:
-      name: node-feature-discovery-csv-status
-    spec:
-      remediationAction: inform
-      severity: high
-      object-templates:
-        - complianceType: musthave
-          objectDefinition:
-            apiVersion: operators.coreos.com/v1alpha1
-            kind: ClusterServiceVersion
-            metadata:
-              namespace: {{ .Values.nodeFeatureDiscovery.namespace }}
-            status:
-              phase: Succeeded
-```
-
-## Troubleshooting
-
-### Policy Not Applied
-1. Check cluster labels: `oc get managedcluster <cluster> --show-labels`
-2. Verify placement: `oc get placement -n open-cluster-policies`
-3. Check policy status: `oc describe policy policy-node-feature-discovery-operator-install`
-
-### Operator Installation Issues
-1. Check subscription: `oc get subscription -n openshift-nfd`
-2. Check install plan: `oc get installplan -n openshift-nfd`
-3. Verify operator source exists: `oc get catalogsource -n openshift-marketplace`
-
-### Template Rendering Issues
-1. Validate rendering: `cd tools && go test -tags integration ./internal/resolver/...`
-2. Check hub escaping: Look for `{{ "{{hub" }} ... {{ "hub}}" }}` patterns
-3. Read the failure: the suite names the chart and the stage that failed (render, hub resolution, spoke resolution, YAML validation, label contract)
-
-## Resources
-- [Operator Documentation](https://operatorhub.io/operator/nfd) - Find your operator details
-- [AutoShift Developer Guide](../../../docs/developer-guide.md) - Comprehensive policy development guide
-- [ACM Policy Documentation](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes) - Policy syntax reference in Governence Section
-- [Similar Policies](../../README.md) - Browse other policies for patterns and examples
+- [Node Feature Discovery Operator](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/specialized_hardware_and_driver_enablement/psap-node-feature-discovery-operator)
+- [NVIDIA GPU architecture](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/hardware_accelerators/nvidia-gpu-architecture)
+- [AMD GPU Operator](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/hardware_accelerators/amd-gpu-operator)
