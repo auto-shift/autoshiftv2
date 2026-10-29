@@ -253,7 +253,8 @@ release: validate validate-version clean sync-values update-versions generate-po
 	@if [ "$(INCLUDE_MIRROR)" = "true" ]; then \
 		printf "$(BLUE)[INFO]$(NC) Generating mirror artifacts...\n"; \
 		$(MAKE) generate-imageset VERSION=$(VERSION) || { \
-			printf "$(YELLOW)[WARN]$(NC) Mirror artifact generation failed - continuing without them\n"; \
+			printf "$(RED)[ERROR]$(NC) Mirror artifact generation failed. Fix it, or rerun with INCLUDE_MIRROR=false\n"; \
+			exit 1; \
 		}; \
 	fi
 	@echo ""
@@ -288,18 +289,49 @@ package-only: validate clean generate-policy-list package-charts ## Package char
 	@printf "$(GREEN)Packaging complete!$(NC)\n"
 	@echo "Charts are ready in: $(CHARTS_DIR)/"
 
-# All values files for complete operator coverage
-VALUES_FILES := $(shell find autoshift/values/clustersets -name '*.yaml' -not -name '_*' 2>/dev/null | sort | tr '\n' ',' | sed 's/,$$//')
+# The _example*.yaml files are the label contract CI enforces: every operator a policy can install is
+# declared there, so a release mirrors all of them rather than what the shipped profiles enable.
+IMAGESET_VALUES := $(shell find autoshift/values -name '_example*.yaml' 2>/dev/null | sort | tr '\n' ',' | sed 's/,$$//')
 
 .PHONY: generate-imageset
-generate-imageset: ## Generate ImageSetConfiguration for disconnected mirroring (auto-resolves dependencies)
-	@printf "$(BLUE)[INFO]$(NC) Generating ImageSetConfiguration from all values files...\n"
-	@printf "$(BLUE)[INFO]$(NC) Values files: $(VALUES_FILES)\n"
+generate-imageset: ## Generate the release ImageSetConfiguration: every operator in the _example*.yaml contract, its dependencies, and the AutoShift charts
+	@printf "$(BLUE)[INFO]$(NC) Generating ImageSetConfiguration for every operator in the label contract...\n"
+	@printf "$(BLUE)[INFO]$(NC) Values files: $(IMAGESET_VALUES)\n"
 	@command -v oc >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) oc CLI is required. Install from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/\n"; exit 1; }
 	@command -v jq >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) jq is required. Install: brew install jq\n"; exit 1; }
 	@mkdir -p $(ARTIFACTS_DIR)
-	@bash scripts/generate-imageset-config.sh $(VALUES_FILES) \
+	@bash scripts/generate-imageset-config.sh $(IMAGESET_VALUES) \
+		--all-operators \
 		--output $(ARTIFACTS_DIR)/imageset-config.yaml \
-		--include-autoshift-charts
+		--include-autoshift-charts \
+		$(if $(filter command line environment,$(origin VERSION)),--autoshift-version $(VERSION))
 	@printf "$(GREEN)✓$(NC) ImageSetConfiguration saved to $(ARTIFACTS_DIR)/imageset-config.yaml\n"
+
+# oc-mirror reads every REGISTRY_* variable as configuration for its embedded registry, so
+# REGISTRY_AUTH_FILE crashes it; the credentials go through --authfile instead.
+# VERSION errors when unset, which verify-imageset outside a release must not trip over.
+IMAGESET_VERSION = $(if $(filter command line environment,$(origin VERSION)),$(VERSION))
+IMAGESET_AUTHFILE ?= $(firstword $(wildcard $(REGISTRY_AUTH_FILE) $(HOME)/.docker/config.json $(HOME)/.config/containers/auth.json))
+
+.PHONY: verify-imageset
+verify-imageset: ## Dry-run oc-mirror against the generated ImageSetConfiguration; fails if any catalog, package, channel or image does not resolve (Linux, needs a registry.redhat.io pull secret)
+	@command -v oc-mirror >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) oc-mirror is required (scripts/install-release-toolchain.sh installs it)\n"; exit 1; }
+	@command -v skopeo >/dev/null 2>&1 || { printf "$(RED)[ERROR]$(NC) skopeo is required (scripts/install-release-toolchain.sh installs it)\n"; exit 1; }
+	@test -f $(ARTIFACTS_DIR)/imageset-config.yaml || { printf "$(RED)[ERROR]$(NC) $(ARTIFACTS_DIR)/imageset-config.yaml not found; run make generate-imageset first\n"; exit 1; }
+	@test -n "$(IMAGESET_AUTHFILE)" || { printf "$(RED)[ERROR]$(NC) No pull secret found; set IMAGESET_AUTHFILE or log in to registry.redhat.io\n"; exit 1; }
+	@rm -rf .tmp/imageset-verify && mkdir -p .tmp/imageset-verify
+	@env -u REGISTRY_AUTH_FILE oc-mirror -c $(ARTIFACTS_DIR)/imageset-config.yaml --v2 --dry-run \
+		--authfile $(IMAGESET_AUTHFILE) --cache-dir .tmp/imageset-verify/cache \
+		file://$(CURDIR)/.tmp/imageset-verify/mirror
+	@printf "$(GREEN)✓$(NC) Catalogs, packages, channels and release resolve: %s images\n" "$$(wc -l < .tmp/imageset-verify/mirror/working-dir/dry-run/mapping.txt | tr -d ' ')"
+	@# The dry run lists additionalImages without fetching them, so a missing tag passes it. Check each
+	@# one exists. A dry-run release pushes no charts, so images tagged with its VERSION are skipped then.
+	@missing=0; \
+	for img in $$(yq -r '.mirror.additionalImages[].name' $(ARTIFACTS_DIR)/imageset-config.yaml); do \
+		if [ "$(DRY_RUN)" = "true" ] && [ "$${img##*:}" = "$(IMAGESET_VERSION)" ]; then continue; fi; \
+		err=$$(skopeo inspect --raw --authfile $(IMAGESET_AUTHFILE) "docker://$$img" 2>&1 >/dev/null) \
+			|| { printf "$(RED)[ERROR]$(NC) %s: %s\n" "$$img" "$$(echo "$$err" | tail -1)"; missing=1; }; \
+	done; \
+	[ $$missing -eq 0 ] || exit 1
+	@printf "$(GREEN)✓$(NC) Additional images exist\n"
 
