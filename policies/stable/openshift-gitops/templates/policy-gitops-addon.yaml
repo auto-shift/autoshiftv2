@@ -1,0 +1,360 @@
+# Argo CD agent (the Red Hat Advanced Cluster Management GitOps add-on).
+#
+# SEPARATE from policy-gitops-systems-argocd on purpose. That policy owns the push-model
+# GitOpsCluster (argo-acm-importer), which registers every managed cluster into this hub's Argo CD
+# and is load-bearing for the whole fleet. Enabling the add-on on that object would switch every
+# registered cluster to agent mode at once. This policy creates its OWN GitOpsCluster against its
+# OWN placement, so enrolling a cluster in the agent is opt-in per cluster and leaves the push model
+# untouched.
+#
+# Two labels, two meanings:
+#   autoshift.io/gitops-agent          on a HUB:   run the principal here (places THIS policy)
+#   autoshift.io/gitops-agent-enroll   on a SPOKE: deploy an agent there (selected below)
+#
+# Opting in at a managed hub alone works because cluster-type hub selects the self-managed hub AND
+# every managed hub, while a managed hub's labels are consumed by the layer above it. Setting
+# gitops-agent in a managed hub's clusterset values therefore enables that hub and nothing above it.
+#
+# Technology Preview in Red Hat Advanced Cluster Management 2.17 with OpenShift GitOps 1.21.
+{{- if .Values.hubClusterSets }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  name: policy-gitops-addon
+  namespace: {{ .Values.policy_namespace }}
+  annotations:
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    policy.open-cluster-management.io/categories: CM Configuration Management
+    policy.open-cluster-management.io/controls: CM-2 Baseline Configuration
+spec:
+{{ if (($.Values.autoshift).dryRun) }}
+  remediationAction: inform
+{{ end }}
+  disabled: false
+  # Required by the ManagedCluster lookup in the principal's sourceNamespaces below. Cluster-scoped
+  # lookups in a hub template are refused without it.
+  hubTemplateOptions:
+    serviceAccountName: autoshift-policy-service-account
+  dependencies:
+    - name: policy-gitops-systems-argocd
+      namespace: {{ .Values.policy_namespace }}
+      apiVersion: policy.open-cluster-management.io/v1
+      compliance: Compliant
+      kind: Policy
+  policy-templates:
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-agent
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            {{ "{{hub" }} $gitopsNamespace := index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "{{ .Values.gitopsNamespace | default .Values.gitops.argoNamespace }}" {{ "hub}}" }}
+            {{ "{{hub" }} $agentCfg := (dig "gitops" "infra" "addon" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
+            {{ "{{hub" }} $serverAddress := (index $agentCfg "serverAddress" | default "") {{ "hub}}" }}
+            {{ "{{hub" }} $serverPort := (index $agentCfg "serverPort" | default "") {{ "hub}}" }}
+            {{ "{{hub" }} $agentMode := (index $agentCfg "mode" | default "autonomous") {{ "hub}}" }}
+            {{ "{{hub" }} $agentNs := (index $agentCfg "namespace" | default "openshift-gitops-agent") {{ "hub}}" }}
+            #
+            # A DEDICATED Argo CD instance for the principal, not the one AutoShift runs its own
+            # configuration from. Two independent reasons. The Red Hat Advanced Cluster Management
+            # side of this is Technology Preview, and it has no business sharing a process with the
+            # instance that reconciles every policy on the fleet. And in autonomous mode the
+            # principal mirrors each spoke Application into a hub namespace named after that
+            # cluster, so the instance hosting it grows a namespace and a cache per managed cluster.
+            # The main instance is already sized for the work it does.
+            #
+            # argoServer.argoNamespace below points the add-on at this namespace, and the controller
+            # honours it (GetEffectiveArgoNamespace), so the whole automatic public key
+            # infrastructure lands here: the cert-manager CA, the principal and resource proxy
+            # certificates the controller derives from it, and the JSON web token signing key.
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: v1
+                kind: Namespace
+                metadata:
+                  name: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                  labels:
+                    openshift.io/cluster-monitoring: 'true'
+            #
+            # The principal. It will not start until the controller has created
+            # argocd-agent-principal-tls and argocd-agent-jwt, so a crash loop on first install is
+            # expected and self-resolving; the controller creates those before it looks for this
+            # service. insecureGenerate stays false on both because they are supplied, never
+            # self-signed here.
+            #
+            # The auth pattern is NOT the upstream `mtls:CN=([^,]+)`. Agent client certificates are
+            # issued through the add-on certificate signing request flow and carry that framework's
+            # identity, so the generic pattern rejects every agent while presenting valid
+            # certificates. This value matches what the add-on actually issues.
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: argoproj.io/v1beta1
+                kind: ArgoCD
+                metadata:
+                  name: argocd-agent-principal
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                spec:
+                  # DISABLED DELIBERATELY, and this is why the principal needs an instance of its
+                  # own. Red Hat documents agent mode as replacing the Argo CD custom resource with
+                  # one whose application controller is off, because that instance becomes a
+                  # principal rather than a reconciler. Doing that to the instance AutoShift runs
+                  # its own configuration from would stop the fleet reconciling, so the principal
+                  # gets a separate instance and infra-gitops keeps its controller.
+                  controller:
+                    enabled: false
+                  # Autonomous mode mirrors each spoke Application into a hub namespace named after
+                  # its cluster, and those namespaces have to be source namespaces for this instance.
+                  #
+                  # The enrolled clusters, never '*'. The operator claims each namespace listed
+                  # here with argocd.argoproj.io/managed-by-cluster-argocd and writes Application
+                  # RBAC into it. A namespace carries one claim, so a wildcard would take the team
+                  # principals' agent namespaces away from them.
+                  #
+                  # This list needs hubTemplateOptions.serviceAccountName on the policy spec below.
+                  # A hub template may not list a CLUSTER-SCOPED resource without one, failing with
+                  # "lookup of cluster-scoped resource 'ManagedCluster/' is not allowed", and a
+                  # template error puts the whole policy NonCompliant, which its dependents then
+                  # treat as unmet and un-enforce themselves over.
+                  #
+                  # A spoke template would carry its own permissions and need no service account,
+                  # but object-templates-raw is serialized before it reaches the spoke and the
+                  # double quotes inside the action come back escaped, so it fails to parse.
+                  # Built first, emitted only if non-empty. A key whose items are all conditional
+                  # renders as null when none match, and musthave WRITES that null over whatever is
+                  # live, so a lookup that momentarily returns nothing would silently wipe the
+                  # principal's source namespaces and still report Compliant. Omitting the key
+                  # leaves the live value alone instead.
+                  {{ "{{hub-" }} $mcs := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict {{ "hub}}" }}
+                  {{ "{{hub-" }} $enrolled := list {{ "hub}}" }}
+                  {{ "{{hub-" }} range $mc := ($mcs.items | default list) {{ "hub}}" }}
+                  {{ "{{hub-" }} $mcLabels := (dig "metadata" "labels" dict $mc) {{ "hub}}" }}
+                  {{ "{{hub-" }} if and (eq (dig "autoshift.io/gitops-agent-enroll" "" $mcLabels) "true") (ne (dig "local-cluster" "" $mcLabels) "true") {{ "hub}}" }}
+                  {{ "{{hub-" }} $enrolled = append $enrolled (dig "metadata" "name" "" $mc) {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} if $enrolled {{ "hub}}" }}
+                  sourceNamespaces:
+                    {{ "{{hub-" }} range $enrolled {{ "hub}}" }}
+                    - '{{ "{{hub" }} . {{ "hub}}" }}'
+                    {{ "{{hub-" }} end {{ "hub}}" }}
+                  {{ "{{hub-" }} end {{ "hub}}" }}
+                  argoCDAgent:
+                    principal:
+                      enabled: true
+                      # How the principal maps an Application to an agent. Not symmetric, and the
+                      # asymmetry shows only in MANAGED mode:
+                      #   false  map by NAMESPACE. On the way back the principal rewrites an
+                      #          incoming status update's namespace to the agent name
+                      #          (`if !m.destinationBasedMapping { incoming.SetNamespace(namespace) }`
+                      #          in internal/manager/application/application.go).
+                      #   true   map by DESTINATION. The namespace is left alone, so a status update
+                      #          arrives naming the SPOKE's namespace and is looked up under that
+                      #          name on the hub, where nothing of that name exists.
+                      # Autonomous mode is unaffected either way, because the agent mirrors into the
+                      # hub namespace that already matches its own agent name, so nothing needs
+                      # rewriting. Managed mode with true pushes applications down correctly and
+                      # then never reports status, which reads as working until someone looks at the
+                      # hub and finds sync and health empty forever.
+                      destinationBasedMapping: {{ "{{hub" }} (index $agentCfg "destinationBasedMapping" | default false) {{ "hub}}" }}
+                      auth: 'mtls:CN=system:open-cluster-management:cluster:([^:]+):addon:gitops-addon:agent:gitops-addon-agent'
+                      logLevel: {{ "{{hub" }} (index $agentCfg "logLevel" | default "info") {{ "hub}}" }}
+                      namespace:
+                        allowedNamespaces:
+                          - '*'
+                        enableNamespaceCreate: true
+                      server:
+                        route:
+                          enabled: true
+                      tls:
+                        insecureGenerate: false
+                        secretName: argocd-agent-principal-tls
+                        rootCASecretName: argocd-agent-ca
+                      jwt:
+                        insecureGenerate: false
+                        secretName: argocd-agent-jwt
+                      resourceProxy:
+                        secretName: argocd-agent-resource-proxy-tls
+                        caSecretName: argocd-agent-ca
+            #
+            # The principal only propagates AppProject resources whose destinations and source
+            # namespaces match the agent configuration. Without the wildcards the propagation is
+            # skipped silently and agents never find their AppProject, so applications simply do
+            # not appear. Red Hat documents this as a required step, not a convenience.
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: argoproj.io/v1alpha1
+                kind: AppProject
+                metadata:
+                  name: default
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                spec:
+                  sourceNamespaces:
+                    - '*'
+                  sourceRepos:
+                    - '*'
+                  destinations:
+                    - namespace: '*'
+                      server: '*'
+                  clusterResourceWhitelist:
+                    - group: '*'
+                      kind: '*'
+            #
+            # Which clusters get an agent. No clusterSets stanza: a Placement with none selects
+            # across every ManagedClusterSet bound to its namespace, which is what makes this work
+            # unchanged on a managed hub. The push-model placement cannot be reused, because it
+            # bakes its cluster sets from the Helm values of the layer that AUTHORED the policy,
+            # and on a managed hub those are the names of the layer above, not that hub's own.
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta1
+                kind: Placement
+                metadata:
+                  name: systems-argocd-agent-placement
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                spec:
+                  predicates:
+                    - requiredClusterSelector:
+                        labelSelector:
+                          matchExpressions:
+                            - key: 'autoshift.io/gitops-agent-enroll'
+                              operator: In
+                              values:
+                                - 'true'
+                            # The hub reaches itself as the built-in in-cluster destination and
+                            # never runs an agent against itself. The controller skips
+                            # local-cluster when propagating the trust bundle for the same reason.
+                            - key: 'local-cluster'
+                              operator: NotIn
+                              values:
+                                - 'true'
+                  tolerations:
+                    - key: cluster.open-cluster-management.io/unreachable
+                      operator: Exists
+                    - key: cluster.open-cluster-management.io/unavailable
+                      operator: Exists
+            #
+            # The add-on itself. The controller derives the whole agent public key infrastructure
+            # from the argocd-agent-ca secret in this namespace: principal serving certificate,
+            # resource proxy certificate, the trust bundle it pushes to each spoke, and every agent
+            # client certificate. Issue that secret with cert-manager (the gitops-agent-ca label,
+            # policy-cert-manager-gitops-agent) to put the mesh under a known certificate
+            # authority; leave it alone and the controller self-signs one per hub.
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: apps.open-cluster-management.io/v1beta1
+                kind: GitOpsCluster
+                metadata:
+                  name: argo-acm-importer-agent
+                  namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                spec:
+                  argoServer:
+                    cluster: notused
+                    argoNamespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                  placementRef:
+                    kind: Placement
+                    apiVersion: cluster.open-cluster-management.io/v1beta1
+                    name: systems-argocd-agent-placement
+                    namespace: {{ "{{hub" }} $agentNs {{ "hub}}" }}
+                  gitopsAddon:
+                    enabled: true
+                    argoCDAgent:
+                      enabled: true
+                      # Whether the controller ships the trust bundle to each spoke itself. Turn it
+                      # off only where the organization distributes that trust by its own means.
+                      propagateHubCA: {{ "{{hub" }} (index $agentCfg "propagateHubCA" | default true) {{ "hub}}" }}
+                      {{ "{{hub" }} if ne $serverAddress "" {{ "hub}}" }}
+                      serverAddress: {{ "{{hub" }} $serverAddress {{ "hub}}" }}
+                      {{ "{{hub" }} end {{ "hub}}" }}
+                      {{ "{{hub" }} if ne $serverPort "" {{ "hub}}" }}
+                      serverPort: '{{ "{{hub" }} $serverPort {{ "hub}}" }}'
+                      {{ "{{hub" }} end {{ "hub}}" }}
+                      # autonomous by default, deliberately. AutoShift already delivers
+                      # configuration to spokes through Red Hat Advanced Cluster Management
+                      # policies, and managed mode would put a second mechanism in competition with
+                      # that one for desired state. Autonomous mode instead fills the gap AutoShift
+                      # has: the spoke keeps ownership of its own applications and the hub gains one
+                      # real-time view of the fleet. Set 'managed' to make the hub authoritative.
+                      mode: {{ "{{hub" }} $agentMode {{ "hub}}" }}
+    # A SECOND ConfigurationPolicy, because this block is LOCAL-templated and the one above is hub
+    # templated. Each ConfigurationPolicy carries its own object-templates-raw, so the two kinds of
+    # templating stay in separate blocks.
+    #
+    # The bindings have to be local. A ManagedClusterSetBinding grants a namespace the use of a
+    # cluster set, and the Placement that reads it runs on THIS cluster, so the names must come from
+    # this cluster's own Red Hat Advanced Cluster Management. A hub template would resolve against
+    # the instance that PLACED the policy, which on a managed hub is the layer above and names sets
+    # that do not exist here.
+    #
+    # Enumerated rather than listed: a managed hub's own sets are not knowable when this policy is
+    # authored, and a versionTag renames a set under blue/green.
+    - objectDefinition:
+        apiVersion: policy.open-cluster-management.io/v1
+        kind: ConfigurationPolicy
+        metadata:
+          name: gitops-agent-cluster-set-bindings
+        spec:
+          remediationAction: enforce
+          severity: high
+          evaluationInterval:
+            compliant: {{ ((($.Values.autoshift).evaluationInterval).compliant) | default "10m" }}
+            noncompliant: {{ ((($.Values.autoshift).evaluationInterval).noncompliant) | default "30s" }}
+          object-templates-raw: |
+            #Indentation Anchor
+            {{ "{{hub-" }} $bindCfg := (dig "gitops" "infra" "addon" dict (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict)) {{ "hub}}" }}
+            {{ "{{-" }} $ns := "{{ "{{hub" }} (index $bindCfg "namespace" | default "openshift-gitops-agent") {{ "hub}}" }}" {{ "}}" }}
+            {{ "{{-" }} range $_, $mcs := ((lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "").items | default list) {{ "}}" }}
+            - complianceType: musthave
+              objectDefinition:
+                apiVersion: cluster.open-cluster-management.io/v1beta2
+                kind: ManagedClusterSetBinding
+                metadata:
+                  name: {{ "{{" }} $mcs.metadata.name {{ "}}" }}
+                  namespace: {{ "{{" }} $ns {{ "}}" }}
+                spec:
+                  clusterSet: {{ "{{" }} $mcs.metadata.name {{ "}}" }}
+            {{ "{{-" }} end {{ "}}" }}
+---
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-gitops-addon
+  namespace: {{ .Values.policy_namespace }}
+spec:
+  clusterSets:
+  {{- range $clusterSet, $value := $.Values.hubClusterSets }}
+    - {{ $clusterSet }}
+  {{- end }}
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/gitops-agent'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists
+---
+apiVersion: policy.open-cluster-management.io/v1
+kind: PlacementBinding
+metadata:
+  name: placement-policy-gitops-addon
+  namespace: {{ .Values.policy_namespace }}
+placementRef:
+  name: placement-policy-gitops-addon
+  apiGroup: cluster.open-cluster-management.io
+  kind: Placement
+subjects:
+  - name: policy-gitops-addon
+    apiGroup: policy.open-cluster-management.io
+    kind: Policy
+{{- end }}

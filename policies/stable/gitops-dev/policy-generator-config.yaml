@@ -12,6 +12,10 @@ metadata:
 # the per-team GitOps objects, one set per team on the cluster. Because it is a
 # first-class manifest, remediationAction + evaluationInterval are baked in the manifest (PG will
 # not inject them); ${REMEDIATION} here drives the root Policy action to match.
+# NOTE: each policy below has its OWN placement file, even where two placements are identical in
+# content. Sharing one placement between two policies forces placementBindingDefaults.name, and a
+# single default name then collides as soon as a SECOND placement is shared. One placement per
+# policy keeps the generated PlacementBinding names unique without that knob.
 policyDefaults:
   namespace: ${POLICY_NAMESPACE}
   # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
@@ -37,3 +41,6 @@ policies:
       - name: policy-gitops-operator-install
     manifests:
       - path: manifests
+  # HUB half of the team agents. Its own policy and its own placement so that an agent problem
+  # reports against the agent, not against the team's Argo CD, and so a hub running no team agents
+  # simply does not receive it.
