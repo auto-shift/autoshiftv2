@@ -82,6 +82,30 @@ Find available CSV versions:
 oc get packagemanifests cloudnative-pg -o jsonpath='{.status.channels[*].currentCSV}'
 ```
 
+## Images
+
+AutoShift does not choose PostgreSQL or PgBouncer images. A `Cluster` or `Pooler` that names no image
+runs the default compiled into the Operator release, so each Operator upgrade can move the
+PostgreSQL major. Applications that need a specific image set it in their own configuration:
+
+| Application | PostgreSQL | PgBouncer |
+|---|---|---|
+| Red Hat Quay | `config.quay.dbImage` | Not used |
+| GitLab | `config.gitlab.dbImage` | `config.gitlab.dbPoolerImage` |
+| JFrog Artifactory | `config.jfrog.dbImage` | `config.jfrog.dbPoolerImage` |
+
+Set the PostgreSQL image before the first deployment. Removing it later leaves the image in place,
+and CloudNativePG rejects a lower major on a running `Cluster`.
+
+### Disconnected clusters
+
+The Operator pulls its defaults by tag, and its bundle does not list them, so oc-mirror does not
+copy them from the catalog. `make generate-imageset` reads both defaults from the release at the
+head of each mirrored channel and adds them to `additionalImages`. oc-mirror writes an
+`ImageTagMirrorSet` for them in `itms-oc-mirror.yaml`. When AutoShift manages the mirror
+configuration instead, add a `tagMirrors` entry for `ghcr.io/cloudnative-pg` under
+`config.disconnected`. An image set in application configuration is not added: mirror it yourself.
+
 ## Next Steps: Configuration
 
 ### 1. Explore Installed CRDs

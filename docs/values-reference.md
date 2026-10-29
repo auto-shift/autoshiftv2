@@ -710,6 +710,7 @@ and optionally provisions its databases through CloudNativePG.
 | `configSecretRef` | map | | `{name, namespace, key}` of a Secret holding sensitive `config.yaml` keys |
 | `dbBackupSchedule` | string | `0 4 * * *` | Cron schedule for database backups |
 | `dbBackupRetention` | string | `30d` | Backup retention period |
+| `dbImage` | string | | `quay-db-mode` `managed` only. PostgreSQL image for `quay-db` and `clair-db`. Empty means the CloudNativePG Operator default |
 
 > [!WARNING]
 > Setting `overrides.<kind>.replicas` while the horizontal pod autoscaler is managed is rejected by

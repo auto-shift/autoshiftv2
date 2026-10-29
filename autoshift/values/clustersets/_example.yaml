@@ -592,9 +592,13 @@ hubClusterSets:
           # tagMirrors -> ImageTagMirrorSet, for images pulled by TAG (not digest). The Vault chart
           # images (docker.io/hashicorp/vault:1.17.2, vault-k8s:1.4.2) are tag-referenced, so mirror
           # them here. `oc mirror` copies them via the imageset (vault key in known-additional-images.json).
+          # The CloudNativePG Operator pulls its default PostgreSQL and PgBouncer images by tag too;
+          # make generate-imageset adds them for the mirrored Operator release.
           tagMirrors:
             - source: 'docker.io/hashicorp'
               mirror: 'hashicorp'
+            - source: 'ghcr.io/cloudnative-pg'
+              mirror: 'cloudnative-pg'
         # imagePath and tag, not a single image string — the host comes from mirrorRegistry above.
         # Required whenever disconnected-mirror is 'true': operators subscribe to <source>-<suffix>.
         catalogs:
@@ -618,6 +622,8 @@ hubClusterSets:
         # startingCSV: 'gitlab-operator-kubernetes.vX.Y.Z'
         dbBackupSchedule: '0 2 * * *'
         dbBackupRetention: '30d'
+        dbImage: ''                            # PostgreSQL image for gitlab-db; '' = Operator default
+        dbPoolerImage: ''                      # PgBouncer image for both Poolers; '' = Operator default
       # =======================================================================
       # JFrog Artifactory
       # =======================================================================
@@ -628,6 +634,8 @@ hubClusterSets:
         # startingCSV: 'openshiftartifactoryha-operator.vX.Y.Z'
         dbBackupSchedule: '0 3 * * *'
         dbBackupRetention: '30d'
+        dbImage: ''                            # PostgreSQL image for artifactory-db; '' = Operator default
+        dbPoolerImage: ''                      # PgBouncer image for both Poolers; '' = Operator default
       # =======================================================================
       # Operator version allow-list — works for EVERY operator, keyed by its version-label base
       # (config.<key>.versions + optional .startingCSV). A list, so it lives in config, not a label.
@@ -640,6 +648,7 @@ hubClusterSets:
         versions:                              # allowed CSV versions (compliance constraint)
           - 'quay-operator.v3.18.0'
         startingCSV: 'quay-operator.v3.18.0'   # explicit initial install pin (optional; '' = let OLM pick)
+        dbImage: ''                            # quay-db-mode managed: PostgreSQL image for both databases; '' = Operator default
         # --- Registry production settings (everything below is optional) ----------------
         # Superusers. With OIDC these are the OIDC usernames and they get admin on FIRST LOGIN
         # with no bootstrap step — that is the supported zero-Job admin path. Changing this

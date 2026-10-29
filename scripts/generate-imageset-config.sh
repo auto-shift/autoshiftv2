@@ -235,6 +235,52 @@ get_catalog_channels() {
                END { if (s == "olm.channel" && n != "") print n }' | tr -d "\"'"
 }
 
+# The CloudNativePG Operator runs a PostgreSQL and a PgBouncer image compiled into its binary, pulled by
+# tag. Its bundle does not list them, so oc-mirror never copies them. Print both for the head of each
+# mirrored channel, read from that release's pkg/versions/versions.go. Fails if either cannot be read.
+cnpg_default_images() {
+    local channels="$1"
+    local catalog_image="$2"
+    local configs
+    configs=$(get_catalog_cache_configs "$catalog_image")
+    if [[ -z "$configs" ]]; then
+        log_warning "cloudnative-pg: $catalog_image is not cached, so the Operator's default PostgreSQL and PgBouncer images are not mirrored"
+        return 0
+    fi
+    local fbc
+    fbc=$( { find "$configs/cloudnative-pg" -type f -name '*.json' -exec cat {} + 2>/dev/null
+             find "$configs/cloudnative-pg" -type f \( -name '*.yaml' -o -name '*.yml' \) -exec yq -o=json -I=0 '.' {} + 2>/dev/null; } )
+    local channel head version src img
+    IFS=',' read -ra chans <<< "$channels"
+    for channel in "${chans[@]}"; do
+        channel=$(echo "$channel" | xargs)
+        [[ -z "$channel" ]] && continue
+        # The head is the entry no other entry in the channel replaces or skips
+        head=$(jq -rs --arg c "$channel" '
+            [.[] | select(.schema == "olm.channel" and .name == $c) | .entries[]] as $e
+            | ([$e[] | .replaces // empty] + [$e[] | .skips // [] | .[]]) as $old
+            | [$e[] | .name | select(. as $n | $old | index($n) | not)] | first // empty' <<< "$fbc")
+        version=$(jq -rs --arg b "$head" '.[] | select(.schema == "olm.bundle" and .name == $b)
+            | .properties[] | select(.type == "olm.package") | .value.version' <<< "$fbc" | head -1)
+        if [[ -z "$version" ]]; then
+            log_error "cloudnative-pg: no head version for channel $channel in $catalog_image"
+            return 1
+        fi
+        if ! src=$(curl -fsSL "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/v${version}/pkg/versions/versions.go"); then
+            log_error "cloudnative-pg: cannot read the default images of v${version} from GitHub"
+            return 1
+        fi
+        for var in DefaultImageName DefaultPgbouncerImage; do
+            img=$(sed -n "s/^[[:space:]]*${var}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" <<< "$src")
+            if [[ -z "$img" ]]; then
+                log_error "cloudnative-pg: v${version} has no ${var} in pkg/versions/versions.go"
+                return 1
+            fi
+            echo "$img"
+        done
+    done
+}
+
 # Fail when a requested channel is not in the catalog. oc-mirror 4.22 drops an unknown channel
 # without a warning, so the values file keeps a channel no mirrored Subscription can resolve.
 # Skipped when the catalog is not cached.
@@ -244,6 +290,8 @@ get_catalog_channels() {
 # not block a release, and nothing could be mirrored for it anyway. SKIPPED_PACKAGES records them.
 VALID_PACKAGES=""
 SKIPPED_PACKAGES=""
+CNPG_CHANNELS=""
+CNPG_CATALOG=""
 validate_catalog_channels() {
     local packages="$1"
     local catalog_image="$2"
@@ -1262,6 +1310,10 @@ EOF
                         [[ -z "$package_info" ]] && continue
                         IFS='|' read -r name channels <<< "$package_info"
                         echo "    - name: $name" >> "$output_file"
+                        if [[ "$name" == cloudnative-pg ]]; then
+                            CNPG_CHANNELS="$channels"
+                            CNPG_CATALOG="registry.redhat.io/redhat/certified-operator-index:v${catalog_ver}"
+                        fi
 
                         # Set defaultChannel to the first specified channel
                         IFS=',' read -ra channels_array <<< "$channels"
@@ -1307,6 +1359,15 @@ EOF
                 known_images+=("$img")
             done <<< "$imgs"
         done
+    fi
+
+    if [[ -n "$CNPG_CHANNELS" ]]; then
+        local cnpg_imgs
+        cnpg_imgs=$(cnpg_default_images "$CNPG_CHANNELS" "$CNPG_CATALOG") || { rm -f "$output_file"; exit 1; }
+        while IFS= read -r img; do
+            [[ -z "$img" ]] && continue
+            [[ " ${known_images[*]} " == *" $img "* ]] || known_images+=("$img")
+        done <<< "$cnpg_imgs"
     fi
 
     # Non-operator (Helm chart) components: their images aren't in any OLM catalog, so the operator scan

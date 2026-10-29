@@ -1,0 +1,39 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: gitlab-db
+  namespace: gitlab-system
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: gitlab-db
+  endpoints:
+  - port: metrics
+    interval: 30s
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gitlab-db-allow
+  namespace: gitlab-system
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: gitlab-db
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: gitlab-system
+    ports:
+    - port: 5432
+      protocol: TCP
+    - port: 9187
+      protocol: TCP
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: openshift-operators
+    ports:
+    - port: 8000
+      protocol: TCP
