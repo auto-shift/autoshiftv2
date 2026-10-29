@@ -1,0 +1,62 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: far
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP (envsubst/sed) BEFORE
+# `kustomize build` runs. They live here and in placement.yaml — never in manifests/, whose hub
+# templates contain `$vars` that substitution would clobber.
+#
+# The operator-install policy points at manifests/operator-install/, a nested kustomization that
+# renders the shared components/operator-install chart. Add further CRs as new policies[] entries
+# pointing at their own manifests/<dir> (a wildcarded dir picks up drop-in files automatically).
+# Keep placement.yaml OUT of manifests/ (a Placement inside a wildcarded dir would be wrapped in).
+placementBindingDefaults:
+  name: binding-policy-far
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  # Consolidate the raw Namespace into one generated ConfigurationPolicy; the first-class
+  # OperatorPolicy stays its own policy-template. Net: one Policy, two policy-templates.
+  consolidateManifests: true
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Placement authored by us (placement.yaml at the dir root, full fidelity); PG includes it and
+  # generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  - name: policy-far-operator-install
+    manifests:
+      - path: manifests/operator-install
+  - name: policy-far-secrets
+    dependencies:
+      - name: policy-far-operator-install
+    manifests:
+      - path: manifests/secrets/bmc-secret.yaml
+    customMessage:
+      noncompliant: >
+        {{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}.
+        Verify far.sharedSecretNamespace/sourceSecretName/sharedSecretName (or per-template overrides)
+        and confirm the source Secret exists on the managed cluster.
+  - name: policy-far-remediation-templates
+    dependencies:
+      - name: policy-far-secrets
+    manifests:
+      - path: manifests/far-templates/far-template.yaml
+    customMessage:
+      noncompliant: >-
+        {{- $msg := (regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim) -}}
+        {{- if regexMatch "autoNodeIPsFromBMH=true but no BMC IPs were detected from BareMetalHost objects" $msg -}}
+        {{ $msg }} autoNodeIPsFromBMH is supported only when BareMetalHost objects exist and expose spec.bmc.address values that policy can read. Otherwise, set templates[].nodeIPs explicitly or set autoNodeIPsFromBMH=false.
+        {{- else -}}
+        {{ $msg }}
+        {{- end -}}
