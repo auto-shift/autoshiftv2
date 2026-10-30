@@ -1,0 +1,564 @@
+object-templates-raw: |
+  # HUB half of a team's Argo CD agent: the principal instance, its certificate authority and
+  # certificates, the JSON web token signing key, the project, the per-cluster client certificates
+  # and the agent-to-cluster mapping.
+  # The preamble below is MIRRORED in gitops-dev.yaml, agent-hub/ and agent-spoke/. It derives the
+  # per-team loop that all three depend on. Change it in one place and you must change it in all
+  # three, or the files silently disagree about which teams exist.
+  # fromConfigMap, NOT lookup. A missing rendered-config means this cluster's values are not ready
+  # yet, and every dig below would silently fall back to a default: an agent instance built in
+  # openshift-gitops-<team> when config names another namespace, which musthave then never removes.
+  # fromConfigMap errors instead, so the policy waits rather than creating the wrong objects.
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
+  {{hub- $clusterName := .ManagedClusterName hub}}
+  {{hub- $clusterSets := list hub}}
+  {{hub- $mcsList := (lookup "cluster.open-cluster-management.io/v1beta2" "ManagedClusterSet" "" "") | default dict hub}}
+  {{hub- range $_, $mcs := ($mcsList.items | default list) hub}}
+  {{hub- $clusterSets = append $clusterSets $mcs.metadata.name hub}}
+  {{hub- end hub}}
+  # A team-to-mode map, built BEFORE the loop so infra is always present. Iterating labels directly
+  # would skip infra on any cluster without a gitops-infra label, which silently produced no
+  # principal at all: the label would have to be remembered or nothing appeared.
+  #
+  # infra is a team named infra whose mode comes from gitops-infra and whose config comes from
+  # config.gitops.infra. Absent that label it DERIVES: hub on a hub, push anywhere else, which is
+  # the documented default rather than a value someone has to set.
+  {{hub- $modes := dict hub}}
+  {{hub- range $label, $val := .ManagedClusterLabels hub}}
+  {{hub- if and (hasPrefix "autoshift.io/gitops-dev-team-" $label) (not (hasSuffix "-cluster-scoped" $label)) hub}}
+  {{hub- $modes = set $modes (replace "autoshift.io/gitops-dev-team-" "" $label) $val hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  # Read before the loop: range rebinds the dot, so .ManagedClusterLabels is unreachable inside it.
+  {{hub- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") hub}}
+  {{hub- $isHubCluster := eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub" hub}}
+  {{hub- $infraDefault := ternary "hub" "push" (eq (index .ManagedClusterLabels "autoshift.io/cluster-type" | default "") "hub") hub}}
+  {{hub- $modes = set $modes "infra" (index .ManagedClusterLabels "autoshift.io/gitops-infra" | default $infraDefault) hub}}
+  {{hub- range $team, $mode := $modes hub}}
+  {{hub- $isInfra := eq $team "infra" hub}}
+  {{hub- if ne $mode "" hub}}
+  {{hub- $spec := ternary (dig "gitops" "infra" dict $cfg) (index $teamSpecs $team | default dict) $isInfra hub}}
+  # Where this team's Argo CD instance lives. Defaults to openshift-gitops-<team>; infra overrides
+  # it to the shared gitops namespace, which is what lets infra use this same machinery.
+  # Where this team's Argo CD instance lives on THIS cluster, defaulting to openshift-gitops-<team>.
+  # infra on a HUB is the exception: policy-gitops-systems-argocd places infra-gitops there, in the
+  # gitops namespace, so infra resolves to that and attaches rather than building a rival instance.
+  # That policy is placed on hub clustersets only, so on a spoke there is nothing to attach to and
+  # infra takes the openshift-gitops-<team> default like anyone else.
+  {{hub- $nsDefault := ternary $gitopsNs (printf "openshift-gitops-%s" $team) (and $isInfra $isHubCluster) hub}}
+  {{hub- $teamNs := (dig "namespace" $nsDefault $spec) hub}}
+  {{hub- $rbac := "g, system:cluster-admins, role:admin\n" hub}}
+  {{hub- range (dig "gitops_rbac_policies" list $spec) hub}}
+  {{hub- $rbac = printf "%s%s\n" $rbac . hub}}
+  {{hub- end hub}}
+  {{hub- $agentCfg := (dig "agent" dict $spec) hub}}
+  {{hub- $agentOn := (dig "enabled" false $agentCfg) hub}}
+  {{hub- $agentNs := (dig "agentNamespace" (printf "openshift-gitops-%s-agent" $team) $spec) hub}}
+  {{hub- $caCfg := (dig "ca" dict $agentCfg) hub}}
+  {{hub- $keyCfg := (dig "privateKey" dict $caCfg) hub}}
+  {{hub- $leafDur := (dig "leafDuration" "720h0m0s" $agentCfg) hub}}
+  {{hub- $leafRenew := (dig "leafRenewBefore" "240h0m0s" $agentCfg) hub}}
+  {{hub- $pName := printf "%s-principal" $team hub}}
+  {{hub- $pSvc := printf "%s-agent-principal" $pName hub}}
+  {{hub- $pRoute := (lookup "route.openshift.io/v1" "Route" $agentNs $pSvc) | default dict hub}}
+  {{hub- $pHost := (dig "spec" "host" "" $pRoute) hub}}
+  {{hub- $route := (lookup "route.openshift.io/v1" "Route" $teamNs "argocd-dev-server") | default dict hub}}
+  {{hub- $host := (dig "spec" "host" "" $route) hub}}
+  # The principal belongs wherever the team's Argo CD instance is, which is mode hub. Keyed on the
+  # mode rather than $isHub, because that variable is also true for a managed hub, which may run
+  # this team's agent instead.
+  {{hub- if and (eq $mode "hub") $agentOn hub}}
+  # The team's Argo CD agent principal. It lives in its OWN namespace, not the team's, because
+  # enabling the principal requires the application controller to be OFF and the team's instance
+  # needs its controller for the applications it deploys itself. Their instance is untouched.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub $agentNs hub}}
+        labels:
+          openshift.io/cluster-monitoring: 'true'
+  # A per-team INTERMEDIATE under the shared autoshift-ca root, deliberately not one shared agent
+  # authority. With a single authority a team's client certificate would authenticate against
+  # another team's principal and only the auth pattern would stand between them. Separate
+  # intermediates make that a cryptographic boundary instead of a naming convention.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: gitops-agent-ca
+        namespace: {{hub $agentNs hub}}
+      spec:
+        isCA: true
+        commonName: {{hub printf "gitops-agent-ca-%s" $team hub}}
+        secretName: gitops-agent-ca
+        # renewBefore MUST stay above duration/5: past 80 percent of its lifetime the add-on
+        # replaces this authority with a self-signed one of its own, silently.
+        duration: {{hub (dig "duration" "8760h0m0s" $caCfg) hub}}
+        renewBefore: {{hub (dig "renewBefore" "2160h0m0s" $caCfg) hub}}
+        privateKey:
+          algorithm: {{hub (dig "algorithm" "RSA" $keyCfg) hub}}
+          size: {{hub (dig "size" 4096 $keyCfg) hub}}
+        issuerRef:
+          name: {{hub (dig "caIssuer" "autoshift-ca" $agentCfg) hub}}
+          kind: ClusterIssuer
+          group: cert-manager.io
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Issuer
+      metadata:
+        name: gitops-agent-ca
+        namespace: {{hub $agentNs hub}}
+      spec:
+        ca:
+          secretName: gitops-agent-ca
+  # Serving certificates for the principal and its resource proxy. The Route host is not known on
+  # the first pass, because the Route does not exist until the instance below is created, so the
+  # certificate is issued for the in-cluster names first and reissued with the host once the
+  # lookup above resolves. Two passes of an already-reconciling policy, no ordering required.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: gitops-agent-principal-tls
+        namespace: {{hub $agentNs hub}}
+      spec:
+        secretName: gitops-agent-principal-tls
+        duration: {{hub $leafDur hub}}
+        renewBefore: {{hub $leafRenew hub}}
+        dnsNames:
+          - {{hub printf "%s.%s.svc" $pSvc $agentNs hub}}
+          - {{hub printf "%s.%s.svc.cluster.local" $pSvc $agentNs hub}}
+          - localhost
+          {{hub- if ne $pHost "" hub}}
+          - {{hub $pHost hub}}
+          {{hub- end hub}}
+        ipAddresses:
+          - 127.0.0.1
+        issuerRef:
+          name: gitops-agent-ca
+          kind: Issuer
+          group: cert-manager.io
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: gitops-agent-resource-proxy-tls
+        namespace: {{hub $agentNs hub}}
+      spec:
+        secretName: gitops-agent-resource-proxy-tls
+        duration: {{hub $leafDur hub}}
+        renewBefore: {{hub $leafRenew hub}}
+        dnsNames:
+          - {{hub printf "%s-resource-proxy" $pSvc hub}}
+          - {{hub printf "%s-resource-proxy.%s.svc" $pSvc $agentNs hub}}
+          - localhost
+        ipAddresses:
+          - 127.0.0.1
+        issuerRef:
+          name: gitops-agent-ca
+          kind: Issuer
+          group: cert-manager.io
+  # JWT signing key. Red Hat documents only `argocd-agentctl jwt create-key` to produce this, and
+  # in the same breath says the CLI-generated public key infrastructure "is intended for development
+  # and testing purposes only. For production environments, use certificates issued by your
+  # organization's PKI", so issuing it here is the documented production posture rather than a
+  # departure from it. The contract is what matters and it is precisely specified: an Opaque secret
+  # carrying a PEM RSA private key in a jwt.key field. The secret name is ours, set on the
+  # principal's jwt.secretName below.
+  #
+  # encoding PKCS8 is REQUIRED: cert-manager defaults to PKCS1 for RSA, while the documented format
+  # is PKCS#8.
+  #
+  # rotationPolicy defaults to Always here, because the same Red Hat page that documents this key
+  # also says to "rotate keys periodically for security", and a signing key that never changes is
+  # the kind of thing a cryptoperiod control asks about. The cost is bounded and measured: rotating
+  # invalidates outstanding agent tokens, and agents simply re-authenticate. That was observed
+  # directly when a principal restarted and every agent reconnected unattended.
+  #
+  # The key changes at renewal, so jwtDuration IS the cryptoperiod. A running principal keeps using
+  # the key it loaded until it restarts, so rotation takes effect on the next restart rather than
+  # cutting anything off mid-flight. Set rotationPolicy Never to pin the key instead, which is the
+  # right answer only where re-authentication is more expensive than a stale key.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: gitops-agent-jwt
+        namespace: {{hub $agentNs hub}}
+      spec:
+        secretName: gitops-agent-jwt-cert
+        commonName: {{hub printf "gitops-agent-jwt-%s" $team hub}}
+        duration: {{hub (dig "jwtDuration" "8760h0m0s" $agentCfg) hub}}
+        renewBefore: {{hub (dig "jwtRenewBefore" "2160h0m0s" $agentCfg) hub}}
+        privateKey:
+          algorithm: RSA
+          size: 4096
+          encoding: PKCS8
+          rotationPolicy: {{hub (dig "jwtRotationPolicy" "Always" $agentCfg) hub}}
+        issuerRef:
+          name: gitops-agent-ca
+          kind: Issuer
+          group: cert-manager.io
+  # The secret the principal actually reads. Only the private key is carried across; the
+  # certificate around it is incidental.
+  #
+  # GUARDED, and this is not optional. Hub templates resolve BEFORE any object in this policy is
+  # applied, so on the first pass the certificate above has not produced its secret yet. fromSecret
+  # ERRORS on a missing secret and that error fails the WHOLE policy, including the Certificate that
+  # would have created it: a deadlock it can never resolve. lookup returns empty instead, so this
+  # simply waits and appears on the next pass.
+  {{hub- $jwtSec := (lookup "v1" "Secret" $agentNs "gitops-agent-jwt-cert") | default dict hub}}
+  {{hub- $jwtKey := (dig "data" "tls.key" "" $jwtSec) hub}}
+  {{hub- if ne $jwtKey "" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      type: Opaque
+      metadata:
+        name: gitops-agent-jwt
+        namespace: {{hub $agentNs hub}}
+      data:
+        jwt.key: {{hub $jwtKey hub}}
+  {{hub- end hub}}
+  # The principal itself. auth is OUR pattern, not the pattern the Red Hat Advanced Cluster
+  # Management add-on uses, because these client certificates are minted by cert-manager and we
+  # choose the naming: CN=<cluster>-<team>.
+  # The principal's cluster-scoped permissions, granted narrowly rather than by naming this
+  # namespace in ARGOCD_CLUSTER_CONFIG_NAMESPACES. That variable would make this a cluster-scoped
+  # Argo CD instance, which is right for infra GitOps and wrong for a team's. These are the rules
+  # the operator would have generated, and no more: the principal mirrors applications from its
+  # agents and creates a namespace per connected cluster, so it needs both at cluster scope.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: {{hub printf "gitops-agent-%s-principal" $team hub}}
+      rules:
+        - apiGroups:
+            - argoproj.io
+          resources:
+            - applications
+            - appprojects
+            - applicationsets
+          verbs:
+            - create
+            - get
+            - list
+            - watch
+            - update
+            - delete
+            - patch
+        - apiGroups:
+            - ''
+          resources:
+            - namespaces
+          verbs:
+            - create
+            - get
+            - list
+            - watch
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{hub printf "gitops-agent-%s-principal" $team hub}}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: {{hub printf "gitops-agent-%s-principal" $team hub}}
+      subjects:
+        - kind: ServiceAccount
+          # The operator names it after the instance: <instance>-agent-principal.
+          name: {{hub printf "%s-agent-principal" $pName hub}}
+          namespace: {{hub $agentNs hub}}
+  # The clusters enrolled in THIS team's agent, enumerated once and reused below for both the
+  # project's source namespaces in managed mode and the per-cluster client certificates.
+  {{hub- $mcList := (lookup "cluster.open-cluster-management.io/v1" "ManagedCluster" "" "") | default dict hub}}
+  {{hub- $enrolled := list hub}}
+  {{hub- $agentNames := list hub}}
+  {{hub- range $_, $mc := ($mcList.items | default list) hub}}
+  # hasPrefix, not eq: the label carries the mode, so the value may be agent, agent-managed or
+  # agent-autonomous. Everything below is per enrolled cluster, so an exact match would drop that
+  # cluster's client certificate, mapping secret, namespace and sourceNamespaces entry.
+  # The label key differs for infra, which carries its mode on gitops-infra. Reading
+  # gitops-dev-team-infra instead would find no clusters, so infra got a principal and no per-cluster
+  # credentials, mapping or namespace.
+  {{hub- $enrollKey := ternary "autoshift.io/gitops-infra" (printf "autoshift.io/gitops-dev-team-%s" $team) $isInfra hub}}
+  {{hub- if hasPrefix "agent" (dig $enrollKey "" (dig "metadata" "labels" dict $mc)) hub}}
+  {{hub- $enrolled = append $enrolled (dig "metadata" "name" "" $mc) hub}}
+  {{hub- $agentNames = append $agentNames (printf "%s-%s" (dig "metadata" "name" "" $mc) $team) hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  # Where the team's Application resources LIVE. This is the UNION of both modes, not a choice
+  # between them:
+  #   autonomous  the spoke owns them, in the team's own GitOps namespace there
+  #   managed     the HUB owns them, in the per-cluster namespace the principal maps each agent to
+  # The hub side uses the AGENT NAME, not the cluster name. Red Hat is explicit that this is a
+  # namespace-to-agent mapping model and that "the namespace names specified in sourceNamespaces
+  # must exactly match the corresponding Agent names"; get it wrong and the principal can neither
+  # deploy nor monitor, in either mode, without reporting anything.
+  #
+  # Both are listed because mode is a PER-AGENT setting, so one team may legitimately run some
+  # clusters managed and others autonomous at the same time. Listing both costs nothing: source
+  # namespaces are a permit list, and naming one the team does not use permits nothing. Naming too
+  # FEW does not error either, which is the trap: the principal silently skips propagating the
+  # project and the team's applications simply never appear.
+  {{hub- $modeNs := list $teamNs hub}}
+  {{hub- range $an := $agentNames hub}}
+  {{hub- $modeNs = append $modeNs $an hub}}
+  {{hub- end hub}}
+  {{hub- $srcNs := (dig "sourceNamespaces" $modeNs $agentCfg) hub}}
+  # sourceNamespaces has to be AUTHORITATIVE, and the musthave below cannot make it so: musthave merges
+  # lists, so an entry never leaves and a stale one keeps its namespace claimed. A namespace carries
+  # one argocd.argoproj.io/managed-by-cluster-argocd claim, so that blocks the next legitimate one.
+  #
+  # Read-modify-write, not a partial mustonlyhave: mustonlyhave compares the WHOLE object, so a
+  # partial one strips the metadata and spec defaults the operator owns and then fights it. Starting
+  # from the live object preserves them. status is dropped because it is not ours to assert.
+  #
+  # ORDER IS LOAD-BEARING. Two object-templates naming the same object collapse and the FIRST one
+  # wins; the second has no effect and the policy still reports Compliant. This one must therefore
+  # precede the musthave below, which is what creates the principal on the first pass, when the
+  # lookup here is empty and this block renders nothing.
+  {{hub- $livePrincipal := (lookup "argoproj.io/v1beta1" "ArgoCD" $agentNs $pName) | default dict hub}}
+  {{hub- if not (empty $livePrincipal) hub}}
+  {{hub- $pSpec := set (dig "spec" dict $livePrincipal) "sourceNamespaces" $srcNs hub}}
+  {{hub- $pObj := set (unset $livePrincipal "status") "spec" $pSpec hub}}
+  - complianceType: mustonlyhave
+    objectDefinition:
+      {{hub $pObj | toYaml | autoindent hub}}
+  {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: argoproj.io/v1beta1
+      kind: ArgoCD
+      metadata:
+        name: {{hub $pName hub}}
+        namespace: {{hub $agentNs hub}}
+      spec:
+        controller:
+          enabled: false
+        # Exactly the namespaces this team owns, never '*'. The operator claims each namespace
+        # listed here with argocd.argoproj.io/managed-by-cluster-argocd and writes Application RBAC
+        # into it. A namespace carries one claim, so a wildcard would take every namespace on the
+        # cluster and deny the other principals their own agent namespaces.
+        sourceNamespaces:
+          {{hub- range $srcNs hub}}
+          - '{{hub . hub}}'
+          {{hub- end hub}}
+        argoCDAgent:
+          principal:
+            enabled: true
+            # FALSE, and the default matters. This selects how the principal maps an Application
+            # to an agent, and it is not symmetric:
+            #   false  by NAMESPACE. The hub namespace is the agent name, and on the way BACK the
+            #          principal rewrites the incoming namespace to the agent name
+            #          (`if !m.destinationBasedMapping { incoming.SetNamespace(namespace) }` in
+            #          internal/manager/application/application.go).
+            #   true   by DESTINATION. The principal leaves the namespace alone, so a status update
+            #          arrives naming the SPOKE's namespace and is looked up under that name on the
+            #          hub, where nothing of that name exists.
+            # With true, spec still flows hub to spoke and the applications appear, so it looks like
+            # it works, but status never comes back and the hub shows empty sync and health
+            # forever. Namespace mapping is also what the rest of this policy already assumes, since
+            # sourceNamespaces above is a list of agent names.
+            destinationBasedMapping: {{hub (dig "destinationBasedMapping" false $agentCfg) hub}}
+            # Matches any common name by default. Isolation between teams rests on each team having
+            # its OWN certificate authority intermediate, not on this pattern, so tighten it when a
+            # deployment wants identity constrained by the pattern as well.
+            auth: '{{hub (dig "auth" "mtls:CN=([^,]+)" $agentCfg) hub}}'
+            logLevel: {{hub (dig "logLevel" "info" $agentCfg) hub}}
+            namespace:
+              # Wildcard by default because the principal mirrors into a namespace per connected
+              # cluster and those names are not known ahead of time. Narrow it where the set is
+              # known. enableNamespaceCreate drives the principal's namespace CREATE permission, so
+              # turning it off lets that verb be dropped from its ClusterRole as well.
+              allowedNamespaces:
+                {{hub- range (dig "principalNamespaces" (list "*") $agentCfg) hub}}
+                - '{{hub . hub}}'
+                {{hub- end hub}}
+              enableNamespaceCreate: {{hub (dig "enableNamespaceCreate" true $agentCfg) hub}}
+            server:
+              route:
+                enabled: true
+            tls:
+              insecureGenerate: false
+              secretName: gitops-agent-principal-tls
+              rootCASecretName: gitops-agent-ca
+            jwt:
+              insecureGenerate: false
+              secretName: gitops-agent-jwt
+            resourceProxy:
+              secretName: gitops-agent-resource-proxy-tls
+              caSecretName: gitops-agent-ca
+
+  # The team's AppProject. The principal only propagates AppProjects whose destinations and source
+  # namespaces match the agent configuration, and it skips propagation SILENTLY when they do not,
+  # so a team whose applications never appear should be checked here first.
+  #
+  # Scoped, not wildcarded. A team deploys into namespaces carrying its own name as a prefix, which
+  # is the normal posture for an application team and matches how the rest of team GitOps is
+  # treated. Override destinationNamespaces to widen it; nothing here grants cluster-scoped
+  # resources, because clusterResourceWhitelist is deliberately absent.
+  {{hub- $destNs := (dig "destinationNamespaces" (list (printf "%s-*" $team)) $agentCfg) hub}}
+  # mustonlyhave, NOT musthave. Argo CD ships a `default` project wildcarded to
+  # destinations '*' and clusterResourceWhitelist '*'. musthave MERGES lists and never removes a
+  # field, so a scoped destination would be APPENDED to the wildcard and the restriction would be
+  # decorative. mustonlyhave replaces the spec outright, which is the only way to actually narrow a
+  # project that already exists.
+  - complianceType: mustonlyhave
+    objectDefinition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: default
+        namespace: {{hub $agentNs hub}}
+      spec:
+        # Every templated value here is QUOTED. A bare '*' is a YAML alias indicator and breaks
+        # the whole object-templates-raw parse, taking the entire policy down with it, not just
+        # this object. sourceRepos defaults to '*', so this is not hypothetical.
+        sourceNamespaces:
+          {{hub- range $srcNs hub}}
+          - '{{hub . hub}}'
+          {{hub- end hub}}
+        sourceRepos:
+          {{hub- range (dig "sourceRepos" (list "*") $agentCfg) hub}}
+          - '{{hub . hub}}'
+          {{hub- end hub}}
+        destinations:
+          {{hub- range $destNs hub}}
+          - namespace: '{{hub . hub}}'
+            server: '*'
+          {{hub- end hub}}
+        # Empty by default, which denies every cluster-scoped resource. A team that genuinely needs
+        # to create its own Namespaces or custom resources widens this deliberately rather than
+        # inheriting the ability.
+        {{hub- $clusterRes := (dig "clusterResources" (list) $agentCfg) hub}}
+        {{hub- if $clusterRes hub}}
+        clusterResourceWhitelist:
+          {{hub- range $clusterRes hub}}
+          - group: '{{hub (dig "group" "" .) hub}}'
+            kind: '{{hub (dig "kind" "" .) hub}}'
+          {{hub- end hub}}
+        {{hub- end hub}}
+  # One client certificate per cluster that has opted into THIS team's agent. Enumerated from the
+  # managed clusters carrying gitops-dev-team-<team>: 'agent', so adding a cluster to a team is a
+  # label change and the certificate follows. The common name is what the principal's auth pattern
+  # matches, and it is namespaced by cluster and team so no two agents share an identity.
+  {{hub- range $mcName := $enrolled hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: {{hub printf "%s-%s-client" $mcName $team hub}}
+        namespace: {{hub $agentNs hub}}
+      spec:
+        secretName: {{hub printf "%s-%s-client-tls" $mcName $team hub}}
+        commonName: {{hub printf "%s-%s" $mcName $team hub}}
+        duration: {{hub $leafDur hub}}
+        renewBefore: {{hub $leafRenew hub}}
+        # All three, and not 'client auth' alone. cert-manager treats usages as a REPLACEMENT for
+        # its defaults rather than an addition, so naming only the extended usage produces a
+        # certificate with no X509v3 Key Usage extension at all. TLS needs digitalSignature to
+        # complete a handshake, and the agent fails at startup without ever reaching the principal,
+        # which makes it look like a connectivity problem rather than a certificate one.
+        usages:
+          - digital signature
+          - key encipherment
+          - client auth
+        issuerRef:
+          name: gitops-agent-ca
+          kind: Issuer
+          group: cert-manager.io
+  # A second client certificate, for the HUB's Argo CD to authenticate to the principal's resource
+  # proxy. It is not the agent's certificate and is not sent to the spoke: the hub uses it to reach
+  # live resources on the managed cluster THROUGH the proxy.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: {{hub printf "%s-%s-proxy" $mcName $team hub}}
+        namespace: {{hub $agentNs hub}}
+      spec:
+        secretName: {{hub printf "%s-%s-proxy-tls" $mcName $team hub}}
+        commonName: {{hub printf "%s-%s" $mcName $team hub}}
+        duration: {{hub $leafDur hub}}
+        renewBefore: {{hub $leafRenew hub}}
+        usages:
+          - digital signature
+          - key encipherment
+          - client auth
+        issuerRef:
+          name: gitops-agent-ca
+          kind: Issuer
+          group: cert-manager.io
+  # One namespace per agent on the hub, named EXACTLY for the agent. Red Hat documents this as a
+  # prerequisite: "you must create one namespace for each Agent... the namespace names must match
+  # the Agent names". In managed mode the principal only sends applications created in this
+  # namespace; in autonomous mode it mirrors the spoke's applications into it.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: {{hub printf "%s-%s" $mcName $team hub}}
+        labels:
+          openshift.io/cluster-monitoring: 'true'
+  # THE AGENT-TO-CLUSTER MAPPING. Without it the principal authenticates the agent and then logs
+  # "Agent <name> is not mapped to any cluster", and no Application can flow in EITHER direction.
+  # Red Hat Advanced Cluster Management creates this automatically for its own add-on; a principal
+  # outside the add-on has to create its own.
+  #
+  # `server` is NOT the managed cluster's API endpoint. The hub reaches the workload cluster
+  # THROUGH the principal's resource proxy, selecting the agent by query parameter, and the
+  # certificate above is what authenticates it to that proxy.
+  #
+  # skip-reconcile is the hybrid-architecture annotation: it tells the local application controller
+  # not to reconcile Applications aimed at this destination, so the agent owns them instead and the
+  # two do not fight.
+  {{hub- $agentName := printf "%s-%s" $mcName $team hub}}
+  {{hub- $proxySvc := printf "%s-resource-proxy.%s.svc" $pSvc $agentNs hub}}
+  # Same guard as the JSON web token key above: the proxy certificate is created by this very
+  # policy, so its secret does not exist on the first pass. lookup waits; fromSecret would deadlock.
+  {{hub- $caSec := (lookup "v1" "Secret" $agentNs "gitops-agent-ca") | default dict hub}}
+  {{hub- $pxSec := (lookup "v1" "Secret" $agentNs (printf "%s-%s-proxy-tls" $mcName $team)) | default dict hub}}
+  {{hub- $pxCrt := (dig "data" "tls.crt" "" $pxSec) hub}}
+  {{hub- $pxKey := (dig "data" "tls.key" "" $pxSec) hub}}
+  {{hub- if and (ne $pxCrt "") (ne $pxKey "") hub}}
+  {{hub- $tlsCfg := dict "insecure" false "caData" (dig "data" "tls.crt" "" $caSec) "certData" $pxCrt "keyData" $pxKey hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      type: Opaque
+      metadata:
+        name: {{hub printf "cluster-%s" $agentName hub}}
+        namespace: {{hub $agentNs hub}}
+        labels:
+          argocd.argoproj.io/secret-type: cluster
+          argocd-agent.argoproj-labs.io/agent-name: '{{hub $agentName hub}}'
+        annotations:
+          argocd.argoproj.io/skip-reconcile: 'true'
+          managed-by: argocd-agent
+      data:
+        name: {{hub $agentName | b64enc hub}}
+        server: {{hub printf "https://%s:%s?agentName=%s" $proxySvc (dig "resourceProxyPort" "9090" $agentCfg) $agentName | b64enc hub}}
+        config: {{hub dict "tlsClientConfig" $tlsCfg | toJson | b64enc hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}
+  {{hub- end hub}}

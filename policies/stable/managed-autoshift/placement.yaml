@@ -8,8 +8,13 @@ spec:
   # self-managed must be 'false'. That label marks the hub THIS AutoShift instance runs on, which
   # already has its own top-level Application; this policy bootstraps AutoShift onto the other
   # hubs the deployment governs.
-  # Every predicate uses `In` rather than `NotIn`: NotIn also matches clusters where the label
-  # is absent, which would select hubs that never opted in.
+  # The opt-in predicates use `In` rather than `NotIn`: NotIn also matches clusters where the
+  # label is absent, which would select hubs that never opted in.
+  #
+  # gitops-infra is the exception and uses NotIn deliberately. In agent-managed mode the hub above
+  # owns this hub's Application resources through the principal, so writing one here as well would
+  # give the same object two writers. Excluding that one mode leaves every other mode, and every
+  # hub with no gitops-infra label at all, selected exactly as before.
   predicates:
     - requiredClusterSelector:
         labelSelector:
@@ -30,6 +35,10 @@ spec:
               operator: In
               values:
                 - 'false'
+            - key: 'autoshift.io/gitops-infra'
+              operator: NotIn
+              values:
+                - 'agent-managed'
   tolerations:
     - key: cluster.open-cluster-management.io/unreachable
       operator: Exists

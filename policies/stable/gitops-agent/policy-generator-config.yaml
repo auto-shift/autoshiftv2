@@ -1,0 +1,147 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: gitops-agent
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP BEFORE `kustomize build`
+# runs. They live here and in placement.yaml, never in manifests/, whose hub templates contain
+# `$vars` that substitution would clobber.
+#
+# The Argo CD agent, for every team AND for infra. A team carries its mode on
+# gitops-dev-team-<team>; infra carries it on gitops-infra and reads config.gitops.infra. Both drive
+# the same machinery, which is why this is one chart rather than two.
+#
+# Separate from gitops-dev deliberately: that chart builds per-team Argo CD instances, this one
+# builds agents. Naming these policies after gitops-dev made infra's principal read as a dev-team
+# object, which is what it is not.
+# NOTE: each policy below has its OWN placement file, even where two placements are identical in
+# content. Sharing one placement between two policies forces placementBindingDefaults.name, and a
+# single default name then collides as soon as a SECOND placement is shared. One placement per
+# policy keeps the generated PlacementBinding names unique without that knob.
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: high
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  placement:
+    placementPath: placement-agent-spoke.yaml
+policies:
+  - name: policy-gitops-agent-hub
+    placement:
+      placementPath: placement-agent-hub.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    dependencies:
+      - name: policy-gitops-dev
+    manifests:
+      - path: agent-hub
+    # Rendering nothing is a legitimate result, not a failure: a hub that has the policy placed but
+    # no team with an enrolled cluster has nothing to create. An empty ConfigurationPolicy reports
+    # Compliant with no detail, which reads as ambiguous rather than as "there was nothing to do",
+    # so say so in the message instead of manufacturing a violation.
+    customMessage:
+      compliant: >-
+        Argo CD agent hub objects match. A team contributes objects only once a cluster carries
+        that team's gitops-dev-team-<team> label with an agent value, and infra only once a cluster
+        carries gitops-infra with one, so Compliant with nothing to show means nothing is enrolled
+        yet rather than a failure.
+  # inform: the hub half is actually serving. Asserts the principal namespace unconditionally, so a
+  # Compliant result always means a real check ran rather than an empty render.
+  - name: policy-gitops-agent-hub-ready
+    placement:
+      placementPath: placement-agent-hub-ready.yaml
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: test/agent-hub-ready.yaml
+  # SPOKE half. Depends on nothing: its inputs are guarded in-template, so it converges on its own
+  # once the hub half has produced the credentials rather than being held Pending.
+  - name: policy-gitops-agent-spoke
+    placement:
+      placementPath: placement-agent-spoke.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: agent-spoke
+    customMessage:
+      compliant: >-
+        Argo CD agent spoke objects match. Objects come only from a team whose
+        gitops-dev-team-<team> label on this cluster carries an agent value, or from infra when
+        gitops-infra does, so Compliant with nothing to show means nothing runs an agent here yet
+        rather than a failure.
+  - name: policy-gitops-agent-spoke-ready
+    placement:
+      placementPath: placement-agent-spoke-ready.yaml
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: test/agent-spoke-ready.yaml
+  # ---- Teardown. Only 'uninstall' on a gitops-dev-team-<team> label removes anything ----
+  # The enforcing policy and its barrier point at the SAME manifest on purpose. The two lists have
+  # to be identical for the barrier to mean anything, and sharing the file is the only way to
+  # guarantee that. mustnothave under enforce reports Compliant when the delete CALL returns rather
+  # than when the object is gone, so the inform copy, which issues no call, is what truthfully says
+  # whether the teardown finished.
+  - name: policy-gitops-agent-spoke-remove
+    placement:
+      placementPath: placement-agent-spoke-remove.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: agent-spoke-remove
+    customMessage:
+      compliant: >-
+        Nothing on this cluster is set to uninstall, or the teardown of it has completed. This
+        policy removes an agent only when its mode label, gitops-dev-team-<team> or gitops-infra,
+        reads uninstall, so Compliant with nothing to show is the normal state rather than a
+        failure.
+  - name: policy-gitops-agent-spoke-removed
+    placement:
+      placementPath: placement-agent-spoke-removed.yaml
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: agent-spoke-remove
+    customMessage:
+      compliant: >-
+        Every spoke object of anything set to uninstall is confirmed gone.
+      noncompliant: >-
+        Something on this cluster is set to uninstall and some of its agent objects are still
+        present. Teardown has not finished, whatever policy-gitops-agent-spoke-remove reports.
+  - name: policy-gitops-agent-hub-remove
+    placement:
+      placementPath: placement-agent-hub-remove.yaml
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: agent-hub-remove
+    customMessage:
+      compliant: >-
+        No cluster and no team is set to uninstall, or the teardown of one has completed. A spoke
+        label set to uninstall removes that cluster's credentials and mapping; the same label set to
+        uninstall on this hub removes the principal entirely.
+  - name: policy-gitops-agent-hub-removed
+    placement:
+      placementPath: placement-agent-hub-removed.yaml
+    remediationAction: inform
+    hubTemplateOptions:
+      serviceAccountName: autoshift-policy-service-account
+    manifests:
+      - path: agent-hub-remove
+    customMessage:
+      compliant: >-
+        Every hub object of any cluster or team set to uninstall is confirmed gone.
+      noncompliant: >-
+        Something set to uninstall still has hub-side objects present. A credential or mapping that
+        outlives its agent keeps that agent able to connect, so treat this as unfinished teardown.
