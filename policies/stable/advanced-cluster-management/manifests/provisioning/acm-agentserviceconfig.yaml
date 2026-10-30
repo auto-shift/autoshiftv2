@@ -33,9 +33,10 @@ object-templates-raw: |
   {{hub- $caRef := (index $mirror "caRef" | default dict) hub}}
   {{hub- if not (empty $caRef) hub}}
   {{hub- $refNs := (index $caRef "namespace" | default $policyNs) hub}}
-  {{hub- $refCM := (lookup "v1" "ConfigMap" $refNs (index $caRef "name")) | default dict hub}}
-  {{hub- $refData := (index $refCM "data" | default dict) hub}}
-  {{hub- $mirrorCa = (index $refData (index $caRef "key") | default $mirrorCa) hub}}
+  {{hub- $mirrorCa = (fromConfigMap $refNs (index $caRef "name") (index $caRef "key")) hub}}
+  {{hub- if not $mirrorCa hub}}
+  {{hub- fail (printf "config.disconnected.mirrorRegistry.caRef: ConfigMap %s/%s has no key %s" $refNs (index $caRef "name") (index $caRef "key")) hub}}
+  {{hub- end hub}}
   {{hub- end hub}}
   {{hub- if (gt (len $mirrors) 0) hub}}
   - complianceType: musthave
@@ -63,8 +64,10 @@ object-templates-raw: |
             [[registry.mirror]]
               location = "{{hub $mirrorLoc hub}}"
           {{hub- end hub}}
+        {{hub- if $mirrorCa hub}}
         ca-bundle.crt: |
           {{hub $mirrorCa | autoindent hub}}
+        {{hub- end hub}}
   {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
