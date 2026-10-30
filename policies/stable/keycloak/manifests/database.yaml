@@ -7,8 +7,7 @@
 #                    sourced from the hub tssc-keycloak-config secret, key db-password).
 #   external       — provision nothing; the Keycloak CR points at an external DB (see instance.yaml).
 object-templates-raw: |
-  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $db := (index (index $cfg "keycloak" | default dict) "db" | default dict) hub}}
   {{hub- $mode := (index $db "mode" | default "cnpg") hub}}
   {{hub- $cluster := (index $db "clusterName" | default "keycloak-pgsql") hub}}
@@ -100,7 +99,7 @@ object-templates-raw: |
       type: Opaque
       data:
         username: '{{hub index $db "user" | default "keycloak" | b64enc hub}}'
-        password: '{{hub fromSecret .PolicyMetadata.namespace "tssc-keycloak-config" "db-password" | b64enc hub}}'
+        password: '{{hub fromSecret .PolicyMetadata.namespace "tssc-keycloak-config" "db-password" hub}}'
         database: '{{hub "keycloak" | b64enc hub}}'
   - complianceType: musthave
     objectDefinition:

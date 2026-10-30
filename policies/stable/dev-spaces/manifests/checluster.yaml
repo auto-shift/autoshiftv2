@@ -2,8 +2,7 @@
 # config.devSpaces (rendered-config). RHDH surfaces "Open in Dev Spaces" automatically via the
 # topology plugin once this CheCluster + its Route exist — no RHDH app-config change is needed.
 object-templates-raw: |
-  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $ds := (index $cfg "devSpaces" | default dict) hub}}
   {{hub- $sc := (index $ds "storageClass" | default "") hub}}
   {{hub- $pvcStrategy := (index $ds "pvcStrategy" | default "per-workspace") hub}}

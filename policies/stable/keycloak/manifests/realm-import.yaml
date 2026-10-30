@@ -2,8 +2,7 @@
 # (spoke-side) from the Secrets realm-secrets.yaml propagated to the managed cluster; each client is
 # included only when its component label is set. Redirect URIs are built from the cluster apps domain.
 object-templates-raw: |
-  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $ns := "keycloak-system" hub}}
   {{hub- $realm := (index (index $cfg "keycloak" | default dict) "realmName" | default "tssc-iam") hub}}
   {{hub- $tasEnabled := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
@@ -14,15 +13,25 @@ object-templates-raw: |
   # ArgoCD Keycloak SSO is opt-in: enabled only when the admin seeded argocd-client-secret in tssc-keycloak-config.
   {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
   {{hub- $argocdSsoEnabled := ne (index $kcData "argocd-client-secret" | default "") "" hub}}
-  {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
-  {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
-  {{- $appsDomain := printf "apps.%s" $baseDomain }}
+  {{- $appsDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{- $tasSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "trusted-artifact-signer-clients" | default dict).data | default dict }}
   {{- $tpaSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "tpa-realm-clients" | default dict).data | default dict }}
   {{- $rhdhSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "rhdh-realm-clients" | default dict).data | default dict }}
   {{- $quaySecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "quay-realm-clients" | default dict).data | default dict }}
   {{- $gitlabSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "gitlab-realm-clients" | default dict).data | default dict }}
   {{- $argocdSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "argocd-realm-clients" | default dict).data | default dict }}
+  {{- /* The import is one-shot: Keycloak keeps whatever secret a client is first created with. So
+       every enabled client's secret must be present before the import is written at all. */}}
+  {{- $missing := list }}
+  {{hub- if $tasEnabled hub}}{{- if not (index $tasSecret "trustedArtifactSigner") }}{{- $missing = append $missing "trusted-artifact-signer-clients" }}{{- end }}{{hub- end hub}}
+  {{hub- if $tpaEnabled hub}}{{- if not (and (index $tpaSecret "cli") (index $tpaSecret "frontend")) }}{{- $missing = append $missing "tpa-realm-clients" }}{{- end }}{{hub- end hub}}
+  {{hub- if $rhdhEnabled hub}}{{- if not (index $rhdhSecret "rhdh") }}{{- $missing = append $missing "rhdh-realm-clients" }}{{- end }}{{hub- end hub}}
+  {{hub- if $quayEnabled hub}}{{- if not (index $quaySecret "quay") }}{{- $missing = append $missing "quay-realm-clients" }}{{- end }}{{hub- end hub}}
+  {{hub- if $gitlabEnabled hub}}{{- if not (index $gitlabSecret "gitlab") }}{{- $missing = append $missing "gitlab-realm-clients" }}{{- end }}{{hub- end hub}}
+  {{hub- if $argocdSsoEnabled hub}}{{- if not (index $argocdSecret "argocd") }}{{- $missing = append $missing "argocd-realm-clients" }}{{- end }}{{hub- end hub}}
+  {{- if $missing }}
+  {{-   fail (printf "The realm import waits for its client secrets. Missing in {{hub $ns hub}}, from policy-keycloak-realm-secrets: %s" (join ", " $missing)) }}
+  {{- end }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: k8s.keycloak.org/v2alpha1
@@ -149,7 +158,7 @@ object-templates-raw: |
           {{hub- if $tasEnabled hub}}
             - clientId: trusted-artifact-signer
               clientAuthenticatorType: client-secret
-              secret: '{{ index $tasSecret "trustedArtifactSigner" | default "" | b64dec }}'
+              secret: '{{ index $tasSecret "trustedArtifactSigner" | b64dec }}'
               enabled: true
               name: trusted-artifact-signer
               description: Client for Red Hat Trusted Artifact Signer authentication
@@ -184,7 +193,7 @@ object-templates-raw: |
           {{hub- if $tpaEnabled hub}}
             - clientId: cli
               clientAuthenticatorType: client-secret
-              secret: '{{ index $tpaSecret "cli" | default "" | b64dec }}'
+              secret: '{{ index $tpaSecret "cli" | b64dec }}'
               enabled: true
               publicClient: false
               bearerOnly: false
@@ -207,7 +216,7 @@ object-templates-raw: |
                 post.logout.redirect.uris: +
             - clientId: frontend
               clientAuthenticatorType: client-secret
-              secret: '{{ index $tpaSecret "frontend" | default "" | b64dec }}'
+              secret: '{{ index $tpaSecret "frontend" | b64dec }}'
               enabled: true
               publicClient: true
               bearerOnly: false
@@ -239,7 +248,7 @@ object-templates-raw: |
           {{hub- if $rhdhEnabled hub}}
             - clientId: rhdh
               clientAuthenticatorType: client-secret
-              secret: '{{ index $rhdhSecret "rhdh" | default "" | b64dec }}'
+              secret: '{{ index $rhdhSecret "rhdh" | b64dec }}'
               enabled: true
               publicClient: false
               bearerOnly: false
@@ -270,7 +279,7 @@ object-templates-raw: |
             # Quay resolves the preferred_username claim from the profile scope.
             - clientId: quay
               clientAuthenticatorType: client-secret
-              secret: '{{ index $quaySecret "quay" | default "" | b64dec }}'
+              secret: '{{ index $quaySecret "quay" | b64dec }}'
               enabled: true
               publicClient: false
               standardFlowEnabled: true
@@ -291,7 +300,7 @@ object-templates-raw: |
             # uid_field preferred_username comes from the profile scope.
             - clientId: gitlab
               clientAuthenticatorType: client-secret
-              secret: '{{ index $gitlabSecret "gitlab" | default "" | b64dec }}'
+              secret: '{{ index $gitlabSecret "gitlab" | b64dec }}'
               enabled: true
               publicClient: false
               standardFlowEnabled: true
@@ -310,7 +319,7 @@ object-templates-raw: |
             # infra (openshift-gitops) and dev (openshift-gitops-dev) instances; groups scope drives ArgoCD RBAC.
             - clientId: argocd
               clientAuthenticatorType: client-secret
-              secret: '{{ index $argocdSecret "argocd" | default "" | b64dec }}'
+              secret: '{{ index $argocdSecret "argocd" | b64dec }}'
               enabled: true
               publicClient: false
               standardFlowEnabled: true

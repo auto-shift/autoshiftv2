@@ -6,9 +6,7 @@
 # policy is a no-op.
 object-templates-raw: |
   {{hub- $tasEnabled := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
-  {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
-  {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
-  {{- $appsDomain := printf "apps.%s" $baseDomain }}
+  {{- $appsDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{hub- if $tasEnabled hub}}
   - complianceType: musthave
     objectDefinition:

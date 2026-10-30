@@ -2,8 +2,7 @@
 # config.tpa.db.mode: cnpg (default, needs the cloudnative-pg operator), simple (rhel9 postgres
 # Deployment + PVC; password from the hub tssc-tpa-config secret, key db-password), external (none).
 object-templates-raw: |
-  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $db := (index (index $cfg "tpa" | default dict) "db" | default dict) hub}}
   {{hub- $mode := (index $db "mode" | default "cnpg") hub}}
   {{hub- $cluster := (index $db "clusterName" | default "tpa-pgsql") hub}}
@@ -95,7 +94,7 @@ object-templates-raw: |
       type: Opaque
       data:
         username: '{{hub index $db "user" | default "tpa" | b64enc hub}}'
-        password: '{{hub fromSecret .PolicyMetadata.namespace "tssc-tpa-config" "db-password" | b64enc hub}}'
+        password: '{{hub fromSecret .PolicyMetadata.namespace "tssc-tpa-config" "db-password" hub}}'
         database: '{{hub "tpa" | b64enc hub}}'
   - complianceType: musthave
     objectDefinition:

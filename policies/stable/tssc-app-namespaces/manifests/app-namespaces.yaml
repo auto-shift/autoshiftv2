@@ -1,24 +1,50 @@
-# Per-application pipeline namespaces + secret propagation, driven entirely by config.tssc-app-namespaces:
+# Per-application pipeline namespaces and secret propagation, driven by config.tssc-app-namespaces:
 #   config.tssc-app-namespaces.<team>.<app>: { environments: [ci, development, stage, prod],
-#                                        gitProvider: gitlab|github, gitHost: '' }
-# Each environment gets a {team}-{app}-{env} namespace (labeled argocd.argoproj.io/managed-by), the
-# tssc-image-registry-auth pull secret, and a pipeline ServiceAccount. The -ci namespace additionally
-# receives the signing/attestation/integration secrets the RHADS pipelines consume (cosign public key,
-# ACS, TAS, TPA, ArgoCD, git). ArgoCD creds come from the infra instance (openshift-gitops).
+#                                              gitProvider: gitlab|github }
+# Each environment gets a <team>-<app>-<env> namespace managed by the Argo CD instance that
+# config.devHub.argocd.team names (infra-gitops when unset), the tssc-image-registry-auth pull secret
+# and a pipeline ServiceAccount. The ci namespace also receives the secrets the RHADS pipelines read:
+# the git credentials and Argo CD access always, and the cosign public key, TAS, TPA and ACS
+# integrations when their component label is on.
+#
+# Every source is required. A missing one fails the policy with the list of what is missing, rather
+# than writing empty values that report Compliant.
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $apps := (index $cfg "tssc-app-namespaces" | default dict) hub}}
-  {{- $pullData := (lookup "v1" "Secret" "openshift-config" "pull-secret" | default dict).data | default dict }}
-  {{- $dockerCfg := index $pullData ".dockerconfigjson" | default "" }}
-  {{- $cosignData := (lookup "v1" "Secret" "openshift-pipelines" "signing-secrets" | default dict).data | default dict }}
-  {{- $cosignPub := index $cosignData "cosign.pub" | default "" }}
-  {{- $acsData := (lookup "v1" "Secret" "stackrox" "tssc-acs-integration" | default dict).data | default dict }}
-  {{- $tasData := (lookup "v1" "Secret" "tssc-tas" "tssc-tas-integration" | default dict).data | default dict }}
-  {{- $tpaData := (lookup "v1" "Secret" "tssc-tpa" "tssc-tpa-integration" | default dict).data | default dict }}
-  {{- $argoRoute := (lookup "route.openshift.io/v1" "Route" "openshift-gitops" "infra-gitops-server" | default dict).spec | default dict }}
-  {{- $argoHost := index $argoRoute "host" | default "" }}
-  {{- $argoAdmin := (lookup "v1" "Secret" "openshift-gitops" "infra-gitops-cluster" | default dict).data | default dict }}
-  {{- $argoPass := index $argoAdmin "admin.password" | default "" }}
+  {{hub- if not $apps hub}}
+  {{hub- fail "config.tssc-app-namespaces declares no applications. Add one, or set the tssc-app-namespaces label to false" hub}}
+  {{hub- end hub}}
+  {{hub- $tasOn := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
+  {{hub- $tpaOn := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false") "true" hub}}
+  {{hub- $acsOn := eq (index .ManagedClusterLabels "autoshift.io/acs" | default "false") "true" hub}}
+  {{hub- $gitopsNs := (index .ManagedClusterLabels "autoshift.io/gitops-namespace" | default "openshift-gitops") hub}}
+  {{hub- $argoTeam := (dig "devHub" "argocd" "team" "" $cfg) hub}}
+  {{hub- $managedBy := $gitopsNs hub}}
+  {{hub- if $argoTeam hub}}
+  {{hub- $managedBy = (dig "gitops" "teams" $argoTeam "namespace" (printf "openshift-gitops-%s" $argoTeam) $cfg) hub}}
+  {{hub- end hub}}
+  {{- $missing := list }}
+  {{- $dockerCfg := index (((lookup "v1" "Secret" "openshift-config" "pull-secret") | default dict).data | default dict) ".dockerconfigjson" | default "" }}
+  {{- if not $dockerCfg }}{{- $missing = append $missing "Secret openshift-config/pull-secret" }}{{- end }}
+  {{- $argoHost := (dig "spec" "host" "" ((lookup "route.openshift.io/v1" "Route" "{{hub $gitopsNs hub}}" "infra-gitops-server") | default dict)) }}
+  {{- if not $argoHost }}{{- $missing = append $missing "Route {{hub $gitopsNs hub}}/infra-gitops-server (policy-gitops-systems-argocd)" }}{{- end }}
+  {{- $argoPass := index (((lookup "v1" "Secret" "{{hub $gitopsNs hub}}" "infra-gitops-cluster") | default dict).data | default dict) "admin.password" | default "" }}
+  {{- if not $argoPass }}{{- $missing = append $missing "Secret {{hub $gitopsNs hub}}/infra-gitops-cluster key admin.password" }}{{- end }}
+  {{hub- if $tasOn hub}}
+  {{- $cosignPub := index (((lookup "v1" "Secret" "openshift-pipelines" "signing-secrets") | default dict).data | default dict) "cosign.pub" | default "" }}
+  {{- if not $cosignPub }}{{- $missing = append $missing "Secret openshift-pipelines/signing-secrets key cosign.pub (policy-pipelines-tssc-config)" }}{{- end }}
+  {{- $tasData := ((lookup "v1" "Secret" "tssc-tas" "tssc-tas-integration") | default dict).data | default dict }}
+  {{- if not (index $tasData "rekor_url" | default "") }}{{- $missing = append $missing "Secret tssc-tas/tssc-tas-integration (policy-tas-securesign)" }}{{- end }}
+  {{hub- end hub}}
+  {{hub- if $tpaOn hub}}
+  {{- $tpaData := ((lookup "v1" "Secret" "tssc-tpa" "tssc-tpa-integration") | default dict).data | default dict }}
+  {{- if not (index $tpaData "bombastic_api_url" | default "") }}{{- $missing = append $missing "Secret tssc-tpa/tssc-tpa-integration (trusted-profile-analyzer)" }}{{- end }}
+  {{hub- end hub}}
+  {{hub- if $acsOn hub}}
+  {{- $acsData := ((lookup "v1" "Secret" "stackrox" "tssc-acs-integration") | default dict).data | default dict }}
+  {{- if not (index $acsData "token" | default "") }}{{- $missing = append $missing "Secret stackrox/tssc-acs-integration (advanced-cluster-security tssc integration Job)" }}{{- end }}
+  {{hub- end hub}}
   {{hub- range $team, $teamApps := $apps hub}}
   {{hub- range $app, $appCfg := $teamApps hub}}
   {{hub- $prefix := printf "%s-%s" $team $app hub}}
@@ -26,7 +52,11 @@ object-templates-raw: |
   {{hub- $gitProvider := (index $appCfg "gitProvider" | default "gitlab") hub}}
   {{hub- $gitNs := ternary "github-system" "gitlab-system" (eq $gitProvider "github") hub}}
   {{hub- $gitSecret := ternary "tssc-github-credentials" "tssc-gitlab-credentials" (eq $gitProvider "github") hub}}
-  {{- $gitData := (lookup "v1" "Secret" "{{hub $gitNs hub}}" "{{hub $gitSecret hub}}" | default dict).data | default dict }}
+  {{- $gitData := ((lookup "v1" "Secret" "{{hub $gitNs hub}}" "{{hub $gitSecret hub}}") | default dict).data | default dict }}
+  {{- if not (index $gitData "token" | default "") }}{{- $missing = append $missing "Secret {{hub $gitNs hub}}/{{hub $gitSecret hub}} key token" }}{{- end }}
+  {{- if $missing }}
+  {{-   fail (printf "The RHADS application namespaces are not created yet. Missing: %s" (join "; " $missing)) }}
+  {{- end }}
   {{hub- range $env := $envs hub}}
   {{hub- $ns := printf "%s-%s" $prefix $env hub}}
   - complianceType: musthave
@@ -36,7 +66,7 @@ object-templates-raw: |
       metadata:
         name: '{{hub $ns hub}}'
         labels:
-          argocd.argoproj.io/managed-by: openshift-gitops
+          argocd.argoproj.io/managed-by: '{{hub $managedBy hub}}'
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -57,6 +87,7 @@ object-templates-raw: |
       imagePullSecrets:
         - name: tssc-image-registry-auth
   {{hub- if eq $env "ci" hub}}
+  {{hub- if $tasOn hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -67,6 +98,8 @@ object-templates-raw: |
       type: Opaque
       data:
         cosign.pub: '{{ $cosignPub }}'
+  {{hub- end hub}}
+  {{hub- if $acsOn hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -76,8 +109,10 @@ object-templates-raw: |
         namespace: '{{hub $ns hub}}'
       type: Opaque
       data:
-        endpoint: '{{ index $acsData "endpoint" | default "" }}'
-        token: '{{ index $acsData "token" | default "" }}'
+        endpoint: '{{ index $acsData "endpoint" }}'
+        token: '{{ index $acsData "token" }}'
+  {{hub- end hub}}
+  {{hub- if $tasOn hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -87,8 +122,10 @@ object-templates-raw: |
         namespace: '{{hub $ns hub}}'
       type: Opaque
       data:
-        rekor_url: '{{ index $tasData "rekor_url" | default "" }}'
-        tuf_url: '{{ index $tasData "tuf_url" | default "" }}'
+        rekor_url: '{{ index $tasData "rekor_url" }}'
+        tuf_url: '{{ index $tasData "tuf_url" }}'
+  {{hub- end hub}}
+  {{hub- if $tpaOn hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -98,8 +135,9 @@ object-templates-raw: |
         namespace: '{{hub $ns hub}}'
       type: Opaque
       data:
-        bombastic_api_url: '{{ index $tpaData "bombastic_api_url" | default "" }}'
-        vexination_api_url: '{{ index $tpaData "vexination_api_url" | default "" }}'
+        bombastic_api_url: '{{ index $tpaData "bombastic_api_url" }}'
+        vexination_api_url: '{{ index $tpaData "vexination_api_url" }}'
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1

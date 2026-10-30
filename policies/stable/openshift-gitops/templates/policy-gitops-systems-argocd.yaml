@@ -192,7 +192,7 @@ spec:
             {{- /* ArgoCD Keycloak SSO (alongside OpenShift OAuth) — enabled only when argocd-realm-clients was
                    propagated (realm-secrets, gated on the admin-provided argocd-client-secret). Spoke-side. */}}
             {{ "{{" }} $argoSsoKey := (index ((lookup "v1" "Secret" "keycloak-system" "argocd-realm-clients" | default dict).data | default dict) "argocd" | default "") {{ "}}" }}
-            {{ "{{" }} $appsDomain := printf "apps.%s" (((lookup "config.openshift.io/v1" "DNS" "" "cluster") | default dict).spec | default dict).baseDomain {{ "}}" }}
+            {{ "{{" }} $appsDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "}}" }}
             - complianceType: musthave
               objectDefinition:
                 apiVersion: argoproj.io/v1beta1
@@ -297,7 +297,7 @@ spec:
                             id: keycloak
                             name: Keycloak
                             config:
-                              issuer: https://keycloak.{{ "{{" }} $appsDomain {{ "}}" }}/realms/tssc-iam
+                              issuer: https://keycloak.{{ "{{hub" }} (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain {{ "hub}}" }}/realms/tssc-iam
                               clientID: argocd
                               clientSecret: $dex.keycloak.clientSecret
                               redirectURI: https://{{ .Values.gitops.argoName }}-server-{{ "{{hub" }} $gitopsNamespace {{ "hub}}" }}.{{ "{{" }} $appsDomain {{ "}}" }}/api/dex/callback

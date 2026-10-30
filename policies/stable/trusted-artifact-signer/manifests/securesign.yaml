@@ -3,14 +3,11 @@
 # OIDC — the issuer is derived from cluster DNS so it matches the Keycloak Route. Org name from
 # config.tas.orgName; realm from config.keycloak.realmName.
 object-templates-raw: |
-  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $realm := (index (index $cfg "keycloak" | default dict) "realmName" | default "tssc-iam") hub}}
   {{hub- $orgName := (index (index $cfg "tas" | default dict) "orgName" | default "TSSC") hub}}
   {{hub- $ns := "tssc-tas" hub}}
-  {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
-  {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
-  {{- $appsDomain := printf "apps.%s" $baseDomain }}
+  {{- $appsDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{- $oidcIssuer := printf "https://keycloak.%s/realms/{{hub $realm hub}}" $appsDomain }}
   - complianceType: musthave
     objectDefinition:
@@ -33,7 +30,7 @@ object-templates-raw: |
             enabled: true
           certificate:
             commonName: 'fulcio.{{ $appsDomain }}'
-            organizationEmail: 'tas@{{ $baseDomain }}'
+            organizationEmail: 'tas@{{ $appsDomain }}'
             organizationName: '{{hub $orgName hub}}'
           config:
             OIDCIssuers:

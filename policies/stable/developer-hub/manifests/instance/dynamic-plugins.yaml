@@ -2,8 +2,7 @@
 # Topology, TechDocs, RBAC, Keycloak catalog) are always included; ArgoCD, GitLab, and GitHub plugins
 # are gated on config.devHub.scm / the gitops-dev label.
 object-templates-raw: |
-  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $scm := (index (index $cfg "devHub" | default dict) "scm" | default dict) hub}}
   {{hub- $ghEnabled := (index $scm "github" | default false) hub}}
   {{hub- $glEnabled := (index $scm "gitlab" | default false) hub}}

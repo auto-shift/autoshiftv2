@@ -2,10 +2,12 @@ object-templates-raw: |
   {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{- $ns := "gitlab-system" }}
 
-  # Keycloak OIDC (omniauth) is wired only when the admin seeded gitlab-client-secret in the hub
-  # tssc-keycloak-config secret (i.e. Keycloak is set up); otherwise GitLab keeps local-only login.
+  # Keycloak OIDC (omniauth) is opt-in: wired only when the admin seeded gitlab-client-secret in the hub
+  # tssc-keycloak-config Secret; otherwise GitLab keeps local-only login. The hub only tests for the
+  # key. The value is read on the cluster from keycloak-system/gitlab-realm-clients, which
+  # policy-keycloak-realm-secrets delivers encrypted, so it never sits in the policy in plain text.
   {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
-  {{hub- $gitlabOidcSecret := (index $kcData "gitlab-client-secret" | default "") hub}}
+  {{hub- $gitlabOidcOn := ne (index $kcData "gitlab-client-secret" | default "") "" hub}}
 
   # Service modes: managed (default) or external
   {{- $dbMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" hub}}" }}
@@ -122,6 +124,13 @@ object-templates-raw: |
   {{- if not $objStoreReady }}
   {{-   $missing = append $missing (ternary "ConfigMap gitlab-system/gitlab-objectstorage, from the NooBaa bucket claim (policy-gitlab-object-storage; needs odf: 'true' and a Ready NooBaa)" "ConfigMap gitlab-system/gitlab-objectstorage, which you create for gitlab-object-storage-mode external" (eq $objStoreMode "managed")) }}
   {{- end }}
+  {{hub- if $gitlabOidcOn hub}}
+  {{- $gitlabRealmClients := ((lookup "v1" "Secret" "keycloak-system" "gitlab-realm-clients") | default dict).data | default dict }}
+  {{- $gitlabOidcSecret := (index $gitlabRealmClients "gitlab" | default "" | base64dec) }}
+  {{- if not $gitlabOidcSecret }}
+  {{-   $missing = append $missing "Secret keycloak-system/gitlab-realm-clients key gitlab (policy-keycloak-realm-secrets; needs keycloak: 'true')" }}
+  {{- end }}
+  {{hub- end hub}}
   {{- if $missing }}
   {{-   fail (printf "GitLab is not created yet. Missing: %s" (join "; " $missing)) }}
   {{- end }}
@@ -169,9 +178,9 @@ object-templates-raw: |
         postgresql-password: {{ $dbPass }}
         postgresql-postgres-password: {{ $dbPass }}
   {{- end }}
-  {{hub- if $gitlabOidcSecret hub}}
+  {{hub- if $gitlabOidcOn hub}}
   # OmniAuth OpenID Connect provider config consumed by global.appConfig.omniauth on the GitLab CR.
-  # The client secret is resolved (hub-side) from tssc-keycloak-config and the gitlab realm client.
+  # The client secret is read on the cluster from keycloak-system/gitlab-realm-clients.
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -199,7 +208,7 @@ object-templates-raw: |
             send_scope_to_token_endpoint: true
             client_options:
               identifier: gitlab
-              secret: {{hub $gitlabOidcSecret | b64dec hub}}
+              secret: {{ $gitlabOidcSecret }}
               redirect_uri: https://gitlab.{{ $ingressDomain }}/users/auth/openid_connect/callback
   {{hub- end hub}}
   - complianceType: musthave
@@ -299,7 +308,7 @@ object-templates-raw: |
           {{- end }}
           {{- if ne $objStoreMode "bundled" }}
               appConfig:
-          {{hub- if $gitlabOidcSecret hub}}
+          {{hub- if $gitlabOidcOn hub}}
                 # Keycloak SSO. autoLinkUser links an existing account by verified email; new SSO users are
                 # auto-provisioned. quayadmin-style local login stays available as break-glass.
                 omniauth:

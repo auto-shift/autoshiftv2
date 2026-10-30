@@ -2,8 +2,7 @@
 # integrations (acs/tpa/tas) are gated on their operator labels. ${VAR} references are populated by
 # the tssc-developer-hub-env Secret (env-secret.yaml).
 object-templates-raw: |
-  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $dh := (index $cfg "devHub" | default dict) hub}}
   {{hub- $scm := (index $dh "scm" | default dict) hub}}
   {{hub- $title := (index $dh "title" | default "Red Hat Developer Hub") hub}}

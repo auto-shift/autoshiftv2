@@ -9,8 +9,7 @@
 #   simple -> <cluster> service, <cluster> secret (database.yaml-generated)
 #   external -> config.keycloak.db.external.{host,secret,name}
 object-templates-raw: |
-  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $kc := (index $cfg "keycloak" | default dict) hub}}
   {{hub- $db := (index $kc "db" | default dict) hub}}
   {{hub- $mode := (index $db "mode" | default "cnpg") hub}}
@@ -18,6 +17,7 @@ object-templates-raw: |
   {{hub- $ext := (index $db "external" | default dict) hub}}
   {{hub- $tlsIssuer := (index $kc "tlsIssuer" | default "autoshift-ca") hub}}
   {{hub- $ns := "keycloak-system" hub}}
+  {{hub- if not (has $mode (list "cnpg" "simple" "external")) hub}}{{hub fail (printf "config.keycloak.db.mode: %s is not cnpg, simple or external" $mode) hub}}{{hub- end hub}}
   {{hub- $dbHost := printf "%s-pooler-rw.%s.svc" $cluster $ns hub}}
   {{hub- $dbSecret := printf "%s-app" $cluster hub}}
   {{hub- $dbName := "keycloak" hub}}
@@ -26,12 +26,12 @@ object-templates-raw: |
   {{hub- $dbSecret = $cluster hub}}
   {{hub- else if eq $mode "external" hub}}
   {{hub- $dbHost = (index $ext "host" | default "") hub}}
+  {{hub- if not $dbHost hub}}{{hub fail "config.keycloak.db.mode external needs config.keycloak.db.external.host" hub}}{{hub- end hub}}
   {{hub- $dbSecret = (index $ext "secret" | default "keycloak-db") hub}}
   {{hub- $dbName = (index $ext "name" | default "keycloak") hub}}
   {{hub- end hub}}
-  {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
-  {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
-  {{- $hostname := printf "keycloak.apps.%s" $baseDomain }}
+  {{- $appsDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
+  {{- $hostname := printf "keycloak.%s" $appsDomain }}
   {{hub- if ne $tlsIssuer "" hub}}
   - complianceType: musthave
     objectDefinition:
