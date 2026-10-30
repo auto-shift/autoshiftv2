@@ -1,0 +1,187 @@
+# Creates a GitLab group, the projects in it, and a Pipelines as Code webhook on one of them. The
+# webhook secret is generated once and kept in autoshift-ci, where the Pipelines as Code Repository
+# reads it. Every step checks before it creates, so the task is safe to run again.
+#
+# Authenticates with the PAT that policy-autoshift-cicd-endpoints copies into autoshift-ci from
+# gitlab-system/tssc-gitlab-credentials.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: gitlab-bootstrap
+  namespace: autoshift-ci
+spec:
+  description: Create a GitLab group, its projects and the Pipelines as Code webhook.
+  params:
+    - name: cliImage
+      type: string
+      description: Image with oc and python3. The Pipeline passes the cluster's openshift/cli image.
+    - name: gitlabUrl
+      type: string
+      default: ''
+      description: GitLab base URL. Empty reads gitlabUrl from the autoshift-ci-endpoints ConfigMap.
+    - name: group
+      type: string
+      default: autoshift
+    - name: projects
+      type: array
+      default:
+        - autoshift
+        - site-config
+    - name: webhookProject
+      type: string
+      default: autoshift
+      description: Project that gets the Pipelines as Code webhook. Empty skips the webhook.
+    - name: pacUrl
+      type: string
+      default: ''
+      description: Pipelines as Code controller URL. Empty reads pacUrl from autoshift-ci-endpoints.
+    - name: tokenSecret
+      type: string
+      default: gitlab-autoshift-token
+      description: Secret in autoshift-ci holding a GitLab token with api scope under key token.
+    - name: webhookSecret
+      type: string
+      default: autoshift-pac-webhook
+      description: Secret in autoshift-ci that keeps the generated webhook secret.
+    - name: tlsVerify
+      type: string
+      default: 'true'
+  results:
+    - name: gitlabUrl
+      description: The GitLab base URL that was used.
+  volumes:
+    - name: trusted-ca
+      configMap:
+        name: autoshift-ci-trusted-ca
+        optional: true
+    - name: autoshift-ci-ca
+      configMap:
+        name: autoshift-ci-ca
+        optional: true
+  steps:
+    - name: bootstrap
+      image: $(params.cliImage)
+      volumeMounts:
+        - name: trusted-ca
+          mountPath: /etc/autoshift-ci/trusted-ca
+        - name: autoshift-ci-ca
+          mountPath: /etc/autoshift-ci/ca
+      args:
+        - $(params.projects[*])
+      env:
+        - name: GITLAB_URL
+          value: $(params.gitlabUrl)
+        - name: GROUP
+          value: $(params.group)
+        - name: WEBHOOK_PROJECT
+          value: $(params.webhookProject)
+        - name: PAC_URL
+          value: $(params.pacUrl)
+        - name: TOKEN_SECRET
+          value: $(params.tokenSecret)
+        - name: WEBHOOK_SECRET
+          value: $(params.webhookSecret)
+        - name: TLS_VERIFY
+          value: $(params.tlsVerify)
+        - name: RESULT_GITLAB_URL
+          value: $(results.gitlabUrl.path)
+      script: |
+        #!/usr/bin/env python3
+        import base64, glob, json, os, secrets, ssl, subprocess, sys, urllib.error, urllib.parse, urllib.request
+        def die(msg):
+            print("ERROR: " + msg, file=sys.stderr)
+            sys.exit(1)
+        def oc(*args, stdin=None, check=True):
+            p = subprocess.run(["oc", *args], input=stdin, capture_output=True, text=True)
+            if check and p.returncode != 0:
+                die("oc " + " ".join(args) + ": " + p.stderr.strip())
+            return p
+        def secret_data(name):
+            p = oc("get", "secret", name, "-o", "json", check=False)
+            if p.returncode != 0:
+                return None
+            return dict((k, base64.b64decode(v).decode()) for k, v in json.loads(p.stdout).get("data", {}).items())
+        def endpoint(key):
+            return oc("get", "configmap", "autoshift-ci-endpoints", "-o", "jsonpath={.data." + key + "}", check=False).stdout.strip()
+        ctx = ssl.create_default_context()
+        for pem in glob.glob("/etc/autoshift-ci/trusted-ca/*") + glob.glob("/etc/autoshift-ci/ca/*"):
+            try:
+                ctx.load_verify_locations(cafile=pem)
+            except (ssl.SSLError, OSError):
+                pass
+        verify = os.environ["TLS_VERIFY"] == "true"
+        if not verify:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        base = (os.environ["GITLAB_URL"] or endpoint("gitlabUrl")).rstrip("/")
+        if not base:
+            die("no GitLab URL: set the gitlabUrl parameter, or turn on the gitlab label so autoshift-ci-endpoints carries it")
+        creds = secret_data(os.environ["TOKEN_SECRET"])
+        if not creds or not creds.get("token"):
+            die("Secret autoshift-ci/%s with key token not found" % os.environ["TOKEN_SECRET"])
+        token = creds["token"]
+        def api(method, path, body=None):
+            req = urllib.request.Request(base + "/api/v4" + path, method=method, data=None if body is None else json.dumps(body).encode())
+            req.add_header("Content-Type", "application/json")
+            req.add_header("PRIVATE-TOKEN", token)
+            try:
+                with urllib.request.urlopen(req, context=ctx, timeout=60) as r:
+                    raw = r.read()
+                    return r.status, (json.loads(raw) if raw else {})
+            except urllib.error.HTTPError as e:
+                raw = e.read()
+                try:
+                    return e.code, json.loads(raw)
+                except ValueError:
+                    return e.code, {"raw": raw.decode(errors="replace")}
+        enc = lambda p: urllib.parse.quote(p, safe="")
+        group = os.environ["GROUP"]
+        status, g = api("GET", "/groups/" + enc(group))
+        if status != 200:
+            status, g = api("POST", "/groups", dict(name=group, path=group, visibility="private"))
+            if status not in (200, 201):
+                die("creating group %s failed (%s): %s" % (group, status, g))
+            print("Created group %s" % group)
+        else:
+            print("Group %s exists" % group)
+        projects = dict()
+        for name in sys.argv[1:]:
+            full = group + "/" + name
+            status, p = api("GET", "/projects/" + enc(full))
+            if status != 200:
+                status, p = api("POST", "/projects", dict(name=name, path=name, namespace_id=g["id"], visibility="private"))
+                if status not in (200, 201):
+                    die("creating project %s failed (%s): %s" % (full, status, p))
+                print("Created project %s" % full)
+            else:
+                print("Project %s exists" % full)
+            projects[name] = p
+        hook_project = os.environ["WEBHOOK_PROJECT"]
+        if hook_project:
+            if hook_project not in projects:
+                die("webhookProject %s is not one of the projects %s" % (hook_project, sorted(projects)))
+            pac = (os.environ["PAC_URL"] or endpoint("pacUrl")).rstrip("/")
+            if not pac:
+                die("no Pipelines as Code URL: set the pacUrl parameter, or check the pipelines-as-code-controller Route")
+            stored = secret_data(os.environ["WEBHOOK_SECRET"])
+            if stored and stored.get("webhook.secret"):
+                hook_secret = stored["webhook.secret"]
+            else:
+                hook_secret = secrets.token_hex(24)
+                obj = dict(apiVersion="v1", kind="Secret", type="Opaque", metadata=dict(name=os.environ["WEBHOOK_SECRET"], labels={"app.kubernetes.io/managed-by": "autoshift-bootstrap"}), stringData={"webhook.secret": hook_secret, "provider.token": token})
+                oc("apply", "-f", "-", stdin=json.dumps(obj))
+                print("Generated the webhook secret in autoshift-ci/%s" % os.environ["WEBHOOK_SECRET"])
+            pid = projects[hook_project]["id"]
+            hook = dict(url=pac, token=hook_secret, push_events=True, tag_push_events=True, merge_requests_events=True, note_events=True, enable_ssl_verification=verify)
+            status, hooks = api("GET", "/projects/%s/hooks" % pid)
+            existing = [h for h in (hooks if status == 200 else []) if h.get("url") == pac]
+            if existing:
+                status, out = api("PUT", "/projects/%s/hooks/%s" % (pid, existing[0]["id"]), hook)
+                action = "Updated"
+            else:
+                status, out = api("POST", "/projects/%s/hooks" % pid, hook)
+                action = "Created"
+            if status not in (200, 201):
+                die("webhook on %s/%s failed (%s): %s" % (group, hook_project, status, out))
+            print("%s the Pipelines as Code webhook on %s/%s" % (action, group, hook_project))
+        open(os.environ["RESULT_GITLAB_URL"], "w").write(base)

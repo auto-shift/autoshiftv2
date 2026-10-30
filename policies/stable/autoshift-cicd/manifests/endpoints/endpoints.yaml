@@ -1,0 +1,71 @@
+# What the bootstrap tasks read, gathered on the cluster so the tasks never look outside
+# autoshift-ci:
+#   autoshift-ci-endpoints  the Pipelines as Code URL, and the Quay host and GitLab URL while their
+#                           labels are on
+#   autoshift-ci-ca         the ingress CA, and autoshift-ca when cert-manager has issued it, so the
+#                           tasks verify TLS against routes signed by either
+#   gitlab-autoshift-token  the GitLab PAT from gitlab-system/tssc-gitlab-credentials, while gitlab is on
+# An enabled component whose endpoint is missing fails the policy with the list, rather than writing
+# an empty value the tasks would only trip over later.
+object-templates-raw: |
+  {{hub- $quayOn := eq (index .ManagedClusterLabels "autoshift.io/quay" | default "false") "true" hub}}
+  {{hub- $gitlabOn := eq (index .ManagedClusterLabels "autoshift.io/gitlab" | default "false") "true" hub}}
+  {{- $missing := list }}
+  {{- $pacHost := (dig "spec" "host" "" ((lookup "route.openshift.io/v1" "Route" "openshift-pipelines" "pipelines-as-code-controller") | default dict)) }}
+  {{- if not $pacHost }}{{- $missing = append $missing "Route openshift-pipelines/pipelines-as-code-controller (the Pipelines Operator)" }}{{- end }}
+  {{- $ingressCA := (index (((lookup "v1" "ConfigMap" "openshift-config-managed" "default-ingress-cert") | default dict).data | default dict) "ca-bundle.crt" | default "") }}
+  {{- if not $ingressCA }}{{- $missing = append $missing "ConfigMap openshift-config-managed/default-ingress-cert" }}{{- end }}
+  {{- $autoshiftCA := (index (((lookup "v1" "Secret" "cert-manager" "autoshift-ca") | default dict).data | default dict) "tls.crt" | default "" | base64dec) }}
+  {{hub- if $quayOn hub}}
+  {{- $quayHost := (dig "spec" "host" "" ((lookup "route.openshift.io/v1" "Route" "quay-enterprise" "registry-quay") | default dict)) }}
+  {{- if not $quayHost }}{{- $missing = append $missing "Route quay-enterprise/registry-quay (policy-quay-deploy)" }}{{- end }}
+  {{hub- end hub}}
+  {{hub- if $gitlabOn hub}}
+  {{- $glData := ((lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials") | default dict).data | default dict }}
+  {{- if not (and (index $glData "host") (index $glData "token")) }}{{- $missing = append $missing "Secret gitlab-system/tssc-gitlab-credentials with host and token (the gitlab create-gitlab-token Job; needs dev-hub: 'true')" }}{{- end }}
+  {{hub- end hub}}
+  {{- if $missing }}
+  {{-   fail (printf "The AutoShift CI endpoints are not available yet. Missing: %s" (join "; " $missing)) }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: autoshift-ci-endpoints
+        namespace: autoshift-ci
+      data:
+        pacUrl: 'https://{{ $pacHost }}'
+        {{hub- if $quayOn hub}}
+        quayHost: '{{ $quayHost }}'
+        {{hub- end hub}}
+        {{hub- if $gitlabOn hub}}
+        gitlabUrl: 'https://{{ index $glData "host" | base64dec }}'
+        {{hub- end hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: autoshift-ci-ca
+        namespace: autoshift-ci
+      data:
+        ingress-ca.crt: |
+          {{ $ingressCA | autoindent }}
+        {{- if $autoshiftCA }}
+        autoshift-ca.crt: |
+          {{ $autoshiftCA | autoindent }}
+        {{- end }}
+  {{hub- if $gitlabOn hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gitlab-autoshift-token
+        namespace: autoshift-ci
+      type: Opaque
+      data:
+        host: '{{ index $glData "host" }}'
+        token: '{{ index $glData "token" }}'
+  {{hub- end hub}}

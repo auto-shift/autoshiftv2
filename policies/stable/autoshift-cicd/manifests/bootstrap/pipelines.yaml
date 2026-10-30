@@ -1,0 +1,227 @@
+# The bootstrap Pipelines. AutoShift only delivers them; start one from the console or with
+# tkn pipeline start -n autoshift-ci, overriding any parameter. Defaults come from
+# config.autoshift-cicd, and the images are resolved on the cluster:
+#   cliImage  config.images.cli, else the openshift/cli ImageStream, a digest against the release
+#             payload that follows the cluster's image mirrors (the same rule as AutoShift's Jobs)
+#   gitImage  the image of the git-clone Task the Pipelines Operator installed, so it is the
+#             mirrored git-init image that matches the installed Pipelines version
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $cicd := (index $cfg "autoshift-cicd" | default dict) hub}}
+  {{hub- $upstreamRepo := (index $cicd "upstreamRepo" | default "https://github.com/auto-shift/autoshiftv2.git") hub}}
+  {{hub- $upstreamRef := (index $cicd "upstreamRef" | default "main") hub}}
+  {{hub- $group := (index $cicd "gitlabGroup" | default "autoshift") hub}}
+  {{hub- $org := (index $cicd "quayOrg" | default "autoshift") hub}}
+  {{- $cliImage := "{{hub (index (index $cfg "images" | default dict) "cli" | default "") hub}}" }}
+  {{- if not $cliImage }}
+  {{-   $isCli := (lookup "image.openshift.io/v1" "ImageStream" "openshift" "cli") | default dict }}
+  {{-   range $t := (dig "spec" "tags" (list) $isCli) }}
+  {{-     if eq (index $t "name" | default "") "latest" }}{{- $cliImage = (dig "from" "name" "" $t) }}{{- end }}
+  {{-   end }}
+  {{- end }}
+  {{- $gitImage := "" }}
+  {{- range $s := (dig "spec" "steps" (list) ((lookup "tekton.dev/v1" "Task" "openshift-pipelines" "git-clone") | default dict)) }}
+  {{-   if not $gitImage }}{{- $gitImage = (index $s "image" | default "") }}{{- end }}
+  {{- end }}
+  {{- $missing := list }}
+  {{- if not $cliImage }}{{- $missing = append $missing "ImageStream openshift/cli tag latest (or set config.images.cli)" }}{{- end }}
+  {{- if not $gitImage }}{{- $missing = append $missing "Task openshift-pipelines/git-clone (installed by the Pipelines Operator)" }}{{- end }}
+  {{- if $missing }}
+  {{-   fail (printf "The bootstrap Pipelines cannot resolve their images. Missing: %s" (join "; " $missing)) }}
+  {{- end }}
+  {{- $gitlabHost := (index (((lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials") | default dict).data | default dict) "host" | default "" | base64dec) }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: tekton.dev/v1
+      kind: Pipeline
+      metadata:
+        name: bootstrap-quay
+        namespace: autoshift-ci
+      spec:
+        description: >-
+          Create the Quay organization AutoShift publishes to, a CI robot that can create and push
+          repositories in it, and the robot's push Secret in autoshift-ci.
+        params:
+          - name: org
+            type: string
+            default: '{{hub $org hub}}'
+          - name: robot
+            type: string
+            default: ci
+          - name: quayHost
+            type: string
+            default: ''
+            description: Empty uses the registry-quay Route.
+          - name: adminTokenSecret
+            type: string
+            default: quay-admin-token
+            description: Secret in autoshift-ci with a Quay superuser OAuth token under key token.
+          - name: initialize
+            type: string
+            default: 'false'
+            description: true creates the first Quay user instead; needs config.quay.bootstrap.userInitialize.
+          - name: adminUser
+            type: string
+            default: quayadmin
+          - name: adminEmail
+            type: string
+            default: quayadmin@example.com
+          - name: orgEmail
+            type: string
+            default: ''
+          - name: tlsVerify
+            type: string
+            default: 'true'
+        tasks:
+          - name: quay-bootstrap
+            taskRef:
+              name: quay-bootstrap
+            params:
+              - name: cliImage
+                value: '{{ $cliImage }}'
+              - name: org
+                value: $(params.org)
+              - name: robot
+                value: $(params.robot)
+              - name: quayHost
+                value: $(params.quayHost)
+              - name: adminTokenSecret
+                value: $(params.adminTokenSecret)
+              - name: initialize
+                value: $(params.initialize)
+              - name: adminUser
+                value: $(params.adminUser)
+              - name: adminEmail
+                value: $(params.adminEmail)
+              - name: orgEmail
+                value: $(params.orgEmail)
+              - name: tlsVerify
+                value: $(params.tlsVerify)
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: tekton.dev/v1
+      kind: Pipeline
+      metadata:
+        name: bootstrap-gitlab
+        namespace: autoshift-ci
+      spec:
+        description: >-
+          Create the GitLab group with the autoshift and site-config projects and the Pipelines as
+          Code webhook, push the upstream AutoShift branches into autoshift, and seed site-config
+          from the AutoShift values once.
+        params:
+          - name: group
+            type: string
+            default: '{{hub $group hub}}'
+          - name: upstreamUrl
+            type: string
+            default: '{{hub $upstreamRepo hub}}'
+          - name: upstreamRefs
+            type: string
+            default: '{{hub $upstreamRef hub}}'
+            description: Space-separated branches to push into the autoshift project, or *.
+          - name: siteConfigRef
+            type: string
+            default: '{{hub $upstreamRef hub}}'
+            description: Upstream ref whose autoshift/values seeds an empty site-config.
+          - name: gitlabUrl
+            type: string
+            default: ''
+            description: Empty uses the host in gitlab-system/tssc-gitlab-credentials.
+          - name: tlsVerify
+            type: string
+            default: 'true'
+        tasks:
+          - name: gitlab-bootstrap
+            taskRef:
+              name: gitlab-bootstrap
+            params:
+              - name: cliImage
+                value: '{{ $cliImage }}'
+              - name: gitlabUrl
+                value: $(params.gitlabUrl)
+              - name: group
+                value: $(params.group)
+              - name: tlsVerify
+                value: $(params.tlsVerify)
+          - name: sync-autoshift
+            runAfter:
+              - gitlab-bootstrap
+            taskRef:
+              name: git-sync
+            params:
+              - name: gitImage
+                value: '{{ $gitImage }}'
+              - name: sourceUrl
+                value: $(params.upstreamUrl)
+              - name: refs
+                value: $(params.upstreamRefs)
+              - name: targetUrl
+                value: $(tasks.gitlab-bootstrap.results.gitlabUrl)/$(params.group)/autoshift.git
+              - name: tlsVerify
+                value: $(params.tlsVerify)
+          - name: seed-site-config
+            runAfter:
+              - gitlab-bootstrap
+            taskRef:
+              name: seed-site-config
+            params:
+              - name: gitImage
+                value: '{{ $gitImage }}'
+              - name: sourceUrl
+                value: $(params.upstreamUrl)
+              - name: sourceRef
+                value: $(params.siteConfigRef)
+              - name: targetUrl
+                value: $(tasks.gitlab-bootstrap.results.gitlabUrl)/$(params.group)/site-config.git
+              - name: tlsVerify
+                value: $(params.tlsVerify)
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: tekton.dev/v1
+      kind: Pipeline
+      metadata:
+        name: sync-upstream
+        namespace: autoshift-ci
+      spec:
+        description: >-
+          Push branches and tags from the upstream AutoShift repository into the GitLab autoshift
+          project. Does not force unless asked, so a branch changed in GitLab is reported, not lost.
+        params:
+          - name: upstreamUrl
+            type: string
+            default: '{{hub $upstreamRepo hub}}'
+          - name: refs
+            type: string
+            default: '{{hub $upstreamRef hub}}'
+          - name: tags
+            type: string
+            default: 'true'
+          - name: force
+            type: string
+            default: 'false'
+          - name: targetUrl
+            type: string
+            default: '{{ ternary (printf "https://%s/{{hub $group hub}}/autoshift.git" $gitlabHost) "" (ne $gitlabHost "") }}'
+          - name: tlsVerify
+            type: string
+            default: 'true'
+        tasks:
+          - name: sync
+            taskRef:
+              name: git-sync
+            params:
+              - name: gitImage
+                value: '{{ $gitImage }}'
+              - name: sourceUrl
+                value: $(params.upstreamUrl)
+              - name: refs
+                value: $(params.refs)
+              - name: tags
+                value: $(params.tags)
+              - name: force
+                value: $(params.force)
+              - name: targetUrl
+                value: $(params.targetUrl)
+              - name: tlsVerify
+                value: $(params.tlsVerify)

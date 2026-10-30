@@ -1,0 +1,93 @@
+# Seeds an empty site-config repository with the AutoShift values from a source ref, plus an empty
+# deployments/ directory that the autoshift-deployments ApplicationSet reads. A repository that
+# already has any branch is left alone, so this runs once and never overwrites site edits.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: seed-site-config
+  namespace: autoshift-ci
+spec:
+  description: Seed an empty site-config repository from the AutoShift values.
+  params:
+    - name: gitImage
+      type: string
+      description: Image with git and sh. The Pipeline passes the cluster's Pipelines git-init image.
+    - name: sourceUrl
+      type: string
+    - name: sourceRef
+      type: string
+      default: main
+    - name: sourcePath
+      type: string
+      default: autoshift/values
+    - name: targetUrl
+      type: string
+      description: HTTPS clone URL of the empty site-config project.
+    - name: tokenSecret
+      type: string
+      default: gitlab-autoshift-token
+    - name: tlsVerify
+      type: string
+      default: 'true'
+  volumes:
+    - name: token
+      secret:
+        secretName: $(params.tokenSecret)
+    - name: trusted-ca
+      configMap:
+        name: autoshift-ci-trusted-ca
+        optional: true
+    - name: autoshift-ci-ca
+      configMap:
+        name: autoshift-ci-ca
+        optional: true
+  steps:
+    - name: seed
+      image: $(params.gitImage)
+      volumeMounts:
+        - name: token
+          mountPath: /etc/autoshift-ci/token
+          readOnly: true
+        - name: trusted-ca
+          mountPath: /etc/autoshift-ci/trusted-ca
+        - name: autoshift-ci-ca
+          mountPath: /etc/autoshift-ci/ca
+      env:
+        - name: HOME
+          value: /tekton/home
+        - name: SOURCE_URL
+          value: $(params.sourceUrl)
+        - name: SOURCE_REF
+          value: $(params.sourceRef)
+        - name: SOURCE_PATH
+          value: $(params.sourcePath)
+        - name: TARGET_URL
+          value: $(params.targetUrl)
+        - name: TLS_VERIFY
+          value: $(params.tlsVerify)
+      script: |
+        #!/bin/sh
+        set -eu
+        cat /etc/autoshift-ci/trusted-ca/* /etc/autoshift-ci/ca/* > /tekton/home/ca.pem 2>/dev/null || true
+        git config --global http.sslCAInfo /tekton/home/ca.pem
+        [ "$TLS_VERIFY" = "true" ] || git config --global http.sslVerify false
+        git config --global user.name "AutoShift bootstrap"
+        git config --global user.email "autoshift-bootstrap@example.com"
+        auth=$(printf 'oauth2:%s' "$(cat /etc/autoshift-ci/token/token)" | base64 | tr -d '\n')
+        target() { git -c "http.extraHeader=Authorization: Basic ${auth}" "$@"; }
+        if [ -n "$(target ls-remote --heads "$TARGET_URL")" ]; then
+          echo "${TARGET_URL} already has branches; leaving it alone"
+          exit 0
+        fi
+        git clone --quiet --depth 1 --branch "$SOURCE_REF" "$SOURCE_URL" /tekton/home/source
+        [ -d "/tekton/home/source/${SOURCE_PATH}" ] || { echo "ERROR: ${SOURCE_PATH} not found at ${SOURCE_REF}" >&2; exit 1; }
+        mkdir -p /tekton/home/site/deployments
+        cp -R "/tekton/home/source/${SOURCE_PATH}/." /tekton/home/site/
+        rev=$(git -C /tekton/home/source rev-parse --short HEAD)
+        printf '%s\n' "# Deployments" "" "One YAML file per AutoShift deployment, read by the autoshift-deployments" "ApplicationSet. The CI pipelines write b-<branch> and r-<release> files here." > /tekton/home/site/deployments/README.md
+        cd /tekton/home/site
+        git init --quiet --initial-branch main
+        git add -A
+        git commit --quiet -m "Seed site-config from ${SOURCE_URL} ${SOURCE_REF} (${rev}) ${SOURCE_PATH}"
+        target push "$TARGET_URL" main
+        echo "Seeded ${TARGET_URL} from ${SOURCE_PATH} at ${SOURCE_REF} (${rev})"

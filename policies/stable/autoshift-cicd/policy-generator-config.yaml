@@ -1,0 +1,52 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: autoshift-cicd
+# AutoShift's own CI/CD on the RHADS stack. Placed on hubs with the autoshift-cicd label; settings in
+# config.autoshift-cicd.
+#
+# Per-deployment scalars (${...}) are substituted by the repo-server CMP before `kustomize build`
+# runs. They live here and in placement.yaml, never in manifests/, whose hub templates contain $vars.
+placementBindingDefaults:
+  name: binding-policy-autoshift-cicd
+policyDefaults:
+  namespace: ${POLICY_NAMESPACE}
+  # ${REMEDIATION} = inform when autoshift.dryRun, else enforce.
+  remediationAction: ${REMEDIATION}
+  severity: medium
+  # One ConfigurationPolicy per manifest, so a Pipeline that cannot resolve its images does not
+  # hold back the namespace and Tasks.
+  consolidateManifests: false
+  evaluationInterval:
+    compliant: ${EVAL_COMPLIANT}
+    noncompliant: ${EVAL_NONCOMPLIANT}
+  standards:
+    - NIST SP 800-53
+  categories:
+    - CM Configuration Management
+  controls:
+    - CM-2 Baseline Configuration
+  # Default Placement (placement.yaml at the dir root); policies with a different predicate set
+  # their own placement.placementPath. PG includes it and generates only the PlacementBinding.
+  placement:
+    placementPath: placement.yaml
+policies:
+  # The autoshift-ci namespace, the bootstrap Tasks and the bootstrap Pipelines. Nothing runs until
+  # someone starts a Pipeline.
+  - name: policy-autoshift-cicd-bootstrap
+    dependencies:
+      - name: policy-pipelines-operator-install
+    # The Pipelines manifest fails with the images it cannot resolve. Keep only that reason, not the
+    # template-error wrapper.
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
+    manifests:
+      - path: manifests/bootstrap
+  # Endpoints, trust bundle and GitLab token the Tasks read, gathered from the components.
+  - name: policy-autoshift-cicd-endpoints
+    dependencies:
+      - name: policy-autoshift-cicd-bootstrap
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
+    manifests:
+      - path: manifests/endpoints

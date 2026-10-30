@@ -1,0 +1,37 @@
+---
+# The git-clone Task the Pipelines Operator installs. policy-autoshift-cicd-bootstrap takes its step
+# image as the git image for the bootstrap Pipelines. Also registers the tekton.dev/v1 Task kind.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: git-clone
+  namespace: openshift-pipelines
+spec:
+  steps:
+    - name: prepare-and-run
+      image: registry.example.com/openshift-pipelines/pipelines-git-init-rhel9@sha256:0000000000000000000000000000000000000000000000000000000000000000
+---
+# The Pipelines as Code controller Route the Pipelines Operator creates. Read by
+# policy-autoshift-cicd-endpoints for the GitLab webhook URL.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: pipelines-as-code-controller
+  namespace: openshift-pipelines
+spec:
+  host: pipelines-as-code-controller-openshift-pipelines.apps.example.com
+  to:
+    kind: Service
+    name: pipelines-as-code-controller
+---
+# The ingress CA published by the ingress Operator. Fake certificate text, testing only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: default-ingress-cert
+  namespace: openshift-config-managed
+data:
+  ca-bundle.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIBFakeIngressCAForTestingOnly1234567890AbCdEfGhIjKlMnOpQrStUvWx
+    -----END CERTIFICATE-----

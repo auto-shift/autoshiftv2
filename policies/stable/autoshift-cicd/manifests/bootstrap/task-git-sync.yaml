@@ -1,0 +1,95 @@
+# Copies branches and tags from an upstream repository into a GitLab project. It does not force by
+# default, so a target branch that has moved on its own is reported rather than overwritten.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: git-sync
+  namespace: autoshift-ci
+spec:
+  description: Push branches and tags from an upstream Git repository to a GitLab project.
+  params:
+    - name: gitImage
+      type: string
+      description: Image with git and sh. The Pipeline passes the cluster's Pipelines git-init image.
+    - name: sourceUrl
+      type: string
+    - name: refs
+      type: string
+      default: main
+      description: Space-separated branch names, or * for every branch.
+    - name: tags
+      type: string
+      default: 'true'
+    - name: force
+      type: string
+      default: 'false'
+    - name: targetUrl
+      type: string
+      description: HTTPS clone URL of the GitLab project.
+    - name: tokenSecret
+      type: string
+      default: gitlab-autoshift-token
+    - name: tlsVerify
+      type: string
+      default: 'true'
+  volumes:
+    - name: token
+      secret:
+        secretName: $(params.tokenSecret)
+    - name: trusted-ca
+      configMap:
+        name: autoshift-ci-trusted-ca
+        optional: true
+    - name: autoshift-ci-ca
+      configMap:
+        name: autoshift-ci-ca
+        optional: true
+  steps:
+    - name: sync
+      image: $(params.gitImage)
+      volumeMounts:
+        - name: token
+          mountPath: /etc/autoshift-ci/token
+          readOnly: true
+        - name: trusted-ca
+          mountPath: /etc/autoshift-ci/trusted-ca
+        - name: autoshift-ci-ca
+          mountPath: /etc/autoshift-ci/ca
+      env:
+        - name: HOME
+          value: /tekton/home
+        - name: SOURCE_URL
+          value: $(params.sourceUrl)
+        - name: REFS
+          value: $(params.refs)
+        - name: TAGS
+          value: $(params.tags)
+        - name: FORCE
+          value: $(params.force)
+        - name: TARGET_URL
+          value: $(params.targetUrl)
+        - name: TLS_VERIFY
+          value: $(params.tlsVerify)
+      script: |
+        #!/bin/sh
+        set -eu
+        cat /etc/autoshift-ci/trusted-ca/* /etc/autoshift-ci/ca/* > /tekton/home/ca.pem 2>/dev/null || true
+        git config --global http.sslCAInfo /tekton/home/ca.pem
+        [ "$TLS_VERIFY" = "true" ] || git config --global http.sslVerify false
+        auth=$(printf 'oauth2:%s' "$(cat /etc/autoshift-ci/token/token)" | base64 | tr -d '\n')
+        target() { git -c "http.extraHeader=Authorization: Basic ${auth}" "$@"; }
+        git clone --bare --quiet "$SOURCE_URL" /tekton/home/source.git
+        cd /tekton/home/source.git
+        opt=""
+        [ "$FORCE" = "true" ] && opt="--force"
+        if [ "$REFS" = "*" ]; then
+          target push $opt "$TARGET_URL" 'refs/heads/*:refs/heads/*'
+        else
+          for ref in $REFS; do
+            target push $opt "$TARGET_URL" "refs/heads/${ref}:refs/heads/${ref}"
+          done
+        fi
+        if [ "$TAGS" = "true" ]; then
+          target push $opt "$TARGET_URL" 'refs/tags/*:refs/tags/*'
+        fi
+        echo "Synced ${REFS} (tags: ${TAGS}) from ${SOURCE_URL} to ${TARGET_URL}"

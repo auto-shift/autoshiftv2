@@ -1,0 +1,25 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-autoshift-cicd
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Hubs that opted in with the autoshift-cicd label. No spec.clusterSets: selects across all
+  # ManagedClusterSetBindings in this namespace.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/cluster-type'
+              operator: In
+              values:
+                - 'hub'
+            - key: 'autoshift.io/autoshift-cicd'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

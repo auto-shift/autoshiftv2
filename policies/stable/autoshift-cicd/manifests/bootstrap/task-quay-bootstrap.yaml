@@ -1,0 +1,219 @@
+# Creates a Quay organization, a robot account that can create and push repositories in it, and a
+# push Secret for that robot in autoshift-ci. Every step checks before it creates, so the task is
+# safe to run again.
+#
+# The admin token comes from one of two places:
+#   initialize false (default)  a Secret you create in autoshift-ci, key token
+#   initialize true             the one-time /api/v1/user/initialize call, which only works while
+#                               config.quay.bootstrap.userInitialize is on and Quay has no users.
+#                               The created admin is stored in the quay-admin Secret.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: quay-bootstrap
+  namespace: autoshift-ci
+spec:
+  description: Create a Quay organization, a CI robot account and its push Secret.
+  params:
+    - name: cliImage
+      type: string
+      description: Image with oc and python3. The Pipeline passes the cluster's openshift/cli image.
+    - name: quayHost
+      type: string
+      default: ''
+      description: Quay registry host. Empty reads quayHost from the autoshift-ci-endpoints ConfigMap.
+    - name: org
+      type: string
+      default: autoshift
+    - name: orgEmail
+      type: string
+      default: ''
+      description: Organization email, needed only when Quay requires one.
+    - name: robot
+      type: string
+      default: ci
+      description: Robot short name. The robot is <org>+<robot>.
+    - name: team
+      type: string
+      default: cicreators
+      description: Team with the creator role that the robot joins.
+    - name: pushSecret
+      type: string
+      default: ''
+      description: Name of the push Secret written in autoshift-ci. Empty means quay-<org>-<robot>.
+    - name: adminTokenSecret
+      type: string
+      default: quay-admin-token
+      description: Secret in autoshift-ci holding the admin OAuth token under key token.
+    - name: initialize
+      type: string
+      default: 'false'
+    - name: adminUser
+      type: string
+      default: quayadmin
+    - name: adminEmail
+      type: string
+      default: quayadmin@example.com
+    - name: tlsVerify
+      type: string
+      default: 'true'
+  results:
+    - name: robot
+      description: The robot account name.
+    - name: pushSecret
+      description: The push Secret written in autoshift-ci.
+  volumes:
+    - name: trusted-ca
+      configMap:
+        name: autoshift-ci-trusted-ca
+        optional: true
+    - name: autoshift-ci-ca
+      configMap:
+        name: autoshift-ci-ca
+        optional: true
+  steps:
+    - name: bootstrap
+      image: $(params.cliImage)
+      volumeMounts:
+        - name: trusted-ca
+          mountPath: /etc/autoshift-ci/trusted-ca
+        - name: autoshift-ci-ca
+          mountPath: /etc/autoshift-ci/ca
+      env:
+        - name: QUAY_HOST
+          value: $(params.quayHost)
+        - name: ORG
+          value: $(params.org)
+        - name: ORG_EMAIL
+          value: $(params.orgEmail)
+        - name: ROBOT
+          value: $(params.robot)
+        - name: TEAM
+          value: $(params.team)
+        - name: PUSH_SECRET
+          value: $(params.pushSecret)
+        - name: ADMIN_TOKEN_SECRET
+          value: $(params.adminTokenSecret)
+        - name: INITIALIZE
+          value: $(params.initialize)
+        - name: ADMIN_USER
+          value: $(params.adminUser)
+        - name: ADMIN_EMAIL
+          value: $(params.adminEmail)
+        - name: TLS_VERIFY
+          value: $(params.tlsVerify)
+        - name: RESULT_ROBOT
+          value: $(results.robot.path)
+        - name: RESULT_PUSH_SECRET
+          value: $(results.pushSecret.path)
+      script: |
+        #!/usr/bin/env python3
+        import base64, glob, json, os, secrets, ssl, string, subprocess, sys, urllib.error, urllib.parse, urllib.request
+        def die(msg):
+            print("ERROR: " + msg, file=sys.stderr)
+            sys.exit(1)
+        def oc(*args, stdin=None, check=True):
+            p = subprocess.run(["oc", *args], input=stdin, capture_output=True, text=True)
+            if check and p.returncode != 0:
+                die("oc " + " ".join(args) + ": " + p.stderr.strip())
+            return p
+        def secret_data(name):
+            p = oc("get", "secret", name, "-o", "json", check=False)
+            if p.returncode != 0:
+                return None
+            return dict((k, base64.b64decode(v).decode()) for k, v in json.loads(p.stdout).get("data", {}).items())
+        def apply_secret(name, data, stype="Opaque"):
+            obj = dict(apiVersion="v1", kind="Secret", type=stype, metadata=dict(name=name, labels={"app.kubernetes.io/managed-by": "autoshift-bootstrap"}), stringData=data)
+            oc("apply", "-f", "-", stdin=json.dumps(obj))
+        ctx = ssl.create_default_context()
+        for pem in glob.glob("/etc/autoshift-ci/trusted-ca/*") + glob.glob("/etc/autoshift-ci/ca/*"):
+            try:
+                ctx.load_verify_locations(cafile=pem)
+            except (ssl.SSLError, OSError):
+                pass
+        if os.environ["TLS_VERIFY"] != "true":
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        host = os.environ["QUAY_HOST"]
+        if not host:
+            host = oc("get", "configmap", "autoshift-ci-endpoints", "-o", "jsonpath={.data.quayHost}").stdout.strip()
+        if not host:
+            die("no Quay host: set the quayHost parameter, or turn on the quay label so autoshift-ci-endpoints carries it")
+        base = "https://" + host
+        def api(method, path, token=None, body=None):
+            req = urllib.request.Request(base + path, method=method, data=None if body is None else json.dumps(body).encode())
+            req.add_header("Content-Type", "application/json")
+            if token:
+                req.add_header("Authorization", "Bearer " + token)
+            try:
+                with urllib.request.urlopen(req, context=ctx, timeout=60) as r:
+                    raw = r.read()
+                    return r.status, (json.loads(raw) if raw else {})
+            except urllib.error.HTTPError as e:
+                raw = e.read()
+                try:
+                    return e.code, json.loads(raw)
+                except ValueError:
+                    return e.code, {"raw": raw.decode(errors="replace")}
+        org, robot_short, team = os.environ["ORG"], os.environ["ROBOT"], os.environ["TEAM"]
+        robot = org + "+" + robot_short
+        push_secret = os.environ["PUSH_SECRET"] or ("quay-" + org + "-" + robot_short)
+        # Admin token
+        if os.environ["INITIALIZE"] == "true":
+            admin = secret_data("quay-admin")
+            if admin and admin.get("token"):
+                token = admin["token"]
+                print("Using the admin stored in quay-admin by an earlier initialize")
+            else:
+                password = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
+                status, out = api("POST", "/api/v1/user/initialize", body=dict(username=os.environ["ADMIN_USER"], password=password, email=os.environ["ADMIN_EMAIL"], access_token=True))
+                if status != 200 or not out.get("access_token"):
+                    die("user initialize failed (%s): %s. It works only while config.quay.bootstrap.userInitialize and xhrOnly false are set and Quay has no users" % (status, out))
+                token = out["access_token"]
+                apply_secret("quay-admin", dict(username=os.environ["ADMIN_USER"], password=password, token=token))
+                print("Initialized Quay admin %s; credentials stored in the quay-admin Secret" % os.environ["ADMIN_USER"])
+        else:
+            data = secret_data(os.environ["ADMIN_TOKEN_SECRET"])
+            if not data or not data.get("token"):
+                die("Secret autoshift-ci/%s with key token not found. Create it from a Quay superuser OAuth token, or start the pipeline with initialize=true" % os.environ["ADMIN_TOKEN_SECRET"])
+            token = data["token"]
+        # Organization
+        status, out = api("GET", "/api/v1/organization/" + org, token)
+        if status == 200:
+            print("Organization %s exists" % org)
+        else:
+            body = dict(name=org)
+            if os.environ["ORG_EMAIL"]:
+                body["email"] = os.environ["ORG_EMAIL"]
+            status, out = api("POST", "/api/v1/organization/", token, body)
+            if status not in (200, 201):
+                die("creating organization %s failed (%s): %s" % (org, status, out))
+            print("Created organization %s" % org)
+        # Robot
+        rpath = "/api/v1/organization/%s/robots/%s" % (org, robot_short)
+        status, out = api("GET", rpath, token)
+        if status != 200:
+            status, out = api("PUT", rpath, token, dict(description="AutoShift CI push robot"))
+            if status not in (200, 201):
+                die("creating robot %s failed (%s): %s" % (robot, status, out))
+            print("Created robot %s" % robot)
+        else:
+            print("Robot %s exists" % robot)
+        robot_token = out.get("token")
+        if not robot_token:
+            die("Quay returned no token for robot %s" % robot)
+        # Team with the creator role, so the robot can create the repositories it pushes
+        status, out = api("PUT", "/api/v1/organization/%s/team/%s" % (org, team), token, dict(role="creator", description="AutoShift CI robots"))
+        if status not in (200, 201):
+            die("creating team %s failed (%s): %s" % (team, status, out))
+        status, out = api("PUT", "/api/v1/organization/%s/team/%s/members/%s" % (org, team, urllib.parse.quote(robot)), token, {})
+        if status not in (200, 201):
+            die("adding %s to team %s failed (%s): %s" % (robot, team, status, out))
+        print("Robot %s is a member of team %s (creator)" % (robot, team))
+        # Push Secret
+        auth = base64.b64encode((robot + ":" + robot_token).encode()).decode()
+        dockercfg = json.dumps(dict(auths={host: dict(auth=auth)}))
+        apply_secret(push_secret, {".dockerconfigjson": dockercfg, "username": robot, "password": robot_token, "registry": host}, "kubernetes.io/dockerconfigjson")
+        print("Wrote push Secret autoshift-ci/%s for %s" % (push_secret, robot))
+        open(os.environ["RESULT_ROBOT"], "w").write(robot)
+        open(os.environ["RESULT_PUSH_SECRET"], "w").write(push_secret)
