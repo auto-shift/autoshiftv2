@@ -1,0 +1,44 @@
+# Is the default NooBaa backing store the kind NooBaa intended, and Ready?
+#
+# On a cloud it can use, NooBaa creates a noobaa-<provider>-cloud-creds CredentialsRequest and backs
+# its default store with that cloud's object storage. When the request cannot be provisioned it falls
+# back to a PV pool and reports the store Ready: only the CredentialsRequest records the failure.
+# odf-noobaa-pvpool only sizes a PV-pool store's agent, so it is wrong on a cloud store, and a PV-pool
+# store without it keeps the 400Mi agent that is OOMKilled. Each mismatch fails with its fix.
+object-templates-raw: |
+  {{- $pvpool := "{{hub index .ManagedClusterLabels "autoshift.io/odf-noobaa-pvpool" | default "" hub}}" }}
+  {{- $store := lookup "noobaa.io/v1alpha1" "BackingStore" "openshift-storage" "noobaa-default-backing-store" }}
+  {{- if not (dig "metadata" "name" "" $store) }}
+  {{-   fail "NooBaa has not created noobaa-default-backing-store in openshift-storage yet" }}
+  {{- end }}
+  {{- $have := dig "spec" "type" "" $store }}
+  {{- $cloudCR := "" }}
+  {{- $why := "" }}
+  {{- range (lookup "cloudcredential.openshift.io/v1" "CredentialsRequest" "openshift-storage" "").items }}
+  {{-   if and (hasPrefix "noobaa-" .metadata.name) (hasSuffix "-cloud-creds" .metadata.name) }}
+  {{-     $cloudCR = .metadata.name }}
+  {{-     range (dig "status" "conditions" list .) }}
+  {{-       if and (eq .type "CredentialsProvisionFailure") (eq .status "True") }}{{- $why = printf ": %s" .message }}{{- end }}
+  {{-     end }}
+  {{-   end }}
+  {{- end }}
+  {{- if and $cloudCR (eq $have "pv-pool") }}
+  {{-   fail (printf "NooBaa requested cloud credentials (CredentialsRequest openshift-storage/%s%s) but fell back to a PV-pool default backing store. Restore the root cloud credential, or create a cloud backing store and make it the default" $cloudCR $why) }}
+  {{- end }}
+  {{- if and (eq $pvpool "true") (ne $have "pv-pool") }}
+  {{-   fail (printf "odf-noobaa-pvpool is 'true' but the default NooBaa backing store is %s, not a PV pool. Unset odf-noobaa-pvpool" $have) }}
+  {{- end }}
+  {{- if and (eq $have "pv-pool") (ne $pvpool "true") }}
+  {{-   fail "The default NooBaa backing store is a PV pool with the NooBaa default 400Mi agent, which is OOMKilled under load. Set odf-noobaa-pvpool: 'true'" }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: noobaa.io/v1alpha1
+      kind: BackingStore
+      metadata:
+        name: noobaa-default-backing-store
+        namespace: openshift-storage
+      spec:
+        type: {{ $have }}
+      status:
+        phase: Ready

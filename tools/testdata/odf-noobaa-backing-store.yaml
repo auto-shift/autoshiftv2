@@ -1,0 +1,30 @@
+# The default NooBaa backing store, as NooBaa creates it on AWS with working cloud credentials.
+# Read by policy-noobaa-backing-store-test, which fails until the store exists.
+apiVersion: noobaa.io/v1alpha1
+kind: BackingStore
+metadata:
+  name: noobaa-default-backing-store
+  namespace: openshift-storage
+spec:
+  awsS3:
+    secret:
+      name: noobaa-aws-cloud-creds-secret
+      namespace: openshift-storage
+    targetBucket: nb.test-cluster.example.com
+  type: aws-s3
+status:
+  phase: Ready
+---
+# NooBaa's CredentialsRequest on AWS, provisioned. policy-noobaa-backing-store-test reads it to tell a
+# cloud store from a PV-pool fallback.
+apiVersion: cloudcredential.openshift.io/v1
+kind: CredentialsRequest
+metadata:
+  name: noobaa-aws-cloud-creds
+  namespace: openshift-storage
+spec:
+  secretRef:
+    name: noobaa-aws-cloud-creds-secret
+    namespace: openshift-storage
+status:
+  provisioned: true

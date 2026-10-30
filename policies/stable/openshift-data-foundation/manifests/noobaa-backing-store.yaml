@@ -1,18 +1,22 @@
-apiVersion: noobaa.io/v1alpha1
-kind: BackingStore
-metadata:
-  name: noobaa-default-backing-store
-  namespace: openshift-storage
-spec:
-  pvPool:
-    numVolumes: '{{hub index .ManagedClusterLabels "autoshift.io/odf-noobaa-store-num-volumes" | default "1" hub}}'
-    resources:
-      limits:
-        cpu: 1000m
-        memory: 4000Mi
-      requests:
-        cpu: 500m
-        memory: 500Mi
-        storage: '{{hub index .ManagedClusterLabels "autoshift.io/odf-noobaa-store-size" | default "500Gi" hub}}'
-    secret: {}
-  type: pv-pool
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $odf := (index $config "odf" | default dict) hub}}
+  {{- /* config.odf.noobaaBackingStore.resources replaces these defaults wholesale; the 400Mi NooBaa default is OOMKilled */}}
+  {{hub- $defaults := dict "requests" (dict "cpu" "500m" "memory" "500Mi") "limits" (dict "cpu" "1000m" "memory" "4000Mi") hub}}
+  {{hub- $resources := (dig "noobaaBackingStore" "resources" $defaults $odf) hub}}
+  {{hub- $requests := merge (dict "storage" (index .ManagedClusterLabels "autoshift.io/odf-noobaa-store-size" | default "500Gi")) (index $resources "requests" | default dict) hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: noobaa.io/v1alpha1
+      kind: BackingStore
+      metadata:
+        name: noobaa-default-backing-store
+        namespace: openshift-storage
+      spec:
+        pvPool:
+          numVolumes: '{{hub index .ManagedClusterLabels "autoshift.io/odf-noobaa-store-num-volumes" | default "1" | toInt hub}}'
+          resources:
+            {{hub dict "limits" (index $resources "limits" | default dict) "requests" $requests | toYaml | autoindent hub}}
+          secret: {}
+        type: pv-pool
