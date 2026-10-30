@@ -2,6 +2,11 @@ object-templates-raw: |
   {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{- $ns := "gitlab-system" }}
 
+  # Keycloak OIDC (omniauth) is wired only when the admin seeded gitlab-client-secret in the hub
+  # tssc-keycloak-config secret (i.e. Keycloak is set up); otherwise GitLab keeps local-only login.
+  {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
+  {{hub- $gitlabOidcSecret := (index $kcData "gitlab-client-secret" | default "") hub}}
+
   # Service modes: managed (default) or external
   {{- $dbMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" hub}}" }}
   {{- $redisMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-redis-mode" | default "managed" hub}}" }}
@@ -55,6 +60,9 @@ object-templates-raw: |
   # Application backups (config.gitlab): gitlab-backup from the toolbox, into the GitLab bucket.
   {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $gitlabCfg := (index ((index ($rcm.data | default dict) "config" | default "" | fromYaml) | default dict) "gitlab" | default dict) hub}}
+  {{- /* config.gitlab.tlsIssuer: the cert-manager ClusterIssuer for the GitLab route certificates.
+       Empty means the Operator self-signs, which consumers such as RHDH, Tekton and Argo CD reject. */}}
+  {{hub- $tlsIssuer := (index $gitlabCfg "tlsIssuer" | default "autoshift-ca") hub}}
   {{- $backupSchedule := "{{hub index $gitlabCfg "backupSchedule" | default "0 3 * * *" hub}}" }}
   {{- $backupMaximum := "{{hub index $gitlabCfg "backupMaximum" | default 7 hub}}" }}
   {{- $backupScratchSize := "{{hub index $gitlabCfg "backupScratchSize" | default "50Gi" hub}}" }}
@@ -117,6 +125,37 @@ object-templates-raw: |
   {{- if $missing }}
   {{-   fail (printf "GitLab is not created yet. Missing: %s" (join "; " $missing)) }}
   {{- end }}
+
+  # Trusted cert for the GitLab routes (gitlab./registry./kas.). cert-manager issues it from the
+  # ClusterIssuer in config.gitlab.tlsIssuer; the operator serves it via global.ingress.tls.secretName
+  # below. Without this the operator self-signs, and RHDH/Tekton/ArgoCD reject the TLS as untrusted.
+  {{hub- if ne $tlsIssuer "" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: gitlab-provided-tls
+        namespace: {{ $ns }}
+      spec:
+        secretName: gitlab-provided-tls
+        dnsNames:
+          - gitlab.{{ $ingressDomain }}
+          - registry.{{ $ingressDomain }}
+          - kas.{{ $ingressDomain }}
+        # Short-lived serving cert, auto-rotated by cert-manager. FedRAMP High (SC-12/SC-13) mandates no
+        # fixed cadence — 30d is a defensible, stronger-than-required cryptoperiod. rotationPolicy: Always
+        # rotates the KEY each cycle; the signing CA is unchanged so no consumer's trust breaks.
+        duration: 720h0m0s          # 30d validity
+        renewBefore: 240h0m0s       # renew ~10d before expiry (rolls every ~20d)
+        privateKey:
+          algorithm: ECDSA
+          size: 384                 # P-384: FIPS 140-approved, higher-assurance curve for High
+          rotationPolicy: Always
+        issuerRef:
+          name: {{hub $tlsIssuer hub}}
+          kind: ClusterIssuer
+  {{hub- end hub}}
   {{- if ne $dbMode "bundled" }}
   - complianceType: musthave
     objectDefinition:
@@ -130,6 +169,39 @@ object-templates-raw: |
         postgresql-password: {{ $dbPass }}
         postgresql-postgres-password: {{ $dbPass }}
   {{- end }}
+  {{hub- if $gitlabOidcSecret hub}}
+  # OmniAuth OpenID Connect provider config consumed by global.appConfig.omniauth on the GitLab CR.
+  # The client secret is resolved (hub-side) from tssc-keycloak-config and the gitlab realm client.
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: gitlab-omniauth-openid-connect
+        namespace: {{ $ns }}
+      type: Opaque
+      stringData:
+        provider: |
+          name: openid_connect
+          label: Keycloak
+          args:
+            name: openid_connect
+            scope:
+              - openid
+              - profile
+              - email
+            response_type: code
+            issuer: https://keycloak.{{ $ingressDomain }}/realms/tssc-iam
+            discovery: true
+            client_auth_method: query
+            uid_field: preferred_username
+            pkce: true
+            send_scope_to_token_endpoint: true
+            client_options:
+              identifier: gitlab
+              secret: {{hub $gitlabOidcSecret | b64dec hub}}
+              redirect_uri: https://gitlab.{{ $ingressDomain }}/users/auth/openid_connect/callback
+  {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: apps.gitlab.com/v1beta1
@@ -171,7 +243,16 @@ object-templates-raw: |
                 enabled: false
                 installEnvoy: false
               ingress:
+                # enabled:true + class:none is the GitLab-on-OpenShift pattern: the operator turns the
+                # chart's Ingress objects into edge-terminated OpenShift Routes (default wildcard cert).
+                # Without enabled:true no Ingress is rendered, so the operator creates no Routes.
                 enabled: true
+                {{hub- if ne $tlsIssuer "" hub}}
+                # Serve the cert-manager-issued (trusted) cert instead of the operator's self-signed one.
+                tls:
+                  enabled: true
+                  secretName: gitlab-provided-tls
+                {{hub- end hub}}
                 annotations:
                   route.openshift.io/termination: edge
                 class: none
@@ -218,6 +299,20 @@ object-templates-raw: |
           {{- end }}
           {{- if ne $objStoreMode "bundled" }}
               appConfig:
+          {{hub- if $gitlabOidcSecret hub}}
+                # Keycloak SSO. autoLinkUser links an existing account by verified email; new SSO users are
+                # auto-provisioned. quayadmin-style local login stays available as break-glass.
+                omniauth:
+                  enabled: true
+                  allowSingleSignOn:
+                    - openid_connect
+                  autoLinkUser:
+                    - openid_connect
+                  blockAutoCreatedUsers: false
+                  providers:
+                    - secret: gitlab-omniauth-openid-connect
+                      key: provider
+          {{hub- end hub}}
                 object_store:
                   enabled: true
                   proxy_download: true

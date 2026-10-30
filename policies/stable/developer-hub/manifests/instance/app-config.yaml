@@ -1,0 +1,166 @@
+# Backstage app-config. SCM providers (github/gitlab) come from config.devHub.scm; the security
+# integrations (acs/tpa/tas) are gated on their operator labels. ${VAR} references are populated by
+# the tssc-developer-hub-env Secret (env-secret.yaml).
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $dh := (index $cfg "devHub" | default dict) hub}}
+  {{hub- $scm := (index $dh "scm" | default dict) hub}}
+  {{hub- $title := (index $dh "title" | default "Red Hat Developer Hub") hub}}
+  {{hub- $realm := (index (index $cfg "keycloak" | default dict) "realmName" | default "tssc-iam") hub}}
+  {{hub- $ghEnabled := (index $scm "github" | default false) hub}}
+  {{hub- $glEnabled := (index $scm "gitlab" | default false) hub}}
+  {{hub- $acsEnabled := eq (index .ManagedClusterLabels "autoshift.io/acs" | default "false") "true" hub}}
+  {{hub- $tpaEnabled := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false") "true" hub}}
+  {{hub- $tasEnabled := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
+  {{hub- $quayEnabled := eq (index .ManagedClusterLabels "autoshift.io/quay" | default "false") "true" hub}}
+  {{hub- $ns := "tssc-dh" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: tssc-developer-hub-app-config
+        namespace: '{{hub $ns hub}}'
+      data:
+        app-config.tssc.yaml: |
+          app:
+            title: '{{hub $title hub}}'
+            baseUrl: ${BACKEND_URL}
+          backend:
+            auth:
+              externalAccess:
+                - type: static
+                  options:
+                    token: ${BACKEND_SECRET}
+                    subject: legacy
+            baseUrl: ${BACKEND_URL}
+            cors:
+              origin: ${BACKEND_URL}
+          auth:
+            environment: production
+            # The OIDC sign-in (popup) flow needs backend session support, else login 500s with
+            # "authentication requires session support". Requires a stable session secret.
+            session:
+              secret: ${AUTH_SESSION_SECRET}
+            providers:
+              oidc:
+                production:
+                  metadataUrl: ${KEYCLOAK_URL}/realms/{{hub $realm hub}}/.well-known/openid-configuration
+                  clientId: ${KEYCLOAK_CLIENT_ID}
+                  clientSecret: ${KEYCLOAK_CLIENT_SECRET}
+                  # RHDH's oidc provider dropped 'scope' in favor of 'additionalScopes'. The realm's rhdh
+                  # client has a 'groups' client scope (realm-import.yaml) that emits the groups claim.
+                  additionalScopes: email profile groups
+                  prompt: auto
+                  signIn:
+                    resolvers:
+                      # Resolve the OIDC preferred_username to a catalog User entity (synced from Keycloak by
+                      # the keycloakOrg provider below). dangerouslyAllowSignInWithoutUserInCatalog is kept as
+                      # a safety net so sign-in still works during the sync's initial delay / if it's briefly
+                      # unavailable — access is already gated by Keycloak auth. Drop it for stricter posture.
+                      - resolver: preferredUsernameMatchingUserEntityName
+                        dangerouslyAllowSignInWithoutUserInCatalog: true
+          signInPage: oidc
+          {{hub- if $quayEnabled hub}}
+          proxy:
+            endpoints:
+              '/quay/api':
+                target: ${QUAY_URL}
+                changeOrigin: true
+                headers:
+                  X-Requested-With: 'XMLHttpRequest'
+                  Authorization: 'Bearer ${QUAY_API_TOKEN}'
+                secure: true
+          {{hub- end hub}}
+          catalog:
+            rules:
+              - allow: [Component, System, Group, Resource, Location, Template, API]
+            {{hub- if $glEnabled hub}}
+            # RHADS golden-path software templates, imported into the in-cluster GitLab
+            # (development/software-templates by policy-gitlab-import-templates). all.yaml is the
+            # Backstage Location index; relative targets resolve against this URL.
+            locations:
+              - type: url
+                target: https://${GITLAB_HOST}/development/software-templates/-/blob/main/all.yaml
+            {{hub- else hub}}
+            locations: []
+            {{hub- end hub}}
+            providers:
+              # Sync Keycloak users + groups into the catalog so sign-in resolves real User entities and
+              # group-based ownership/RBAC work. Uses the rhdh client's service account (needs realm-mgmt
+              # view/query-users + query-groups roles). Always on — RHDH always authenticates via Keycloak.
+              keycloakOrg:
+                default:
+                  baseUrl: ${KEYCLOAK_URL}
+                  loginRealm: ${KEYCLOAK_REALM}
+                  realm: ${KEYCLOAK_REALM}
+                  clientId: ${KEYCLOAK_CLIENT_ID}
+                  clientSecret: ${KEYCLOAK_CLIENT_SECRET}
+                  userQuerySize: 100
+                  groupQuerySize: 100
+                  schedule:
+                    frequency: { hours: 1 }
+                    timeout: { minutes: 3 }
+                    initialDelay: { seconds: 15 }
+              {{hub- if $glEnabled hub}}
+              gitlab:
+                default:
+                  host: ${GITLAB_HOST}
+                  branch: main
+                  fallbackBranch: master
+                  entityFilename: catalog-info.yaml
+                  projectPattern: '[\s\S]*'
+              {{hub- end hub}}
+              {{hub- if $ghEnabled hub}}
+              github:
+                default:
+                  organization: ${GITHUB_ORG}
+                  catalogPath: /catalog-info.yaml
+                  filters:
+                    branch: main
+              {{hub- end hub}}
+          argocd:
+            appLocatorMethods:
+              - type: config
+                instances:
+                    # Auth via username/password (admin + the argocd-*-cluster secret). No API token —
+                    # the argocd plugin's config reader rejects an empty-string 'token', which breaks the
+                    # scaffolder's argocd:create-resources step, so the token field is omitted entirely.
+                  - name: default
+                    url: https://${ARGOCD_HOSTNAME}
+                    username: ${ARGOCD_USER}
+                    password: ${ARGOCD_PASSWORD}
+          {{hub- if or $glEnabled $ghEnabled hub}}
+          integrations:
+            {{hub- if $glEnabled hub}}
+            gitlab:
+              - host: ${GITLAB_HOST}
+                token: ${GITLAB_TOKEN}
+                apiBaseUrl: https://${GITLAB_HOST}/api/v4
+                baseUrl: https://${GITLAB_HOST}
+            {{hub- end hub}}
+            {{hub- if $ghEnabled hub}}
+            github:
+              - host: ${GITHUB_HOST}
+                token: ${GITHUB_TOKEN}
+            {{hub- end hub}}
+          {{hub- end hub}}
+          {{hub- if $acsEnabled hub}}
+          acs:
+            endpoint: ${ACS_ENDPOINT}
+            token: ${ACS_API_TOKEN}
+          {{hub- end hub}}
+          {{hub- if $tpaEnabled hub}}
+          trustification:
+            bombasticApiUrl: ${TPA_BOMBASTIC_API_URL}
+            vexinationApiUrl: ${TPA_VEXINATION_API_URL}
+          {{hub- end hub}}
+          {{hub- if $tasEnabled hub}}
+          tas:
+            rekorUrl: ${REKOR_URL}
+          {{hub- end hub}}
+          {{hub- if $quayEnabled hub}}
+          quay:
+            uiUrl: ${QUAY_URL}
+          {{hub- end hub}}

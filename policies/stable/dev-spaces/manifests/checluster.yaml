@@ -1,0 +1,72 @@
+# OpenShift Dev Spaces instance (CheCluster) in openshift-devspaces. Config comes from
+# config.devSpaces (rendered-config). RHDH surfaces "Open in Dev Spaces" automatically via the
+# topology plugin once this CheCluster + its Route exist — no RHDH app-config change is needed.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $ds := (index $cfg "devSpaces" | default dict) hub}}
+  {{hub- $sc := (index $ds "storageClass" | default "") hub}}
+  {{hub- $pvcStrategy := (index $ds "pvcStrategy" | default "per-workspace") hub}}
+  {{hub- $editor := (index $ds "defaultEditor" | default "che-incubator/che-code/latest") hub}}
+  {{hub- $maxRunning := (index $ds "maxRunningWorkspacesPerUser" | default 3) hub}}
+  {{hub- $openVSX := (index $ds "openVSXURL" | default "https://open-vsx.org") hub}}
+  {{hub- $ns := "openshift-devspaces" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: '{{hub $ns hub}}'
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: org.eclipse.che/v2
+      kind: CheCluster
+      metadata:
+        name: devspaces
+        namespace: '{{hub $ns hub}}'
+      spec:
+        components:
+          cheServer:
+            debug: false
+            logLevel: INFO
+          dashboard:
+            logLevel: ERROR
+          devWorkspace: {}
+          devfileRegistry: {}
+          metrics:
+            enable: true
+          pluginRegistry:
+            openVSXURL: '{{hub $openVSX hub}}'
+        containerRegistry: {}
+        devEnvironments:
+          containerBuildConfiguration:
+            openShiftSecurityContextConstraint: container-build
+          defaultEditor: '{{hub $editor hub}}'
+          defaultNamespace:
+            autoProvision: true
+            template: <username>-devspaces
+          disableContainerRunCapabilities: true
+          maxNumberOfRunningWorkspacesPerUser: {{hub $maxRunning hub}}
+          maxNumberOfWorkspacesPerUser: -1
+          persistUserHome:
+            enabled: true
+          secondsOfInactivityBeforeIdling: -1
+          secondsOfRunBeforeIdling: -1
+          startTimeoutSeconds: 300
+          storage:
+            pvcStrategy: '{{hub $pvcStrategy hub}}'
+            {{hub- if ne $sc "" hub}}
+            {{hub- if eq $pvcStrategy "per-user" hub}}
+            perUserStrategyPvcConfig:
+              storageClass: '{{hub $sc hub}}'
+            {{hub- else hub}}
+            perWorkspaceStrategyPvcConfig:
+              storageClass: '{{hub $sc hub}}'
+            {{hub- end hub}}
+            {{hub- end hub}}
+        networking:
+          auth:
+            gateway:
+              configLabels:
+                app: che
+                component: che-gateway-config

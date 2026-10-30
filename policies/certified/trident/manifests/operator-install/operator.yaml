@@ -1,0 +1,19 @@
+apiVersion: policy.open-cluster-management.io/v1beta1
+kind: OperatorPolicy
+metadata:
+  name: install-operator-trident
+spec:
+  remediationAction: ${REMEDIATION}
+  severity: high
+  complianceType: musthave
+  operatorGroup:
+    name: trident-operator
+  subscription:
+    namespace: trident
+    channel: '{{hub index .ManagedClusterLabels "autoshift.io/trident-channel" | default "stable" hub}}'
+    name: '{{hub index .ManagedClusterLabels "autoshift.io/trident-name" | default "trident-operator" hub}}'
+    source: '{{hub index .ManagedClusterLabels "autoshift.io/trident-source" | default "certified-operators" hub}}'
+    sourceNamespace: '{{hub index .ManagedClusterLabels "autoshift.io/trident-source-namespace" | default "openshift-marketplace" hub}}'
+  upgradeApproval: '{{hub index .ManagedClusterLabels "autoshift.io/trident-install-plan-approval" | default "Automatic" hub}}'
+  versions:
+    - '{{hub index .ManagedClusterLabels "autoshift.io/trident-version" | default "" hub}}'

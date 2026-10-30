@@ -1,0 +1,343 @@
+# KeycloakRealmImport — the tssc-iam realm with per-component OIDC clients. Client secrets are read
+# (spoke-side) from the Secrets realm-secrets.yaml propagated to the managed cluster; each client is
+# included only when its component label is set. Redirect URIs are built from the cluster apps domain.
+object-templates-raw: |
+  {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $cfg := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
+  {{hub- $ns := "keycloak-system" hub}}
+  {{hub- $realm := (index (index $cfg "keycloak" | default dict) "realmName" | default "tssc-iam") hub}}
+  {{hub- $tasEnabled := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
+  {{hub- $tpaEnabled := eq (index .ManagedClusterLabels "autoshift.io/trusted-profile-analyzer" | default "false") "true" hub}}
+  {{hub- $rhdhEnabled := eq (index .ManagedClusterLabels "autoshift.io/dev-hub" | default "false") "true" hub}}
+  {{hub- $quayEnabled := eq (index .ManagedClusterLabels "autoshift.io/quay" | default "false") "true" hub}}
+  {{hub- $gitlabEnabled := eq (index .ManagedClusterLabels "autoshift.io/gitlab" | default "false") "true" hub}}
+  # ArgoCD Keycloak SSO is opt-in: enabled only when the admin seeded argocd-client-secret in tssc-keycloak-config.
+  {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
+  {{hub- $argocdSsoEnabled := ne (index $kcData "argocd-client-secret" | default "") "" hub}}
+  {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
+  {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
+  {{- $appsDomain := printf "apps.%s" $baseDomain }}
+  {{- $tasSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "trusted-artifact-signer-clients" | default dict).data | default dict }}
+  {{- $tpaSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "tpa-realm-clients" | default dict).data | default dict }}
+  {{- $rhdhSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "rhdh-realm-clients" | default dict).data | default dict }}
+  {{- $quaySecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "quay-realm-clients" | default dict).data | default dict }}
+  {{- $gitlabSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "gitlab-realm-clients" | default dict).data | default dict }}
+  {{- $argocdSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "argocd-realm-clients" | default dict).data | default dict }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: k8s.keycloak.org/v2alpha1
+      kind: KeycloakRealmImport
+      metadata:
+        name: '{{hub $realm hub}}'
+        namespace: '{{hub $ns hub}}'
+        labels:
+          app: keycloak
+      spec:
+        keycloakCRName: keycloak
+        realm:
+          realm: '{{hub $realm hub}}'
+          displayName: TSSC IAM
+          enabled: true
+          accessCodeLifespan: 60
+          accessCodeLifespanLogin: 1800
+          accessCodeLifespanUserAction: 300
+          accessTokenLifespan: 300
+          accessTokenLifespanForImplicitFlow: 900
+          adminEventsDetailsEnabled: false
+          adminEventsEnabled: false
+          clientScopes:
+            - name: read:document
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+            - name: write:document
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+            - name: create:document
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+            - name: update:document
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+            - name: delete:document
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+            # This clientScopes list REPLACES Keycloak's built-in scopes, so profile/email must be declared
+            # here or OIDC clients can't request them (RHDH login fails invalid_scope on profile/email).
+            - name: profile
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+              protocolMappers:
+                - name: username
+                  protocol: openid-connect
+                  protocolMapper: oidc-usermodel-property-mapper
+                  config:
+                    user.attribute: username
+                    claim.name: preferred_username
+                    jsonType.label: String
+                    id.token.claim: "true"
+                    access.token.claim: "true"
+                    userinfo.token.claim: "true"
+                - name: full name
+                  protocol: openid-connect
+                  protocolMapper: oidc-full-name-mapper
+                  config:
+                    id.token.claim: "true"
+                    access.token.claim: "true"
+                    userinfo.token.claim: "true"
+            - name: email
+              protocol: openid-connect
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+              protocolMappers:
+                - name: email
+                  protocol: openid-connect
+                  protocolMapper: oidc-usermodel-property-mapper
+                  config:
+                    user.attribute: email
+                    claim.name: email
+                    jsonType.label: String
+                    id.token.claim: "true"
+                    access.token.claim: "true"
+                    userinfo.token.claim: "true"
+                - name: email verified
+                  protocol: openid-connect
+                  protocolMapper: oidc-usermodel-property-mapper
+                  config:
+                    user.attribute: emailVerified
+                    claim.name: email_verified
+                    jsonType.label: boolean
+                    id.token.claim: "true"
+                    access.token.claim: "true"
+                    userinfo.token.claim: "true"
+            # groups client scope: emits the user's group membership as a 'groups' claim so RHDH can do
+            # group-based ownership/RBAC and sync Keycloak groups. Requested via app-config additionalScopes.
+            - name: groups
+              protocol: openid-connect
+              description: Group membership of the user
+              attributes:
+                include.in.token.scope: "true"
+                display.on.consent.screen: "true"
+              protocolMappers:
+                - name: groups
+                  protocol: openid-connect
+                  protocolMapper: oidc-group-membership-mapper
+                  config:
+                    claim.name: groups
+                    full.path: "false"
+                    id.token.claim: "true"
+                    access.token.claim: "true"
+                    userinfo.token.claim: "true"
+          # Seed realm groups so team-based ownership/RBAC has something to map to. Assign users to these
+          # in the Keycloak admin console (or via federation); membership flows to RHDH via the groups claim.
+          groups:
+            - name: platform-team
+            - name: developers
+          clients:
+          {{hub- if $tasEnabled hub}}
+            - clientId: trusted-artifact-signer
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $tasSecret "trustedArtifactSigner" | default "" | b64dec }}'
+              enabled: true
+              name: trusted-artifact-signer
+              description: Client for Red Hat Trusted Artifact Signer authentication
+              publicClient: true
+              bearerOnly: false
+              directAccessGrantsEnabled: true
+              standardFlowEnabled: true
+              fullScopeAllowed: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - profile
+                - email
+              optionalClientScopes: []
+              redirectUris:
+                - "*"
+                - "urn:ietf:wg:oauth:2.0:oob"
+              attributes:
+                request.object.signature.alg: RS256
+                user.info.response.signature.alg: RS256
+              protocolMappers:
+                - name: audience
+                  protocol: openid-connect
+                  protocolMapper: oidc-hardcoded-claim-mapper
+                  consentRequired: false
+                  config:
+                    access.token.claim: "true"
+                    claim.name: aud
+                    claim.value: trusted-artifact-signer
+                    id.token.claim: "true"
+                    userinfo.token.claim: "true"
+          {{hub- end hub}}
+          {{hub- if $tpaEnabled hub}}
+            - clientId: cli
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $tpaSecret "cli" | default "" | b64dec }}'
+              enabled: true
+              publicClient: false
+              bearerOnly: false
+              directAccessGrantsEnabled: false
+              standardFlowEnabled: false
+              fullScopeAllowed: true
+              serviceAccountsEnabled: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - web-origins
+                - profile
+                - roles
+                - read:document
+                - email
+                - create:document
+                - update:document
+                - delete:document
+              attributes:
+                access.token.lifespan: "300"
+                post.logout.redirect.uris: +
+            - clientId: frontend
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $tpaSecret "frontend" | default "" | b64dec }}'
+              enabled: true
+              publicClient: true
+              bearerOnly: false
+              directAccessGrantsEnabled: false
+              standardFlowEnabled: true
+              implicitFlowEnabled: true
+              fullScopeAllowed: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - web-origins
+                - profile
+                - roles
+                - read:document
+                - email
+                - create:document
+                - delete:document
+              attributes:
+                access.token.lifespan: "300"
+                post.logout.redirect.uris: +
+              redirectUris:
+                - "http://localhost:8080"
+                - 'https://server-tssc-tpa.{{ $appsDomain }}'
+                - 'https://server-tssc-tpa.{{ $appsDomain }}/*'
+                - 'https://sbom-tssc-tpa.{{ $appsDomain }}'
+                - 'https://sbom-tssc-tpa.{{ $appsDomain }}/*'
+              webOrigins:
+                - "*"
+          {{hub- end hub}}
+          {{hub- if $rhdhEnabled hub}}
+            - clientId: rhdh
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $rhdhSecret "rhdh" | default "" | b64dec }}'
+              enabled: true
+              publicClient: false
+              bearerOnly: false
+              directAccessGrantsEnabled: true
+              standardFlowEnabled: true
+              fullScopeAllowed: true
+              serviceAccountsEnabled: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - web-origins
+                - acr
+                - roles
+                - profile
+                - email
+                - groups
+              optionalClientScopes: []
+              redirectUris:
+                - 'https://backstage-developer-hub-tssc-dh.{{ $appsDomain }}/api/auth/oidc/handler/frame'
+                - 'https://backstage-developer-hub-tssc-dh.{{ $appsDomain }}/*'
+              webOrigins:
+                - 'https://backstage-developer-hub-tssc-dh.{{ $appsDomain }}'
+              attributes:
+                backchannel.logout.session.required: "true"
+                backchannel.logout.revoke.offline.tokens: "false"
+          {{hub- end hub}}
+          {{hub- if $quayEnabled hub}}
+            # Quay OIDC login (KEYCLOAK_LOGIN_CONFIG in the Quay config bundle). Confidential client;
+            # Quay resolves the preferred_username claim from the profile scope.
+            - clientId: quay
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $quaySecret "quay" | default "" | b64dec }}'
+              enabled: true
+              publicClient: false
+              standardFlowEnabled: true
+              fullScopeAllowed: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - profile
+                - email
+              redirectUris:
+                - 'https://registry-quay-quay-enterprise.{{ $appsDomain }}/oauth2/keycloak/callback'
+                - 'https://registry-quay-quay-enterprise.{{ $appsDomain }}/oauth2/keycloak/callback/attach'
+                - 'https://registry-quay-quay-enterprise.{{ $appsDomain }}/oauth2/keycloak/callback/cli'
+              webOrigins:
+                - 'https://registry-quay-quay-enterprise.{{ $appsDomain }}'
+          {{hub- end hub}}
+          {{hub- if $gitlabEnabled hub}}
+            # GitLab OIDC login (omniauth openid_connect provider in the GitLab CR). Confidential client;
+            # uid_field preferred_username comes from the profile scope.
+            - clientId: gitlab
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $gitlabSecret "gitlab" | default "" | b64dec }}'
+              enabled: true
+              publicClient: false
+              standardFlowEnabled: true
+              fullScopeAllowed: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - profile
+                - email
+              redirectUris:
+                - 'https://gitlab.{{ $appsDomain }}/users/auth/openid_connect/callback'
+              webOrigins:
+                - 'https://gitlab.{{ $appsDomain }}'
+          {{hub- end hub}}
+          {{hub- if $argocdSsoEnabled hub}}
+            # ArgoCD Keycloak SSO (Dex oidc connector, alongside OpenShift OAuth). One client for both the
+            # infra (openshift-gitops) and dev (openshift-gitops-dev) instances; groups scope drives ArgoCD RBAC.
+            - clientId: argocd
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $argocdSecret "argocd" | default "" | b64dec }}'
+              enabled: true
+              publicClient: false
+              standardFlowEnabled: true
+              fullScopeAllowed: true
+              protocol: openid-connect
+              defaultClientScopes:
+                - profile
+                - email
+                - groups
+              redirectUris:
+                - 'https://infra-gitops-server-openshift-gitops.{{ $appsDomain }}/api/dex/callback'
+                - 'https://argocd-dev-server-openshift-gitops-dev.{{ $appsDomain }}/api/dex/callback'
+              webOrigins:
+                - 'https://infra-gitops-server-openshift-gitops.{{ $appsDomain }}'
+                - 'https://argocd-dev-server-openshift-gitops-dev.{{ $appsDomain }}'
+          {{hub- end hub}}
+          {{hub- if $rhdhEnabled hub}}
+          # The rhdh client's service account needs realm-management read roles so the keycloakOrg catalog
+          # provider can sync Keycloak users/groups into RHDH. This is a role binding (service-account-rhdh),
+          # not a login credential — real login users come from federation or the admin.
+          users:
+            - username: service-account-rhdh
+              enabled: true
+              serviceAccountClientId: rhdh
+              clientRoles:
+                realm-management:
+                  - view-users
+                  - query-users
+                  - query-groups
+          {{hub- end hub}}

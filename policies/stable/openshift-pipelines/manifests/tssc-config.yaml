@@ -1,0 +1,31 @@
+# Tekton Chains signing config on the singleton TektonConfig. Applied only when TAS is enabled
+# (autoshift.io/tas) — Chains signs task/pipeline run artifacts and logs to the Rekor transparency
+# log provisioned by the trusted-artifact-signer Securesign. generateSigningSecret lets the Pipelines
+# operator mint the cosign signing-secrets keypair itself (no Job); the transparency URL is derived
+# from cluster DNS to match the Rekor Route (rekor-server-tssc-tas). When TAS is not enabled this
+# policy is a no-op.
+object-templates-raw: |
+  {{hub- $tasEnabled := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
+  {{- $dnsObj := lookup "config.openshift.io/v1" "DNS" "" "cluster" | default dict }}
+  {{- $baseDomain := ($dnsObj.spec | default dict).baseDomain | default "cluster.local" }}
+  {{- $appsDomain := printf "apps.%s" $baseDomain }}
+  {{hub- if $tasEnabled hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: operator.tekton.dev/v1alpha1
+      kind: TektonConfig
+      metadata:
+        name: config
+      spec:
+        chain:
+          disabled: false
+          generateSigningSecret: true
+          transparency.enabled: "true"
+          transparency.url: 'https://rekor-server-tssc-tas.{{ $appsDomain }}'
+          artifacts.taskrun.format: in-toto
+          artifacts.taskrun.storage: oci
+          artifacts.pipelinerun.format: in-toto
+          artifacts.pipelinerun.storage: oci
+          artifacts.oci.format: simplesigning
+          artifacts.oci.storage: oci
+  {{hub- end hub}}
