@@ -37,7 +37,7 @@ In `managed` mode both databases run the CloudNativePG Operator's default Postgr
 tests Red Hat Quay 3.18 against PostgreSQL 13 to 17, and the Operator default can be newer. To pin a
 tested major, set `config.quay.dbImage`, for example
 `ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie`. Set it before the first deployment:
-CloudNativePG rejects a lower major on a running cluster.
+the Operator records its default in the cluster when it creates it, and rejects a lower major later.
 
 ### 2. Decide where images are stored
 

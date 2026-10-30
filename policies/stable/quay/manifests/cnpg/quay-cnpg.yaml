@@ -12,12 +12,20 @@
 # Storage matches the 50Gi the Quay Operator allocates for its own managed database, so switching
 # quay-db-mode does not silently change the disk budget.
 #
-# No imageName by default, so the Operator runs its built-in PostgreSQL image. config.quay.dbImage
-# names another one for both databases. Removing the key later leaves that image in place (musthave never removes
-# a field), and CloudNativePG rejects a lower major on a running Cluster.
+# No imageName by default, so the Operator runs its built-in PostgreSQL image and records it in the
+# Cluster at creation: an Operator upgrade does not move an existing database. config.quay.dbImage
+# names another image; change it in a maintenance window. A minor change rolls the replicas, then the
+# primary; a higher major is an offline in-place upgrade, and a lower one is rejected. Removing the key
+# leaves the last image in place (musthave never removes a field).
+#
+# config.quay.dbPrimaryUpdate: unsupervised (default) switches the primary over automatically;
+# supervised updates the replicas and waits for a manual switchover of the primary; CloudNativePG
+# rejects it on a single-instance Cluster.
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $dbImage := (index (index $cfg "quay" | default dict) "dbImage" | default "") hub}}
+  {{hub- $dbPrimaryUpdate := (index (index $cfg "quay" | default dict) "dbPrimaryUpdate" | default "unsupervised") hub}}
+  {{hub- if not (has $dbPrimaryUpdate (list "unsupervised" "supervised")) hub}}{{hub fail (printf "config.quay.dbPrimaryUpdate: %s is not unsupervised or supervised" $dbPrimaryUpdate) hub}}{{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
       apiVersion: postgresql.cnpg.io/v1
@@ -30,6 +38,7 @@ object-templates-raw: |
         {{hub- if $dbImage hub}}
         imageName: '{{hub $dbImage hub}}'
         {{hub- end hub}}
+        primaryUpdateStrategy: '{{hub $dbPrimaryUpdate hub}}'
         postgresql:
           parameters:
             max_connections: '200'
@@ -66,6 +75,7 @@ object-templates-raw: |
         {{hub- if $dbImage hub}}
         imageName: '{{hub $dbImage hub}}'
         {{hub- end hub}}
+        primaryUpdateStrategy: '{{hub $dbPrimaryUpdate hub}}'
         postgresql:
           parameters:
             max_connections: '200'

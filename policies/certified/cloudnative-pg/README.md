@@ -85,8 +85,11 @@ oc get packagemanifests cloudnative-pg -o jsonpath='{.status.channels[*].current
 ## Images
 
 AutoShift does not choose PostgreSQL or PgBouncer images. A `Cluster` or `Pooler` that names no image
-runs the default compiled into the Operator release, so each Operator upgrade can move the
-PostgreSQL major. Applications that need a specific image set it in their own configuration:
+runs the default compiled into the Operator release. The Operator writes that default into the
+`Cluster` `spec.imageName` when it creates the `Cluster`, so an existing database keeps its image
+across Operator upgrades and only a new `Cluster` gets the newer default. A `Pooler` keeps no image
+in its spec and follows the default of the running Operator. Applications that need a specific image
+set it in their own configuration:
 
 | Application | PostgreSQL | PgBouncer |
 |---|---|---|
@@ -94,8 +97,29 @@ PostgreSQL major. Applications that need a specific image set it in their own co
 | GitLab | `config.gitlab.dbImage` | `config.gitlab.dbPoolerImage` |
 | JFrog Artifactory | `config.jfrog.dbImage` | `config.jfrog.dbPoolerImage` |
 
-Set the PostgreSQL image before the first deployment. Removing it later leaves the image in place,
-and CloudNativePG rejects a lower major on a running `Cluster`.
+Set the PostgreSQL image before the first deployment. A lower major on a running `Cluster` is
+rejected, and the database policy reports NonCompliant with `cannot be updated` until the image is
+put back. Removing either setting later leaves the last image in place and the policy Compliant,
+because `musthave` never removes a field.
+
+### Updating in a maintenance window
+
+Nothing in a database changes until git does, so the window is the merge:
+
+1. Pin the Operator with `cloudnative-pg-version` and raise it only in a window. An Operator
+   upgrade restarts every database one instance at a time to replace its instance manager, ends
+   with a switchover of each primary, and moves every `Pooler` without `dbPoolerImage` to the new
+   default PgBouncer image.
+2. Raise `config.<app>.dbImage` in a window. A new minor version rolls the replicas and then the
+   primary. A new major version stops the database for an in-place `pg_upgrade`: take a backup first
+   and check that the application supports that major.
+3. Set `config.<app>.dbPrimaryUpdate: supervised` to hold the switchover of the primary in both
+   cases. CloudNativePG updates the replicas and waits until you promote one with
+   `oc cnpg promote <cluster> <instance>`. A single-instance database rejects `supervised`, and the
+   database policy reports `cannot be updated`.
+
+The Operator does not expose its default image to the cluster, so nothing reports that a newer
+PostgreSQL minor version is available. Check the CloudNativePG release notes when you plan a window.
 
 ### Disconnected clusters
 
@@ -105,6 +129,8 @@ head of each mirrored channel and adds them to `additionalImages`. oc-mirror wri
 `ImageTagMirrorSet` for them in `itms-oc-mirror.yaml`. When AutoShift manages the mirror
 configuration instead, add a `tagMirrors` entry for `ghcr.io/cloudnative-pg` under
 `config.disconnected`. An image set in application configuration is not added: mirror it yourself.
+Keep the earlier defaults in the mirror registry after an Operator upgrade, because existing
+databases still pull the image they were created with.
 
 ## Next Steps: Configuration
 
