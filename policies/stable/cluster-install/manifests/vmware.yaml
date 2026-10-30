@@ -75,9 +75,10 @@ object-templates-raw: |
   {{- $caRef := (index $mirrorReg "caRef" | default dict) }}
   {{- if not (empty $caRef) }}
   {{- $caRefNs := (index $caRef "namespace" | default $secretSourceNs) }}
-  {{- $caRefCM := (lookup "v1" "ConfigMap" $caRefNs (index $caRef "name")) | default dict }}
-  {{- $caRefData := (index $caRefCM "data" | default dict) }}
-  {{- $caTrustBundle = (index $caRefData (index $caRef "key") | default $caTrustBundle) }}
+  {{- $caTrustBundle = (fromConfigMap $caRefNs (index $caRef "name") (index $caRef "key")) }}
+  {{- if not $caTrustBundle }}
+  {{- fail (printf "config.disconnected.mirrorRegistry.caRef: ConfigMap %s/%s has no key %s" $caRefNs (index $caRef "name") (index $caRef "key")) }}
+  {{- end }}
   {{- end }}{{- $fdList := list }}
   {{- range $_, $fd := $failureDomains }}
   {{- $topo := (index $fd "topology" | default dict) }}

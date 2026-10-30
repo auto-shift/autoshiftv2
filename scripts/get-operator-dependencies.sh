@@ -185,11 +185,22 @@ if [[ -z "$PULL_SECRET" ]]; then
     done
 fi
 
+# Then the standard auth files: the release workflow writes ~/.docker/config.json, and podman login
+# writes the containers auth.json.
+if [[ -z "$PULL_SECRET" && -z "${REGISTRY_AUTH_FILE:-}" ]]; then
+    for ps_file in "$HOME/.docker/config.json" "${XDG_RUNTIME_DIR:-/nonexistent}/containers/auth.json" "$HOME/.config/containers/auth.json"; do
+        if [[ -f "$ps_file" ]]; then
+            PULL_SECRET="$ps_file"
+            break
+        fi
+    done
+fi
+
 # Export pull secret for oc image extract
 if [[ -n "$PULL_SECRET" ]]; then
     export REGISTRY_AUTH_FILE="$PULL_SECRET"
 elif [[ -z "${REGISTRY_AUTH_FILE:-}" ]]; then
-    error "No pull secret found. Place pull-secret.json in the repo root or use --pull-secret PATH"
+    error "No pull secret found. Use --pull-secret PATH, set REGISTRY_AUTH_FILE, place pull-secret.json in the repo root, or log in to registry.redhat.io"
     exit 1
 fi
 

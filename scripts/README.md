@@ -369,8 +369,9 @@ rm test-imageset.yaml
 Generate ImageSetConfiguration YAML for oc-mirror disconnected mirroring.
 
 This script automatically:
-- Discovers all enabled operators from your values files
+- Discovers all enabled operators from your values files, or with `--all-operators` every operator they declare
 - Resolves operator dependencies recursively (e.g., `odf-operator` → `odf-dependencies` → sub-operators)
+- Checks every requested package and channel against the Red Hat, certified and community catalogs, and fails on one that does not exist
 - Adds `defaultChannel` for each operator package (required by oc-mirror)
 - Deduplicates cross-catalog dependencies (e.g., certified operators won't be added to the redhat catalog)
 - Generates a complete `ImageSetConfiguration` with `apiVersion: mirror.openshift.io/v2alpha1`
@@ -395,6 +396,9 @@ This script automatically:
 
 # Custom output file
 ./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --output my-imageset.yaml
+
+# Release imageset: every operator in the label contract, enabled or not
+./scripts/generate-imageset-config.sh "$(find autoshift/values -name '_example*.yaml' | paste -sd, -)" --all-operators --include-autoshift-charts
 
 # Use pre-generated dependencies (for Windows or offline use)
 ./scripts/generate-imageset-config.sh autoshift/values/clustersets/hub.yaml --dependencies-file scripts/operator-dependencies.json
@@ -634,6 +638,7 @@ Scripts that access the Red Hat registry (`generate-imageset-config.sh`, `get-op
 1. `--pull-secret <path>` flag (explicit)
 2. `pull-secret.json` or `pull-secret.txt` in the repo root (auto-detected)
 3. `REGISTRY_AUTH_FILE` environment variable
+4. `~/.docker/config.json`, then the `podman login` file (`$XDG_RUNTIME_DIR/containers/auth.json` or `~/.config/containers/auth.json`)
 
 Place your pull secret in the repo root as `pull-secret.json` and all scripts will find it automatically. The file is gitignored.
 

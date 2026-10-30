@@ -51,6 +51,7 @@ OUTPUT_FILE=""
 INCLUDE_OPENSHIFT=true
 INCLUDE_OPERATORS=true
 INCLUDE_AUTOSHIFT_CHARTS=false
+ALL_OPERATORS=false
 AUTOSHIFT_REGISTRY=""
 AUTOSHIFT_VERSION=""
 DEPENDENCIES_FILE=""
@@ -67,9 +68,12 @@ mkdir -p "$LOCAL_TMP"
 
 # Temp file for operator mappings (portable alternative to associative arrays)
 MAPPINGS_FILE=""
+# Marker extract_operators touches from its subshell when an enabled operator is incomplete
+EXTRACT_ERRORS_FILE="$LOCAL_TMP/extract-errors.$$"
 
 cleanup_temp_files() {
     [[ -n "$MAPPINGS_FILE" ]] && rm -f "$MAPPINGS_FILE" || true
+    rm -f "$EXTRACT_ERRORS_FILE"
     # Only cleanup DEPENDENCIES_FILE if it was auto-generated (not passed via --dependencies-file)
     [[ -n "$DEPENDENCIES_FILE" && "$DEPENDENCIES_FILE" == "$LOCAL_TMP"/* ]] && rm -f "$DEPENDENCIES_FILE" || true
 }
@@ -131,46 +135,80 @@ resolve_all_dependencies() {
         return
     fi
 
+    # Without dependencies the imageset lacks operators OLM must install alongside (multicluster-engine
+    # for ACM, the ODF stack), so a mirror built from it cannot install them. Fail rather than continue.
     if [[ ! -x "$GET_DEPS_SCRIPT" ]]; then
-        log_warning "get-operator-dependencies.sh not found or not executable, skipping dependency resolution"
-        return
+        log_error "get-operator-dependencies.sh not found or not executable"
+        return 1
     fi
 
     # Detect Windows/Git Bash — dependency resolution won't work
     if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        log_warning "Windows/Git Bash detected — cannot resolve dependencies (requires oc image extract with symlinks)"
-        log_warning "Use --dependencies-file scripts/operator-dependencies.json instead"
-        log_warning "Generate the file on Mac/Linux/WSL2: ./scripts/get-operator-dependencies.sh --json > scripts/operator-dependencies.json"
-        return
+        log_error "Windows/Git Bash detected — cannot resolve dependencies (requires oc image extract with symlinks)"
+        log_error "Use --dependencies-file scripts/operator-dependencies.json instead"
+        log_error "Generate the file on Mac/Linux/WSL2: ./scripts/get-operator-dependencies.sh --json > scripts/operator-dependencies.json"
+        return 1
     fi
 
     log_step "Resolving operator dependencies..."
 
     # Create temp file for dependencies
     DEPENDENCIES_FILE="$LOCAL_TMP/dependencies.$$.json"
+    local deps_log="$LOCAL_TMP/dependencies.$$.log"
 
     # Call get-operator-dependencies.sh with all operators
     local catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${catalog_version}"
 
-    if "$GET_DEPS_SCRIPT" --catalog "$catalog_image" --operators "$operators_list" --json > "$DEPENDENCIES_FILE" 2>/dev/null; then
+    if "$GET_DEPS_SCRIPT" --catalog "$catalog_image" --operators "$operators_list" --json > "$DEPENDENCIES_FILE" 2>"$deps_log"; then
         local dep_count=$(jq 'to_entries | map(select(.value | length > 0)) | length' "$DEPENDENCIES_FILE" 2>/dev/null || echo "0")
         log_success "Resolved dependencies for $dep_count operators with dependencies"
+        rm -f "$deps_log"
     else
-        log_warning "Failed to resolve dependencies, continuing without them"
-        rm -f "$DEPENDENCIES_FILE"
+        log_error "Failed to resolve operator dependencies from $catalog_image:"
+        cat "$deps_log" >&2
+        rm -f "$DEPENDENCIES_FILE" "$deps_log"
         DEPENDENCIES_FILE=""
+        return 1
     fi
 }
 
-# Get default channel for an operator from the catalog cache
-get_default_channel() {
-    local operator="$1"
-    local catalog_version="$2"
-    local default_channel=""
+# Extract a catalog into the cache so its channels can be checked. The dependency resolution above
+# only covers redhat-operator-index; certified and community operators are checked the same way.
+cache_catalog() {
+    local catalog_image="$1"
+    local operators_list="$2"
+    local deps_log="$LOCAL_TMP/catalog-cache.$$.log"
 
-    # Find the catalog cache directory for this version
+    [[ -n "$(get_catalog_cache_configs "$catalog_image")" ]] && return 0
+    [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] && return 0
+
+    log_step "Caching $catalog_image to check its channels..."
+    if ! "$GET_DEPS_SCRIPT" --catalog "$catalog_image" --operators "$operators_list" --json > /dev/null 2>"$deps_log"; then
+        log_error "Failed to extract $catalog_image:"
+        cat "$deps_log" >&2
+        rm -f "$deps_log"
+        return 1
+    fi
+    rm -f "$deps_log"
+}
+
+# Cache a certified or community catalog and check its channels. Skipped with --dependencies-file,
+# which is the offline path; validate_catalog_channels then warns that nothing was checked.
+check_other_catalog() {
+    local packages="$1"
+    local catalog_image="$2"
+    if [[ "$DEPENDENCIES_FILE" == "$LOCAL_TMP"/* ]]; then
+        local names
+        names=$(for p in $packages; do echo "${p%%|*}"; done | paste -sd, -)
+        cache_catalog "$catalog_image" "$names" || return 1
+    fi
+    validate_catalog_channels "$packages" "$catalog_image"
+}
+
+# Cached config directory for a catalog image (empty if not cached)
+get_catalog_cache_configs() {
+    local catalog_image="$1"
     local cache_key=""
-    local catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${catalog_version}"
 
     if command -v md5sum &> /dev/null; then
         cache_key=$(echo "$catalog_image" | md5sum | cut -d' ' -f1)
@@ -180,9 +218,138 @@ get_default_channel() {
         cache_key=$(echo "$catalog_image" | cksum | cut -d' ' -f1)
     fi
 
-    local pkg_dir="$CATALOG_CACHE_DIR/$cache_key/configs/$operator"
+    local configs_dir="$CATALOG_CACHE_DIR/$cache_key/configs"
+    [[ -d "$configs_dir" ]] && echo "$configs_dir"
+    return 0
+}
 
-    if [[ ! -d "$pkg_dir" ]]; then
+# Channel names an operator has in the cached catalog, one per line. FBC packages are laid out as
+# catalog.json, catalog.yaml, or split files, so read every non-bundle file.
+get_catalog_channels() {
+    local pkg_dir="$1"
+    find "$pkg_dir" -type f -name '*.json' -not -path '*/bundles*' -exec cat {} + 2>/dev/null \
+        | jq -r 'select(.schema == "olm.channel") | .name' 2>/dev/null
+    find "$pkg_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -not -path '*/bundles*' -exec cat {} + 2>/dev/null \
+        | awk '/^---/ { if (s == "olm.channel" && n != "") print n; s = ""; n = ""; next }
+               /^schema:/ { s = $2 } /^name:/ { n = $2 }
+               END { if (s == "olm.channel" && n != "") print n }' | tr -d "\"'"
+}
+
+# The CloudNativePG Operator runs a PostgreSQL and a PgBouncer image compiled into its binary, pulled by
+# tag. Its bundle does not list them, so oc-mirror never copies them. Print both for the head of each
+# mirrored channel, read from that release's pkg/versions/versions.go. Fails if either cannot be read.
+cnpg_default_images() {
+    local channels="$1"
+    local catalog_image="$2"
+    local configs
+    configs=$(get_catalog_cache_configs "$catalog_image")
+    if [[ -z "$configs" ]]; then
+        log_warning "cloudnative-pg: $catalog_image is not cached, so the Operator's default PostgreSQL and PgBouncer images are not mirrored"
+        return 0
+    fi
+    local fbc
+    fbc=$( { find "$configs/cloudnative-pg" -type f -name '*.json' -exec cat {} + 2>/dev/null
+             find "$configs/cloudnative-pg" -type f \( -name '*.yaml' -o -name '*.yml' \) -exec yq -o=json -I=0 '.' {} + 2>/dev/null; } )
+    local channel head version src img
+    IFS=',' read -ra chans <<< "$channels"
+    for channel in "${chans[@]}"; do
+        channel=$(echo "$channel" | xargs)
+        [[ -z "$channel" ]] && continue
+        # The head is the entry no other entry in the channel replaces or skips
+        head=$(jq -rs --arg c "$channel" '
+            [.[] | select(.schema == "olm.channel" and .name == $c) | .entries[]] as $e
+            | ([$e[] | .replaces // empty] + [$e[] | .skips // [] | .[]]) as $old
+            | [$e[] | .name | select(. as $n | $old | index($n) | not)] | first // empty' <<< "$fbc")
+        version=$(jq -rs --arg b "$head" '.[] | select(.schema == "olm.bundle" and .name == $b)
+            | .properties[] | select(.type == "olm.package") | .value.version' <<< "$fbc" | head -1)
+        if [[ -z "$version" ]]; then
+            log_error "cloudnative-pg: no head version for channel $channel in $catalog_image"
+            return 1
+        fi
+        if ! src=$(curl -fsSL "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/v${version}/pkg/versions/versions.go"); then
+            log_error "cloudnative-pg: cannot read the default images of v${version} from GitHub"
+            return 1
+        fi
+        for var in DefaultImageName DefaultPgbouncerImage; do
+            img=$(sed -n "s/^[[:space:]]*${var}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" <<< "$src")
+            if [[ -z "$img" ]]; then
+                log_error "cloudnative-pg: v${version} has no ${var} in pkg/versions/versions.go"
+                return 1
+            fi
+            echo "$img"
+        done
+    done
+}
+
+# Fail when a requested channel is not in the catalog. oc-mirror 4.22 drops an unknown channel
+# without a warning, so the values file keeps a channel no mirrored Subscription can resolve.
+# Skipped when the catalog is not cached.
+#
+# Sets VALID_PACKAGES to the packages to write. With --all-operators a package the catalog does not
+# carry is left out with a warning: a vendor that has not published for this OpenShift version should
+# not block a release, and nothing could be mirrored for it anyway. SKIPPED_PACKAGES records them.
+VALID_PACKAGES=""
+SKIPPED_PACKAGES=""
+CNPG_CHANNELS=""
+CNPG_CATALOG=""
+validate_catalog_channels() {
+    local packages="$1"
+    local catalog_image="$2"
+    local catalog_label="${catalog_image##*/}"
+    local configs_dir
+    configs_dir=$(get_catalog_cache_configs "$catalog_image")
+    VALID_PACKAGES="$packages"
+
+    if [[ -z "$configs_dir" ]]; then
+        log_warning "$catalog_label is not cached; channels not checked against the catalog"
+        return 0
+    fi
+
+    VALID_PACKAGES=""
+    local invalid=0 package_info name channels channel available
+    for package_info in $packages; do
+        [[ -z "$package_info" ]] && continue
+        IFS='|' read -r name channels <<< "$package_info"
+        if [[ ! -d "$configs_dir/$name" ]]; then
+            if [[ "$ALL_OPERATORS" == "true" ]]; then
+                log_warning "Package $name is not in $catalog_label; left out of the imageset"
+                SKIPPED_PACKAGES+="$name ($catalog_label) "
+            else
+                log_error "Package $name is not in $catalog_label"
+                invalid=1
+            fi
+            continue
+        fi
+        VALID_PACKAGES+="$package_info "
+        available=$(get_catalog_channels "$configs_dir/$name" | sort -u)
+        IFS=',' read -ra channels_array <<< "$channels"
+        for channel in "${channels_array[@]}"; do
+            channel=$(echo "$channel" | xargs)
+            [[ -z "$channel" ]] && continue
+            if ! grep -qxF "$channel" <<< "$available"; then
+                log_error "Channel $channel of $name is not in $catalog_label. Available: $(echo $available)"
+                invalid=1
+            fi
+        done
+    done
+
+    if [[ $invalid -ne 0 ]]; then
+        log_error "Fix the <operator>-channel labels in the values files, then run again"
+        return 1
+    fi
+}
+
+# Get default channel for an operator from the catalog cache
+get_default_channel() {
+    local operator="$1"
+    local catalog_version="$2"
+    local default_channel=""
+
+    local configs_dir
+    configs_dir=$(get_catalog_cache_configs "registry.redhat.io/redhat/redhat-operator-index:v${catalog_version}")
+    local pkg_dir="$configs_dir/$operator"
+
+    if [[ -z "$configs_dir" || ! -d "$pkg_dir" ]]; then
         echo ""
         return
     fi
@@ -266,6 +433,9 @@ usage() {
     echo "  --autoshift-version VERSION    AutoShift chart version to mirror"
     echo "  --input FILE                   Input values file (alternative to positional argument)"
     echo "  --dependencies-file FILE       JSON file with operator dependencies (from get-operator-dependencies.sh)"
+    echo "  --all-operators                Mirror every operator the values files declare with"
+    echo "                                 <label>-subscription-name, enabled or not. Use with the"
+    echo "                                 _example*.yaml files, the label contract CI enforces, for a release"
     echo "  --help                         Show this help message"
     echo ""
     echo "Examples:"
@@ -329,6 +499,10 @@ while [[ $# -gt 0 ]]; do
         --dependencies-file)
             DEPENDENCIES_FILE="$2"
             shift 2
+            ;;
+        --all-operators)
+            ALL_OPERATORS=true
+            shift
             ;;
         --help)
             usage
@@ -649,10 +823,17 @@ extract_operators() {
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
         [[ -z "$(echo "$line" | xargs)" ]] && continue
 
-        # Look for enabled operator (value: 'true') - handle inline comments
-        if echo "$line" | grep -qE "^[[:space:]]*[a-z0-9-]+:[[:space:]]*['\"]?true['\"]?"; then
-            local label_name
+        # Look for enabled operator (value: 'true') - handle inline comments. With --all-operators every
+        # declared operator counts, so match its subscription-name label instead of the enable flag.
+        local label_name=""
+        if [[ "$ALL_OPERATORS" == "true" ]]; then
+            if echo "$line" | grep -qE "^[[:space:]]*[a-z0-9-]+-subscription-name:"; then
+                label_name=$(echo "$line" | sed -E 's/^[[:space:]]*([a-z0-9-]+)-subscription-name:.*/\1/')
+            fi
+        elif echo "$line" | grep -qE "^[[:space:]]*[a-z0-9-]+:[[:space:]]*['\"]?true['\"]?"; then
             label_name=$(echo "$line" | sed -E 's/^[[:space:]]*([a-z0-9-]+):[[:space:]]*['\''"]?true['\''"]?.*/\1/')
+        fi
+        if [[ -n "$label_name" ]]; then
 
             # Get operator subscription name - returns empty for non-operators
             # This is the ONLY filter needed: if no subscription-name mapping exists, it's not an operator
@@ -668,9 +849,13 @@ extract_operators() {
             source=$(grep -E "^[[:space:]]*$label_name-source:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r')
             source_namespace=$(grep -E "^[[:space:]]*$label_name-source-namespace:" "$values_file" | head -1 | sed 's/.*:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '\r')
 
-            # Only add if we have the required fields and avoid duplicates
+            # A missing field used to drop the operator without a word. The policy's own default would
+            # apply on the cluster, but this script cannot read it, so name the gap and fail.
             if [[ -n "$channel" && -n "$source" && -n "$source_namespace" ]]; then
                 echo "$operator_name|$channel|$source|$source_namespace"
+            else
+                log_error "$(basename "$values_file"): $label_name is enabled but $label_name-channel, -source or -source-namespace is not set" >&2
+                touch "$EXTRACT_ERRORS_FILE"
             fi
         fi
     done < "$values_file"
@@ -943,6 +1128,11 @@ EOF
             done < <(extract_and_log_operators_multi "${values_files_array[@]}")
         fi
 
+        if [[ -e "$EXTRACT_ERRORS_FILE" ]]; then
+            rm -f "$output_file"
+            exit 1
+        fi
+
         # Automatically resolve dependencies for all operators
         if [[ ${#operators[@]} -gt 0 && -z "$DEPENDENCIES_FILE" ]]; then
             # Collect all operator package names
@@ -956,7 +1146,7 @@ EOF
                 fi
             done
             # Resolve dependencies (this populates DEPENDENCIES_FILE)
-            resolve_all_dependencies "$all_operator_names" "$(get_catalog_version)"
+            resolve_all_dependencies "$all_operator_names" "$(get_catalog_version)" || { rm -f "$output_file"; exit 1; }
         fi
 
         if [[ ${#operators[@]} -eq 0 ]]; then
@@ -1049,87 +1239,104 @@ EOF
             # Generate redhat-operators catalog if we have operators
             if [[ -n "$redhat_operators" ]]; then
                 local catalog_ver=$(get_catalog_version)
-                echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v${catalog_ver}" >> "$output_file"
-                echo "    packages:" >> "$output_file"
+                validate_catalog_channels "$redhat_operators" "registry.redhat.io/redhat/redhat-operator-index:v${catalog_ver}" || { rm -f "$output_file"; exit 1; }
+                if [[ -n "${VALID_PACKAGES// /}" ]]; then
+                    echo "  - catalog: registry.redhat.io/redhat/redhat-operator-index:v${catalog_ver}" >> "$output_file"
+                    echo "    packages:" >> "$output_file"
 
-                for package_info in $redhat_operators; do
-                    [[ -z "$package_info" ]] && continue
-                    IFS='|' read -r name channels <<< "$package_info"
-                    echo "    - name: $name" >> "$output_file"
+                    for package_info in $VALID_PACKAGES; do
+                        [[ -z "$package_info" ]] && continue
+                        IFS='|' read -r name channels <<< "$package_info"
+                        echo "    - name: $name" >> "$output_file"
 
-                    # Set defaultChannel to the first specified channel
-                    IFS=',' read -ra channels_array <<< "$channels"
-                    local first_channel=$(echo "${channels_array[0]}" | xargs)
-                    if [[ -n "$first_channel" ]]; then
-                        echo "      defaultChannel: $first_channel" >> "$output_file"
-                    fi
+                        # Set defaultChannel to the first specified channel
+                        IFS=',' read -ra channels_array <<< "$channels"
+                        local first_channel=$(echo "${channels_array[0]}" | xargs)
+                        if [[ -n "$first_channel" ]]; then
+                            echo "      defaultChannel: $first_channel" >> "$output_file"
+                        fi
 
-                    echo "      channels:" >> "$output_file"
-                    for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)
-                        [[ -z "$channel" ]] && continue
-                        echo "      - name: $channel" >> "$output_file"
+                        echo "      channels:" >> "$output_file"
+                        for channel in "${channels_array[@]}"; do
+                            channel=$(echo "$channel" | xargs)
+                            [[ -z "$channel" ]] && continue
+                            echo "      - name: $channel" >> "$output_file"
+                        done
                     done
-                done
+                fi
                 log_step "Added catalog: redhat-operator-index"
             fi
             
             # Generate community-operators catalog if we have operators
             if [[ -n "$community_operators" ]]; then
                 local catalog_ver=$(get_catalog_version)
-                echo "  - catalog: registry.redhat.io/redhat/community-operator-index:v${catalog_ver}" >> "$output_file"
-                echo "    packages:" >> "$output_file"
+                check_other_catalog "$community_operators" "registry.redhat.io/redhat/community-operator-index:v${catalog_ver}" || { rm -f "$output_file"; exit 1; }
+                if [[ -n "${VALID_PACKAGES// /}" ]]; then
+                    echo "  - catalog: registry.redhat.io/redhat/community-operator-index:v${catalog_ver}" >> "$output_file"
+                    echo "    packages:" >> "$output_file"
 
-                for package_info in $community_operators; do
-                    [[ -z "$package_info" ]] && continue
-                    IFS='|' read -r name channels <<< "$package_info"
-                    echo "    - name: $name" >> "$output_file"
+                    for package_info in $VALID_PACKAGES; do
+                        [[ -z "$package_info" ]] && continue
+                        IFS='|' read -r name channels <<< "$package_info"
+                        echo "    - name: $name" >> "$output_file"
 
-                    # Set defaultChannel to the first specified channel
-                    IFS=',' read -ra channels_array <<< "$channels"
-                    local first_channel=$(echo "${channels_array[0]}" | xargs)
-                    if [[ -n "$first_channel" ]]; then
-                        echo "      defaultChannel: $first_channel" >> "$output_file"
-                    fi
+                        # Set defaultChannel to the first specified channel
+                        IFS=',' read -ra channels_array <<< "$channels"
+                        local first_channel=$(echo "${channels_array[0]}" | xargs)
+                        if [[ -n "$first_channel" ]]; then
+                            echo "      defaultChannel: $first_channel" >> "$output_file"
+                        fi
 
-                    echo "      channels:" >> "$output_file"
-                    for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)
-                        [[ -z "$channel" ]] && continue
-                        echo "      - name: $channel" >> "$output_file"
+                        echo "      channels:" >> "$output_file"
+                        for channel in "${channels_array[@]}"; do
+                            channel=$(echo "$channel" | xargs)
+                            [[ -z "$channel" ]] && continue
+                            echo "      - name: $channel" >> "$output_file"
+                        done
                     done
-                done
+                fi
                 log_step "Added catalog: community-operator-index"
             fi
             
             # Generate certified-operators catalog if we have operators
             if [[ -n "$certified_operators" ]]; then
                 local catalog_ver=$(get_catalog_version)
-                echo "  - catalog: registry.redhat.io/redhat/certified-operator-index:v${catalog_ver}" >> "$output_file"
-                echo "    packages:" >> "$output_file"
+                check_other_catalog "$certified_operators" "registry.redhat.io/redhat/certified-operator-index:v${catalog_ver}" || { rm -f "$output_file"; exit 1; }
+                if [[ -n "${VALID_PACKAGES// /}" ]]; then
+                    echo "  - catalog: registry.redhat.io/redhat/certified-operator-index:v${catalog_ver}" >> "$output_file"
+                    echo "    packages:" >> "$output_file"
 
-                for package_info in $certified_operators; do
-                    [[ -z "$package_info" ]] && continue
-                    IFS='|' read -r name channels <<< "$package_info"
-                    echo "    - name: $name" >> "$output_file"
+                    for package_info in $VALID_PACKAGES; do
+                        [[ -z "$package_info" ]] && continue
+                        IFS='|' read -r name channels <<< "$package_info"
+                        echo "    - name: $name" >> "$output_file"
+                        if [[ "$name" == cloudnative-pg ]]; then
+                            CNPG_CHANNELS="$channels"
+                            CNPG_CATALOG="registry.redhat.io/redhat/certified-operator-index:v${catalog_ver}"
+                        fi
 
-                    # Set defaultChannel to the first specified channel
-                    IFS=',' read -ra channels_array <<< "$channels"
-                    local first_channel=$(echo "${channels_array[0]}" | xargs)
-                    if [[ -n "$first_channel" ]]; then
-                        echo "      defaultChannel: $first_channel" >> "$output_file"
-                    fi
+                        # Set defaultChannel to the first specified channel
+                        IFS=',' read -ra channels_array <<< "$channels"
+                        local first_channel=$(echo "${channels_array[0]}" | xargs)
+                        if [[ -n "$first_channel" ]]; then
+                            echo "      defaultChannel: $first_channel" >> "$output_file"
+                        fi
 
-                    echo "      channels:" >> "$output_file"
-                    for channel in "${channels_array[@]}"; do
-                        channel=$(echo "$channel" | xargs)
-                        [[ -z "$channel" ]] && continue
-                        echo "      - name: $channel" >> "$output_file"
+                        echo "      channels:" >> "$output_file"
+                        for channel in "${channels_array[@]}"; do
+                            channel=$(echo "$channel" | xargs)
+                            [[ -z "$channel" ]] && continue
+                            echo "      - name: $channel" >> "$output_file"
+                        done
                     done
-                done
+                fi
                 log_step "Added catalog: certified-operator-index"
             fi
             
+            if [[ -n "$SKIPPED_PACKAGES" ]]; then
+                echo "  # Declared but not in the catalog for this OpenShift version, so not mirrored: $SKIPPED_PACKAGES" >> "$output_file"
+                log_warning "Not mirrored, absent from the catalog: $SKIPPED_PACKAGES"
+            fi
             log_success "Added ${#operators[@]} operators to ImageSetConfiguration"
         fi
     else
@@ -1143,6 +1350,8 @@ EOF
     if [[ -f "$KNOWN_IMAGES_FILE" ]]; then
         for op in "${operators[@]}"; do
             local op_name="${op%%|*}"
+            # An operator the catalog does not carry was left out, so its runtime images are no use
+            [[ " $SKIPPED_PACKAGES" == *" $op_name ("* ]] && continue
             local imgs
             imgs=$(jq -r --arg pkg "$op_name" '.[$pkg] // [] | .[]' "$KNOWN_IMAGES_FILE" 2>/dev/null)
             while IFS= read -r img; do
@@ -1152,13 +1361,22 @@ EOF
         done
     fi
 
+    if [[ -n "$CNPG_CHANNELS" ]]; then
+        local cnpg_imgs
+        cnpg_imgs=$(cnpg_default_images "$CNPG_CHANNELS" "$CNPG_CATALOG") || { rm -f "$output_file"; exit 1; }
+        while IFS= read -r img; do
+            [[ -z "$img" ]] && continue
+            [[ " ${known_images[*]} " == *" $img "* ]] || known_images+=("$img")
+        done <<< "$cnpg_imgs"
+    fi
+
     # Non-operator (Helm chart) components: their images aren't in any OLM catalog, so the operator scan
     # above misses them. Mirror their known images when the component is enabled ('<component>: true' in a
     # clusterset values file). Keyed the same as operators in known-additional-images.json.
     if [[ -f "$KNOWN_IMAGES_FILE" ]]; then
         local CHART_COMPONENTS=("vault")
         for comp in "${CHART_COMPONENTS[@]}"; do
-            local comp_enabled=false
+            local comp_enabled="$ALL_OPERATORS"
             for values_file in "$PROJECT_ROOT"/autoshift/values/clustersets/*.yaml; do
                 [[ -f "$values_file" ]] || continue
                 [[ "$(basename "$values_file")" == _* ]] && continue
@@ -1225,7 +1443,11 @@ EOF
                 echo "    - name: $AUTOSHIFT_REGISTRY/policies/$chart_name:$AUTOSHIFT_VERSION" >> "$output_file"
             done
 
-            log_success "Added ${#policy_charts[@]} policies + 3 core charts to additionalImages"
+            # The autoshift-console policy runs this image tagged for the cluster's OpenShift minor.
+            echo "    # AutoShift console plugin" >> "$output_file"
+            echo "    - name: $AUTOSHIFT_REGISTRY/autoshift-console-plugin:ocp$(get_catalog_version)" >> "$output_file"
+
+            log_success "Added ${#policy_charts[@]} policies + 3 core charts + console plugin to additionalImages"
         fi
     else
         if [[ ${#known_images[@]} -gt 0 ]]; then
@@ -1267,8 +1489,9 @@ show_usage_instructions() {
     echo -e "   ${YELLOW}oc-mirror -c $output_file docker://your-registry.example.com/mirror --v2${NC}"
     echo ""
     echo "4. Apply mirrored content to disconnected cluster:"
-    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/catalogSource-*.yaml${NC}"
-    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/imageContentSourcePolicy.yaml${NC}"
+    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/cs-*.yaml${NC}"
+    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/idms-oc-mirror.yaml${NC}"
+    echo -e "   ${YELLOW}oc apply -f mirror/working-dir/cluster-resources/itms-oc-mirror.yaml${NC}"
     echo ""
     echo "5. Deploy AutoShift with mirrored content:"
     if [[ ${#VALUES_FILES_ARRAY[@]} -eq 1 ]]; then

@@ -91,9 +91,6 @@ Shared so config.acm.provisioning.osImages and the deprecated disconnected.osIma
 {{ printf "%s: disconnected.mirrorRegistry.caRef.key is required" $path }}
     {{- end -}}
   {{- end -}}
-  {{- if and (gt (len $mirrorEntries) 0) (not (or $mirrorReg.ca $mirrorReg.caRef)) }}
-{{ printf "%s: disconnected.mirrorRegistry.ca or caRef is required when sources are defined" $path }}
-  {{- end -}}
   {{- $catalogs := ($disconnected.catalogs | default list) -}}
   {{- if and (gt (len $catalogs) 0) (not $mirrorReg.host) }}
 {{ printf "%s: disconnected.mirrorRegistry.host is required when catalogs are defined" $path }}

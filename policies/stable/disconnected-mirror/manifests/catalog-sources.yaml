@@ -1,7 +1,7 @@
+# fromConfigMap fails the policy when rendered-config is missing, rather than rendering
+# nothing and reporting Compliant.
 object-templates-raw: |
-  {{hub $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
-  {{hub $config := (index $cm "data" | default dict) hub}}
-  {{hub $configYaml := (index $config "config" | default "" | fromYaml | default dict) hub}}
+  {{hub $configYaml := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | default "" | fromYaml | default dict) hub}}
   {{hub $disconnected := (index $configYaml "disconnected" | default dict) hub}}
   {{hub $mirror := (index $disconnected "mirrorRegistry" | default dict) hub}}
   {{hub $mirrorHost := (index $mirror "host") hub}}

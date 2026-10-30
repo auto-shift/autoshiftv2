@@ -273,19 +273,29 @@ For disconnected environments, mirror the released artifacts to an internal regi
 > `make render-policy-charts`). All are listed in `policy-list.txt`; `helm pull` works on every one. The
 > policy-generator `ConfigManagementPlugin` is never used for OCI.
 
-**Recommended — the `ImageSet` generator.** It discovers every AutoShift artifact (main chart, bootstrap charts,
-all policy charts, plus the operator images each enabled policy needs) and emits an
-`ImageSetConfiguration` for `oc mirror`:
+**Recommended: the `ImageSet` generator.** Every release publishes `imageset-config.yaml`, built by
+`make generate-imageset`. It holds every operator any policy can install, as declared in the
+`_example*.yaml` label contract, whether or not a shipped profile enables it, with each operator's
+dependencies, the main, bootstrap and policy charts, the console plugin image, and the images a few
+components pull outside their operator. An operator the Red Hat catalog does not carry for the
+OpenShift version is left out and named in a comment in the file.
 
 ```bash
-make generate-imageset VERSION=X.Y.Z
-# or call the script directly with your values files:
+make generate-imageset VERSION=X.Y.Z   # the release imageset, in release-artifacts/
+make verify-imageset VERSION=X.Y.Z     # oc-mirror dry run plus an existence check on every extra image
+
+# or mirror only what your own values files enable:
 bash scripts/generate-imageset-config.sh \
-  autoshift/values/global.yaml,autoshift/values/clustersets/hub.yaml \
+  autoshift/values/clustersets/hub.yaml \
   --output imageset-config.yaml --include-autoshift-charts
 
 oc mirror --config imageset-config.yaml docker://registry.example.com
 ```
+
+Generation fails, rather than writing a partial file, when the dependencies cannot be resolved, when a
+values file names a channel or package the catalog does not have, or when an enabled operator is missing
+its `-channel`, `-source` or `-source-namespace` label. CI regenerates and verifies the release imageset
+on every pull request and every Monday, because the Red Hat catalogs change without a commit here.
 
 **Manual alternative**: copy the OCI artifacts registry-to-registry with `oras` (all policies are Helm charts):
 
