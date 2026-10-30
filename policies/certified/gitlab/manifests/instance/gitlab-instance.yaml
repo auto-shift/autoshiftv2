@@ -2,10 +2,21 @@ object-templates-raw: |
   {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{- $ns := "gitlab-system" }}
 
-  # Service modes: managed (default), external, or bundled
+  # Service modes: managed (default) or external
   {{- $dbMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" hub}}" }}
   {{- $redisMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-redis-mode" | default "managed" hub}}" }}
   {{- $objStoreMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-object-storage-mode" | default "managed" hub}}" }}
+  {{- /* GitLab chart 10 (GitLab 19) removed the bundled PostgreSQL, Redis and MinIO, so a bundled
+       mode would render an instance with no backend. */}}
+  {{- if eq $dbMode "bundled" }}
+  {{-   fail "gitlab-db-mode bundled is not supported: GitLab 19 removed the bundled PostgreSQL. Set it to managed or external" }}
+  {{- end }}
+  {{- if eq $redisMode "bundled" }}
+  {{-   fail "gitlab-redis-mode bundled is not supported: GitLab 19 removed the bundled Redis. Set it to managed or external" }}
+  {{- end }}
+  {{- if eq $objStoreMode "bundled" }}
+  {{-   fail "gitlab-object-storage-mode bundled is not supported: GitLab 19 removed the bundled MinIO. Set it to managed or external" }}
+  {{- end }}
 
   # Gitaly HA (Praefect)
   {{- $gitalyHA := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-gitaly-ha" | default "false" hub}}" }}
@@ -22,8 +33,36 @@ object-templates-raw: |
 
   # Storage classes for persistent volumes (empty = use cluster default; set label to override)
   {{- $gitalyStorageClass := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-gitaly-storage-class" | default "" hub}}" }}
-  {{- $redisStorageClass := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-redis-storage-class" | default "" hub}}" }}
   {{- $disconnected := "{{hub index .ManagedClusterLabels "autoshift.io/disconnected-mirror" | default "false" hub}}" }}
+
+  # SSH: the OpenShift router carries only HTTP and TLS, so GitLab Shell needs its own way in.
+  #   internal (default) — reachable inside the cluster only
+  #   loadbalancer       — a cloud LoadBalancer Service; clone URLs use gitlab-ssh-host, or the
+  #                        load balancer's own address until you give it a DNS name
+  #   disabled           — no GitLab Shell; Git over HTTPS only
+  {{- $sshMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-ssh-mode" | default "internal" hub}}" }}
+  {{- $sshHost := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-ssh-host" | default "" hub}}" }}
+  {{- if not (has $sshMode (list "internal" "loadbalancer" "disabled")) }}
+  {{-   fail (printf "gitlab-ssh-mode %s is not one of internal, loadbalancer or disabled" $sshMode) }}
+  {{- end }}
+  {{- if and (eq $sshMode "loadbalancer") (not $sshHost) }}
+  {{-   $lbIngress := (dig "status" "loadBalancer" "ingress" (list) ((lookup "v1" "Service" $ns "gitlab-gitlab-shell") | default dict)) }}
+  {{-   if $lbIngress }}
+  {{-     $sshHost = (index (index $lbIngress 0) "hostname" | default (index (index $lbIngress 0) "ip" | default "")) }}
+  {{-   end }}
+  {{- end }}
+
+  # Application backups (config.gitlab): gitlab-backup from the toolbox, into the GitLab bucket.
+  {{hub- $rcm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
+  {{hub- $gitlabCfg := (index ((index ($rcm.data | default dict) "config" | default "" | fromYaml) | default dict) "gitlab" | default dict) hub}}
+  {{- $backupSchedule := "{{hub index $gitlabCfg "backupSchedule" | default "0 3 * * *" hub}}" }}
+  {{- $backupMaximum := "{{hub index $gitlabCfg "backupMaximum" | default 7 hub}}" }}
+  {{- $backupScratchSize := "{{hub index $gitlabCfg "backupScratchSize" | default "50Gi" hub}}" }}
+  {{- /* config.gitlab.zoneSpread: soft anti-affinity across zones instead of nodes. Always written,
+       because musthave never removes a field. */}}
+  {{- $spreadKey := ternary "topology.kubernetes.io/zone" "kubernetes.io/hostname" (eq "{{hub index $gitlabCfg "zoneSpread" | default false hub}}" "true") }}
+  {{- /* managed object storage: policy-gitlab-object-storage writes this Secret; external: you do. */}}
+  {{- $backupCfgReady := not (empty ((lookup "v1" "Secret" $ns "gitlab-backup-s3cfg") | default dict)) }}
 
   # Check if non-bundled services are ready by looking for their connection secrets
   # For managed mode: CNPG/Redis/NooBaa policies create these secrets
@@ -63,8 +102,21 @@ object-templates-raw: |
   {{- if (empty $bucketName) }}{{- $objStoreReady = false }}{{- end }}
   {{- end }}
 
-  # Only deploy when all enabled external services are ready
-  {{- if and $dbReady $redisReady $objStoreReady }}
+  {{- /* Name every missing input rather than render nothing: an empty ConfigurationPolicy reports
+       Compliant, which hid a GitLab that was never created. */}}
+  {{- $missing := list }}
+  {{- if not $dbReady }}
+  {{-   $missing = append $missing (ternary "Secret gitlab-system/gitlab-db-app, from CloudNativePG (policy-cnpg-gitlab; needs cloudnative-pg: 'true')" "Secret gitlab-system/gitlab-db-app, which you create for gitlab-db-mode external" (eq $dbMode "managed")) }}
+  {{- end }}
+  {{- if not $redisReady }}
+  {{-   $missing = append $missing (ternary "Secret gitlab-system/gitlab-redis-password (policy-gitlab-redis)" "Secret gitlab-system/gitlab-redis-password, which you create for gitlab-redis-mode external" (eq $redisMode "managed")) }}
+  {{- end }}
+  {{- if not $objStoreReady }}
+  {{-   $missing = append $missing (ternary "ConfigMap gitlab-system/gitlab-objectstorage, from the NooBaa bucket claim (policy-gitlab-object-storage; needs odf: 'true' and a Ready NooBaa)" "ConfigMap gitlab-system/gitlab-objectstorage, which you create for gitlab-object-storage-mode external" (eq $objStoreMode "managed")) }}
+  {{- end }}
+  {{- if $missing }}
+  {{-   fail (printf "GitLab is not created yet. Missing: %s" (join "; " $missing)) }}
+  {{- end }}
   {{- if ne $dbMode "bundled" }}
   - complianceType: musthave
     objectDefinition:
@@ -102,9 +154,24 @@ object-templates-raw: |
           {{- end }}
           values:
             global:
+              antiAffinity: soft
+              affinity:
+                podAntiAffinity:
+                  topologyKey: {{ $spreadKey }}
               hosts:
                 domain: {{ $ingressDomain }}
+                # Always written: musthave never removes a field, so a host left over from
+                # loadbalancer mode would otherwise stay after switching back.
+                ssh: {{ $sshHost | default (printf "gitlab.%s" $ingressDomain) }}
+              # Chart 10 (GitLab 19) defaults to Gateway API with a bundled Envoy Gateway, whose CRDs
+              # OpenShift does not have, and turns Ingress off. OpenShift turns Ingress objects into
+              # Routes, so keep Ingress and switch Gateway API off. installEnvoy too: configureEnvoy
+              # defaults to it and would still render an EnvoyProxy.
+              gatewayApi:
+                enabled: false
+                installEnvoy: false
               ingress:
+                enabled: true
                 annotations:
                   route.openshift.io/termination: edge
                 class: none
@@ -202,7 +269,7 @@ object-templates-raw: |
                   port: "5432"
                   user: gitlab
                   dbName: praefect_production
-                  sslMode: disable
+                  sslMode: require    # PgBouncer offers TLS; disable sent Praefect's database traffic in plaintext
           {{- end }}
             registry:
               storage:
@@ -213,30 +280,22 @@ object-templates-raw: |
               install: {{ eq $dbMode "bundled" }}
             redis:
               install: {{ eq $redisMode "bundled" }}
-          {{- if eq $redisMode "bundled" }}
-              resources:
-                requests:
-                  cpu: 100m
-          {{- if not (empty $redisStorageClass) }}
-              master:
-                persistence:
-                  storageClass: {{ $redisStorageClass }}
-          {{- end }}
-          {{- end }}
             minio:
               install: {{ eq $objStoreMode "bundled" }}
-          {{- if eq $objStoreMode "bundled" }}
-              resources:
-                requests:
-                  cpu: 100m
-          {{- end }}
             nginx-ingress:
               enabled: false
             installCertmanager: false
             gitlab:
               gitlab-shell:
+          {{- if eq $sshMode "disabled" }}
+                enabled: false
+          {{- else }}
+                enabled: true
                 minReplicas: {{ $shellMinReplicas }}
                 maxReplicas: {{ $shellMaxReplicas }}
+                service:
+                  type: {{ ternary "LoadBalancer" "ClusterIP" (eq $sshMode "loadbalancer") }}
+          {{- end }}
               webservice:
                 minReplicas: {{ $webserviceMinReplicas }}
                 maxReplicas: {{ $webserviceMaxReplicas }}
@@ -257,8 +316,24 @@ object-templates-raw: |
                   storageClass: {{ $gitalyStorageClass }}
                   accessMode: ReadWriteMany
           {{- end }}
-          {{- if eq $gitalyHA "true" }}
-            praefect:
-              replicas: {{ $praefectReplicas }}
+          {{- if $backupCfgReady }}
+              toolbox:
+                backups:
+                  cron:
+                    enabled: true
+                    schedule: '{{ $backupSchedule }}'
+                    extraArgs: '--maximum-backups {{ $backupMaximum }}'
+                    persistence:
+                      enabled: true
+                      useGenericEphemeralVolume: true
+                      size: {{ $backupScratchSize }}
+                  objectStorage:
+                    config:
+                      secret: gitlab-backup-s3cfg
+                      key: config
           {{- end }}
-  {{- end }}
+          {{- if eq $gitalyHA "true" }}
+              # The Praefect subchart reads gitlab.praefect.replicas; a top-level praefect key is ignored.
+              praefect:
+                replicas: {{ $praefectReplicas }}
+          {{- end }}

@@ -11,6 +11,7 @@ object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $dbImage := (index (index $cfg "gitlab" | default dict) "dbImage" | default "") hub}}
   {{hub- $dbPrimaryUpdate := (index (index $cfg "gitlab" | default dict) "dbPrimaryUpdate" | default "unsupervised") hub}}
+  {{hub- $zoneSpread := (index (index $cfg "gitlab" | default dict) "zoneSpread" | default false) hub}}
   {{hub- if not (has $dbPrimaryUpdate (list "unsupervised" "supervised")) hub}}{{hub fail (printf "config.gitlab.dbPrimaryUpdate: %s is not unsupervised or supervised" $dbPrimaryUpdate) hub}}{{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
@@ -44,6 +45,11 @@ object-templates-raw: |
           limits:
             cpu: '2'
             memory: 4Gi
+        # PgBouncer keeps its server connections open, so a smart shutdown never finishes early and the
+        # 180s default delays failover that long on every primary restart or node drain, then drops the
+        # connections anyway. Measured live: failover 3.5 minutes after the delete.
+        smartShutdownTimeout: 15
         affinity:
           enablePodAntiAffinity: true
-          topologyKey: kubernetes.io/hostname
+          # config.gitlab.zoneSpread puts the instances in separate zones instead of on separate nodes.
+          topologyKey: '{{hub ternary "topology.kubernetes.io/zone" "kubernetes.io/hostname" (eq (printf "%v" $zoneSpread) "true") hub}}'
