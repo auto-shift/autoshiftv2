@@ -267,7 +267,16 @@ the rule. `tokenMaxAgeSeconds` caps the lifetime of an access token and satisfie
 ### routeRateLimits
 
 The rule scores every route outside `kube-*` and `openshift-*`, so `allNamespaces` is what passes
-it. `annotations` defaults to ten concurrent connections and ten per second.
+it. The rule checks only that `rate-limit-connections` is `true`, so the limits themselves are a
+choice. `annotations` defaults to 100 concurrent connections, 100 new connections every 3 seconds,
+and 1000 HTTP requests every 10 seconds, each counted per source IP address and per router pod.
+That stops a flood from a single address and leaves room for a browser page load, a parallel image
+pull, and a few clients behind one NAT address.
+
+The router drops a connection over the limit without an HTTP error, so the client sees a closed
+connection rather than a status code. Behind a load balancer that does not pass client addresses
+through to the router, with `PROXY` protocol, every client arrives from the address of the load
+balancer. Raise the limits there, or the whole route shares one client's allowance.
 
 ```yaml
           routeRateLimits:

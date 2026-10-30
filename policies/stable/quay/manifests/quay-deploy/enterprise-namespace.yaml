@@ -1,6 +1,30 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: quay-enterprise
-  labels:
-    openshift.io/cluster-monitoring: 'true'
+# config.quay.infraNodes puts every pod in quay-enterprise, the registry and its databases alike, on
+# infra nodes through the namespace node selector and default tolerations, which is Red Hat's supported
+# method. It applies only while the cluster's infra-nodes label is set to a count other than '0' and at
+# least one infra node is Ready, so pods are never pinned to nodes that do not exist. Running pods move
+# when they are next recreated. Turning it off leaves the annotations in place, because a policy cannot
+# remove metadata: remove them by hand (see the README).
+object-templates-raw: |
+  {{hub- $rcmConfig := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $wantInfra := and (index (index $rcmConfig "quay" | default dict) "infraNodes" | default false) (ne (index .ManagedClusterLabels "autoshift.io/infra-nodes" | default "0") "0") hub}}
+  {{- $readyInfra := 0 }}
+  {{- range $node := (lookup "v1" "Node" "" "" "node-role.kubernetes.io/infra").items }}
+  {{- range $cond := ($node.status.conditions | default list) }}
+  {{- if and (eq $cond.type "Ready") (eq $cond.status "True") }}
+  {{- $readyInfra = add $readyInfra 1 }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: quay-enterprise
+        labels:
+          openshift.io/cluster-monitoring: 'true'
+        {{- if and {{hub $wantInfra hub}} (gt $readyInfra 0) }}
+        annotations:
+          openshift.io/node-selector: node-role.kubernetes.io/infra=
+          scheduler.alpha.kubernetes.io/defaultTolerations: '[{"key":"node-role.kubernetes.io/infra","operator":"Exists","effect":"NoSchedule"},{"key":"node-role.kubernetes.io/infra","operator":"Exists","effect":"NoExecute"}]'
+        {{- end }}

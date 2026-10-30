@@ -1,0 +1,28 @@
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: placement-policy-quay-dashboard
+  namespace: ${POLICY_NAMESPACE}
+spec:
+  # Perses health dashboard. Needs the Cluster Observability Operator, which serves Perses.
+  predicates:
+    - requiredClusterSelector:
+        labelSelector:
+          matchExpressions:
+            - key: 'autoshift.io/quay'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/quay-dashboard'
+              operator: In
+              values:
+                - 'true'
+            - key: 'autoshift.io/coo'
+              operator: In
+              values:
+                - 'true'
+  tolerations:
+    - key: cluster.open-cluster-management.io/unreachable
+      operator: Exists
+    - key: cluster.open-cluster-management.io/unavailable
+      operator: Exists

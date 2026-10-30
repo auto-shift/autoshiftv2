@@ -1,0 +1,76 @@
+description: >-
+  Red Hat Quay with quay-db-mode managed: AutoShift provisions the quay-db and clair-db
+  CloudNativePG clusters and writes their connections into the config bundle from the application
+  Secrets CloudNativePG generates, stubbed in tools/testdata/quay-secrets.yaml. The configSecretRef
+  Secret still holds a DB_URI and clair-config.yaml from an earlier external setup, and both
+  databases must still come from CloudNativePG.
+
+policies:
+  - stable/quay
+
+expect:
+  - policy: policy-cnpg-quay
+    kind: Cluster
+    namespace: quay-enterprise
+    name: quay-db
+    fields:
+      - path: spec.instances
+        equals: 3
+  - policy: policy-cnpg-quay
+    kind: Cluster
+    namespace: quay-enterprise
+    name: clair-db
+    fields:
+      - path: spec.instances
+        equals: 3
+
+  - policy: policy-quay-deploy-cnpg
+    kind: Secret
+    namespace: quay-enterprise
+    name: quay-registry-config-bundle
+    fields:
+      - path: stringData["config.yaml"]
+        contains: 'DB_URI: postgresql://quay:testtest@quay-db-rw:5432/quay'
+      - path: stringData["config.yaml"]
+        notContains: external-quay-pg
+      - path: stringData["clair-config.yaml"]
+        contains: host=clair-db-rw
+      - path: stringData["clair-config.yaml"]
+        notContains: external-clair-pg
+      - path: stringData["clair-config.yaml"]
+        contains: 'disable_updaters: true'
+      - path: stringData["clair-config.yaml"]
+        contains: 'name: prometheus'
+
+  - policy: policy-quay-deploy-cnpg
+    kind: QuayRegistry
+    name: registry
+    fields:
+      - path: spec.components[kind=postgres].managed
+        equals: false
+      - path: spec.components[kind=clairpostgres].managed
+        equals: false
+
+  # policy-cnpg-quay must create quay-enterprise itself. policy-quay-deploy-cnpg creates it too, but
+  # waits on this policy through policy-cnpg-quay-test, so a fresh cluster otherwise deadlocks.
+  - policy: policy-cnpg-quay
+    kind: Namespace
+    name: quay-enterprise
+    count: 1
+
+  # A short smart shutdown: Quay and Clair never close their pooled connections, so the 180s default
+  # refuses new connections for that long before failover starts.
+  - policy: policy-cnpg-quay
+    kind: Cluster
+    name: quay-db
+    count: 1
+    fields:
+      - path: spec.smartShutdownTimeout
+        equals: 15
+  - policy: policy-cnpg-quay
+    kind: Cluster
+    name: clair-db
+    count: 1
+    fields:
+      - path: spec.smartShutdownTimeout
+        equals: 15

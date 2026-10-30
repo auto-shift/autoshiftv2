@@ -121,7 +121,7 @@ Every managed operator supports version control through its respective label:
 | OpenShift Pipelines         | `pipelines-version`     | `openshift-pipelines-operator-rh.v1.18.1`          |
 | OpenShift Data Foundation   | `odf-version`           | `odf-operator.v4.22.2-rhodf`                       |
 | MetalLB                     | `metallb-version`       | `metallb-operator.v4.22.0-202608122145`            |
-| Quay                        | `quay-version`          | `quay-operator.v3.18.0`                            |
+| Quay                        | `quay-version`          | `quay-operator.v3.18.2`                            |
 | Developer Hub               | `dev-hub-version`       | `rhdh.v1.5.0`                                      |
 | Developer Spaces            | `dev-spaces-version`    | `devspaces.v3.21.0`                                |
 | Trusted Artifact Signer     | `tas-version`           | `rhtas-operator.v1.2.0`                            |
@@ -178,7 +178,7 @@ created for each replica of the image service. Sized to hold the image catalog: 
 | `acm-observability-storage` | string    | `noobaa`                  | `noobaa` creates a NooBaa bucket and requires Red Hat OpenShift Data Foundation. `external-s3` reads `config.acm.observability.thanosStorage` and does not require OpenShift Data Foundation |
 | `acm-observability-custom-metrics` | bool | `false` | Collect metrics beyond the default allowlist. Requires `config.acm.observability.customMetrics` |
 | `acm-search-storage`        | bool      | `true` or `false`         | Enable persistent storage for Red Hat Advanced Cluster Management Search (recommended for production) |
-| `acm-search-storage-class`  | string    | `ocs-storagecluster-ceph-rbd` | Storage class for Search database |
+| `acm-search-storage-class`  | string    | cluster default           | Storage class for Search database. Unset uses the cluster's default `StorageClass`; with no default, Search falls back to `emptyDir` |
 | `acm-search-storage-size`   | string    | `100Gi`                   | Storage size for Search database. Sizing: Small (<50 clusters): 20Gi, Medium (50-200): 50Gi, Large (200-500): 100Gi, Very Large (500+): 200Gi+ |
 | `acm-addon-tuning`          | bool      | `true` or `false`         | Enable add-on tuning for governance controllers. Recommended for 50+ managed clusters. See the sizing guidelines that follow. |
 | `acm-addon-cpc-eval-concurrency` | string | `5`                  | config-policy-controller concurrent policy evaluations (default: 2) |
@@ -706,10 +706,11 @@ and optionally provisions its databases through CloudNativePG.
 | `quay-version`                    | string            | (optional)                | Specific CSV version for controlled upgrades |
 | `quay-source`                     | string            | `redhat-operators`        |       |
 | `quay-source-namespace`           | string            | `openshift-marketplace`   |       |
-| `quay-db-mode`                    | string            | `bundled`                 | `bundled`, `managed`, or `external`. See the following table |
+| `quay-db-mode`                    | string            | `bundled`                 | `bundled`, `managed`, or `external`. Set it before first deployment: changing it moves no data. See the following table |
 | `quay-db-instances`               | int               | `2`                       | CloudNativePG replicas for the Quay database |
 | `quay-clair-db-instances`         | int               | `2`                       | CloudNativePG replicas for the Clair database |
 | `quay-db-backups`                 | bool              | `false`                   | Scheduled database backups. Requires `quay-db-mode: managed` and `odf` |
+| `quay-dashboard`                  | bool              | `false`                   | Red Hat Quay health dashboard under **Observe** > **Dashboards (Perses)**. Requires `coo`. See [Dashboard](../policies/stable/quay/README.md#dashboard) |
 
 **Database modes** (`quay-db-mode`):
 
@@ -717,7 +718,7 @@ and optionally provisions its databases through CloudNativePG.
 |------|----------|
 | `bundled` | The Quay Operator runs its own PostgreSQL deployments. The shipped default, and appropriate for proof of concept clusters |
 | `managed` | AutoShift provisions two CloudNativePG clusters, `quay-db` and `clair-db`. Requires `cloudnative-pg: 'true'` on the same cluster |
-| `external` | You supply `DB_URI` and the Clair connection strings yourself. See `configSecretRef` in the following section |
+| `external` | You run both databases. Supply `DB_URI` and a `clair-config.yaml` in the `configSecretRef` Secret. See [External PostgreSQL](../policies/stable/quay/README.md#external-postgresql) |
 
 > [!NOTE]
 > Red Hat Quay and Clair must not share a database, so `managed` mode creates two separate
@@ -733,6 +734,14 @@ and optionally provisions its databases through CloudNativePG.
 | `superUsers` | list | `[quayadmin]` | Registry superusers. With OpenID Connect these are the OpenID Connect user names |
 | `components.<kind>` | bool | `true` | Per component `managed` flag. Omit a component to leave it managed by the operator |
 | `overrides.<kind>` | map | | Passed through to `spec.components[].overrides`. Accepts `affinity`, `annotations`, `env`, `labels`, `replicas`, `resources`, `securityContext`, `storageClassName`, `tls`, and `volumeSize`. See the warning that follows about `replicas` |
+| `zoneSpread` | bool | `false` | Prefers separate zones, as well as separate nodes, for the `quay`, `clair`, and `mirror` pods. An explicit `overrides.<kind>.affinity` replaces it for that component |
+| `infraNodes` | bool | `false` | Runs every pod in `quay-enterprise` on infra nodes through namespace annotations. Applies only while `infra-nodes` is set to a count other than `'0'` and an infra node is Ready. Turning it off leaves the annotations in place. See [Infra nodes](../policies/stable/quay/README.md#infra-nodes) |
+| `alerts.enabled` | bool | `true` | Alerts for garbage collection that does not drain, repositories that do not finish mirroring, and pushed images that are not scanned. Needs the `monitoring` component managed. See [Alerts](../policies/stable/quay/README.md#alerts) |
+| `alerts.severity` | string | `warning` | `severity` label on every alert |
+| `alerts.garbageCollectionStalledFor` | duration | `6h` | How long a garbage collection queue must hold items before `QuayGarbageCollectionStalled` fires |
+| `alerts.mirrorUnsyncedFor` | duration | `2h` | How long repositories configured for mirroring can stay unsynced before `QuayMirrorNotSynced` fires |
+| `alerts.scanStalledFor` | duration | `1h` | The window for `QuaySecurityScanStalled`: it fires when images were pushed in this window and none were scanned |
+| `clair` | map | | Non-sensitive Clair settings layered over the Clair configuration, such as `indexer.airgap` and `matcher.disable_updaters`. The Secret's `clair-config.yaml` wins over it. See [Clair settings](../policies/stable/quay/README.md#clair-settings) |
 | `bootstrap.userInitialize` | bool | `false` | `FEATURE_USER_INITIALIZE`. Enables the unauthenticated first user endpoint |
 | `bootstrap.xhrOnly` | bool | `true` | `BROWSER_API_CALLS_XHR_ONLY`. Restricts the registry API to browser calls |
 | `bootstrap.userCreation` | bool | `false` | `FEATURE_USER_CREATION`. When false, only superusers create users |
@@ -741,7 +750,7 @@ and optionally provisions its databases through CloudNativePG.
 | `tls.certificate.issuerRef` | map | | Optional. Creates a cert-manager `Certificate` from this issuer |
 | `tls.certificate.dnsNames` | list | | Optional. Defaults to the registry route host |
 | `config` | map | | Extra `config.yaml` keys, merged after the preceding fields. Non-sensitive values only |
-| `configSecretRef` | map | | `{name, namespace, key}` of a Secret holding sensitive `config.yaml` keys |
+| `configSecretRef` | map | | `{name, namespace, key}` of a Secret holding sensitive `config.yaml` keys. AutoShift copies its `extra_ca_cert_*` keys into the config bundle as files, and layers its `clair-config.yaml` over the Clair configuration in every mode. In `managed` mode the CloudNativePG connection wins. See [Clair settings](../policies/stable/quay/README.md#clair-settings) |
 | `dbBackupSchedule` | string | `0 4 * * *` | Cron schedule for database backups |
 | `dbBackupRetention` | string | `30d` | Backup retention period |
 | `dbImage` | string | | `quay-db-mode` `managed` only. PostgreSQL image for `quay-db` and `clair-db`. Empty means the CloudNativePG Operator default |

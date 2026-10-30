@@ -11,7 +11,7 @@ metadata:
 # Database backing is selected by the autoshift.io/quay-db-mode label:
 #   bundled  (default) — the Quay Operator's own PostgreSQL Deployment
 #   managed            — CNPG HA clusters provisioned below (also needs cloudnative-pg: 'true')
-#   external           — bring your own, via DB_URI in config.quay.config
+#   external           — bring your own: DB_URI and clair-config.yaml in the configSecretRef Secret
 placementBindingDefaults:
   name: binding-policy-quay
 policyDefaults:
@@ -86,6 +86,16 @@ policies:
       placementPath: placement-cnpg.yaml
     manifests:
       - path: manifests/quay-deploy
+  # 3-input) db-mode external input check (inform). No dependency, so a missing Secret or key is
+  #    reported at once rather than only after the registry fails to become ready.
+  - name: policy-quay-external-db
+    remediationAction: inform
+    placement:
+      placementPath: placement-external-db.yaml
+    manifests:
+      - path: test/quay-external-db.yaml
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
   # 3-test) QuayRegistry readiness (status observation → inform, its own Policy in test/).
   - name: policy-quay-test
     remediationAction: inform
@@ -93,7 +103,7 @@ policies:
       - name: policy-quay-operator-install
     manifests:
       - path: test/quay-registry-ready.yaml
-  # 4) Console link + registry host ConfigMap. Waits on the registry actually serving.
+  # 4) Console link + registry host ConfigMap + Day 2 alerts. Waits on the registry actually serving.
   # TLS status (inform) — config.quay.tls names an issuer, but the deploy policy emits the
   # Certificate only when that issuer exists and leaves tls managed while the secret is absent.
   - name: policy-quay-tls-issuer
@@ -114,6 +124,16 @@ policies:
       - name: policy-quay-test
     manifests:
       - path: manifests/console-link.yaml
+      - path: manifests/quay-alerts.yaml
+  # 4-dashboard) Perses health dashboard, opt in with autoshift.io/quay-dashboard. Needs coo for Perses.
+  - name: policy-quay-dashboard
+    dependencies:
+      - name: policy-coo-operator-install
+      - name: policy-quay-test
+    placement:
+      placementPath: placement-dashboard.yaml
+    manifests:
+      - path: manifests/quay-dashboard.yaml
   # 5) CNPG scheduled backups to NooBaa. The Quay Operator does not back up its own managed
   #    database, so this only exists for db-mode: managed.
   - name: policy-cnpg-quay-backup
