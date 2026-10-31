@@ -81,9 +81,3 @@ installed outside AutoShift. Those report `ResolutionFailed` and stop receiving 
 ```console
 oc get sub -A -o custom-columns=NAME:.metadata.name,SOURCE:.spec.source
 ```
-
-## Testing against a connected hub
-
-`autoshift/values/clusters/local-cluster-disconnected-test.yaml` exercises every policy here on a
-connected hub, using `registry.redhat.io` as the mirror. Its mirror entries redirect a name that
-does not resolve, so a pull through that name succeeds only when the mirror set works.
