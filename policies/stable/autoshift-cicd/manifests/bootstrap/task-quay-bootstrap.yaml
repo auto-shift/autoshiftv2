@@ -206,9 +206,13 @@ spec:
         status, out = api("PUT", "/api/v1/organization/%s/team/%s" % (org, team), token, dict(role="creator", description="AutoShift CI robots"))
         if status not in (200, 201):
             die("creating team %s failed (%s): %s" % (team, status, out))
-        status, out = api("PUT", "/api/v1/organization/%s/team/%s/members/%s" % (org, team, urllib.parse.quote(robot)), token, {})
-        if status not in (200, 201):
-            die("adding %s to team %s failed (%s): %s" % (robot, team, status, out))
+        status, out = api("GET", "/api/v1/organization/%s/team/%s/members" % (org, team), token)
+        if status != 200:
+            die("reading team %s members failed (%s): %s" % (team, status, out))
+        if robot not in [m.get("name") for m in out.get("members", [])]:
+            status, out = api("PUT", "/api/v1/organization/%s/team/%s/members/%s" % (org, team, urllib.parse.quote(robot)), token, {})
+            if status not in (200, 201):
+                die("adding %s to team %s failed (%s): %s" % (robot, team, status, out))
         print("Robot %s is a member of team %s (creator)" % (robot, team))
         # Push Secret
         auth = base64.b64encode((robot + ":" + robot_token).encode()).decode()
