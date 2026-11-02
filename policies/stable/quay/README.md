@@ -591,15 +591,14 @@ Creating the first user is an API-only operation in Red Hat Quay, so there are t
 administrator user names in `config.quay.superUsers`. Superusers named in `config.yaml` before
 deployment receive administrative access on first login with no bootstrap step.
 
-**Manual bootstrap (proof of concept).** Set both flags, wait for the registry to roll out, then
-call the endpoint once:
+**Manual bootstrap (proof of concept).** Turn on the first user endpoint, wait for the registry to
+roll out, then call it once:
 
 ```yaml
 config:
   quay:
     bootstrap:
       userInitialize: true
-      xhrOnly: false
 ```
 
 ```bash
@@ -609,8 +608,9 @@ curl -X POST "https://${HOST}/api/v1/user/initialize" \
   --data '{"username":"quayadmin","password":"<choose-one>","email":"quayadmin@example.com","access_token":true}'
 ```
 
-Store the returned `access_token` somewhere safe, then set both flags back to their defaults. The
-endpoint refuses to run once any user exists, so it cannot be replayed.
+Store the returned `access_token` somewhere safe. The endpoint refuses to run once any user exists,
+so it cannot be replayed and `userInitialize` can stay on. `xhrOnly` does not affect it: that check
+rejects only `GET` calls from a browser without the XHR header.
 
 ## Pushing to this registry
 

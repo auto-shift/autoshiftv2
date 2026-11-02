@@ -818,8 +818,8 @@ and optionally provisions its databases through CloudNativePG.
 | `alerts.mirrorUnsyncedFor` | duration | `2h` | How long repositories configured for mirroring can stay unsynced before `QuayMirrorNotSynced` fires |
 | `alerts.scanStalledFor` | duration | `1h` | The window for `QuaySecurityScanStalled`: it fires when images were pushed in this window and none were scanned |
 | `clair` | map | | Non-sensitive Clair settings layered over the Clair configuration, such as `indexer.airgap` and `matcher.disable_updaters`. The Secret's `clair-config.yaml` wins over it. See [Clair settings](../policies/stable/quay/README.md#clair-settings) |
-| `bootstrap.userInitialize` | bool | `false` | `FEATURE_USER_INITIALIZE`. Enables the unauthenticated first user endpoint |
-| `bootstrap.xhrOnly` | bool | `true` | `BROWSER_API_CALLS_XHR_ONLY`. Restricts the registry API to browser calls |
+| `bootstrap.userInitialize` | bool | `false` | `FEATURE_USER_INITIALIZE`. Enables the unauthenticated first user endpoint, which refuses once any user exists |
+| `bootstrap.xhrOnly` | bool | `true` | `BROWSER_API_CALLS_XHR_ONLY`. Rejects API `GET` calls from a browser that lack the XHR header. Other clients are not affected |
 | `bootstrap.userCreation` | bool | `false` | `FEATURE_USER_CREATION`. When false, only superusers create users |
 | `bootstrap.programmatic` | bool | `false` | `FEATURE_PROGRAMMATIC_BOOTSTRAP`. Technology Preview in Red Hat Quay 3.18 |
 | `tls.secretName` | string | | Name of a `kubernetes.io/tls` Secret for the registry certificate |
@@ -848,7 +848,7 @@ and optionally provisions its databases through CloudNativePG.
 The default configuration is secure: the unauthenticated first user endpoint is disabled and the
 registry API is restricted to browser calls. A cluster with no OpenID Connect provider therefore has
 no interactive administrator until you either configure OpenID Connect and list administrators in `superUsers`, or set
-`bootstrap.userInitialize` and `bootstrap.xhrOnly` to bootstrap a local account by hand.
+`bootstrap.userInitialize` to bootstrap a local account. The endpoint refuses once any user exists.
 
 ### OpenShift virtualization
 

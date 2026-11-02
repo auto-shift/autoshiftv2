@@ -59,7 +59,8 @@ tkn pipeline start bootstrap-gitlab -n autoshift-ci -p upstreamRefs="main releas
 
 - On a new registry with no users, start the pipeline with `initialize=true` instead. It calls the
   one-time user initialize endpoint, which works only while `config.quay.bootstrap.userInitialize`
-  is on, and stores the new administrator in the `quay-admin` Secret. Turn the flag off afterward.
+  is on, and stores the new administrator in the `quay-admin` Secret. The endpoint refuses once any
+  user exists, so the flag can stay on.
 
 ## Images
 
