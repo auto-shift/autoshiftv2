@@ -14,12 +14,12 @@ object-templates-raw: |
   {{hub- $teamSpecs := (dig "gitops" "teams" dict $cfg) hub}}
   {{hub- $isHub := ne (index .ManagedClusterLabels "autoshift.io/self-managed") "" hub}}
   {{hub- $clusterName := .ManagedClusterName hub}}
-  # ArgoCD Keycloak SSO (alongside OpenShift OAuth) is opt-in: enabled only when the admin seeded
-  # argocd-client-secret in tssc-keycloak-config. The OpenShift connector reuses the operator-maintained
+  # ArgoCD Keycloak SSO (alongside OpenShift OAuth) is on while the hub's Keycloak has an Argo CD
+  # client: policy-keycloak-realm-secrets generates keycloak-system/argocd-realm-clients when
+  # config.keycloak.argocdSso is true. The OpenShift connector reuses the operator-maintained
   # $oidc.dex.clientSecret (openShiftOAuth stays on), so only the Keycloak client secret is propagated.
-  {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
-  {{hub- $argoClientSecret := (index $kcData "argocd-client-secret" | default "") hub}}
-  {{hub- $argoSsoOn := ne $argoClientSecret "" hub}}
+  {{hub- $argoRealmClients := (lookup "v1" "Secret" "keycloak-system" "argocd-realm-clients" | default dict).data | default dict hub}}
+  {{hub- $argoSsoOn := ne (index $argoRealmClients "argocd" | default "") "" hub}}
   # Keycloak runs on the hub, so its issuer uses the hub's ingress domain; the Dex callback uses this
   # cluster's own, where the team instance runs.
   {{hub- $kcDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain hub}}
@@ -217,7 +217,7 @@ object-templates-raw: |
         namespace: {{hub $teamNs hub}}
       data:
         # fromSecret, not the lookup above, so the policy carries the value encrypted.
-        dex.keycloak.clientSecret: '{{hub fromSecret $.PolicyMetadata.namespace "tssc-keycloak-config" "argocd-client-secret" hub}}'
+        dex.keycloak.clientSecret: '{{hub fromSecret "keycloak-system" "argocd-realm-clients" "argocd" hub}}'
   {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:

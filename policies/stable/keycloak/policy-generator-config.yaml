@@ -37,11 +37,8 @@ policies:
   - name: policy-keycloak-operator-install
     manifests:
       - path: manifests/operator-install
-  # PostgreSQL database (cnpg / simple / external, from config.keycloak.db). simple mode reads
-  # db-password from the hub tssc-keycloak-config secret, so it needs the elevated SA.
+  # PostgreSQL database (cnpg / simple / external, from config.keycloak.db).
   - name: policy-keycloak-database
-    hubTemplateOptions:
-      serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-keycloak-operator-install
     manifests:
@@ -57,20 +54,14 @@ policies:
     remediationAction: inform
     manifests:
       - path: test/keycloak-ready.yaml
-  # Realm client secrets propagated from the hub tssc-keycloak-config secret (needs elevated SA).
+  # Realm client secrets, generated once on the cluster for each enabled component.
   - name: policy-keycloak-realm-secrets
-    hubTemplateOptions:
-      serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-keycloak-operator-install
     manifests:
       - path: manifests/realm-secrets.yaml
   # Realm import with per-component OIDC clients.
   - name: policy-keycloak-realm-import
-    # Hub-reads the admin-provided tssc-keycloak-config to gate the argocd client on argocd-client-secret
-    # being present (opt-in ArgoCD Keycloak SSO), so it needs the elevated policy service account.
-    hubTemplateOptions:
-      serviceAccountName: autoshift-policy-service-account
     dependencies:
       - name: policy-keycloak-instance
       - name: policy-keycloak-realm-secrets

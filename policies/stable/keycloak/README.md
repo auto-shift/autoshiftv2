@@ -54,6 +54,26 @@ the label-contract CI requires for every consumed `autoshift.io/*` key).
 The ApplicationSet auto-discovers new directories under `policies/stable/*` (and `certified`/
 `community`) — no manual registration required.
 
+## Realm and client secrets
+Nothing has to be created by hand. `policy-keycloak-realm-secrets` generates one client secret per
+enabled component in `keycloak-system`, writes it once, and reads it back on every evaluation so it
+never rotates:
+
+| Secret | Created while |
+|---|---|
+| `trusted-artifact-signer-clients` | `tas: 'true'` |
+| `tpa-realm-clients` | `trusted-profile-analyzer: 'true'` |
+| `rhdh-realm-clients` | `dev-hub: 'true'` |
+| `quay-realm-clients` | `quay: 'true'` |
+| `gitlab-realm-clients` | `gitlab: 'true'` |
+| `argocd-realm-clients` | `config.keycloak.argocdSso: true` |
+
+`policy-keycloak-realm-import` then writes the `tssc-iam` realm with those values. The import runs
+once, so it waits, failing with the list of missing Secrets, until every enabled client has one.
+Keycloak keeps a client's first secret after that, so to change one, set the same new value on the
+client in Keycloak and in its Secret. The `simple` database mode generates its password the same
+way.
+
 ## Version Control
 - **Automatic upgrades** within the channel by default.
 - **Pin a version** with the `keycloak-version` label — a pinned version sets a manual

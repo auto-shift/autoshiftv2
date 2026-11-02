@@ -3,8 +3,8 @@
 # per-cluster labels. Three modes via config.keycloak.db.mode:
 #   cnpg (default) — CloudNativePG Cluster + PgBouncer Pooler (requires the cloudnative-pg operator,
 #                    autoshift.io/cloudnative-pg: 'true'). CNPG mints the <cluster>-app Secret.
-#   simple         — single rhel9 postgresql-16 Deployment + one RWO PVC + Service + Secret (creds
-#                    sourced from the hub tssc-keycloak-config secret, key db-password).
+#   simple         — single rhel9 postgresql-16 Deployment + one RWO PVC + Service + Secret (the
+#                    password is generated on the cluster once).
 #   external       — provision nothing; the Keycloak CR points at an external DB (see instance.yaml).
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
@@ -89,6 +89,8 @@ object-templates-raw: |
                         matchLabels:
                           cnpg.io/poolerName: '{{hub $cluster hub}}-pooler-rw'
   {{hub- else if eq $mode "simple" hub}}
+  {{- /* The password is generated on the cluster once, then read back so it never rotates. */}}
+  {{- $simpleDb := (lookup "v1" "Secret" "{{hub $ns hub}}" "{{hub $cluster hub}}" | default dict).data | default dict }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -99,7 +101,7 @@ object-templates-raw: |
       type: Opaque
       data:
         username: '{{hub index $db "user" | default "keycloak" | b64enc hub}}'
-        password: '{{hub fromSecret .PolicyMetadata.namespace "tssc-keycloak-config" "db-password" hub}}'
+        password: '{{ index $simpleDb "password" | default (randAlphaNum 32 | b64enc) }}'
         database: '{{hub "keycloak" | b64enc hub}}'
   - complianceType: musthave
     objectDefinition:

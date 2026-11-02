@@ -1,6 +1,6 @@
 # TPA PostgreSQL database. Config from config.tpa.db (rendered-config). Three modes via
 # config.tpa.db.mode: cnpg (default, needs the cloudnative-pg operator), simple (rhel9 postgres
-# Deployment + PVC; password from the hub tssc-tpa-config secret, key db-password), external (none).
+# Deployment + PVC; password generated on the cluster once), external (none).
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $db := (index (index $cfg "tpa" | default dict) "db" | default dict) hub}}
@@ -84,6 +84,8 @@ object-templates-raw: |
                         matchLabels:
                           cnpg.io/poolerName: '{{hub $cluster hub}}-pooler-rw'
   {{hub- else if eq $mode "simple" hub}}
+  {{- /* The password is generated on the cluster once, then read back so it never rotates. */}}
+  {{- $simpleDb := (lookup "v1" "Secret" "{{hub $ns hub}}" "{{hub $cluster hub}}" | default dict).data | default dict }}
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
@@ -94,7 +96,7 @@ object-templates-raw: |
       type: Opaque
       data:
         username: '{{hub index $db "user" | default "tpa" | b64enc hub}}'
-        password: '{{hub fromSecret .PolicyMetadata.namespace "tssc-tpa-config" "db-password" hub}}'
+        password: '{{ index $simpleDb "password" | default (randAlphaNum 32 | b64enc) }}'
         database: '{{hub "tpa" | b64enc hub}}'
   - complianceType: musthave
     objectDefinition:

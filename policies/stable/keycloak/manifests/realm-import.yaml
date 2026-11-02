@@ -1,5 +1,5 @@
 # KeycloakRealmImport — the tssc-iam realm with per-component OIDC clients. Client secrets are read
-# (spoke-side) from the Secrets realm-secrets.yaml propagated to the managed cluster; each client is
+# (spoke-side) from the Secrets realm-secrets.yaml generates in keycloak-system; each client is
 # included only when its component label is set. Redirect URIs are built from the cluster apps domain.
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
@@ -10,9 +10,8 @@ object-templates-raw: |
   {{hub- $rhdhEnabled := eq (index .ManagedClusterLabels "autoshift.io/dev-hub" | default "false") "true" hub}}
   {{hub- $quayEnabled := eq (index .ManagedClusterLabels "autoshift.io/quay" | default "false") "true" hub}}
   {{hub- $gitlabEnabled := eq (index .ManagedClusterLabels "autoshift.io/gitlab" | default "false") "true" hub}}
-  # ArgoCD Keycloak SSO is opt-in: enabled only when the admin seeded argocd-client-secret in tssc-keycloak-config.
-  {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
-  {{hub- $argocdSsoEnabled := ne (index $kcData "argocd-client-secret" | default "") "" hub}}
+  # Argo CD Keycloak SSO is opt-in, through config.keycloak.argocdSso.
+  {{hub- $argocdSsoEnabled := (dig "keycloak" "argocdSso" false $cfg) hub}}
   {{- $appsDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{- $tasSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "trusted-artifact-signer-clients" | default dict).data | default dict }}
   {{- $tpaSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "tpa-realm-clients" | default dict).data | default dict }}

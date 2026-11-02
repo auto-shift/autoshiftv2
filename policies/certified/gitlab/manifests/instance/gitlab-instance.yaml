@@ -2,12 +2,10 @@ object-templates-raw: |
   {{- $ingressDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{- $ns := "gitlab-system" }}
 
-  # Keycloak OIDC (omniauth) is opt-in: wired only when the admin seeded gitlab-client-secret in the hub
-  # tssc-keycloak-config Secret; otherwise GitLab keeps local-only login. The hub only tests for the
-  # key. The value is read on the cluster from keycloak-system/gitlab-realm-clients, which
-  # policy-keycloak-realm-secrets delivers encrypted, so it never sits in the policy in plain text.
-  {{hub- $kcData := (lookup "v1" "Secret" .PolicyMetadata.namespace "tssc-keycloak-config" | default dict).data | default dict hub}}
-  {{hub- $gitlabOidcOn := ne (index $kcData "gitlab-client-secret" | default "") "" hub}}
+  # Keycloak OIDC (omniauth) is wired while keycloak is enabled on this cluster; otherwise GitLab keeps
+  # local-only login. The client secret is read on the cluster from keycloak-system/gitlab-realm-clients,
+  # which policy-keycloak-realm-secrets generates there, so it never sits in the policy.
+  {{hub- $gitlabOidcOn := eq (index .ManagedClusterLabels "autoshift.io/keycloak" | default "false") "true" hub}}
 
   # Service modes: managed (default) or external
   {{- $dbMode := "{{hub index .ManagedClusterLabels "autoshift.io/gitlab-db-mode" | default "managed" hub}}" }}
