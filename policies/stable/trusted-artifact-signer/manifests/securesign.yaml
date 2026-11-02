@@ -19,46 +19,41 @@ object-templates-raw: |
           openshift.io/cluster-monitoring: "true"
   - complianceType: musthave
     objectDefinition:
-      apiVersion: rhtas.redhat.com/v1alpha1
+      apiVersion: rhtas.redhat.com/v1
       kind: Securesign
       metadata:
         name: trusted-artifact-signer
         namespace: '{{hub $ns hub}}'
+      # Written as v1, the storage version. A v1alpha1 object converts its defaulted trillian port to
+      # url ":8091" next to the ref the Operator sets, and the CTlog then rejects both.
       spec:
         fulcio:
-          externalAccess:
-            enabled: true
-          certificate:
-            commonName: 'fulcio.{{ $appsDomain }}'
-            organizationEmail: 'tas@{{ $appsDomain }}'
-            organizationName: '{{hub $orgName hub}}'
-          config:
-            OIDCIssuers:
-              - Issuer: '{{ $oidcIssuer }}'
-                IssuerURL: '{{ $oidcIssuer }}'
-                ClientID: trusted-artifact-signer
-                Type: email
-        rekor:
-          externalAccess:
-            enabled: true
-          rekorSearchUI:
+          ingress:
             enabled: true
           signer:
-            kms: secret
+            certificateChain:
+              commonName: 'fulcio.{{ $appsDomain }}'
+              organizationEmail: 'tas@{{ $appsDomain }}'
+              organizationName: '{{hub $orgName hub}}'
+          config:
+            oidcIssuers:
+              - issuer: '{{ $oidcIssuer }}'
+                issuerURL: '{{ $oidcIssuer }}'
+                clientID: trusted-artifact-signer
+                type: email
+        rekor:
+          ingress:
+            enabled: true
+          signer:
+            type: secret
         trillian:
           database:
             create: true
+        # No tsa here or under tuf: a nil tuf.tsa keeps TSA out of the trust root, which the standard
+        # RHTAS deployment does not include.
         tuf:
-          externalAccess:
+          ingress:
             enabled: true
-          # Pin the TUF trust-root keys to the components we deploy. The v1.4 operator otherwise
-          # defaults in tsa.certchain.pem, and with no TimestampAuthority configured TUF blocks forever
-          # ("Secret \"\" not found"). TSA is not part of the standard RHTAS deployment (the RHTAS
-          # Deployment Guide's ready-check lists only CTlog/Fulcio/Rekor/Trillian/TUF).
-          keys:
-            - name: rekor.pub
-            - name: ctfe.pub
-            - name: fulcio_v1.crt.pem
   - complianceType: musthave
     objectDefinition:
       apiVersion: v1
