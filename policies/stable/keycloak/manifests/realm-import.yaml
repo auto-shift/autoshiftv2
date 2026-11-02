@@ -10,6 +10,8 @@ object-templates-raw: |
   {{hub- $rhdhEnabled := eq (index .ManagedClusterLabels "autoshift.io/dev-hub" | default "false") "true" hub}}
   {{hub- $quayEnabled := eq (index .ManagedClusterLabels "autoshift.io/quay" | default "false") "true" hub}}
   {{hub- $gitlabEnabled := eq (index .ManagedClusterLabels "autoshift.io/gitlab" | default "false") "true" hub}}
+  # The autoshift-ci signing client exists while both tas and autoshift-cicd are on.
+  {{hub- $cicdEnabled := and $tasEnabled (eq (index .ManagedClusterLabels "autoshift.io/autoshift-cicd" | default "false") "true") hub}}
   # Argo CD Keycloak SSO is opt-in, through config.keycloak.argocdSso.
   {{hub- $argocdSsoEnabled := (dig "keycloak" "argocdSso" false $cfg) hub}}
   {{- $appsDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
@@ -18,6 +20,7 @@ object-templates-raw: |
   {{- $rhdhSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "rhdh-realm-clients" | default dict).data | default dict }}
   {{- $quaySecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "quay-realm-clients" | default dict).data | default dict }}
   {{- $gitlabSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "gitlab-realm-clients" | default dict).data | default dict }}
+  {{- $ciSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "autoshift-ci-realm-clients" | default dict).data | default dict }}
   {{- $argocdSecret := (lookup "v1" "Secret" "{{hub $ns hub}}" "argocd-realm-clients" | default dict).data | default dict }}
   {{- /* The import is one-shot: Keycloak keeps whatever secret a client is first created with. So
        every enabled client's secret must be present before the import is written at all. */}}
@@ -27,6 +30,7 @@ object-templates-raw: |
   {{hub- if $rhdhEnabled hub}}{{- if not (index $rhdhSecret "rhdh") }}{{- $missing = append $missing "rhdh-realm-clients" }}{{- end }}{{hub- end hub}}
   {{hub- if $quayEnabled hub}}{{- if not (index $quaySecret "quay") }}{{- $missing = append $missing "quay-realm-clients" }}{{- end }}{{hub- end hub}}
   {{hub- if $gitlabEnabled hub}}{{- if not (index $gitlabSecret "gitlab") }}{{- $missing = append $missing "gitlab-realm-clients" }}{{- end }}{{hub- end hub}}
+  {{hub- if $cicdEnabled hub}}{{- if not (index $ciSecret "autoshiftCi") }}{{- $missing = append $missing "autoshift-ci-realm-clients" }}{{- end }}{{hub- end hub}}
   {{hub- if $argocdSsoEnabled hub}}{{- if not (index $argocdSecret "argocd") }}{{- $missing = append $missing "argocd-realm-clients" }}{{- end }}{{hub- end hub}}
   {{- if $missing }}
   {{-   fail (printf "The realm import waits for its client secrets. Missing in {{hub $ns hub}}, from policy-keycloak-realm-secrets: %s" (join ", " $missing)) }}
@@ -312,6 +316,55 @@ object-templates-raw: |
                 - 'https://gitlab.{{ $appsDomain }}/users/auth/openid_connect/callback'
               webOrigins:
                 - 'https://gitlab.{{ $appsDomain }}'
+          {{hub- end hub}}
+          {{hub- if $cicdEnabled hub}}
+            # AutoShift CI signing identity. Client credentials only: the pipeline trades the secret for
+            # a short-lived token that Fulcio accepts, so every certificate names this one identity.
+            # The audience is the Fulcio client ID; email and email_verified are fixed claims, because
+            # Fulcio's email issuer type requires a verified email.
+            - clientId: autoshift-ci
+              clientAuthenticatorType: client-secret
+              secret: '{{ index $ciSecret "autoshiftCi" | b64dec }}'
+              enabled: true
+              publicClient: false
+              serviceAccountsEnabled: true
+              standardFlowEnabled: false
+              implicitFlowEnabled: false
+              directAccessGrantsEnabled: false
+              fullScopeAllowed: false
+              protocol: openid-connect
+              defaultClientScopes: []
+              optionalClientScopes: []
+              attributes:
+                access.token.lifespan: "300"
+              protocolMappers:
+                - name: fulcio audience
+                  protocol: openid-connect
+                  protocolMapper: oidc-audience-mapper
+                  config:
+                    included.custom.audience: trusted-artifact-signer
+                    access.token.claim: "true"
+                    id.token.claim: "false"
+                - name: signer email
+                  protocol: openid-connect
+                  protocolMapper: oidc-hardcoded-claim-mapper
+                  config:
+                    claim.name: email
+                    claim.value: 'autoshift-ci@{{ $appsDomain }}'
+                    jsonType.label: String
+                    access.token.claim: "true"
+                    id.token.claim: "false"
+                    userinfo.token.claim: "false"
+                - name: signer email verified
+                  protocol: openid-connect
+                  protocolMapper: oidc-hardcoded-claim-mapper
+                  config:
+                    claim.name: email_verified
+                    claim.value: "true"
+                    jsonType.label: boolean
+                    access.token.claim: "true"
+                    id.token.claim: "false"
+                    userinfo.token.claim: "false"
           {{hub- end hub}}
           {{hub- if $argocdSsoEnabled hub}}
             # ArgoCD Keycloak SSO (Dex oidc connector, alongside OpenShift OAuth). One client for both the

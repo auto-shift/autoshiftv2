@@ -1,0 +1,48 @@
+# Lets the autoshift-ci pipeline ServiceAccount read the two objects bootstrap-keycloak needs in
+# keycloak-system, by name and nothing else: the Keycloak admin credential and the realm import whose
+# clients it copies into an existing realm. Present while tas is on, the same gate as the
+# autoshift-ci client.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $realm := (dig "keycloak" "realmName" "tssc-iam" $cfg) hub}}
+  {{hub- if eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: autoshift-ci-keycloak-bootstrap
+        namespace: keycloak-system
+      rules:
+        - apiGroups:
+            - ''
+          resources:
+            - secrets
+          resourceNames:
+            - keycloak-initial-admin
+          verbs:
+            - get
+        - apiGroups:
+            - k8s.keycloak.org
+          resources:
+            - keycloakrealmimports
+          resourceNames:
+            - '{{hub $realm hub}}'
+          verbs:
+            - get
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: autoshift-ci-keycloak-bootstrap
+        namespace: keycloak-system
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: autoshift-ci-keycloak-bootstrap
+      subjects:
+        - kind: ServiceAccount
+          name: pipeline
+          namespace: autoshift-ci
+  {{hub- end hub}}

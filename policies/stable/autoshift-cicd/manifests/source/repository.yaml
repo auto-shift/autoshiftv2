@@ -1,0 +1,61 @@
+# The Pipelines as Code Repository for the AutoShift source, on GitHub or GitLab, from
+# config.autoshift-cicd.source. A push or merge request there runs the .tekton/ pipelines in
+# autoshift-ci.
+#   provider    gitlab (default) or github
+#   repo        the repository URL. Empty with gitlab means the autoshift project bootstrap-gitlab
+#               creates; github requires it
+#   apiUrl      the provider API, for GitHub Enterprise or a GitLab other than the one on this hub.
+#               Empty means github.com, or the hub's GitLab
+#   secret      Secret in autoshift-ci with provider.token and webhook.secret. bootstrap-gitlab
+#               writes it for GitLab; for GitHub you create it
+#   provenance  source runs .tekton/ from the pushed branch; default_branch runs only what is on the
+#               default branch, so a branch cannot change the pipeline it runs under
+# Missing input fails the policy with the list rather than creating a Repository that never runs.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $src := (dig "autoshift-cicd" "source" (dict) $cfg) hub}}
+  {{hub- $provider := (index $src "provider" | default "gitlab") hub}}
+  {{hub- $group := (dig "autoshift-cicd" "gitlabGroup" "autoshift" $cfg) hub}}
+  {{- $missing := list }}
+  {{- $repo := regexReplaceAll "[.]git$" "{{hub index $src "repo" | default "" hub}}" "" }}
+  {{- $apiUrl := "{{hub index $src "apiUrl" | default "" hub}}" }}
+  {{- $secretName := "{{hub index $src "secret" | default "autoshift-pac-webhook" hub}}" }}
+  {{hub- if eq $provider "gitlab" hub}}
+  {{- $glHost := (index (((lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials") | default dict).data | default dict) "host" | default "" | base64dec) }}
+  {{- if not $apiUrl }}{{- $apiUrl = ternary (printf "https://%s" $glHost) "" (ne $glHost "") }}{{- end }}
+  {{- if not $repo }}{{- $repo = ternary (printf "https://%s/{{hub $group hub}}/autoshift" $glHost) "" (ne $glHost "") }}{{- end }}
+  {{- if not (and $repo $apiUrl) }}{{- $missing = append $missing "config.autoshift-cicd.source.repo and apiUrl, or Secret gitlab-system/tssc-gitlab-credentials with host" }}{{- end }}
+  {{hub- else if eq $provider "github" hub}}
+  {{- if not $repo }}{{- $missing = append $missing "config.autoshift-cicd.source.repo, the GitHub repository URL" }}{{- end }}
+  {{hub- else hub}}
+  {{- $missing = append $missing "config.autoshift-cicd.source.provider must be gitlab or github, not {{hub $provider hub}}" }}
+  {{hub- end hub}}
+  {{- $sd := ((lookup "v1" "Secret" "autoshift-ci" $secretName) | default dict).data | default dict }}
+  {{- if not (and (index $sd "provider.token") (index $sd "webhook.secret")) }}
+  {{-   $missing = append $missing (printf "Secret autoshift-ci/%s with keys provider.token and webhook.secret (bootstrap-gitlab writes it for GitLab; create it for GitHub)" $secretName) }}
+  {{- end }}
+  {{- if $missing }}
+  {{-   fail (printf "The AutoShift source Repository cannot be created. Missing: %s" (join "; " $missing)) }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: pipelinesascode.tekton.dev/v1alpha1
+      kind: Repository
+      metadata:
+        name: autoshift
+        namespace: autoshift-ci
+      spec:
+        url: '{{ $repo }}'
+        git_provider:
+          type: '{{hub $provider hub}}'
+          {{- if $apiUrl }}
+          url: '{{ $apiUrl }}'
+          {{- end }}
+          secret:
+            name: '{{ $secretName }}'
+            key: provider.token
+          webhook_secret:
+            name: '{{ $secretName }}'
+            key: webhook.secret
+        settings:
+          pipelinerun_provenance: '{{hub index $src "provenance" | default "source" hub}}'

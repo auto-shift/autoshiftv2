@@ -4,18 +4,21 @@
 
 AutoShift's own continuous integration and delivery, built on the Red Hat Advanced Developer Suite
 (RHADS) components. This first part delivers bootstrap pipelines: parameterized Tekton Pipelines in
-the `autoshift-ci` namespace that create what the CI/CD needs in Quay and GitLab. AutoShift only
-installs them. Nothing runs until you start one.
+the `autoshift-ci` namespace that create what the CI/CD needs in Quay, GitLab and Keycloak. AutoShift
+only installs them. Nothing runs until you start one. Every step, automated or not, has a manual
+procedure in [AutoShift CI/CD](../../../docs/autoshift-cicd.md).
 
 | Policy | What it does |
 |---|---|
-| `policy-autoshift-cicd-bootstrap` | The `autoshift-ci` namespace, the bootstrap Tasks and the bootstrap Pipelines |
-| `policy-autoshift-cicd-endpoints` | Gathers what the Tasks read into `autoshift-ci`: endpoint URLs, the trust bundle and the GitLab token |
+| `policy-autoshift-cicd-bootstrap` | The `autoshift-ci` namespace, the bootstrap Tasks and Pipelines, and while `tas` is on, read access to the Keycloak admin Secret and realm import for `bootstrap-keycloak` |
+| `policy-autoshift-cicd-source` | The Pipelines as Code Repository for the AutoShift source on GitHub or GitLab |
+| `policy-autoshift-cicd-endpoints` | Gathers what the Tasks read into `autoshift-ci`: endpoint URLs, the trust bundle, the GitLab token, and while `tas` is on, the Trusted Artifact Signer URLs and the `autoshift-ci` signing client |
 
 ## Labels and configuration
 
 Placed on hubs with `autoshift.io/autoshift-cicd: 'true'`. Pipeline defaults come from
-`config.autoshift-cicd`, and every one can be overridden when a pipeline starts:
+`config.autoshift-cicd`, and every one can be overridden when a pipeline starts. `source` selects
+the repository whose pushes run the `.tekton/` pipelines:
 
 ```yaml
 config:
@@ -24,7 +27,17 @@ config:
     upstreamRef: main
     gitlabGroup: autoshift
     quayOrg: autoshift
+    source:
+      provider: github                # gitlab (default) | github
+      repo: https://github.com/auto-shift/autoshiftv2
+      apiUrl: ''                      # set for GitHub Enterprise or another GitLab
+      secret: autoshift-pac-github    # Secret in autoshift-ci: provider.token, webhook.secret
+      provenance: source              # source | default_branch
 ```
+
+With `provider: gitlab` and no `repo`, the source is the `autoshift` project `bootstrap-gitlab`
+creates. For GitHub, create the Secret and the repository webhook as described in
+[Source repository](../../../docs/autoshift-cicd.md#source-repository).
 
 The Quay and GitLab endpoints are gathered only while the `quay` and `gitlab` labels are on.
 
@@ -35,6 +48,7 @@ The Quay and GitLab endpoints are gathered only while the `quay` and `gitlab` la
 | `bootstrap-quay` | The Quay organization, a `<org>+ci` robot in a team with the creator role, and the robot's push Secret `quay-<org>-ci` |
 | `bootstrap-gitlab` | The GitLab group with `autoshift` and `site-config` projects, the Pipelines as Code webhook, the upstream branches pushed into `autoshift`, and `site-config` seeded once from `autoshift/values` |
 | `sync-upstream` | Pushes upstream branches and tags into the GitLab `autoshift` project again |
+| `bootstrap-keycloak` | Copies the `autoshift-ci` signing client from the realm import into a realm imported before the client existed, then checks its token carries the claims Fulcio requires |
 
 Every task checks before it creates, so each pipeline is safe to run again. `sync-upstream` does not
 force unless you set `force=true`, so a branch changed in GitLab is reported rather than lost.
@@ -45,6 +59,7 @@ Start a pipeline from the console, or with the `tkn` CLI:
 ```bash
 tkn pipeline start bootstrap-quay -n autoshift-ci --use-param-defaults --showlog
 tkn pipeline start bootstrap-gitlab -n autoshift-ci -p upstreamRefs="main release-1.0" --showlog
+tkn pipeline start bootstrap-keycloak -n autoshift-ci --use-param-defaults --showlog
 ```
 
 ## The Quay admin token
@@ -72,5 +87,6 @@ The Tasks use images the cluster already has, so nothing extra needs mirroring:
 ## Failing on missing input
 
 `policy-autoshift-cicd-endpoints` fails with the list of what is missing, rather than writing empty
-values: the Pipelines as Code Route, the ingress CA, and the Quay Route and GitLab token while their
-labels are on. `policy-autoshift-cicd-bootstrap` fails when it cannot resolve the two images.
+values: the Pipelines as Code Route, the ingress CA, the Quay Route and GitLab token while their
+labels are on, and the Trusted Artifact Signer URLs, Keycloak host and signing client while `tas` is
+on. `policy-autoshift-cicd-bootstrap` fails when it cannot resolve the two images.

@@ -1,0 +1,172 @@
+# Copies clients from the KeycloakRealmImport into a realm that already exists. The import only runs
+# when the realm is first created, so a client added to it later, such as autoshift-ci, never reaches
+# an existing realm on its own. The realm import stays the one definition of each client: this task
+# creates a missing client, updates one that differs, including its secret and protocol mappers, and
+# then checks a client-credentials token for the claims Fulcio requires. Safe to run again.
+#
+# Reads keycloak-system/keycloak-initial-admin and the realm import by name, through the Role in
+# keycloak-access.yaml. The admin credential stays in the step and is never written anywhere.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: keycloak-client-sync
+  namespace: autoshift-ci
+spec:
+  description: Copy clients from the KeycloakRealmImport into an existing Keycloak realm.
+  params:
+    - name: cliImage
+      type: string
+      description: Image with oc and python3. The Pipeline passes the cluster's openshift/cli image.
+    - name: realm
+      type: string
+      default: tssc-iam
+    - name: clients
+      type: string
+      default: autoshift-ci
+      description: Space-separated client IDs to copy from the realm import.
+    - name: keycloakUrl
+      type: string
+      default: ''
+      description: Keycloak base URL. Empty derives it from oidcIssuer in the autoshift-ci-endpoints ConfigMap.
+    - name: tlsVerify
+      type: string
+      default: 'true'
+  volumes:
+    - name: trusted-ca
+      configMap:
+        name: autoshift-ci-trusted-ca
+        optional: true
+    - name: autoshift-ci-ca
+      configMap:
+        name: autoshift-ci-ca
+        optional: true
+  steps:
+    - name: sync
+      image: $(params.cliImage)
+      volumeMounts:
+        - name: trusted-ca
+          mountPath: /etc/autoshift-ci/trusted-ca
+        - name: autoshift-ci-ca
+          mountPath: /etc/autoshift-ci/ca
+      env:
+        - name: REALM
+          value: $(params.realm)
+        - name: CLIENTS
+          value: $(params.clients)
+        - name: KEYCLOAK_URL
+          value: $(params.keycloakUrl)
+        - name: TLS_VERIFY
+          value: $(params.tlsVerify)
+      script: |
+        #!/usr/bin/env python3
+        import base64, glob, json, os, ssl, subprocess, sys, urllib.error, urllib.parse, urllib.request
+        def die(msg):
+            print("ERROR: " + msg, file=sys.stderr)
+            sys.exit(1)
+        def oc(*args):
+            p = subprocess.run(["oc", *args], capture_output=True, text=True)
+            if p.returncode != 0:
+                die("oc " + " ".join(args) + ": " + p.stderr.strip())
+            return p.stdout
+        ctx = ssl.create_default_context()
+        for pem in glob.glob("/etc/autoshift-ci/trusted-ca/*") + glob.glob("/etc/autoshift-ci/ca/*"):
+            try:
+                ctx.load_verify_locations(cafile=pem)
+            except (ssl.SSLError, OSError):
+                pass
+        if os.environ["TLS_VERIFY"] != "true":
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        realm = os.environ["REALM"]
+        base = os.environ["KEYCLOAK_URL"].rstrip("/")
+        if not base:
+            issuer = json.loads(oc("get", "configmap", "autoshift-ci-endpoints", "-o", "json")).get("data", {}).get("oidcIssuer", "")
+            if "/realms/" not in issuer:
+                die("no Keycloak URL: set keycloakUrl, or turn on tas so autoshift-ci-endpoints carries oidcIssuer")
+            base = issuer.split("/realms/")[0]
+        def call(method, path, token=None, body=None, form=None):
+            data, ctype = None, "application/json"
+            if form is not None:
+                data, ctype = urllib.parse.urlencode(form).encode(), "application/x-www-form-urlencoded"
+            elif body is not None:
+                data = json.dumps(body).encode()
+            req = urllib.request.Request(base + path, method=method, data=data)
+            req.add_header("Content-Type", ctype)
+            if token:
+                req.add_header("Authorization", "Bearer " + token)
+            try:
+                with urllib.request.urlopen(req, context=ctx, timeout=60) as r:
+                    raw = r.read()
+                    return r.status, (json.loads(raw) if raw else {})
+            except urllib.error.HTTPError as e:
+                raw = e.read()
+                try:
+                    return e.code, json.loads(raw)
+                except ValueError:
+                    return e.code, {"raw": raw.decode(errors="replace")}
+        # Clients as the realm import defines them
+        imp = json.loads(oc("get", "keycloakrealmimport", realm, "-n", "keycloak-system", "-o", "json"))
+        defined = dict((c["clientId"], c) for c in imp["spec"]["realm"].get("clients", []))
+        wanted = os.environ["CLIENTS"].split()
+        absent = [c for c in wanted if c not in defined]
+        if absent:
+            die("not in the %s realm import: %s. Turn on the labels that add them, then wait for policy-keycloak-realm-import" % (realm, ", ".join(absent)))
+        # Admin token from the master realm
+        admin = json.loads(oc("get", "secret", "keycloak-initial-admin", "-n", "keycloak-system", "-o", "json"))["data"]
+        status, out = call("POST", "/realms/master/protocol/openid-connect/token", form=dict(
+            grant_type="password", client_id="admin-cli",
+            username=base64.b64decode(admin["username"]).decode(), password=base64.b64decode(admin["password"]).decode()))
+        if status != 200 or not out.get("access_token"):
+            die("Keycloak admin login failed (%s): %s" % (status, out.get("error_description", out.get("error", ""))))
+        token = out["access_token"]
+        for cid in wanted:
+            want = dict(defined[cid])
+            mappers = want.pop("protocolMappers", [])
+            status, found = call("GET", "/admin/realms/%s/clients?clientId=%s" % (realm, urllib.parse.quote(cid)), token)
+            if status != 200:
+                die("reading client %s failed (%s): %s" % (cid, status, found))
+            if not found:
+                status, out = call("POST", "/admin/realms/%s/clients" % realm, token, want)
+                if status not in (200, 201):
+                    die("creating client %s failed (%s): %s" % (cid, status, out))
+                status, found = call("GET", "/admin/realms/%s/clients?clientId=%s" % (realm, urllib.parse.quote(cid)), token)
+                print("Created client %s" % cid)
+            else:
+                status, out = call("PUT", "/admin/realms/%s/clients/%s" % (realm, found[0]["id"]), token, dict(want, id=found[0]["id"]))
+                if status not in (200, 204):
+                    die("updating client %s failed (%s): %s" % (cid, status, out))
+                print("Updated client %s from the realm import" % cid)
+            uid = found[0]["id"]
+            status, have = call("GET", "/admin/realms/%s/clients/%s/protocol-mappers/models" % (realm, uid), token)
+            if status != 200:
+                die("reading mappers of %s failed (%s): %s" % (cid, status, have))
+            have = dict((m["name"], m) for m in have)
+            for m in mappers:
+                if m["name"] in have:
+                    status, out = call("PUT", "/admin/realms/%s/clients/%s/protocol-mappers/models/%s" % (realm, uid, have[m["name"]]["id"]), token, dict(m, id=have[m["name"]]["id"]))
+                else:
+                    status, out = call("POST", "/admin/realms/%s/clients/%s/protocol-mappers/models" % (realm, uid), token, m)
+                if status not in (200, 201, 204):
+                    die("writing mapper %s on %s failed (%s): %s" % (m["name"], cid, status, out))
+            print("Client %s has its %d protocol mappers" % (cid, len(mappers)))
+        # The signing client must yield a token Fulcio accepts: its audience, and a verified email
+        if "autoshift-ci" in wanted:
+            c = defined["autoshift-ci"]
+            status, out = call("POST", "/realms/%s/protocol/openid-connect/token" % realm, form=dict(
+                grant_type="client_credentials", client_id="autoshift-ci", client_secret=c["secret"]))
+            if status != 200 or not out.get("access_token"):
+                die("autoshift-ci client-credentials token failed (%s): %s" % (status, out.get("error_description", out.get("error", ""))))
+            seg = out["access_token"].split(".")[1]
+            claims = json.loads(base64.urlsafe_b64decode(seg + "=" * (-len(seg) % 4)))
+            aud = claims.get("aud", [])
+            aud = aud if isinstance(aud, list) else [aud]
+            problems = []
+            if "trusted-artifact-signer" not in aud:
+                problems.append("aud %s lacks trusted-artifact-signer" % aud)
+            if not claims.get("email"):
+                problems.append("no email claim")
+            if claims.get("email_verified") is not True:
+                problems.append("email_verified is not true")
+            if problems:
+                die("the autoshift-ci token would be refused by Fulcio: " + "; ".join(problems))
+            print("autoshift-ci token: iss %s, email %s, audience trusted-artifact-signer" % (claims.get("iss"), claims.get("email")))

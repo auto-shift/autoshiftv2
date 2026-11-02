@@ -12,6 +12,7 @@ object-templates-raw: |
   {{hub- $upstreamRef := (index $cicd "upstreamRef" | default "main") hub}}
   {{hub- $group := (index $cicd "gitlabGroup" | default "autoshift") hub}}
   {{hub- $org := (index $cicd "quayOrg" | default "autoshift") hub}}
+  {{hub- $realm := (dig "keycloak" "realmName" "tssc-iam" $cfg) hub}}
   {{- $cliImage := "{{hub (index (index $cfg "images" | default dict) "cli" | default "") hub}}" }}
   {{- if not $cliImage }}
   {{-   $isCli := (lookup "image.openshift.io/v1" "ImageStream" "openshift" "cli") | default dict }}
@@ -223,5 +224,47 @@ object-templates-raw: |
                 value: $(params.force)
               - name: targetUrl
                 value: $(params.targetUrl)
+              - name: tlsVerify
+                value: $(params.tlsVerify)
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: tekton.dev/v1
+      kind: Pipeline
+      metadata:
+        name: bootstrap-keycloak
+        namespace: autoshift-ci
+      spec:
+        description: >-
+          Copy clients from the realm import into a Keycloak realm that already exists, such as the
+          autoshift-ci signing client, and check that its token carries the claims Fulcio requires.
+          A realm created after the client was added already has it.
+        params:
+          - name: realm
+            type: string
+            default: '{{hub $realm hub}}'
+          - name: clients
+            type: string
+            default: autoshift-ci
+            description: Space-separated client IDs to copy from the realm import.
+          - name: keycloakUrl
+            type: string
+            default: ''
+            description: Empty derives it from oidcIssuer in autoshift-ci-endpoints.
+          - name: tlsVerify
+            type: string
+            default: 'true'
+        tasks:
+          - name: keycloak-client-sync
+            taskRef:
+              name: keycloak-client-sync
+            params:
+              - name: cliImage
+                value: '{{ $cliImage }}'
+              - name: realm
+                value: $(params.realm)
+              - name: clients
+                value: $(params.clients)
+              - name: keycloakUrl
+                value: $(params.keycloakUrl)
               - name: tlsVerify
                 value: $(params.tlsVerify)

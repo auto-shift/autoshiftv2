@@ -35,3 +35,53 @@ data:
     -----BEGIN CERTIFICATE-----
     MIIBFakeIngressCAForTestingOnly1234567890AbCdEfGhIjKlMnOpQrStUvWx
     -----END CERTIFICATE-----
+---
+# The Keycloak instance policy-keycloak creates. policy-autoshift-cicd-endpoints reads its hostname
+# for the signing client's issuer and token URL.
+apiVersion: k8s.keycloak.org/v2beta1
+kind: Keycloak
+metadata:
+  name: keycloak
+  namespace: keycloak-system
+spec:
+  hostname:
+    hostname: keycloak.apps.example.com
+---
+# The Trusted Artifact Signer components the Securesign creates, with the URLs they publish.
+apiVersion: rhtas.redhat.com/v1
+kind: Fulcio
+metadata:
+  name: trusted-artifact-signer
+  namespace: tssc-tas
+status:
+  url: https://fulcio-server-tssc-tas.apps.example.com
+---
+apiVersion: rhtas.redhat.com/v1
+kind: Rekor
+metadata:
+  name: trusted-artifact-signer
+  namespace: tssc-tas
+status:
+  url: https://rekor-server-tssc-tas.apps.example.com
+---
+apiVersion: rhtas.redhat.com/v1
+kind: Tuf
+metadata:
+  name: trusted-artifact-signer
+  namespace: tssc-tas
+status:
+  url: https://tuf-tssc-tas.apps.example.com
+---
+# The source Repository's credentials: the Git provider token and the webhook secret. Fake,
+# low-entropy values, testing only.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: autoshift-pac-webhook
+  namespace: autoshift-ci
+type: Opaque
+data:
+  # provider.token: fake-token
+  provider.token: ZmFrZS10b2tlbg==
+  # webhook.secret: fake-hook
+  webhook.secret: ZmFrZS1ob29r

@@ -66,12 +66,15 @@ never rotates:
 | `rhdh-realm-clients` | `dev-hub: 'true'` |
 | `quay-realm-clients` | `quay: 'true'` |
 | `gitlab-realm-clients` | `gitlab: 'true'` |
+| `autoshift-ci-realm-clients` | `tas: 'true'` and `autoshift-cicd: 'true'` |
 | `argocd-realm-clients` | `config.keycloak.argocdSso: true` |
 
 `policy-keycloak-realm-import` then writes the `tssc-iam` realm with those values. The import runs
 once, so it waits, failing with the list of missing Secrets, until every enabled client has one.
 Keycloak keeps a client's first secret after that, so to change one, set the same new value on the
-client in Keycloak and in its Secret. The `simple` database mode generates its password the same
+client in Keycloak and in its Secret. A client added to the import after the realm exists, such as
+`autoshift-ci`, reaches the running realm through the `bootstrap-keycloak` pipeline; see
+[AutoShift CI/CD](../../../docs/autoshift-cicd.md#add-the-client-to-an-existing-realm). The `simple` database mode generates its password the same
 way.
 
 ## Version Control

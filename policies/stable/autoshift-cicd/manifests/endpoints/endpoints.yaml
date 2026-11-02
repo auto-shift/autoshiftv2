@@ -5,9 +5,14 @@
 #   autoshift-ci-ca         the ingress CA, and autoshift-ca when cert-manager has issued it, so the
 #                           tasks verify TLS against routes signed by either
 #   gitlab-autoshift-token  the GitLab PAT from gitlab-system/tssc-gitlab-credentials, while gitlab is on
+#   keycloak-autoshift-ci   the autoshift-ci Keycloak client the pipelines sign with, while tas is on,
+#                           with the Fulcio, Rekor and TUF URLs and the signer identity in the endpoints
 # An enabled component whose endpoint is missing fails the policy with the list, rather than writing
 # an empty value the tasks would only trip over later.
 object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $realm := (dig "keycloak" "realmName" "tssc-iam" $cfg) hub}}
+  {{hub- $tasOn := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
   {{hub- $quayOn := eq (index .ManagedClusterLabels "autoshift.io/quay" | default "false") "true" hub}}
   {{hub- $gitlabOn := eq (index .ManagedClusterLabels "autoshift.io/gitlab" | default "false") "true" hub}}
   {{- $missing := list }}
@@ -23,6 +28,17 @@ object-templates-raw: |
   {{hub- if $gitlabOn hub}}
   {{- $glData := ((lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials") | default dict).data | default dict }}
   {{- if not (and (index $glData "host") (index $glData "token")) }}{{- $missing = append $missing "Secret gitlab-system/tssc-gitlab-credentials with host and token (the gitlab create-gitlab-token Job; needs dev-hub: 'true')" }}{{- end }}
+  {{hub- end hub}}
+  {{hub- if $tasOn hub}}
+  {{- $fulcioUrl := (dig "status" "url" "" ((lookup "rhtas.redhat.com/v1" "Fulcio" "tssc-tas" "trusted-artifact-signer") | default dict)) }}
+  {{- $rekorUrl := (dig "status" "url" "" ((lookup "rhtas.redhat.com/v1" "Rekor" "tssc-tas" "trusted-artifact-signer") | default dict)) }}
+  {{- $tufUrl := (dig "status" "url" "" ((lookup "rhtas.redhat.com/v1" "Tuf" "tssc-tas" "trusted-artifact-signer") | default dict)) }}
+  {{- if not (and $fulcioUrl $rekorUrl $tufUrl) }}{{- $missing = append $missing "the Fulcio, Rekor and Tuf URLs in tssc-tas (policy-tas-securesign)" }}{{- end }}
+  {{- $kcHost := (dig "spec" "hostname" "hostname" "" ((lookup "k8s.keycloak.org/v2beta1" "Keycloak" "keycloak-system" "keycloak") | default dict)) }}
+  {{- if not $kcHost }}{{- $missing = append $missing "Keycloak keycloak-system/keycloak with spec.hostname.hostname (policy-keycloak)" }}{{- end }}
+  {{- $ciClient := (index (((lookup "v1" "Secret" "keycloak-system" "autoshift-ci-realm-clients") | default dict).data | default dict) "autoshiftCi" | default "") }}
+  {{- if not $ciClient }}{{- $missing = append $missing "Secret keycloak-system/autoshift-ci-realm-clients (policy-keycloak-realm-secrets)" }}{{- end }}
+  {{- $appsDomain := (lookup "config.openshift.io/v1" "Ingress" "" "cluster").spec.domain }}
   {{hub- end hub}}
   {{- if $missing }}
   {{-   fail (printf "The AutoShift CI endpoints are not available yet. Missing: %s" (join "; " $missing)) }}
@@ -41,6 +57,13 @@ object-templates-raw: |
         {{hub- end hub}}
         {{hub- if $gitlabOn hub}}
         gitlabUrl: 'https://{{ index $glData "host" | base64dec }}'
+        {{hub- end hub}}
+        {{hub- if $tasOn hub}}
+        fulcioUrl: '{{ $fulcioUrl }}'
+        rekorUrl: '{{ $rekorUrl }}'
+        tufUrl: '{{ $tufUrl }}'
+        oidcIssuer: 'https://{{ $kcHost }}/realms/{{hub $realm hub}}'
+        signerIdentity: 'autoshift-ci@{{ $appsDomain }}'
         {{hub- end hub}}
   - complianceType: musthave
     objectDefinition:
@@ -68,4 +91,18 @@ object-templates-raw: |
       data:
         host: '{{ index $glData "host" }}'
         token: '{{ index $glData "token" }}'
+  {{hub- end hub}}
+  {{hub- if $tasOn hub}}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: keycloak-autoshift-ci
+        namespace: autoshift-ci
+      type: Opaque
+      data:
+        clientId: '{{ "autoshift-ci" | b64enc }}'
+        clientSecret: '{{ $ciClient }}'
+        tokenUrl: '{{ printf "https://%s/realms/{{hub $realm hub}}/protocol/openid-connect/token" $kcHost | b64enc }}'
   {{hub- end hub}}
