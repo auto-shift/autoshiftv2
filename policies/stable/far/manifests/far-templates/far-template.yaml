@@ -2,6 +2,9 @@ object-templates-raw: |
   {{hub- $cm := (lookup "v1" "ConfigMap" .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName)) | default dict hub}}
   {{hub- $config := (index ($cm.data | default dict) "config" | default "" | fromYaml | default dict) hub}}
   {{hub- $far := (index $config "far" | default dict) hub}}
+  {{hub- if empty $far hub}}
+    {{ fail "Fence Agents Remediation is set to true but config is not detected. Please ensure the config is set, refer to documentation. " }}
+  {{hub- end hub}}
   {{hub- $templates := (dig "templates" (list) $far) hub}}
   {{hub- $defaultTargetSecret := (dig "sharedSecretName" "" $far) hub}}
   {{hub- range $t := $templates hub}}
@@ -24,6 +27,9 @@ object-templates-raw: |
   {{hub- if empty $tplName hub}}{{ fail "far.templates[].name is required and cannot be empty" }}{{hub- end hub}}
   {{hub- if and (kindIs "string" $retrycountRaw) (not (regexMatch "^[0-9]+$" $retrycountRaw)) hub}}
     {{ fail (printf "far.templates[%s].retrycount must be an integer value, for example: retrycount: 15" $tplName) }}
+  {{hub- end hub}}
+  {{hub- if and (ne $action "off") (ne $action "reboot") hub}}
+    {{ fail (printf "far.templates[%s].action must be either 'off' or 'reboot'" $tplName) }}
   {{hub- end hub}}
   {{hub- if and (not $autoNodeIPsFromBMH) (empty $nodeIPs) hub}}
     {{ fail (printf "far.templates[%s].nodeIPs is required and cannot be empty" $tplName) }}
