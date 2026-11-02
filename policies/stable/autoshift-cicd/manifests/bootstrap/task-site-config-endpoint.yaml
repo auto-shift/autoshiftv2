@@ -1,0 +1,39 @@
+# Reads the site-config repository that policy-autoshift-cicd-endpoints resolved from
+# config.autoshift-cicd.siteConfig, so every pipeline that reads or writes site-config uses the same
+# repository, branch and credential, on GitHub or GitLab. The Secret is passed by name only.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: site-config-endpoint
+  namespace: autoshift-ci
+spec:
+  description: Read the site-config repository, branch and credential from autoshift-ci-endpoints.
+  params:
+    - name: cliImage
+      type: string
+      description: Image with oc. The Pipeline passes the cluster's openshift/cli image.
+  results:
+    - name: url
+    - name: branch
+    - name: secret
+    - name: secretKey
+    - name: user
+  steps:
+    - name: read
+      image: $(params.cliImage)
+      script: |
+        #!/bin/sh
+        set -eu
+        get() { oc get configmap autoshift-ci-endpoints -o "jsonpath={.data.$1}"; }
+        url=$(get siteConfigUrl)
+        secret=$(get siteConfigSecret)
+        if [ -z "$url" ] || [ -z "$secret" ]; then
+          echo "ERROR: autoshift-ci-endpoints has no siteConfigUrl or siteConfigSecret. Check policy-autoshift-cicd-endpoints, which lists what is missing" >&2
+          exit 1
+        fi
+        printf '%s' "$url" > "$(results.url.path)"
+        printf '%s' "$(get siteConfigBranch)" > "$(results.branch.path)"
+        printf '%s' "$secret" > "$(results.secret.path)"
+        printf '%s' "$(get siteConfigSecretKey)" > "$(results.secretKey.path)"
+        printf '%s' "$(get siteConfigUser)" > "$(results.user.path)"
+        echo "site-config: ${url} branch $(get siteConfigBranch), credential Secret ${secret}"

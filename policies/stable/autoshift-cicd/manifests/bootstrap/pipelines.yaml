@@ -13,6 +13,12 @@ object-templates-raw: |
   {{hub- $group := (index $cicd "gitlabGroup" | default "autoshift") hub}}
   {{hub- $org := (index $cicd "quayOrg" | default "autoshift") hub}}
   {{hub- $realm := (dig "keycloak" "realmName" "tssc-iam" $cfg) hub}}
+  {{hub- $srcCfg := (dig "autoshift-cicd" "source" (dict) $cfg) hub}}
+  {{hub- $scCfg := (dig "autoshift-cicd" "siteConfig" (dict) $cfg) hub}}
+  # The GitLab projects bootstrap-gitlab creates: autoshift while the source is the hub's GitLab, and
+  # site-config while site-config is. A repository named in config lives elsewhere.
+  {{hub- $glSource := and (eq (index $srcCfg "provider" | default "gitlab") "gitlab") (not (index $srcCfg "repo" | default "")) hub}}
+  {{hub- $glSite := and (eq (index $scCfg "provider" | default "gitlab") "gitlab") (not (index $scCfg "repo" | default "")) hub}}
   {{- $cliImage := "{{hub (index (index $cfg "images" | default dict) "cli" | default "") hub}}" }}
   {{- if not $cliImage }}
   {{-   $isCli := (lookup "image.openshift.io/v1" "ImageStream" "openshift" "cli") | default dict }}
@@ -107,13 +113,34 @@ object-templates-raw: |
         namespace: autoshift-ci
       spec:
         description: >-
-          Create the GitLab group with the autoshift and site-config projects and the Pipelines as
-          Code webhook, push the upstream AutoShift branches into autoshift, and seed site-config
-          from the AutoShift values once.
+          Create the GitLab group and the projects that config.autoshift-cicd places on this GitLab:
+          autoshift, with the Pipelines as Code webhook and the upstream branches pushed into it, and
+          site-config. Seed site-config afterwards with bootstrap-site-config.
         params:
           - name: group
             type: string
             default: '{{hub $group hub}}'
+          - name: projects
+            type: array
+            {{hub- if or $glSource $glSite hub}}
+            default:
+              {{hub- if $glSource hub}}
+              - autoshift
+              {{hub- end hub}}
+              {{hub- if $glSite hub}}
+              - site-config
+              {{hub- end hub}}
+            {{hub- else hub}}
+            default: []
+            {{hub- end hub}}
+          - name: webhookProject
+            type: string
+            default: '{{hub ternary "autoshift" "" $glSource hub}}'
+            description: Project that gets the Pipelines as Code webhook. Empty skips it.
+          - name: syncUpstream
+            type: string
+            default: '{{hub ternary "true" "false" $glSource hub}}'
+            description: true pushes the upstream branches into the autoshift project.
           - name: upstreamUrl
             type: string
             default: '{{hub $upstreamRepo hub}}'
@@ -121,10 +148,6 @@ object-templates-raw: |
             type: string
             default: '{{hub $upstreamRef hub}}'
             description: Space-separated branches to push into the autoshift project, or *.
-          - name: siteConfigRef
-            type: string
-            default: '{{hub $upstreamRef hub}}'
-            description: Upstream ref whose autoshift/values seeds an empty site-config.
           - name: gitlabUrl
             type: string
             default: ''
@@ -143,11 +166,20 @@ object-templates-raw: |
                 value: $(params.gitlabUrl)
               - name: group
                 value: $(params.group)
+              - name: projects
+                value: $(params.projects[*])
+              - name: webhookProject
+                value: $(params.webhookProject)
               - name: tlsVerify
                 value: $(params.tlsVerify)
           - name: sync-autoshift
             runAfter:
               - gitlab-bootstrap
+            when:
+              - input: $(params.syncUpstream)
+                operator: in
+                values:
+                  - 'true'
             taskRef:
               name: git-sync
             params:
@@ -159,22 +191,6 @@ object-templates-raw: |
                 value: $(params.upstreamRefs)
               - name: targetUrl
                 value: $(tasks.gitlab-bootstrap.results.gitlabUrl)/$(params.group)/autoshift.git
-              - name: tlsVerify
-                value: $(params.tlsVerify)
-          - name: seed-site-config
-            runAfter:
-              - gitlab-bootstrap
-            taskRef:
-              name: seed-site-config
-            params:
-              - name: gitImage
-                value: '{{ $gitImage }}'
-              - name: sourceUrl
-                value: $(params.upstreamUrl)
-              - name: sourceRef
-                value: $(params.siteConfigRef)
-              - name: targetUrl
-                value: $(tasks.gitlab-bootstrap.results.gitlabUrl)/$(params.group)/site-config.git
               - name: tlsVerify
                 value: $(params.tlsVerify)
   - complianceType: musthave
@@ -266,5 +282,57 @@ object-templates-raw: |
                 value: $(params.clients)
               - name: keycloakUrl
                 value: $(params.keycloakUrl)
+              - name: tlsVerify
+                value: $(params.tlsVerify)
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: tekton.dev/v1
+      kind: Pipeline
+      metadata:
+        name: bootstrap-site-config
+        namespace: autoshift-ci
+      spec:
+        description: >-
+          Seed the site-config repository, on GitHub or GitLab, from the AutoShift values once. The
+          repository, branch and credential come from config.autoshift-cicd.siteConfig through
+          autoshift-ci-endpoints. A repository that already has a branch is left alone.
+        params:
+          - name: upstreamUrl
+            type: string
+            default: '{{hub $upstreamRepo hub}}'
+          - name: sourceRef
+            type: string
+            default: '{{hub $upstreamRef hub}}'
+            description: Upstream ref whose autoshift/values seeds site-config.
+          - name: tlsVerify
+            type: string
+            default: 'true'
+        tasks:
+          - name: site-config-endpoint
+            taskRef:
+              name: site-config-endpoint
+            params:
+              - name: cliImage
+                value: '{{ $cliImage }}'
+          - name: seed-site-config
+            taskRef:
+              name: seed-site-config
+            params:
+              - name: gitImage
+                value: '{{ $gitImage }}'
+              - name: sourceUrl
+                value: $(params.upstreamUrl)
+              - name: sourceRef
+                value: $(params.sourceRef)
+              - name: targetUrl
+                value: $(tasks.site-config-endpoint.results.url)
+              - name: branch
+                value: $(tasks.site-config-endpoint.results.branch)
+              - name: tokenSecret
+                value: $(tasks.site-config-endpoint.results.secret)
+              - name: tokenKey
+                value: $(tasks.site-config-endpoint.results.secretKey)
+              - name: tokenUser
+                value: $(tasks.site-config-endpoint.results.user)
               - name: tlsVerify
                 value: $(params.tlsVerify)

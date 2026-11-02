@@ -33,6 +33,12 @@ config:
       apiUrl: ''                      # set for GitHub Enterprise or another GitLab
       secret: autoshift-pac-github    # Secret in autoshift-ci: provider.token, webhook.secret
       provenance: source              # source | default_branch
+    siteConfig:
+      provider: gitlab                # gitlab (default) | github
+      repo: ''                        # empty with gitlab: the site-config project bootstrap-gitlab creates
+      branch: main
+      secret: ''                      # Secret in autoshift-ci with a push token. Empty with gitlab: the GitLab token
+      secretKey: token
 ```
 
 With `provider: gitlab` and no `repo`, the source is the `autoshift` project `bootstrap-gitlab`
@@ -46,19 +52,21 @@ The Quay and GitLab endpoints are gathered only while the `quay` and `gitlab` la
 | Pipeline | Creates |
 |---|---|
 | `bootstrap-quay` | The Quay organization, a `<org>+ci` robot in a team with the creator role, and the robot's push Secret `quay-<org>-ci` |
-| `bootstrap-gitlab` | The GitLab group with `autoshift` and `site-config` projects, the Pipelines as Code webhook, the upstream branches pushed into `autoshift`, and `site-config` seeded once from `autoshift/values` |
+| `bootstrap-gitlab` | The GitLab group and the projects config places on the hub's GitLab: `autoshift` with the Pipelines as Code webhook and the upstream branches pushed into it, and `site-config` |
+| `bootstrap-site-config` | Seeds the site configuration repository, on GitHub or GitLab, once from `autoshift/values` |
 | `sync-upstream` | Pushes upstream branches and tags into the GitLab `autoshift` project again |
 | `bootstrap-keycloak` | Copies the `autoshift-ci` signing client from the realm import into a realm imported before the client existed, then checks its token carries the claims Fulcio requires |
 
 Every task checks before it creates, so each pipeline is safe to run again. `sync-upstream` does not
 force unless you set `force=true`, so a branch changed in GitLab is reported rather than lost.
-`seed-site-config` leaves a repository that already has a branch alone.
+`bootstrap-site-config` leaves a repository that already has a branch alone.
 
 Start a pipeline from the console, or with the `tkn` CLI:
 
 ```bash
 tkn pipeline start bootstrap-quay -n autoshift-ci --use-param-defaults --showlog
 tkn pipeline start bootstrap-gitlab -n autoshift-ci -p upstreamRefs="main release-1.0" --showlog
+tkn pipeline start bootstrap-site-config -n autoshift-ci --use-param-defaults --showlog
 tkn pipeline start bootstrap-keycloak -n autoshift-ci --use-param-defaults --showlog
 ```
 

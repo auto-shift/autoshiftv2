@@ -1,6 +1,8 @@
-# Seeds an empty site-config repository with the AutoShift values from a source ref, plus an empty
-# deployments/ directory that the autoshift-deployments ApplicationSet reads. A repository that
-# already has any branch is left alone, so this runs once and never overwrites site edits.
+# Seeds an empty site-config repository, on GitHub or GitLab, with the AutoShift values from a source
+# ref, plus an empty deployments/ directory that the autoshift-deployments ApplicationSet reads. A
+# repository that already has any branch is left alone, so this runs once and never overwrites site
+# edits. It pushes over HTTPS with the token as the password: GitLab takes the user oauth2, GitHub
+# any user.
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
@@ -22,10 +24,21 @@ spec:
       default: autoshift/values
     - name: targetUrl
       type: string
-      description: HTTPS clone URL of the empty site-config project.
+      description: HTTPS clone URL of the empty site-config repository.
+    - name: branch
+      type: string
+      default: main
     - name: tokenSecret
       type: string
       default: gitlab-autoshift-token
+      description: Secret in autoshift-ci with a token that can push to the repository.
+    - name: tokenKey
+      type: string
+      default: token
+    - name: tokenUser
+      type: string
+      default: oauth2
+      description: The HTTPS user sent with the token. oauth2 for GitLab; GitHub accepts any.
     - name: tlsVerify
       type: string
       default: 'true'
@@ -63,6 +76,12 @@ spec:
           value: $(params.sourcePath)
         - name: TARGET_URL
           value: $(params.targetUrl)
+        - name: BRANCH
+          value: $(params.branch)
+        - name: TOKEN_KEY
+          value: $(params.tokenKey)
+        - name: TOKEN_USER
+          value: $(params.tokenUser)
         - name: TLS_VERIFY
           value: $(params.tlsVerify)
       script: |
@@ -73,7 +92,8 @@ spec:
         [ "$TLS_VERIFY" = "true" ] || git config --global http.sslVerify false
         git config --global user.name "AutoShift bootstrap"
         git config --global user.email "autoshift-bootstrap@example.com"
-        auth=$(printf 'oauth2:%s' "$(cat /etc/autoshift-ci/token/token)" | base64 | tr -d '\n')
+        [ -s "/etc/autoshift-ci/token/${TOKEN_KEY}" ] || { echo "ERROR: the token Secret has no key ${TOKEN_KEY}" >&2; exit 1; }
+        auth=$(printf '%s:%s' "$TOKEN_USER" "$(cat "/etc/autoshift-ci/token/${TOKEN_KEY}")" | base64 | tr -d '\n')
         target() { git -c "http.extraHeader=Authorization: Basic ${auth}" "$@"; }
         if [ -n "$(target ls-remote --heads "$TARGET_URL")" ]; then
           echo "${TARGET_URL} already has branches; leaving it alone"
@@ -86,8 +106,8 @@ spec:
         rev=$(git -C /tekton/home/source rev-parse --short HEAD)
         printf '%s\n' "# Deployments" "" "One YAML file per AutoShift deployment, read by the autoshift-deployments" "ApplicationSet. The CI pipelines write b-<branch> and r-<release> files here." > /tekton/home/site/deployments/README.md
         cd /tekton/home/site
-        git init --quiet --initial-branch main
+        git init --quiet --initial-branch "$BRANCH"
         git add -A
         git commit --quiet -m "Seed site-config from ${SOURCE_URL} ${SOURCE_REF} (${rev}) ${SOURCE_PATH}"
-        target push "$TARGET_URL" main
+        target push "$TARGET_URL" "$BRANCH"
         echo "Seeded ${TARGET_URL} from ${SOURCE_PATH} at ${SOURCE_REF} (${rev})"

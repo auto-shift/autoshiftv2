@@ -1,9 +1,11 @@
 # AutoShift CI/CD
 
 AutoShift builds, signs and deploys itself on the Red Hat Advanced Developer Suite components that it
-installs on a hub: Red Hat OpenShift Pipelines runs the pipelines, GitHub or GitLab hosts the
-source, GitLab hosts the site configuration, Red Hat Quay stores the charts, and Red Hat Trusted Artifact Signer signs them with
-an identity from the Red Hat build of Keycloak.
+installs on a hub: Red Hat OpenShift Pipelines runs the pipelines, GitHub or GitLab hosts the source
+and the site configuration, Red Hat Quay stores the charts, and Red Hat Trusted Artifact Signer
+signs them with an identity from the Red Hat build of Keycloak. The source and the site
+configuration are chosen separately, so a customer's own GitHub repository can hold the site
+configuration while AutoShift builds from upstream, or from the hub's GitLab.
 
 Most of the setup is policy. Steps that need a credential an administrator holds, or that change a
 system AutoShift cannot reach through a Kubernetes resource, are bootstrap pipelines you start with
@@ -17,9 +19,11 @@ it by hand or need to understand what the automation does.
 | `autoshift-ci` namespace, Tasks and Pipelines | `policy-autoshift-cicd-bootstrap` | Not applicable |
 | Endpoints, trust bundle and GitLab token in `autoshift-ci` | `policy-autoshift-cicd-endpoints` | [Endpoints and trust](#endpoints-and-trust) |
 | Quay organization, CI robot and push Secret | `bootstrap-quay` pipeline | [Quay organization and robot](#quay-organization-and-robot) |
-| GitLab group, projects and Pipelines as Code webhook | `bootstrap-gitlab` pipeline | [GitLab group, projects and webhook](#gitlab-group-projects-and-webhook) |
-| Upstream branches in GitLab and the seeded `site-config` | `bootstrap-gitlab` and `sync-upstream` pipelines | [Upstream source and site configuration](#upstream-source-and-site-configuration) |
 | Pipelines as Code Repository for the source on GitHub or GitLab | `policy-autoshift-cicd-source` | [Source repository](#source-repository) |
+| The site configuration repository, its branch and push credential, on GitHub or GitLab | `policy-autoshift-cicd-endpoints` | [Site configuration repository](#site-configuration-repository) |
+| GitLab group and the projects config places on the hub's GitLab, with the Pipelines as Code webhook | `bootstrap-gitlab` pipeline | [GitLab group, projects and webhook](#gitlab-group-projects-and-webhook) |
+| Upstream branches mirrored into the GitLab `autoshift` project | `bootstrap-gitlab` and `sync-upstream` pipelines | [Upstream mirror](#upstream-mirror) |
+| The site configuration seeded from the AutoShift values | `bootstrap-site-config` pipeline | [Site configuration repository](#site-configuration-repository) |
 | Signing client secret and the `autoshift-ci` Keycloak client | `policy-keycloak-realm-secrets` and `policy-keycloak-realm-import` | [Signing identity](#signing-identity) |
 | The signing client in a realm imported before the client existed | `bootstrap-keycloak` pipeline | [Add the client to an existing realm](#add-the-client-to-an-existing-realm) |
 
@@ -66,6 +70,7 @@ safe to run again:
 ```bash
 tkn pipeline start bootstrap-quay -n autoshift-ci -p initialize=true --use-param-defaults --showlog
 tkn pipeline start bootstrap-gitlab -n autoshift-ci --use-param-defaults --showlog
+tkn pipeline start bootstrap-site-config -n autoshift-ci --use-param-defaults --showlog
 tkn pipeline start bootstrap-keycloak -n autoshift-ci --use-param-defaults --showlog
 ```
 
@@ -84,6 +89,9 @@ tkn pipeline start bootstrap-keycloak -n autoshift-ci --use-param-defaults --sho
     | `fulcioUrl`, `rekorUrl`, `tufUrl` | `status.url` of the `Fulcio`, `Rekor` and `Tuf` resources in `tssc-tas` |
     | `oidcIssuer` | `${KEYCLOAK}/realms/${REALM}` |
     | `signerIdentity` | `autoshift-ci@${DOMAIN}` |
+    | `siteConfigUrl`, `siteConfigBranch` | The site configuration repository and branch; see [Site configuration repository](#site-configuration-repository) |
+    | `siteConfigSecret`, `siteConfigSecretKey` | The Secret in `autoshift-ci`, and its key, holding a token that can push there |
+    | `siteConfigUser` | The HTTPS user sent with that token: `oauth2` for GitLab, any value for GitHub |
 
 2. Create the `autoshift-ci-ca` ConfigMap with the ingress CA, so the tasks verify TLS against the
    cluster routes:
@@ -146,11 +154,15 @@ To do the same by hand, with `TOKEN` set to a superuser OAuth token:
 
 ## GitLab group, projects and webhook
 
-`bootstrap-gitlab` creates a private `autoshift` group with the private projects `autoshift` and
-`site-config`, and a Pipelines as Code webhook on `autoshift`. To do the same by hand, with
-`GL_TOKEN` set to a token with the `api` scope:
+`bootstrap-gitlab` creates a private `autoshift` group on the hub's GitLab with a private project
+for each repository that config places there, and does nothing on GitHub:
 
-1. Create the group, then the two projects in it:
+- `autoshift`, with a Pipelines as Code webhook, while `source.provider` is `gitlab` with no `repo`.
+- `site-config`, while `siteConfig.provider` is `gitlab` with no `repo`.
+
+To do the same by hand, with `GL_TOKEN` set to a token with the `api` scope:
+
+1. Create the group, then the projects in it:
 
     ```bash
     GROUP_ID=$(curl -sf -X POST "${GITLAB}/api/v4/groups" -H "PRIVATE-TOKEN: ${GL_TOKEN}" \
@@ -182,20 +194,61 @@ To do the same by hand, with `TOKEN` set to a superuser OAuth token:
            \"enable_ssl_verification\": true}"
     ```
 
-## Upstream source and site configuration
+## Upstream mirror
 
-`bootstrap-gitlab` pushes the upstream branches and tags into the `autoshift` project, and seeds an
-empty `site-config` project once from `autoshift/values`, plus an empty `deployments/` directory.
-`sync-upstream` repeats the push later, and never forces unless you set `force=true`. By hand:
+While the source is the GitLab `autoshift` project, `bootstrap-gitlab` pushes the upstream branches
+and tags into it, and `sync-upstream` repeats the push later. It never forces unless you set
+`force=true`, so a branch changed in GitLab is reported rather than lost. By hand:
 
 ```bash
 git clone --mirror https://github.com/auto-shift/autoshiftv2.git autoshift.git
 git -C autoshift.git push "${GITLAB}/autoshift/autoshift.git" 'refs/heads/main:refs/heads/main' --tags
+```
 
+## Site configuration repository
+
+The site configuration repository holds the values files each AutoShift deployment reads and the
+`deployments/` files the pipelines write. It can be on GitHub or on GitLab, independent of the
+source, and is set in `config.autoshift-cicd.siteConfig`:
+
+```yaml
+config:
+  autoshift-cicd:
+    siteConfig:
+      provider: github                    # gitlab (default) | github
+      repo: https://github.com/my-org/autoshift-site-config
+      branch: main
+      secret: autoshift-site-config       # Secret in autoshift-ci with a token that can push
+      secretKey: token
+```
+
+With `provider: gitlab` and no `repo`, it is the `site-config` project that `bootstrap-gitlab`
+creates, pushed with the GitLab token in `gitlab-autoshift-token`. `policy-autoshift-cicd-endpoints`
+resolves the repository, branch and credential into `autoshift-ci-endpoints`, and fails with what is
+missing: a GitHub repository needs `repo`, and `secret` must name a Secret with that key.
+
+### GitHub
+
+1. Create an empty repository. AutoShift does not create repositories on GitHub.
+2. Create a fine-grained personal access token restricted to that repository, with Contents read and
+   write. A classic token needs the `repo` scope.
+3. Store it in `autoshift-ci`, under the name and key set in `siteConfig`:
+
+    ```bash
+    oc create secret generic autoshift-site-config -n autoshift-ci --from-literal=token=<token>
+    ```
+
+### Seed it
+
+`bootstrap-site-config` reads the repository from `autoshift-ci-endpoints`, copies `autoshift/values`
+from the upstream ref into it with an empty `deployments/` directory, and pushes the branch. A
+repository that already has a branch is left alone, so it never overwrites site edits. By hand:
+
+```bash
 git clone --depth 1 https://github.com/auto-shift/autoshiftv2.git upstream
 mkdir -p site/deployments && cp -R upstream/autoshift/values/. site/
 cd site && git init --initial-branch main && git add -A && git commit -m 'Seed site-config'
-git push "${GITLAB}/autoshift/site-config.git" main
+git push <site configuration repository URL> main
 ```
 
 ## Source repository
