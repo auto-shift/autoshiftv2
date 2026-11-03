@@ -50,6 +50,15 @@ policies:
       noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
     manifests:
       - path: manifests/endpoints
+  # One AutoShift deployment per file in site-config/deployments/, through an ApplicationSet in the
+  # infra Argo CD, with the repository credentials it needs.
+  - name: policy-autoshift-cicd-deployments
+    dependencies:
+      - name: policy-autoshift-cicd-endpoints
+    customMessage:
+      noncompliant: '{{ regexReplaceAll "(?s).*error calling fail: " .DefaultMessage "" | trim }}'
+    manifests:
+      - path: manifests/deployments
   # The Pipelines as Code Repository for the AutoShift source on GitHub or GitLab, from
   # config.autoshift-cicd.source.
   - name: policy-autoshift-cicd-source

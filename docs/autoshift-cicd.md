@@ -46,6 +46,7 @@ it by hand or need to understand what the automation does.
 | The site configuration seeded from the AutoShift values | `bootstrap-site-config` pipeline | [Site configuration repository](#site-configuration-repository) |
 | Signing client secret and the `autoshift-ci` Keycloak client | `policy-keycloak-realm-secrets` and `policy-keycloak-realm-import` | [Signing identity](#signing-identity) |
 | Test, publish, sign and verify every branch push | `.tekton/autoshift-push.yaml`, run by Pipelines as Code | [Push pipeline](#push-pipeline) |
+| Deploy each signed build as its own AutoShift, on versioned ClusterSets | `policy-autoshift-cicd-deployments` and the push pipeline's deploy task | [Deployments](#deployments) |
 | The signing client in a realm imported before the client existed | `bootstrap-keycloak` pipeline | [Add the client to an existing realm](#add-the-client-to-an-existing-realm) |
 
 ## Prerequisites
@@ -517,6 +518,9 @@ specific to a hub comes from `autoshift-ci-endpoints`, so the file is the same o
 4. **sign**: requests a token as `autoshift-ci`, signs every digest with one short-lived certificate,
    and verifies each signature against the signer identity and issuer. A chart that does not verify
    fails the run.
+5. **deploy**: writes `deployments/b-<id>.yaml` in the site configuration repository, naming the
+   version just verified; see [Deployments](#deployments). `<id>` is six hex digits of the branch
+   name's hash, so each branch keeps one file.
 
 The pipeline runs only on stock Red Hat images, so there is no CI image to build or maintain. It
 needs egress to `get.helm.sh`, `github.com` and the Go module proxy, which `make test` needs anyway.
@@ -542,6 +546,92 @@ cosign verify --certificate-identity "autoshift-ci@${DOMAIN}" \
 
 Push the bootstrap charts to `${REG}/bootstrap` and `autoshift-${VERSION}.tgz` to `${REG}` the same
 way.
+
+## Deployments
+
+Each file in `deployments/` of the site configuration repository is one AutoShift deployment. The
+push pipeline writes one per branch after its build verifies:
+
+```yaml
+name: b-1f2e3d                            # Application and release name, at most 11 characters
+branch: feature/my-change
+commit: 9c698cb...
+chartRepo: registry.example.com/autoshift/dev
+chartVersion: 0.0.0-feature-my-change.9c698cb
+valuesRevision: main                      # site configuration branch or tag the values come from
+```
+
+`policy-autoshift-cicd-deployments` creates the `autoshift-deployments` ApplicationSet in the infra
+Argo CD, which turns each file into an Application with two sources: the site configuration
+repository at `valuesRevision`, and the signed `autoshift` chart at `chartVersion`. The Application
+reads the files in `config.autoshift-cicd.deployments.valueFiles`, in order, and sets
+`autoshiftOciRepo`, `autoshiftOciVersion` and `versionedClusterSets: true`:
+
+```yaml
+config:
+  autoshift-cicd:
+    deployments:
+      valueFiles:
+        - global.yaml
+        - clustersets/hub.yaml
+```
+
+With versioned ClusterSets, a deployment owns copies of the ClusterSets in its values, named with its
+version, such as `hub-0-0-0-feature-my-change-9c698cb`. They start with no clusters, so the
+deployment's policies render on the hub and reach no cluster until you move one in. To test a
+build on a cluster, set that cluster's ClusterSet:
+
+```bash
+oc label managedcluster <cluster> cluster.open-cluster-management.io/clusterset=hub-0-0-0-feature-my-change-9c698cb --overwrite
+```
+
+Removing a file removes its Application, and the Application's finalizer removes its policies.
+
+The policy also copies two credentials into the infra Argo CD namespace: `autoshift-site-config`
+for the site configuration repository, from the Secret named in `siteConfig`, and
+`autoshift-registry`, a credential template for every repository under the registry namespace, from
+the push Secret. Argo CD must trust both endpoints: when they use certificates from the cluster's
+own CA, add that CA to the Argo CD instance.
+
+To do the same by hand, create the two repository Secrets in `openshift-gitops`, with the label
+`argocd.argoproj.io/secret-type` set to `repository` and `repo-creds`, and the keys `type`, `url`,
+`username` and `password`. Then create one Application per deployment:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: b-1f2e3d
+  namespace: openshift-gitops
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-gitops
+  sources:
+    - repoURL: https://github.com/my-org/autoshift-site-config
+      targetRevision: main
+      ref: siteValues
+    - repoURL: oci://registry.example.com/autoshift/dev/autoshift
+      path: .
+      targetRevision: 0.0.0-feature-my-change.9c698cb
+      helm:
+        releaseName: b-1f2e3d
+        valueFiles:
+          - $siteValues/global.yaml
+          - $siteValues/clustersets/hub.yaml
+        valuesObject:
+          autoshiftOciRepo: oci://registry.example.com/autoshift/dev/policies
+          autoshiftOciVersion: 0.0.0-feature-my-change.9c698cb
+          versionedClusterSets: true
+          policyGenerator: false
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
 
 ## Troubleshooting
 

@@ -110,7 +110,7 @@ data:
   # webhook.secret: fake-hook
   webhook.secret: ZmFrZS1ob29r
 ---
-# Push credential for the example's external OCI registry. Fake: an empty auths map.
+# Push credential for the example's external OCI registry. Fake, low-entropy: ci:fake.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -118,5 +118,22 @@ metadata:
   namespace: autoshift-ci
 type: kubernetes.io/dockerconfigjson
 data:
-  # .dockerconfigjson: {"auths":{}}
-  .dockerconfigjson: eyJhdXRocyI6e319
+  # .dockerconfigjson: {"auths":{"registry.example.com":{"auth":"Y2k6ZmFrZQ=="}}}
+  .dockerconfigjson: eyJhdXRocyI6eyJyZWdpc3RyeS5leGFtcGxlLmNvbSI6eyJhdXRoIjoiWTJrNlptRnJaUT09In19fQ==
+---
+# What policy-autoshift-cicd-endpoints writes, for policies that read it on the cluster: the
+# example's production shape, a GitHub site-config and an external registry.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autoshift-ci-endpoints
+  namespace: autoshift-ci
+data:
+  siteConfigUrl: https://github.com/my-org/autoshift-site-config
+  siteConfigBranch: main
+  siteConfigSecret: autoshift-site-config
+  siteConfigSecretKey: token
+  siteConfigUser: x-access-token
+  registryHost: registry.example.com
+  registryNamespace: autoshift
+  registryPushSecret: autoshift-registry

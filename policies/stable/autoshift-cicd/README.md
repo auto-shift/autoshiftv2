@@ -11,6 +11,7 @@ procedure in [AutoShift CI/CD](../../../docs/autoshift-cicd.md).
 | Policy | What it does |
 |---|---|
 | `policy-autoshift-cicd-bootstrap` | The `autoshift-ci` namespace, the bootstrap Tasks and Pipelines, and while `tas` is on, read access to the Keycloak admin Secret and realm import for `bootstrap-keycloak` |
+| `policy-autoshift-cicd-deployments` | The `autoshift-deployments` ApplicationSet, which deploys each file in `site-config/deployments/`, and the Argo CD credentials it needs |
 | `policy-autoshift-cicd-source` | The Pipelines as Code Repository for the AutoShift source on GitHub or GitLab |
 | `policy-autoshift-cicd-endpoints` | Gathers what the Tasks read into `autoshift-ci`: endpoint URLs, the trust bundle, the GitLab token, and while `tas` is on, the Trusted Artifact Signer URLs and the `autoshift-ci` signing client |
 
@@ -35,6 +36,9 @@ config:
       provenance: default_branch      # default_branch (default) | source
       pollSchedule: ''                # cron schedule: mirror upstream into the GitLab project instead of a webhook
       pollRefs: ''                    # branches to watch, or *. Empty: upstreamRef
+    deployments:
+      valueFiles:                     # site-config files each deployment reads, in order
+        - global.yaml
     registry:
       host: ''                        # your OCI registry. Empty: the hub's Quay
       namespace: ''                   # organization or project. Empty: quayOrg

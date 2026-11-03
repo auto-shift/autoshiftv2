@@ -5,7 +5,8 @@
 # Everything hub-specific comes from the autoshift-ci-endpoints ConfigMap that
 # policy-autoshift-cicd-endpoints writes: the registry and its push Secret, the TUF mirror, the
 # signing identity and issuer. So this file is the same on every hub. Branch builds publish under
-# <registry namespace>/dev, versioned 0.0.0-<branch>.<commit>.
+# <registry namespace>/dev, versioned 0.0.0-<branch>.<commit>, and each signed build is deployed
+# through site-config/deployments/b-<id>.yaml, which the autoshift-deployments ApplicationSet reads.
 #
 # See docs/autoshift-cicd.md.
 apiVersion: tekton.dev/v1
@@ -67,6 +68,8 @@ spec:
               description: host/namespace that branch builds publish under.
             - name: pushSecret
             - name: version
+            - name: deployName
+              description: b- and six hex digits of the branch hash, short enough for a release name.
           steps:
             - name: read
               image: registry.access.redhat.com/ubi9/ubi-minimal:latest
@@ -81,17 +84,19 @@ spec:
               script: |
                 #!/bin/sh
                 set -eu
-                for k in registryHost registryNamespace registryPushSecret tufUrl signerIdentity oidcIssuer; do
+                for k in registryHost registryNamespace registryPushSecret tufUrl signerIdentity oidcIssuer siteConfigUrl siteConfigSecret; do
                   eval "v=\${$k:-}"
                   [ -n "$v" ] || { echo "ERROR: autoshift-ci-endpoints has no $k; check policy-autoshift-cicd-endpoints" >&2; exit 1; }
                 done
                 # 0.0.0-<branch>.<commit>: a SemVer prerelease, and a valid OCI tag. The branch is
-                # lowercased, everything but letters and digits becomes -, and it is cut to 40.
-                slug=$(printf '%s' "${BRANCH#refs/heads/}" | tr 'A-Z' 'a-z' | sed -e 's/[^a-z0-9]\{1,\}/-/g' -e 's/^-//' -e 's/-$//' | cut -c1-40 | sed 's/-$//')
+                # lowercased, everything but letters and digits becomes -, and it is cut to 24, so
+                # the versioned ClusterSet names built from this version stay within 63 characters.
+                slug=$(printf '%s' "${BRANCH#refs/heads/}" | tr 'A-Z' 'a-z' | sed -e 's/[^a-z0-9]\{1,\}/-/g' -e 's/^-//' -e 's/-$//' | cut -c1-24 | sed 's/-$//')
                 version="0.0.0-${slug}.$(printf '%s' "$REVISION" | cut -c1-7)"
                 printf '%s' "${registryHost}/${registryNamespace}/dev" > "$(results.registry.path)"
                 printf '%s' "$registryPushSecret" > "$(results.pushSecret.path)"
                 printf '%s' "$version" > "$(results.version.path)"
+                printf 'b-%s' "$(printf '%s' "${BRANCH#refs/heads/}" | sha256sum | cut -c1-6)" > "$(results.deployName.path)"
                 echo "Branch build ${version} publishes to ${registryHost}/${registryNamespace}/dev"
 
       - name: fetch
@@ -314,3 +319,99 @@ spec:
                   n=$((n + 1))
                 done < .ci/charts.txt
                 echo "Signed and verified ${n} charts as ${signerIdentity}"
+
+      # Records the signed build in site-config, which deploys it: deployments/<deployName>.yaml names
+      # the chart version, and the autoshift-deployments ApplicationSet turns the file into an
+      # Application. A file whose content is unchanged is not committed again.
+      - name: deploy
+        runAfter:
+          - sign
+        params:
+          - name: deployName
+            value: $(tasks.endpoints.results.deployName)
+          - name: registry
+            value: $(tasks.endpoints.results.registry)
+          - name: version
+            value: $(tasks.endpoints.results.version)
+          - name: branch
+            value: $(params.branch)
+          - name: revision
+            value: $(params.revision)
+        taskSpec:
+          params:
+            - name: deployName
+              type: string
+            - name: registry
+              type: string
+            - name: version
+              type: string
+            - name: branch
+              type: string
+            - name: revision
+              type: string
+          volumes:
+            - name: autoshift-ci-ca
+              configMap:
+                name: autoshift-ci-ca
+          steps:
+            - name: write
+              image: registry.access.redhat.com/ubi9/go-toolset:latest
+              envFrom:
+                - configMapRef:
+                    name: autoshift-ci-endpoints
+              env:
+                - name: HOME
+                  value: /tekton/home
+              volumeMounts:
+                - name: autoshift-ci-ca
+                  mountPath: /etc/autoshift-ci/ca
+              script: |
+                #!/bin/sh
+                set -eu
+                token_file=$(mktemp)
+                # The site-config push token, read through the API so the Secret name can come from
+                # autoshift-ci-endpoints rather than from this file.
+                python3 - "$siteConfigSecret" "$siteConfigSecretKey" "$token_file" <<'PY'
+                import base64, json, ssl, sys, urllib.request
+                name, key, out = sys.argv[1:]
+                ns = open("/var/run/secrets/kubernetes.io/serviceaccount/namespace").read()
+                tok = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read()
+                ctx = ssl.create_default_context(cafile="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+                req = urllib.request.Request("https://kubernetes.default.svc/api/v1/namespaces/%s/secrets/%s" % (ns, name))
+                req.add_header("Authorization", "Bearer " + tok)
+                data = json.load(urllib.request.urlopen(req, context=ctx, timeout=30))["data"]
+                open(out, "w").write(base64.b64decode(data[key]).decode())
+                PY
+                cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/autoshift-ci/ca/* > /tekton/home/ca.pem
+                git config --global http.sslCAInfo /tekton/home/ca.pem
+                git config --global user.name "AutoShift CI"
+                git config --global user.email "${signerIdentity}"
+                auth=$(printf '%s:%s' "$siteConfigUser" "$(cat "$token_file")" | base64 | tr -d '\n')
+                rm -f "$token_file"
+                site() { git -c "http.extraHeader=Authorization: Basic ${auth}" "$@"; }
+                site clone --quiet --depth 1 --branch "$siteConfigBranch" "$siteConfigUrl" /tekton/home/site
+                cd /tekton/home/site
+                file="deployments/$(params.deployName).yaml"
+                mkdir -p deployments
+                cat > "$file" <<EOF
+                # Written by the AutoShift push pipeline for branch $(params.branch). The
+                # autoshift-deployments ApplicationSet deploys it; removing the file removes the deployment.
+                name: $(params.deployName)
+                branch: $(params.branch)
+                commit: $(params.revision)
+                chartRepo: $(params.registry)
+                chartVersion: $(params.version)
+                valuesRevision: ${siteConfigBranch}
+                EOF
+                git add "$file"
+                if git diff --cached --quiet; then
+                  echo "${file} already deploys $(params.version)"
+                  exit 0
+                fi
+                git commit --quiet -m "Deploy $(params.branch) as $(params.deployName): $(params.version)"
+                for a in 1 2 3 4 5; do
+                  site push --quiet origin "HEAD:${siteConfigBranch}" && break
+                  [ "$a" = 5 ] && { echo "ERROR: could not push ${file}" >&2; exit 1; }
+                  site pull --quiet --rebase origin "$siteConfigBranch"
+                done
+                echo "Deploying $(params.version) as $(params.deployName) through ${siteConfigUrl} ${file}"
