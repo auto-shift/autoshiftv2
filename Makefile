@@ -122,7 +122,7 @@ lint: ## Lint all Helm charts
 .PHONY: validate-version
 validate-version: ## Validate version format
 	@printf "$(BLUE)[INFO]$(NC) Validating version format: $(VERSION)\n"
-	@echo "$(VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$$' || { \
+	@echo "$(VERSION)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$$' || { \
 		printf "$(RED)[ERROR]$(NC) Invalid version format: $(VERSION)\n"; \
 		echo "Expected: X.Y.Z or X.Y.Z-prerelease (e.g., 1.0.0 or 1.0.0-rc.1)"; \
 		exit 1; \

@@ -45,6 +45,7 @@ it by hand or need to understand what the automation does.
 | Polling upstream, for evaluation | `poll-upstream` CronJob, from `policy-autoshift-cicd-bootstrap` | [Poll instead of a webhook](#poll-instead-of-a-webhook) |
 | The site configuration seeded from the AutoShift values | `bootstrap-site-config` pipeline | [Site configuration repository](#site-configuration-repository) |
 | Signing client secret and the `autoshift-ci` Keycloak client | `policy-keycloak-realm-secrets` and `policy-keycloak-realm-import` | [Signing identity](#signing-identity) |
+| Test, publish, sign and verify every branch push | `.tekton/autoshift-push.yaml`, run by Pipelines as Code | [Push pipeline](#push-pipeline) |
 | The signing client in a realm imported before the client existed | `bootstrap-keycloak` pipeline | [Add the client to an existing realm](#add-the-client-to-an-existing-realm) |
 
 ## Prerequisites
@@ -500,6 +501,47 @@ curl -sf "${KEYCLOAK}/realms/${REALM}/protocol/openid-connect/token" \
   | jq -r .access_token | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null \
   | jq '{iss, aud, email, email_verified}'
 ```
+
+## Push pipeline
+
+`.tekton/autoshift-push.yaml` runs on every push to a branch of the source repository. Everything
+specific to a hub comes from `autoshift-ci-endpoints`, so the file is the same on every hub:
+
+1. **endpoints**: reads the registry and push Secret, and sets the version to
+   `0.0.0-<branch>.<commit>`, with the branch lowercased and cut to 40 characters.
+2. **fetch**: clones the pushed commit.
+3. **build**: on Red Hat's `ubi9/go-toolset` image, downloads helm and yq at the versions
+   `versions.yaml` pins, runs `make test`, then runs `make release` without its push. It pushes every
+   chart to `<registry>/<namespace>/dev` itself and records the digest each one was stored under. Go
+   follows `tools/go.mod` through `GOTOOLCHAIN=auto`.
+4. **sign**: requests a token as `autoshift-ci`, signs every digest with one short-lived certificate,
+   and verifies each signature against the signer identity and issuer. A chart that does not verify
+   fails the run.
+
+The pipeline runs only on stock Red Hat images, so there is no CI image to build or maintain. It
+needs egress to `get.helm.sh`, `github.com` and the Go module proxy, which `make test` needs anyway.
+
+The signing step runs Red Hat's cosign image, `registry.redhat.io/rhtas/cosign-rhel9`, which the
+cluster pulls with its own pull secret. cosign takes the Fulcio and Rekor URLs from the signing
+configuration that the hub's TUF repository publishes.
+
+To do the same by hand from a clone, with `TOKEN` set to an `autoshift-ci` token (see
+[Check the signing token](#check-the-signing-token)):
+
+```bash
+make install-policy-generator && make test
+VERSION=0.0.0-my-branch.$(git rev-parse --short=7 HEAD)
+REG=registry.example.com/autoshift/dev
+make release VERSION="${VERSION}" REGISTRY="${REG%%/*}" REGISTRY_NAMESPACE="${REG#*/}" INCLUDE_MIRROR=false DRY_RUN=true
+for c in .helm-charts/policies/*.tgz; do helm push "$c" "oci://${REG}/policies"; done
+cosign initialize --mirror "${TUF_URL}" --root "${TUF_URL}/root.json"
+cosign sign --yes --identity-token "${TOKEN}" "${REG}/policies/<chart>@<digest>"
+cosign verify --certificate-identity "autoshift-ci@${DOMAIN}" \
+  --certificate-oidc-issuer "${KEYCLOAK}/realms/${REALM}" "${REG}/policies/<chart>@<digest>"
+```
+
+Push the bootstrap charts to `${REG}/bootstrap` and `autoshift-${VERSION}.tgz` to `${REG}` the same
+way.
 
 ## Troubleshooting
 
