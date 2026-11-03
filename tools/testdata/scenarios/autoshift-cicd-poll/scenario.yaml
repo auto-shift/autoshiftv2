@@ -1,7 +1,8 @@
 description: >-
-  AutoShift CI/CD with the source and site-config on the hub's GitLab. The example uses GitHub for
-  both, so this covers the gitlab provider: the repository URLs, the API URL and the push credential
-  derive from the GitLab host in tssc-gitlab-credentials and the group, rather than from config.
+  AutoShift CI/CD set up for evaluation on the hub alone. The example is the production shape, a
+  customer's own GitHub repository with a webhook, a GitHub site-config and an external registry,
+  so this covers the other side of each: the GitLab mirror fed by the poll CronJob, site-config on
+  the hub's GitLab, and publishing to the hub's Quay with the bootstrap-quay robot.
 
 policies:
   - stable/autoshift-cicd
@@ -21,7 +22,7 @@ expect:
       - path: spec.git_provider.secret.name
         equals: autoshift-pac-webhook
       - path: spec.settings.pipelinerun_provenance
-        equals: source
+        equals: default_branch
 
   - policy: policy-autoshift-cicd-endpoints
     kind: ConfigMap
@@ -34,9 +35,14 @@ expect:
         equals: gitlab-autoshift-token
       - path: data.siteConfigUser
         equals: oauth2
+      - path: data.registryHost
+        equals: registry-quay.apps.example.com
+      - path: data.registryNamespace
+        equals: autoshift
+      - path: data.registryPushSecret
+        equals: quay-autoshift-ci
 
-  # Both repositories are on this GitLab, so bootstrap-gitlab creates both projects, the webhook,
-  # and mirrors upstream.
+  # Both repositories are on this GitLab: both projects, the webhook, and the upstream mirror.
   - policy: policy-autoshift-cicd-bootstrap
     kind: Pipeline
     namespace: autoshift-ci
@@ -50,3 +56,13 @@ expect:
         equals: autoshift
       - path: spec.params[name=syncUpstream].default
         equals: 'true'
+
+  - policy: policy-autoshift-cicd-bootstrap
+    kind: CronJob
+    namespace: autoshift-ci
+    name: poll-upstream
+    fields:
+      - path: spec.schedule
+        equals: '*/5 * * * *'
+      - path: spec.jobTemplate.spec.template.spec.containers[name=poll].env[name=REFS].value
+        equals: main feature/my-change

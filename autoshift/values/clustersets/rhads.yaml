@@ -167,15 +167,16 @@ hubClusterSets:
           size: 32Gi
       tas:
         orgName: TSSC
-      # AutoShift's own CI/CD. The source is the upstream GitHub repository; set provider: gitlab
-      # (and leave repo empty) to build from the autoshift project bootstrap-gitlab creates.
-      # site-config is not set, so it is the site-config project on this hub's GitLab; point
-      # siteConfig at a GitHub repository with provider, repo and secret.
+      # AutoShift's own CI/CD, set up for evaluation: the hub polls the upstream GitHub repository
+      # and mirrors the watched branches into its GitLab autoshift project, whose webhook starts the
+      # pipelines, so upstream needs no webhook. site-config is this hub's GitLab project and charts
+      # publish to this hub's Quay. In production, point source at your own copy of AutoShift with
+      # its webhook (provider, repo, secret; no pollSchedule), and registry at your OCI registry.
       autoshift-cicd:
         source:
-          provider: github
-          repo: https://github.com/auto-shift/autoshiftv2
-          secret: autoshift-pac-github
+          provenance: source
+          pollSchedule: '*/5 * * * *'
+          pollRefs: main feature/autoshift-cicd
       devHub:
         title: Red Hat Developer Hub
         # Which ArgoCD RHDH scaffolds golden-path apps into. Set 'team' to a gitops-dev team so apps

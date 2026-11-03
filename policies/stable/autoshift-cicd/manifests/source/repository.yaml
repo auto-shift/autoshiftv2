@@ -8,8 +8,9 @@
 #               Empty means github.com, or the hub's GitLab
 #   secret      Secret in autoshift-ci with provider.token and webhook.secret. bootstrap-gitlab
 #               writes it for GitLab; for GitHub you create it
-#   provenance  source runs .tekton/ from the pushed branch; default_branch runs only what is on the
-#               default branch, so a branch cannot change the pipeline it runs under
+#   provenance  default_branch (default) runs only the .tekton/ on the default branch, so a branch
+#               cannot change the pipeline it runs under; source runs .tekton/ from the pushed branch,
+#               which evaluating a branch needs
 # Missing input fails the policy with the list rather than creating a Repository that never runs.
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
@@ -58,4 +59,4 @@ object-templates-raw: |
             name: '{{ $secretName }}'
             key: webhook.secret
         settings:
-          pipelinerun_provenance: '{{hub index $src "provenance" | default "source" hub}}'
+          pipelinerun_provenance: '{{hub index $src "provenance" | default "default_branch" hub}}'

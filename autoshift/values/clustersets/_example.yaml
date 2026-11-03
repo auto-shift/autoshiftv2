@@ -880,13 +880,22 @@ hubClusterSets:
         gitlabGroup: autoshift                # GitLab group holding the autoshift and site-config projects
         quayOrg: autoshift                    # Quay organization AutoShift publishes to
         # The repository whose pushes run the .tekton/ pipelines, through a Pipelines as Code
-        # Repository in autoshift-ci.
+        # Repository in autoshift-ci: your own copy of AutoShift, whose webhook calls the hub.
         source:
           provider: github                    # gitlab (default) | github
-          repo: https://github.com/auto-shift/autoshiftv2   # empty with gitlab: the autoshift project bootstrap-gitlab creates
-          apiUrl: ''                          # empty: github.com, or the hub's GitLab. Set for GitHub Enterprise
-          secret: autoshift-pac-webhook       # Secret in autoshift-ci: provider.token, webhook.secret
-          provenance: source                  # source: .tekton/ from the pushed branch | default_branch
+          repo: https://github.com/my-org/autoshiftv2   # empty with gitlab: the autoshift project bootstrap-gitlab creates
+          apiUrl: ''                          # empty: github.com, or the hub's GitLab. Set for GitHub Enterprise or another GitLab
+          secret: autoshift-pac-github        # Secret in autoshift-ci: provider.token, webhook.secret
+          provenance: default_branch          # default_branch: only .tekton/ on the default branch runs | source: from the pushed branch
+          # Evaluation only: poll upstreamRepo and mirror it into the GitLab autoshift project, whose
+          # webhook starts the pipelines, so upstream needs no webhook. Needs provider gitlab, no repo.
+          pollSchedule: ''                    # cron schedule; empty turns polling off
+          pollRefs: ''                        # space-separated branches to watch, or *. Empty: upstreamRef
+        # The OCI registry the pipelines publish charts and signatures to.
+        registry:
+          host: registry.example.com          # empty: the hub's Quay (quay label)
+          namespace: autoshift                # organization or project. Empty: quayOrg
+          pushSecret: autoshift-registry      # dockerconfigjson Secret in autoshift-ci. Empty with the hub's Quay: the bootstrap-quay robot
         # The site-config repository: the values each deployment reads, and the deployments/ files the
         # pipelines write. bootstrap-site-config seeds it once.
         siteConfig:

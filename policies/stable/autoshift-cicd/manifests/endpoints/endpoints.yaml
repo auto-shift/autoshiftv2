@@ -5,6 +5,9 @@
 #   autoshift-ci-ca         the ingress CA, and autoshift-ca when cert-manager has issued it, so the
 #                           tasks verify TLS against routes signed by either
 #   gitlab-autoshift-token  the GitLab PAT from gitlab-system/tssc-gitlab-credentials, while gitlab is on
+#   registry*               the OCI registry the pipelines publish to, from
+#                           config.autoshift-cicd.registry: the customer's registry with its push
+#                           Secret, or by default the hub's Quay and the bootstrap-quay robot
 #   siteConfig*             the site-config repository from config.autoshift-cicd.siteConfig, on
 #                           GitHub or GitLab: its URL and branch, and the Secret, key and git user
 #                           that push to it
@@ -15,6 +18,8 @@
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $realm := (dig "keycloak" "realmName" "tssc-iam" $cfg) hub}}
+  {{hub- $reg := (dig "autoshift-cicd" "registry" (dict) $cfg) hub}}
+  {{hub- $quayOrg := (dig "autoshift-cicd" "quayOrg" "autoshift" $cfg) hub}}
   {{hub- $sc := (dig "autoshift-cicd" "siteConfig" (dict) $cfg) hub}}
   {{hub- $scProvider := (index $sc "provider" | default "gitlab") hub}}
   {{hub- $group := (dig "autoshift-cicd" "gitlabGroup" "autoshift" $cfg) hub}}
@@ -27,14 +32,33 @@ object-templates-raw: |
   {{- $ingressCA := (index (((lookup "v1" "ConfigMap" "openshift-config-managed" "default-ingress-cert") | default dict).data | default dict) "ca-bundle.crt" | default "") }}
   {{- if not $ingressCA }}{{- $missing = append $missing "ConfigMap openshift-config-managed/default-ingress-cert" }}{{- end }}
   {{- $autoshiftCA := (index (((lookup "v1" "Secret" "cert-manager" "autoshift-ca") | default dict).data | default dict) "tls.crt" | default "" | base64dec) }}
+  {{- $quayHost := "" }}
   {{hub- if $quayOn hub}}
-  {{- $quayHost := (dig "spec" "host" "" ((lookup "route.openshift.io/v1" "Route" "quay-enterprise" "registry-quay") | default dict)) }}
+  {{- $quayHost = (dig "spec" "host" "" ((lookup "route.openshift.io/v1" "Route" "quay-enterprise" "registry-quay") | default dict)) }}
   {{- if not $quayHost }}{{- $missing = append $missing "Route quay-enterprise/registry-quay (policy-quay-deploy)" }}{{- end }}
   {{hub- end hub}}
   {{hub- if $gitlabOn hub}}
   {{- $glData := ((lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials") | default dict).data | default dict }}
   {{- if not (and (index $glData "host") (index $glData "token")) }}{{- $missing = append $missing "Secret gitlab-system/tssc-gitlab-credentials with host and token (the gitlab create-gitlab-token Job; needs dev-hub: 'true')" }}{{- end }}
   {{hub- end hub}}
+  {{- /* registry: a host in config is the customer's registry and needs its push Secret; no host
+       means the hub's Quay, pushed by the robot bootstrap-quay creates, which runs after this */}}
+  {{- $regHost := "{{hub index $reg "host" | default "" hub}}" }}
+  {{- $regNs := "{{hub index $reg "namespace" | default $quayOrg hub}}" }}
+  {{- $regSecret := "{{hub index $reg "pushSecret" | default "" hub}}" }}
+  {{- $regSecretSet := ne $regSecret "" }}
+  {{- if not $regHost }}
+  {{-   if and (not $quayHost) (not {{hub $quayOn hub}}) }}{{- $missing = append $missing "config.autoshift-cicd.registry.host, or the quay label for the hub's Quay" }}{{- end }}
+  {{-   $regHost = $quayHost }}
+  {{-   if not $regSecret }}{{- $regSecret = printf "quay-%s-ci" $regNs }}{{- end }}
+  {{- else if not $regSecret }}
+  {{-   $missing = append $missing (printf "config.autoshift-cicd.registry.pushSecret, a Secret in autoshift-ci that can push to %s" $regHost) }}
+  {{- end }}
+  {{- if $regSecretSet }}
+  {{-   if not (index (((lookup "v1" "Secret" "autoshift-ci" $regSecret) | default dict).data | default dict) ".dockerconfigjson") }}
+  {{-     $missing = append $missing (printf "Secret autoshift-ci/%s of type kubernetes.io/dockerconfigjson, with push access to %s/%s" $regSecret $regHost $regNs) }}
+  {{-   end }}
+  {{- end }}
   {{- /* site-config: a GitLab one with no repo is the project bootstrap-gitlab creates, pushed with
        the GitLab token this policy copies; a GitHub one needs its repo and a Secret */}}
   {{- $scRepo := regexReplaceAll "[.]git$" "{{hub index $sc "repo" | default "" hub}}" "" }}
@@ -81,6 +105,9 @@ object-templates-raw: |
         namespace: autoshift-ci
       data:
         pacUrl: 'https://{{ $pacHost }}'
+        registryHost: '{{ $regHost }}'
+        registryNamespace: '{{ $regNs }}'
+        registryPushSecret: '{{ $regSecret }}'
         siteConfigUrl: '{{ $scRepo }}'
         siteConfigBranch: '{{hub index $sc "branch" | default "main" hub}}'
         siteConfigSecret: '{{ $scSecret }}'

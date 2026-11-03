@@ -32,7 +32,13 @@ config:
       repo: https://github.com/auto-shift/autoshiftv2
       apiUrl: ''                      # set for GitHub Enterprise or another GitLab
       secret: autoshift-pac-github    # Secret in autoshift-ci: provider.token, webhook.secret
-      provenance: source              # source | default_branch
+      provenance: default_branch      # default_branch (default) | source
+      pollSchedule: ''                # cron schedule: mirror upstream into the GitLab project instead of a webhook
+      pollRefs: ''                    # branches to watch, or *. Empty: upstreamRef
+    registry:
+      host: ''                        # your OCI registry. Empty: the hub's Quay
+      namespace: ''                   # organization or project. Empty: quayOrg
+      pushSecret: ''                  # dockerconfigjson Secret in autoshift-ci. Empty with the hub's Quay: the bootstrap-quay robot
     siteConfig:
       provider: gitlab                # gitlab (default) | github
       repo: ''                        # empty with gitlab: the site-config project bootstrap-gitlab creates
@@ -42,7 +48,10 @@ config:
 ```
 
 With `provider: gitlab` and no `repo`, the source is the `autoshift` project `bootstrap-gitlab`
-creates. For GitHub, create the Secret and the repository webhook as described in
+creates. Set `pollSchedule` there and the `poll-upstream` CronJob mirrors upstream into it on that
+schedule, so GitHub needs no webhook and the hub needs no inbound access. That suits evaluation; in
+production, `source`, `siteConfig` and `registry` point at repositories and a registry you own. See
+[Production and evaluation](../../../docs/autoshift-cicd.md#production-and-evaluation). For GitHub, create the Secret and the repository webhook as described in
 [Source repository](../../../docs/autoshift-cicd.md#source-repository).
 
 The Quay and GitLab endpoints are gathered only while the `quay` and `gitlab` labels are on.

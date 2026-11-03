@@ -1,0 +1,156 @@
+# Watches the upstream repository instead of waiting for it to call in, for a hub that GitHub cannot
+# reach or a repository you cannot add a webhook to. Present while config.autoshift-cicd.source has
+# a pollSchedule, which needs the source to be the GitLab autoshift project: the CronJob mirrors
+# upstream into it, and that project's webhook starts the Pipelines as Code run inside the cluster.
+#
+# Each run compares the upstream and mirror refs over git's HTTP protocol, which costs two requests,
+# and starts the sync-upstream Pipeline only when a watched branch moved or a tag is new. A sync
+# already running is left to finish. Only the latest five poll runs are kept. With no pollSchedule
+# the CronJob is removed, so turning polling off needs no manual cleanup.
+object-templates-raw: |
+  {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
+  {{hub- $cicd := (index $cfg "autoshift-cicd" | default dict) hub}}
+  {{hub- $srcCfg := (index $cicd "source" | default dict) hub}}
+  {{hub- $schedule := (index $srcCfg "pollSchedule" | default "") hub}}
+  {{hub- $glSource := and (eq (index $srcCfg "provider" | default "gitlab") "gitlab") (not (index $srcCfg "repo" | default "")) hub}}
+  {{hub- if $schedule hub}}
+  {{hub- if not $glSource hub}}
+  {{- fail "config.autoshift-cicd.source.pollSchedule mirrors upstream into the GitLab autoshift project, so it needs source.provider gitlab with no repo. Remove pollSchedule, or point source at the GitLab project" }}
+  {{hub- end hub}}
+  {{- $cliImage := "{{hub (index (index $cfg "images" | default dict) "cli" | default "") hub}}" }}
+  {{- if not $cliImage }}
+  {{-   $isCli := (lookup "image.openshift.io/v1" "ImageStream" "openshift" "cli") | default dict }}
+  {{-   range $t := (dig "spec" "tags" (list) $isCli) }}
+  {{-     if eq (index $t "name" | default "") "latest" }}{{- $cliImage = (dig "from" "name" "" $t) }}{{- end }}
+  {{-   end }}
+  {{- end }}
+  {{- if not $cliImage }}
+  {{-   fail "The upstream poll cannot resolve its image. Missing: ImageStream openshift/cli tag latest (or set config.images.cli)" }}
+  {{- end }}
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: poll-upstream
+        namespace: autoshift-ci
+      spec:
+        schedule: '{{hub $schedule hub}}'
+        concurrencyPolicy: Forbid
+        successfulJobsHistoryLimit: 1
+        failedJobsHistoryLimit: 3
+        jobTemplate:
+          spec:
+            backoffLimit: 0
+            activeDeadlineSeconds: 300
+            template:
+              spec:
+                serviceAccountName: pipeline
+                restartPolicy: Never
+                volumes:
+                  - name: trusted-ca
+                    configMap:
+                      name: autoshift-ci-trusted-ca
+                      optional: true
+                  - name: autoshift-ci-ca
+                    configMap:
+                      name: autoshift-ci-ca
+                      optional: true
+                containers:
+                  - name: poll
+                    image: '{{ $cliImage }}'
+                    volumeMounts:
+                      - name: trusted-ca
+                        mountPath: /etc/autoshift-ci/trusted-ca
+                      - name: autoshift-ci-ca
+                        mountPath: /etc/autoshift-ci/ca
+                    env:
+                      - name: UPSTREAM
+                        value: '{{hub (index $cicd "upstreamRepo" | default "https://github.com/auto-shift/autoshiftv2.git") hub}}'
+                      - name: REFS
+                        value: '{{hub (index $srcCfg "pollRefs" | default (index $cicd "upstreamRef" | default "main")) hub}}'
+                      - name: GROUP
+                        value: '{{hub (index $cicd "gitlabGroup" | default "autoshift") hub}}'
+                      - name: GITLAB_TOKEN
+                        valueFrom:
+                          secretKeyRef:
+                            name: gitlab-autoshift-token
+                            key: token
+                    command:
+                      - python3
+                      - -c
+                      - |
+                        import base64, glob, json, os, ssl, subprocess, sys, urllib.request
+                        def die(msg):
+                            print("ERROR: " + msg, file=sys.stderr)
+                            sys.exit(1)
+                        def oc(*args, stdin=None):
+                            p = subprocess.run(["oc", *args], input=stdin, capture_output=True, text=True)
+                            if p.returncode != 0:
+                                die("oc " + " ".join(args[:3]) + ": " + p.stderr.strip())
+                            return p.stdout
+                        ctx = ssl.create_default_context()
+                        for pem in glob.glob("/etc/autoshift-ci/trusted-ca/*") + glob.glob("/etc/autoshift-ci/ca/*"):
+                            try:
+                                ctx.load_verify_locations(cafile=pem)
+                            except (ssl.SSLError, OSError):
+                                pass
+                        def refs(url, auth=None):
+                            req = urllib.request.Request(url.rstrip("/") + "/info/refs?service=git-upload-pack")
+                            req.add_header("User-Agent", "git/2 autoshift-poll")
+                            if auth:
+                                req.add_header("Authorization", "Basic " + base64.b64encode(auth.encode()).decode())
+                            with urllib.request.urlopen(req, context=ctx, timeout=60) as r:
+                                body = r.read()
+                            out, i = {}, 0
+                            while i + 4 <= len(body):
+                                n = int(body[i:i + 4], 16)
+                                if n == 0:
+                                    i += 4
+                                    continue
+                                line = body[i + 4:i + n].split(b"\0")[0].decode().strip()
+                                i += n
+                                if line.startswith("#") or " " not in line:
+                                    continue
+                                sha, ref = line.split(" ", 1)
+                                if not ref.endswith("^{}"):
+                                    out[ref] = sha
+                            return out
+                        gitlab = json.loads(oc("get", "configmap", "autoshift-ci-endpoints", "-o", "json")).get("data", {}).get("gitlabUrl", "")
+                        if not gitlab:
+                            die("autoshift-ci-endpoints has no gitlabUrl; check policy-autoshift-cicd-endpoints")
+                        mirror = "%s/%s/autoshift.git" % (gitlab, os.environ["GROUP"])
+                        up = refs(os.environ["UPSTREAM"])
+                        have = refs(mirror, "oauth2:" + os.environ["GITLAB_TOKEN"])
+                        wanted = os.environ["REFS"].split()
+                        heads = [r for r in up if r.startswith("refs/heads/")] if "*" in wanted else ["refs/heads/" + b for b in wanted]
+                        moved = [r for r in heads if r in up and up[r] != have.get(r)]
+                        missing = [r for r in heads if r not in up]
+                        new_tags = [r for r in up if r.startswith("refs/tags/") and r not in have]
+                        if missing:
+                            print("Not upstream, skipped: " + " ".join(missing))
+                        if not moved and not new_tags:
+                            print("Mirror is up to date")
+                            sys.exit(0)
+                        runs = json.loads(oc("get", "pipelinerun", "-l", "autoshift.io/trigger=poll-upstream", "-o", "json"))["items"]
+                        if any(c.get("status") == "Unknown" for r in runs for c in r.get("status", {}).get("conditions", [])):
+                            print("A sync-upstream run is still going; leaving it to finish")
+                            sys.exit(0)
+                        print("Changed upstream: " + " ".join(moved + new_tags[:10]))
+                        run = dict(apiVersion="tekton.dev/v1", kind="PipelineRun",
+                                   metadata=dict(generateName="sync-upstream-poll-", labels={"autoshift.io/trigger": "poll-upstream"}),
+                                   spec=dict(pipelineRef=dict(name="sync-upstream"), taskRunTemplate=dict(serviceAccountName="pipeline"),
+                                             params=[dict(name="refs", value=os.environ["REFS"]), dict(name="tags", value="true")]))
+                        print(oc("create", "-o", "name", "-f", "-", stdin=json.dumps(run)).strip())
+                        done = sorted((r for r in runs if r.get("status", {}).get("completionTime")), key=lambda r: r["metadata"]["creationTimestamp"])
+                        for r in done[:-4]:
+                            oc("delete", "pipelinerun", r["metadata"]["name"], "--wait=false")
+  {{hub- else hub}}
+  - complianceType: mustnothave
+    objectDefinition:
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: poll-upstream
+        namespace: autoshift-ci
+  {{hub- end hub}}

@@ -7,6 +7,24 @@ signs them with an identity from the Red Hat build of Keycloak. The source and t
 configuration are chosen separately, so a customer's own GitHub repository can hold the site
 configuration while AutoShift builds from upstream, or from the hub's GitLab.
 
+## Production and evaluation
+
+In production you own your copy of AutoShift. Clone it into a repository on your GitHub or GitLab,
+add a webhook from that repository to your hub, keep your site configuration in a second repository,
+and publish to your own OCI registry. Every one of those is set in `config.autoshift-cicd`, and none
+of them has to run on the hub.
+
+To evaluate the CI/CD without any of that, the hub can do it all itself: it polls the upstream
+AutoShift repository into its own GitLab, keeps the site configuration in that GitLab, and publishes
+to its own Quay. `clustersets/rhads.yaml` is set up this way.
+
+| | Production | Evaluation |
+|---|---|---|
+| Source | Your repository, with a webhook to the hub: `source.provider`, `source.repo`, `source.secret` | The upstream repository, polled into the hub's GitLab: `source.pollSchedule` |
+| Site configuration | Your repository: `siteConfig.provider`, `siteConfig.repo`, `siteConfig.secret` | The hub's GitLab `site-config` project |
+| Registry | Your OCI registry: `registry.host`, `registry.namespace`, `registry.pushSecret` | The hub's Quay, with the `bootstrap-quay` robot |
+| Pipelines run from | `.tekton/` on the default branch: `source.provenance: default_branch` | `.tekton/` on the pushed branch: `source.provenance: source` |
+
 Most of the setup is policy. Steps that need a credential an administrator holds, or that change a
 system AutoShift cannot reach through a Kubernetes resource, are bootstrap pipelines you start with
 parameters. Every step also has a manual procedure on this page, for a hub where you prefer to run
@@ -18,11 +36,13 @@ it by hand or need to understand what the automation does.
 |---|---|---|
 | `autoshift-ci` namespace, Tasks and Pipelines | `policy-autoshift-cicd-bootstrap` | Not applicable |
 | Endpoints, trust bundle and GitLab token in `autoshift-ci` | `policy-autoshift-cicd-endpoints` | [Endpoints and trust](#endpoints-and-trust) |
-| Quay organization, CI robot and push Secret | `bootstrap-quay` pipeline | [Quay organization and robot](#quay-organization-and-robot) |
+| The registry the pipelines publish to, and its push credential | `policy-autoshift-cicd-endpoints` | [Publishing registry](#publishing-registry) |
+| Quay organization, CI robot and push Secret, when publishing to the hub's Quay | `bootstrap-quay` pipeline | [Quay organization and robot](#quay-organization-and-robot) |
 | Pipelines as Code Repository for the source on GitHub or GitLab | `policy-autoshift-cicd-source` | [Source repository](#source-repository) |
 | The site configuration repository, its branch and push credential, on GitHub or GitLab | `policy-autoshift-cicd-endpoints` | [Site configuration repository](#site-configuration-repository) |
 | GitLab group and the projects config places on the hub's GitLab, with the Pipelines as Code webhook | `bootstrap-gitlab` pipeline | [GitLab group, projects and webhook](#gitlab-group-projects-and-webhook) |
 | Upstream branches mirrored into the GitLab `autoshift` project | `bootstrap-gitlab` and `sync-upstream` pipelines | [Upstream mirror](#upstream-mirror) |
+| Polling upstream, for evaluation | `poll-upstream` CronJob, from `policy-autoshift-cicd-bootstrap` | [Poll instead of a webhook](#poll-instead-of-a-webhook) |
 | The site configuration seeded from the AutoShift values | `bootstrap-site-config` pipeline | [Site configuration repository](#site-configuration-repository) |
 | Signing client secret and the `autoshift-ci` Keycloak client | `policy-keycloak-realm-secrets` and `policy-keycloak-realm-import` | [Signing identity](#signing-identity) |
 | The signing client in a realm imported before the client existed | `bootstrap-keycloak` pipeline | [Add the client to an existing realm](#add-the-client-to-an-existing-realm) |
@@ -89,6 +109,8 @@ tkn pipeline start bootstrap-keycloak -n autoshift-ci --use-param-defaults --sho
     | `fulcioUrl`, `rekorUrl`, `tufUrl` | `status.url` of the `Fulcio`, `Rekor` and `Tuf` resources in `tssc-tas` |
     | `oidcIssuer` | `${KEYCLOAK}/realms/${REALM}` |
     | `signerIdentity` | `autoshift-ci@${DOMAIN}` |
+    | `registryHost`, `registryNamespace` | The registry and the organization or project the pipelines publish to; see [Publishing registry](#publishing-registry) |
+    | `registryPushSecret` | The `kubernetes.io/dockerconfigjson` Secret in `autoshift-ci` that pushes there |
     | `siteConfigUrl`, `siteConfigBranch` | The site configuration repository and branch; see [Site configuration repository](#site-configuration-repository) |
     | `siteConfigSecret`, `siteConfigSecretKey` | The Secret in `autoshift-ci`, and its key, holding a token that can push there |
     | `siteConfigUser` | The HTTPS user sent with that token: `oauth2` for GitLab, any value for GitHub |
@@ -106,7 +128,34 @@ tkn pipeline start bootstrap-keycloak -n autoshift-ci --use-param-defaults --sho
    `token` keys of `gitlab-system/tssc-gitlab-credentials`. Any GitLab personal access token with the
    `api` scope works.
 
+## Publishing registry
+
+The pipelines publish the AutoShift charts, their signatures and attestations to an OCI registry
+set in `config.autoshift-cicd.registry`. Any registry that accepts OCI artifacts works:
+
+```yaml
+config:
+  autoshift-cicd:
+    registry:
+      host: registry.example.com          # empty: the hub's Quay
+      namespace: autoshift                # organization or project
+      pushSecret: autoshift-registry      # Secret in autoshift-ci
+```
+
+With a `host`, create the push Secret from an account that can create and push repositories in
+that namespace. `policy-autoshift-cicd-endpoints` fails, naming the Secret, until it exists:
+
+```bash
+oc create secret docker-registry autoshift-registry -n autoshift-ci \
+  --docker-server=registry.example.com --docker-username=<user> --docker-password=<token>
+```
+
+With no `host`, the pipelines publish to the hub's Quay, in the organization `quayOrg`, with the
+robot account and Secret that `bootstrap-quay` creates.
+
 ## Quay organization and robot
+
+This section applies when the pipelines publish to the hub's Quay.
 
 `bootstrap-quay` creates an organization, a robot account that can create and push repositories in
 it, and the robot's push Secret. It needs a Quay superuser OAuth token in Secret
@@ -265,8 +314,22 @@ config:
       repo: https://github.com/auto-shift/autoshiftv2
       apiUrl: ''                          # set for GitHub Enterprise
       secret: autoshift-pac-github        # Secret in autoshift-ci: provider.token, webhook.secret
-      provenance: source                  # source | default_branch
+      provenance: default_branch          # default_branch (default) | source
+      pollSchedule: ''                    # cron schedule; see Poll instead of a webhook
+      pollRefs: ''                        # branches to watch, or *
 ```
+
+Pipelines as Code starts a run only when the Git provider sends it an event, so the provider has to
+reach the cluster. In production that is the webhook on your repository. Polling is for
+evaluation:
+
+| | Webhook | Polling |
+|---|---|---|
+| Configuration | `provider: github` and `repo` | `provider: gitlab`, no `repo`, and `pollSchedule` |
+| Inbound access to the hub from the internet | Required | Not required |
+| Rights on the GitHub repository | Administrator, to add the webhook, and a token | None for a public repository |
+| A run starts | When the change is pushed | Within one schedule interval |
+| Pipeline status is shown on | The GitHub commit and pull request | The commit in the hub's GitLab mirror |
 
 `provenance: source` runs `.tekton/` from the branch that was pushed, which a branch needs before
 its pipelines reach the default branch. `default_branch` runs only what is on the default branch, so
@@ -313,6 +376,36 @@ pipeline writes. The manual equivalent is in
 [GitLab group, projects and webhook](#gitlab-group-projects-and-webhook). For another GitLab, set
 `repo` and `apiUrl`, and create the Secret and the project webhook with the same keys and events.
 
+### Poll instead of a webhook
+
+Polling lets a hub build the upstream AutoShift repository with no webhook, which suits evaluation
+and testing rather than production, where the repository is your own. With `pollSchedule` set, the `poll-upstream` CronJob in `autoshift-ci` watches `upstreamRepo` on
+that schedule. It reads the branch and tag references of upstream and of the GitLab `autoshift`
+project over the Git HTTP protocol, and starts the `sync-upstream` pipeline only when a watched
+branch moved or a tag is new. The push into GitLab fires that project's Pipelines as Code webhook,
+which `bootstrap-gitlab` created, inside the cluster. A sync that is still running is left to
+finish, and only the latest five poll runs are kept.
+
+```yaml
+config:
+  autoshift-cicd:
+    source:
+      pollSchedule: '*/5 * * * *'
+      pollRefs: main feature/my-change    # space-separated branches, or *. Empty: upstreamRef
+```
+
+Polling needs the source to be the GitLab mirror, `provider: gitlab` with no `repo`. With another
+source, `policy-autoshift-cicd-bootstrap` fails and says so. Removing `pollSchedule` removes the
+CronJob. `sync-upstream` never forces, so a branch rewritten upstream stops syncing until you run
+`sync-upstream` with `force=true`. Watching `*` builds every upstream branch, so list the branches
+you want deployed.
+
+To poll by hand, run `sync-upstream` whenever upstream changes:
+
+```bash
+tkn pipeline start sync-upstream -n autoshift-ci -p refs="main feature/my-change" --use-param-defaults --showlog
+```
+
 ### Create the Repository by hand
 
 ```yaml
@@ -332,7 +425,7 @@ spec:
       name: autoshift-pac-github
       key: webhook.secret
   settings:
-    pipelinerun_provenance: source
+    pipelinerun_provenance: default_branch
 ```
 
 For GitLab, set `type: gitlab` and `git_provider.url` to the GitLab URL.
