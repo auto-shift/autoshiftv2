@@ -267,7 +267,7 @@ config:
   autoshift-cicd:
     siteConfig:
       provider: github                    # gitlab (default) | github
-      repo: https://github.com/my-org/autoshift-site-config
+      repo: https://github.com/my-org/autoshift-site-config.git
       branch: main
       secret: autoshift-site-config       # Secret in autoshift-ci with a token that can push
       secretKey: token
@@ -611,7 +611,7 @@ spec:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops
   sources:
-    - repoURL: https://github.com/my-org/autoshift-site-config
+    - repoURL: https://github.com/my-org/autoshift-site-config.git
       targetRevision: main
       ref: siteValues
     - repoURL: oci://registry.example.com/autoshift/dev/autoshift

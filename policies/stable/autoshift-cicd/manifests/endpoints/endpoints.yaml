@@ -61,14 +61,14 @@ object-templates-raw: |
   {{- end }}
   {{- /* site-config: a GitLab one with no repo is the project bootstrap-gitlab creates, pushed with
        the GitLab token this policy copies; a GitHub one needs its repo and a Secret */}}
-  {{- $scRepo := regexReplaceAll "[.]git$" "{{hub index $sc "repo" | default "" hub}}" "" }}
+  {{- $scRepo := "{{hub index $sc "repo" | default "" hub}}" }}
   {{- $scSecret := "{{hub index $sc "secret" | default "" hub}}" }}
   {{- $scKey := "{{hub index $sc "secretKey" | default "token" hub}}" }}
   {{- $scUser := "x-access-token" }}
   {{hub- if eq $scProvider "gitlab" hub}}
   {{- $scUser = "oauth2" }}
   {{- $scHost := (index (((lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials") | default dict).data | default dict) "host" | default "" | base64dec) }}
-  {{- if not $scRepo }}{{- $scRepo = ternary (printf "https://%s/{{hub $group hub}}/site-config" $scHost) "" (ne $scHost "") }}{{- end }}
+  {{- if not $scRepo }}{{- $scRepo = ternary (printf "https://%s/{{hub $group hub}}/site-config.git" $scHost) "" (ne $scHost "") }}{{- end }}
   {{- if not $scSecret }}{{- $scSecret = "gitlab-autoshift-token" }}{{- end }}
   {{- if not $scRepo }}{{- $missing = append $missing "config.autoshift-cicd.siteConfig.repo, or Secret gitlab-system/tssc-gitlab-credentials with host" }}{{- end }}
   {{hub- else if eq $scProvider "github" hub}}
