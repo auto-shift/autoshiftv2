@@ -1,4 +1,4 @@
-# Creates a GitLab group, the projects in it, and a Pipelines as Code webhook on one of them. The
+# Creates GitLab projects, and their groups, by path, and a Pipelines as Code webhook on one of them. The
 # webhook secret is generated once and kept in autoshift-ci, where the Pipelines as Code Repository
 # reads it. Every step checks before it creates, so the task is safe to run again.
 #
@@ -10,7 +10,7 @@ metadata:
   name: gitlab-bootstrap
   namespace: autoshift-ci
 spec:
-  description: Create a GitLab group, its projects and the Pipelines as Code webhook.
+  description: Create GitLab projects by path, with their groups, and the Pipelines as Code webhook.
   params:
     - name: cliImage
       type: string
@@ -19,18 +19,14 @@ spec:
       type: string
       default: ''
       description: GitLab base URL. Empty reads gitlabUrl from the autoshift-ci-endpoints ConfigMap.
-    - name: group
-      type: string
-      default: autoshift
     - name: projects
       type: array
-      default:
-        - autoshift
-        - site-config
+      default: []
+      description: Project paths to create, such as autoshift/site-config. A missing group is created.
     - name: webhookProject
       type: string
-      default: autoshift
-      description: Project that gets the Pipelines as Code webhook. Empty skips the webhook.
+      default: ''
+      description: Path of the project that gets the Pipelines as Code webhook. Empty skips the webhook.
     - name: pacUrl
       type: string
       default: ''
@@ -71,8 +67,6 @@ spec:
       env:
         - name: GITLAB_URL
           value: $(params.gitlabUrl)
-        - name: GROUP
-          value: $(params.group)
         - name: WEBHOOK_PROJECT
           value: $(params.webhookProject)
         - name: PAC_URL
@@ -135,27 +129,35 @@ spec:
                 except ValueError:
                     return e.code, {"raw": raw.decode(errors="replace")}
         enc = lambda p: urllib.parse.quote(p, safe="")
-        group = os.environ["GROUP"]
-        status, g = api("GET", "/groups/" + enc(group))
-        if status != 200:
-            status, g = api("POST", "/groups", dict(name=group, path=group, visibility="private"))
-            if status not in (200, 201):
-                die("creating group %s failed (%s): %s" % (group, status, g))
-            print("Created group %s" % group)
-        else:
-            print("Group %s exists" % group)
+        groups = dict()
+        def group_id(path):
+            if path not in groups:
+                status, g = api("GET", "/groups/" + enc(path))
+                if status != 200:
+                    parent, _, name = path.rpartition("/")
+                    body = dict(name=name, path=name, visibility="private")
+                    if parent:
+                        body["parent_id"] = group_id(parent)
+                    status, g = api("POST", "/groups", body)
+                    if status not in (200, 201):
+                        die("creating group %s failed (%s): %s" % (path, status, g))
+                    print("Created group %s" % path)
+                groups[path] = g["id"]
+            return groups[path]
         projects = dict()
-        for name in sys.argv[1:]:
-            full = group + "/" + name
+        for full in sys.argv[1:]:
+            group, _, name = full.strip("/").rpartition("/")
+            if not group:
+                die("project %s needs a group, such as autoshift/%s" % (full, full))
             status, p = api("GET", "/projects/" + enc(full))
             if status != 200:
-                status, p = api("POST", "/projects", dict(name=name, path=name, namespace_id=g["id"], visibility="private"))
+                status, p = api("POST", "/projects", dict(name=name, path=name, namespace_id=group_id(group), visibility="private"))
                 if status not in (200, 201):
                     die("creating project %s failed (%s): %s" % (full, status, p))
                 print("Created project %s" % full)
             else:
                 print("Project %s exists" % full)
-            projects[name] = p
+            projects[full] = p
         hook_project = os.environ["WEBHOOK_PROJECT"]
         if hook_project:
             if hook_project not in projects:
@@ -182,6 +184,6 @@ spec:
                 status, out = api("POST", "/projects/%s/hooks" % pid, hook)
                 action = "Created"
             if status not in (200, 201):
-                die("webhook on %s/%s failed (%s): %s" % (group, hook_project, status, out))
-            print("%s the Pipelines as Code webhook on %s/%s" % (action, group, hook_project))
+                die("webhook on %s failed (%s): %s" % (hook_project, status, out))
+            print("%s the Pipelines as Code webhook on %s" % (action, hook_project))
         open(os.environ["RESULT_GITLAB_URL"], "w").write(base)

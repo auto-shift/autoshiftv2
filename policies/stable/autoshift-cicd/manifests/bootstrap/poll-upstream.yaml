@@ -1,7 +1,7 @@
 # Watches the upstream repository instead of waiting for it to call in, for a hub that GitHub cannot
 # reach or a repository you cannot add a webhook to. Present while config.autoshift-cicd.source has
-# a pollSchedule, which needs the source to be the GitLab autoshift project: the CronJob mirrors
-# upstream into it, and that project's webhook starts the Pipelines as Code run inside the cluster.
+# a pollSchedule, which needs source.repo to be a project path on the hub's GitLab: the CronJob
+# mirrors upstream into it, and that project's webhook starts the Pipelines as Code run inside the cluster.
 #
 # Each run compares the upstream and mirror refs over git's HTTP protocol, which costs two requests,
 # and starts the sync-upstream Pipeline only when a watched branch moved or a tag is new. A sync
@@ -12,10 +12,11 @@ object-templates-raw: |
   {{hub- $cicd := (index $cfg "autoshift-cicd" | default dict) hub}}
   {{hub- $srcCfg := (index $cicd "source" | default dict) hub}}
   {{hub- $schedule := (index $srcCfg "pollSchedule" | default "") hub}}
-  {{hub- $glSource := and (eq (index $srcCfg "provider" | default "gitlab") "gitlab") (not (index $srcCfg "repo" | default "")) hub}}
+  {{hub- $srcRepo := (index $srcCfg "repo" | default "") hub}}
+  {{hub- $glSource := and (ne $srcRepo "") (not (regexMatch "^https?://" $srcRepo)) hub}}
   {{hub- if $schedule hub}}
   {{hub- if not $glSource hub}}
-  {{- fail "config.autoshift-cicd.source.pollSchedule mirrors upstream into the GitLab autoshift project, so it needs source.provider gitlab with no repo. Remove pollSchedule, or point source at the GitLab project" }}
+  {{- fail "config.autoshift-cicd.source.pollSchedule mirrors upstream into the source project on the hub's GitLab, so source.repo must be a project path there, such as autoshift/autoshift, not a URL. Remove pollSchedule, or set source.repo to the path" }}
   {{hub- end hub}}
   {{- $cliImage := "{{hub (index (index $cfg "images" | default dict) "cli" | default "") hub}}" }}
   {{- if not $cliImage }}
@@ -69,8 +70,8 @@ object-templates-raw: |
                         value: '{{hub (index $cicd "upstreamRepo" | default "https://github.com/auto-shift/autoshiftv2.git") hub}}'
                       - name: REFS
                         value: '{{hub (index $srcCfg "pollRefs" | default (index $cicd "upstreamRef" | default "main")) hub}}'
-                      - name: GROUP
-                        value: '{{hub (index $cicd "gitlabGroup" | default "autoshift") hub}}'
+                      - name: PROJECT
+                        value: '{{hub $srcRepo hub}}'
                       - name: GITLAB_TOKEN
                         valueFrom:
                           secretKeyRef:
@@ -119,7 +120,7 @@ object-templates-raw: |
                         gitlab = json.loads(oc("get", "configmap", "autoshift-ci-endpoints", "-o", "json")).get("data", {}).get("gitlabUrl", "")
                         if not gitlab:
                             die("autoshift-ci-endpoints has no gitlabUrl; check policy-autoshift-cicd-endpoints")
-                        mirror = "%s/%s/autoshift.git" % (gitlab, os.environ["GROUP"])
+                        mirror = "%s/%s.git" % (gitlab, os.environ["PROJECT"])
                         up = refs(os.environ["UPSTREAM"])
                         have = refs(mirror, "oauth2:" + os.environ["GITLAB_TOKEN"])
                         wanted = os.environ["REFS"].split()

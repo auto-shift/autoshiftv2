@@ -26,11 +26,10 @@ config:
   autoshift-cicd:
     upstreamRepo: https://github.com/auto-shift/autoshiftv2.git
     upstreamRef: main
-    gitlabGroup: autoshift
     quayOrg: autoshift
     source:
       provider: github                # gitlab (default) | github
-      repo: https://github.com/auto-shift/autoshiftv2
+      repo: https://github.com/auto-shift/autoshiftv2   # a URL, or a project path on the hub's GitLab
       apiUrl: ''                      # set for GitHub Enterprise or another GitLab
       secret: autoshift-pac-github    # Secret in autoshift-ci: provider.token, webhook.secret
       provenance: default_branch      # default_branch (default) | source
@@ -45,14 +44,15 @@ config:
       pushSecret: ''                  # dockerconfigjson Secret in autoshift-ci. Empty with the hub's Quay: the bootstrap-quay robot
     siteConfig:
       provider: gitlab                # gitlab (default) | github
-      repo: ''                        # empty with gitlab: the site-config project bootstrap-gitlab creates
+      repo: autoshift/site-config     # a URL, or a project path on the hub's GitLab
       branch: main
       secret: ''                      # Secret in autoshift-ci with a push token. Empty with gitlab: the GitLab token
       secretKey: token
 ```
 
-With `provider: gitlab` and no `repo`, the source is the `autoshift` project `bootstrap-gitlab`
-creates. Set `pollSchedule` there and the `poll-upstream` CronJob mirrors upstream into it on that
+Both `repo` keys are required. A URL is used as written. A project path such as
+`autoshift/autoshift` names a project on the hub's GitLab, which `bootstrap-gitlab` creates. With the
+source given as a path, set `pollSchedule` and the `poll-upstream` CronJob mirrors upstream into it on that
 schedule, so GitHub needs no webhook and the hub needs no inbound access. That suits evaluation; in
 production, `source`, `siteConfig` and `registry` point at repositories and a registry you own. See
 [Production and evaluation](../../../docs/autoshift-cicd.md#production-and-evaluation). For GitHub, create the Secret and the repository webhook as described in

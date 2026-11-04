@@ -10,15 +10,16 @@ object-templates-raw: |
   {{hub- $cicd := (index $cfg "autoshift-cicd" | default dict) hub}}
   {{hub- $upstreamRepo := (index $cicd "upstreamRepo" | default "https://github.com/auto-shift/autoshiftv2.git") hub}}
   {{hub- $upstreamRef := (index $cicd "upstreamRef" | default "main") hub}}
-  {{hub- $group := (index $cicd "gitlabGroup" | default "autoshift") hub}}
   {{hub- $org := (index $cicd "quayOrg" | default "autoshift") hub}}
   {{hub- $realm := (dig "keycloak" "realmName" "tssc-iam" $cfg) hub}}
   {{hub- $srcCfg := (dig "autoshift-cicd" "source" (dict) $cfg) hub}}
   {{hub- $scCfg := (dig "autoshift-cicd" "siteConfig" (dict) $cfg) hub}}
-  # The GitLab projects bootstrap-gitlab creates: autoshift while the source is the hub's GitLab, and
-  # site-config while site-config is. A repository named in config lives elsewhere.
-  {{hub- $glSource := and (eq (index $srcCfg "provider" | default "gitlab") "gitlab") (not (index $srcCfg "repo" | default "")) hub}}
-  {{hub- $glSite := and (eq (index $scCfg "provider" | default "gitlab") "gitlab") (not (index $scCfg "repo" | default "")) hub}}
+  # The GitLab projects bootstrap-gitlab creates: each repo in config given as a project path on the
+  # hub's GitLab rather than a URL.
+  {{hub- $srcRepo := (index $srcCfg "repo" | default "") hub}}
+  {{hub- $siteRepo := (index $scCfg "repo" | default "") hub}}
+  {{hub- $glSource := and (ne $srcRepo "") (not (regexMatch "^https?://" $srcRepo)) hub}}
+  {{hub- $glSite := and (ne $siteRepo "") (not (regexMatch "^https?://" $siteRepo)) hub}}
   {{- $cliImage := "{{hub (index (index $cfg "images" | default dict) "cli" | default "") hub}}" }}
   {{- if not $cliImage }}
   {{-   $isCli := (lookup "image.openshift.io/v1" "ImageStream" "openshift" "cli") | default dict }}
@@ -113,41 +114,38 @@ object-templates-raw: |
         namespace: autoshift-ci
       spec:
         description: >-
-          Create the GitLab group and the projects that config.autoshift-cicd places on this GitLab:
-          autoshift, with the Pipelines as Code webhook and the upstream branches pushed into it, and
+          Create the GitLab projects that config.autoshift-cicd names by path on this GitLab: the
+          source, with the Pipelines as Code webhook and the upstream branches pushed into it, and
           site-config. Seed site-config afterwards with bootstrap-site-config.
         params:
-          - name: group
-            type: string
-            default: '{{hub $group hub}}'
           - name: projects
             type: array
             {{hub- if or $glSource $glSite hub}}
             default:
               {{hub- if $glSource hub}}
-              - autoshift
+              - '{{hub $srcRepo hub}}'
               {{hub- end hub}}
               {{hub- if $glSite hub}}
-              - site-config
+              - '{{hub $siteRepo hub}}'
               {{hub- end hub}}
             {{hub- else hub}}
             default: []
             {{hub- end hub}}
           - name: webhookProject
             type: string
-            default: '{{hub ternary "autoshift" "" $glSource hub}}'
-            description: Project that gets the Pipelines as Code webhook. Empty skips it.
+            default: '{{hub ternary $srcRepo "" $glSource hub}}'
+            description: Project path that gets the Pipelines as Code webhook. Empty skips it.
           - name: syncUpstream
             type: string
             default: '{{hub ternary "true" "false" $glSource hub}}'
-            description: true pushes the upstream branches into the autoshift project.
+            description: true pushes the upstream branches into the webhook project.
           - name: upstreamUrl
             type: string
             default: '{{hub $upstreamRepo hub}}'
           - name: upstreamRefs
             type: string
             default: '{{hub $upstreamRef hub}}'
-            description: Space-separated branches to push into the autoshift project, or *.
+            description: Space-separated branches to push into the webhook project, or *.
           - name: gitlabUrl
             type: string
             default: ''
@@ -164,8 +162,6 @@ object-templates-raw: |
                 value: '{{ $cliImage }}'
               - name: gitlabUrl
                 value: $(params.gitlabUrl)
-              - name: group
-                value: $(params.group)
               - name: projects
                 value: $(params.projects[*])
               - name: webhookProject
@@ -190,7 +186,7 @@ object-templates-raw: |
               - name: refs
                 value: $(params.upstreamRefs)
               - name: targetUrl
-                value: $(tasks.gitlab-bootstrap.results.gitlabUrl)/$(params.group)/autoshift.git
+                value: $(tasks.gitlab-bootstrap.results.gitlabUrl)/$(params.webhookProject).git
               - name: tlsVerify
                 value: $(params.tlsVerify)
   - complianceType: musthave
@@ -202,8 +198,8 @@ object-templates-raw: |
         namespace: autoshift-ci
       spec:
         description: >-
-          Push branches and tags from the upstream AutoShift repository into the GitLab autoshift
-          project. Does not force unless asked, so a branch changed in GitLab is reported, not lost.
+          Push branches and tags from the upstream AutoShift repository into the source project on
+          this GitLab. Does not force unless asked, so a branch changed in GitLab is reported, not lost.
         params:
           - name: upstreamUrl
             type: string
@@ -219,7 +215,7 @@ object-templates-raw: |
             default: 'false'
           - name: targetUrl
             type: string
-            default: '{{ ternary (printf "https://%s/{{hub $group hub}}/autoshift.git" $gitlabHost) "" (ne $gitlabHost "") }}'
+            default: '{{ ternary (printf "https://%s/{{hub $srcRepo hub}}.git" $gitlabHost) "" (and (ne $gitlabHost "") {{hub $glSource hub}}) }}'
           - name: tlsVerify
             type: string
             default: 'true'

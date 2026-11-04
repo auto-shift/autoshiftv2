@@ -22,7 +22,6 @@ object-templates-raw: |
   {{hub- $quayOrg := (dig "autoshift-cicd" "quayOrg" "autoshift" $cfg) hub}}
   {{hub- $sc := (dig "autoshift-cicd" "siteConfig" (dict) $cfg) hub}}
   {{hub- $scProvider := (index $sc "provider" | default "gitlab") hub}}
-  {{hub- $group := (dig "autoshift-cicd" "gitlabGroup" "autoshift" $cfg) hub}}
   {{hub- $tasOn := eq (index .ManagedClusterLabels "autoshift.io/tas" | default "false") "true" hub}}
   {{hub- $quayOn := eq (index .ManagedClusterLabels "autoshift.io/quay" | default "false") "true" hub}}
   {{hub- $gitlabOn := eq (index .ManagedClusterLabels "autoshift.io/gitlab" | default "false") "true" hub}}
@@ -59,20 +58,23 @@ object-templates-raw: |
   {{-     $missing = append $missing (printf "Secret autoshift-ci/%s of type kubernetes.io/dockerconfigjson, with push access to %s/%s" $regSecret $regHost $regNs) }}
   {{-   end }}
   {{- end }}
-  {{- /* site-config: a GitLab one with no repo is the project bootstrap-gitlab creates, pushed with
-       the GitLab token this policy copies; a GitHub one needs its repo and a Secret */}}
+  {{- /* site-config: repo is a URL, used as written, or a project path on the hub's GitLab, which
+       bootstrap-gitlab creates and the GitLab token this policy copies pushes to */}}
   {{- $scRepo := "{{hub index $sc "repo" | default "" hub}}" }}
   {{- $scSecret := "{{hub index $sc "secret" | default "" hub}}" }}
   {{- $scKey := "{{hub index $sc "secretKey" | default "token" hub}}" }}
   {{- $scUser := "x-access-token" }}
+  {{- if not $scRepo }}
+  {{-   $missing = append $missing "config.autoshift-cicd.siteConfig.repo, a repository URL or a project path on the hub's GitLab" }}
+  {{- else if not (regexMatch "^https?://" $scRepo) }}
+  {{-   $scHost := (index (((lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials") | default dict).data | default dict) "host" | default "" | base64dec) }}
+  {{-   if not $scHost }}{{- $missing = append $missing (printf "Secret gitlab-system/tssc-gitlab-credentials with host, the hub's GitLab that holds %s" $scRepo) }}{{- end }}
+  {{-   $scRepo = printf "https://%s/%s.git" $scHost $scRepo }}
+  {{- end }}
   {{hub- if eq $scProvider "gitlab" hub}}
   {{- $scUser = "oauth2" }}
-  {{- $scHost := (index (((lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials") | default dict).data | default dict) "host" | default "" | base64dec) }}
-  {{- if not $scRepo }}{{- $scRepo = ternary (printf "https://%s/{{hub $group hub}}/site-config.git" $scHost) "" (ne $scHost "") }}{{- end }}
   {{- if not $scSecret }}{{- $scSecret = "gitlab-autoshift-token" }}{{- end }}
-  {{- if not $scRepo }}{{- $missing = append $missing "config.autoshift-cicd.siteConfig.repo, or Secret gitlab-system/tssc-gitlab-credentials with host" }}{{- end }}
   {{hub- else if eq $scProvider "github" hub}}
-  {{- if not $scRepo }}{{- $missing = append $missing "config.autoshift-cicd.siteConfig.repo, the GitHub repository URL" }}{{- end }}
   {{- if not $scSecret }}{{- $missing = append $missing "config.autoshift-cicd.siteConfig.secret, a Secret in autoshift-ci with a token that can push to it" }}{{- end }}
   {{hub- else hub}}
   {{- $missing = append $missing "config.autoshift-cicd.siteConfig.provider must be gitlab or github, not {{hub $scProvider hub}}" }}

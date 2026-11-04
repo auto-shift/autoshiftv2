@@ -7,7 +7,8 @@
 #
 # config.autoshift-cicd.deployments.valueFiles lists the site-config files each deployment reads, in
 # order. The {{ "{{" }} ... {{ "}}" }} expressions are the ApplicationSet's own Go templates, which
-# ACM writes out unchanged.
+# ACM writes out unchanged. mustonlyhave, because musthave merges lists: a changed site-config URL
+# would leave the old generator beside the new one and generate every Application twice.
 object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $valueFiles := (dig "autoshift-cicd" "deployments" "valueFiles" (list "global.yaml") $cfg) hub}}
@@ -17,7 +18,7 @@ object-templates-raw: |
   {{- if not (and $siteUrl (index $ep "siteConfigBranch")) }}
   {{-   fail "The AutoShift deployments ApplicationSet cannot be set up yet. Missing: siteConfigUrl and siteConfigBranch in autoshift-ci/autoshift-ci-endpoints" }}
   {{- end }}
-  - complianceType: musthave
+  - complianceType: mustonlyhave
     objectDefinition:
       apiVersion: argoproj.io/v1alpha1
       kind: ApplicationSet

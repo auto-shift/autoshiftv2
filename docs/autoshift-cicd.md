@@ -20,8 +20,8 @@ to its own Quay. `clustersets/rhads.yaml` is set up this way.
 
 | | Production | Evaluation |
 |---|---|---|
-| Source | Your repository, with a webhook to the hub: `source.provider`, `source.repo`, `source.secret` | The upstream repository, polled into the hub's GitLab: `source.pollSchedule` |
-| Site configuration | Your repository: `siteConfig.provider`, `siteConfig.repo`, `siteConfig.secret` | The hub's GitLab `site-config` project |
+| Source | Your repository, with a webhook to the hub: `source.provider`, `source.repo` as a URL, `source.secret` | The upstream repository, polled into a project on the hub's GitLab: `source.repo` as a path such as `autoshift/autoshift`, and `source.pollSchedule` |
+| Site configuration | Your repository: `siteConfig.provider`, `siteConfig.repo` as a URL, `siteConfig.secret` | A project on the hub's GitLab: `siteConfig.repo` as a path such as `autoshift/site-config` |
 | Registry | Your OCI registry: `registry.host`, `registry.namespace`, `registry.pushSecret` | The hub's Quay, with the `bootstrap-quay` robot |
 | Pipelines run from | `.tekton/` on the default branch: `source.provenance: default_branch` | `.tekton/` on the pushed branch: `source.provenance: source` |
 
@@ -205,11 +205,15 @@ To do the same by hand, with `TOKEN` set to a superuser OAuth token:
 
 ## GitLab group, projects and webhook
 
-`bootstrap-gitlab` creates a private `autoshift` group on the hub's GitLab with a private project
-for each repository that config places there, and does nothing on GitHub:
+`source.repo` and `siteConfig.repo` are each a URL, used as written, or a project path such as
+`autoshift/site-config`, which names a project on the hub's GitLab. `bootstrap-gitlab` creates a
+private project, and any missing group, for each one given as a path, and leaves URLs alone:
 
-- `autoshift`, with a Pipelines as Code webhook, while `source.provider` is `gitlab` with no `repo`.
-- `site-config`, while `siteConfig.provider` is `gitlab` with no `repo`.
+- The `source.repo` project, with a Pipelines as Code webhook.
+- The `siteConfig.repo` project.
+
+The commands below use the paths in `clustersets/rhads.yaml`, `autoshift/autoshift` and
+`autoshift/site-config`.
 
 To do the same by hand, with `GL_TOKEN` set to a token with the `api` scope:
 
@@ -273,10 +277,12 @@ config:
       secretKey: token
 ```
 
-With `provider: gitlab` and no `repo`, it is the `site-config` project that `bootstrap-gitlab`
-creates, pushed with the GitLab token in `gitlab-autoshift-token`. `policy-autoshift-cicd-endpoints`
-resolves the repository, branch and credential into `autoshift-ci-endpoints`, and fails with what is
-missing: a GitHub repository needs `repo`, and `secret` must name a Secret with that key.
+`repo` is required. A URL is used as written, so give the clone URL ending in `.git`: Argo CD does
+not follow the redirect GitLab sends for a URL without it. A project path such as
+`autoshift/site-config` is the project `bootstrap-gitlab` creates on the hub's GitLab, pushed with
+the GitLab token in `gitlab-autoshift-token`. `policy-autoshift-cicd-endpoints` resolves the
+repository, branch and credential into `autoshift-ci-endpoints`, and fails with what is missing: a
+GitHub repository needs `secret`, and `secret` must name a Secret with that key.
 
 ### GitHub
 
@@ -327,7 +333,7 @@ evaluation:
 
 | | Webhook | Polling |
 |---|---|---|
-| Configuration | `provider: github` and `repo` | `provider: gitlab`, no `repo`, and `pollSchedule` |
+| Configuration | `provider: github` and `repo` as a URL | `provider: gitlab`, `repo` as a hub GitLab path, and `pollSchedule` |
 | Inbound access to the hub from the internet | Required | Not required |
 | Rights on the GitHub repository | Administrator, to add the webhook, and a token | None for a public repository |
 | A run starts | When the change is pushed | Within one schedule interval |
@@ -372,9 +378,9 @@ GitHub must reach the controller route, so the hub's ingress has to be reachable
 
 ### GitLab
 
-With `provider: gitlab` and no `repo`, the Repository points at the `autoshift` project that
-`bootstrap-gitlab` creates, on the hub's GitLab, and uses the `autoshift-pac-webhook` Secret that
-pipeline writes. The manual equivalent is in
+With `provider: gitlab` and `repo` as a project path, such as `autoshift/autoshift`, the Repository
+points at the project that `bootstrap-gitlab` creates on the hub's GitLab, and uses the
+`autoshift-pac-webhook` Secret that pipeline writes. The manual equivalent is in
 [GitLab group, projects and webhook](#gitlab-group-projects-and-webhook). For another GitLab, set
 `repo` and `apiUrl`, and create the Secret and the project webhook with the same keys and events.
 
@@ -382,7 +388,7 @@ pipeline writes. The manual equivalent is in
 
 Polling lets a hub build the upstream AutoShift repository with no webhook, which suits evaluation
 and testing rather than production, where the repository is your own. With `pollSchedule` set, the `poll-upstream` CronJob in `autoshift-ci` watches `upstreamRepo` on
-that schedule. It reads the branch and tag references of upstream and of the GitLab `autoshift`
+that schedule. It reads the branch and tag references of upstream and of the `source.repo`
 project over the Git HTTP protocol, and starts the `sync-upstream` pipeline only when a watched
 branch moved or a tag is new. The push into GitLab fires that project's Pipelines as Code webhook,
 which `bootstrap-gitlab` created, inside the cluster. A sync that is still running is left to
@@ -396,7 +402,7 @@ config:
       pollRefs: main feature/my-change    # space-separated branches, or *. Empty: upstreamRef
 ```
 
-Polling needs the source to be the GitLab mirror, `provider: gitlab` with no `repo`. With another
+Polling needs `source.repo` to be a project path on the hub's GitLab. With another
 source, `policy-autoshift-cicd-bootstrap` fails and says so. Removing `pollSchedule` removes the
 CronJob. `sync-upstream` never forces, so a branch rewritten upstream stops syncing until you run
 `sync-upstream` with `force=true`. Watching `*` builds every upstream branch, so list the branches

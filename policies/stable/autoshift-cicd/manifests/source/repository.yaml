@@ -2,8 +2,8 @@
 # config.autoshift-cicd.source. A push or merge request there runs the .tekton/ pipelines in
 # autoshift-ci.
 #   provider    gitlab (default) or github
-#   repo        the repository URL. Empty with gitlab means the autoshift project bootstrap-gitlab
-#               creates; github requires it
+#   repo        the repository URL, or a project path on the hub's GitLab, which bootstrap-gitlab
+#               creates. Required
 #   apiUrl      the provider API, for GitHub Enterprise or a GitLab other than the one on this hub.
 #               Empty means github.com, or the hub's GitLab
 #   secret      Secret in autoshift-ci with provider.token and webhook.secret. bootstrap-gitlab
@@ -16,19 +16,22 @@ object-templates-raw: |
   {{hub- $cfg := (fromConfigMap .PolicyMetadata.namespace (printf "%s.rendered-config" .ManagedClusterName) "config" | fromYaml | default dict) hub}}
   {{hub- $src := (dig "autoshift-cicd" "source" (dict) $cfg) hub}}
   {{hub- $provider := (index $src "provider" | default "gitlab") hub}}
-  {{hub- $group := (dig "autoshift-cicd" "gitlabGroup" "autoshift" $cfg) hub}}
   {{- $missing := list }}
+  {{- /* Pipelines as Code matches events on the project's web URL, which has no .git */}}
   {{- $repo := regexReplaceAll "[.]git$" "{{hub index $src "repo" | default "" hub}}" "" }}
   {{- $apiUrl := "{{hub index $src "apiUrl" | default "" hub}}" }}
   {{- $secretName := "{{hub index $src "secret" | default "autoshift-pac-webhook" hub}}" }}
-  {{hub- if eq $provider "gitlab" hub}}
   {{- $glHost := (index (((lookup "v1" "Secret" "gitlab-system" "tssc-gitlab-credentials") | default dict).data | default dict) "host" | default "" | base64dec) }}
+  {{- if not $repo }}
+  {{-   $missing = append $missing "config.autoshift-cicd.source.repo, a repository URL or a project path on the hub's GitLab" }}
+  {{- else if not (regexMatch "^https?://" $repo) }}
+  {{-   if not $glHost }}{{- $missing = append $missing (printf "Secret gitlab-system/tssc-gitlab-credentials with host, the hub's GitLab that holds %s" $repo) }}{{- end }}
+  {{-   $repo = printf "https://%s/%s" $glHost $repo }}
+  {{- end }}
+  {{hub- if eq $provider "gitlab" hub}}
   {{- if not $apiUrl }}{{- $apiUrl = ternary (printf "https://%s" $glHost) "" (ne $glHost "") }}{{- end }}
-  {{- if not $repo }}{{- $repo = ternary (printf "https://%s/{{hub $group hub}}/autoshift" $glHost) "" (ne $glHost "") }}{{- end }}
-  {{- if not (and $repo $apiUrl) }}{{- $missing = append $missing "config.autoshift-cicd.source.repo and apiUrl, or Secret gitlab-system/tssc-gitlab-credentials with host" }}{{- end }}
-  {{hub- else if eq $provider "github" hub}}
-  {{- if not $repo }}{{- $missing = append $missing "config.autoshift-cicd.source.repo, the GitHub repository URL" }}{{- end }}
-  {{hub- else hub}}
+  {{- if not $apiUrl }}{{- $missing = append $missing "config.autoshift-cicd.source.apiUrl, or Secret gitlab-system/tssc-gitlab-credentials with host" }}{{- end }}
+  {{hub- else if ne $provider "github" hub}}
   {{- $missing = append $missing "config.autoshift-cicd.source.provider must be gitlab or github, not {{hub $provider hub}}" }}
   {{hub- end hub}}
   {{- $sd := ((lookup "v1" "Secret" "autoshift-ci" $secretName) | default dict).data | default dict }}
