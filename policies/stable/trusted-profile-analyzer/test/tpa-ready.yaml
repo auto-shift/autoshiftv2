@@ -1,4 +1,6 @@
-# Readiness gate (inform-only): the TrustedProfileAnalyzer CR reports Successful/Ready.
+# Readiness gate (inform-only): the Operator installed the TrustedProfileAnalyzer release, and its server
+# is Available. The Operator is Helm-based, so the CR reports Deployed and ReleaseFailed, not a Ready
+# condition, and Deployed says nothing about the pods; the server Deployment does.
 object-templates-raw: |
   - complianceType: musthave
     objectDefinition:
@@ -9,5 +11,18 @@ object-templates-raw: |
         namespace: tssc-tpa
       status:
         conditions:
-          - type: Successful
+          - type: Deployed
+            status: "True"
+          - type: ReleaseFailed
+            status: "False"
+  - complianceType: musthave
+    objectDefinition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: server
+        namespace: tssc-tpa
+      status:
+        conditions:
+          - type: Available
             status: "True"
